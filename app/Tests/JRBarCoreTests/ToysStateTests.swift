@@ -22,23 +22,20 @@ struct ToysStateTests {
         #expect(state.fold == FoldSettings())
         #expect(state.fold.enabled == false)
         #expect(state.fold.activationAngle == 65)
-        #expect(state.fold.style == .fog)
         #expect(state.fold.provider == .jrbar)
         #expect(state.aquarium == AquariumSettings())
         #expect(state.notchBuddy == NotchBuddySettings())
         #expect(state.confetti == ConfettiSettings())
-        #expect(state.externalApps.isEmpty)
     }
 
     @Test("encode then decode returns the same state")
     func roundTrip() throws {
         var state = ToysState()
-        state.fold = FoldSettings(enabled: true, activationAngle: 95, style: .fog, perspective: 0.8,
+        state.fold = FoldSettings(enabled: true, activationAngle: 95, perspective: 0.8,
                                   blur: 0.2, shade: 0.7, jitterTolerance: 2, provider: .bendy)
         state.aquarium = AquariumSettings(enabled: true, showLabels: false, density: 0.4)
         state.notchBuddy = NotchBuddySettings(enabled: true, character: "dot")
         state.confetti = ConfettiSettings(enabled: true)
-        state.externalApps = [ExternalToyApp(id: "com.example.Fish", name: "Fish", launchWithJRBar: true)]
         let decoded = try decode(ToysState.self, encode(state))
         #expect(decoded == state)
     }
@@ -54,45 +51,35 @@ struct ToysStateTests {
         let state = try decode(ToysState.self, json)
         #expect(state.fold.enabled == true)
         #expect(state.fold.activationAngle == 65, "a string is not an angle")
-        #expect(state.fold.style == .fog, "an unknown style is fog")
         #expect(state.fold.provider == .jrbar, "an unknown renderer is jrbar")
         #expect(state.confetti.enabled == false, "a string is not a flag")
-        #expect(state.externalApps.isEmpty)
         #expect(state.aquarium == AquariumSettings())
-    }
-
-    @Test("a partially wrong external app keeps the fields that parse")
-    func tolerantExternalApp() throws {
-        let json = #"{"externalApps": [{"id": "com.example.A", "name": "A", "launchWithJRBar": true}, {"name": "NoID"}, {"id": "com.example.B"}]}"#
-        let state = try decode(ToysState.self, json)
-        // The row with no bundle id is dropped: it can never be launched.
-        #expect(state.externalApps == [
-            ExternalToyApp(id: "com.example.A", name: "A", launchWithJRBar: true),
-            ExternalToyApp(id: "com.example.B", name: ""),
-        ])
     }
 
     @Test("a file still on the old defaults migrates to the new ones")
     func oldDefaultsMigrate() throws {
         // Each past default set is treated as untouched: pre-0.9.6's
         // 110°/Tilt and 0.9.6's 82°/Dusk both land on the current
-        // 65°/Fog. Real persisted files encode every key, so the check
-        // sees the old shade too. Deliberate changes survive either way.
+        // 65°/0.7-shade portal. Real persisted files encode every key,
+        // so the check sees the old shade too. Deliberate changes
+        // survive either way, and the retired style key itself is
+        // simply ignored.
         let stale = try decode(FoldSettings.self,
                                #"{"activationAngle": 110, "style": "tilt", "shade": 0.4}"#)
         #expect(stale.activationAngle == 65)
-        #expect(stale.style == .fog)
         #expect(stale.shade == 0.7)
         let mid = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "dusk", "shade": 0.4}"#)
         #expect(mid.activationAngle == 65)
-        #expect(mid.style == .fog)
+        #expect(mid.shade == 0.7)
         // But a deliberate 110° survives: any other field moved means the
-        // user touched it, and Tilt on its own is a real choice too.
+        // user touched it.
         let chosen = try decode(FoldSettings.self,
                                 #"{"activationAngle": 110, "style": "tilt", "blur": 0.9}"#)
         #expect(chosen.activationAngle == 110)
-        let tiltOnly = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "tilt"}"#)
-        #expect(tiltOnly.style == .tilt)
+        // A stale "fog" from the portal-rewrite era decodes without a
+        // murmur — the key is read only for the legacy-default check.
+        let fogged = try decode(FoldSettings.self, #"{"style": "fog"}"#)
+        #expect(fogged == FoldSettings())
         // A deliberate 82° with a moved field survives the migration too.
         let kept = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "dusk", "shade": 0.9}"#)
         #expect(kept.activationAngle == 82)
@@ -111,7 +98,6 @@ struct ToysStateTests {
     func appStateRoundTrip() throws {
         var app = AppState(showScreenBar: false)
         app.toys.notchBuddy.enabled = true
-        app.toys.externalApps = [ExternalToyApp(id: "com.example.Bear", name: "Bear")]
         let data = try JSONEncoder().encode(app)
         #expect(try JSONDecoder().decode(AppState.self, from: data) == app)
     }

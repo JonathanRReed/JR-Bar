@@ -431,27 +431,46 @@ final class UsageCenterStore {
 
     func forecast(for provider: CoreProviderUsage, window: CoreUsageWindow) -> UsageForecast {
         // A window's own `forecast` wins. The provider-level one is about
-        // the primary (5h) window; other windows only get its pace word.
-        let primary = window.id == (provider.windows.first { $0.name.lowercased() == "5h" }?.id ?? provider.windows.first?.id)
+        // the daemon's 5h-convention primary; other windows only get its
+        // pace word.
+        let primary = window.id == Self.conventionalWindow(of: provider)?.id
         let daemon = window.forecast
             ?? (primary ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
         let samples = core.usageSamples.samples(provider: provider.identity, window: window.name)
         return UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
     }
 
-    /// The window the card leads with: the daemon's constrained pick when
-    /// it names one (least headroom of the applicable measured lanes),
-    /// else the 5h convention.
+    /// The window the card leads with: `primaryWindow`, the same
+    /// most-exhausted pick every surface uses.
     static func featuredWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
+        primaryWindow(of: provider)
+    }
+
+    /// The window every surface leads with — the card's headline, the
+    /// panel row's big number, the menu-bar meter: the daemon's
+    /// `constrained` pick when it names a real window (least headroom of
+    /// the applicable measured lanes), the same least-headroom rule
+    /// computed locally when it does not, else the 5h convention. A
+    /// weekly lane at 100 % outranks a 5h lane with headroom: the tighter
+    /// constraint is always the story, never the shorter clock.
+    static func primaryWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
         if let constrained = provider.constrained,
            let match = provider.windows.first(where: { $0.id == constrained.id || $0.name == constrained.name }) {
             return match
         }
-        return primaryWindow(of: provider)
+        // A daemon that names no constrained lane still gets the same
+        // rule: the measured, applicable window with the least headroom.
+        let measured = provider.windows.filter { $0.bindable && $0.usedPct != nil }
+        if let worst = measured.max(by: { ($0.usedPct ?? 0) < ($1.usedPct ?? 0) }) {
+            return worst
+        }
+        return conventionalWindow(of: provider)
     }
 
-    /// The window the card leads with: 5h when reported, else the first.
-    static func primaryWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
+    /// The 5h convention: what the pick would be before exhaustion is
+    /// consulted — the baseline the card's "Watching it" note compares
+    /// against when the constrained pick differs.
+    static func conventionalWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
         provider.windows.first { $0.name.lowercased() == "5h" } ?? provider.windows.first
     }
 
@@ -521,6 +540,45 @@ final class UsageCenterStore {
                     instance: provider.instance == "default" ? nil : provider.instance
                 )
                 self.show(error: message)
+                self.loadProviderRows()
+            } catch {
+                self.show(error: Self.describe(error))
+            }
+        }
+    }
+
+    /// Providers mid re-sign-in, keyed by identity — the row's button
+    /// spins while the daemon re-pulls the sign-in and force-refreshes.
+    private(set) var resigningIn: Set<String> = []
+
+    func isResigningIn(_ provider: CoreProviderUsage) -> Bool {
+        resigningIn.contains(provider.identity)
+    }
+
+    /// "Re-sign in" / "Update provider" (T3 Code's pattern): asks the
+    /// daemon to re-pull whatever sign-in the provider's own tooling
+    /// holds — the Claude Code Keychain item, the grok CLI's auth file, a
+    /// consented browser session — and force a refresh. The reply's own
+    /// message is surfaced verbatim: when the sign-in itself is what
+    /// lapsed it names the provider's remedy (`grok login`, the `gemini`
+    /// CLI) rather than claiming a reconnect nothing performed. A
+    /// `sign_in_url` in the reply means the remedy is a page only the
+    /// user can sign in to — it is opened for them.
+    func resignIn(_ provider: CoreProviderUsage) {
+        guard core.isLive, !resigningIn.contains(provider.identity) else { return }
+        resigningIn.insert(provider.identity)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.resigningIn.remove(provider.identity) }
+            do {
+                let result = try await self.core.resignInProvider(
+                    provider.id,
+                    instance: provider.instance == "default" ? nil : provider.instance
+                )
+                self.show(error: result.message.isEmpty ? "Re-checking \(provider.id)'s sign-in…" : result.message)
+                if let urlString = result.signInURL, let url = URL(string: urlString) {
+                    NSWorkspace.shared.open(url)
+                }
                 self.loadProviderRows()
             } catch {
                 self.show(error: Self.describe(error))

@@ -18,7 +18,7 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         store.windowDidOpen()
-        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        NSRunningApplication.current.activate()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }

@@ -117,8 +117,7 @@ struct CalibrationSheet: View {
                 Button("Apply") {
                     // Awaited so a `not_found` (the device went away
                     // mid-sheet) is reported instead of looking applied.
-                    Task { [weak store] in
-                        guard let store else { return }
+                    Task { [store] in
                         do {
                             let reply = try await store.core.applyCalibrationNow(device: deviceID, profile: model.profileArguments())
                             if reply.ok {

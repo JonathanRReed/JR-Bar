@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarLEDS
 import Observation
 import SwiftUI
 
@@ -420,6 +421,89 @@ final class NotchBuddyToy: Toy {
             s.statusLine = line
         }
         return s
+    }
+
+    // MARK: Strip link
+
+    /// The docked dot's link to the pulse strip. While the daemon
+    /// publishes a `screen_bar` program the dot is the strip's extra
+    /// LED at the notch seam — the same program text the band compiles
+    /// and the hardware plays, sampled on the daemon's anchor. There is
+    /// no second clock to drift: the anchor is the event's own tick, so
+    /// the dot swells exactly when the pulse crosses the middle, and a
+    /// phase that cannot run ahead can never read inverted either.
+    /// nil means nothing is published to extend and the dot keeps its
+    /// resting look. The cache is keyed on the program text, so a
+    /// republished program pays for one parse, not one per frame.
+    @ObservationIgnored private var stripCache:
+        (key: String, sampler: LEDSSampler, firstSeen: TimeInterval, peak: RGB)?
+
+    /// The seam colour at `epoch` — wall-clock seconds, the anchor's own
+    /// domain, so no media-time conversion sits between the two. `still`
+    /// freezes the link at the program's brightest seam instant: Reduce
+    /// Motion's version of the pulse, the same still frame the band holds.
+    func stripDot(at epoch: TimeInterval, still: Bool = false) -> RGB? {
+        guard let surface = core.lights?.screenBar else { return nil }
+        let text = surface.program
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let ledCount = LEDSProgram.normalizedLedCount(surface.ledCount ?? ScreenBarGeometry.ledCount)
+        let key = "\(ledCount)\u{1F}\(text)"
+        if stripCache?.key != key {
+            // The band's own acceptance rules: a program it would refuse
+            // extends nothing rather than pulsing on rejected text.
+            let decision = ScreenBarController.programDecision(
+                text, fallback: LEDSPresentationCompiler.safeFallbackProgram)
+            guard let program = decision.program else {
+                stripCache = nil
+                return nil
+            }
+            let sampler = LEDSSampler(program: program, ledCount: ledCount)
+            stripCache = (key: key, sampler: sampler, firstSeen: epoch,
+                          peak: Self.centrePeak(sampler: sampler, ledCount: ledCount))
+        }
+        guard let cache = stripCache else { return nil }
+        if still { return cache.peak }
+        // The anchor is the daemon's t=0 on the strip. A missing or
+        // absurd one starts the program when we first saw it — the
+        // band's own nil-anchor rule — and a same-program republish that
+        // moved the anchor re-locks the dot on the next frame for free.
+        var start = cache.firstSeen
+        if let anchor = surface.anchor, anchor <= epoch + 0.05, epoch - anchor < 6 * 3600 {
+            start = anchor
+        }
+        return Self.centreColor(sampler: cache.sampler,
+                                at: max(0, epoch - start), ledCount: ledCount)
+    }
+
+    /// The brighter of the LEDs straddling the strip's middle — the seam
+    /// the docked dot hangs under. Brightest, not averaged: the Dot
+    /// role's own band rule, so a pulse reaches the dot at full strength
+    /// and a chase blips it as the wave crosses the notch.
+    static func centreColor(sampler: LEDSSampler, at seconds: Double, ledCount: Int) -> RGB {
+        let colors = sampler.colors(at: seconds)
+        let mid = ledCount / 2
+        let seam = ledCount % 2 == 0 ? [mid - 1, mid] : [mid]
+        var best = RGB.black
+        for index in seam where index >= 0 && index < colors.count {
+            if colors[index].maxChannel > best.maxChannel { best = colors[index] }
+        }
+        return best
+    }
+
+    /// The seam's brightest instant across the program's first cycle —
+    /// the frame Reduce Motion holds, probed the way the band's still
+    /// frame probes.
+    static func centrePeak(sampler: LEDSSampler, ledCount: Int) -> RGB {
+        var best = centreColor(sampler: sampler, at: 0, ledCount: ledCount)
+        let span = sampler.cycleDuration ?? sampler.motionEndsAt ?? 0
+        if span > 0 {
+            for step in 1..<12 {
+                let color = centreColor(sampler: sampler, at: span * Double(step) / 12,
+                                        ledCount: ledCount)
+                if color.maxChannel > best.maxChannel { best = color }
+            }
+        }
+        return best
     }
 
     // MARK: Menu

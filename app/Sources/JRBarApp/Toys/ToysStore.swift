@@ -27,19 +27,18 @@ final class ToysStore {
     }
 
     /// The cards, in contract order: Fold, Aquarium, Notch Buddy,
-    /// Confetti, Alcove. The page renders whatever is here.
+    /// Confetti, Notch. The page renders whatever is here.
     private(set) var toys: [any Toy]
 
     /// Typed handles for the toys that other parts of the app drive:
     /// the HUD hosts the buddy, the event coordinator fires confetti and
-    /// feeds the island's event capsules, the page lists the external
-    /// apps. `alcove` is implicitly unwrapped for the same reason `fold`
-    /// is a lookup: `AlcoveToy` takes `store: self`, so it can only be
-    /// built after every stored property has a value.
+    /// feeds the island's event capsules. `notch` is implicitly
+    /// unwrapped for the same reason `fold` is a lookup: `NotchToy`
+    /// takes `store: self`, so it can only be built after every stored
+    /// property has a value.
     let notchBuddy: NotchBuddyToy
     let confetti: ConfettiToy
-    let externalApps: ExternalAppsToy
-    private(set) var alcove: AlcoveToy!
+    private(set) var notch: NotchToy!
 
     /// The island asks the fold whether its overlay owns the screen.
     /// Found in `toys`, not stored: `FoldToy` takes `store: self` in its
@@ -56,7 +55,11 @@ final class ToysStore {
 
     @ObservationIgnored private var saveWork: DispatchWorkItem?
 
-    init(core: CoreModel, settings: SettingsStore, state: ToysState) {
+    /// `cardModel` is the grown island's model — the delegate builds it
+    /// on the shared timer/tray stores so the glass card and the island
+    /// card can never disagree about a timer or a tray file.
+    init(core: CoreModel, settings: SettingsStore, state: ToysState,
+         cardModel: NotchCardModel) {
         self.core = core
         self.settings = settings
         self.state = state
@@ -64,10 +67,8 @@ final class ToysStore {
         // stored property above has a value and `self` is complete.
         let notchBuddy = NotchBuddyToy(core: core)
         let confetti = ConfettiToy()
-        let externalApps = ExternalAppsToy()
         self.notchBuddy = notchBuddy
         self.confetti = confetti
-        self.externalApps = externalApps
         self.toys = []
         var cards: [any Toy] = []
         cards.append(FoldToy(core: core, store: self))
@@ -76,10 +77,11 @@ final class ToysStore {
         cards.append(notchBuddy)
         confetti.store = self
         cards.append(confetti)
-        let alcove = AlcoveToy(core: core, store: self)
-        self.alcove = alcove
-        cards.append(alcove)
-        externalApps.store = self
+        let notch = NotchToy(core: core, store: self, cardModel: cardModel)
+        self.notch = notch
+        // The Notch card renders on the Utilities page — it manages a
+        // real macOS surface, so it is a utility, not a toy; `toys`
+        // keeps only the page's cards.
         self.toys = cards
     }
 
@@ -108,13 +110,5 @@ final class ToysStore {
     /// The delegate's `AlcoveFollower.onChange` lands here.
     func noteAlcoveCapsule(_ capsule: AlcoveCapsule?) {
         alcoveCapsule = capsule
-    }
-
-    // MARK: External apps
-
-    /// Called once after launch: opens every external toy app the user
-    /// flagged "Launch with JR-Bar" that is not already running.
-    func launchExternalAppsAtStartup() {
-        externalApps.launchAtStartup()
     }
 }

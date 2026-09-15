@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import JRBarCore
 @testable import JRBarApp
 
 /// The band's click state machine (W10): a click pins the peek card as
@@ -51,6 +52,39 @@ import Testing
             #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: true, deltaY: delta) == .none,
                     "pinned deltaY \(delta) should not fire")
         }
+    }
+
+    // MARK: The flick — release speed is the other commit
+
+    @Test func aFastDownwardReleaseExpandsEvenReleasedShort() {
+        // The pull never crossed the travel threshold — the release
+        // speed carries the swipe over the line.
+        #expect(ScreenBarInteraction.flickOutcome(
+            pinnedAtDown: false,
+            velocityY: -NotchPullGesture.flickVelocity - 50) == .expand)
+    }
+
+    @Test func aFastUpwardReleaseCollapsesAPinnedCard() {
+        #expect(ScreenBarInteraction.flickOutcome(
+            pinnedAtDown: true,
+            velocityY: NotchPullGesture.flickVelocity + 50) == .collapse)
+    }
+
+    @Test func aSlowReleaseIsNothing() {
+        for v in stride(from: -500.0, through: 500.0, by: 100.0) {
+            #expect(ScreenBarInteraction.flickOutcome(pinnedAtDown: false, velocityY: v) == .none)
+            #expect(ScreenBarInteraction.flickOutcome(pinnedAtDown: true, velocityY: v) == .none)
+        }
+    }
+
+    @Test func aFastFlickStillAnswersOnlyWhatTheSwipeWould() {
+        // Speed commits the swipe's own verdict — a flick down on a
+        // pinned card is already expanded, a flick up on nothing is
+        // nothing.
+        #expect(ScreenBarInteraction.flickOutcome(
+            pinnedAtDown: true, velocityY: -1200) == .none)
+        #expect(ScreenBarInteraction.flickOutcome(
+            pinnedAtDown: false, velocityY: 1200) == .none)
     }
 
     // MARK: Wing swipe (dismiss / summon the notch lobes)

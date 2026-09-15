@@ -221,13 +221,15 @@
           "profile": 0,
           "layer": 0,
           "label": "Profile 1 / Layer 1: Base",
-          "scope": "automatic"
+          "scope": "automatic",
+          "owner": "jrbar"
         },
         {
           "profile": 0,
           "layer": 1,
           "label": "Profile 1 / Layer 2: Fn",
-          "scope": "codex"
+          "scope": "codex",
+          "owner": "codex"
         },
         {
           "profile": 0,
@@ -236,7 +238,8 @@
           "scope": "claude",
           "future_field": {
             "nested": true
-          }
+          },
+          "owner": "everything"
         }
       ]
     },
@@ -276,6 +279,17 @@
       ],
       "scopes": [
         "devin"
+      ],
+      "ownership": "hold",
+      "layer_owners": [
+        {
+          "layer": 1,
+          "owner": "codex"
+        },
+        {
+          "layer": 2,
+          "owner": "everything"
+        }
       ]
     },
     "x_future": {

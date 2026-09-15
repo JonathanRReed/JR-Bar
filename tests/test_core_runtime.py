@@ -892,6 +892,111 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     assert controller._core_linked_companion is None
 
 
+def test_the_skew_median_reanchors_the_dots_next_program(headless) -> None:
+    """The write gap between Pro and Dot is measured, medianed over the
+    last eight coupled writes, and baked into the Dot's NEXT program as a
+    phase shift -- the Dot still restarts late, but it restarts into the
+    phase the strip is on. The lights document reports the correction."""
+    from collections import deque
+
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
+
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller.settings = controller.settings.with_devices_linked(True)
+    controller._hardware_write_generation = 1
+    controller._hardware_write_active = True
+    controller._hardware_write_worker = SimpleNamespace(
+        submit=lambda command: None,
+        discard_pending_prefix=lambda prefix: None,
+    )
+
+    nominal = "#FF0000 500ms\noff 500ms\nrepeat"
+    handed: list[str] = []
+
+    class FakeDotController:
+        brightness = 255
+
+        def sync_program(self, program, state):
+            handed.append(program)
+            return LedStatusWrite(state, dot.target, program, True)
+
+    controller.agent_controller_for_device = lambda device: FakeDotController()
+    pro_request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
+    dot_request = HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5)
+
+    completed = {"pro": 100.0, "dot": 100.5}
+    controller._runtime_worker_monotonic = lambda: completed["dot"]
+
+    def fake_sync(request):
+        return HardwareWriteResult(
+            request=request,
+            write=LedStatusWrite(
+                LedDisplayState.WORKING, request.device.target, "0:#000000", True,
+                nominal_program=nominal,
+            ),
+            label=f"{request.device.name} Working",
+            agent_display_rendered=True,
+            completed_at=completed["pro"],
+        )
+
+    controller._sync_hardware_device = fake_sync
+    submitted: list = []
+    controller._hardware_write_worker.submit = lambda command: submitted.append(command)
+
+    def coupled_write() -> None:
+        submitted.clear()
+        controller._submit_hardware_write_requests([pro_request, dot_request], 100.0)
+        result = controller._execute_hardware_write_command(submitted[0])
+        controller._apply_hardware_write_result(submitted[0], result)
+
+    # No samples yet: the first coupled write plays the loop unshifted.
+    coupled_write()
+    assert handed == ["brightness 149\n#FF0000 500ms\noff 500ms\nrepeat"]
+    assert controller._core_linked_skew_ms == 500.0
+    assert controller._core_linked_skew_median_ms == 500.0
+
+    # The median lands past the 250 ms cap, so the next write is re-anchored
+    # by the CLAMPED shift: the rotated body starts a quarter-cycle in --
+    # the second half of the first step, the other step, the first half back.
+    handed.clear()
+    coupled_write()
+    assert handed == [
+        "brightness 149\n"
+        "0:#FF0000 250ms; 1:#FF0000 250ms\n"
+        "off 500ms\n"
+        "0:#800000 250ms; 1:#800000 250ms\n"
+        "repeat"
+    ]
+    assert controller._core_linked_corrected_ms == 250.0
+    # The rotated program's true on-device start is the DOT's write
+    # completion pulled back by the shift it baked in -- the strip's
+    # anchor has nothing to do with it.
+    assert controller._core_hardware_anchor[dot.device_id] == pytest.approx(
+        mono_to_epoch(completed["dot"]) - 0.25
+    )
+    lights = controller._core_build_lights()
+    assert lights["linked_skew_ms"] == 500.0
+    assert lights["linked_skew_corrected_ms"] == 250.0
+
+    # The correction is the MEDIAN of the last eight, not the latest gap:
+    # one 600 ms outlier in a history of ~11 ms writes shifts by 11.5.
+    pair = (pro.device_id, dot.device_id)
+    controller._core_linked_skew_samples[pair] = deque(
+        [10.0, 12.0, 11.0, 13.0, 11.0, 12.0, 10.0], maxlen=8
+    )
+    completed["dot"] = 100.6
+    coupled_write()
+    assert controller._core_linked_skew_ms == 600.0
+    assert controller._core_linked_skew_median_ms == 11.5
+    handed.clear()
+    coupled_write()
+    assert controller._core_linked_corrected_ms == 11.5
+    assert handed[0] != "brightness 149\n#FF0000 500ms\noff 500ms\nrepeat"
+
+
 def test_quitting_turns_every_mounted_strip_off_pro_and_dot(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     """Terminating writes ``off`` to each connected strip's own file: the
     Pro and the Dot both, past the controllers' dedupe (a linked Dot's

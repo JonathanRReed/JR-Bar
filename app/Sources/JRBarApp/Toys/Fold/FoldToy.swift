@@ -16,14 +16,20 @@ enum FoldLog {
     static let log = Logger(subsystem: "devin.jrbar", category: "fold")
 }
 
-/// Fold (docs/TOYS.md): the desktop tilts, dims and blurs as the lid
-/// comes down, like it is holding its angle in the room. The pieces stay
-/// small: `LidAngleSensor` reads the hinge, `FoldCapture` grabs the
-/// built-in display, `FoldRenderer` warps it into the click-through
-/// `FoldOverlayWindow`. While the toy is armed the capture stays live —
-/// only the overlay hides above the activation angle, so crossing it
-/// never restarts a stream. Render can also be handed to Bendy or Lid
-/// Plane; then all of this stays parked.
+/// Fold (docs/TOYS.md): the desktop is a portal — a lit room seen
+/// through the screen — and closing the lid reads as the UI continuing
+/// INTO the display, the iPhone Duo animation. The pieces stay small:
+/// `LidAngleSensor` reads the hinge, `FoldArming` decides when the
+/// ScreenCaptureKit streams may exist (inside the arming band, plus a
+/// short cooldown, so the purple indicator only shows while a fold can
+/// be on screen), `FoldCapture` grabs the built-in display twice — the
+/// full desktop and the wallpaper-only far wall — plus the window-card
+/// layout, `SlewTracker` turns the 10 Hz integer sensor into a capped,
+/// overshoot-free glide, `DeltaChase` unwinds the displayed delta when
+/// the gate snaps it to 0 mid-motion, and `FoldRenderer` composites
+/// the frosted cover's room into the click-through `FoldOverlayWindow`.
+/// Render can also be handed to
+/// Bendy or Lid Plane; then all of this stays parked.
 @MainActor
 @Observable
 final class FoldToy: Toy {
@@ -56,12 +62,29 @@ final class FoldToy: Toy {
     private(set) var permissionVersion = 0
 
     @ObservationIgnored private var jitter = JitterFilter(tolerance: 0)
-    /// The edge tracker: the hinge sensor only changes every ~100 ms,
-    /// so `renderAngle` is simply the last accepted edge — the spring
-    /// downstream owns the glide (extrapolating between edges was the
-    /// judder). `velocity` still feeds the motion blur. Fed on accepted
-    /// samples, ticked on every vsync.
-    @ObservationIgnored private var tracker = LidTracker()
+    /// The display-angle tracker: critically damped and slew-limited, so
+    /// the 10 Hz integer-degree sensor becomes a continuous glide that
+    /// can never overshoot — a slammed lid eases shut in ~300 ms instead
+    /// of lurching between samples. Fed on accepted samples, ticked on
+    /// every vsync.
+    @ObservationIgnored private var tracker = SlewTracker()
+    /// The displayed-delta follower: instant while the fold deepens, a
+    /// critically damped unwind when the gate snaps the target to 0 —
+    /// opening counter-rotates the room back through the hinge instead
+    /// of cutting to black mid-swing.
+    @ObservationIgnored private var chase = DeltaChase()
+    /// The capture-lifecycle machine: the streams exist only inside the
+    /// arming band and through its cooldown, and it owns the fold gate's
+    /// hysteresis at the activation edge.
+    @ObservationIgnored private var arming = FoldArming()
+    /// The latest window-card layout, kept so an overlay created after
+    /// the poll still gets it.
+    @ObservationIgnored private var lastCards: [PortalDepth.Card] = []
+    /// Fires when a cooling arming phase expires — the stream shutdown
+    /// is scheduled, not polled.
+    @ObservationIgnored private var cooldownWork: DispatchWorkItem?
+    /// What the renderer is currently showing — diagnostics only.
+    @ObservationIgnored private var displayedDelta = 0.0
     @ObservationIgnored private var overlay: FoldOverlayWindow?
 
     /// True while the fold plane is on screen — overlay guests like the
@@ -69,11 +92,6 @@ final class FoldToy: Toy {
     var overlayOnScreen: Bool { overlay?.isVisible == true }
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    /// The delta the renderer is showing, sprung: the tracker's dead
-    /// reckoning changes slope at every sensor edge, and a first-order
-    /// ease transmitted that as a fine judder. The spring carries its
-    /// own velocity, so an edge becomes an acceleration change instead.
-    @ObservationIgnored private var deltaSpring = DeltaSpring()
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
     /// Safety facts, cached instead of queried per frame: the clamshell
     /// truth rides in on the sensor's 1 Hz beat, and display topology
@@ -146,7 +164,14 @@ final class FoldToy: Toy {
         observers.append(center.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.permissionVersion += 1 }
+            MainActor.assumeIsolated {
+                // Re-activating is the moment a granted Screen
+                // Recording permission lands — drop the cached
+                // preflight so the next read asks TCC once, here,
+                // instead of waiting out the 30 s freshness.
+                FoldCapturePermission.invalidate()
+                self?.permissionVersion += 1
+            }
         })
 
         sensor.onSample = { [weak self] angle in self?.noteSensorSample(angle) }
@@ -158,7 +183,7 @@ final class FoldToy: Toy {
 
     let id = "fold"
     let name = "Fold"
-    let blurb = "Your desktop tilts & blurs as the lid comes down."
+    let blurb = "Your desktop folds into the screen as the lid comes down."
     let symbol = "laptopcomputer"
 
     var isOn: Bool {
@@ -234,9 +259,13 @@ final class FoldToy: Toy {
     /// lead cannot open the overlay a hair early.
     private var gateAngle: Double? { simulatedAngle ?? rawAngle }
 
-    /// What the fold amount reads: the simulation while held, else the
-    /// tracker's render angle — the last accepted sensor edge.
-    private var renderAngle: Double? { simulatedAngle ?? tracker.renderAngle }
+    /// What the fold amount reads: the tracker's smoothed angle (the
+    /// simulation feeds it while held, so the slider glides too). Before
+    /// the first accepted sample there is no estimate — fall back to the
+    /// raw truth rather than the tracker's zero.
+    private var renderAngle: Double? {
+        tracker.primed ? tracker.angle : (simulatedAngle ?? rawAngle)
+    }
 
     /// The number the "Lid angle" row prints — the measured truth.
     private var measuredAngle: Double? { simulatedAngle ?? rawAngle }
@@ -244,10 +273,11 @@ final class FoldToy: Toy {
     // MARK: Engine
 
     /// One place that reads every input and makes the machine match:
-    /// sensor polling while on and ours to render, capture live while
-    /// unpaused (it survives the activation line — restarting the stream
-    /// on every threshold crossing was the stutter), a half-second quiet
-    /// before a paused fold comes back.
+    /// sensor polling while on and ours to render, `FoldArming` owning
+    /// the streams (they exist only inside the arming band and through
+    /// its cooldown, so the Screen Recording indicator only shows while
+    /// a fold can be on screen), a half-second quiet before a paused
+    /// fold comes back.
     private func reconcile() {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
@@ -258,8 +288,11 @@ final class FoldToy: Toy {
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
-            deltaSpring.reset()
+            arming.reset()
+            scheduleCooldown(nil)
             tracker.reset()
+            chase.reset()
+            displayedDelta = 0
             standDown()
             sensor.setPolling(false)
             return
@@ -273,6 +306,8 @@ final class FoldToy: Toy {
         // thing that tells us the lid reopened.
         sensor.setPolling(true)
         guard !rendererFailed, FoldCapturePermission.granted else {
+            arming.reset()
+            scheduleCooldown(nil)
             standDown()
             noteDiag(stage: "armed-gate")
             return
@@ -282,7 +317,10 @@ final class FoldToy: Toy {
             paused = true
             resumeWork?.cancel()
             resumeWork = nil
-            deltaSpring.reset()
+            arming.reset()
+            scheduleCooldown(nil)
+            chase.reset()
+            displayedDelta = 0
             standDown()
             noteDiag(stage: "paused")
             return
@@ -304,7 +342,20 @@ final class FoldToy: Toy {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
             return
         }
-        ensureCaptureRunning()
+        // The arming machine decides whether the streams may exist —
+        // inside the band, or lingering through its cooldown — and owns
+        // the fold gate's hysteresis at the activation edge.
+        let outcome = arming.update(
+            angle: gateAngle,
+            activation: settings.activationAngle,
+            closed: cachedClamshell == true,
+            now: CACurrentMediaTime())
+        scheduleCooldown(outcome.cooldownEndsAt)
+        if outcome.capture {
+            ensureCaptureRunning()
+        } else {
+            standDown()
+        }
         if displayVersion != reframedVersion {
             overlay?.reframe()
             reframedVersion = displayVersion
@@ -313,9 +364,9 @@ final class FoldToy: Toy {
     }
 
     /// The whole decision chain on one line, logged only on change —
-    /// `armed/busy` are the link's terms, `raw/render` the angles, then
-    /// the delta chain, then frame/texture/overlay. A lid close should
-    /// read armed→busy→delta growing→frame→tex→vis.
+    /// `arm` is the capture-lifecycle phase, `raw/render` the angles,
+    /// then the delta chain, then frame/texture/overlay. A lid close
+    /// should read armed→gate→delta growing→frame→tex→vis.
     private func noteDiag(stage: String) {
         let raw = gateAngle.map { String(format: "%.0f", $0) } ?? "nil"
         let render = renderAngle.map { String(format: "%.1f", $0) } ?? "nil"
@@ -325,7 +376,8 @@ final class FoldToy: Toy {
         let state = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
             + "paused=\(paused) pause=\(pauseReason ?? "-") "
             + "raw=\(raw) render=\(render) target=\(String(format: "%.3f", targetDelta)) "
-            + "disp=\(String(format: "%.3f", deltaSpring.value)) "
+            + "disp=\(String(format: "%.3f", displayedDelta)) "
+            + "arm=\(arming.phase) gate=\(arming.foldGateOpen) "
             + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
             + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
             + "link=\(tickLink != nil)"
@@ -334,17 +386,18 @@ final class FoldToy: Toy {
         FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
     }
 
-    /// The delta the fold wants right now, from the freshest truth — 0
-    /// when the gate is closed, so easing home is also how the overlay
-    /// leaves. The gate reads the raw angle; the delta itself rides the
-    /// tracker's render angle — the last accepted edge — so the held
-    /// plane counter-rotates by the hinge's own arc.
+    /// The delta the fold wants right now — 0 when the gate is closed.
+    /// The gate is `FoldArming`'s, fed the raw angle in `reconcile` with
+    /// a degree of hysteresis so a sensor wobble on the line can never
+    /// flick the fold; the delta itself rides the tracker's render
+    /// angle, so the room counter-rotates by the hinge's own arc — and
+    /// when the gate shuts mid-motion the chase unwinds the displayed
+    /// delta home instead of snapping it.
     private var targetDelta: Double {
-        guard let gate = gateAngle,
-              FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),
-              pauseReason == nil else { return 0 }
+        guard arming.foldGateOpen, pauseReason == nil,
+              let angle = renderAngle ?? gateAngle else { return 0 }
         return FoldMath.deltaRadians(
-            angle: renderAngle ?? gate, reference: settings.activationAngle)
+            angle: angle, reference: settings.activationAngle)
     }
 
     /// Starts or stops the vsync heartbeat to match the machine: armed
@@ -356,10 +409,11 @@ final class FoldToy: Toy {
         let armed = settings.enabled && settings.provider == .jrbar && !paused
             && !rendererFailed && FoldCapturePermission.granted && pauseReason == nil
         // The link exists only to move pixels: a parked fold — gate
-        // shut and the ease finished — runs no timer at all. Without
-        // this check the link was born and killed on every parked
-        // sensor sample.
-        let busy = targetDelta > 0 || deltaSpring.value > 0.002
+        // shut, tracker settled — runs no timer at all. Without this
+        // check the link was born and killed on every parked sensor
+        // sample.
+        let busy = targetDelta > 0 || displayedDelta > 0.002
+            || !tracker.atRest || !chase.atRest
         if armed && busy {
             if tickLink == nil {
                 // On macOS the link comes from the screen it drives.
@@ -373,13 +427,12 @@ final class FoldToy: Toy {
         } else if let link = tickLink {
             link.invalidate()
             tickLink = nil
-            deltaSpring.reset()
             overlay?.setVisible(false)
         }
     }
 
-    /// One heartbeat: advance the tracker's dead reckoning, ease the
-    /// delta toward its target, push the uniforms, and show or hide the
+    /// One heartbeat: advance the tracker's slew-limited glide, read
+    /// the delta off it, push the uniforms, and show or hide the
     /// overlay to match. Runs at the display's refresh while armed, so
     /// the fold's motion is the screen's own cadence — the sensor only
     /// moves the target.
@@ -387,11 +440,15 @@ final class FoldToy: Toy {
         let now = CACurrentMediaTime()
         let dt = now - lastDeltaTick
         lastDeltaTick = now
-        tracker.tick(dt: dt, at: now)
+        tracker.tick(dt: dt)
         refreshDisplayFactsIfStale()
-        deltaSpring.tick(target: targetDelta, dt: dt)
+        // The tracker's glide IS the easing while the lid moves; the
+        // chase owns the rest — instant while the target grows, a damped
+        // unwind when the gate snaps it to 0 mid-motion, so opening
+        // counter-rotates back through the hinge instead of snapping.
+        displayedDelta = chase.tick(target: targetDelta, dt: dt)
         let wantVisible = FoldMath.showsOverlay(
-            delta: deltaSpring.value, hasFrame: capture?.hasFrame ?? false)
+            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
         noteDiag(stage: "tick")
         guard wantVisible else {
             overlay?.setVisible(false)
@@ -407,10 +464,10 @@ final class FoldToy: Toy {
                 Task { await capture.stop() }
                 ensureCaptureRunning()
             }
-            // The link's only job is motion; fully at rest — gate shut
-            // and the spring settled — it stands down until the next
-            // reconcile arms it again.
-            if targetDelta == 0 && deltaSpring.atRest, let link = tickLink {
+            // The link's only job is motion; fully at rest — gate shut,
+            // the tracker settled and the unwind landed — it stands
+            // down until the next reconcile arms it again.
+            if targetDelta == 0 && tracker.atRest && chase.atRest, let link = tickLink {
                 link.invalidate()
                 tickLink = nil
             }
@@ -424,36 +481,23 @@ final class FoldToy: Toy {
             guard ensureOverlay() != nil else { return }
         }
         if let overlay {
-            let styleBlur: Double = switch settings.style {
-            case .tilt: 0
-            case .dusk: settings.blur * 0.45   // Dusk keeps a light matte
-            case .fog: settings.blur
-            }
-            let blur = reduceMotion ? Float(0) : Float(styleBlur)
-            let boost = reduceMotion ? Float(0) : FoldToy.velocityBlurBoost(tracker.velocity)
-            // Adaptive disc density, keyed on the shader's own peak
-            // radius (the disc is widest at the far edge): sparse while
-            // the matte is thin, dense when it is wide.
-            let peakRadius = (blur * 65 + boost) * Float(sin(deltaSpring.value))
-            let samples: Float = peakRadius <= 6 ? 12 : peakRadius <= 20 ? 20 : 32
-            overlay.renderer.params.delta = Float(deltaSpring.value)
-            overlay.renderer.params.blurStrength = blur
-            overlay.renderer.params.motionBoost = boost
-            overlay.renderer.params.dimStrength = settings.style == .tilt ? 0
-                : Float(settings.shade)
-            overlay.renderer.params.persp = Float(settings.perspective)
-            overlay.renderer.params.samples = samples
+            // One style — the portal: Perspective, Blur, Shade and
+            // Frost are the knobs. `apply` writes only the animatable
+            // fields, so the upload's imageSize/texAspect survive the
+            // per-tick pass.
+            FoldPortalModel.apply(to: &overlay.renderer.params,
+                                  delta: displayedDelta,
+                                  perspective: settings.perspective,
+                                  blur: reduceMotion ? 0 : settings.blur,
+                                  shade: settings.shade,
+                                  frost: settings.frost,
+                                  usedBuckets: overlay.renderer.usedBucketCount,
+                                  reduceMotion: reduceMotion)
+            // The activation-edge fade is the window's own alpha — a
+            // crossfade under Reduce Motion, a materialize otherwise.
+            overlay.alphaValue = CGFloat(overlay.renderer.params.opacity)
             overlay.setVisible(true)
         }
-    }
-
-    /// Velocity-aware blur, in radius units: dead-zoned under 30°/s so
-    /// hinge noise at rest adds nothing, and clamped so even a slammed
-    /// lid smears instead of washing out.
-    static func velocityBlurBoost(_ velocity: Double) -> Float {
-        let speed = abs(velocity)
-        guard speed > 30 else { return 0 }
-        return Float(min((speed - 30) * 0.02, 12))
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {
@@ -461,6 +505,7 @@ final class FoldToy: Toy {
         guard let screen = FoldOverlayWindow.builtinScreen() else { return nil }
         do {
             let overlay = try FoldOverlayWindow(screen: screen)
+            overlay.renderer.setCards(lastCards)
             self.overlay = overlay
             reframedVersion = -1
             return overlay
@@ -471,14 +516,15 @@ final class FoldToy: Toy {
         }
     }
 
-    /// The stream runs while the toy is enabled and unpaused — hiding
-    /// above the activation angle costs nothing but the frames.
+    /// The streams run only while `FoldArming` says they may — inside
+    /// the band or its cooldown — so the purple indicator never outlives
+    /// a fold that could be on screen.
     private func ensureCaptureRunning() {
         guard capture == nil else { return }
         let capture = FoldCapture()
         self.capture = capture
         captureBeganAt = CACurrentMediaTime()
-        capture.onFrame = { [weak self] buffer in
+        capture.onFullFrame = { [weak self] buffer in
             guard let self else { return }
             // Push once per delivered frame; a draw then costs one
             // triangle, not a texture conversion. The overlay is made
@@ -486,13 +532,26 @@ final class FoldToy: Toy {
             // a single frame ever, and dropping it on a nil renderer is
             // how the overlay ordered in with no texture — painted clear,
             // invisible, for the whole fold.
-            if self.ensureOverlay()?.renderer.setDesktopFrame(buffer) ?? false {
+            if self.ensureOverlay()?.renderer.setFullFrame(buffer) ?? false {
                 self.tickFrame()
             }
+        }
+        capture.onFarFrame = { [weak self] buffer in
+            // The wallpaper-only far wall is the nice-to-have half — the
+            // renderer stands the full texture in until it lands.
+            _ = self?.overlay?.renderer.setFarFrame(buffer)
+        }
+        capture.onCards = { [weak self] cards in
+            guard let self else { return }
+            self.lastCards = cards
+            self.overlay?.renderer.setCards(cards)
         }
         capture.onError = { [weak self] message in
             // The stream died mid-run: drop it so the next reconcile
             // builds a fresh one rather than trusting a dead hasFrame.
+            // A revoked grant kills streams this way, so the cached
+            // preflight goes stale here — re-ask on the next read.
+            FoldCapturePermission.invalidate()
             guard let self, let capture = self.capture else { return }
             self.capture = nil
             self.core.appendLocalLog(level: "error", "Fold capture stopped: \(message)")
@@ -504,12 +563,32 @@ final class FoldToy: Toy {
             do {
                 try await capture?.start()
             } catch {
+                FoldCapturePermission.invalidate()
                 guard let self, self.capture === capture else { return }
                 self.capture = nil
                 FoldLog.log.error("capture: start failed: \(error.localizedDescription, privacy: .public)")
                 self.core.appendLocalLog(level: "error", "Fold capture failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// A cooling arming phase ends on a schedule, not a poll: the work
+    /// item re-runs `reconcile` the moment the streams should die, and
+    /// each pass replaces whatever was pending (nil just cancels).
+    private func scheduleCooldown(_ until: TimeInterval?) {
+        cooldownWork?.cancel()
+        cooldownWork = nil
+        guard let until else { return }
+        let delay = max(0, until - CACurrentMediaTime())
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.cooldownWork = nil
+                self.reconcile()
+            }
+        }
+        cooldownWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// Overlay off, capture stopped. The sensor is the caller's choice —
@@ -531,7 +610,7 @@ final class FoldToy: Toy {
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
         guard let angle = sample.angle, simulatedAngle == nil,
               jitter.accept(angle, at: sample.at) else { return }
-        tracker.feed(angle, at: sample.at)
+        tracker.feed(angle)
         reconcile()
     }
 
@@ -569,16 +648,21 @@ final class FoldToy: Toy {
     var simulateBinding: Binding<Double> {
         Binding(
             get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
-            set: { self.simulatedAngle = $0 })
+            set: {
+                self.simulatedAngle = $0
+                // The tracker turns the slider's jumps into the same
+                // capped glide the hinge gets.
+                self.tracker.feed($0)
+            })
     }
 
     func endSimulate() {
         simulatedAngle = nil
-        // The tracker's extrapolation belongs to the real lid — a drag
-        // that just jumped the angle 40° must not carry it.
+        // The tracker's glide belongs to the real lid — a drag that
+        // just jumped the angle 40° must not carry over.
         tracker.reset()
         if let raw = rawAngle {
-            tracker.feed(raw, at: CACurrentMediaTime())
+            tracker.feed(raw)
         }
         reconcile()
     }
@@ -603,7 +687,7 @@ final class FoldToy: Toy {
         guard FoldCapturePermission.granted else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
-        let tilted = deltaSpring.value * 180 / .pi
+        let tilted = displayedDelta * 180 / .pi
         guard tilted > 0.1 else {
             return "Parked — close the lid past \(Int(settings.activationAngle.rounded()))°"
         }
@@ -642,6 +726,11 @@ final class FoldToy: Toy {
         paused = false
         resumeWork?.cancel()
         resumeWork = nil
+        arming.reset()
+        scheduleCooldown(nil)
+        tracker.reset()
+        chase.reset()
+        displayedDelta = 0
         standDown()
         sensor.setPolling(false)
         refreshTick()
@@ -692,15 +781,6 @@ private struct FoldControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Picker(selection: toy.bind(\.style)) {
-                Text("Tilt").tag(FoldStyle.tilt)
-                Text("Dusk").tag(FoldStyle.dusk)
-                Text("Fog").tag(FoldStyle.fog)
-            } label: {
-                SettingLabel(title: "Style", subtitle: "Tilt only warps; Dusk dims; Fog blurs.")
-            }
-            .pickerStyle(.segmented)
-
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: toy.bind(\.activationAngle), in: 60...160)
@@ -728,7 +808,7 @@ private struct FoldControlsView: View {
                     ValueText(text: percent(toy.settings.shade))
                 }
             } label: {
-                SettingLabel(title: "Shade", subtitle: "How dark it goes toward the top. Dusk & Fog.")
+                SettingLabel(title: "Shade", subtitle: "How dark the room goes toward the hinge and the far wall.")
             }
 
             LabeledContent {
@@ -738,7 +818,17 @@ private struct FoldControlsView: View {
                     ValueText(text: percent(toy.settings.blur))
                 }
             } label: {
-                SettingLabel(title: "Blur", subtitle: "The fog toward the top. Fog only, & never under Reduce Motion.")
+                SettingLabel(title: "Blur", subtitle: "How much the room defocuses — deeper layers and the far edge soften first. Never under Reduce Motion.")
+            }
+
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: toy.bind(\.frost), in: 0...1)
+                        .frame(width: 180)
+                    ValueText(text: percent(toy.settings.frost))
+                }
+            } label: {
+                SettingLabel(title: "Frost", subtitle: "How milky the cover is — higher reads more like frosted plastic.")
             }
 
             LabeledContent {

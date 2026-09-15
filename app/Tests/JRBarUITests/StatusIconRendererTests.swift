@@ -89,72 +89,77 @@ struct StatusIconRendererTests {
     }
 }
 
-@Suite("Device orbit menu bar icon")
+@Suite("Orbit menu bar icon")
 struct StatusOrbitTests {
     static func pixels(_ image: NSImage) -> [UInt8] {
         StatusMetersTests.pixels(image)
     }
 
-    static let device = StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58,
-                                         batteryPercent: 72, charging: false, hasBattery: true)
+    static func dots(_ states: [StatusDotState]) -> [SessionDot] {
+        states.enumerated().map { SessionDot(id: "s\($0.offset)", state: $0.element) }
+    }
 
     @Test("the roundel is its own size, wider than the square styles")
     func sizing() {
-        let spec = StatusIconSpec(style: .orbit, device: Self.device)
+        let spec = StatusIconSpec(style: .orbit, ringFraction: 0.42)
         #expect(StatusIconRenderer.size(for: spec) == StatusIconRenderer.orbitSize)
         #expect(StatusIconRenderer.orbitSize.height == StatusIconRenderer.barHeight,
                 "menu-bar tall like the strips")
         #expect(StatusIconRenderer.orbitSize.width > StatusIconRenderer.size.width)
     }
 
-    @Test("battery, signal and radio state each change the picture; never a template")
+    @Test("window fill, warning, tint and the working count each change the picture")
     func states() {
         let renderer = StatusIconRenderer()
-        let base = renderer.image(for: StatusIconSpec(style: .orbit, device: Self.device))
-        #expect(!base.isTemplate, "the colours carry meaning — it can never be a template")
-        let charging = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, charging: true, hasBattery: true)))
-        let low = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 12, charging: false, hasBattery: true)))
-        let off = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: nil, wifiRSSI: nil, batteryPercent: 72, charging: false, hasBattery: true)))
-        let weak = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: 1, wifiRSSI: -80, batteryPercent: 72, charging: false, hasBattery: true)))
-        let empty = renderer.image(for: StatusIconSpec(style: .orbit, device: StatusDeviceInfo()))
-        #expect(Self.pixels(base) != Self.pixels(charging), "charging paints the ring")
-        #expect(Self.pixels(base) != Self.pixels(low), "a low battery goes red")
-        #expect(Self.pixels(base) != Self.pixels(off), "radio off is grey, not blue")
-        #expect(Self.pixels(base) != Self.pixels(weak), "the dots move with the signal")
-        #expect(Self.pixels(base) != Self.pixels(empty), "no reading still draws the quiet roundel")
+        let calm = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.42))
+        #expect(calm.isTemplate, "a calm roundel takes the menu bar's own colour like the glyph")
+        let amber = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.85))
+        let red = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.97))
+        let tinted = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.42,
+                                                        tintHex: "#00E5FF"))
+        let working = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.42,
+                                                         sessions: Self.dots([.working, .working, .ask])))
+        #expect(Self.pixels(calm) != Self.pixels(amber), "80% goes amber")
+        #expect(Self.pixels(amber) != Self.pixels(red), "95% goes red")
+        #expect(Self.pixels(calm) != Self.pixels(tinted), "the mark carries the aggregate tint")
+        #expect(Self.pixels(calm) != Self.pixels(working), "the dots count working sessions")
+        #expect(!tinted.isTemplate)
     }
 
-    @Test("a dBm drift inside a dot bucket reuses the cached image")
+    @Test("the working dots cap at four and nothing else fills them")
+    func workingDots() {
+        let renderer = StatusIconRenderer()
+        let five = renderer.image(for: StatusIconSpec(style: .orbit,
+            sessions: Self.dots([.working, .working, .working, .working, .working])))
+        let four = renderer.image(for: StatusIconSpec(style: .orbit,
+            sessions: Self.dots([.working, .working, .working, .working])))
+        #expect(Self.pixels(five) == Self.pixels(four), "a fifth worker moves nothing")
+        let quiet = renderer.image(for: StatusIconSpec(style: .orbit,
+            sessions: Self.dots([.idle, .done, .ask])))
+        let none = renderer.image(for: StatusIconSpec(style: .orbit))
+        #expect(Self.pixels(quiet) == Self.pixels(none), "asks, dones and idles are not working")
+    }
+
+    @Test("a small window drift inside a bucket reuses the cached image")
     func caching() {
         let renderer = StatusIconRenderer()
-        let a = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, hasBattery: true)))
-        let b = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -60, batteryPercent: 72, hasBattery: true)))
-        let c = renderer.image(for: StatusIconSpec(style: .orbit,
-            device: StatusDeviceInfo(wifiDots: 4, wifiRSSI: -40, batteryPercent: 72, hasBattery: true)))
-        #expect(a === b, "a 2 dBm flicker is the same roundel")
-        #expect(a !== c, "a dot gained is a new image")
+        let a = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.421))
+        let b = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.424))
+        let c = renderer.image(for: StatusIconSpec(style: .orbit, ringFraction: 0.44))
+        #expect(a === b, "a drift inside the 2% bucket is the same roundel")
+        #expect(a !== c, "a real move is a new image")
     }
 
-    @Test("the words say what the picture means — rssi, percent, charging, the honest offs")
+    @Test("the words say what the picture means — the fill and the working count")
     func words() {
-        let spec = StatusIconSpec(style: .orbit, device: Self.device)
+        let spec = StatusIconSpec(style: .orbit, ringFraction: 0.42,
+                                  sessions: Self.dots([.working, .working]))
         let voice = StatusIconRenderer.accessibilityLabel(spec)
-        #expect(voice.contains("Wi-Fi -58 dBm") && voice.contains("Battery 72%"))
-        #expect(!voice.contains("charging"))
+        #expect(voice.contains("42% used") && voice.contains("2 working"))
         let tip = StatusIconRenderer.tooltip(spec, headline: "JR-Bar · Working")
-        #expect(tip.contains("JR-Bar · Working") && tip.contains("Wi-Fi"))
-        let off = StatusIconSpec(style: .orbit, device: StatusDeviceInfo(batteryPercent: 40, hasBattery: true))
-        #expect(StatusIconRenderer.accessibilityLabel(off).contains("Wi-Fi off"))
-        let desktop = StatusIconSpec(style: .orbit, device: StatusDeviceInfo(wifiDots: 2))
-        #expect(StatusIconRenderer.accessibilityLabel(desktop).contains("No battery"))
-        #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .orbit))
-            .contains("unavailable"), "a nil reading admits it")
+        #expect(tip.contains("JR-Bar · Working") && tip.contains("42% used"))
+        #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .orbit)) == "JR-Bar",
+                "nothing to say says just the app's name")
     }
 
     /// Render proof: every orbit state at 8× on a menu-bar-dark strip,
@@ -166,18 +171,23 @@ struct StatusOrbitTests {
     func snapshots() throws {
         let dir = URL(fileURLWithPath: "/tmp/orbit-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let states: [(name: String, device: StatusDeviceInfo)] = [
-            ("base", StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, charging: false, hasBattery: true)),
-            ("charging", StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, charging: true, hasBattery: true)),
-            ("low", StatusDeviceInfo(wifiDots: 4, wifiRSSI: -42, batteryPercent: 14, charging: false, hasBattery: true)),
-            ("radio-off", StatusDeviceInfo(wifiDots: nil, wifiRSSI: nil, batteryPercent: 88, charging: false, hasBattery: true)),
-            ("unassociated", StatusDeviceInfo(wifiDots: 0, wifiRSSI: nil, batteryPercent: 60, charging: false, hasBattery: true)),
-            ("desktop", StatusDeviceInfo(wifiDots: 4, wifiRSSI: -50)),
+        let states: [(name: String, spec: StatusIconSpec)] = [
+            ("base", StatusIconSpec(style: .orbit, ringFraction: 0.42,
+                                    sessions: Self.dots([.working, .working]))),
+            ("busy", StatusIconSpec(style: .orbit, ringFraction: 0.42,
+                                    sessions: Self.dots([.working, .working, .working, .working, .working]))),
+            ("amber", StatusIconSpec(style: .orbit, ringFraction: 0.85,
+                                     sessions: Self.dots([.working]))),
+            ("red", StatusIconSpec(style: .orbit, ringFraction: 0.97,
+                                   sessions: Self.dots([.ask]))),
+            ("tinted", StatusIconSpec(style: .orbit, ringFraction: 0.42, tintHex: "#00E5FF",
+                                      sessions: Self.dots([.working]))),
+            ("quiet", StatusIconSpec(style: .orbit)),
         ]
         let scale = 8
         let size = StatusIconRenderer.orbitSize
         for state in states {
-            let spec = StatusIconSpec(style: .orbit, device: state.device)
+            let spec = state.spec
             let image = StatusIconRenderer.shared.image(for: spec)
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
                                        pixelsWide: Int(size.width) * scale,

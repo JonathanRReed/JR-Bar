@@ -45,6 +45,7 @@ is still the authority; this module simply never gives it work to do.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
@@ -65,7 +66,9 @@ from .animation import (
     normalize_color,
     read_program,
     render_animation,
+    step_duration_ms,
 )
+from .flash_analysis import _paint_transitions
 from .led_status import ERROR_RED
 
 #: A SidePulse Dot is two LEDs. Not a guess, not a setting.
@@ -191,6 +194,8 @@ class DotSurfacePlan:
     animated: bool = False
     #: Machine-readable notes for the log and the protocol's ``why_detail``.
     reasons: tuple[str, ...] = ()
+    #: The skew this program was re-anchored by, in milliseconds.
+    corrected_ms: float = 0.0
 
 
 # Escalation is meant to be VISIBLE without ever becoming a hazard. Each
@@ -572,6 +577,273 @@ def apply_brightness_line(program: str, brightness: int | None) -> str:
     return body if value >= 255 else f"brightness {value}\n{body}"
 
 
+#: The largest skew a linked write will bake into the Dot's program. A gap
+#: bigger than this is not write latency -- it is a stuck worker or a batch
+#: that did not couple -- and re-sequencing the loop by half a second would
+#: be a confident fix for a problem nobody measured.
+LINKED_SKEW_SHIFT_MAX_MS: Final = 250.0
+
+
+def _rgb_to_hex(color: tuple[int, int, int]) -> str:
+    red, green, blue = color
+    return f"#{max(0, min(255, int(red))):02X}{max(0, min(255, int(green))):02X}{max(0, min(255, int(blue))):02X}"
+
+
+def _ms(value: float) -> int:
+    """A positive duration in whole ms -- zero is not a legal duration."""
+    return max(1, int(round(value)))
+
+
+def _delay_ms(value: float) -> int | None:
+    """A delay token, omitted when it rounds away."""
+    rounded = int(round(value))
+    return rounded if rounded >= 1 else None
+
+
+def _played_state(steps, state: list, led_count: int) -> list:
+    """The per-LED resting colours a run of steps leaves behind.
+
+    A roll is skipped rather than modelled: it slides the arrangement one
+    full wraparound and ends exactly where it began, so the state it leaves
+    is the state it found.
+    """
+    state = list(state)
+    for step in steps:
+        if type(step) is not PaintStep:
+            continue
+        for led, transition in _paint_transitions(step, state, led_count).items():
+            if 0 <= led < led_count:
+                state[led] = transition.resting
+    return state
+
+
+def _split_paint_step(
+    step: PaintStep, within_ms: float, *, state: list, led_count: int
+) -> tuple[PaintStep, PaintStep] | None:
+    """``(tail, head)`` steps: ``[within, span)`` of the line, then ``[0, within)``.
+
+    The tail plays where the rotated loop starts; the head plays where it
+    wraps. Per-LED the transition the cut lands in decides the emission:
+    untouched transitions keep their shape with less delay, finished ones
+    hold their resting colour, and a mid-flight one continues toward its
+    target with what's left of its window. ``None`` is the honest refusal:
+    a ``pulse`` cut mid-flight cannot be spelled in the DSL.
+    """
+    span = step_duration_ms(step)
+    transitions = _paint_transitions(step, list(state), led_count)
+    tail: list[IndexedPaint] = []
+    head: list[IndexedPaint] = []
+    for led in range(led_count):
+        transition = transitions.get(led)
+        start = state[led]
+        at_cut = transition.at(within_ms) if transition is not None else start
+        if transition is None or within_ms >= transition.delay_ms + transition.duration_ms:
+            resting = transition.resting if transition is not None else start
+            tail.append(
+                IndexedPaint(
+                    assignments=((led, _rgb_to_hex(resting)),),
+                    timing=Timing(duration_ms=_ms(span - within_ms)),
+                )
+            )
+        elif within_ms <= transition.delay_ms:
+            tail.append(
+                IndexedPaint(
+                    assignments=((led, _rgb_to_hex(transition.target)),),
+                    timing=Timing(
+                        duration_ms=_ms(transition.duration_ms),
+                        easing=transition.easing,
+                        delay_ms=_delay_ms(transition.delay_ms - within_ms),
+                    ),
+                )
+            )
+        else:
+            if transition.easing == "pulse":
+                return None
+            tail.append(
+                IndexedPaint(
+                    assignments=((led, _rgb_to_hex(transition.target)),),
+                    timing=Timing(
+                        duration_ms=_ms(
+                            transition.delay_ms + transition.duration_ms - within_ms
+                        ),
+                        easing=transition.easing,
+                    ),
+                )
+            )
+        if (
+            transition is not None
+            and within_ms >= transition.delay_ms + transition.duration_ms
+        ):
+            # The transition finished inside the head -- replay it verbatim,
+            # pulses and all, and let it hold to the line's end.
+            head.append(
+                IndexedPaint(
+                    assignments=((led, _rgb_to_hex(transition.target)),),
+                    timing=Timing(
+                        duration_ms=_ms(transition.duration_ms),
+                        easing=transition.easing,
+                        delay_ms=_delay_ms(transition.delay_ms),
+                    ),
+                )
+            )
+        elif transition is None or at_cut == start:
+            head.append(
+                IndexedPaint(
+                    assignments=((led, _rgb_to_hex(start)),),
+                    timing=Timing(duration_ms=_ms(within_ms)),
+                )
+            )
+        elif transition.easing == "pulse":
+            return None
+        else:
+            head.append(
+                IndexedPaint(
+                    assignments=((led, _rgb_to_hex(at_cut)),),
+                    timing=Timing(
+                        duration_ms=_ms(within_ms - min(transition.delay_ms, within_ms)),
+                        easing=transition.easing,
+                        delay_ms=_delay_ms(min(transition.delay_ms, within_ms)),
+                    ),
+                )
+            )
+    head_span = max((segment.timing.span_ms for segment in head), default=0)
+    if head and head_span < within_ms - 0.5:
+        # Every transition finished before the cut: no segment reaches the
+        # boundary, so the line would end early and shorten the lap. The
+        # last-finishing LED stretches its ramp to the edge instead.
+        led = max(
+            range(led_count),
+            key=lambda index: (
+                transitions[index].delay_ms + transitions[index].duration_ms
+                if index in transitions
+                else 0
+            ),
+        )
+        transition = transitions.get(led)
+        resting = transition.resting if transition is not None else state[led]
+        delay = min(transition.delay_ms, within_ms) if transition is not None else 0.0
+        head[led] = IndexedPaint(
+            assignments=((led, _rgb_to_hex(resting)),),
+            timing=Timing(
+                duration_ms=_ms(within_ms - delay),
+                easing="ease" if transition is not None else None,
+                delay_ms=_delay_ms(delay),
+            ),
+        )
+    return PaintStep(tuple(tail)), PaintStep(tuple(head))
+
+
+def shift_program_phase(
+    program: str,
+    shift_ms: float,
+    *,
+    led_count: int = DOT_LED_COUNT,
+) -> str | None:
+    """The same program re-anchored ``shift_ms`` earlier, or ``None``.
+
+    A linked Dot is written ``skew`` milliseconds after its strip, and the
+    firmware starts every program at its own write -- the Dot's restart is
+    that many milliseconds late, every lap, forever. Re-sequencing the loop
+    so it begins ``shift_ms`` in is the same cycle from the same instant
+    the strip's write landed, and it is the only shift the hardware can
+    actually run: no directive can reach back and start a program early,
+    and ``repeat`` always loops from step one, so the rotated body itself
+    has to carry the phase.
+
+    ``None`` means the text is not something this can honestly re-time --
+    the cut lands on a ``roll`` or inside a ``pulse`` -- and the caller
+    writes the unshifted program rather than a wrong one. The program
+    itself comes back unchanged when the shift is too small to matter or
+    lands on the loop boundary.
+    """
+    if not isinstance(program, str) or not program.strip():
+        return None
+    try:
+        shift_ms = float(shift_ms)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(shift_ms) or abs(shift_ms) < 0.5:
+        return program
+    animation, problems = read_program(program, led_count=led_count)
+    if animation is None or errors_only(problems):
+        return None
+    steps = list(animation.steps)
+    repeat_at = next(
+        (index for index, step in enumerate(steps) if type(step) is RepeatStep), None
+    )
+    if repeat_at is not None:
+        if any(type(step) is RepeatStep for step in steps[:repeat_at]):
+            return None
+        if steps[repeat_at + 1 :]:
+            return None
+        count = steps[repeat_at].count
+        body = steps[:repeat_at]
+    else:
+        count = None
+        body = steps
+    total = sum(step_duration_ms(step) for step in body)
+    if total <= 0:
+        return None
+    if repeat_at is not None:
+        offset = shift_ms % total
+    else:
+        offset = shift_ms
+        # A one-shot can only start late into itself: a negative shift would
+        # have to start the program before it exists.
+        if offset <= 0 or offset >= total:
+            return None
+    if offset == 0:
+        return program
+    elapsed = 0.0
+    index = -1
+    within = 0.0
+    for position, step in enumerate(body):
+        span = step_duration_ms(step)
+        if offset < elapsed + span:
+            index, within = position, offset - elapsed
+            break
+        elapsed += span
+    if index < 0:  # pragma: no cover - offset < total guarantees a home
+        return None
+    split = None
+    if within > 0.0:
+        step = body[index]
+        if type(step) is not PaintStep:
+            return None
+        # Steady state: the state a loop's step is really entered in is what
+        # a lap leaves behind, not the black a cold start begins from.
+        state = [(0, 0, 0)] * led_count
+        if repeat_at is not None:
+            state = _played_state(body, state, led_count)
+        state = _played_state(body[:index], state, led_count)
+        split = _split_paint_step(step, within, state=state, led_count=led_count)
+        if split is None:
+            return None
+    if repeat_at is not None:
+        rotated = (
+            ([split[0]] if split else [body[index]])
+            + body[index + 1 :]
+            + body[:index]
+            + ([split[1]] if split else [])
+            + [RepeatStep(count=count)]
+        )
+    else:
+        # A one-shot joins mid-program: what the cut skipped never plays,
+        # except the brightness and comment lines that still mean something.
+        prefix = [
+            step
+            for step in body[:index]
+            if type(step) in (BrightnessStep, CommentStep)
+        ]
+        rotated = prefix + ([split[0]] if split else []) + body[index + 1 :]
+        if split is None:
+            rotated = prefix + body[index:]
+    try:
+        return render_animation(Animation(animation.name, tuple(rotated)))
+    except Exception:
+        return None
+
+
 def plan_dot_surface(
     *,
     role: object,
@@ -579,7 +851,7 @@ def plan_dot_surface(
     facts: DotBeaconFacts | None = None,
     strip_program: str | None = None,
     strip_led_count: int = 8,
-    strip_anchor: float | None = None,
+    skew_correction_ms: float | None = None,
     brightness: int | None = None,
     colors: DotRoleColors = DEFAULT_DOT_ROLE_COLORS,
     include_completions: bool = False,
@@ -594,10 +866,14 @@ def plan_dot_surface(
 
     ``semantic`` is the resolved glance's semantic value; it only ever
     supplies the ``why`` for ``extend``, because ``extend`` shows the
-    strip's state and should say so. ``strip_anchor`` is not consumed here
-    -- the phase lock is the daemon writing both devices from one command
-    -- but it is part of the caller's contract and named so the signature
-    reads as the whole surface rather than half of it.
+    strip's state and should say so. ``skew_correction_ms`` is the rolling
+    median of measured write gaps between the pair. A nonzero correction
+    re-times the narrowed program ``shift`` milliseconds in -- the Dot
+    writes late but plays the phase the strip is on -- and the plan reports
+    the shift it baked in (``corrected_ms``). The published program is
+    already rotated, so its true on-device start is the Dot's own write
+    completion pulled back by the shift; the runtime derives that anchor
+    from the write result, not from anything the plan could guess.
     """
     resolved = normalize_dot_role(role)
     if resolved == DotRole.STATUS.value:
@@ -622,14 +898,28 @@ def plan_dot_surface(
     )
     if narrowed is None:
         return None
+    corrected_ms = 0.0
+    if skew_correction_ms:
+        shift = max(
+            -LINKED_SKEW_SHIFT_MAX_MS,
+            min(LINKED_SKEW_SHIFT_MAX_MS, float(skew_correction_ms)),
+        )
+        shifted = shift_program_phase(narrowed, shift, led_count=led_count)
+        if shifted is not None and shifted != narrowed:
+            narrowed = shifted
+            corrected_ms = shift
     why = _WHY_FOR_SEMANTIC.get(str(getattr(semantic, "value", semantic) or ""), "idle")
+    reasons = ["extend", f"from:{int(strip_led_count)}"]
+    if corrected_ms:
+        reasons.append(f"skew:{int(round(corrected_ms))}")
     return DotSurfacePlan(
         program=apply_brightness_line(narrowed, brightness),
         why=why,
         role=resolved,
         led_count=led_count,
         animated="repeat" in narrowed or "ms" in narrowed,
-        reasons=("extend", f"from:{int(strip_led_count)}"),
+        reasons=tuple(reasons),
+        corrected_ms=corrected_ms,
     )
 
 
@@ -658,6 +948,7 @@ __all__ = [
     "DotRoleColors",
     "DotRoleError",
     "DotSurfacePlan",
+    "LINKED_SKEW_SHIFT_MAX_MS",
     "apply_brightness_line",
     "beacon_program",
     "downsample_program",
@@ -665,4 +956,5 @@ __all__ = [
     "migrated_role_for_display",
     "normalize_dot_role",
     "plan_dot_surface",
+    "shift_program_phase",
 ]

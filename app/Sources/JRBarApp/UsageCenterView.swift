@@ -23,6 +23,9 @@ struct UsageCenterView: View {
                     ScrollView {
                         LazyVStack(spacing: 14) {
                             statusLine
+                            if store.providers.count > 1 {
+                                CombinedUsageCard(providers: store.providers, store: store)
+                            }
                             ForEach(store.providers) { provider in
                                 ProviderUsageCard(provider: provider, store: store)
                                     .id(provider.identity)
@@ -161,7 +164,7 @@ struct ProviderUsageCard: View {
     private var primary: CoreUsageWindow? { UsageCenterStore.featuredWindow(of: provider) }
     /// The name-convention window — the pick the explanation compares
     /// against before it needs defending.
-    private var conventional: CoreUsageWindow? { UsageCenterStore.primaryWindow(of: provider) }
+    private var conventional: CoreUsageWindow? { UsageCenterStore.conventionalWindow(of: provider) }
     /// Two accounts of one provider get an instance badge so the cards
     /// are not twins with no way to tell them apart.
     private var duplicated: Bool { store.providers.filter { $0.id == provider.id }.count > 1 }
@@ -254,6 +257,7 @@ struct ProviderUsageCard: View {
                         .controlSize(.small)
                         .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
                 }
+                ResignInButton(provider: provider, store: store)
                 Spacer()
                 if row.importedCredential {
                     Text("imported session")
@@ -582,6 +586,7 @@ struct SignedOutRow: View {
                             .controlSize(.small)
                             .help("Writes claude_plan_limits_enabled so the monitor may read Claude's plan-limit source")
                     }
+                    ResignInButton(provider: provider, store: store)
                     Button("Usage settings…") { store.openUsageSettings() }
                         .controlSize(.small)
                         .help("Opens Settings › Usage, where metering per provider lives")
@@ -589,6 +594,177 @@ struct SignedOutRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Combined view
+
+/// Every provider's quota in one glance — the "view all of my combined
+/// usage" surface: one compact row per provider with every window it
+/// reports, the fleet's tightest lane named at the top, and the token /
+/// cost totals across providers at the bottom. Tapping a row scrolls to
+/// that provider's card below.
+struct CombinedUsageCard: View {
+    let providers: [CoreProviderUsage]
+    @Bindable var store: UsageCenterStore
+
+    /// The lane worth the headline: the highest used-percent across every
+    /// provider's applicable, measured windows — the daemon's per-provider
+    /// `constrained` rule applied across all of them.
+    static func worstLane(in providers: [CoreProviderUsage]) -> (provider: CoreProviderUsage, window: CoreUsageWindow)? {
+        var worst: (CoreProviderUsage, CoreUsageWindow)?
+        for provider in providers {
+            for window in provider.windows where window.bindable && window.usedPct != nil {
+                if worst == nil || (window.usedPct ?? 0) > (worst?.1.usedPct ?? 0) {
+                    worst = (provider, window)
+                }
+            }
+        }
+        return worst
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("All providers").font(.subheadline.weight(.semibold))
+                Text("\(providers.count)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if let worst = Self.worstLane(in: providers) {
+                    let style = ProviderStyle.style(for: worst.provider.id, document: store.document)
+                    Text("\(style.name) \(worst.window.shortName) \(worst.window.percentText)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(UsageColors.level(worst.window.usedPct, accent: style.accent))
+                        .monospacedDigit()
+                        .help("The tightest window any provider reports — \(worst.window.longName)")
+                }
+            }
+            ForEach(providers) { provider in
+                row(provider)
+            }
+            if let totals = totalsLine {
+                Divider()
+                Text(totals)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    /// "182K tokens · ≈ $4.12 est. across providers" — the sums only name
+    /// what providers actually reported; a provider without counters adds
+    /// nothing rather than an implied zero that looks measured.
+    private var totalsLine: String? {
+        let tokens = providers.reduce(0) { $0 + ($1.tokens?.total ?? 0) }
+        let cost = providers.reduce(0.0) { $0 + ($1.estimatedCostUSD ?? 0) }
+        var parts: [String] = []
+        if tokens > 0 { parts.append("\(UsageFormat.tokens(tokens)) tokens") }
+        if cost > 0 { parts.append("≈ \(UsageFormat.cost(cost)) est.") }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " · ") + " across providers"
+    }
+
+    private func row(_ provider: CoreProviderUsage) -> some View {
+        let style = ProviderStyle.style(for: provider.id, document: store.document)
+        let leading = UsageCenterStore.primaryWindow(of: provider)
+        return HStack(spacing: 10) {
+            ProviderTile(style: style, size: 18)
+            Text(style.name)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if provider.isSignedOut {
+                Text("not signed in")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                ResignInButton(provider: provider, store: store)
+            } else if provider.windows.isEmpty {
+                Text(provider.state?.replacingOccurrences(of: "_", with: " ") ?? "no quota windows")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+            } else {
+                Spacer(minLength: 4)
+                ForEach(provider.windows) { window in
+                    Text("\(window.shortName) \(window.percentText)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(UsageColors.level(window.usedPct, accent: style.accent))
+                        .help("\(window.longName) window: \(window.spokenPercent)")
+                }
+                if let leading, let reset = PanelStore.countdown(to: leading.resetsAt, now: store.now) {
+                    Text(reset)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { store.focus(provider: provider.id) }
+        .help("Scroll to \(style.name)'s card")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The per-provider "Re-sign in" / "Update provider" button (T3 Code's
+/// pattern): asks the daemon to re-pull whatever sign-in the provider's
+/// own tooling holds and forces a refresh. The daemon's reply — shown in
+/// the window's banner — says what actually happened, including the
+/// provider's own remedy when only its CLI or a page can sign in.
+struct ResignInButton: View {
+    let provider: CoreProviderUsage
+    @Bindable var store: UsageCenterStore
+
+    var body: some View {
+        Button {
+            store.resignIn(provider)
+        } label: {
+            if store.isResigningIn(provider) {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Re-sign in", systemImage: "arrow.clockwise")
+            }
+        }
+        .controlSize(.small)
+        .disabled(store.isResigningIn(provider) || !store.isLive)
+        .help(Self.help(for: provider.id))
+    }
+
+    /// What the click actually does for this provider — honest about who
+    /// owns the sign-in, so a CLI-owned one never pretends JR-Bar can
+    /// re-auth it.
+    static func help(for providerID: String) -> String {
+        switch providerID {
+        case "claude":
+            return "Re-read Claude Code's sign-in from the Keychain, then refresh"
+        case "codex":
+            return "Rescan the Codex CLI's sign-in and sessions, then refresh"
+        case "grok":
+            return "Re-read the grok CLI's sign-in, then refresh"
+        case "devin":
+            return "Re-import the consented browser session, then refresh"
+        case "openai-api":
+            return "Store a copied OpenAI Admin key (read only when you click), then refresh"
+        case "gemini", "antigravity", "opencode", "cursor":
+            return "Re-check and refresh — the sign-in itself belongs to this provider's own app or CLI"
+        default:
+            return "Re-check this provider's sign-in and refresh its usage"
+        }
     }
 }
 

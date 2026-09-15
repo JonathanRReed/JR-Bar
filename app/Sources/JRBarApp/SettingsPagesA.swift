@@ -8,45 +8,55 @@ struct GeneralPage: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        Section {
+        SettingGroup("Startup") {
             Toggle(isOn: Binding(get: { store.launchAtLogin }, set: { store.setLaunchAtLogin($0) })) {
-                SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Registers JR-Bar with the system so it starts with your Mac.")
+                SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Starts JR-Bar when you log in.")
             }
-            MenuBarStylePicker(store: store)
-            Toggle(isOn: $store.panelHotkeyEnabled) {
-                SettingLabel(title: "Summon the panel with ⌃⌥J",
-                             subtitle: store.panelHotkeyRegistrationFailed
-                                ? "⌃⌥J is taken by another app."
-                                : "A global hotkey: works from any app, toggles the panel under the menu-bar icon.")
+            .settingRowStyle()
+            SettingRow("Setup", subtitle: "The first-run walkthrough — agents, permissions, menu bar.") {
+                Button("Run Setup Again…") { SetupWindowController.show() }
+                    .controlSize(.small)
             }
         }
 
-        Section("Brightness") {
-            SettingSlider(store, "Global brightness", subtitle: "One dial over every surface; composes with each device's own brightness.",
+        SettingGroup("Menu bar") {
+            MenuBarStylePicker(store: store)
+            Toggle(isOn: $store.panelHotkeyEnabled) {
+                SettingLabel(title: "Panel hotkey",
+                             subtitle: store.panelHotkeyRegistrationFailed
+                                ? "⌃⌥J is taken by another app."
+                                : "Press ⌃⌥J in any app to show or hide the panel.")
+            }
+            .settingRowStyle()
+        }
+
+        SettingGroup("Brightness") {
+            SettingSlider(store, "Global brightness", subtitle: "One dial over every surface.",
                           path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
         }
 
-        Section {
-            LabeledContent {
+        SettingGroup("Software Update", note: "Updates are checked by the app, not the monitor. The channel is remembered on this Mac.") {
+            SettingRow("Version", subtitle: softwareUpdateSubtitle) {
                 Button("Check for Updates…") { store.checkForUpdates() }
                     .disabled(!store.updaterAvailable)
                     .help(store.updaterHint ?? "Look for a newer JR-Bar now")
-            } label: {
-                SettingLabel(title: "Software Update", subtitle: softwareUpdateSubtitle)
             }
             Toggle(isOn: Binding(get: { store.automaticUpdateChecks }, set: { store.setAutomaticUpdateChecks($0) })) {
                 SettingLabel(title: "Automatically check for updates",
-                             subtitle: store.updaterHint ?? "Sparkle looks for a newer JR-Bar in the background and asks before installing.")
+                             subtitle: store.updaterHint ?? "Checks in the background and asks before installing.")
             }
             .disabled(!store.updaterAvailable)
-            Picker("Update channel", selection: $store.updateChannel) {
-                Text("Stable").tag("stable")
-                Text("Beta").tag("beta")
+            .settingRowStyle()
+            DisclosureRow("Advanced") {
+                Picker(selection: $store.updateChannel) {
+                    Text("Stable").tag("stable")
+                    Text("Beta").tag("beta")
+                } label: {
+                    SettingLabel(title: "Update channel", subtitle: "Stable or beta builds.")
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
             }
-            .pickerStyle(.menu)
-            .fixedSize()
-        } footer: {
-            SectionNote("Updates are checked by the app, not the monitor. The channel is remembered on this Mac.")
         }
         .onAppear { store.refreshUpdater() }
     }
@@ -120,7 +130,7 @@ struct MenuBarStylePicker: View {
     var body: some View {
         Group {
             VStack(alignment: .leading, spacing: 6) {
-                SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows at a glance.")
+                SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows.")
                 VStack(spacing: 0) {
                     ForEach(Array(StatusIconStyle.allCases.enumerated()), id: \.element) { index, style in
                         if index > 0 { Divider().opacity(0.5) }
@@ -207,12 +217,6 @@ struct MenuBarPreview: View {
     /// every row's text starts at the same x and none of them truncates.
     static let width: CGFloat = 152
 
-    /// The orbit preview's stand-in reading — a decent link on a
-    /// mid-charge battery — so the row shows the roundel it names.
-    private static let sampleDevice = StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58,
-                                                       batteryPercent: 72, charging: false,
-                                                       hasBattery: true)
-
     private var spec: StatusIconSpec {
         StatusIconSpec(style: style,
                        ringFraction: meters.first?.fraction ?? 0.42,
@@ -220,8 +224,7 @@ struct MenuBarPreview: View {
                        meters: style.isMeters ? meters : [],
                        overflow: style.isMeters ? overflow : 0,
                        dot: style.isMeters ? .working : .idle,
-                       sessions: style == .agents ? sessions : [],
-                       device: style == .orbit ? Self.sampleDevice : nil,
+                       sessions: style == .agents || style == .orbit ? sessions : [],
                        phase: 0.5)
     }
 
@@ -254,26 +257,25 @@ struct AgentsPage: View {
     ]
 
     var body: some View {
-        Section {
+        SettingGroup("Providers", note: "Hooks let each agent report its sessions. “Clicks open” picks what a click on a session raises.") {
             ForEach(SettingsKey.providers, id: \.self) { provider in
                 AgentRow(store: store, provider: provider)
             }
-        } header: {
-            Text("Providers")
-        } footer: {
-            SectionNote("Hooks let each agent report its sessions to the monitor. \"Clicks open\" picks what a click on a session raises.")
         }
 
-        Section("Transcripts") {
-            ForEach(SettingsKey.transcriptProviders, id: \.self) { provider in
-                SettingToggle(store, "Watch \(ProviderStyle.style(for: provider).name) transcripts",
-                              subtitle: "Reads the local transcript files for token and cost figures.",
-                              path: "transcript_monitoring.\(provider)")
+        SettingGroup("Transcripts", note: "Reads each agent's local transcript files for token and cost figures.") {
+            Provided(store, "transcript_monitoring.claude", "transcript_monitoring.codex",
+                     "transcript_monitoring.gemini", "transcript_monitoring.pi") {
+                MultiSelectMenu(store, "Watch transcripts",
+                                subtitle: "Agents whose transcripts are read.",
+                                keyPrefix: "transcript_monitoring",
+                                options: SettingsKey.transcriptProviders.map { ($0, ProviderStyle.style(for: $0).name) },
+                                providerTiles: true)
             }
         }
 
-        Section("Asks") {
-            SettingToggle(store, "Alert for sub-agent asks", subtitle: "Sub-agents cannot be answered directly; by default only main sessions ring the Ask signal.",
+        SettingGroup("Asks") {
+            SettingToggle(store, "Sub-agent asks", subtitle: "Sub-agents cannot be answered, so only main sessions alert by default.",
                           path: "subagent_asks_alert")
         }
     }
@@ -312,14 +314,33 @@ struct AgentRow: View {
                 Text(style.name)
                 HStack(spacing: 5) {
                     Circle().fill(statusColor).frame(width: 6, height: 6)
-                    Text(statusWord).font(.callout).foregroundStyle(.secondary)
+                    Text(statusWord)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     if store.hookDetected(provider) == false {
-                        Text("· CLI not found").font(.caption).foregroundStyle(.tertiary)
+                        Text("· CLI not found")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
+                }
+                // The reply's own words, where the click happened.
+                if let note = store.hookNotes[provider] {
+                    Text(note.text)
+                        .font(.caption)
+                        .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                        .lineLimit(1)
+                        .transition(.opacity)
                 }
             }
             Spacer()
-            Text("Clicks open").font(.callout).foregroundStyle(.tertiary)
+            Text("Clicks open")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
             Picker("Clicks open", selection: store.optionalString("session_open_preferences.\(provider)")) {
                 ForEach(AgentsPage.openChoices, id: \.value) { choice in
                     Text(choice.label).tag(choice.value)
@@ -338,7 +359,11 @@ struct AgentRow: View {
                 }
             }
             .controlSize(.small)
-            .disabled(!store.core.isLive || store.hookBusy.contains(provider))
+            .disabled(!store.core.isLive || store.hookDetected(provider) == false
+                      || store.hookBusy.contains(provider))
+            .help(store.hookDetected(provider) == false
+                  ? "No \(style.name) CLI found in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin"
+                  : "")
             Button { store.uninstallHooks(provider) } label: {
                 Text("Remove").frame(width: 52)
             }
@@ -354,32 +379,18 @@ struct AgentRow: View {
 struct UsagePage: View {
     @Bindable var store: SettingsStore
 
-    private let columns = [GridItem(.adaptive(minimum: 150), alignment: .leading)]
-
     var body: some View {
-        Section {
+        SettingGroup("Menu bar meters", note: "The panel and Usage Center always show every provider with usage.") {
             Provided(store, "usage_graph_providers") {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                    ForEach(SettingsKey.providers, id: \.self) { provider in
-                        let style = ProviderStyle.style(for: provider, document: store.document)
-                        Toggle(isOn: store.listMember("usage_graph_providers", provider)) {
-                            HStack(spacing: 6) {
-                                ProviderTile(style: style, size: 16)
-                                Text(style.name)
-                            }
-                        }
-                        .toggleStyle(.checkbox)
-                    }
-                }
-                .padding(.vertical, 2)
+                MultiSelectMenu(store, "Show meters for",
+                                subtitle: "Providers that get a meter in Meters-style menu-bar icons.",
+                                path: "usage_graph_providers",
+                                options: SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) },
+                                providerTiles: true)
             }
-        } header: {
-            Text("Menu bar meters")
-        } footer: {
-            SectionNote("Which providers get a meter in the menu-bar icon (Meters styles). The panel and Usage Center always show every provider with usage.")
         }
 
-        Section {
+        SettingGroup("Display", note: "The graphs live in the Usage Center (⌘U); this range is what it opens on. The panel's sparklines cover a week, or a month when the range is longer.") {
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
                 ("tokens", "Tokens"), ("cost", "Cost"),
             ], default: "tokens", segmented: true)
@@ -387,19 +398,13 @@ struct UsagePage: View {
             SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
                 (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
-            LabeledContent {
+            SettingRow("Graphs", subtitle: "Per-provider history, cost and pace, for the range above.") {
                 Button("Usage Center…") { store.onOpenUsageCenter?() }
                     .help("The graphs live in the Usage Center (⌘U)")
-            } label: {
-                SettingLabel(title: "Graphs", subtitle: "Per-provider history, cost and pace, for the range above.")
             }
-        } header: {
-            Text("Display")
-        } footer: {
-            SectionNote("Graphs live in the Usage Center (⌘U): this range is what it opens on, and both pickers are the same settings it writes. The panel's sparklines cover a week, or a month when the range is longer.")
         }
 
-        Section {
+        SettingGroup("Claude") {
             Provided(store, "claude_plan_limits_enabled") {
                 Toggle(isOn: Binding(
                     get: { store.document.bool("claude_plan_limits_enabled") ?? false },
@@ -407,29 +412,27 @@ struct UsagePage: View {
                     // first so a consent-aware core keeps the enable.
                     set: { on in store.setClaudePlanLimits(on) }
                 )) {
-                    SettingLabel(title: "Read Claude plan limits",
-                                 subtitle: "Presents your own Claude subscription credential to api.anthropic.com to read the official 5-hour and 7-day windows. Off until you opt in.")
+                    SettingLabel(title: "Read plan limits",
+                                 subtitle: "Reads your subscription's official 5-hour and 7-day windows from Anthropic. Off until you opt in.")
                 }
+                .settingRowStyle()
             }
-        } header: {
-            Text("Claude")
         }
 
-        Section("Quota alerts") {
-            SettingToggle(store, "Alert when a window crosses a threshold", path: "quota_alerts_enabled")
+        SettingGroup("Quota alerts") {
+            SettingToggle(store, "Alert at thresholds", subtitle: "A nudge, then a warning, as a usage window fills.",
+                          path: "quota_alerts_enabled")
             Provided(store, "quota_alert_thresholds") {
                 ThresholdRow(store: store)
             }
         }
 
-        Section {
-            SettingToggle(store, "Keep capacity history", subtitle: "Stores usage samples locally so the graph can look back.", path: "capacity_history_enabled")
+        SettingGroup("History") {
+            SettingToggle(store, "Keep history", subtitle: "Stores usage samples locally so graphs can look back.", path: "capacity_history_enabled")
             SettingIntPicker(store, "Keep for", path: "capacity_history_retention_days", options: [
                 (1, "1 day"), (7, "7 days"), (30, "30 days"), (90, "90 days"),
             ], default: 7)
                 .disabled(!(store.document.bool("capacity_history_enabled") ?? false))
-        } header: {
-            Text("History")
         }
     }
 }
@@ -483,7 +486,7 @@ struct DevicesPage: View {
     var body: some View {
         let devices = store.deviceEntries
         if devices.isEmpty {
-            Section("Devices") {
+            SettingGroup("Devices") {
                 if store.hasDocument {
                     Text("No SidePulse hardware yet — plug in a Pro or Dot and it shows up here.").foregroundStyle(.secondary)
                 } else {
@@ -495,24 +498,20 @@ struct DevicesPage: View {
             DeviceCard(store: store, device: device)
         }
 
-        Section {
-            SettingToggle(store, "Dot follows the strip", subtitle: "The Dot takes its cue from the Pro instead of driving itself — which cue is the role below. Off, it always renders its own two-LED display.",
+        SettingGroup("Pro & Dot", note: "The role is what the Dot is for; the link is whether the monitor drives it at all.") {
+            SettingToggle(store, "Dot follows strip", subtitle: "The Dot mirrors the Pro instead of rendering its own; which cue is the role below.",
                           path: "devices_linked", default: true)
-            SettingSlider(store, "Dot brightness", subtitle: "How bright the linked Dot runs next to the strip while mirroring it: two LEDs an arm's length away read much brighter than eight across a desk. The alert beacon is never dimmed.",
+            SettingSlider(store, "Dot brightness", subtitle: "Two nearby LEDs read much brighter than eight across a desk. The alert beacon is never dimmed.",
                           path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded()))%" }
                 .disabled(!(store.document.bool("devices_linked") ?? true))
             DotRoleControls(store: store, inDeviceCard: false)
-        } header: {
-            Text("Pro + Dot")
-        } footer: {
-            SectionNote("The role is what the Dot is for; the link is whether the monitor drives it at all.")
         }
 
         CreatorMicroCard(store: store)
 
         StreamDeckCard(store: store)
 
-        Section {
+        SettingGroup(note: "The gap is the span treated as the notch, between the two risers; the wing is each stroke's reach beyond it. Automatic measures the notch and Alcove; manual values are points and always win.") {
             ScreenBarCard(store: store)
         } header: {
             HStack(spacing: 8) {
@@ -521,8 +520,6 @@ struct DevicesPage: View {
                     Text(bar.enabled == true ? "Shown" : "Hidden").foregroundStyle(.secondary).font(.callout)
                 }
             }
-        } footer: {
-            SectionNote("The gap is the span treated as the notch, between the two risers; the wing is each stroke's reach beyond it. Automatic measures the notch and Alcove; manual values are points and always win.")
         }
     }
 }
@@ -537,7 +534,7 @@ struct DeviceCard: View {
     }
 
     var body: some View {
-        Section {
+        SettingGroup {
             SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
             SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
             SettingToggle(store, "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight.",
@@ -546,7 +543,7 @@ struct DeviceCard: View {
                 Picker(selection: store.optionalString("\(device.prefix).provider_pin")) {
                     ForEach(pinOptions, id: \.value) { Text($0.label).tag($0.value) }
                 } label: {
-                    SettingLabel(title: "Pin to", subtitle: "A pinned device shows only that provider's sessions and rests dark otherwise.")
+                    SettingLabel(title: "Pin to", subtitle: "Shows only that provider's sessions; rests dark otherwise.")
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
@@ -556,14 +553,13 @@ struct DeviceCard: View {
                     get: { store.document.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
                     set: { store.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
                 )) {
-                    SettingLabel(title: "Asks only", subtitle: "Mute courtesy signals on this device; agent status, asks and low battery still show.")
+                    SettingLabel(title: "Asks only", subtitle: "Mutes courtesy signals; agent status, asks and low battery still show.")
                 }
+                .settingRowStyle()
             }
-            LabeledContent {
+            SettingRow("Colour calibration", subtitle: calibrationSummary) {
                 Button("Calibrate…") { store.calibrating = device.id }
                     .disabled(!store.core.isLive)
-            } label: {
-                SettingLabel(title: "Colour calibration", subtitle: calibrationSummary)
             }
             if device.kind == "dot" {
                 DotRoleControls(store: store, inDeviceCard: true)
@@ -637,71 +633,152 @@ struct CreatorMicroCard: View {
         return parts.joined(separator: " · ")
     }
 
+    /// A layer's owner picker: reads the daemon-published settings, and a
+    /// change rewrites the whole `layer_owners` list (the daemon replaces
+    /// it, it does not merge). "jrbar" rows are dropped — unassigned means
+    /// ours; the daemon keeps layer 1 ours no matter what is sent.
+    private func layerOwnerBinding(_ layer: Int) -> Binding<String> {
+        Binding(
+            get: { settings.owner(forLayer: layer) },
+            set: { owner in
+                var owners = (settings.layerOwners ?? []).filter { $0.layer != layer }
+                if owner != "jrbar" { owners.append(DeckLayerOwner(layer: layer, owner: owner)) }
+                owners.sort { $0.layer < $1.layer }
+                let core = store.core
+                Task { @MainActor in
+                    _ = try? await core.deckSetSettings(
+                        layerOwners: owners.map { (layer: $0.layer, owner: $0.owner) })
+                }
+            })
+    }
+
     private func set(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil) {
         let core = store.core
-        Task { _ = try? await core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled) }
+        if enabled == true {
+            // The toggle used to write deck-controls.json and stop there —
+            // the HID service only runs once the pad is approved, so
+            // enabling probes and approves in one step. Zero pads gets the
+            // plug-it-in line on the row; several leaves the pick to the
+            // Control Center's approve path.
+            Task { @MainActor in
+                let reply = try? await core.deckApproveDevice()
+                guard let reply, reply.ok else {
+                    let code = reply?.error?.code ?? ""
+                    let text: String
+                    switch code {
+                    case "no_device":
+                        text = "No Creator Micro 2 found. If Codex Micro is open, remove its device connection there first, then plug the pad in"
+                    case "ambiguous_device_identity", "device_identity_unavailable":
+                        text = "More than one pad found — approve it in the Control Center"
+                    default:
+                        text = reply?.error?.message ?? "Approval failed"
+                    }
+                    store.noteDeck(text, isError: true)
+                    return
+                }
+                store.noteDeck("Approved and started", isError: false)
+                _ = try? await core.deckSetSettings(enabled: true)
+            }
+            return
+        }
+        Task { @MainActor in
+            _ = try? await core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled)
+            if enabled == false {
+                // Off means off: the output service is torn down, not just
+                // gated out of writes. The approval survives the switch.
+                _ = try? await core.deckDisable()
+            }
+        }
     }
 
     var body: some View {
-        Section {
+        SettingGroup(note: "Thirteen session keys per bank, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the monitor owns the device.") {
             Toggle(isOn: Binding(get: { settings.enabled }, set: { set(enabled: $0) })) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Enable Creator Micro 2")
-                    Text("The monitor drives the approved pad's per-key colours and listens to its inputs.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+                SettingLabel(title: "Enable Creator Micro 2",
+                             subtitle: "The monitor drives the approved pad's per-key colours and listens to its inputs.")
             }
             .disabled(!live)
+            .settingRowStyle()
             Toggle(isOn: Binding(get: { settings.sessionMode }, set: { set(sessionMode: $0) })) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Session keys")
-                    Text("The thirteen keys always follow the session board: a key lights with its session's state and reveals it when pressed. Only the dial, joystick and analog sectors take explicit mappings.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+                SettingLabel(title: "Session keys",
+                             subtitle: "The thirteen keys follow the session board; only the dial, joystick and analog sectors take explicit mappings.")
             }
             .disabled(!live || !settings.enabled)
+            .settingRowStyle()
             Toggle(isOn: Binding(get: { settings.analogEnabled }, set: { set(analogEnabled: $0) })) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Analog joystick sectors")
-                    Text("Calibrated sectors 1–4 (AG20–AG23) count as inputs and can carry their own mappings in the Control Center.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+                SettingLabel(title: "Analog joystick sectors",
+                             subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in the Control Center.")
             }
             .disabled(!live || !settings.enabled)
+            .settingRowStyle()
             LabeledContent {
                 HStack(spacing: 6) {
                     Circle().fill(statusColor).frame(width: 7, height: 7)
-                    Text(statusText).foregroundStyle(.secondary).lineLimit(2)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(statusText).foregroundStyle(.secondary).lineLimit(2)
+                        // The toggle's own answer, where the click happened.
+                        if let note = store.deckNote {
+                            Text(note.text)
+                                .font(.caption)
+                                .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                                .lineLimit(2)
+                                .transition(.opacity)
+                        }
+                    }
                 }
             } label: {
                 Text("Status")
             }
             if let deck {
-                LabeledContent("Keymap") {
-                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
+                DisclosureRow("Details") {
+                    LabeledContent("Keymap") {
+                        Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
+                    }
+                    LabeledContent("Compact rail") {
+                        Text(deck.rail.edge.label).foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Sessions") {
+                        Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Board scope") {
+                        Text(deck.scope == "automatic" ? "Automatic — all providers"
+                             : ProviderStyle.style(for: deck.scope).name)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let receipt = deck.device?.receipt {
+                        LabeledContent("Last receipt") {
+                            Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
                 }
-                LabeledContent("Compact rail") {
-                    Text(deck.rail.edge.label).foregroundStyle(.secondary)
-                }
-                LabeledContent("Sessions") {
-                    Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Board scope") {
-                    Text(deck.scope == "automatic" ? "Automatic — all providers"
-                         : ProviderStyle.style(for: deck.scope).name)
-                        .foregroundStyle(.secondary)
-                }
-                if let receipt = deck.device?.receipt {
-                    LabeledContent("Last receipt") {
-                        Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
-                            .multilineTextAlignment(.trailing)
+                if !deck.keymap.layers.isEmpty {
+                    DisclosureRow("Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over.") {
+                        ForEach(deck.keymap.layers.sorted(by: { $0.layer < $1.layer })) { layer in
+                            if layer.layer == 0 {
+                                LabeledContent("Layer 1") {
+                                    Text("JR-Bar — the auto layer")
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Picker("Layer \(layer.layer + 1)", selection: layerOwnerBinding(layer.layer)) {
+                                    Text("JR-Bar").tag("jrbar")
+                                    ForEach(SettingsKey.providers, id: \.self) { provider in
+                                        Text(ProviderStyle.style(for: provider).name).tag(provider)
+                                    }
+                                    Divider()
+                                    Text("Other apps").tag("everything")
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                        }
                     }
                 }
             }
-            HStack {
-                Text("Control Center")
-                Spacer()
+            SettingRow("Control Center", subtitle: "Pins, banks, the rail, input check and the keymap.") {
                 Button("Control Center…") { store.onOpenControlCenter?() }
             }
         } header: {
@@ -711,8 +788,6 @@ struct CreatorMicroCard: View {
                     Text("Approve it in the Control Center").foregroundStyle(.secondary).font(.callout)
                 }
             }
-        } footer: {
-            SectionNote("Thirteen session keys per bank with solid per-key colour, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the monitor owns the device.")
         }
     }
 }
@@ -721,10 +796,10 @@ struct ScreenBarCard: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
-        SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
+        SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
+        SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
-        SettingToggle(store, "Notch wings", subtitle: "Status slots in the menu-bar space beside the notch — who's working or needs you on the left, the headline usage meter on the right. Off, the bar keeps to its light strip.", path: "screen_bar_notch_wings", default: true)
+        SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
         SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,
                       path: "screen_bar_notch_profile",
                       options: NotchProfile.allCases.map { ($0.rawValue, $0.title) },
@@ -734,19 +809,19 @@ struct ScreenBarCard: View {
                           path: "screen_bar_notch_corner", in: 4...16, step: 0.5,
                           default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
         }
-        SettingToggle(store, "Mirror the hardware strip", subtitle: "The Screen Bar plays the strip's own program on the strip's clock. Off, it renders its own display. Independent of Dot follows the strip above.", path: "link_screen_bar_to_hardware", default: true)
-        SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
-                      path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
-            .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
-        NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
-        NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
-        SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor. Zero is pitch black: only the moving signal shows.",
-                      path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
-        LabeledContent {
+        SettingToggle(store, "Mirror hardware strip", subtitle: "Play the strip's program on its clock; off, the bar renders its own display.", path: "link_screen_bar_to_hardware", default: true)
+        DisclosureRow("Advanced", subtitle: "Phase, geometry and the band's dim floor.") {
+            SettingSlider(store, "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back.",
+                          path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
+                .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
+            NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
+            NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
+            SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor; zero is pitch black.",
+                          path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
+        }
+        SettingRow("Colour calibration", subtitle: screenBarCalibrationSummary) {
             Button("Calibrate…") { store.calibrating = "virtual:status-bar" }
                 .disabled(!store.core.isLive)
-        } label: {
-            SettingLabel(title: "Colour calibration", subtitle: screenBarCalibrationSummary)
         }
     }
 

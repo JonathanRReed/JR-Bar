@@ -442,3 +442,41 @@ def test_provider_action_preserves_credential_ownership():
     reply = core_runtime._cmd_provider_action(controller, {"provider": "gemini"})
     assert "gemini" in reply["message"].lower()
     assert reply["provider"] == "gemini"
+
+
+def test_provider_action_resign_in_reconnects_and_forces_refresh():
+    """`action="resign_in"` is the Usage Center's per-provider "Re-sign
+    in": it runs the provider's own re-pull even when no staged action
+    label is on the card, arms the outcome watch, and forces a scoped
+    refresh — never the plain path's `unsupported`."""
+    controller = _controller()
+    reply = core_runtime._cmd_provider_action(
+        controller, {"provider": "gemini", "action": "resign_in"}
+    )
+    assert "gemini" in reply["message"].lower()
+    assert reply["sign_in_url"] is None
+    controller._request_provider_usage.assert_called_once_with(
+        force=True, providers=("gemini",)
+    )
+    assert controller._jrbar_reconnect_watch[0] == "gemini"
+
+    # A named instance scopes the forced refresh to it.
+    controller = _controller()
+    core_runtime._cmd_provider_action(
+        controller,
+        {"provider": "gemini", "instance": "work", "action": "resign_in"},
+    )
+    controller._request_provider_usage.assert_called_once_with(
+        force=True, providers=(("gemini", "work"),)
+    )
+
+    with pytest.raises(CommandError) as error:
+        core_runtime._cmd_provider_action(
+            _controller(), {"provider": "claude", "action": "nonsense"}
+        )
+    assert error.value.code == "invalid_args"
+    with pytest.raises(CommandError) as error:
+        core_runtime._cmd_provider_action(
+            _controller(), {"provider": "nonsense", "action": "resign_in"}
+        )
+    assert error.value.code == "unknown_provider"

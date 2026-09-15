@@ -47,6 +47,7 @@ struct EffectStudioView: View {
                             Divider()
                             Button("Remove pack “\(entry.name)”…") { store.removePack(entry) }
                         }
+                        Divider()
                     }
                     Button("Export every provider animation…") {
                         let ids = store.catalog?.effects.filter { $0.catalog == "provider_animation" }.map(\.id) ?? []
@@ -56,7 +57,7 @@ struct EffectStudioView: View {
                     Label("Export…", systemImage: "square.and.arrow.up")
                 }
                 .help("Write a data-only pack with the current parameters as defaults")
-                .disabled(!store.isLive || store.selected == nil)
+                .disabled(!store.isLive)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { store.reload() } label: {
@@ -117,6 +118,19 @@ struct EffectLibraryPane: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Clear search")
                 }
+                Menu {
+                    Picker("Show", selection: $store.filter) {
+                        ForEach(EffectStudioStore.LibraryFilter.allCases) { Text($0.label).tag($0) }
+                    }
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .symbolVariant(store.filter == .all ? .none : .fill)
+                        .foregroundStyle(store.filter == .all ? .secondary : Color.accentColor)
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Filter the library")
+                .accessibilityLabel("Filter: \(store.filter.label)")
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
@@ -124,21 +138,25 @@ struct EffectLibraryPane: View {
             .padding(10)
             Divider()
             if store.groups.isEmpty {
-                VStack(spacing: 6) {
-                    Text("Nothing matches").font(.callout).foregroundStyle(.secondary)
-                    Button("Clear search") { store.search = "" }.buttonStyle(.link).font(.caption)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyState
             } else {
                 List(selection: $store.selectedID) {
                     ForEach(store.groups, id: \.title) { group in
                         Section {
                             ForEach(group.effects) { effect in
-                                EffectLibraryRow(effect: effect, selected: store.selectedID == effect.id, used: !store.usage(of: effect).isEmpty)
+                                EffectLibraryRow(effect: effect, store: store,
+                                                 uses: store.usage(of: effect),
+                                                 selected: store.selectedID == effect.id)
                                     .tag(effect.id)
                             }
                         } header: {
-                            Text(group.title)
+                            HStack {
+                                Text(group.title)
+                                Spacer()
+                                Text("\(group.effects.count)")
+                                    .foregroundStyle(.tertiary)
+                                    .monospacedDigit()
+                            }
                         }
                     }
                 }
@@ -148,17 +166,51 @@ struct EffectLibraryPane: View {
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
+
+    /// Which "nothing to show" applies: an empty catalog, a filter with
+    /// no hits, or a search with no matches.
+    @ViewBuilder
+    private var emptyState: some View {
+        if store.catalog?.effects.isEmpty ?? true {
+            VStack(spacing: 6) {
+                Text("No effects installed").font(.callout.weight(.medium))
+                Text("The registry is empty — import a pack from the toolbar to add some.")
+                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 6) {
+                Text(store.search.isEmpty ? "Nothing in this filter" : "Nothing matches")
+                    .font(.callout).foregroundStyle(.secondary)
+                if !store.search.isEmpty {
+                    Button("Clear search") { store.search = "" }.buttonStyle(.link).font(.caption)
+                }
+                if store.filter != .all {
+                    Button("Show all effects") { store.filter = .all }.buttonStyle(.link).font(.caption)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
 }
 
 struct EffectLibraryRow: View {
     let effect: EffectDefinition
+    @Bindable var store: EffectStudioStore
+    let uses: [EffectAssignment]
     let selected: Bool
-    let used: Bool
+
+    /// The thumbnail plays at its authored count, capped where dots
+    /// would shrink past readability.
+    private var thumbnailLeds: Int { min(effect.preview?.ledCount ?? 8, 16) }
 
     var body: some View {
+        let metrics = LEDStripPreview.dotMetrics(ledCount: thumbnailLeds, width: 54, dotSize: 5, spacing: 2, padded: false)
         HStack(spacing: 9) {
-            LEDStripPreview(program: effect.preview?.program ?? "off", ledCount: effect.preview?.ledCount ?? 8,
-                            style: .dots, dotSize: 5, spacing: 2, paused: !selected, showsBackground: false)
+            LEDStripPreview(program: effect.preview?.program ?? "off", ledCount: thumbnailLeds,
+                            style: .dots, dotSize: metrics.dotSize, spacing: metrics.spacing,
+                            paused: !selected, showsBackground: false)
                 .frame(width: 54)
                 .padding(.vertical, 5)
                 .padding(.horizontal, 5)
@@ -166,9 +218,10 @@ struct EffectLibraryRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(effect.label).lineLimit(1)
-                    if used {
-                        Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(.secondary)
-                            .help("Used by an assignment")
+                    if !uses.isEmpty {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(Color.accentColor)
+                            .help(store.usageSummary(of: effect) ?? "Used by an assignment")
+                            .accessibilityLabel("Used by \(uses.count) assignment\(uses.count == 1 ? "" : "s")")
                     }
                 }
                 HStack(spacing: 4) {
@@ -186,7 +239,31 @@ struct EffectLibraryRow: View {
             }
         }
         .padding(.vertical, 2)
-        .accessibilityLabel("\(effect.label)\(effect.pack.map { ", pack \($0)" } ?? "")\(effect.safety.warns ? ", \(effect.safety.label)" : "")")
+        .accessibilityLabel("\(effect.label)\(effect.pack.map { ", pack \($0)" } ?? "")\(effect.safety.warns ? ", \(effect.safety.label)" : "")\(uses.isEmpty ? "" : ", in use")")
+        .contextMenu {
+            Button("Assign…") { store.beginAssigning(effect) }
+            // The consent alert replays `store.selected`; select first so
+            // it previews this row's effect, not whatever is selected.
+            Button("Preview on hardware") {
+                store.selectedID = effect.id
+                store.previewOnHardware(effect)
+            }
+            .disabled(!store.hasHardware)
+            Divider()
+            Button("Export “\(effect.label)”…") { store.exportPack(ids: [effect.id], suggestedName: effect.label) }
+            if let pack = effect.pack, let entry = store.catalog?.pack(pack) {
+                Button("Export pack “\(entry.name)”…") { store.exportPack(ids: entry.effectIDs, suggestedName: entry.name) }
+                Button("Remove pack “\(entry.name)”…") { store.removePack(entry) }
+            }
+            if !uses.isEmpty {
+                Divider()
+                ForEach(uses) { assignment in
+                    Button("Remove from \(store.targetTitle(for: assignment)) (\(assignment.scope.label.lowercased()))") {
+                        store.remove(assignment)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -249,9 +326,20 @@ struct EffectInspectorPane: View {
     private func preview(_ effect: EffectDefinition) -> some View {
         let program = store.previewProgram(for: effect)
         let leds = store.previewLedCount(for: effect)
+        // Fit to the pane's narrowest content width so a wide device
+        // never clips its end dots or their glow.
+        let metrics = LEDStripPreview.dotMetrics(ledCount: leds, width: 336, dotSize: 20, spacing: 14, padded: true)
+        let shape = store.previewSurface.map { "\($0.name)'s \(leds)-LED layout" } ?? "\(leds) LEDs, no strip or Dot connected"
         return VStack(alignment: .leading, spacing: 8) {
-            LEDStripPreview(program: program, ledCount: leds, style: .dots, dotSize: 20, spacing: 14)
+            LEDStripPreview(program: program, ledCount: leds, style: .dots, dotSize: metrics.dotSize, spacing: metrics.spacing)
                 .frame(maxWidth: .infinity)
+                .help("Previewing on \(shape)")
+            if store.reduceMotion, let fallback = effect.reduceMotionFallback {
+                Label("Reduce Motion is on — “\(store.catalog?.effect(fallback)?.label ?? fallback)” plays instead",
+                      systemImage: "figure.walk.motion")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack(spacing: 10) {
                 LEDStripPreview(program: program, ledCount: leds, style: .band, dotSize: 8, showsBackground: false)
                     .frame(maxWidth: 220)
@@ -270,7 +358,7 @@ struct EffectInspectorPane: View {
                         Label(store.previewSurface.map { "Preview on \($0.name)" } ?? "Preview on hardware", systemImage: "light.beacon.max")
                     }
                 }
-                .disabled(store.hardwarePreviewActive || !store.isLive || !store.hasHardware)
+                .disabled(store.hardwarePreviewActive || store.hardwarePreviewInFlight || !store.isLive || !store.hasHardware)
                 .help(store.previewSurface.map { "Play this effect on \($0.name) (\($0.ledCount) LEDs) for 5 seconds, then revert" } ?? "No strip or Dot is connected, so there is nothing to play it on")
                 Button {
                     store.beginAssigning(effect)
@@ -370,6 +458,9 @@ struct EffectInspectorPane: View {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.turn.down.right").foregroundStyle(.tertiary)
                         Text("\(assignment.scope.label) · \(store.targetTitle(for: assignment))")
+                        if !assignment.parameters.isEmpty, assignment.parameters != effect.defaultParameters {
+                            Text("· tuned").font(.caption2).foregroundStyle(.tertiary)
+                        }
                         Spacer()
                         Button("Remove") { store.remove(assignment) }.buttonStyle(.link).font(.caption)
                     }
@@ -880,6 +971,11 @@ struct AssignmentRow: View {
         .onTapGesture(perform: select)
         .onHover { hovering = $0 }
         .padding(.vertical, 1)
+        .contextMenu {
+            Button("Show “\(effect?.label ?? assignment.effectID)”", action: select)
+            Divider()
+            Button(suppressed ? "Stop suppressing this scope" : "Remove assignment", role: .destructive, action: remove)
+        }
     }
 }
 
@@ -894,7 +990,10 @@ struct AssignSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 if let effect {
-                    LEDStripPreview(program: store.draftPreviewProgram(for: effect), ledCount: store.previewLedCount(for: effect), style: .dots, dotSize: 9, spacing: 5, showsBackground: true)
+                    let leds = store.previewLedCount(for: effect)
+                    let metrics = LEDStripPreview.dotMetrics(ledCount: leds, width: 130, dotSize: 9, spacing: 5, padded: true)
+                    LEDStripPreview(program: store.draftPreviewProgram(for: effect), ledCount: leds,
+                                    style: .dots, dotSize: metrics.dotSize, spacing: metrics.spacing, showsBackground: true)
                         .frame(width: 130)
                 }
                 VStack(alignment: .leading, spacing: 2) {

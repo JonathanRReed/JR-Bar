@@ -18,7 +18,7 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         self.window = window
         if let effect { store.selectedID = effect }
         store.windowDidOpen()
-        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        NSRunningApplication.current.activate()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }

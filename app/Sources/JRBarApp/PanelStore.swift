@@ -505,17 +505,20 @@ final class PanelStore {
             ?? rows.first { $0.activity == .working && !$0.isRemote }
         if let pick {
             let word = pick.ask != nil ? "Needs you" : pick.activity.word
-            return ScreenBarFocus(style: pick.style, label: pick.label, word: word, clickSession: clickable?.id, explanation: lightExplanation?.headline)
+            return ScreenBarFocus(style: pick.style, label: pick.label, word: word,
+                                  clickSession: clickable?.id, focusSession: pick.id,
+                                  explanation: lightExplanation?.reason)
         }
         let word = core.isLive ? aggregate.label : (fallbackState == .idle ? "Idle" : fallbackState.label)
-        return ScreenBarFocus(style: nil, label: "JR-Bar", word: word, clickSession: nil, explanation: lightExplanation?.headline)
+        return ScreenBarFocus(style: nil, label: "JR-Bar", word: word, clickSession: nil,
+                              explanation: lightExplanation?.reason)
     }
 
     /// The wing slots' content (`screen_bar_notch_wings`). Left is the
     /// activity slot: the top-priority session's provider tile and state
     /// word, with the open-ask count when there is more than one. Right is
     /// the ambient slot: the headline usage meter — the first provider
-    /// window the daemon sent, the same pick the island's card makes. A
+    /// window the daemon sent, the same pick the notch card makes. A
     /// side with nothing to say is nil and collapses rather than holding
     /// space open beside the notch.
     var screenBarWings: ScreenBarWings {
@@ -529,7 +532,7 @@ final class PanelStore {
                     : pick.ask != nil || pick.activity == .waiting ? .attention
                     : .neutral)
         }
-        let right = AlcoveIsland.meters(core.state?.usage).first
+        let right = NotchIsland.meters(core.state?.usage).first
             .map { ScreenBarWingSlot(text: $0.percentText, provider: $0.provider,
                                      meter: $0.percent.map { min(1, max(0, $0 / 100)) }) }
         return ScreenBarWings(left: left, right: right)
@@ -827,10 +830,12 @@ final class PanelStore {
         }
     }
 
-    /// The two windows a usage row draws: the 5 h window (else the first)
-    /// and the 7 d window (else the next one).
+    /// The two windows a usage row draws: the leading window — the
+    /// most-exhausted measured lane (`UsageCenterStore.primaryWindow`),
+    /// so a weekly at 100 % leads red instead of hiding behind 5 h
+    /// headroom — and the 7 d window (else the next one) beside it.
     static func windows(of usage: CoreProviderUsage) -> (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) {
-        let primary = usage.windows.first { $0.shortName == "5h" } ?? usage.windows.first
+        let primary = UsageCenterStore.primaryWindow(of: usage)
         let secondary = usage.windows.first { $0.shortName == "7d" && $0.id != primary?.id }
             ?? usage.windows.first { $0.id != primary?.id }
         return (primary, secondary)

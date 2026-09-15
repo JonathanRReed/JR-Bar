@@ -31,6 +31,43 @@ def test_disabled_settings_do_not_resolve_any_action__and_1_more() -> None:
 
 
 
+def test_ownership_and_layer_owners_roundtrip_and_validate(tmp_path) -> None:
+    # --- scenario: ownership_and_layer_owners_roundtrip
+    path = tmp_path / "private" / "deck-controls.json"
+    settings = DeckControlSettings(ownership="yield", layer_owners=((1, "codex"), (2, "everything")))
+    save_deck_controls(settings, path, expected=DeckControlSettings())
+    loaded = load_deck_controls(path)
+    assert loaded == settings
+    assert loaded.ownership == "yield"
+    assert loaded.owner_for_layer(1) == "codex" and loaded.owner_for_layer(2) == "everything"
+    assert loaded.owner_for_layer(0) == "jrbar" and loaded.owner_for_layer(None) == "jrbar"
+
+    # --- scenario: a_v3_document_decodes_to_the_feature_defaults
+    from jrbar.deck_control_settings import decode_deck_controls
+
+    v3 = json.dumps({"version": 3, "enabled": True, "bindings": [],
+                     "session_mode": False, "analog_enabled": False,
+                     "layer_map": [{"layer": 1, "scope": "codex"}], "scopes": []})
+    decoded = decode_deck_controls(v3)
+    assert decoded.ownership == "hold" and decoded.layer_owners == ()
+    assert decoded.layer_map == ((1, "codex"),)
+
+    # --- scenario: invalid_ownership_and_layer_owners_are_rejected
+    for kwargs in [
+        {"ownership": "seize"},
+        {"ownership": True},
+        {"layer_owners": ((0, "codex"),)},                      # layer 1 is always the auto layer
+        {"layer_owners": ((1, "codex"), (1, "claude"))},        # duplicate layer
+        {"layer_owners": ((1, "automatic"),)},                  # not an owner token
+        {"layer_owners": ((-1, "codex"),)},
+        {"layer_owners": ((1, ""),)},
+        {"layer_owners": [("1", "codex")]},                     # not a tuple
+    ]:
+        with pytest.raises(ValueError):
+            DeckControlSettings(**kwargs)
+
+
+
 def test_save_refuses_changed_settings_instead_of_losing_another_edit__and_1_more(tmp_path) -> None:
     # --- scenario: save_refuses_changed_settings_instead_of_losing_another_edit
     path = tmp_path / "private" / "deck-controls.json"

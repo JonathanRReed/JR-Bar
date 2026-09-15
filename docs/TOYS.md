@@ -17,8 +17,10 @@ before the code; the code follows it.
   asset: the letters "JR" set tight in the page tint's rounded square, 44pt)
   beside a one-line intro in Jonathan's voice. No paragraphs of preamble.
 - Below the header, one `ToyCard` per toy, in this order: Fold, Aquarium,
-  Notch Buddy, Confetti, Alcove, then the external app rows, then an
-  "Add an app…" button.
+  Notch Buddy, Confetti. (Notch is a utility — it lives on the Utilities
+  page. The external-app rows and "Add an app…" were removed entirely —
+  the `externalApps` key in an old state file decodes as an ignored
+  unknown key.)
 
 ## Persistence
 
@@ -40,12 +42,12 @@ public struct ToysState {
     public var aquarium: AquariumSettings
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
-    public var externalApps: [ExternalToyApp]
 }
-public struct FoldSettings { enabled: Bool = false; activationAngle: Double = 82; style: FoldStyle = .dusk;
-                             perspective: Double = 0.6; blur: Double = 0.5; shade: Double = 0.4;
+public struct FoldSettings { enabled: Bool = false; activationAngle: Double = 65;
+                             perspective: Double = 0.6; blur: Double = 0.5; shade: Double = 0.7;
                              jitterTolerance: Double = 0; provider: FoldProvider = .jrbar }
-public enum FoldStyle: String { case tilt, dusk, fog }          // perspective only / + darken / + blur
+// (the Tilt/Dusk/Fog style picker is retired — `style` is decoded only to
+//  recognize old default sets for migration; nothing reads it)
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
 public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0 }
 public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
@@ -66,15 +68,14 @@ public struct ConfettiTriggers { sessionCompleted: Bool = false; weeklyReset: Bo
 public enum ConfettiLanding: String { case rest, fall, fade }   // rest on the band / rain to the bottom / dissolve mid-air
 public enum ConfettiPalette: String { case provider, toys, rainbow }
 public enum ConfettiShapes: String { case mixed, streamers, flecks }
-public struct AlcoveSettings { enabled: Bool = false; provider: AlcoveProvider = .jrbar;
-                               islandEnabled: Bool = true; showUsage: Bool = true;
-                               expandOnHover: Bool = true; capsuleNotifications: Bool = true;
-                               mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds }
+public struct NotchSettings { enabled: Bool = false; provider: NotchProvider = .jrbar;
+                              islandEnabled: Bool = true; showUsage: Bool = true;
+                              expandOnHover: Bool = true; capsuleNotifications: Bool = true;
+                              mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds }
 public struct AlcoveCapsuleKinds { ask: Bool = true; completed: Bool = true;
                                    failed: Bool = true; quotaReset: Bool = true;
                                    charging: Bool = true }
-public enum AlcoveProvider: String { case jrbar, alcove, boringNotch }  // who owns the notch
-public struct ExternalToyApp: Identifiable { id: String /* bundle id */; name: String; launchWithJRBar: Bool }
+public enum NotchProvider: String { case jrbar, alcove, boringNotch }   // who owns the notch
 ```
 
 ## The `Toy` shape
@@ -107,9 +108,11 @@ page can reach it.
 
 ## Fold (native)
 
-Your desktop tilts, dims and blurs as the lid comes down, like it's holding
-its angle in the room while the screen moves. Clean-room; no Lid Plane
-(GPL-3) or Bendy code.
+Closing the lid looks like the desktop continues *into* the display — a
+portal, not a tilting picture: windows float as cards in a lit space, the
+wallpaper recedes behind them, and the whole thing blurs, fogs and
+dissolves toward the hinge. One style, "Portal" — the iPhone Duo read of
+the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
 
 - **Sensor** `LidAngleSensor` (`JRBarApp/Toys/Fold/LidAngleSensor.swift`):
   IOKit HID, match usage page `0x20` (Sensor), usage `0x8A` (Orientation),
@@ -127,21 +130,14 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   `Sample{angle, at, clamshell}` so no per-frame path ever touches IOKit.
   Missing device → `status = .unavailable("No lid-angle sensor on this Mac")`
   and the Simulate slider still works.
-- **Motion** `LidTracker` (`JRBarCore/FoldMath.swift`): edge dead
-  reckoning, not a predictor — a 10 Hz stepping sensor has no
-  poll-to-poll signal worth filtering. Only a changed reading is an
-  edge: each edge re-anchors the position and updates a blended
-  velocity (a reversal takes the new direction whole). `tick`, once per
-  render frame, sets `renderAngle` to the edge plus that velocity
-  extrapolated for at most 150 ms and clamped to ±8° — enough to cover
-  the sensor's ~100 ms latency, bounded so a wrong estimate can't run
-  away; after 0.3 s without an edge the lid is parked, velocity is zero
-  and the render angle IS the measurement. The tracker itself smooths
-  nothing — the eased `displayedDelta` is the one smoothing stage,
-  chasing the target on a `CADisplayLink` at the screen's own refresh
-  with an 80 ms time constant (`1 − exp(−dt/0.08)`), so at each edge the
-  dead-reckoned position is already near the new value and the ease only
-  absorbs the residual. `velocity` (deg/s) feeds the motion blur.
+- **Motion** `SlewTracker` (`FoldPortal.swift`): a slew-limited
+  critically-damped tracker — semi-implicit Euler, velocity hard-capped at
+  `maxRate` 150°/s so a slammed lid glides shut in ~300 ms instead of
+  lurching between the sensor's 10 Hz integer-degree samples. A crossing
+  guard makes overshoot structurally impossible, an arrival epsilon snaps
+  to the target so it can truly rest, and a `maxDt` clamp means a slept
+  display is a stall, never a teleport. The tracker IS the motion — no
+  second spring, no velocity smear; opening is the exact reverse.
 - **Gesture** `FoldMath.deltaRadians`: the fold is the real lid travel —
   `(activationAngle − angle)` in radians, clamped at 1.25 rad (~72°),
   the arc the projection is stable over. It is not a normalized
@@ -150,37 +146,44 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   shader is the identity — activating is invisible. The activation gate
   reads the raw angle so an extrapolated lead can never open the overlay
   early, and a jitter-suppressed sample can never hold it open.
-- **Capture** `FoldCapture`: ScreenCaptureKit on the built-in display
-  (`CGDisplayIsBuiltin`), `SCContentFilter(display:excludingApplications:)`
-  excluding JR-Bar itself; 30 fps; BGRA sRGB; no audio, no cursor;
-  complete frames only; capped at 2560 px on the long edge. The stream
-  stays alive across the activation line — only the overlay hides — so
-  re-entering a fold never pays a capture restart. Permission via
+- **Capture** `FoldCapture`: TWO ScreenCaptureKit streams on the
+  built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA sRGB, no audio,
+  no cursor, complete frames only, capped at 2560 px: a near stream
+  (`excludingApplications` JR-Bar itself) for the window cards, and a
+  wallpaper-only stream (filter = `desktopWindows` + excluded apps +
+  excluded windows — a static layer rate-limited to 2 fps) for the
+  portal's far wall. Between them a `CGWindowList` poll (4 Hz, inside
+  the arming band only) gives each window card its on-screen rect; cards
+  crop their pixels out of the near frame and sort by front-to-back
+  window order (`PortalDepth`). `FoldArming` owns the lifecycle: armed
+  inside `activation + 12°` (`FoldArming.margin`), disarmed 1° above
+  the activation edge (`hysteresis`), a 2 s linger on disarm so
+  lingering at the edge doesn't flap the purple indicator — outside the
+  band everything is stopped and nothing is captured. Permission via
   `CGPreflightScreenCaptureAccess()`; request with
   `CGRequestScreenCaptureAccess()`; deep link
   `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
   Denied → `.needsPermission("Needs Screen Recording")` and nothing else
   runs.
-- **Render** `FoldOverlayWindow` + `FoldRenderer`: borderless `NSWindow`,
-  `.screenSaver` level, `ignoresMouseEvents = true`,
-  `sharingType = .none`, covers the built-in screen only, `MTKView`
+- **Render** `FoldOverlayWindow` + `FoldRenderer` + `FoldPortalModel`:
+  borderless `NSWindow`, `.screenSaver` level, `ignoresMouseEvents =
+  true`, `sharingType = .none`, covers the built-in screen only, `MTKView`
   (`framebufferOnly`, capped at `min(120, screen.maximumFramesPerSecond)`)
-  with one Metal pipeline. Each frame blits into a private mipmapped
-  texture (3 levels, `generateMipmaps` on the GPU — no CPU decode), so
-  the matte blur reads real LODs. The fragment shader is the physical
-  model, nothing else painted: the desktop plane held at the activation
-  angle, projected parallel (t = 1: pure `cos(delta)` compression, no
-  taper) or through a finite eye at (0, 0.65, 1.6) screen heights —
-  `perspective` blends the two. Blur and shade scale with
-  `sin(delta)·height`: the matte is a Vogel-disc (golden-angle spiral,
-  area-uniform rings, per-pixel phase jitter) whose radius grows toward
-  the far edge with the real tilt, plus a velocity boost (`|v| > 30°/s`,
-  ≤ 12) so fast closes smear like real glass; the disc adapts 12/20/32
-  taps by the computed radius. The edge feather is the blur's own
-  sigma, and where the projection leaves the image there is only void.
-  Tilt = projection only; Dusk = dim + a light matte; Fog = dim + the
-  deep matte. The overlay is ordered out whenever `delta ≤ 0.002` or no
-  frame has landed, so at rest nothing runs.
+  with the `FoldPortal` pipeline. The model is a room, not a picture:
+  the wallpaper is the far wall, each window a card floating in front of
+  it at a depth from its stacking order — nearer cards translate more
+  with the tilt (`PortalDepth.parallax`), so the contents really do
+  parallax as the lid moves. With the fold the space scales toward the
+  hinge, the matte fog swallows the far end and the near end dissolves —
+  `fade` per card, depth-driven `dissolve` on the wall — which is what
+  makes it read as continuing into the display rather than a warped
+  screenshot. One style; Perspective / Blur / Shade are its knobs —
+  Perspective sweeps the eye from orthographic to close-up, Blur is the
+  fog (Vogel-disc LOD reads off the GPU-mipped textures, radius per
+  depth — distant layers soft first, never ghosted past frames), Shade
+  is the room's darkness (0 = pure dissolve, 1 = near-black void). The
+  overlay is ordered out whenever `delta ≤ 0.002` or no frame has
+  landed, so at rest nothing runs.
 - **Safety**: pause (hide overlay, stop capture, keep sensor) when the
   lid reads ≤ 5°, when `AppleClamshellState` on `IOPMrootDomain` says
   closed — the daemon's `closed_lid.holding` is the keep-awake
@@ -198,8 +201,9 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   the storefront link). Choosing an external provider stops our renderer,
   launches that app, and the chip reads "Bendy is rendering it". When the
   chosen app isn't installed the picker row says so and links to it.
-- **Controls**: On/Off, Style (Tilt / Dusk / Fog segmented), Activation
-  angle slider 60–160°, Perspective / Blur / Shade sliders, Jitter
+- **Controls**: On/Off, Activation
+  angle slider 60–160°, Perspective / Blur / Shade sliders (one style —
+  the portal), Jitter
   tolerance 0–5°, "Simulate a fold" slider (drives the angle while held),
   live angle readout ("104°" or "no sensor"), Render with (JR-Bar / Bendy /
   Lid Plane).
@@ -213,11 +217,26 @@ antigravity & openclaw as spotted puffers, hermes as an upright
 seahorse, opencode/kiro/t3code as flowing-finned bettas, devin as a
 tang, cursor & pi as little tetras; anything new is a minnow
 (`FishSpecies` in `AquariumModel.swift`, so the mapping is testable).
-Each fish keeps its tapered body, a translucent tail that articulates
-a beat behind the head, swept dorsal and pectoral fins, a gill line,
-a pale belly countershade and a proper eye with a catchlight, in the
-provider's colour with the session label on a small floating tag
-tethered under it.
+The fish are drawn chunky and cartooned (`AquariumFishArt` /
+`CartoonFish`): fat rounded bodies, big glossy eyes with catchlights,
+soft bellies, expressive fins — a toy's fish, not a field guide's.
+Each keeps a translucent tail that articulates a beat behind the head,
+swept dorsal and pectoral fins, a gill line, a pale belly countershade
+and a proper eye with a catchlight, in the provider's colour with the
+session label on a small floating tag tethered under it.
+
+It's also a small idle game (`JRBarCore/AquariumGame.swift`, the
+`GameStore` on `AquariumStore`): while sessions work, the tank earns
+**pearls**; a completion drops a bonus. Pearls spend in the Shop sheet
+on decor (kelp, coral, pebbles, shells, chests, jellyfish, snail),
+pets and hats for your fish. A day with a finished session keeps the
+**streak**; open the tank after a while and a "while you were away"
+card pays out what accrued (capped). Everything the game owns lives in
+a separate `aquarium-save.json` (`AquariumSave`) — resetting settings
+never wipes your tank — while the tank's own toggles stay in
+`app-state.json` like every toy. Feeding is the active toy: tap to
+drop pellets and the nearest fish dart over. Nothing in the game ever
+touches your agents.
 
 Sub-agent sessions join as fry — about half size, the school's
 species — orbiting loosely around their parent's fish, up to eight a
@@ -251,9 +270,11 @@ overlapping rounded humps with a light-catching crest, faint ripple
 contours down the face and seeded grains, a corner vignette and a
 faint diagonal glass highlight.
 
-Deeper lanes hold smaller, dimmer, slower fish. Fish ease into curved
-U-turns at the glass instead of mirror-flipping, and new sessions swim
-in from an edge; a recently updated session's tail beats faster. An
+Deeper lanes hold smaller, dimmer, slower fish. Movement is
+steering-based (`AquariumSteering`): wander, arrive, seek-food and
+flee compose into smooth paths — fish bank into turns instead of
+pivoting, ease into curved U-turns at the glass instead of
+mirror-flipping, and new sessions swim in from an edge; a recently updated session's tail beats faster. An
 idle session holds midwater on a slow drift and rises to sip the
 surface every half-minute or so. An ask rises to the glass — a little
 closer to the viewer — trailing small bubbles, bobs there with a
@@ -439,24 +460,38 @@ tolerantly to the shipped look.
 
 Blurb: "A burst in the provider's colours when the moment earns it."
 
-## Alcove (notch island)
+## Notch (island)
 
 The notch island is JR-Bar's own Dynamic-Island-style capsule: a black
 shape flush with the notch whose lip carries the working providers'
 dots (plus amber for asks, red for failures) and a live count —
 "3 working · 1 waiting" — breathing slowly while anything works.
-Hover grows it into a card: live session rows in the panel's
-precedence, then the providers' headline usage meters when `showUsage`
-is on. The window (`AlcoveIslandWindow`) is a non-activating panel at
+Anything that comes out of the notch must feel like part of the notch,
+so hover — or a click on the band — grows the island itself into the
+card, Dynamic-Island style: solid black, contiguous with the notch,
+corners from `NotchProfile`, top edge pinned while the bottom edge
+travels. The card's content is the shared `NotchCardView` in its
+`.island` style: focus header, live session rows in the panel's
+precedence, media, battery, tray, timers, calendar, the providers'
+headline usage meters when `showUsage` is on, and the Agent Overview
+button; its width is the notch slot plus shoulders, clamped to
+300–380 pt. The glass card — `NotchCardView` in a `NotchCardPanel`,
+owned by `NotchCardPresenter` — is the fallback: it shows under the
+band only while the toy is off or an external provider owns the notch,
+driven by the band's peek and pin as before. There is never both: the
+band's hover arms nothing while the island is drawn, and its
+pin/dismiss route to the toy's expand and fold. The window
+(`NotchIslandWindow`) is a non-activating panel at
 `statusBar` level — one step under the Screen Bar's `statusBar + 1`,
 so while the band is up its LED strip draws across the island's dead
 top zone instead of the island's black face covering it; the layout
 adds `ledBandClearance` under the notch so the island's own content
 sits below the band, and the bar's click-through window never steals a
-hover. `sharingType = .none` so Fold's desktop capture never sees it,
-and its frame is always exactly the drawn shape — nothing invisible
-swallows a menu-bar click; while Fold's overlay is up, the island lets
-clicks fall through it.
+hover. `sharingType = .none` so Fold's desktop capture never sees it
+(the `JRBAR_CAPTURE_CARD` env var is a dev-only escape so screenshots
+can), and its frame is always exactly the drawn shape — nothing
+invisible swallows a menu-bar click; while Fold's overlay is up, the
+island lets clicks fall through it.
 
 "Render with" picks who owns the notch, Fold-style: **JR-Bar** draws
 the island itself (settings: Show the island, Grow on hover, Usage
@@ -469,16 +504,16 @@ app; the status chip tells the truth per provider — "rendering it"
 only while it actually runs, "isn't installed" / "isn't running"
 otherwise. The `screen_bar_follow_alcove` toggle and the capsule-width
 fact live under the Alcove provider, where they're meaningful.
-`AlcoveIsland` in JRBarCore owns the pure summary/meter/layout math;
-`AlcoveIslandTests` covers it.
+`NotchIsland` in JRBarCore owns the pure summary/meter/layout math;
+`NotchIslandTests` covers it.
 
 Three Alcove-parity behaviours ride the same window. **Event capsules**
 (`capsuleNotifications`, per-kind switches in `capsuleKinds`): an
 `ask_opened` / `completed` / `failed` / `quota_reset` event morphs the
-island into a wide notice capsule — the kind's glyph and tint (amber
-ask, green done, red failed, the provider's accent for a reset) over a
-"Claude · rename-the-fish" / "needs you" line — for ~2.4 s, then the
-island settles back. `AlcoveEventPolicy` shapes the notice and
+island into a compact notice capsule — the kind's glyph and tint
+(amber ask, green done, red failed, the provider's accent for a reset)
+and one truncating "Claude · rename-the-fish needs you" line — for
+~2.4 s, then the island settles back. `AlcoveEventPolicy` shapes the notice and
 `AlcoveCapsuleQueue` owns the pipeline — one showing, at most one
 waiting (newest wins), a 30 s cooldown per kind+session, a 1.2 s
 minimum gap — all pure and covered by `AlcoveEventsTests`; the toy only
@@ -512,8 +547,8 @@ normalised for the user's scroll-direction setting so it means the same
 flick either way. Reduce Motion swaps the morph for a quiet crossfade;
 a parked island holds no listener and runs no clock.
 
-Blurb: "A notch island: who's working, up in the notch. Alcove or
-Boring Notch can draw it instead."
+Blurb: "Who's working, up in the notch. Alcove or Boring Notch can
+draw it instead."
 
 ## External app toys
 
@@ -537,8 +572,8 @@ marketing words. Examples:
   agents are doing."
 - Confetti blurb: "A burst in the provider's colours when your weekly
   limit resets."
-- Alcove blurb: "JR-Bar already follows Alcove's capsule. This is where
-  you can see it doing that."
+- Notch blurb: "Who's working, up in the notch. Alcove or Boring Notch
+  can draw it instead."
 
 ## Tests
 

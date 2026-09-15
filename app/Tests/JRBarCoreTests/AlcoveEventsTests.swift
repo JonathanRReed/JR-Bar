@@ -266,74 +266,65 @@ struct AlcoveEventsTests {
 
     // MARK: Layout
 
-    @Test("the notice capsule is wider and deeper than idle, still hung from the notch")
+    @Test("the notice capsule is one line wide and one lip deep, still hung from the notch")
     func noticeSize() {
-        let size = AlcoveIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32)
-        #expect(size.width == AlcoveIslandLayout.noticeWidth)
-        #expect(size.height == 32 + AlcoveIslandLayout.noticeLip)
+        let size = NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32)
+        #expect(size.width == 185 + 2 * NotchIslandLayout.noticeShoulder)
+        #expect(size.height == 32 + NotchIslandLayout.noticeLip)
         // A huge slot keeps its shoulders.
-        #expect(AlcoveIslandLayout.noticeSize(slotWidth: 400, notchDepth: 32).width == 424)
-        // Notch-less: a floating pill of the same width.
-        #expect(AlcoveIslandLayout.noticeSize(slotWidth: 0, notchDepth: 0) == CGSize(width: 320, height: 36))
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 400, notchDepth: 32).width == 500)
+        // A tiny slot keeps the shoulder cap too — the capsule never
+        // outgrows notch-plus-wings, it just truncates its line.
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 60, notchDepth: 32).width
+                == 60 + 2 * NotchIslandLayout.noticeShoulder)
+        // Notch-less: a floating one-line pill.
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 0, notchDepth: 0)
+                == CGSize(width: 240, height: 22))
     }
 
     @Test("media adds its fixed strip width to the idle content")
     func idleMediaWidth() {
-        var s = AlcoveIslandSummary()
+        var s = NotchIslandSummary()
         s.working = 2
         s.workingProviders = ["claude", "codex"]
-        let base = AlcoveIsland.idleContentWidth(s)
+        let base = NotchIsland.idleContentWidth(s)
         let media = AlcoveMedia(title: "Papillon", playing: true)
-        #expect(AlcoveIsland.idleContentWidth(s, media: media)
-                == base + AlcoveIsland.mediaSeparatorWidth + AlcoveIsland.mediaContentWidth)
-        #expect(AlcoveIsland.idleContentWidth(s, media: nil) == base)
+        #expect(NotchIsland.idleContentWidth(s, media: media)
+                == base + NotchIsland.mediaSeparatorWidth + NotchIsland.mediaContentWidth)
+        #expect(NotchIsland.idleContentWidth(s, media: nil) == base)
     }
 
-    @Test("the card's media row is the forty points the layout reserves")
-    func expandedMediaHeight() {
-        let without = AlcoveIslandLayout.expandedHeight(notchDepth: 32, rows: 1, meters: 0, overflow: false)
-        let with = AlcoveIslandLayout.expandedHeight(notchDepth: 32, rows: 1, meters: 0,
-                                                     overflow: false, media: true)
-        #expect(with - without == 40)
-    }
-
-    @Test("a live Screen Bar's band raises the drop-down faces; idle tucks into the notch")
+    @Test("a live Screen Bar's band drops the notice face; idle tucks into the notch")
     func ledClearance() {
-        let c = AlcoveIslandLayout.ledBandClearance
+        let c = NotchIslandLayout.ledBandClearance
         // The resting capsule is exactly the notch's depth — the band
         // hangs below it, so no clearance is owed.
-        #expect(AlcoveIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
-                                            contentWidth: 20).height == 32)
-        #expect(AlcoveIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
-                                              ledClearance: c).height
-                == 32 + AlcoveIslandLayout.noticeLip + c)
-        #expect(AlcoveIslandLayout.expandedHeight(notchDepth: 32, rows: 1, meters: 0,
-                                                  overflow: false, ledClearance: c)
-                == 32 + AlcoveIslandLayout.expandedNotchInset + c + 20 + 22 + 12)
+        #expect(NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
+                                           contentWidth: 20).height == 32)
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
+                                             ledClearance: c).height
+                == 32 + NotchIslandLayout.noticeLip + c)
         // No notch, no band — a floating pill never grows.
-        #expect(AlcoveIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 20).height == 24)
-        let notchless: CGFloat = 8 + 20 + 12
-        #expect(AlcoveIslandLayout.expandedHeight(notchDepth: 0, rows: 0, meters: 0,
-                                                  overflow: false, ledClearance: c) == notchless)
+        #expect(NotchIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 20).height == 24)
     }
 
     @Test("the new settings default on and decode tolerantly")
     func settingsDecode() throws {
-        let s = try JSONDecoder().decode(AlcoveSettings.self, from: Data("{}".utf8))
+        let s = try JSONDecoder().decode(NotchSettings.self, from: Data("{}".utf8))
         #expect(s.capsuleNotifications == true)
         #expect(s.mediaEnabled == true)
         #expect(s.capsuleKinds == AlcoveCapsuleKinds())
-        let off = try JSONDecoder().decode(AlcoveSettings.self, from: Data(
+        let off = try JSONDecoder().decode(NotchSettings.self, from: Data(
             #"{"capsuleNotifications": false, "mediaEnabled": false, "capsuleKinds": {"failed": false, "ask": 7}}"#.utf8))
         #expect(off.capsuleNotifications == false)
         #expect(off.mediaEnabled == false)
         #expect(off.capsuleKinds.failed == false)
         #expect(off.capsuleKinds.ask == true, "a mistyped leaf falls back to its default")
         var state = ToysState()
-        state.alcove.capsuleKinds.quotaReset = false
-        state.alcove.capsuleKinds.charging = false
+        state.notch.capsuleKinds.quotaReset = false
+        state.notch.capsuleKinds.charging = false
         let decoded = try JSONDecoder().decode(ToysState.self, from: JSONEncoder().encode(state))
-        #expect(decoded.alcove.capsuleKinds.quotaReset == false)
-        #expect(decoded.alcove.capsuleKinds.charging == false)
+        #expect(decoded.notch.capsuleKinds.quotaReset == false)
+        #expect(decoded.notch.capsuleKinds.charging == false)
     }
 }

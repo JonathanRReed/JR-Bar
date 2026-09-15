@@ -564,7 +564,10 @@ class CreatorMicro2Adapter:
             if isinstance(error, dict):
                 if error.get("code") in {-32601, 404}:
                     continue
-                return Receipt("capability_probe_failed", method)
+                # The firmware's own message, not just the method that
+                # drew it: "Malformed request" is all a first-contact
+                # failure leaves behind.
+                return Receipt("capability_probe_failed", str(error.get("message") or method))
             supported.add(method)
         self._capabilities = DeviceCapability.from_methods(supported)
         return Receipt("capabilities_negotiated", ",".join(sorted(supported)))
@@ -662,7 +665,15 @@ class CreatorMicro2Adapter:
                     self._disconnect_for_retry()
                     return Receipt("malformed_report", "response method does not match request"), None
                 if "error" in response:
-                    return Receipt("rpc_error", str(response["error"])), response
+                    rpc_error = response["error"]
+                    # The firmware's message field when it sent one; the
+                    # whole error object when it did not.
+                    detail = (
+                        str(rpc_error.get("message") or rpc_error)
+                        if isinstance(rpc_error, dict)
+                        else str(rpc_error)
+                    )
+                    return Receipt("rpc_error", detail), response
                 return Receipt("applied"), response
         self.conflict.forget(ident)
         self._disconnect_for_retry()

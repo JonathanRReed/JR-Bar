@@ -96,7 +96,7 @@ final class EventCoordinator {
         // The island turns the events that matter into its transient
         // capsules — its own policy and cooldown decide whether this one
         // shows.
-        toys?.alcove.noteEvent(event)
+        toys?.notch.noteEvent(event)
     }
 
     /// The daemon went away: nothing is escalating any more.

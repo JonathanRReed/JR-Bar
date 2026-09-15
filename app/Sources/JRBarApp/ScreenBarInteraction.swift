@@ -1,10 +1,7 @@
 import AppKit
 import JRBarCore
-import QuartzCore
-import SwiftUI
-import UniformTypeIdentifiers
 
-/// What the Screen Bar's tooltip says: the top-priority session, or the
+/// What the card currently names: the top-priority session, or the
 /// aggregate when there is none.
 struct ScreenBarFocus: Equatable {
     var style: ProviderStyle?
@@ -12,7 +9,11 @@ struct ScreenBarFocus: Equatable {
     var word: String
     /// The session a click opens; nil when nothing should be raised.
     var clickSession: String?
-    /// "Why this light", as a second line.
+    /// The session the header names — kept out of the card's row list
+    /// so it is never listed twice.
+    var focusSession: String? = nil
+    /// "Why this light", as a second line — the reason without its
+    /// motion prefix.
     var explanation: String? = nil
 }
 
@@ -20,23 +21,31 @@ struct ScreenBarFocus: Equatable {
 /// `ignoresMouseEvents` so it never takes focus or blocks the menu bar --
 /// which is also why an `NSTrackingArea` cannot do this job (a tracking area
 /// needs the window to take mouse events, and the band shares its strip of
-/// screen with Alcove's capsule, so eating clicks there is not an option).
-/// Instead an `NSEvent` monitor watches the pointer and hit-tests it against
-/// the band's own rounded rect (the way codenotch does), coalesced to at
-/// most one main-actor wake per `moveInterval` so a fast pointer does not
-/// run the actor at mouse-event rate. Hovering shows a transient glass pill
-/// under the band, clicking pins it open. A press dragged down is the
-/// Alcove-style swipe — it expands the pinned card — and a press dragged
-/// up while pinned collapses it; a click is simply a down+up that never
-/// crossed the threshold, so it resolves on release instead of on down.
+/// screen with the island, so eating clicks there is not an option).
+/// Instead a `moveInterval` poll reads `NSEvent.mouseLocation` and
+/// hit-tests it against the band's own rounded rect — a global
+/// `mouseMoved` monitor would do the same job but every delivery costs a
+/// `TCCAccessRequest` round trip, which was the tccd flood. Hovering
+/// drops the glass notch
+/// card as a peek under the band, clicking pins it open — the card
+/// itself belongs to `NotchCardPresenter`. While the Notch island owns
+/// the notch (`islandOwnsNotch`) the island IS the card: the band's
+/// hover arms nothing and its pin/dismiss route to the toy's
+/// expand/collapse instead. A press dragged down is the swipe — it
+/// expands the pinned card — and a press dragged up while pinned
+/// collapses it; a click is simply a down+up that never crossed the
+/// threshold, so it resolves on release instead of on down. A press
+/// that began ON the island's own window is the island's gesture — its
+/// hosting view owns the tap and the pull — so the band's machine never
+/// arms it (a release there is never an outside-click either).
 @MainActor
 final class ScreenBarInteraction {
     /// Deliberate-intent delay: long enough that a pointer cutting across
     /// the notch never arms a peek, short enough that aiming at one feels
     /// immediate.
     static let hoverDelay: TimeInterval = 0.18
-    /// Pointer moves are needed at ~20 Hz for hover; the raw stream is far
-    /// denser than that.
+    /// The hover poll's cadence — ~20 Hz reads the pointer often enough
+    /// that entry feels instant and costs nothing per tick.
     nonisolated static let moveInterval: TimeInterval = 0.05
     /// The peek is a glance, not a label: it leaves on its own while the
     /// pointer is away…
@@ -52,18 +61,15 @@ final class ScreenBarInteraction {
     /// The hover zones in screen coordinates: the band plus each drawn
     /// wing chip — the drawn capsules, so hovering them is hovering us.
     var hitRects: @MainActor () -> [NSRect]
-    /// The band's rect for anchoring the peek card (nil while hidden).
-    var bandRect: @MainActor () -> NSRect?
     var focus: @MainActor () -> ScreenBarFocus?
-    /// Extra room under the band another surface already claims — the
-    /// docked buddy hangs there, so the peek drops below the pet instead
-    /// of landing on it.
-    var underBandClearance: @MainActor () -> CGFloat = { 0 }
-    /// The frame that clearance comes from — while the peek is up the
-    /// HUD panel is part of its hover corridor, so crossing the buddy
-    /// between band and card never counts as leaving.
+    /// The frame the buddy's HUD clearance comes from — while the card
+    /// is up the HUD panel is part of its hover corridor, so crossing
+    /// the buddy between band and card never counts as leaving.
     var underBandRegion: @MainActor () -> NSRect? = { nil }
-    var onOpen: @MainActor (String) -> Void
+    /// Rects the hit region should also count — the island's frame while
+    /// it is up: the island is the card's other anchor, so a click on it
+    /// must not read as "outside" and dismiss the card it summoned.
+    var extraHitRects: @MainActor () -> [NSRect] = { [] }
     /// Which drawn wing a screen point is over — the dismiss swipe's
     /// target; the band and empty flank room answer nil.
     var wingSideAt: @MainActor (NSPoint) -> ScreenBarWingSide? = { _ in nil }
@@ -88,44 +94,44 @@ final class ScreenBarInteraction {
 
     private var globalMonitors: [Any] = []
     private var localMonitors: [Any] = []
-    /// The monitor callback runs off-actor; a lock and one pending flag keep
-    /// the coalescing there instead of paying a `Task` hop per event.
-    private final class MoveGate: @unchecked Sendable {
-        let lock = NSLock()
-        var pending = false
-    }
-    nonisolated private let moveGate = MoveGate()
+    /// The hover poll — `moveInterval` cadence, replaces the moved
+    /// event tap whose every delivery cost a `TCCAccessRequest`.
+    private var hoverTimer: Timer?
     private var hovering = false
     private var showWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
     private var lifeWork: DispatchWorkItem?
-    private let tooltip = ScreenBarTooltipPanel()
-    /// W12's persisted timers — surfaced so AppDelegate can wire the
-    /// expiry notification into `NotificationBridge`.
-    var timers: ShelfTimerModel { tooltip.model.timers }
-    /// The peek/pinned card's model — surfaced so AppDelegate can wire
-    /// the roster affordance into the Overview window.
-    var tooltipModel: ScreenBarTooltipModel { tooltip.model }
-    private(set) var isTooltipShown = false
-    private var lastFocus: ScreenBarFocus?
-    /// Escape-to-unpin while a pinned card is up: local covers the
-    /// pointer having activated us, global covers every other app.
-    private var pinnedKeyMonitors: [Any] = []
+    /// The shared card — owned by `NotchCardPresenter`, which also keeps
+    /// its anchor, its content and the Esc-to-close watch on a pin.
+    /// Band-only: the glass fallback for when the island is not drawn.
+    let card: NotchCardPresenter
+    /// The Notch island owns the notch while the toy draws it — the
+    /// grown island IS the card then, so hover arms no glass peek and
+    /// pin/dismiss route to the toy instead of the panel.
+    var islandOwnsNotch: @MainActor () -> Bool = { false }
+    /// The grown island card is up — the click/swipe state machine's
+    /// "pinned" answer while the island owns the notch.
+    var islandExpanded: @MainActor () -> Bool = { false }
+    /// The deliberate expand/collapse the band's gestures mean while
+    /// the island owns the notch.
+    var onIslandExpand: @MainActor () -> Void = {}
+    var onIslandCollapse: @MainActor () -> Void = {}
 
-    init(hitRects: @escaping @MainActor () -> [NSRect],
-         bandRect: @escaping @MainActor () -> NSRect?,
-         focus: @escaping @MainActor () -> ScreenBarFocus?,
-         onOpen: @escaping @MainActor (String) -> Void) {
+    /// The "is the card pinned" read — the glass panel's pin normally,
+    /// the grown island's hold while it owns the notch.
+    private func cardPinned() -> Bool {
+        islandOwnsNotch() ? islandExpanded() : card.isPinned
+    }
+
+    private var isTooltipShown: Bool { card.isShown }
+    private var lastFocus: ScreenBarFocus?
+
+    init(card: NotchCardPresenter,
+         hitRects: @escaping @MainActor () -> [NSRect],
+         focus: @escaping @MainActor () -> ScreenBarFocus?) {
+        self.card = card
         self.hitRects = hitRects
-        self.bandRect = bandRect
         self.focus = focus
-        self.onOpen = onOpen
-        tooltip.model.onOpenSession = { [weak self] in
-            guard let self, let session = self.tooltip.model.focus.clickSession else { return }
-            self.unpin()
-            self.onOpen(session)
-        }
-        tooltip.model.onClose = { [weak self] in self?.unpin() }
     }
 
     func start() {
@@ -133,112 +139,129 @@ final class ScreenBarInteraction {
         // Global: events bound for other apps (the band is click-through, so
         // that is every pointer event over it while we are not active).
         // Local: the same events when this app happens to be active.
-        if let moved = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
-            self?.schedulePointerMoved()
-        } { globalMonitors.append(moved) }
-        if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+        // Hover is a poll, not an event tap: a global `mouseMoved` monitor
+        // delivers ~125 events a second and every delivery costs a
+        // `TCCAccessRequest` round trip — that was the tccd flood. Polling
+        // `NSEvent.mouseLocation` at `moveInterval` hits the same code
+        // path for free, and `pointerMoved` reads the live location
+        // rather than an event, so nothing is lost.
+        let timer = Timer(timeInterval: Self.moveInterval, repeats: true,
+                          block: { [weak self] _ in
+            MainActor.assumeIsolated { self?.pointerMoved() }
+        })
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+        if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
-            Task { @MainActor [weak self] in self?.pointerDown(at: point) }
-        } { globalMonitors.append(down) }
-        if let drag = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] _ in
+            let time = event.timestamp
+            Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time) }
+        }) { globalMonitors.append(down) }
+        if let drag = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
-            Task { @MainActor [weak self] in self?.pointerDragged(to: point) }
-        } { globalMonitors.append(drag) }
-        if let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.pointerReleased() }
-        } { globalMonitors.append(up) }
-        if let moved = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
-            self?.schedulePointerMoved()
-            return event
-        } { localMonitors.append(moved) }
-        if let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            let time = event.timestamp
+            Task { @MainActor [weak self] in self?.pointerDragged(to: point, at: time) }
+        }) { globalMonitors.append(drag) }
+        if let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp], handler: { [weak self] event in
+            let time = event.timestamp
+            Task { @MainActor [weak self] in self?.pointerReleased(at: time) }
+        }) { globalMonitors.append(up) }
+        if let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
-            Task { @MainActor [weak self] in self?.pointerDown(at: point) }
+            let time = event.timestamp
+            Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time) }
             return event
-        } { localMonitors.append(down) }
-        if let drag = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
+        }) { localMonitors.append(down) }
+        if let drag = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
-            Task { @MainActor [weak self] in self?.pointerDragged(to: point) }
+            let time = event.timestamp
+            Task { @MainActor [weak self] in self?.pointerDragged(to: point, at: time) }
             return event
-        } { localMonitors.append(drag) }
-        if let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-            Task { @MainActor [weak self] in self?.pointerReleased() }
+        }) { localMonitors.append(drag) }
+        if let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp], handler: { [weak self] event in
+            let time = event.timestamp
+            Task { @MainActor [weak self] in self?.pointerReleased(at: time) }
             return event
-        } { localMonitors.append(up) }
+        }) { localMonitors.append(up) }
         // Trackpad swipes arrive as scrollWheel, never as drags — the
         // same stream the island's hosting view reads.
-        if let scroll = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+        if let scroll = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] event in
             Task { @MainActor [weak self] in self?.pointerScrolled(event) }
-        } { globalMonitors.append(scroll) }
-        if let scroll = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+        }) { globalMonitors.append(scroll) }
+        if let scroll = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] event in
             Task { @MainActor [weak self] in self?.pointerScrolled(event) }
             return event
-        } { localMonitors.append(scroll) }
+        }) { localMonitors.append(scroll) }
     }
 
     func stop() {
         for monitor in globalMonitors + localMonitors { NSEvent.removeMonitor(monitor) }
         globalMonitors = []
         localMonitors = []
+        hoverTimer?.invalidate()
+        hoverTimer = nil
         hovering = false
         swipeStart = nil
         swipeFired = false
+        pressOnIsland = false
+        dragFlick = NotchPullGesture()
         scrollLive = false
         scrollFired = false
         hideTooltip()
+        // A band going away takes a grown island with it — the card is
+        // the band's guest, it cannot outlive its host.
+        onIslandCollapse()
     }
 
-    /// The band or a wing rect moved. Re-anchor a live peek under the
-    /// band's new rect instead of hiding it — killing it while the
-    /// pointer sat on the band just re-armed the hover, and a wing slot
-    /// coming and going on state churn turned that into an open/close
-    /// flap. A pinned card re-anchors the same way; its buttons ride along.
+    /// The band or a wing rect moved. The presenter re-anchors a live
+    /// card under its new anchor instead of hiding it — killing it
+    /// while the pointer sat on the band just re-armed the hover, and a
+    /// wing slot coming and going on state churn turned that into an
+    /// open/close flap. A pinned card re-anchors the same way.
     func geometryChanged() {
-        if isTooltipShown, let rect = bandRect() ?? hitRects().first,
-           let current = focus() ?? lastFocus {
-            showTooltip(current)
-        }
+        // A live card re-anchors under the moved band — unless the
+        // island took the notch meanwhile: the island IS the card then,
+        // and re-presenting the glass one would double the surface.
+        if islandOwnsNotch() { card.hide() } else { card.geometryChanged() }
         hovering = false
         pointerMoved()
     }
 
     // MARK: Pointer
 
-    /// At most one main-actor hop per `moveInterval` however fast the
-    /// monitor stream is. `pointerMoved` reads `NSEvent.mouseLocation`
-    /// rather than the event, so a dropped intermediate event is a dropped
-    /// stale sample, not a dropped state.
-    nonisolated private func schedulePointerMoved() {
-        moveGate.lock.lock()
-        let already = moveGate.pending
-        moveGate.pending = true
-        moveGate.lock.unlock()
-        guard !already else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.moveInterval) { [weak self] in
-            guard let self else { return }
-            self.moveGate.lock.lock()
-            self.moveGate.pending = false
-            self.moveGate.lock.unlock()
-            MainActor.assumeIsolated { self.pointerMoved() }
-        }
-    }
-
-    /// Inside = the union of the band, the drawn wing chips, and — once it
-    /// is up — the peek card itself. The slack around each chip is a
-    /// couple of points so the edge is not a pixel hunt; the card gets a
-    /// point too, so brushing its frame does not count as leaving.
+    /// Inside = the union of the band, the drawn wing chips, the island
+    /// while it is up, and — once it is up — the card itself. The slack
+    /// around each chip is a couple of points so the edge is not a pixel
+    /// hunt; the card gets a point too, so brushing its frame does not
+    /// count as leaving.
     private func pointerInHitRegion() -> Bool {
         let point = NSEvent.mouseLocation
         if hitRects().contains(where: { $0.insetBy(dx: -2, dy: -3).contains(point) }) { return true }
+        if extraHitRects().contains(where: { $0.insetBy(dx: -1, dy: -1).contains(point) }) { return true }
         guard isTooltipShown else { return false }
-        if tooltip.frame.insetBy(dx: -1, dy: -1).contains(point) { return true }
+        if let frame = card.cardFrame, frame.insetBy(dx: -1, dy: -1).contains(point) { return true }
         // The buddy's HUD frame sits in the corridor between band and
         // card — without it, crossing the pet kills and re-arms the peek.
         if let region = underBandRegion(), region.insetBy(dx: -1, dy: -1).contains(point) { return true }
         return false
     }
 
+    /// The island's frame arrives through `extraHitRects` — the toy
+    /// publishes exactly its own desired rect — so a point on it is a
+    /// press the island's window answers itself: tap to toggle, pull to
+    /// grow or fold. `contains` is exact (no slack inset) — the window
+    /// IS the shape, and a point beside it is still the band's.
+    private func onIsland(_ point: NSPoint) -> Bool {
+        extraHitRects().contains { $0.contains(point) }
+    }
+
     private func pointerMoved() {
+        // Ownership can flip under a still pointer — the island coming
+        // on while a peek or pinned glass card is up, or the utility
+        // switching off under one. Every move stream tick re-checks the
+        // card's own surface answer, so a stale card retires on the
+        // next pointer event instead of doubling the island — or
+        // lingering as the one thing a switched-off utility drew.
+        if isTooltipShown, card.surface() != .glass { hideTooltip() }
         let inside = pointerInHitRegion()
         guard inside != hovering else {
             if inside, isTooltipShown, let current = focus(), current != lastFocus { showTooltip(current) }
@@ -250,7 +273,11 @@ final class ScreenBarInteraction {
         hideWork?.cancel()
         hideWork = nil
         if inside {
-            if isTooltipShown {
+            if islandOwnsNotch() {
+                // The island is the peek — its own hover grows it; the
+                // band arms nothing. A leftover glass card goes away.
+                if isTooltipShown { hideTooltip() }
+            } else if isTooltipShown {
                 // Back inside before the grace fired — the peek never went
                 // anywhere; refresh it if the focus moved on.
                 if let current = focus(), current != lastFocus { showTooltip(current) }
@@ -264,7 +291,7 @@ final class ScreenBarInteraction {
                 showWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
             }
-        } else if isTooltipShown && !tooltip.isPinned {
+        } else if isTooltipShown && !card.isPinned {
             let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
             hideWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeGrace, execute: work)
@@ -296,6 +323,17 @@ final class ScreenBarInteraction {
         return .none
     }
 
+    /// The release-speed half of the swipe truth table — a flick is a
+    /// swipe that lifted short of the travel threshold: a fast pull
+    /// never needs the full distance. `velocityY` is screen-space,
+    /// upward positive; slow releases answer `.none` and stay clicks.
+    nonisolated static func flickOutcome(pinnedAtDown: Bool, velocityY: CGFloat,
+                                         flick: CGFloat = NotchPullGesture.flickVelocity) -> SwipeOutcome {
+        guard abs(velocityY) >= flick else { return .none }
+        return swipeOutcome(pinnedAtDown: pinnedAtDown,
+                            deltaY: velocityY > 0 ? swipeThreshold : -swipeThreshold)
+    }
+
     /// Where a press or a two-finger gesture began: a drawn wing, or the
     /// band under everything else in the hit region.
     enum SwipeRegion: Equatable { case wing(ScreenBarWingSide), band }
@@ -320,30 +358,51 @@ final class ScreenBarInteraction {
     /// Where the press started and what surface it started on, whether
     /// the card was pinned then, and whether the drag already fired its
     /// outcome — one pending press at a time; a down outside the region
-    /// never arms one.
+    /// never arms one, and a down on the island's own window is the
+    /// island's gesture, never the band's.
     private var swipeStart: NSPoint?
     private var swipeRegion: SwipeRegion = .band
     private var swipePinnedAtDown = false
     private var swipeFired = false
+    /// A press that began on the island's frame: the island's hosting
+    /// view owns the tap and the pull — here the press only proves
+    /// "inside", so it can never arm the band's swipe or fire the
+    /// outside-click dismissal.
+    private var pressOnIsland = false
+    /// The drag's flick tracker — travel commits mid-drag, release
+    /// speed is the other way a swipe is a swipe.
+    private var dragFlick = NotchPullGesture()
 
-    private func pointerDown(at point: NSPoint) {
+    private func pointerDown(at point: NSPoint, time: TimeInterval) {
+        pressOnIsland = false
+        if onIsland(point) {
+            // The island's window answers its own presses — tap to
+            // toggle, pull to grow or fold. The press is inside, so it
+            // is never the outside-click dismissal either.
+            pressOnIsland = true
+            swipeStart = nil
+            return
+        }
         if pointerInHitRegion() {
             // Inside: the press might become a swipe — the click resolves
             // on release instead.
             swipeStart = point
             swipeRegion = wingSideAt(point).map { .wing($0) } ?? .band
-            swipePinnedAtDown = tooltip.isPinned
+            swipePinnedAtDown = cardPinned()
             swipeFired = false
+            dragFlick = NotchPullGesture()
+            dragFlick.move(translation: 0, at: time)
         } else {
             swipeStart = nil
             // Outside: only the dismiss-a-pinned-card case, and it wants
             // the press, not the release.
-            if tooltip.isPinned { unpin() }
+            if case .unpin = Self.clickOutcome(pinned: cardPinned(), inside: false) { unpin() }
         }
     }
 
-    private func pointerDragged(to point: NSPoint) {
+    private func pointerDragged(to point: NSPoint, at time: TimeInterval) {
         guard let start = swipeStart, !swipeFired else { return }
+        dragFlick.move(translation: point.y - start.y, at: time)
         // The gesture's axis wins: a sideways drag on a wing dismisses
         // it, a sideways drag on the band summons — the vertical
         // expand/collapse only fires when the pull is honestly vertical.
@@ -381,24 +440,43 @@ final class ScreenBarInteraction {
         }
     }
 
-    private func pointerReleased() {
+    private func pointerReleased(at time: TimeInterval) {
         let wasSwipe = swipeFired
+        let armed = swipeStart != nil
+        let pinnedAtDown = swipePinnedAtDown
+        let flick = dragFlick.flickSpeed(at: time)
         // A wing pull that never committed springs the ear home.
         if case .wing(let side) = swipeRegion { onWingPullEnd(side) }
         swipeStart = nil
         swipeFired = false
-        guard !wasSwipe else { return }
+        let onIsland = pressOnIsland
+        pressOnIsland = false
+        // A release resolves only a press that armed here — a swipe
+        // that already fired, and an island press (the island's window
+        // owns its own verdicts), both skip.
+        guard !wasSwipe, !onIsland, armed else { return }
+        // The flick: a fast pull released short of the travel
+        // threshold is still the swipe it felt like.
+        switch Self.flickOutcome(pinnedAtDown: pinnedAtDown, velocityY: flick) {
+        case .expand: pinCard(); return
+        case .collapse: unpin(); return
+        case .none: break
+        }
         // A press that never crossed the threshold is the click it always
         // was — pinned cards route inside clicks to their buttons, so
         // only the pin path is left to resolve here.
-        if !tooltip.isPinned, pointerInHitRegion() { pinCard() }
+        if case .pin = Self.clickOutcome(pinned: cardPinned(), inside: pointerInHitRegion()) {
+            pinCard()
+        }
     }
 
     /// The pull's early answer: the peek slides out before the commit
     /// lands — a gesture with no visible response until the threshold
-    /// reads dead.
+    /// reads dead. While the island owns the notch the pull's commit
+    /// grows the island instead, so no glass slides out early.
     private func showPullPeek() {
-        guard !isTooltipShown, let focus = focus() ?? lastFocus else { return }
+        guard !isTooltipShown, !islandOwnsNotch(),
+              let focus = focus() ?? lastFocus else { return }
         showTooltip(focus)
     }
 
@@ -420,9 +498,13 @@ final class ScreenBarInteraction {
         // gesture's momentum tail arrive with `phase` empty.
         guard event.hasPreciseScrollingDeltas, event.phase != [] else { return }
         if event.phase.contains(.began) {
-            scrollLive = pointerInHitRegion()
+            // A two-finger gesture that began on the island's window is
+            // the island's own — its hosting view reads the same scroll
+            // stream, so both machines counting one flick would double
+            // every swipe.
+            scrollLive = pointerInHitRegion() && !onIsland(NSEvent.mouseLocation)
             scrollRegion = wingSideAt(NSEvent.mouseLocation).map { .wing($0) } ?? .band
-            scrollPinnedAtStart = tooltip.isPinned
+            scrollPinnedAtStart = cardPinned()
             scrollFired = false
             scrollAccumY = 0
             scrollAccumX = 0
@@ -531,54 +613,39 @@ final class ScreenBarInteraction {
 
     /// Deliberate focus entry: a click or swipe pins the peek open as an
     /// interactive card — Open session lives on the card, so a stray
-    /// band click never yanks a terminal forward.
+    /// band click never yanks a terminal forward. While the island owns
+    /// the notch the same click grows the island, deliberately.
     private func pinCard() {
+        if islandOwnsNotch() {
+            showWork?.cancel(); showWork = nil
+            hideWork?.cancel(); hideWork = nil
+            lifeWork?.cancel(); lifeWork = nil
+            onIslandExpand()
+            return
+        }
         guard let focus = focus() ?? lastFocus else { return }
         lastFocus = focus
         showWork?.cancel(); showWork = nil
         hideWork?.cancel(); hideWork = nil
         lifeWork?.cancel(); lifeWork = nil
-        if !isTooltipShown { showTooltip(focus) }
-        setPinned(true)
-    }
-
-    private func setPinned(_ pinned: Bool) {
-        tooltip.setPinned(pinned)
-        for monitor in pinnedKeyMonitors { NSEvent.removeMonitor(monitor) }
-        pinnedKeyMonitors = []
-        guard pinned else { return }
-        // The card's layout is taller than the peek it replaces — the
-        // panel refits now rather than drawing clipped until some later
-        // focus churn happens to re-present it.
-        if isTooltipShown, let current = focus() ?? lastFocus { showTooltip(current) }
-        // Escape unpins: the card never becomes key (nonactivating), so
-        // watch for it — local when we are active, global when we are not.
-        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            if event.keyCode == 53 {
-                Task { @MainActor [weak self] in self?.unpin() }
-                return nil
-            }
-            return event
-        }) { pinnedKeyMonitors.append(local) }
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            if event.keyCode == 53 {
-                Task { @MainActor [weak self] in self?.unpin() }
-            }
-        }) { pinnedKeyMonitors.append(global) }
+        card.pin()
     }
 
     private func unpin() {
-        setPinned(false)
+        if islandOwnsNotch() {
+            onIslandCollapse()
+            return
+        }
         hideTooltip()
     }
 
-    // MARK: Tooltip
+    // MARK: Card
 
     private func showTooltip(_ focus: ScreenBarFocus) {
-        guard let rect = bandRect() ?? hitRects().first else { return }
+        // The island IS the peek while it owns the notch — no glass.
+        guard !islandOwnsNotch() else { return }
         lastFocus = focus
-        tooltip.present(focus, under: rect, clearance: underBandClearance())
-        isTooltipShown = true
+        card.peek()
         lifeWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.tooltipLifeExpired() }
@@ -592,7 +659,7 @@ final class ScreenBarInteraction {
     /// A pinned card answers to its buttons, not the clock.
     private func tooltipLifeExpired() {
         lifeWork = nil
-        guard isTooltipShown, !tooltip.isPinned else { return }
+        guard isTooltipShown, !card.isPinned else { return }
         if pointerInHitRegion() {
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated { self?.tooltipLifeExpired() }
@@ -611,512 +678,6 @@ final class ScreenBarInteraction {
         showWork = nil
         hideWork = nil
         lifeWork = nil
-        if tooltip.isPinned { setPinned(false) }
-        guard isTooltipShown else { return }
-        isTooltipShown = false
-        tooltip.dismiss()
-    }
-}
-
-/// The pill under the band. Click-through and never key. Quiet HUD
-/// material, not liquid glass — it is a glance, not a surface.
-@MainActor
-final class ScreenBarTooltipPanel: NSPanel {
-    private let hosting: NSHostingView<ScreenBarTooltipView>
-    private let backdrop: NSView
-
-    init() {
-        model = ScreenBarTooltipModel()
-        hosting = NSHostingView(rootView: ScreenBarTooltipView(model: model))
-        hosting.sizingOptions = [.intrinsicContentSize]
-        let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 13
-        effect.layer?.masksToBounds = true
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-        ])
-        backdrop = effect
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 120, height: 26), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        ignoresMouseEvents = true
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        isExcludedFromWindowsMenu = true
-        animationBehavior = .none
-        isMovable = false
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        alphaValue = 0
-    }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-
-    /// The W10 pinned state: the card holds open and takes mouse events
-    /// so its Open/close buttons work — still `.nonactivatingPanel`,
-    /// still never key, so nothing steals focus.
-    private(set) var isPinned = false
-    private(set) var model: ScreenBarTooltipModel
-
-    func setPinned(_ pinned: Bool) {
-        isPinned = pinned
-        ignoresMouseEvents = !pinned
-        model.pinned = pinned
-    }
-
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
-
-    func present(_ focus: ScreenBarFocus, under band: NSRect, clearance: CGFloat = 0) {
-        model.focus = focus
-        hosting.rootView = ScreenBarTooltipView(model: model)
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
-        let height = max(26, size.height)
-        let width = max(60, size.width)
-        backdrop.layer?.cornerRadius = height / 2
-        let origin = NSPoint(x: (band.midX - width / 2).rounded(),
-                             y: (band.minY - 7 - height - clearance).rounded())
-        let frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
-        let wasVisible = isVisible && alphaValue > 0.01
-        setFrame(frame, display: true)
-        orderFrontRegardless()
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if !wasVisible, !reduced {
-            setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 4))
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? 0.1 : 0.18
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
-            animator().alphaValue = 1
-            if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
-        }
-    }
-
-    func dismiss() {
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = reduced ? 0.06 : 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.alphaValue < 0.01 else { return }
-                self.orderOut(nil)
-            }
-        })
-    }
-}
-
-@MainActor
-@Observable
-final class ScreenBarTooltipModel {
-    var focus = ScreenBarFocus(style: nil, label: "JR-Bar", word: "Idle", clickSession: nil)
-    /// Pinned: the card holds open and its controls take clicks (W10's
-    /// deliberate-focus state — the band itself stays click-through).
-    var pinned = false {
-        didSet {
-            if pinned {
-                utility.start()
-                tray.revalidate()
-            } else {
-                utility.stop()
-                calendar.stop()
-            }
-        }
-    }
-    /// W11's media/device utility facts — monitored only while pinned.
-    let utility = ShelfUtilityModel()
-    /// W12's file tray — paths persist in defaults; revalidated on pin.
-    let tray = ShelfTrayModel()
-    /// W12's timers — tick and persist regardless of pin state so a
-    /// deadline set now still fires after the card goes away.
-    let timers = ShelfTimerModel()
-    /// W12's calendar glance — reads only while pinned (privacy: no
-    /// background polling of the owner's schedule).
-    let calendar = ShelfCalendarModel()
-    var onOpenSession: (() -> Void)?
-    var onClose: (() -> Void)?
-    /// The pinned card's roster affordance — the Overview window.
-    var onOpenOverview: (() -> Void)?
-}
-
-struct ScreenBarTooltipView: View {
-    @Bindable var model: ScreenBarTooltipModel
-
-    var body: some View {
-        if model.pinned {
-            // The pinned card is a vertical surface: session row on
-            // top, W11/W12 utility rows below.
-            VStack(alignment: .leading, spacing: 6) {
-                sessionRow
-                ShelfMediaRow(utility: model.utility)
-                ShelfBatteryRow(power: model.utility.power)
-                ShelfTrayRow(tray: model.tray)
-                ShelfTimersRow(timers: model.timers)
-                ShelfCalendarRow(calendar: model.calendar)
-                Button { model.onOpenOverview?() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "rectangle.grid.2x2")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18, height: 18)
-                        Text("Agent Overview")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 8)
-                        Text("⌘O")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Every session as a roster (⌘O)")
-            }
-            .padding(.leading, 7)
-            .padding(.trailing, 10)
-            .padding(.vertical, 5)
-            .fixedSize()
-            .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
-                ShelfTrayDrop.urls(from: providers) { urls in
-                    model.tray.add(urls)
-                }
-                return true
-            }
-        } else {
-            sessionRow
-                .padding(.leading, 7)
-                .padding(.trailing, 10)
-                .padding(.vertical, 5)
-                .fixedSize()
-        }
-    }
-
-    private var sessionRow: some View {
-        HStack(alignment: .center, spacing: 6) {
-            if let style = model.focus.style {
-                ProviderTile(style: style, size: 16)
-            } else {
-                Image(nsImage: StatusItemController.glyph())
-                    .renderingMode(.template)
-                    .foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(model.focus.label)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                    Text("·").foregroundStyle(.tertiary)
-                    Text(model.focus.word)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if let explanation = model.focus.explanation {
-                    Text(explanation)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
-            if model.pinned {
-                // The deliberate-focus controls: Open raises the
-                // session's terminal; ✕ lets the card go.
-                HStack(spacing: 4) {
-                    if model.focus.clickSession != nil {
-                        Button("Open") { model.onOpenSession?() }
-                            .controlSize(.mini)
-                    }
-                    Button { model.onClose?() } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .controlSize(.mini)
-                    .accessibilityLabel("Close pinned card")
-                }
-                .buttonStyle(.borderless)
-            }
-        }
-    }
-}
-
-/// The pinned card's media row (W11/AL04): artwork, source identity,
-/// track line, transport. Drawn only while a certified source reports
-/// media — `nil` media means no row, not a dead control.
-private struct ShelfMediaRow: View {
-    let utility: ShelfUtilityModel
-
-    var body: some View {
-        if let media = utility.media {
-            HStack(spacing: 6) {
-                Group {
-                    if let artwork = utility.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(media.displayLine)
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                    Text(utility.sourceName ?? "Now playing")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                transportButton("backward.fill") { utility.send(.previousTrack) }
-                transportButton(media.playing ? "pause.fill" : "play.fill") {
-                    utility.send(.togglePlayPause)
-                }
-                transportButton("forward.fill") { utility.send(.nextTrack) }
-            }
-            .accessibilityElement(children: .combine)
-        }
-    }
-
-    private func transportButton(_ symbol: String,
-                                 action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 18, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// The pinned card's battery row (W11/AL05): the internal battery's
-/// observed state, hidden entirely on machines without one — never an
-/// invented charge. Volume/brightness controls are intentionally not
-/// here: macOS owns those HUDs.
-private struct ShelfBatteryRow: View {
-    let power: AlcovePowerState
-
-    var body: some View {
-        if power.hasBattery {
-            HStack(spacing: 6) {
-                Image(systemName: power.charging ? "battery.100.bolt" : "battery.50")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
-                Text(label)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    private var label: String {
-        var parts: [String] = []
-        if let percent = power.percent { parts.append("\(percent)%") }
-        if power.fullyCharged {
-            parts.append("Charged")
-        } else if power.charging {
-            parts.append("Charging")
-        } else {
-            parts.append(power.onAC ? "On AC" : "On battery")
-        }
-        return parts.isEmpty ? "Battery" : parts.joined(separator: " · ")
-    }
-}
-
-/// The pinned card's tray strip (W12): dropped files as chips. A moved
-/// or deleted file renders dimmed and disabled — the strip says
-/// missing, it doesn't silently forget (T49). Reveal/share only ever
-/// act on a file that re-resolved this pass.
-private struct ShelfTrayRow: View {
-    let tray: ShelfTrayModel
-
-    var body: some View {
-        if !tray.entries.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(tray.entries) { entry in
-                        trayChip(entry)
-                    }
-                }
-            }
-            .frame(maxWidth: 280)
-        }
-    }
-
-    private func trayChip(_ entry: ShelfTrayModel.Entry) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: entry.missing ? "doc.questionmark" : "doc")
-                .font(.system(size: 9))
-            Text(entry.missing ? "\(entry.name) (moved)" : entry.name)
-                .font(.system(size: 10))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(entry.missing
-                    ? AnyShapeStyle(Color.primary.opacity(0.05))
-                    : AnyShapeStyle(.quaternary),
-                    in: Capsule())
-        .foregroundStyle(entry.missing ? .tertiary : .secondary)
-        .contextMenu {
-            if !entry.missing {
-                Button("Reveal in Finder") { tray.reveal(entry) }
-                shareMenu(for: entry)
-            }
-            Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
-        }
-        .onDrag {
-            tray.provider(for: entry) ?? NSItemProvider()
-        }
-        .help(entry.missing
-              ? "Missing — the file moved or was deleted."
-              : entry.path)
-    }
-
-    /// Native share targets for the file; a canceled sheet delivers
-    /// nothing and claims nothing (T50).
-    private func shareMenu(for entry: ShelfTrayModel.Entry) -> some View {
-        Menu("Share…") {
-            ForEach(tray.sharingServices(for: entry), id: \.title) { service in
-                Button(service.title) {
-                    service.perform(withItems: [entry.url])
-                }
-            }
-        }
-    }
-}
-
-/// The pinned card's timer strip (W12): live countdowns plus a small
-/// add menu. Timers persist across sleep/restart on absolute deadlines;
-/// an overdue one shows "Done" once — the notification fires through
-/// the model's `onFire`, not here.
-private struct ShelfTimersRow: View {
-    let timers: ShelfTimerModel
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(timers.entries) { entry in
-                timerChip(entry)
-            }
-            Menu {
-                ForEach(Self.presets, id: \.seconds) { preset in
-                    Button(preset.name) {
-                        timers.add(label: preset.name, duration: preset.seconds)
-                    }
-                }
-            } label: {
-                Image(systemName: "timer")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 16, height: 16)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 20)
-            .help("Add a timer")
-        }
-    }
-
-    /// (name, seconds) presets — bounded by `maxDuration` regardless.
-    private static let presets: [(name: String, seconds: TimeInterval)] = [
-        ("1 minute", 60), ("5 minutes", 300), ("15 minutes", 900),
-        ("30 minutes", 1800), ("1 hour", 3600),
-    ]
-
-    private func timerChip(_ entry: ShelfTimerModel.Entry) -> some View {
-        let overdue = entry.overdue
-        return HStack(spacing: 3) {
-            Image(systemName: overdue ? "checkmark" : "timer")
-                .font(.system(size: 9))
-            Text(overdue ? "Done" : remainingText(entry))
-                .font(.system(size: 10, design: .monospaced))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(.quaternary, in: Capsule())
-        .foregroundStyle(overdue
-            ? AnyShapeStyle(.secondary)
-            : AnyShapeStyle(Color.primary.opacity(0.75)))
-        .contextMenu {
-            Button("Remove", role: .destructive) { timers.remove(entry) }
-        }
-        .help(overdue ? "\(entry.label) — done." : "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened))")
-    }
-
-    /// `m:ss` or `h:mm:ss` remaining — the chip counts down from the
-    /// absolute deadline, so a clock change shows up here too.
-    private func remainingText(_ entry: ShelfTimerModel.Entry) -> String {
-        let seconds = Int(entry.remaining.rounded(.up))
-        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
-                     : String(format: "%d:%02d", m, s)
-    }
-}
-
-/// The pinned card's calendar glance (W12): the next event, hidden
-/// until the owner grants EventKit access — no permission, no row
-/// (T52). Join only ever opens an http(s) link.
-private struct ShelfCalendarRow: View {
-    let calendar: ShelfCalendarModel
-
-    var body: some View {
-        switch calendar.state {
-        case .hidden:
-            EmptyView()
-        case .needsPermission:
-            Button {
-                calendar.authorizeAndLoad()
-            } label: {
-                Label("Show calendar", systemImage: "calendar")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
-        case .idle:
-            Label("Nothing on the calendar today", systemImage: "calendar")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-        case .event(let event):
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
-                Text(event.start.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Text(event.title)
-                    .font(.system(size: 10))
-                    .lineLimit(1)
-                if event.url != nil {
-                    Button("Join") { calendar.join(event) }
-                        .controlSize(.mini)
-                }
-            }
-            .contextMenu {
-                Button("Open in Calendar") { calendar.openInCalendar(event) }
-            }
-        }
+        card.hide()
     }
 }

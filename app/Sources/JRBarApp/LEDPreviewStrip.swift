@@ -52,6 +52,21 @@ struct LEDStripPreview: View {
 
     private var sampler: LEDSSampler? { LEDPreviewSamplers.sampler(for: program, ledCount: ledCount) }
 
+    /// The (dotSize, spacing) a dots-style strip needs to show `ledCount`
+    /// LEDs inside `width` points: the asked sizes when the row already
+    /// fits, shrunk in proportion when it would overflow — a wide
+    /// device's preview keeps every LED on screen instead of clipping
+    /// its ends or spilling over the neighbour column.
+    static func dotMetrics(ledCount: Int, width: CGFloat, dotSize: CGFloat, spacing: CGFloat, padded: Bool) -> (dotSize: CGFloat, spacing: CGFloat) {
+        let n = max(1, CGFloat(ledCount))
+        guard dotSize > 0, width > 0 else { return (dotSize, spacing) }
+        // The dots card pads each side by dotSize × 0.9 when it shows.
+        let units = n + (n - 1) * (spacing / dotSize) + (padded ? 1.8 : 0)
+        let fitted = width / units
+        guard fitted < dotSize else { return (dotSize, spacing) }
+        return (max(2, fitted), max(1, spacing * fitted / dotSize))
+    }
+
     var body: some View {
         let sampler = self.sampler
         let still = paused || reduceMotion || (sampler?.isStatic ?? true)

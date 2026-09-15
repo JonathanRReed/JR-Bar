@@ -556,6 +556,29 @@ public final class CoreModel {
         return try await send("provider_consent", args: args)
     }
 
+    /// `provider_action` with `action:"resign_in"`: the per-provider
+    /// "Re-sign in" / "Update provider" click. The daemon re-pulls
+    /// whatever sign-in the provider's own tooling holds and forces a
+    /// refresh, even when no staged action label is on the card. The
+    /// reply's `message` is the daemon's honest account — including the
+    /// provider's own remedy when only its CLI/app can sign in — and
+    /// `signInURL` is set when the remedy is a page to open.
+    public func resignInProvider(_ provider: String, instance: String? = nil) async throws -> ProviderResignInResult {
+        var args: [String: JSONValue] = [
+            "provider": .string(provider),
+            "action": .string("resign_in"),
+        ]
+        if let instance { args["instance"] = .string(instance) }
+        let reply = try await send("provider_action", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "re-sign-in failed")
+        }
+        return ProviderResignInResult(
+            message: reply.result?["message"]?.stringValue ?? "",
+            signInURL: reply.result?["sign_in_url"]?.stringValue
+        )
+    }
+
     /// `provider_action` runs the staged flow behind the provider's
     /// current action label (clipboard import, reconnect, repair). The
     /// reply carries the message the daemon surfaced; `unsupported`
@@ -737,6 +760,10 @@ public final class CoreModel {
     @discardableResult
     public func deckApproveDevice() async throws -> CoreReply { try await send("deck_approve_device") }
 
+    /// `deck_disable`: writes `creator_micro_enabled = false` — the output
+    /// service is torn down; the approved serial survives the off switch.
+    public func deckDisable() async throws -> CoreReply { try await send("deck_disable") }
+
     /// `deck_check_input {enabled}`: inputs are shown, actions are paused.
     @discardableResult
     public func deckCheckInput(enabled: Bool) async throws -> CoreReply {
@@ -744,13 +771,16 @@ public final class CoreModel {
     }
 
     /// `deck_set_settings {enabled, session_mode, analog_enabled, bindings,
-    /// layer_map, scopes}` (any subset). `bindings` replaces every auxiliary
-    /// binding; `layer_map` maps hardware layers to board scopes; `scopes`
-    /// adds provider scopes past the mapped ones.
+    /// layer_map, layer_owners, scopes}` (any subset). `bindings` replaces
+    /// every auxiliary binding; `layer_map` maps hardware layers to board
+    /// scopes; `layer_owners` hands hardware layers past layer 1 to an
+    /// external writer (a provider id or "everything"); `scopes` adds
+    /// provider scopes past the mapped ones.
     @discardableResult
     public func deckSetSettings(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil,
                                 bindings: [(index: Int, action: String?)]? = nil,
                                 layerMap: [(layer: Int, scope: String)]? = nil,
+                                layerOwners: [(layer: Int, owner: String)]? = nil,
                                 scopes: [String]? = nil) async throws -> CoreReply {
         var args: [String: JSONValue] = [:]
         if let enabled { args["enabled"] = .bool(enabled) }
@@ -765,6 +795,11 @@ public final class CoreModel {
         if let layerMap {
             args["layer_map"] = .array(layerMap.map {
                 .object(["layer": .number(Double($0.layer)), "scope": .string($0.scope)])
+            })
+        }
+        if let layerOwners {
+            args["layer_owners"] = .array(layerOwners.map {
+                .object(["layer": .number(Double($0.layer)), "owner": .string($0.owner)])
             })
         }
         if let scopes { args["scopes"] = .array(scopes.map(JSONValue.string)) }

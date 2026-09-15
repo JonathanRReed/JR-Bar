@@ -275,6 +275,7 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("surfaces", "*", "why_detail", "seconds_in_state"),
         ("linked_skew_at",),
         ("linked_skew_ms",),
+        ("linked_skew_corrected_ms",),
         ("auto_dim", "lux"),
         ("auto_dim", "factor"),
     ),
@@ -2126,10 +2127,13 @@ def _cmd_provider_consent(self, args):
 def _cmd_provider_action(self, args):
     provider = args.get("provider")
     instance = args.get("instance") or "default"
+    action = args.get("action")
     if not isinstance(provider, str) or not provider:
         raise CommandError("invalid_args", "provider is required")
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
+    if action is not None and action != "resign_in":
+        raise CommandError("invalid_args", "action must be resign_in")
     from .provider_browser_access import perform_provider_usage_action
     from .provider_usage_platform import provider_descriptor
 
@@ -2137,6 +2141,53 @@ def _cmd_provider_action(self, args):
         provider_descriptor(provider)
     except ValueError as exc:
         raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
+    if action == "resign_in":
+        # "Re-sign in" / "Update provider" from the Usage Center: re-pull
+        # whatever sign-in the provider's own tooling holds even when no
+        # staged action label is on the card, then the same feedback +
+        # outcome-watch + forced-refresh tail the staged flow uses.
+        from .provider_reconnect import reconnect_provider
+
+        state = getattr(self, "provider_usage_state", None)
+        snapshot = next(
+            (
+                item
+                for item in getattr(state, "snapshots", ()) or ()
+                if getattr(item, "identity", None) == (provider, instance)
+            ),
+            None,
+        )
+        result = reconnect_provider(
+            provider,
+            instance,
+            reason_code=getattr(snapshot, "reason_code", None),
+        )
+        message = result.message
+        feedback = getattr(self, "_show_provider_usage_feedback", None)
+        if callable(feedback):
+            try:
+                feedback(message)
+            except Exception:
+                pass
+        try:
+            self._jrbar_reconnect_watch = (provider, instance, time.time())
+        except Exception:
+            pass
+        try:
+            scope = (
+                (provider,)
+                if instance == "default"
+                else ((provider, instance),)
+            )
+            self._request_provider_usage(force=True, providers=scope)
+        except Exception:
+            pass
+        return {
+            "provider": provider,
+            "instance": instance,
+            "message": message,
+            "sign_in_url": result.sign_in_url,
+        }
     message = perform_provider_usage_action(self, provider, instance)
     if message is None:
         raise CommandError(
@@ -2964,6 +3015,26 @@ def _cmd_deck_approve_device(self, args):
     return {"serial": serial, "approved": True}
 
 
+@command("deck_disable", main_thread=False)
+def _cmd_deck_disable(self, args):
+    """The off half of approve: writes `creator_micro_enabled = false` so
+    the output service is torn down; the approved serial stays, so the
+    next enable does not ask for the pad again."""
+    from .creator_micro_settings import save_creator_micro_choice_async
+
+    self._core_deck_settings_done.clear()
+    save_creator_micro_choice_async(self, False)
+    if not self._core_deck_settings_done.wait(DECK_APPROVE_TIMEOUT_SECONDS):
+        raise CommandError("busy", "Creator Micro 2 disable did not finish in time.")
+    result = self._core_deck_settings_result
+    if result is None or not result.saved:
+        reason = getattr(result, "reason", "settings_save_failed")
+        raise CommandError("refused", f"Creator Micro 2: {reason.replace('_', ' ')}.")
+    self._core_deck_integration_cache = None
+    self._core_publish_state_soon()
+    return {"enabled": False}
+
+
 @command("deck_check_input")
 def _cmd_deck_check_input(self, args):
     enabled = args.get("enabled")
@@ -3026,6 +3097,17 @@ def _deck_scopes_update(value) -> tuple:
     return tuple(scopes)
 
 
+def _deck_layer_owners_update(value) -> tuple:
+    if type(value) is not list or len(value) > 24:
+        raise CommandError("invalid_args", "layer_owners must be a list of {layer, owner} rows")
+    entries = []
+    for row in value:
+        if type(row) is not dict or set(row) != {"layer", "owner"}:
+            raise CommandError("invalid_args", "layer_owners rows must be {layer, owner}")
+        entries.append((row["layer"], row["owner"]))
+    return tuple(entries)
+
+
 @command("deck_set_settings", main_thread=False)
 def _cmd_deck_set_settings(self, args):
     from dataclasses import replace
@@ -3048,10 +3130,16 @@ def _cmd_deck_set_settings(self, args):
         updates["layer_map"] = _deck_layer_map_update(args["layer_map"])
     if "scopes" in args:
         updates["scopes"] = _deck_scopes_update(args["scopes"])
+    if "ownership" in args:
+        if type(args["ownership"]) is not str or args["ownership"] not in ("yield", "hold"):
+            raise CommandError("invalid_args", "ownership must be yield or hold")
+        updates["ownership"] = args["ownership"]
+    if "layer_owners" in args:
+        updates["layer_owners"] = _deck_layer_owners_update(args["layer_owners"])
     if not updates:
         raise CommandError(
             "invalid_args",
-            "enabled, session_mode and analog_enabled must be bools; bindings, layer_map and scopes must be lists",
+            "enabled, session_mode and analog_enabled must be bools; bindings, layer_map, layer_owners and scopes must be lists",
         )
     try:
         candidate = replace(previous, **updates)
@@ -3078,6 +3166,8 @@ def _cmd_deck_set_settings(self, args):
         "bindings": [{"index": index, "action": action.kind} for index, action in candidate.bindings],
         "layer_map": [{"layer": layer, "scope": scope} for layer, scope in candidate.layer_map],
         "scopes": list(candidate.scopes),
+        "ownership": candidate.ownership,
+        "layer_owners": [{"layer": layer, "owner": owner} for layer, owner in candidate.layer_owners],
     }
 
 
@@ -3164,6 +3254,16 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
+            # The skew's rolling median: the last eight coupled-write gaps
+            # per (pro, dot) pair. The median, not the latest sample, is
+            # what the Dot's next program compensates for -- one slow write
+            # should not re-phase the loop.
+            self._core_linked_skew_samples: dict[tuple[str, str], deque[float]] = {}
+            self._core_linked_skew_median_ms: float | None = None
+            # The plan behind the pending companion write, and the shift it
+            # baked in -- ``_apply_hardware_write_result`` reports both.
+            self._core_linked_dot_plan = None
+            self._core_linked_corrected_ms: float | None = None
             # The strip's latest nominal program and its LED count: what a
             # linked ``extend`` Dot replays. Set on every write to the
             # followed strip, cleared when no connected strip remains --
@@ -3758,6 +3858,10 @@ def build_headless_controller_class() -> type:
             self._core_linked_pro_leds = 8
             self._core_linked_skew_ms = None
             self._core_linked_skew_at = None
+            self._core_linked_skew_samples.clear()
+            self._core_linked_skew_median_ms = None
+            self._core_linked_corrected_ms = None
+            self._core_linked_dot_plan = None
             self._core_linked_pair_ok = False
             self._core_linked_dot_error = None
             for device in devices:
@@ -3862,6 +3966,10 @@ def build_headless_controller_class() -> type:
                 facts=self._core_dot_beacon_facts(),
                 strip_program=body,
                 strip_led_count=int(getattr(self, "_core_linked_pro_leds", 8) or 8),
+                # The rolling median of measured write gaps: the program is
+                # re-anchored by that much, so the Dot's late restart plays
+                # the phase the strip is on (dot_role.shift_program_phase).
+                skew_correction_ms=self._core_linked_skew_median_ms,
                 brightness=brightness,
                 include_completions=bool(
                     getattr(self.settings, "dot_role_include_completions", False)
@@ -4012,6 +4120,7 @@ def build_headless_controller_class() -> type:
             except Exception as exc:
                 self._core_linked_dot_error = f"{exc.__class__.__name__}"
                 self._core_linked_pair_ok = False
+                self._core_linked_dot_plan = None
                 legacy.log_status_bar(f"core: linked dot write failed: {exc.__class__.__name__}")
                 return result
             dot_command = self._hardware_write_command(dot_request, command.deadline - 1.0)
@@ -4043,7 +4152,14 @@ def build_headless_controller_class() -> type:
             if not program or getattr(write, "error", None) is not None:
                 return self._sync_hardware_device(dot_request)
             controller = self.agent_controller_for_device(dot_request.device)
-            plan = self._core_dot_plan(controller, program)
+            plan = self._core_dot_plan(
+                controller,
+                program,
+            )
+            # The apply side reports the shift this plan baked in and stamps
+            # the Dot's anchor with it; stashed here because the result
+            # pipeline rejoins on the main thread.
+            self._core_linked_dot_plan = plan
             if plan is None:
                 return self._sync_hardware_device(dot_request)
             dot_write = controller.sync_program(plan.program, write.state)
@@ -4088,8 +4204,40 @@ def build_headless_controller_class() -> type:
                 # Epoch, so a stale number can be told apart from a fresh
                 # one: the lights document publishes the two together.
                 self._core_linked_skew_at = time.time()
+                try:
+                    from statistics import median
+
+                    pair = (
+                        str(result.request.device.device_id),
+                        str(dot_result.request.device.device_id),
+                    )
+                    samples = self._core_linked_skew_samples.setdefault(
+                        pair, deque(maxlen=8)
+                    )
+                    samples.append(self._core_linked_skew_ms)
+                    self._core_linked_skew_median_ms = round(float(median(samples)), 1)
+                except Exception:
+                    self._core_linked_skew_median_ms = self._core_linked_skew_ms
                 legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
             self._core_note_hardware_write(dot_command, dot_result)
+            plan = self._core_linked_dot_plan
+            self._core_linked_dot_plan = None
+            corrected = (
+                float(getattr(plan, "corrected_ms", 0.0) or 0.0)
+                if plan is not None
+                else 0.0
+            )
+            if corrected:
+                # The published program is already rotated to the strip's
+                # phase, so its true on-device start is the Dot's own write
+                # completion pulled back by the shift it baked in -- not
+                # the strip's anchor, and not a planning-time guess.
+                anchor = mono_to_epoch(getattr(dot_result, "completed_at", None))
+                if anchor is not None:
+                    self._core_hardware_anchor[dot_result.request.device.device_id] = (
+                        anchor - corrected / 1000.0
+                    )
+            self._core_linked_corrected_ms = corrected or None
             self._core_publish_lights()
 
         # -- the Creator Micro 2 deck ------------------------------------------
@@ -4545,9 +4693,11 @@ def build_headless_controller_class() -> type:
                 )
             keymap = core_deck.keymap_facts(self._core_deck_backup_path(serial))
             layer_scopes = dict(getattr(controls, "layer_map", ()) or ())
+            layer_owners = dict(getattr(controls, "layer_owners", ()) or ())
             layers = core_deck.keymap_layer_rows(
                 plan.original_json if plan is not None else keymap.original_json,
                 layer_scopes,
+                layer_owners,
             )
             try:
                 brightness = self.effective_brightness_for_device(CreatorMicroBrightnessProfile()) / 255.0
@@ -4581,6 +4731,8 @@ def build_headless_controller_class() -> type:
                     "bindings": [(index, action.kind) for index, action in getattr(controls, "bindings", ()) or ()],
                     "layer_map": list(layer_scopes.items()),
                     "scopes": list(getattr(controls, "scopes", ()) or ()),
+                    "ownership": getattr(controls, "ownership", "yield"),
+                    "layer_owners": list(layer_owners.items()),
                 },
                 bindings=bindings,
                 control_labels=control_labels,
@@ -5686,6 +5838,8 @@ def build_headless_controller_class() -> type:
             ):
                 document["linked_skew_ms"] = self._core_linked_skew_ms
                 document["linked_skew_at"] = self._core_linked_skew_at
+                if self._core_linked_corrected_ms is not None:
+                    document["linked_skew_corrected_ms"] = self._core_linked_corrected_ms
             return document
 
         def _core_dot_link(self, dot_connected: bool, strip_connected: bool, dot_role: str) -> dict[str, Any]:

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import os
 import stat
+import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Final
+from typing import Callable, Final
 
 from .installed_agents import (
     InstalledSurfaceEvidence,
@@ -264,15 +265,19 @@ def default_inventory_roots(*, home: Path | None = None) -> tuple[InventoryRoot,
 
 def collect_installed_agent_inventory(
     roots: tuple[InventoryRoot, ...],
+    path_dirs: tuple[Path, ...] | None = None,
 ) -> InstalledAgentInventoryResult:
     """Collect only reviewed markers under supplied roots, and fail closed."""
     registrations = installed_surface_registrations()
     candidates = default_inventory_candidates()
     root_map = _validate_roots(roots)
+    path_directories = _path_dirs(path_dirs)
     evidence: list[InstalledSurfaceEvidence] = []
     rejected_count = 0
     for candidate in candidates:
-        detected = _candidate_is_present_in_any_location(root_map, candidate)
+        detected = _candidate_is_present_in_any_location(
+            root_map, candidate
+        ) or _candidate_is_present_in_path(path_directories, candidate)
         if not detected:
             rejected_count += 1
         evidence.append(
@@ -362,6 +367,112 @@ def _candidate_is_present_in_any_location(
         for root_id, relative_path in locations
         for root in (roots.get(root_id),)
     )
+
+
+#: Only these variables cross into the login shell's environment — the
+#: probe must not inherit a launchd session's leftovers or leak ours.
+_LOGIN_SHELL_PATH_ENV_KEYS: Final = ("HOME", "USER", "SHELL", "TERM")
+_login_shell_path_dirs_cache: tuple[Path, ...] | None = None
+
+
+def login_shell_path_dirs(
+    *,
+    runner: Callable[..., object] | None = None,
+) -> tuple[Path, ...]:
+    """The PATH directories the user's LOGIN shell would see.
+
+    Under Finder/launchd the process PATH is the minimal default, so the
+    scan asks the login shell once — ``$SHELL -lic 'printf %s "$PATH"'`` —
+    with a bare environment, no stdin, and a 3 s ceiling. Any failure is
+    ``()``; the caller still has the process PATH. ``JRBAR_NO_SHELL_PATH=1``
+    opts the probe out entirely. The result is cached for the process: PATH
+    does not change under a running app, and a shell spawn per scan would
+    be the expensive part. Tests inject ``runner`` (a ``subprocess.run``
+    stand-in) which bypasses the cache.
+    """
+    if runner is not None:
+        return _probe_login_shell_path(runner)
+    global _login_shell_path_dirs_cache
+    if _login_shell_path_dirs_cache is None:
+        _login_shell_path_dirs_cache = _probe_login_shell_path(subprocess.run)
+    return _login_shell_path_dirs_cache
+
+
+def _probe_login_shell_path(runner: Callable[..., object]) -> tuple[Path, ...]:
+    if os.environ.get("JRBAR_NO_SHELL_PATH") == "1":
+        return ()
+    env = {
+        key: os.environ[key]
+        for key in _LOGIN_SHELL_PATH_ENV_KEYS
+        if key in os.environ
+    }
+    try:
+        completed = runner(
+            [os.environ.get("SHELL") or "/bin/zsh", "-lic", 'printf %s "$PATH"'],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            timeout=3,
+            text=True,
+        )
+    except Exception:
+        return ()
+    if getattr(completed, "returncode", 1) != 0:
+        return ()
+    output = getattr(completed, "stdout", "")
+    if type(output) is not str:
+        return ()
+    # A login-interactive shell can decorate stdout around the payload;
+    # the PATH print is the last thing it emits.
+    lines = output.splitlines()
+    path_text = lines[-1].strip() if lines else ""
+    return tuple(Path(entry) for entry in path_text.split(os.pathsep) if entry)
+
+
+def _path_dirs(path_dirs: tuple[Path, ...] | None) -> tuple[Path, ...]:
+    """The directories of the user's PATH, deduped in order. ``None``
+    reads the process environment AND the login shell's answer — under
+    launchd the former is the minimal default and the latter is where the
+    user's CLI actually lives; tests hand the tuple in."""
+    if path_dirs is None:
+        path_dirs = tuple(
+            Path(entry)
+            for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry
+        ) + login_shell_path_dirs()
+    seen: set[Path] = set()
+    directories: list[Path] = []
+    for directory in path_dirs:
+        if directory not in seen:
+            seen.add(directory)
+            directories.append(directory)
+    return tuple(directories)
+
+
+def _candidate_is_present_in_path(
+    path_dirs: tuple[Path, ...],
+    candidate: InventoryCandidate,
+) -> bool:
+    """A PATH-marker candidate also answers from any PATH directory —
+    the user's PATH is where their CLI lives. Every entry faces the
+    same directory/marker safety rules as a literal root: user- or
+    root-owned, never group- or world-writable, and the directory is
+    re-statted after the marker so a swap mid-scan earns nothing."""
+    if candidate.detector_kind is not SurfaceDetectorKind.PATH_MARKER:
+        return False
+    owner = frozenset({0, os.getuid()})
+    basename = candidate.relative_path[-1]
+    for directory in path_dirs:
+        info = _lstat(directory)
+        if not _safe_directory(info, owner):
+            continue
+        marker_info = _lstat(directory / basename)
+        if _safe_marker(
+            marker_info, candidate.marker_kind, owner
+        ) and _directory_still_matches(directory, _identity(info), owner):
+            return True
+    return False
 
 
 def _location_is_present(

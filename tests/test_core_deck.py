@@ -175,7 +175,8 @@ def test_slot_colours_follow_the_lighting_layer__and_1_more() -> None:
     assert document["keymap"] == {"state": "applied", "backup_at": 2.0, "generation": 3,
                                   "layers": [{"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Base"}]}
     assert document["settings"] == {"enabled": True, "session_mode": True, "analog_enabled": False,
-                                    "bindings": [], "layer_map": [], "scopes": []}
+                                    "bindings": [], "layer_map": [], "scopes": [],
+                                    "ownership": "yield", "layer_owners": []}
     assert document["rail"] == {"edge": "left"} and document["banks"] == {"index": 0, "count": 1}
     assert build_deck_document(device=None, slots=[], bank=0, bank_count=0, rail_edge="sideways", keymap_state="weird",
                                backup_at=None, keymap_generation=0, layers=[], input_check=False, last_input=None,
@@ -216,7 +217,8 @@ def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one__and_1_mo
     assert deck["keymap"] == {"state": "stock", "backup_at": None, "generation": 0, "layers": []}
     assert deck["input_check"] is False and deck["last_input"] is None
     assert deck["settings"] == {"enabled": False, "session_mode": False, "analog_enabled": False,
-                               "bindings": [], "layer_map": [], "scopes": []}
+                               "bindings": [], "layer_map": [], "scopes": [],
+                               "ownership": "yield", "layer_owners": []}
     assert deck["scope"] == "automatic" and deck["scopes"] == []
     # A pad the probe can see but nobody approved yet.
     controller._core_deck_devices = [{"serial_number": SERIAL, "bus_type": 2, "product_id": 0x8297}]
@@ -502,7 +504,7 @@ def test_plan_apply_and_restore_run_the_setup_path_without_alerts(deck_live) -> 
     assert controller._deck_test_runtimes[-1] is controller._jrbar_optional_integration_runtime  # the pad was handed back
     state = controller._core_build_state()["deck"]
     assert state["keymap"]["layers"] == [
-        {"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Layer 1", "scope": "automatic"}
+        {"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Layer 1", "scope": "automatic", "owner": "jrbar"}
     ]
     assert state["device"]["profile"] == 0 and state["device"]["layer"] == 0
     with pytest.raises(CommandError) as bad_layer:
@@ -673,7 +675,7 @@ def test_approve_device_and_set_settings_persist_and_reconfigure(deck_live, monk
     reply = controller._core_dispatch("deck_set_settings", {"enabled": True, "session_mode": True})
     assert reply == {"enabled": True, "session_mode": True, "analog_enabled": False, "bindings": [],
                      "layer_map": [{"layer": 1, "scope": "codex"}, {"layer": 2, "scope": "claude"}],
-                     "scopes": []}
+                     "scopes": [], "ownership": "hold", "layer_owners": []}
     saved = load_deck_controls()
     assert saved.enabled is True and saved.session_mode is True and saved.analog_enabled is False
     assert controller._deck_control_settings == saved

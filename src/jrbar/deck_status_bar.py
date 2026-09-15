@@ -19,6 +19,8 @@ def install_deck_status_bar(base):
                     "ready": "Creator Micro 2 ready.",
                     "unsupported_firmware": "Creator Micro 2 firmware does not expose agent-status output.",
                     "device_conflict": "Creator Micro 2 stopped after detecting conflicting device traffic.",
+                    "contention": "Another app wrote to the pad; JR-Bar re-asserted its layer.",
+                    "external_layer": "The pad is on a layer assigned to another app; JR-Bar is not painting it.",
                 }.get(receipt.reason, f"Creator Micro 2: {receipt.reason.replace('_', ' ')}.")
                 self.set_settings_message(label)
 

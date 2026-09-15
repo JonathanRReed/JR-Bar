@@ -264,7 +264,7 @@ def test_alternate_literal_install_location_emits_one_surface_row_and_refuses_mi
     )
     _materialize(homebrew, candidate.alternate_locations[0][1], mode=0o700)
 
-    result = collect_installed_agent_inventory(roots)
+    result = collect_installed_agent_inventory(roots, path_dirs=())
     rows = [row for row in result.reduction.observations if row.key == candidate.key]
 
     assert len(rows) == 1
@@ -272,11 +272,12 @@ def test_alternate_literal_install_location_emits_one_surface_row_and_refuses_mi
     assert str(homebrew) not in repr(result)
 
     homebrew.chmod(0o777)
-    unsafe = collect_installed_agent_inventory(roots)
+    unsafe = collect_installed_agent_inventory(roots, path_dirs=())
     unsafe_row = next(row for row in unsafe.reduction.observations if row.key == candidate.key)
     assert unsafe_row.presence is SurfacePresence.ABSENT
 
-    missing = collect_installed_agent_inventory((InventoryRoot("home", home, owner),))
+    missing = collect_installed_agent_inventory((InventoryRoot("home", home, owner),),
+                                                path_dirs=())
     missing_row = next(row for row in missing.reduction.observations if row.key == candidate.key)
     assert missing_row.presence is SurfacePresence.ABSENT
 
@@ -310,7 +311,7 @@ def test_reviewed_executable_marker_accepts_only_a_trusted_leaf_symlink_and_conf
     config_leaf.parent.mkdir(parents=True)
     config_leaf.symlink_to("outside-config")
 
-    result = collect_installed_agent_inventory(roots)
+    result = collect_installed_agent_inventory(roots, path_dirs=())
     rows = {row.key: row for row in result.reduction.observations}
 
     assert rows[codex.key].presence is SurfacePresence.INSTALLED
@@ -318,7 +319,7 @@ def test_reviewed_executable_marker_accepts_only_a_trusted_leaf_symlink_and_conf
     assert str(root) not in repr(result)
 
     codex_leaf.parent.chmod(0o777)
-    unsafe = collect_installed_agent_inventory(roots)
+    unsafe = collect_installed_agent_inventory(roots, path_dirs=())
     unsafe_rows = {row.key: row for row in unsafe.reduction.observations}
     assert unsafe_rows[codex.key].presence is SurfacePresence.ABSENT
 
@@ -472,7 +473,7 @@ def test_inventory_refuses_untrusted_or_wrong_shape_markers(tmp_path: Path, muta
     else:
         target.chmod(0o600)
 
-    result = collect_installed_agent_inventory(roots)
+    result = collect_installed_agent_inventory(roots, path_dirs=())
 
     observation = next(row for row in result.reduction.observations if row.key == candidate.key)
     assert observation.presence is SurfacePresence.ABSENT
@@ -531,13 +532,16 @@ def test_inventory_refuses_parent_replacement_before_emitting_an_observation(
         return original_lstat(path)
 
     monkeypatch.setattr(inventory, "_lstat", swapping_lstat)
-    result = inventory.collect_installed_agent_inventory(roots)
+    result = inventory.collect_installed_agent_inventory(roots, path_dirs=())
 
     observation = next(row for row in result.reduction.observations if row.key == candidate.key)
     assert observation.presence is SurfacePresence.ABSENT
 
 
-def test_inventory_result_is_worker_payload_safe_and_rejects_noninventory_commands(tmp_path: Path) -> None:
+def test_inventory_result_is_worker_payload_safe_and_rejects_noninventory_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """Accepting another worker key would let unreviewed work enter OS polling."""
     from jrbar.installed_agent_inventory import (
         InventoryRoot,
@@ -545,6 +549,9 @@ def test_inventory_result_is_worker_payload_safe_and_rejects_noninventory_comman
     )
     from jrbar.runtime_scheduler import RuntimeWorkCommand, RuntimeWorkerDomain
 
+    # An empty PATH keeps the ambient machine's real CLIs out of the
+    # count — the test's claim is payload shape, not this host's tools.
+    monkeypatch.setenv("PATH", "")
     root = tmp_path / "home"
     root.mkdir()
     root.chmod(0o700)
@@ -629,3 +636,112 @@ def test_one_hundred_inventory_refreshes_keep_the_worker_to_one_running_and_one_
     assert worker.snapshot().completed >= 2
     assert results == []
     assert worker.close(timeout_seconds=1.0)
+
+
+def test_path_directory_hit_detects_the_cli_and_an_unsafe_dir_earns_nothing(
+    tmp_path: Path,
+) -> None:
+    """A CLI that lives on the user's PATH but outside the literal
+    roots still counts; a group-writable PATH dir must not vouch."""
+    from jrbar.installed_agent_inventory import (
+        InventoryRoot,
+        collect_installed_agent_inventory,
+    )
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
+
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o700)
+    roots = (InventoryRoot("home", home, frozenset({os.getuid()})),)
+    path_dir = tmp_path / "pathbin"
+    path_dir.mkdir()
+    path_dir.chmod(0o700)
+    _materialize(path_dir, ("codex",), mode=0o700)
+    key = InstalledSurfaceKey("codex", "cli")
+
+    result = collect_installed_agent_inventory(roots, path_dirs=(path_dir,))
+    row = next(row for row in result.reduction.observations if row.key == key)
+    assert row.presence is SurfacePresence.INSTALLED
+
+    # The same marker inside a group-writable PATH dir earns nothing.
+    path_dir.chmod(0o770)
+    unsafe = collect_installed_agent_inventory(roots, path_dirs=(path_dir,))
+    unsafe_row = next(row for row in unsafe.reduction.observations if row.key == key)
+    assert unsafe_row.presence is SurfacePresence.ABSENT
+    assert str(path_dir) not in repr(unsafe)
+
+    # A duplicate PATH entry is probed once; an empty list is no PATH at all.
+    none = collect_installed_agent_inventory(roots, path_dirs=())
+    none_row = next(row for row in none.reduction.observations if row.key == key)
+    assert none_row.presence is SurfacePresence.ABSENT
+
+
+def test_login_shell_path_dirs_parse_fallback_timeout_and_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The login-shell probe yields PATH entries the launchd process PATH
+    lacks, and every failure mode — nonzero exit, exception, timeout —
+    falls back to nothing rather than raising."""
+    import subprocess
+    from types import SimpleNamespace
+
+    import jrbar.installed_agent_inventory as inventory
+
+    def good_runner(argv, **kwargs):
+        assert argv[1:] == ["-lic", 'printf %s "$PATH"']
+        assert argv[0]
+        assert kwargs["timeout"] == 3
+        assert kwargs["stdin"] is subprocess.DEVNULL
+        assert set(kwargs["env"]) <= {"HOME", "USER", "SHELL", "TERM"}
+        return SimpleNamespace(returncode=0, stdout="/probe/a:/probe/b\n")
+
+    assert inventory.login_shell_path_dirs(runner=good_runner) == (
+        Path("/probe/a"),
+        Path("/probe/b"),
+    )
+
+    # A login-interactive shell can decorate stdout; the PATH print is last.
+    noisy = inventory.login_shell_path_dirs(
+        runner=lambda argv, **kw: SimpleNamespace(
+            returncode=0, stdout="Last login: never\n/probe/c\n"
+        )
+    )
+    assert noisy == (Path("/probe/c"),)
+
+    # Nonzero exit, exceptions and timeouts all degrade to empty.
+    assert inventory.login_shell_path_dirs(
+        runner=lambda argv, **kw: SimpleNamespace(returncode=1, stdout="")
+    ) == ()
+
+    def timeout_runner(argv, **kw):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=3)
+
+    assert inventory.login_shell_path_dirs(runner=timeout_runner) == ()
+
+    # The opt-out must not spawn anything.
+    monkeypatch.setenv("JRBAR_NO_SHELL_PATH", "1")
+
+    def boom(argv, **kw):
+        raise AssertionError("probe ran despite JRBAR_NO_SHELL_PATH")
+
+    assert inventory.login_shell_path_dirs(runner=boom) == ()
+
+
+def test_path_dirs_unions_process_path_with_the_shell_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under launchd the process PATH is minimal; the scan merges the
+    login shell's answer into it, deduped, in order."""
+    import jrbar.installed_agent_inventory as inventory
+
+    monkeypatch.setenv("PATH", "/proc/bin:/shared/bin")
+    monkeypatch.setattr(
+        inventory,
+        "login_shell_path_dirs",
+        lambda: (Path("/shell/bin"), Path("/shared/bin")),
+    )
+    assert inventory._path_dirs(None) == (
+        Path("/proc/bin"),
+        Path("/shared/bin"),
+        Path("/shell/bin"),
+    )

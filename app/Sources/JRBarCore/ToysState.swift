@@ -12,23 +12,23 @@ public struct ToysState: Codable, Equatable, Sendable {
     public var aquarium: AquariumSettings
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
-    public var alcove: AlcoveSettings
-    /// Apps the user asked JR-Bar to sit next to, by bundle id.
-    public var externalApps: [ExternalToyApp]
+    public var notch: NotchSettings
 
     public init(fold: FoldSettings = FoldSettings(), aquarium: AquariumSettings = AquariumSettings(),
                 notchBuddy: NotchBuddySettings = NotchBuddySettings(), confetti: ConfettiSettings = ConfettiSettings(),
-                alcove: AlcoveSettings = AlcoveSettings(), externalApps: [ExternalToyApp] = []) {
+                notch: NotchSettings = NotchSettings()) {
         self.fold = fold
         self.aquarium = aquarium
         self.notchBuddy = notchBuddy
         self.confetti = confetti
-        self.alcove = alcove
-        self.externalApps = externalApps
+        self.notch = notch
     }
 
     private enum CodingKeys: String, CodingKey {
-        case fold, aquarium, notchBuddy, confetti, alcove, externalApps
+        case fold, aquarium, notchBuddy, confetti, notch
+        /// The island toy shipped as `alcove`; the key is read but never
+        /// written — a saved file always lands under `notch`.
+        case legacyAlcove = "alcove"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -37,76 +37,104 @@ public struct ToysState: Codable, Equatable, Sendable {
         aquarium = (try? c.decodeIfPresent(AquariumSettings.self, forKey: .aquarium)) ?? AquariumSettings()
         notchBuddy = (try? c.decodeIfPresent(NotchBuddySettings.self, forKey: .notchBuddy)) ?? NotchBuddySettings()
         confetti = (try? c.decodeIfPresent(ConfettiSettings.self, forKey: .confetti)) ?? ConfettiSettings()
-        alcove = (try? c.decodeIfPresent(AlcoveSettings.self, forKey: .alcove)) ?? AlcoveSettings()
-        // An app with no bundle id can never be launched or found again;
-        // it is dropped rather than carried as a dead row.
-        externalApps = ((try? c.decodeIfPresent([ExternalToyApp].self, forKey: .externalApps)) ?? [])
-            .filter { !$0.id.isEmpty }
+        notch = (try? c.decodeIfPresent(NotchSettings.self, forKey: .notch))
+            ?? (try? c.decodeIfPresent(NotchSettings.self, forKey: .legacyAlcove))
+            ?? NotchSettings()
+        // `externalApps` was the Toys page's app list — the feature is
+        // gone; an old file's key is now just an ignored unknown key.
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(fold, forKey: .fold)
+        try c.encode(aquarium, forKey: .aquarium)
+        try c.encode(notchBuddy, forKey: .notchBuddy)
+        try c.encode(confetti, forKey: .confetti)
+        try c.encode(notch, forKey: .notch)
     }
 }
 
-/// Fold: the desktop tilts, dims and blurs as the lid comes down. The
-/// shipped defaults — 65°, Fog — are the ones that read as the
+/// Fold: the desktop folds into the screen as the lid comes down — one
+/// style now, the portal room seen through a frosted-PP cover, with
+/// Perspective/Blur/Shade/Frost as the knobs. The shipped defaults —
+/// 65°, shade 0.7, frost 0.65 — are the ones that read as the
 /// hold-the-angle illusion rather than a warp: early enough that the
 /// fold starts while the lid is still visibly moving, dim enough that
-/// the fold reads as shadow before it reads as distortion.
+/// the fold reads as shadow before it reads as distortion, milky
+/// enough to read as translucent plastic rather than a dark void.
 public struct FoldSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var activationAngle: Double
-    public var style: FoldStyle
     public var perspective: Double
     public var blur: Double
     public var shade: Double
     public var jitterTolerance: Double
     /// Who renders the fold: JR-Bar's own overlay, or Bendy / Lid Plane.
     public var provider: FoldProvider
+    /// How milky the cover is: 0 is the bare dark portal room, 1 a
+    /// fully frosted-polypropylene sheet over the room.
+    public var frost: Double
 
-    public init(enabled: Bool = false, activationAngle: Double = 65, style: FoldStyle = .fog,
+    public init(enabled: Bool = false, activationAngle: Double = 65,
                 perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
-                jitterTolerance: Double = 0, provider: FoldProvider = .jrbar) {
+                jitterTolerance: Double = 0, provider: FoldProvider = .jrbar,
+                frost: Double = 0.65) {
         self.enabled = enabled
         self.activationAngle = activationAngle
-        self.style = style
         self.perspective = perspective
         self.blur = blur
         self.shade = shade
         self.jitterTolerance = jitterTolerance
         self.provider = provider
+        self.frost = frost
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, activationAngle, style, perspective, blur, shade, jitterTolerance, provider
+        // `style` is the retired Tilt/Dusk/Fog picker — decoded only so
+        // a file parked on an old default set still migrates; nothing
+        // reads it now and a stale value like "fog" decodes fine.
+        case enabled, activationAngle, style, perspective, blur, shade, jitterTolerance, provider, frost
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         activationAngle = (try? c.decodeIfPresent(Double.self, forKey: .activationAngle)) ?? 65
-        style = (try? c.decodeIfPresent(FoldStyle.self, forKey: .style)) ?? .fog
+        let style = (try? c.decodeIfPresent(String.self, forKey: .style)) ?? "fog"
         perspective = (try? c.decodeIfPresent(Double.self, forKey: .perspective)) ?? 0.6
         blur = (try? c.decodeIfPresent(Double.self, forKey: .blur)) ?? 0.5
         shade = (try? c.decodeIfPresent(Double.self, forKey: .shade)) ?? 0.7
         jitterTolerance = (try? c.decodeIfPresent(Double.self, forKey: .jitterTolerance)) ?? 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
+        frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0.65
         // Each past default set is treated as untouched and moved to the
         // current one; any deliberate change means the file survives.
-        if activationAngle == 110, style == .tilt, perspective == 0.6,
-           blur == 0.5, shade == 0.4, jitterTolerance == 0 {
+        // A file old enough to migrate never wrote `frost`, so the knob
+        // reads its default there — a moved frost is a deliberate change.
+        if activationAngle == 110, style == "tilt", perspective == 0.6,
+           blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0.65 {
             activationAngle = 65
-            style = .fog
             shade = 0.7
-        } else if activationAngle == 82, style == .dusk, perspective == 0.6,
-                  blur == 0.5, shade == 0.4, jitterTolerance == 0 {
+        } else if activationAngle == 82, style == "dusk", perspective == 0.6,
+                  blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0.65 {
             activationAngle = 65
-            style = .fog
             shade = 0.7
         }
     }
-}
 
-/// Perspective only / + darken / + blur.
-public enum FoldStyle: String, Codable, CaseIterable, Sendable {
-    case tilt, dusk, fog
+    /// `style` is decode-only — a saved file never writes the retired key,
+    /// so the encoder lists real properties alone.
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(activationAngle, forKey: .activationAngle)
+        try c.encode(perspective, forKey: .perspective)
+        try c.encode(blur, forKey: .blur)
+        try c.encode(shade, forKey: .shade)
+        try c.encode(jitterTolerance, forKey: .jitterTolerance)
+        try c.encode(provider, forKey: .provider)
+        try c.encode(frost, forKey: .frost)
+    }
 }
 
 /// Who renders the fold.
@@ -580,22 +608,22 @@ public enum ConfettiShapes: String, Codable, CaseIterable, Sendable {
     case mixed, streamers, flecks
 }
 
-/// Alcove: the notch island — a capsule hugging the notch that shows who
-/// is working and grows into a session card on hover. `provider` picks
-/// who draws it, Fold-style: JR-Bar's own island, or the capsule owned
-/// by Alcove / boring.notch, which JR-Bar then leaves alone. The other
+/// Notch: the island — a capsule hugging the notch that shows who is
+/// working and drops the shared card on hover. `provider` picks who
+/// draws it, Fold-style: JR-Bar's own island, or the capsule owned by
+/// Alcove / boring.notch, which JR-Bar then leaves alone. The other
 /// fields are our island's knobs and mean nothing while an external app
 /// owns the notch.
-public struct AlcoveSettings: Codable, Equatable, Sendable {
+public struct NotchSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     /// Who renders the island.
-    public var provider: AlcoveProvider
+    public var provider: NotchProvider
     /// The capsule itself. Off parks the island without touching the
     /// provider pick.
     public var islandEnabled: Bool
-    /// Per-provider quota meters in the expanded card.
+    /// Per-provider quota meters in the card.
     public var showUsage: Bool
-    /// Hover grows the capsule into the card.
+    /// Hover drops the card under the island.
     public var expandOnHover: Bool
     /// Daemon events briefly morph the island into a notification
     /// capsule (asks, finishes, failures, quota resets).
@@ -604,11 +632,16 @@ public struct AlcoveSettings: Codable, Equatable, Sendable {
     public var mediaEnabled: Bool
     /// Which event kinds may raise a capsule.
     public var capsuleKinds: AlcoveCapsuleKinds
+    /// The island's touch gestures: press-and-pull grows or folds it,
+    /// a two-finger swipe down puts it away. Off leaves click and
+    /// hover — the gestures default on, the native behaviour.
+    public var pullGestures: Bool
 
-    public init(enabled: Bool = false, provider: AlcoveProvider = .jrbar,
+    public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
                 expandOnHover: Bool = true, capsuleNotifications: Bool = true,
-                mediaEnabled: Bool = true, capsuleKinds: AlcoveCapsuleKinds = AlcoveCapsuleKinds()) {
+                mediaEnabled: Bool = true, capsuleKinds: AlcoveCapsuleKinds = AlcoveCapsuleKinds(),
+                pullGestures: Bool = true) {
         self.enabled = enabled
         self.provider = provider
         self.islandEnabled = islandEnabled
@@ -617,55 +650,31 @@ public struct AlcoveSettings: Codable, Equatable, Sendable {
         self.capsuleNotifications = capsuleNotifications
         self.mediaEnabled = mediaEnabled
         self.capsuleKinds = capsuleKinds
+        self.pullGestures = pullGestures
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, islandEnabled, showUsage, expandOnHover
-        case capsuleNotifications, mediaEnabled, capsuleKinds
+        case capsuleNotifications, mediaEnabled, capsuleKinds, pullGestures
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
-        provider = (try? c.decodeIfPresent(AlcoveProvider.self, forKey: .provider)) ?? .jrbar
+        provider = (try? c.decodeIfPresent(NotchProvider.self, forKey: .provider)) ?? .jrbar
         islandEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .islandEnabled)) ?? true
         showUsage = (try? c.decodeIfPresent(Bool.self, forKey: .showUsage)) ?? true
         expandOnHover = (try? c.decodeIfPresent(Bool.self, forKey: .expandOnHover)) ?? true
         capsuleNotifications = (try? c.decodeIfPresent(Bool.self, forKey: .capsuleNotifications)) ?? true
         mediaEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .mediaEnabled)) ?? true
         capsuleKinds = (try? c.decodeIfPresent(AlcoveCapsuleKinds.self, forKey: .capsuleKinds)) ?? AlcoveCapsuleKinds()
+        pullGestures = (try? c.decodeIfPresent(Bool.self, forKey: .pullGestures)) ?? true
     }
 }
 
 /// Who renders the island: ours, Henrik's Alcove, or boring.notch.
-public enum AlcoveProvider: String, Codable, CaseIterable, Sendable {
+public enum NotchProvider: String, Codable, CaseIterable, Sendable {
     case jrbar, alcove, boringNotch
 }
 
-/// One app on the Toys page's external list. Identity is the bundle id:
-/// the name is remembered so a row that is no longer installed can still
-/// say what it was and offer Remove.
-public struct ExternalToyApp: Codable, Equatable, Sendable, Identifiable {
-    /// The bundle id.
-    public var id: String
-    public var name: String
-    /// JR-Bar opens it at its own launch when it is not already running.
-    public var launchWithJRBar: Bool
 
-    public init(id: String, name: String, launchWithJRBar: Bool = false) {
-        self.id = id
-        self.name = name
-        self.launchWithJRBar = launchWithJRBar
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, name, launchWithJRBar
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? ""
-        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
-        launchWithJRBar = (try? c.decodeIfPresent(Bool.self, forKey: .launchWithJRBar)) ?? false
-    }
-}

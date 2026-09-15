@@ -29,10 +29,38 @@ DEFAULT_AUX_BINDINGS: tuple[tuple[int, str], ...] = (
 # automatic instead.
 DEFAULT_LAYER_MAP: tuple[tuple[int, str], ...] = ((1, "codex"), (2, "claude"))
 
+# How the output owner answers a foreign writer on the shared report stream.
+# ``yield`` is the historical behaviour: a foreign response id pauses our
+# output while the adapter waits out its conflict retry delay. ``hold`` is
+# the hijack option: on a layer we own, the accusation is absorbed and our
+# latest frame is written back instead of the worker going quiet.
+OWNERSHIP_MODES: tuple[str, ...] = ("yield", "hold")
+
+# Layer-owner vocabulary for ``layer_owners``. ``jrbar`` is the auto layer —
+# JR-Bar paints it from the session board and, under "hold", defends it. A
+# provider id, or the ``everything`` catch-all, hands the layer to that
+# external writer: while the pad sits on it we do not paint, and foreign
+# traffic there is expected rather than a conflict.
+#
+# What the firmware makes impossible, honestly: there is no documented RPC
+# to switch the pad's active layer, and another process's HID output
+# reports are invisible to us (only its response ids broadcast back), so a
+# foreign write cannot be redirected to a given layer. Ownership is the
+# routing that exists: our layers are re-asserted, theirs are left alone.
+LAYER_OWNER_JRBAR: str = "jrbar"
+LAYER_OWNER_EVERYTHING: str = "everything"
+
 
 def _valid_scope(value) -> bool:
     return (type(value) is str and 0 < len(value) <= 64
             and value.isprintable() and bool(value.strip()))
+
+
+def _valid_layer_owner(value) -> bool:
+    if value in (LAYER_OWNER_JRBAR, LAYER_OWNER_EVERYTHING):
+        return True
+    # A provider id is scope-shaped; "automatic" is not an owner.
+    return _valid_scope(value) and value != "automatic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +71,8 @@ class DeckControlSettings:
     analog_enabled: bool = False
     layer_map: tuple[tuple[int, str], ...] = DEFAULT_LAYER_MAP
     scopes: tuple[str, ...] = ()
+    ownership: str = "hold"
+    layer_owners: tuple[tuple[int, str], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool or type(self.bindings) is not tuple or len(self.bindings) > 24:
@@ -78,6 +108,23 @@ class DeckControlSettings:
             if not _valid_scope(scope) or scope == "automatic" or scope in seen_scopes:
                 raise ValueError("invalid deck scopes")
             seen_scopes.add(scope)
+        if self.ownership not in OWNERSHIP_MODES:
+            raise ValueError("invalid deck ownership mode")
+        if type(self.layer_owners) is not tuple or len(self.layer_owners) > 24:
+            raise ValueError("invalid deck layer owners")
+        owned_layers = set()
+        for entry in self.layer_owners:
+            if type(entry) is not tuple or len(entry) != 2:
+                raise ValueError("invalid deck layer owners")
+            layer, owner = entry
+            if (type(layer) is not int or layer < 0 or layer in owned_layers
+                    or not _valid_layer_owner(owner)):
+                raise ValueError("invalid deck layer owners")
+            if layer == 0 and owner != LAYER_OWNER_JRBAR:
+                # The first hardware layer is the auto layer; it is the one
+                # thing the ownership option always keeps under JR-Bar.
+                raise ValueError("layer 1 stays under the auto layer")
+            owned_layers.add(layer)
 
     def action_for(self, key: int) -> DeckAction | None:
         if not self.enabled or type(key) is not int:
@@ -102,6 +149,16 @@ class DeckControlSettings:
             return None
         return next((scope for index, scope in self.layer_map if index == layer), None)
 
+    def owner_for_layer(self, layer: int | None) -> str:
+        """Who may paint a hardware layer: ``jrbar`` — the auto layer — for
+        every layer the map does not hand to an external writer."""
+        if type(layer) is not int:
+            return LAYER_OWNER_JRBAR
+        return next(
+            (owner for index, owner in self.layer_owners if index == layer),
+            LAYER_OWNER_JRBAR,
+        )
+
     def all_scopes(self) -> tuple[str, ...]:
         """Provider scopes in cycle order: mapped layers first, then extras."""
         ordered = []
@@ -123,11 +180,13 @@ class DeckControlSettings:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "version": 3, "enabled": self.enabled,
+            "version": 4, "enabled": self.enabled,
             "session_mode": self.session_mode, "analog_enabled": self.analog_enabled,
             "bindings": [{"key": key, "action": action.to_dict()} for key, action in self.bindings],
             "layer_map": [{"layer": layer, "scope": scope} for layer, scope in self.layer_map],
             "scopes": list(self.scopes),
+            "ownership": self.ownership,
+            "layer_owners": [{"layer": layer, "owner": owner} for layer, owner in self.layer_owners],
         }
 
 
@@ -160,9 +219,12 @@ def decode_deck_controls(raw: str) -> DeckControlSettings:
         fields = base
     elif version == 2:
         fields = base | {"session_mode", "analog_enabled"}
-    else:
+    elif version == 3:
         fields = base | {"session_mode", "analog_enabled", "layer_map", "scopes"}
-    if (version not in (1, 2, 3) or set(document) != fields
+    else:
+        fields = base | {"session_mode", "analog_enabled", "layer_map", "scopes",
+                         "ownership", "layer_owners"}
+    if (version not in (1, 2, 3, 4) or set(document) != fields
             or type(document["bindings"]) is not list or len(document["bindings"]) > (20 if version == 1 else 24)):
         raise ValueError("unsupported deck settings document")
     bindings = []
@@ -178,11 +240,20 @@ def decode_deck_controls(raw: str) -> DeckControlSettings:
     scopes = document.get("scopes", [])
     if type(scopes) is not list:
         raise ValueError("invalid deck scopes")
+    layer_owners = []
+    for entry in document.get("layer_owners", []):
+        if type(entry) is not dict or set(entry) != {"layer", "owner"}:
+            raise ValueError("invalid deck layer owners")
+        layer_owners.append((entry["layer"], entry["owner"]))
+    ownership = document.get("ownership", "hold")
+    if type(ownership) is not str:
+        raise ValueError("invalid deck ownership mode")
     # v1/v2 documents predate scopes: every layer stays automatic rather than
-    # silently inheriting the fresh-install map.
+    # silently inheriting the fresh-install map. v3 predates ownership; it
+    # decodes to the feature default — the pad is held, not yielded.
     return DeckControlSettings(document["enabled"], tuple(bindings),
                                document.get("session_mode", False), document.get("analog_enabled", False),
-                               tuple(layer_map), tuple(scopes))
+                               tuple(layer_map), tuple(scopes), ownership, tuple(layer_owners))
 
 
 def save_deck_controls(

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import JRBarCore
 @testable import JRBarApp
 
 /// W12's shelf utilities: tray revalidation, persisted timers with
@@ -146,5 +147,64 @@ import Testing
 
     @Test func notesWithOnlyUnsafeLinksYieldNil() {
         #expect(ShelfCalendarModel.joinableURL(nil, notes: "go to file:///tmp/x") == nil)
+    }
+}
+
+/// A card model for tests whose timer store lives in a throwaway file,
+/// so a sweep can never mark the real `shelf-timers.json` fired.
+@MainActor
+func makeTestCardModel() -> NotchCardModel {
+    NotchCardModel(
+        timers: ShelfTimerModel(storeURL: URL(fileURLWithPath:
+            NSTemporaryDirectory() + "jrbar-test-timers-\(UUID().uuidString).json")),
+        tray: ShelfTrayModel())
+}
+
+/// The delegate builds the timer and tray stores once and hands them to
+/// both card surfaces — the glass card's presenter and the island's
+/// grown card. Twin stores on the same files would fire a timer twice
+/// and clobber each other's persist, so the surfaces must share
+/// identity, not just file paths.
+@MainActor
+@Suite("Shared card shelf")
+struct SharedCardShelfTests {
+    @Test func bothCardSurfacesShareTheOneStores() {
+        let cardModel = makeTestCardModel()
+        var state = ToysState()
+        state.notch.enabled = true
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: state, cardModel: cardModel)
+        let presenter = NotchCardPresenter(model: cardModel)
+
+        #expect(store.notch.cardModel.timers === presenter.model.timers)
+        #expect(store.notch.cardModel.tray === presenter.model.tray)
+    }
+
+    /// One timer store means one fire: the delegate wires `onFire` once
+    /// and both surfaces' entries run through it — even with both card
+    /// models alive.
+    @Test func aDueTimerDeliversOnceAcrossBothSurfaces() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-shared-timers-\(UUID().uuidString).json")
+        let timers = ShelfTimerModel(storeURL: url)
+        let tray = ShelfTrayModel()
+        var delivered = 0
+        timers.onFire = { _ in delivered += 1 }
+
+        let cardModel = NotchCardModel(timers: timers, tray: tray)
+        var state = ToysState()
+        state.notch.enabled = true
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: state, cardModel: cardModel)
+        let presenter = NotchCardPresenter(model: cardModel)
+        #expect(store.notch.cardModel.timers === presenter.model.timers)
+
+        // The 1 s tick sweeps the due entry once through the shared
+        // store — a second model would have delivered it again.
+        timers.add(label: "tea", duration: 1)
+        try await Task.sleep(for: .seconds(2.5))
+        #expect(delivered == 1)
     }
 }

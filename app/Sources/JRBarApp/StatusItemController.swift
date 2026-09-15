@@ -56,7 +56,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             guard iconStyle != oldValue else { return }
             syncBreathing()
             applyPulseAnimation()
-            syncDeviceMonitor()
             redraw()
         }
     }
@@ -89,12 +88,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// One tooltip line per session for the `agents` style
     /// ("docs-sweep · waiting on you 2h 31m · Gemini"), same order.
     var sessionLines: [String] = [] { didSet { if sessionLines != oldValue { redraw() } } }
-    /// The `orbit` style's feed. The monitor fills it only while the
-    /// style is selected, so a machine on another style never pays for
-    /// the Wi-Fi and battery reads.
-    var deviceInfo: StatusDeviceInfo? { didSet { if deviceInfo != oldValue { redraw() } } }
-    private var deviceMonitor: StatusDeviceMonitor?
-
     private static let pulseKey = "jrbar.escalationPulse"
     /// The breathing clock: two frames a second, only while the dot moves.
     private static let breathingInterval: TimeInterval = 0.5
@@ -215,9 +208,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     nonisolated static func plan(style: StatusIconStyle, ringFraction: Double? = nil, tint: NSColor? = nil,
                      isPulsing: Bool = false, meters: [StatusMeter] = [], meterOverflow: Int = 0,
                      dotState: StatusDotState = .idle, sessionDots: [SessionDot] = [],
-                     labelText: String? = nil, device: StatusDeviceInfo? = nil, phase: Double = 0) -> StatusItemPlan {
+                     labelText: String? = nil, phase: Double = 0) -> StatusItemPlan {
+        // The ring tracks the leading provider — the same provider the
+        // first meter meters whenever it reports a window — and that
+        // provider's meter now leads with its MOST-EXHAUSTED window, not
+        // the 5h one. The ring takes the same figure so a weekly lane at
+        // 100 % cannot leave a calm 5 h ring on the bar; when the leading
+        // provider reports no window at all, the first metered provider's
+        // constraint still fills the ring rather than drawing nothing.
+        var ring = ringFraction
+        if style == .glyphRing || style == .orbit, let lead = meters.first?.fraction {
+            ring = max(ring ?? lead, lead)
+        }
         let spec = StatusIconSpec(style: style,
-                                  ringFraction: style == .glyphRing ? ringFraction : nil,
+                                  ringFraction: style == .glyphRing || style == .orbit ? ring : nil,
                                   tintHex: tint?.statusHex,
                                   meters: style.isMeters ? meters : [],
                                   overflow: style.isMeters ? meterOverflow : 0,
@@ -226,8 +230,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   // a dead session's dot amber made it read
                                   // as a live ask.
                                   dot: style.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
-                                  sessions: style == .agents ? sessionDots : [],
-                                  device: style == .orbit ? device : nil,
+                                  sessions: style == .agents || style == .orbit ? sessionDots : [],
                                   phase: phase)
         let strip = style.isMeters || style == .agents || style == .orbit
         return StatusItemPlan(spec: spec,
@@ -247,7 +250,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let tint: NSColor? = isPulsing ? .systemOrange : aggregateTint
         let plan = Self.plan(style: iconStyle, ringFraction: ringFraction, tint: tint, isPulsing: isPulsing,
                              meters: meters, meterOverflow: meterOverflow, dotState: dotState,
-                             sessionDots: sessionDots, labelText: labelText, device: deviceInfo, phase: phase)
+                             sessionDots: sessionDots, labelText: labelText, phase: phase)
         let spec = plan.spec
         let strip = plan.isStrip
         let label = plan.label
@@ -330,23 +333,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             breathing?.invalidate()
             breathing = nil
             phase = 0.5
-        }
-    }
-
-    /// The `orbit` style is the only one that needs Wi-Fi and battery
-    /// reads, so the monitor exists only while that style is selected.
-    /// Selecting orbit mid-session backfills `deviceInfo` as soon as the
-    /// first sample lands; leaving it frees the reader.
-    private func syncDeviceMonitor() {
-        if iconStyle == .orbit, deviceMonitor == nil {
-            let monitor = StatusDeviceMonitor()
-            monitor.onChange = { [weak self] info in
-                MainActor.assumeIsolated { self?.deviceInfo = info }
-            }
-            monitor.start()
-            deviceMonitor = monitor
-        } else if iconStyle != .orbit {
-            deviceMonitor = nil
         }
     }
 

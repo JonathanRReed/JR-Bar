@@ -82,10 +82,12 @@ public struct DotRoleReadout: Equatable, Sendable {
     /// authority and `linked` (the `devices_linked` setting) is only the
     /// fallback for daemons that predate it. `linkedSkewMs` /
     /// `linkedSkewFresh` carry the measured gap, shown only while the
-    /// measurement is still worth quoting.
+    /// measurement is still worth quoting; `linkedSkewCorrectedMs` is the
+    /// shift the last write baked into the Dot's program, quoted instead
+    /// of the raw gap when a correction is in effect.
     public static func make(chosen: DotRole, includeCompletions: Bool, linked: Bool = true,
                             link: CoreDotLink? = nil, linkedSkewMs: Double? = nil,
-                            linkedSkewFresh: Bool = false,
+                            linkedSkewFresh: Bool = false, linkedSkewCorrectedMs: Double? = nil,
                             dot: CoreLightSurface?) -> DotRoleReadout {
         let active = dot?.role.map(DotRole.parse)
         let rendersItself = dot != nil && dot?.role == nil
@@ -125,7 +127,11 @@ public struct DotRoleReadout: Equatable, Sendable {
             headline = "Extending the strip"
             detail = "Two bands, LEDs 0–3 and 4–7, each showing its band's brightest lit colour."
             if linkedSkewFresh, let skew = linkedSkewMs {
-                detail = (detail ?? "") + " In step: the Dot restarts \(Int(skew.rounded())) ms after the strip."
+                if let corrected = linkedSkewCorrectedMs {
+                    detail = (detail ?? "") + " Kept in step: the Dot was \(Int(corrected.rounded())) ms behind, now corrected."
+                } else {
+                    detail = (detail ?? "") + " In step: the Dot restarts \(Int(skew.rounded())) ms after the strip."
+                }
             }
         case .asks?:
             let state = beaconState(why: dot.why, program: dot.program)

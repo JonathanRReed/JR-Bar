@@ -17,7 +17,8 @@ struct BuddyRoamingTests {
 
     private func makeToy(state: ToysState = ToysState()) -> (NotchBuddyToy, ToysStore) {
         let core = CoreModel()
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state)
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: state, cardModel: makeTestCardModel())
         return (store.notchBuddy, store)
     }
 

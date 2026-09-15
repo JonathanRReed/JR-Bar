@@ -74,7 +74,8 @@ struct ReplyDraftTests {
     @Test("mini mode writes `presentation`; the toggle reads it back")
     func miniModeRoundTrips() {
         let core = CoreModel()
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState())
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel())
         let toy = store.notchBuddy
         #expect(toy.miniMode == false)
         toy.presentationBinding.wrappedValue = true

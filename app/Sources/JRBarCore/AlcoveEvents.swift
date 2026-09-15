@@ -5,7 +5,7 @@ import Foundation
 /// `quota_reset`) becomes an `AlcoveNotice`: an icon, a title, a
 /// subtitle, shown for a couple of seconds before the island settles
 /// back to its idle face. Which kinds may raise one is the user's;
-/// `AlcoveCapsuleKinds` is the per-kind switchboard `AlcoveSettings`
+/// `AlcoveCapsuleKinds` is the per-kind switchboard `NotchSettings`
 /// persists.
 public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
     case ask
@@ -453,7 +453,7 @@ public enum AlcovePower {
     }
 }
 
-extension AlcoveIsland {
+extension NotchIsland {
     /// Points of idle content a Now Playing strip adds: the artwork
     /// thumbnail, a truncated "title — artist", and the visualizer bars.
     /// Fixed, like every idle content measure — the panel's frame is its
@@ -465,28 +465,33 @@ extension AlcoveIsland {
     /// The idle width with Now Playing in it. The media strip rides the
     /// same capsule as the dots; when nothing is working the capsule is
     /// the strip plus the resting dot.
-    public static func idleContentWidth(_ summary: AlcoveIslandSummary, media: AlcoveMedia?) -> CGFloat {
+    public static func idleContentWidth(_ summary: NotchIslandSummary, media: AlcoveMedia?) -> CGFloat {
         let base = idleContentWidth(summary)
         guard media != nil else { return base }
         return base + mediaSeparatorWidth + mediaContentWidth
     }
 }
 
-extension AlcoveIslandLayout {
-    /// The notification capsule's width — wide enough for a glyph and
-    /// two lines of copy, still a capsule and not the card.
-    public static let noticeWidth: CGFloat = 320
-    /// How far below the notch the notice capsule reaches.
-    public static let noticeLip: CGFloat = 40
+extension NotchIslandLayout {
+    /// Points the notice capsule reaches past each side of the notch
+    /// slot — room for the glyph and one line of copy.
+    public static let noticeShoulder: CGFloat = 50
+    public static let noticeMinWidth: CGFloat = 240
+    /// How far below the notch the notice capsule reaches — one line's
+    /// worth of lip.
+    public static let noticeLip: CGFloat = 22
 
-    /// The notice face: wider than idle, deeper than idle, still hung
-    /// from the notch — one window morphing, never a second panel.
-    /// `ledClearance` keeps the capsule's copy below a live Screen Bar's
-    /// band (the idle face needs none — it tucks inside the notch).
+    /// The notice face: a one-line capsule — the kind's glyph and the
+    /// "Claude · rename-the-fish needs you" line — a touch wider and
+    /// deeper than idle, still hung from the notch. `ledClearance`
+    /// keeps the line below a live Screen Bar's band (the idle face
+    /// needs none — it tucks inside the notch). The width is exactly
+    /// the slot plus its shoulders — never more: a minimum that could
+    /// outgrow notch-plus-wings would read as a panel, not the notch
+    /// speaking. Notch-less screens get the fixed floating pill.
     public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat,
                                   ledClearance: CGFloat = 0) -> CGSize {
-        guard notchDepth > 0 else { return CGSize(width: noticeWidth, height: 36) }
-        return CGSize(width: max(slotWidth + 2 * shoulder, noticeWidth),
-                      height: notchDepth + noticeLip + ledClearance)
+        CGSize(width: slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth,
+               height: notchDepth + noticeLip + ledClearance)
     }
 }

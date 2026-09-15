@@ -92,6 +92,11 @@ def _creator_output_adapter(approved_serial: str) -> CreatorMicro2Adapter:
 class CreatorMicroOutputService:
     """One HID owner for latest-wins output and optional bounded input polling."""
 
+    #: The shortest gap between re-asserts "hold" writes after a foreign
+    #: write; below it the defence is scheduled, so the last write on a layer
+    #: we own is still ours without answering every foreign frame at wire rate.
+    HOLD_REASSERT_SECONDS = 1.0
+
     def __init__(
         self,
         *,
@@ -102,6 +107,8 @@ class CreatorMicroOutputService:
         input_reset_callback: Callable[[], None] | None = None,
         layer_callback: Callable[[dict[str, int | None]], None] | None = None,
         status_poll_seconds: float = 2.0,
+        ownership: str = "yield",
+        layer_owners: Any = None,
     ) -> None:
         if adapter_factory is _creator_output_adapter:
             if not approved_serial:
@@ -114,8 +121,24 @@ class CreatorMicroOutputService:
         self._input_reset_callback = input_reset_callback
         self._layer_callback = layer_callback
         self._status_poll_seconds = max(0.05, float(status_poll_seconds))
+        from .deck_control_settings import OWNERSHIP_MODES
+        if ownership not in OWNERSHIP_MODES:
+            raise ValueError("invalid deck ownership mode")
+        self._ownership = ownership
+        try:
+            owners = dict(layer_owners or {})
+        except (TypeError, ValueError):
+            raise ValueError("invalid deck layer owners") from None
+        if any(type(layer) is not int or type(owner) is not str for layer, owner in owners.items()):
+            raise ValueError("invalid deck layer owners")
+        self._layer_owners = owners
         self._condition = threading.Condition()
         self._pending: tuple[AgentMode, str | None, CreatorMicroLightFrame | None] | None = None
+        self._last_submit: tuple[AgentMode, str | None, CreatorMicroLightFrame | None] | None = None
+        self._active_layer: int | None = None
+        self._reassert_due: float | None = None
+        self._reassert_not_before = 0.0
+        self._last_receipt: tuple[bool, str] | None = None
         self._closed = False
         self._busy = False
         self._thread: threading.Thread | None = None
@@ -142,10 +165,12 @@ class CreatorMicroOutputService:
             if self._closed:
                 return False
             self._pending = (mode, signal, frame)
+            self._last_submit = self._pending
             self._condition.notify_all()
             return True
 
     def _publish(self, available: bool, reason: str, detail: str = "") -> None:
+        self._last_receipt = (available, reason)
         if self._callback is not None:
             self._callback(CreatorMicroOutputReceipt(available, reason, detail[:256]))
 
@@ -153,12 +178,13 @@ class CreatorMicroOutputService:
         """One ``device.status`` read: the only way to learn which hardware
         layer the pad is on, since input reports carry no layer field.
 
-        Returns the observed ``(layer_index, profile_index)`` and fires the
-        layer callback with zero-based indexes whenever the answer changed.
+        Returns the observed ``(layer_index, profile_index)``, records the
+        zero-based layer for the ownership policy, and fires the layer
+        callback with zero-based indexes whenever the answer changed.
         A refused or failed query leaves the position unchanged; the adapter
         itself backs a failed query off for a while.
         """
-        if self._layer_callback is None:
+        if self._layer_callback is None and self._ownership != "hold" and not self._layer_owners:
             return last_position
         query = getattr(adapter, "query_status", None)
         if not callable(query):
@@ -172,8 +198,100 @@ class CreatorMicroOutputService:
             return last_position
         position = (layer, profile)
         if position != last_position:
-            self._layer_callback({"layer": layer - 1, "profile": profile})
+            self._layer_changed(layer - 1)
+            if self._layer_callback is not None:
+                self._layer_callback({"layer": layer - 1, "profile": profile})
         return position
+
+    def _layer_changed(self, layer: int) -> None:
+        """The pad moved to another hardware layer (service thread).
+
+        The first position read still answers for a layer the map hands to
+        an external writer — a pad that connects already sitting on Codex's
+        layer must say so — but repaints nothing: nothing left our hands.
+        After that: a foreign layer stops our paint and says so; a layer
+        back under JR-Bar repaints the latest frame on the next tick.
+        """
+        previous = self._active_layer
+        self._active_layer = layer
+        if previous == layer:
+            return
+        owner = self._layer_owners.get(layer, "jrbar")
+        if owner != "jrbar":
+            label = "other apps" if owner == "everything" else owner
+            self._publish(True, "external_layer", f"layer {layer + 1} is assigned to {label}")
+        elif previous is not None and self._last_submit is not None:
+            self._reassert_due = 0.0
+
+    def _owns_active_layer(self) -> bool:
+        """Whether JR-Bar paints the layer the pad is on. An unread or
+        unassigned layer is ours; only an explicit owner gives it away."""
+        layer = self._active_layer
+        if type(layer) is not int:
+            return True
+        return self._layer_owners.get(layer, "jrbar") == "jrbar"
+
+    def _contention_detail(self) -> str:
+        layer = self._active_layer
+        if type(layer) is not int:
+            return "foreign writes on the pad"
+        owner = self._layer_owners.get(layer, "jrbar")
+        if owner == "jrbar":
+            return f"foreign writes on layer {layer + 1} (ours)"
+        label = "other apps" if owner == "everything" else owner
+        return f"foreign writes on layer {layer + 1} (assigned to {label})"
+
+    def _absorb_contention(self, adapter) -> bool:
+        """Answer a foreign-write accusation without yielding, when the
+        layer's ownership says to.
+
+        On a layer handed to an external writer the traffic is the design,
+        not a conflict — the accusation is dropped and nothing is painted
+        over it. On our own layer under ``hold`` the accusation is dropped
+        and the latest frame goes back on the wire, bounded by
+        ``HOLD_REASSERT_SECONDS``. Returns whether the accusation was
+        absorbed; ``False`` leaves it for the ordinary conflict retry.
+        """
+        owned = self._owns_active_layer()
+        if owned and self._ownership != "hold":
+            return False
+        adapter.conflict.reset()
+        if owned:
+            if self._last_receipt is None or self._last_receipt[1] != "contention":
+                self._publish(True, "contention", self._contention_detail())
+            self._reassert(adapter)
+        return True
+
+    def _reassert(self, adapter) -> None:
+        """Write the latest submitted frame again — the bounded answer to a
+        foreign write on a layer we own."""
+        pending = self._last_submit
+        if pending is None or not getattr(adapter, "connected", False):
+            return
+        now = time.monotonic()
+        if now < self._reassert_not_before:
+            # Inside the floor: schedule the trailing write so the last
+            # frame on our layer is still ours.
+            self._reassert_due = self._reassert_not_before
+            return
+        mode, signal, frame = pending
+        state = creator_semantic_state(mode, signal=signal)
+        methods = adapter.capabilities().methods
+        if "lights.preview" in methods and frame is not None and not frame.slots:
+            result = adapter.apply_preview(frame)
+        elif "v.oai.thstatus" in methods:
+            result = adapter.apply(state, frame.params()) if frame is not None else adapter.apply(state)
+        else:
+            return
+        self._reassert_due = None
+        if result.code == "applied":
+            self._reassert_not_before = now + self.HOLD_REASSERT_SECONDS
+            return
+        if result.code != "device_conflict":
+            # A racing foreign reply re-raised the accusation — that case is
+            # absorbed on the next pass; anything else is a transport fact
+            # the ordinary reconnect path should see.
+            self._publish(False, result.code, getattr(result, "detail", ""))
 
     def _run(self) -> None:
         adapter = None
@@ -220,7 +338,14 @@ class CreatorMicroOutputService:
                         negotiated = adapter.negotiate_capabilities()
                         if negotiated.code != "capabilities_negotiated":
                             self._publish(False, negotiated.code, negotiated.detail)
-                            if negotiated.code not in {"timeout", "transport_unavailable", "backoff"}:
+                            # rpc_error and capability_probe_failed are a
+                            # pad mid-boot or mid-conflict more often than
+                            # they are a verdict -- retry them like a lost
+                            # transport rather than exiting the worker.
+                            if negotiated.code not in {
+                                "timeout", "transport_unavailable", "backoff",
+                                "rpc_error", "capability_probe_failed",
+                            }:
                                 return
                             raise OSError(negotiated.code)
                         if not adapter.capabilities().methods.intersection({"v.oai.thstatus", "lights.preview"}):
@@ -229,7 +354,6 @@ class CreatorMicroOutputService:
                         if self._input_reset_callback is not None:
                             self._input_reset_callback()
                         self._publish(True, "ready")
-                        retry_delay = 1.0
                         # Learn the layer the pad is already on before the
                         # first input or lighting frame lands.
                         last_status = self._poll_status(adapter, None)
@@ -243,12 +367,15 @@ class CreatorMicroOutputService:
                         code, detail = transient or ("reconnecting", str(error))
                         self._publish(False, code, detail)
                         retry_at = time.monotonic() + retry_delay
-                        retry_delay = min(10.0, retry_delay * 2)
+                        retry_delay = min(30.0, retry_delay * 2)
                         continue
                 try:
                     with self._condition:
                         if self._pending is None and not self._closed:
-                            self._condition.wait(timeout=0.05 if self._input_callback else 0.5)
+                            timeout = 0.05 if self._input_callback else 0.5
+                            if self._reassert_due is not None:
+                                timeout = min(timeout, max(0.0, self._reassert_due - time.monotonic()))
+                            self._condition.wait(timeout=timeout)
                         if self._closed:
                             return
                         pending, self._pending = self._pending, None
@@ -258,7 +385,12 @@ class CreatorMicroOutputService:
                         mode, signal, frame = pending
                         state = creator_semantic_state(mode, signal=signal)
                         output = (state, frame)
-                        if output != last_output or time.monotonic() - last_write_at >= 1.0:
+                        if not self._owns_active_layer():
+                            # A layer the user handed to another app is not
+                            # painted; the frame is kept as ``_last_submit``
+                            # for when the pad returns to a layer of ours.
+                            pass
+                        elif output != last_output or time.monotonic() - last_write_at >= 1.0:
                             methods = adapter.capabilities().methods
                             preview = "lights.preview" in methods and frame is not None and not frame.slots
                             if preview:
@@ -272,16 +404,25 @@ class CreatorMicroOutputService:
                                           "aggregate_preview" if preview and result.code == "applied" else result.code,
                                           result.detail)
                             if result.code != "device_conflict" and result.code not in {
-                                "applied", "timeout", "transport_unavailable", "backoff",
+                                "applied", "timeout", "transport_unavailable", "backoff", "rpc_error",
                             }:
                                 return
                             failed = result.code != "applied"
                             if not failed:
+                                # Only a pad that actually TOOK output has
+                                # earned the fast retry -- a clean connect
+                                # that never applies is still an unwell pad.
+                                retry_delay = 1.0
                                 last_output, last_write_at = output, time.monotonic()
                     # Poll even with actions disabled: this detects competing owners
                     # and disconnects. Never replay notifications after reconnect.
                     inputs = adapter.poll_inputs() if not failed else []
                     conflicted = adapter.conflict.active
+                    if conflicted and self._absorb_contention(adapter):
+                        # The layer's owner answered for the write: either an
+                        # external writer painted its own layer, or "hold"
+                        # re-asserted ours. Either way the accusation is over.
+                        conflicted = adapter.conflict.active
                     if not conflicted:
                         failed = failed or not adapter.connected
                         if not failed and inputs and self._input_callback is not None:
@@ -321,6 +462,13 @@ class CreatorMicroOutputService:
                                 self._input_reset_callback()
                             self._publish(False, "reconnecting", recovery.detail or recovery.code)
                             retry_at = time.monotonic() + retry_delay
+                    if (self._reassert_due is not None and not failed
+                            and time.monotonic() >= self._reassert_due
+                            and adapter is not None and adapter.connected
+                            and not adapter.conflict.active):
+                        self._reassert_due = None
+                        if self._owns_active_layer():
+                            self._reassert(adapter)
                     with self._condition:
                         self._busy = False
                         self._condition.notify_all()
@@ -331,6 +479,7 @@ class CreatorMicroOutputService:
                             self._input_reset_callback()
                         self._publish(False, "reconnecting")
                         retry_at = time.monotonic() + retry_delay
+                        retry_delay = min(30.0, retry_delay * 2)
                 except Exception as error:
                     # One bad packet or a bug in a poll used to fall through
                     # to the outer except, which closed the service for good:
@@ -350,7 +499,7 @@ class CreatorMicroOutputService:
                         self._input_reset_callback()
                     self._publish(False, "reconnecting", f"{type(error).__name__}: {error}")
                     retry_at = time.monotonic() + retry_delay
-                    retry_delay = min(10.0, retry_delay * 2)
+                    retry_delay = min(30.0, retry_delay * 2)
         except Exception:
             self._publish(False, "transport_unavailable")
         finally:
@@ -481,6 +630,8 @@ class OptionalIntegrationRuntime:
                     input_callback=self._deck_dispatch.receive,
                     input_reset_callback=self._reset_deck_connection,
                     layer_callback=self._deck_apply_layer,
+                    ownership=getattr(controls, "ownership", "yield"),
+                    layer_owners=getattr(controls, "layer_owners", ()),
                 )
                 with self._lock:
                     if self._closed:

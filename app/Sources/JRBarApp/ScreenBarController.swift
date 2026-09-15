@@ -99,6 +99,18 @@ final class ScreenBarController {
     private var lastCodes: [RGB8] = []
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
     private var displayAsleep = false
+    /// The island frame the last scan saw — the watcher's dedup, so a
+    /// poll that finds nothing new runs no layout.
+    private var lastIslandScan: NSRect?
+    /// The island watch: a slow poll under the window notifications —
+    /// ordering the island out posts nothing we can hang a rescan on
+    /// reliably, so while the band is up a 4 Hz look at `NSApp.windows`
+    /// is the safety net that drops the coupling when the island parks.
+    private var islandWatch: Timer?
+    /// A settle pass after an island notification: the frame write posts
+    /// before the order-in lands, so the coupling re-reads once the run
+    /// loop turns.
+    private var islandRescanWork: DispatchWorkItem?
     /// The daemon's last epoch anchor — kept so wake can re-lock: the
     /// strip's firmware clock runs through sleep while `CACurrentMediaTime`
     /// pauses, so the media-time anchor computed before the sleep no longer
@@ -142,6 +154,14 @@ final class ScreenBarController {
 
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // The island's frame is the band's silhouette while it is drawn:
+        // every setFrame — each step of a morph included — re-reads it,
+        // and the ordering notifications catch a show or a park that
+        // never moves a point.
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+                     NSWindow.didExposeNotification, NSWindow.didChangeOcclusionStateNotification] {
+            center.addObserver(self, selector: #selector(islandWindowChanged(_:)), name: name, object: nil)
+        }
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
@@ -175,7 +195,7 @@ final class ScreenBarController {
     /// drawn capsules, so a click on one is a click on something of ours.
     var hoverScreenRects: [NSRect] {
         guard isShown, panel.isVisible else { return [] }
-        return [view.bandRect, view.leftWingRect, view.rightWingRect, view.trayRect]
+        return [view.bandRect, view.leftWingRect, view.rightWingRect, view.trayRect, view.housingRect]
             .compactMap { $0 }
             .map { panel.convertToScreen(view.convert($0, to: nil)) }
     }
@@ -223,12 +243,14 @@ final class ScreenBarController {
             }
         }
         updateNoticeMonitors()
+        syncIslandWatch()
         present()
     }
 
     func hide() {
         isShown = false
         updateNoticeMonitors()
+        syncIslandWatch()
         if reduceMotion {
             panel.alphaValue = 1
             panel.orderOut(nil)
@@ -248,6 +270,46 @@ final class ScreenBarController {
     }
 
     @objc private func screensChanged(_ note: Notification) { reposition() }
+
+    /// The island moved, resized, or crossed the visible threshold —
+    /// re-read its frame and reseat the band. Filtered to the island's
+    /// own window: the band's panel fires the same notifications and
+    /// must never answer them.
+    @objc private func islandWindowChanged(_ note: Notification) {
+        guard note.object is NotchIslandWindow else { return }
+        islandFrameChanged()
+        islandRescanWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.islandFrameChanged() }
+        }
+        islandRescanWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
+    }
+
+    /// The poll that owns the coupling's truth: when the island's
+    /// on-screen frame is not what the band was last laid out against —
+    /// including gone — reposition. The window notifications land here
+    /// too, so the morph's steps and the poll share one dedup.
+    private func islandFrameChanged() {
+        let island = ScreenBarGeometry.islandScreenRect
+        guard island != lastIslandScan else { return }
+        reposition()
+    }
+
+    /// The safety poll lives exactly as long as the band is shown: a
+    /// hidden band has no silhouette to keep in step.
+    private func syncIslandWatch() {
+        if isShown, islandWatch == nil {
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.islandFrameChanged() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            islandWatch = timer
+        } else if !isShown {
+            islandWatch?.invalidate()
+            islandWatch = nil
+        }
+    }
     @objc private func screensDidSleep(_ note: Notification) { displayAsleep = true; updateClock() }
     @objc private func screensDidWake(_ note: Notification) {
         displayAsleep = false
@@ -391,8 +453,20 @@ final class ScreenBarController {
 
     private func reposition() {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
-        let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect)
+        let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect)
         let depth = ScreenBarGeometry.notchDepth(of: screen)
+        // Our notch island, while it is drawn: the band couples to it —
+        // the strip runs edge to edge under the island and the black
+        // housing continues its silhouette. Only on the notched screen
+        // the band belongs to; a floating island on a notch-less display
+        // keeps the standalone band, as does any other provider's.
+        let island = ScreenBarGeometry.islandScreenRect
+        lastIslandScan = island
+        let coupledIsland = island.flatMap { rect -> NSRect? in
+            guard depth > 0, rect.width > 1,
+                  screen.frame.contains(NSPoint(x: rect.midX, y: rect.midY)) else { return nil }
+            return rect
+        }
         let notchWidth = ScreenBarGeometry.resolvedNotchWidth(slotWidth: ScreenBarGeometry.slotWidth(of: screen),
                                                             gapWidth: gapWidth)
         let extents = wingExtents(on: screen, notchWidth: notchWidth, notchDepth: depth)
@@ -402,7 +476,7 @@ final class ScreenBarController {
         let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
                                                   gapWidth: gapWidth, wingLength: wingLength, capsule: capsule,
                                                   contentExtent: max(extents.left, extents.right),
-                                                  chin: chin)
+                                                  chin: chin, coupledIsland: coupledIsland)
         view.bandSpan = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
                                                       gapWidth: gapWidth, wingLength: wingLength,
                                                       capsule: capsule).width
@@ -416,10 +490,14 @@ final class ScreenBarController {
             lastCodes = []
             present()
         }
+        view.islandFrame = coupledIsland.map { island in
+            CGRect(x: island.minX - frame.minX, y: island.minY - frame.minY,
+                   width: island.width, height: island.height)
+        }
         view.relayout()
         // Wing chips come and go without a frame change; the hit region
         // follows the drawn capsules, not the window.
-        if (view.bandRect, view.leftWingRect, view.rightWingRect) != oldRects {
+        if (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect) != oldRects {
             onGeometryChange?()
         }
     }

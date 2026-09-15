@@ -24,6 +24,20 @@ struct OverviewView: View {
         .font(.system(size: 13))
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search titles, projects, tools")
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("View", selection: Binding(
+                    get: { store.viewMode },
+                    set: { store.setViewMode($0) }
+                )) {
+                    ForEach(OverviewViewMode.allCases, id: \.self) { mode in
+                        Label(mode.label, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 170)
+                .help("Switch between the roster table and the session graph")
+                .accessibilityLabel("Overview mode")
+            }
             if store.canCompare {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -179,7 +193,12 @@ struct OverviewView: View {
                                    title: store.roster.isEmpty ? "Nothing on record" : "Nothing matches",
                                    text: store.roster.isEmpty
                                        ? "The monitor has no sessions on record yet."
-                                       : "No row fits this view. Try another preset or clear the search.")
+                                       : "No row fits this view. Try another preset or clear the search.",
+                                   hint: store.viewMode == .graph
+                                       ? "The graph draws itself as soon as a session matches — or flip back to List."
+                                       : nil)
+            } else if store.viewMode == .graph {
+                OverviewGraphPane(store: store)
             } else {
                 Table(store.rows, selection: Binding(
                     get: { store.selectedIDs },
@@ -223,7 +242,7 @@ struct OverviewView: View {
                     }
                     .width(min: 76, ideal: 96)
                     TableColumn("Current activity", value: \.activitySortKey) { entry in
-                        Text(currentActivity(entry))
+                        Text(entry.session.activityCaption)
                             .foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                     }
                     .width(min: 120, ideal: 200)
@@ -295,15 +314,6 @@ struct OverviewView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("State: \(activity.word)")
-    }
-
-    private func currentActivity(_ entry: CoreRosterEntry) -> String {
-        let session = entry.session
-        if let ask = session.ask { return ask.summary ?? "Waiting on you" }
-        if let message = session.message, !message.isEmpty { return message }
-        if let event = session.event { return event }
-        if let tool = session.tool { return tool }
-        return session.mode?.replacingOccurrences(of: "_", with: " ") ?? "—"
     }
 
     private func elapsedText(_ entry: CoreRosterEntry) -> String {
@@ -697,6 +707,8 @@ struct OverviewEmptyState: View {
     let symbol: String
     let title: String
     let text: String
+    /// Optional extra line (the graph's "flip back to List" nudge).
+    var hint: String? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -704,6 +716,10 @@ struct OverviewEmptyState: View {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             Text(text).font(.system(size: 11)).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center).frame(maxWidth: 320)
+            if let hint {
+                Text(hint).font(.system(size: 10)).foregroundStyle(.quaternary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 320)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)

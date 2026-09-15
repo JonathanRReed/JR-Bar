@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarLEDS
 import SwiftUI
 
 /// The buddy itself: one of ten drawn characters (`BuddyCharacter`)
@@ -38,12 +39,18 @@ struct NotchBuddyView: View {
             let summary = toy.summary(at: context.date)
             let dress = dragDress(at: context.date)
             if compact || toy.miniMode {
-                // The status dot: idle dims, one worker tints it, and a
-                // plural count earns the number — same tap/menu/badge
-                // contract as the full figure.
+                // The status dot extends the pulse strip: while the
+                // daemon publishes a screen_bar program the dot is its
+                // centre seam's extra LED, sampled on the anchor's own
+                // clock — a free-running breath could only ever sit at
+                // some arbitrary phase, which is why the unlinked dot
+                // read as inverted and late. No program published: the
+                // dot keeps its standalone breath.
                 MiniFigure(
                     mood: summary.mood,
                     tint: tint(for: summary),
+                    strip: toy.stripDot(at: context.date.timeIntervalSince1970,
+                                        still: reduceMotion),
                     waiting: summary.waiting,
                     working: summary.working,
                     still: reduceMotion,
@@ -199,21 +206,58 @@ struct NotchBuddyView: View {
 /// and a number beside it once the work is plural. The "!" still wears
 /// the open-ask count; tap, drag and menu behave exactly like the full
 /// figure.
+///
+/// While the daemon publishes a Screen Bar program the dot is also the
+/// strip's extension: `strip` carries the seam's sampled colour and its
+/// `maxChannel` is the pulse's level, so the dot's glow rides the same
+/// clock the band and the hardware run — bright when the strip is
+/// bright, dark when it is dark — instead of a private sin() that sat
+/// at an arbitrary phase against the band.
 private struct MiniFigure: View {
     let mood: NotchBuddyToy.Mood
     let tint: Color
+    /// The strip link: the centre seam's colour right now, or nil when
+    /// no program is published to extend.
+    let strip: RGB?
     let waiting: Int
     let working: Int
     let still: Bool
     let phase: TimeInterval
 
+    /// The sampled colour normalized to full strength, so the pulse's
+    /// ramp lives in the overlay's opacity rather than greying the hue.
+    /// nil when the sample is dark — the resting dot owns the trough.
+    private var stripHue: Color? {
+        guard let strip else { return nil }
+        let level = strip.maxChannel
+        guard level > 0.004 else { return nil }
+        return Color(red: strip.r / level, green: strip.g / level, blue: strip.b / level)
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 3) {
-            Circle()
-                .fill(tint.opacity(mood == .asleep ? 0.35 : 0.95))
-                // Awake breathes on a slow cycle; Reduce Motion holds still.
-                .scaleEffect(still || mood == .asleep ? 1.0 : 1.0 + 0.1 * sin(phase * 2.2))
-                .frame(width: 7, height: 7)
+            ZStack {
+                Circle()
+                    // Linked, the resting tint dims and brightens with
+                    // the strip — the extension's own duty cycle, so the
+                    // pulse's trough is visible on the dot too.
+                    .fill(tint.opacity(mood == .asleep ? 0.35
+                                       : strip != nil ? 0.45 + 0.5 * (strip?.maxChannel ?? 0)
+                                       : 0.95))
+                if let hue = stripHue {
+                    Circle()
+                        .fill(hue)
+                        .opacity(strip?.maxChannel ?? 0)
+                }
+            }
+            // The swell rides the strip's level while linked — a phase
+            // that is the strip's own cannot run inverted or late —
+            // and keeps the slow standalone breath when it is not.
+            // Asleep and Reduce Motion hold still either way.
+            .scaleEffect(still || mood == .asleep ? 1.0
+                         : strip != nil ? 1.0 + 0.15 * (strip?.maxChannel ?? 0)
+                         : 1.0 + 0.1 * sin(phase * 2.2))
+            .frame(width: 7, height: 7)
             if working > 1 {
                 Text("\(working)")
                     .font(.system(size: 8.5, weight: .bold, design: .rounded))

@@ -29,25 +29,45 @@ public enum DeckTransport: String, Codable, Hashable, Sendable {
 public struct DeckReceipt: Codable, Hashable, Sendable {
     public var code: String
     public var message: String?
+    /// The pad's or the OS's own words — `{"code":…,"message":"Malformed
+    /// request"}` arrives as just the message, so "Pad replied: …" can say
+    /// what the firmware actually answered.
+    public var detail: String?
     public var at: Double?
 
-    public init(code: String, message: String? = nil, at: Double? = nil) {
+    public init(code: String, message: String? = nil, detail: String? = nil, at: Double? = nil) {
         self.code = code
         self.message = message
+        self.detail = detail
         self.at = at
     }
 
-    enum CodingKeys: String, CodingKey { case code, message, at }
+    enum CodingKeys: String, CodingKey { case code, message, detail, at }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         code = try c.decodeIfPresent(String.self, forKey: .code) ?? "unknown"
         message = try c.decodeIfPresent(String.self, forKey: .message)
+        detail = try c.decodeIfPresent(String.self, forKey: .detail)
         at = try c.decodeIfPresent(Double.self, forKey: .at)
     }
 
-    /// The sentence to show: the daemon's, else the Python app's table.
-    public var text: String { message ?? DeckReceiptMessages.message(for: code) }
+    /// The sentence to show. A pad-replied error leads with its own words;
+    /// a conflict says what the daemon said when it can, else names the
+    /// app that still holds the pad; anything else is the daemon's, else
+    /// the Python app's table.
+    public var text: String {
+        if code == "device_conflict" {
+            if let message, !message.isEmpty { return message }
+            if let detail, !detail.isEmpty { return detail }
+            return "Another app (Codex Micro) is still driving the pad"
+        }
+        if code == "rpc_error" || code == "capability_probe_failed",
+           let detail, !detail.isEmpty {
+            return "Pad replied: \(detail)"
+        }
+        return message ?? DeckReceiptMessages.message(for: code)
+    }
 
     /// Receipts that mean the pad cannot be written right now.
     public var isProblem: Bool { DeckReceiptMessages.problems.contains(code) }
@@ -492,17 +512,23 @@ public struct DeckKeymapLayer: Codable, Hashable, Sendable, Identifiable {
     /// The board scope the daemon's layer map assigns this layer, or nil on
     /// a daemon that does not know scopes (reads as automatic).
     public var scope: String?
+    /// Who may paint the layer: "jrbar" (the auto layer — always ours),
+    /// a provider id, or the "everything" catch-all. Nil on a daemon that
+    /// does not know owners (reads as jrbar).
+    public var owner: String?
 
     public var id: String { "\(profile)/\(layer)" }
 
-    public init(profile: Int, layer: Int, label: String? = nil, scope: String? = nil) {
+    public init(profile: Int, layer: Int, label: String? = nil, scope: String? = nil,
+                owner: String? = nil) {
         self.profile = profile
         self.layer = layer
         self.label = label ?? "Profile \(profile + 1) / Layer \(layer + 1)"
         self.scope = scope
+        self.owner = owner
     }
 
-    enum CodingKeys: String, CodingKey { case profile, layer, label, scope }
+    enum CodingKeys: String, CodingKey { case profile, layer, label, scope, owner }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -510,10 +536,30 @@ public struct DeckKeymapLayer: Codable, Hashable, Sendable, Identifiable {
         layer = try c.decodeIfPresent(Int.self, forKey: .layer) ?? 0
         label = try c.decodeIfPresent(String.self, forKey: .label) ?? "Profile \(profile + 1) / Layer \(layer + 1)"
         scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        owner = try c.decodeIfPresent(String.self, forKey: .owner)
     }
 
     /// The scope the layer selects, defaulting to every provider.
     public var boardScope: String { scope?.isEmpty == false ? scope! : "automatic" }
+    /// The writer the layer map hands it to, defaulting to JR-Bar.
+    public var layerOwner: String { owner?.isEmpty == false ? owner! : "jrbar" }
+}
+
+/// One `layer_owners` row: which writer a hardware layer belongs to.
+public struct DeckLayerOwner: Codable, Hashable, Sendable, Identifiable {
+    /// The zero-based hardware layer. Layer 0 (the pad's "Layer 1") is
+    /// always the auto layer — the daemon refuses any other owner for it.
+    public var layer: Int
+    /// "jrbar", a provider id, or "everything" — the catch-all for any
+    /// other app that tries to drive the pad.
+    public var owner: String
+
+    public var id: Int { layer }
+
+    public init(layer: Int, owner: String) {
+        self.layer = layer
+        self.owner = owner
+    }
 }
 
 public struct DeckKeymap: Codable, Hashable, Sendable {
@@ -683,15 +729,20 @@ public struct DeckSettings: Codable, Hashable, Sendable {
     public var layerMap: [DeckLayerScope]?
     /// Provider scopes the board cycles past the mapped ones.
     public var scopes: [String]?
+    /// Who may paint each hardware layer. Layer 0 is always JR-Bar's —
+    /// the daemon enforces it; an entry only ever names layers 1–5.
+    public var layerOwners: [DeckLayerOwner]?
 
     public init(enabled: Bool = false, sessionMode: Bool = true, analogEnabled: Bool = false,
-                bindings: [DeckBinding]? = nil, layerMap: [DeckLayerScope]? = nil, scopes: [String]? = nil) {
+                bindings: [DeckBinding]? = nil, layerMap: [DeckLayerScope]? = nil,
+                scopes: [String]? = nil, layerOwners: [DeckLayerOwner]? = nil) {
         self.enabled = enabled
         self.sessionMode = sessionMode
         self.analogEnabled = analogEnabled
         self.bindings = bindings
         self.layerMap = layerMap
         self.scopes = scopes
+        self.layerOwners = layerOwners
     }
 
     enum CodingKeys: String, CodingKey {
@@ -701,6 +752,7 @@ public struct DeckSettings: Codable, Hashable, Sendable {
         case bindings
         case layerMap = "layer_map"
         case scopes
+        case layerOwners = "layer_owners"
     }
 
     public init(from decoder: Decoder) throws {
@@ -711,11 +763,19 @@ public struct DeckSettings: Codable, Hashable, Sendable {
         bindings = try? c.decodeIfPresent([DeckBinding].self, forKey: .bindings)
         layerMap = try? c.decodeIfPresent([DeckLayerScope].self, forKey: .layerMap)
         scopes = try? c.decodeIfPresent([String].self, forKey: .scopes)
+        layerOwners = try? c.decodeIfPresent([DeckLayerOwner].self, forKey: .layerOwners)
     }
 
     /// The scope a hardware layer selects, or "automatic" when unmapped.
     public func scope(forLayer layer: Int) -> String {
         layerMap?.first { $0.layer == layer }?.scope ?? "automatic"
+    }
+
+    /// Who may paint a hardware layer — "jrbar" for every layer the map
+    /// does not hand to an external writer, and always for layer 0.
+    public func owner(forLayer layer: Int) -> String {
+        if layer == 0 { return "jrbar" }
+        return layerOwners?.first { $0.layer == layer }?.owner ?? "jrbar"
     }
 }
 

@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarLEDS
 import Observation
 import UniformTypeIdentifiers
 
@@ -57,10 +58,13 @@ final class EffectStudioStore {
     private(set) var draftParameters: [String: JSONValue] = [:]
 
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    /// Insertion order for `renders`, so the cache can drop its oldest.
+    @ObservationIgnored private var renderOrder: [String] = []
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var statusClear: DispatchWorkItem?
     @ObservationIgnored private var observing = false
     @ObservationIgnored private var wasLive = false
+    @ObservationIgnored private var isOpen = false
     @ObservationIgnored private var seenCatalogGeneration: Int?
 
     init(core: CoreModel) {
@@ -71,6 +75,7 @@ final class EffectStudioStore {
     // MARK: Lifecycle
 
     func windowDidOpen() {
+        isOpen = true
         ticker?.invalidate()
         ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -85,9 +90,23 @@ final class EffectStudioStore {
     }
 
     func windowDidClose() {
+        isOpen = false
         ticker?.invalidate()
         ticker = nil
         hardwarePreviewUntil = nil
+        renderTask?.cancel()
+        renderTask = nil
+        // Everything modal or transient belongs to the window session: a
+        // half-finished assign sheet, a consent prompt, a pack-conflict
+        // alert or a stale toast must not greet the next open.
+        assigning = false
+        askingConsent = false
+        packConflict = nil
+        scenePreview = nil
+        status = nil
+        lastError = nil
+        statusClear?.cancel()
+        statusClear = nil
     }
 
     private func observeCore() {
@@ -108,10 +127,13 @@ final class EffectStudioStore {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let generation = self.core.state?.catalogGeneration
-                if self.core.isLive, !self.wasLive { self.reload() }
+                // Closed windows don't fetch: `windowDidOpen` reloads on
+                // the next show, so a bumped generation while closed only
+                // updates the seen marker.
+                if self.core.isLive, !self.wasLive, self.isOpen { self.reload() }
                 if generation != self.seenCatalogGeneration {
                     self.seenCatalogGeneration = generation
-                    if self.core.isLive { self.reload() }
+                    if self.core.isLive, self.isOpen { self.reload() }
                 }
                 self.wasLive = self.core.isLive
                 self.track()
@@ -124,6 +146,10 @@ final class EffectStudioStore {
     func reload() {
         guard core.isLive, !loading else { return }
         loading = true
+        // The generation the fetch starts from: a bump landing mid-fetch
+        // is consumed by `track()` while `loading` drops its reload, so
+        // compare after the fetch and go around again if state moved.
+        let generationAtStart = core.state?.catalogGeneration
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -131,23 +157,106 @@ final class EffectStudioStore {
                 async let assignments = self.core.listAssignments()
                 self.catalog = try await catalog
                 self.assignments = try await assignments
-                self.seenCatalogGeneration = self.catalog?.generation
-                if self.selectedID == nil || self.catalog?.effect(self.selectedID ?? "") == nil {
-                    self.selectedID = self.catalog?.effects.first?.id
-                }
+                // The reload cue is `state.catalog_generation`; the
+                // catalog's own `generation` is only a fallback for cores
+                // that don't carry it in state.
+                self.seenCatalogGeneration = self.core.state?.catalogGeneration ?? self.catalog?.generation
+                self.catalogDidChange()
                 await self.loadScenePacks()
             } catch {
                 self.fail("Could not load effects: \(Self.describe(error))")
             }
             self.loading = false
+            if self.isOpen, self.core.isLive,
+               self.core.state?.catalogGeneration != generationAtStart {
+                self.reload()
+            }
         }
+    }
+
+    /// Selection and caches follow the catalog: after any write that
+    /// replaces it — a reload, an import, an update, a pack removal —
+    /// re-anchor the selection and drop edits and renders for effects
+    /// that no longer exist.
+    private func catalogDidChange() {
+        if selectedID == nil || catalog?.effect(selectedID ?? "") == nil {
+            selectedID = catalog?.effects.first?.id
+        }
+        pruneForRemovedEffects()
+    }
+
+    /// Drops edits and renders for effects a pack removal (or an older
+    /// registry) took away, so stale tuning can't linger invisible.
+    private func pruneForRemovedEffects() {
+        guard let catalog else { return }
+        let live = Set(catalog.effects.map(\.id))
+        edits = edits.filter { live.contains($0.key) }
+        let deadKeys = renders.keys.filter { key in
+            guard let id = key.split(separator: "|", maxSplits: 1).first else { return true }
+            return !live.contains(String(id))
+        }
+        for key in deadKeys { renders[key] = nil }
+        renderOrder.removeAll { deadKeys.contains($0) }
     }
 
     // MARK: Selection and parameters
 
     var selected: EffectDefinition? { selectedID.flatMap { catalog?.effect($0) } }
 
-    var groups: [(title: String, effects: [EffectDefinition])] { catalog?.groups(matching: search) ?? [] }
+    /// The library's filter: everything, only effects an assignment
+    /// uses, or only pack-installed ones.
+    enum LibraryFilter: String, CaseIterable, Identifiable {
+        case all, inUse, packs
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .all: return "All effects"
+            case .inUse: return "In use"
+            case .packs: return "From packs"
+            }
+        }
+
+        func includes(_ effect: EffectDefinition, used: Bool) -> Bool {
+            switch self {
+            case .all: return true
+            case .inUse: return used
+            case .packs: return effect.isFromPack
+            }
+        }
+    }
+
+    var filter: LibraryFilter = .all
+
+    var groups: [(title: String, effects: [EffectDefinition])] {
+        Self.libraryGroups(from: catalog, matching: search, filter: filter) { !usage(of: $0).isEmpty }
+    }
+
+    /// The catalog's meaning-groups with the filter applied and each
+    /// group's effects sorted by label — the daemon's order is
+    /// first-seen, which scatters nineteen provider animations into an
+    /// unscannable list. Groups keep their first-seen order and empty
+    /// ones drop out.
+    static func libraryGroups(from catalog: EffectCatalog?, matching search: String, filter: LibraryFilter,
+                              used: (EffectDefinition) -> Bool) -> [(title: String, effects: [EffectDefinition])] {
+        (catalog?.groups(matching: search) ?? []).compactMap { group in
+            let effects = group.effects
+                .filter { filter.includes($0, used: used($0)) }
+                .sorted(by: Self.libraryOrder)
+            return effects.isEmpty ? nil : (group.title, effects)
+        }
+    }
+
+    /// Alphabetical by display label; the id breaks ties so the order is
+    /// stable across reloads.
+    static func libraryOrder(_ a: EffectDefinition, _ b: EffectDefinition) -> Bool {
+        switch a.label.localizedCaseInsensitiveCompare(b.label) {
+        case .orderedAscending: return true
+        case .orderedDescending: return false
+        case .orderedSame: return a.id < b.id
+        }
+    }
 
     func values(for effect: EffectDefinition) -> [String: JSONValue] {
         effect.normalizedParameters(edits[effect.id] ?? [:])
@@ -174,6 +283,15 @@ final class EffectStudioStore {
         return effect.id + "|" + String(decoding: data, as: UTF8.self)
     }
 
+    /// The effect the preview actually plays. Under Reduce Motion the
+    /// daemon substitutes the named fallback, so the studio shows that
+    /// program instead of a motion the hardware would never run.
+    static func displayedEffect(for effect: EffectDefinition, catalog: EffectCatalog?, reduceMotion: Bool) -> EffectDefinition {
+        guard reduceMotion, let fallback = effect.reduceMotionFallback,
+              let target = catalog?.effect(fallback), target.id != effect.id else { return effect }
+        return target
+    }
+
     /// The program the preview strip plays: the daemon's render for the
     /// edited parameters when it has arrived, else the catalog's default.
     func previewProgram(for effect: EffectDefinition) -> String {
@@ -181,6 +299,8 @@ final class EffectStudioStore {
     }
 
     func previewProgram(for effect: EffectDefinition, values: [String: JSONValue]) -> String {
+        let shown = Self.displayedEffect(for: effect, catalog: catalog, reduceMotion: reduceMotion)
+        if shown.id != effect.id { return shown.preview?.program ?? "off" }
         if let render = renders[Self.renderKey(effect, values)] { return render.program }
         return effect.preview?.program ?? "off"
     }
@@ -192,9 +312,12 @@ final class EffectStudioStore {
     }
 
     /// The LED count the on-screen strip renders at: the connected
-    /// device's real count so the preview matches the hardware.
+    /// device's real count so the preview matches the hardware. The
+    /// sampler only models the firmware's counts (2 and 8), so a device
+    /// reporting anything else snaps to the nearest real shape rather
+    /// than drawing a program it cannot play.
     func previewLedCount(for effect: EffectDefinition) -> Int {
-        previewSurface.map { min(24, max(2, $0.ledCount)) } ?? effect.preview?.ledCount ?? 8
+        previewSurface.map { LEDSProgram.normalizedLedCount($0.ledCount) } ?? effect.preview?.ledCount ?? 8
     }
 
     /// The cadence the daemon reports for the current parameters, else the
@@ -214,6 +337,10 @@ final class EffectStudioStore {
         scheduleRender(effect, values: values(for: effect))
     }
 
+    /// Every slider position is a distinct cache key; without a bound a
+    /// tuning session grows the cache for the window's whole lifetime.
+    private static let renderCacheLimit = 48
+
     private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue]) {
         renderTask?.cancel()
         let key = Self.renderKey(effect, values)
@@ -226,7 +353,17 @@ final class EffectStudioStore {
             do {
                 let preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: previewLedCount)
                 self.renders[key] = preview
+                self.renderOrder.removeAll { $0 == key }
+                self.renderOrder.append(key)
+                while self.renderOrder.count > Self.renderCacheLimit, let oldest = self.renderOrder.first {
+                    self.renderOrder.removeFirst()
+                    self.renders[oldest] = nil
+                }
             } catch {
+                // Every keystroke cancels the previous render and the
+                // window close cancels the last one — neither is a
+                // failure worth a toast.
+                if Task.isCancelled || error is CancellationError { return }
                 self.fail("Preview render failed: \(Self.describe(error))")
             }
         }
@@ -255,25 +392,34 @@ final class EffectStudioStore {
 
     var hasHardware: Bool { previewSurface != nil }
 
+    /// A `preview_program` request on the wire; the button stays enabled
+    /// until the daemon answers without this, so a fast double-tap would
+    /// queue two previews on the hardware.
+    private(set) var hardwarePreviewInFlight = false
+
     /// The LED count previews render at: the connected device's real
-    /// count (2–24 is what `render_effect` supports), the catalog's 8
-    /// otherwise.
+    /// count snapped to a shape the sampler can play (the firmware's 2
+    /// and 8), the catalog's 8 otherwise.
     var previewLedCount: Int {
         guard let ledCount = previewSurface?.ledCount else { return 8 }
-        return min(24, max(2, ledCount))
+        return LEDSProgram.normalizedLedCount(ledCount)
     }
 
     func previewOnHardware(_ effect: EffectDefinition) {
         guard hardwareConsent else { askingConsent = true; return }
+        guard !hardwarePreviewInFlight else { return }
         guard let target = previewSurface else {
             fail("Nothing to play on: no strip or Dot is connected")
             return
         }
         let program = previewProgram(for: effect)
+        hardwarePreviewInFlight = true
         Task { [weak self] in
             guard let self else { return }
+            defer { self.hardwarePreviewInFlight = false }
             do {
                 let reply = try await self.core.previewProgramNow(surface: target.surface, program: program, seconds: Self.hardwarePreviewSeconds)
+                guard self.isOpen else { return }
                 if reply.ok {
                     self.hardwarePreviewUntil = Date().addingTimeInterval(Self.hardwarePreviewSeconds)
                     self.show(status: "Playing \(effect.label) on \(target.name) for \(Int(Self.hardwarePreviewSeconds)) s")
@@ -337,9 +483,26 @@ final class EffectStudioStore {
 
     func usage(of effect: EffectDefinition) -> [EffectAssignment] { assignments?.usage(of: effect.id) ?? [] }
 
+    /// "Used by Everywhere, Codex (provider)" — where the effect is
+    /// assigned, for the library row's tooltip.
+    func usageSummary(of effect: EffectDefinition) -> String? {
+        let uses = usage(of: effect)
+        guard !uses.isEmpty else { return nil }
+        let list = uses.map { assignment in
+            assignment.scope == .global
+                ? "Everywhere"
+                : "\(targetTitle(for: assignment)) (\(assignment.scope.label.lowercased()))"
+        }
+        return "Used by " + list.joined(separator: ", ")
+    }
+
     func beginAssigning(_ effect: EffectDefinition, scope: EffectScope? = nil, target: String? = nil) {
+        // The sheet reads `selected`; a context-menu Assign on a row that
+        // is not selected must not write the other effect's id.
+        selectedID = effect.id
         if let scope { draftScope = scope }
         draftTarget = target ?? defaultTarget(for: draftScope)
+        draftUsesParameters = true
         assigning = true
         hydrateDraftParameters(for: effect)
     }
@@ -508,11 +671,14 @@ final class EffectStudioStore {
     }
 
     /// A stored device assignment naming a linked Dot: while it follows
-    /// the strip, the scoped effect is shadowed.
+    /// the strip, the scoped effect is shadowed. The check mirrors the
+    /// picker label's — the lights document or the device itself can
+    /// carry the linked flag.
     func isUnreachableDot(_ assignment: EffectAssignment) -> Bool {
-        assignment.scope == .device
-            && (core.lights?.linked == true)
-            && core.devices.contains { $0.id == assignment.targetID && $0.kind == "dot" }
+        guard assignment.scope == .device,
+              let dot = core.devices.first(where: { $0.id == assignment.targetID && $0.kind == "dot" })
+        else { return false }
+        return core.lights?.linked == true || dot.linked == true
     }
 
     /// The row's second line: what the assignment actually does — a
@@ -579,6 +745,9 @@ final class EffectStudioStore {
             guard let self else { return }
             do {
                 let preview = try await self.core.previewScenePack(packID: pack.id, ledCount: self.previewLedCount)
+                // A reply landing after the window closed would resurface
+                // as an unasked-for preview on the next open.
+                guard self.isOpen else { return }
                 self.scenePreview = (pack.id, preview)
             } catch {
                 self.fail("Scene pack preview failed: \(Self.describe(error))")
@@ -619,6 +788,7 @@ final class EffectStudioStore {
             guard let self else { return }
             do {
                 self.catalog = try await self.core.removeEffectPack(packID: pack.id)
+                self.catalogDidChange()
                 self.show(status: "Removed pack \(pack.name)")
             } catch {
                 self.fail("Remove refused: \(Self.describe(error))")
@@ -636,6 +806,7 @@ final class EffectStudioStore {
             guard let self else { return }
             do {
                 self.catalog = try await self.core.importEffectPack(path: conflict.path, update: true)
+                self.catalogDidChange()
                 self.show(status: "Updated \(conflict.name)")
             } catch {
                 self.fail("Update refused: \(Self.describe(error))")
@@ -655,8 +826,9 @@ final class EffectStudioStore {
             guard let self else { return }
             do {
                 self.catalog = try await self.core.importEffectPack(path: url.path)
+                self.catalogDidChange()
                 self.show(status: "Imported \(url.lastPathComponent)")
-            } catch let error as CoreReplyError where error.code == "conflict" || (error.message ?? "").contains("already_installed") {
+            } catch let error as CoreReplyError where error.code == "conflict" || error.code == "already_installed" || (error.message ?? "").contains("already_installed") {
                 self.packConflict = (url.path, url.lastPathComponent)
             } catch {
                 self.fail("Import refused: \(Self.describe(error))")

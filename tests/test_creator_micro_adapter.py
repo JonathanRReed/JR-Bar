@@ -786,3 +786,31 @@ def test_a_late_answer_to_an_earlier_request_of_ours_is_not_a_conflict__and_1_mo
     finally:
         service.close()
 
+
+
+def test_rpc_error_and_probe_failure_keep_the_firmwares_own_message() -> None:
+    # --- scenario: rpc_error_detail_is_the_pads_message_field
+    """A stringified ``{'code': -32602, 'message': 'Malformed request'}``
+    made the row quote Python at the owner; the message field is the pad's
+    own words and is what the detail must carry."""
+    error = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Malformed request"}}
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO,
+        capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]),
+    )
+    adapter.connect()
+    transport.reads.extend(CreatorMicro2Framer.encode_message(error))
+    receipt = adapter.apply(SemanticState.IDLE, [{"id": 1}])
+    assert receipt.code == "rpc_error"
+    assert receipt.detail == "Malformed request"
+
+    # --- scenario: capability_probe_failed_keeps_the_pads_reason
+    error = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "busy calibrating"}}
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(transport, INFO)
+    adapter.connect()
+    transport.reads.extend(CreatorMicro2Framer.encode_message(error))
+    receipt = adapter.negotiate_capabilities()
+    assert receipt.code == "capability_probe_failed"
+    assert receipt.detail == "busy calibrating"

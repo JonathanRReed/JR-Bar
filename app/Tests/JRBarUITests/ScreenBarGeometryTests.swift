@@ -165,6 +165,67 @@ import Testing
             == CGRect(x: 144, y: 6, width: 56, height: 32))
     }
 
+    // MARK: Island coupling (the band reads as part of the notch island)
+
+    /// The island's frame in view coordinates: idle it is exactly the
+    /// notch's depth, hanging from the window's top.
+    static func islandRect(width: CGFloat, height: CGFloat, in size: NSSize) -> CGRect {
+        CGRect(x: (size.width - width) / 2, y: size.height - height, width: width, height: height)
+    }
+
+    @Test func coupledStripKissesTheIslandEdges() {
+        // The coupled window: 41 tall (coupledWindowHeight(32)), island
+        // 209 wide — slot 185 + 12 pt shoulders — centred inside it.
+        let size = NSSize(width: 213, height: 41)
+        let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 209, height: 32, in: size),
+                                                     notchDepth: 32, cornerRadius: 8)
+        // The strip keeps its seat — 31…37 below the screen's top — but
+        // runs the island's full width: end caps kissing its side edges.
+        #expect(coupling.band == CGRect(x: 2, y: 4, width: 209, height: 6))
+        // The housing swallows the island's bottom corners (its top runs
+        // to 32 - 8 = 24 below the top) and ends 3 pt under the strip.
+        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 16))
+        #expect(coupling.cornerRadius == 8)
+    }
+
+    @Test func coupledHousingHidesInsideAGrownIsland() {
+        // The grown card's bottom is far below the band — the housing's
+        // lip only has to reach the strip, since the island's own black
+        // face is already behind everything.
+        let size = NSSize(width: 380, height: 41)
+        let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 380, height: 300, in: size),
+                                                     notchDepth: 32, cornerRadius: 8)
+        #expect(coupling.band == CGRect(x: 0, y: 4, width: 380, height: 6))
+        // Top at 31 - 4 = 27 below the top; bottom at 40 — a 13 pt lip
+        // whose only visible edge is the corner curve under the strip.
+        #expect(coupling.housing == CGRect(x: 0, y: 1, width: 380, height: 13))
+    }
+
+    @Test func coupledIslandGrowsTheWindowTowardIt() {
+        // A grown island (the expanded card's 380) widens the window to
+        // its own edges and seats the housing; the top stays pinned.
+        let island = CGRect(x: 566, y: 682, width: 380, height: 300)
+        let frame = ScreenBarGeometry.windowFrame(screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
+                                                  auxiliaryLeft: 300, auxiliaryRight: 300,
+                                                  hardwareSlot: 185, wrapMenuBar: true,
+                                                  coupledIsland: island)
+        #expect(frame == CGRect(x: 566, y: 982 - 41, width: 380, height: 41))
+        #expect(ScreenBarGeometry.coupledWindowHeight(notchDepth: 32) == 41)
+    }
+
+    @Test func coupledIslandNeverShrinksTheWindow() {
+        // The idle island is narrower than the classic wrap frame: only
+        // the height grows to seat the housing.
+        let island = CGRect(x: 651.5, y: 950, width: 209, height: 32)
+        let frame = ScreenBarGeometry.windowFrame(screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
+                                                  auxiliaryLeft: 300, auxiliaryRight: 300,
+                                                  hardwareSlot: 185, wrapMenuBar: true,
+                                                  coupledIsland: island)
+        #expect(frame == CGRect(x: 649.5, y: 982 - 41, width: 213, height: 41))
+        // And nil is the standalone frame, untouched.
+        #expect(Self.frame().height == 38)
+    }
+
     @Test func notchlessSlotsFlankTheBand() {
         // No notch: the window is the 260 pt fallback plus a fixed claim
         // per populated side, and the chips hug the band's ends.

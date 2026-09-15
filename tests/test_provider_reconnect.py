@@ -15,6 +15,7 @@ from jrbar.provider_reconnect import (
     grok_auth_status,
     newest_codex_rollout_age,
     note_failure,
+    reconnect_provider,
     repair_claude_credential,
     repair_grok_credential,
     should_collect,
@@ -515,4 +516,137 @@ def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more() -
     assert claude_token_is_stale(Store(None), now=1000.0), "unknown = stale"
     assert claude_token_is_stale(Store("1200"), now=1000.0), "inside the margin"
     assert not claude_token_is_stale(Store("9000"), now=1000.0)
+
+
+# --- reconnect_provider: the Usage Center's "Re-sign in" --------------------
+#
+# The button is always on the card, so the answer is always honest: a real
+# re-pull where JR-Bar can reach the sign-in, the provider's own remedy
+# where only its CLI/app can mint one.
+
+
+def test_reconnect_grok_clears_the_wedge_and_reports(tmp_path):
+    write_grok_auth(tmp_path)
+    store = FakeStore({("grok", "token"): "stale-stored-token-000000"})
+    result = reconnect_provider(
+        "grok", credential_store=store, home=tmp_path, now=1000.0
+    )
+    assert result.changed
+    assert ("grok", "token") in store.deleted
+    assert "signed in" in result.message
+    assert result.sign_in_url is None
+
+
+def test_reconnect_grok_names_grok_login_when_the_cli_is_out(tmp_path):
+    write_grok_auth(tmp_path, expires_at=1.0)
+    result = reconnect_provider(
+        "grok", credential_store=FakeStore(), home=tmp_path, now=1000.0
+    )
+    assert not result.changed
+    assert "grok login" in result.message
+
+
+def test_reconnect_grok_defers_to_the_server_rejection(tmp_path):
+    # reason_code="authentication_required" is the collector's last 401:
+    # the file looks live, the server says otherwise, so the answer must
+    # be `grok login`, not "signed in — refreshing now".
+    write_grok_auth(tmp_path)
+    result = reconnect_provider(
+        "grok",
+        reason_code="authentication_required",
+        credential_store=FakeStore(),
+        home=tmp_path,
+        now=1000.0,
+    )
+    assert "grok login" in result.message
+    assert "rejecting" in result.message
+
+
+def test_reconnect_claude_stores_the_fresh_keychain_token():
+    store = FakeStore()
+    result = reconnect_provider(
+        "claude",
+        credential_store=store,
+        now=1000.0,
+        keychain_payload_reader=lambda: claude_payload(access="d" * 32),
+    )
+    assert result.changed
+    assert store.secrets[("claude", "oauth-token")] == "d" * 32
+
+
+def test_reconnect_claude_provider_owned_shape_is_not_a_sign_in_ask():
+    # A refresh-token-only payload means Claude Code itself owns the
+    # renewal; the honest message says so instead of asking the user to
+    # sign in somewhere.
+    result = reconnect_provider(
+        "claude",
+        credential_store=FakeStore(),
+        now=1000.0,
+        keychain_payload_reader=lambda: claude_payload(access=""),
+    )
+    assert not result.changed
+    assert "Claude Code owns" in result.message
+
+
+def test_reconnect_codex_reports_the_evidence_it_found(tmp_path):
+    result = reconnect_provider(
+        "codex", credential_store=FakeStore(), home=tmp_path, now=1000.0
+    )
+    assert "Codex" in result.message
+    assert not result.changed
+    assert result.sign_in_url is None
+
+
+def test_reconnect_devin_reimports_the_consented_session():
+    result = reconnect_provider(
+        "devin",
+        credential_store=FakeStore(),
+        session_importer=lambda provider: "Signed in as your Firefox "
+        "session — no API key needed. Refreshing usage now.",
+    )
+    assert result.changed
+    assert "Signed in" in result.message
+
+
+def test_reconnect_devin_without_a_session_points_at_the_page():
+    result = reconnect_provider(
+        "devin",
+        credential_store=FakeStore(),
+        session_importer=lambda provider: None,
+    )
+    assert not result.changed
+    assert result.sign_in_url == "https://app.devin.ai"
+    assert "app.devin.ai" in result.message
+
+
+def test_reconnect_openai_takes_the_clipboard_key_on_click():
+    store = FakeStore()
+    result = reconnect_provider(
+        "openai-api",
+        credential_store=store,
+        clipboard_reader=lambda: "sk-admin-" + "x" * 24,
+    )
+    assert result.changed
+    assert store.secrets[("openai-api", "admin-key")].startswith("sk-admin-")
+    # Prose on the clipboard is not a credential: the honest ask names
+    # the Admin-keys page.
+    again = reconnect_provider(
+        "openai-api",
+        credential_store=FakeStore(),
+        clipboard_reader=lambda: "not a key, just text",
+    )
+    assert not again.changed
+    assert "Admin" in again.message
+
+
+def test_reconnect_cli_owned_providers_name_the_owner():
+    gemini = reconnect_provider("gemini", credential_store=FakeStore())
+    assert "gemini" in gemini.message.lower()
+    assert "cli" in gemini.message.lower()
+    assert gemini.sign_in_url is None
+    cursor = reconnect_provider("cursor", credential_store=FakeStore())
+    assert "Cursor" in cursor.message
+    assert cursor.sign_in_url == "https://cursor.com/settings"
+    opencode = reconnect_provider("opencode", credential_store=FakeStore())
+    assert "opencode auth login" in opencode.message
 

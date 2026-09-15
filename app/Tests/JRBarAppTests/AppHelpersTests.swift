@@ -145,6 +145,25 @@ import JRBarUI
         #expect(StatusItemController.plan(style: .agents, ringFraction: 0.42).spec.ringFraction == nil)
     }
 
+    @Test func theRingFollowsTheLeadingMetersMostExhaustedWindow() {
+        // The ring's own figure still arrives as the 5h window's, but the
+        // leading meter now leads with the provider's most-exhausted
+        // window — a weekly at 100 % must not leave a calm 40 % ring.
+        let exhausted = [StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 1.0)]
+        let ring = StatusItemController.plan(style: .glyphRing, ringFraction: 0.4, meters: exhausted)
+        #expect(ring.spec.ringFraction == 1.0)
+        #expect(ring.spec.ringWarning == .red)
+        let orbit = StatusItemController.plan(style: .orbit, ringFraction: 0.4, meters: exhausted)
+        #expect(orbit.spec.ringFraction == 1.0)
+        // A calmer leading window never lowers the ring, and non-ring
+        // styles never take the meter's figure.
+        let calm = [StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 0.2)]
+        #expect(StatusItemController.plan(style: .glyphRing, ringFraction: 0.4, meters: calm).spec.ringFraction == 0.4)
+        #expect(StatusItemController.plan(style: .glyph, ringFraction: 0.4, meters: exhausted).spec.ringFraction == nil)
+        // No ring figure at all: the leading meter's constraint still fills it.
+        #expect(StatusItemController.plan(style: .glyphRing, meters: exhausted).spec.ringFraction == 1.0)
+    }
+
     @Test func onlyTheLabelStyleShowsALabel() {
         #expect(StatusItemController.plan(style: .glyphLabel, labelText: "2 working").label == "2 working")
         #expect(StatusItemController.plan(style: .agents, labelText: "2 working").label == nil)
@@ -157,30 +176,18 @@ import JRBarUI
         #expect(StatusItemController.plan(style: .glyph).spec.tintHex == nil)
     }
 
-    @Test func onlyTheOrbitStyleCarriesTheDeviceReading() {
-        let device = StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58,
-                                      batteryPercent: 72, hasBattery: true)
-        let orbit = StatusItemController.plan(style: .orbit, device: device)
+    @Test func theOrbitStyleCarriesTheRingAndTheWorkingDots() {
+        let dots = [SessionDot(id: "a", state: .working), SessionDot(id: "b", state: .ask)]
+        let orbit = StatusItemController.plan(style: .orbit, ringFraction: 0.42, sessionDots: dots)
         #expect(orbit.isStrip, "the roundel owns its own width")
-        #expect(orbit.spec.device == device)
+        #expect(orbit.spec.ringFraction == 0.42)
+        #expect(orbit.spec.sessions == dots)
         #expect(orbit.stripWidth == StatusIconRenderer.orbitSize.width)
         #expect(orbit.label == nil)
-        // Other styles never take it — a device spec on a glyph would be
-        // a stray reading the picture can't show.
-        #expect(StatusItemController.plan(style: .glyph, device: device).spec.device == nil)
-        #expect(StatusItemController.plan(style: .agents, device: device).spec.device == nil)
-    }
-}
-
-/// The `orbit` icon's Wi-Fi read: the dBm-to-dots bucketing, off-device.
-@Suite struct StatusDeviceMonitorTests {
-    @Test func rssiBuckets() {
-        #expect(StatusDeviceMonitor.wifiDots(rssi: -40) == 4)
-        #expect(StatusDeviceMonitor.wifiDots(rssi: -55) == 4)
-        #expect(StatusDeviceMonitor.wifiDots(rssi: -60) == 3)
-        #expect(StatusDeviceMonitor.wifiDots(rssi: -70) == 2)
-        #expect(StatusDeviceMonitor.wifiDots(rssi: -80) == 1)
-        #expect(StatusDeviceMonitor.wifiDots(rssi: -95) == 1, "a thread of a link is still a dot")
+        // Other styles never take them — a ring or a session dot on the
+        // wrong style is data the picture can't show.
+        #expect(StatusItemController.plan(style: .glyph, ringFraction: 0.42).spec.ringFraction == nil)
+        #expect(StatusItemController.plan(style: .glyph, sessionDots: dots).spec.sessions.isEmpty)
     }
 }
 
@@ -296,14 +303,17 @@ import JRBarUI
     }
 }
 
-/// The card's featured window: the daemon's constrained pick when it
-/// names one (least headroom of the applicable measured lanes), else the
-/// 5h convention (S6.4).
+/// The card's featured window — and every surface's leading window: the
+/// daemon's constrained pick when it names one (least headroom of the
+/// applicable measured lanes), the same rule computed locally when it
+/// does not, else the 5h convention (S6.4). An exhausted weekly outranks
+/// a 5h window with headroom.
 @Suite @MainActor struct FeaturedWindowTests {
-    static func provider(_ constrained: CoreConstrainedLane?) -> CoreProviderUsage {
+    static func provider(_ constrained: CoreConstrainedLane?, fiveHour: Double? = 42,
+                         sevenDay: Double? = 61) -> CoreProviderUsage {
         CoreProviderUsage(id: "claude", windows: [
-            CoreUsageWindow(key: "five_hour", name: "5h", usedPct: 42),
-            CoreUsageWindow(key: "seven_day", name: "7d", usedPct: 61),
+            CoreUsageWindow(key: "five_hour", name: "5h", usedPct: fiveHour),
+            CoreUsageWindow(key: "seven_day", name: "7d", usedPct: sevenDay),
         ], constrained: constrained)
     }
 
@@ -311,15 +321,44 @@ import JRBarUI
         let provider = Self.provider(CoreConstrainedLane(id: "seven_day", name: "7d", usedPct: 61,
                                                          reason: "least_headroom", candidates: 2))
         #expect(UsageCenterStore.featuredWindow(of: provider)?.id == "seven_day")
-        #expect(UsageCenterStore.primaryWindow(of: provider)?.id == "five_hour")
+        #expect(UsageCenterStore.primaryWindow(of: provider)?.id == "seven_day")
+        #expect(UsageCenterStore.conventionalWindow(of: provider)?.id == "five_hour")
         #expect(provider.constrained?.explanation == "least headroom of 2 measured windows")
     }
 
-    @Test func conventionLeadsWhenTheDaemonNamesNothing() {
+    @Test func leastHeadroomLeadsWhenTheDaemonNamesNothing() {
+        // No constrained pick: the local rule is the same — the tighter
+        // window leads, so an exhausted weekly (100%) beats a 5h with
+        // headroom even though the convention would have named the 5h.
         let provider = Self.provider(nil)
-        #expect(UsageCenterStore.featuredWindow(of: provider)?.id == "five_hour")
+        #expect(UsageCenterStore.primaryWindow(of: provider)?.id == "seven_day")
+        #expect(UsageCenterStore.featuredWindow(of: provider)?.id == "seven_day")
         // A constrained id that matches no window falls back the same way.
         let stale = Self.provider(CoreConstrainedLane(id: "gone", name: "gone"))
-        #expect(UsageCenterStore.featuredWindow(of: stale)?.id == "five_hour")
+        #expect(UsageCenterStore.primaryWindow(of: stale)?.id == "seven_day")
+    }
+
+    @Test func exhaustedWeeklyIsRed() {
+        let provider = Self.provider(nil, fiveHour: 30, sevenDay: 100)
+        let leading = UsageCenterStore.primaryWindow(of: provider)
+        #expect(leading?.id == "seven_day")
+        #expect(leading?.usedPct == 100)
+        // The colour model's own word for it: ≥95 is red.
+        #expect(UsageColors.level(leading?.usedPct, accent: .blue) == .red)
+        // The convention still answers 5h — that is what the card's
+        // "Watching it" note compares the pick against.
+        #expect(UsageCenterStore.conventionalWindow(of: provider)?.id == "five_hour")
+    }
+
+    @Test func conventionLeadsWhenNothingIsMeasured() {
+        let provider = Self.provider(nil, fiveHour: nil, sevenDay: nil)
+        #expect(UsageCenterStore.primaryWindow(of: provider)?.id == "five_hour")
+    }
+
+    @Test func panelRowLeadsWithTheExhaustedWindow() {
+        let provider = Self.provider(nil, fiveHour: 30, sevenDay: 100)
+        let (primary, secondary) = PanelStore.windows(of: provider)
+        #expect(primary?.id == "seven_day")
+        #expect(secondary?.id == "five_hour")
     }
 }

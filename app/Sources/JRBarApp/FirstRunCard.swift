@@ -90,7 +90,7 @@ final class FirstRunCard: NSObject, NSWindowDelegate {
         // A once-ever card may take focus: buttons and Esc need a key
         // window, and an accessory app is never key on its own. The same
         // two calls the Settings and History windows use.
-        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        NSRunningApplication.current.activate()
         NSApp.activate()
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)

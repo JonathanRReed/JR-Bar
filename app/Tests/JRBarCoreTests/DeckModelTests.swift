@@ -49,6 +49,13 @@ struct DeckModelTests {
         #expect(deck.settings.scopes == ["devin"])
         #expect(deck.settings.scope(forLayer: 1) == "codex" && deck.settings.scope(forLayer: 0) == "automatic")
         #expect(deck.settings.scope(forLayer: 9) == "automatic", "an unmapped layer is automatic")
+        #expect(deck.settings.layerOwners == [DeckLayerOwner(layer: 1, owner: "codex"),
+                                            DeckLayerOwner(layer: 2, owner: "everything")])
+        #expect(deck.settings.owner(forLayer: 0) == "jrbar", "layer 1 is always the auto layer")
+        #expect(deck.settings.owner(forLayer: 1) == "codex")
+        #expect(deck.settings.owner(forLayer: 2) == "everything")
+        #expect(deck.settings.owner(forLayer: 4) == "jrbar", "an unassigned layer is ours")
+        #expect(deck.keymap.layers.map(\.layerOwner) == ["jrbar", "codex", "everything"])
         #expect(deck.slots.count == 11, "the raw list keeps what the daemon sent")
 
         let keys = deck.keySlots

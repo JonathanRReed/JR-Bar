@@ -3,9 +3,13 @@ import JRBarLEDS
 import QuartzCore
 import SwiftUI
 
-/// The Screen Bar's drawing surface: three layers composited by the window
+/// The Screen Bar's drawing surface: four layers composited by the window
 /// server and nothing rasterised in this process.
 ///
+/// * `housingLayer` -- solid black, drawn only while our notch island is
+///   up: the strip's seat. Square at the top where it runs into the
+///   island's face, the notch profile's radius on its bottom corners, so
+///   island and band read as one continuous black shape.
 /// * `bandLayer`  -- the 6 pt rounded status band, one horizontal gradient;
 /// * `haloLayer`  -- the same gradient, a little larger, softened by a
 ///   vertical alpha mask and drawn at `HALO_ALPHA` below the band so the
@@ -24,6 +28,7 @@ final class ScreenBarView: NSView {
     private let haloLayer = CAGradientLayer()
     private let haloMask = CAGradientLayer()
     private let outlineLayer = CAShapeLayer()
+    private let housingLayer = CAShapeLayer()
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     private var lastStops: [BandStop] = []
     private var lastBandWidth: CGFloat = -1
@@ -57,6 +62,16 @@ final class ScreenBarView: NSView {
     /// below it — in view coordinates; nil while no wing is drawn or the
     /// screen has no notch to wrap.
     private(set) var trayRect: NSRect?
+    /// The notch island's frame in view coordinates while it is ours and
+    /// on screen — pushed by the controller on every reposition. Non-nil
+    /// couples the band: the strip runs edge to edge under the island and
+    /// `housingLayer` continues its silhouette (`ScreenBarCoupling`).
+    /// nil is the standalone band: Notch off, the island parked, an
+    /// external provider rendering, or a screen with no notch.
+    var islandFrame: CGRect?
+    /// The housing's drawn bounds in view coordinates — ours, so it joins
+    /// the hit region; nil while the band stands alone.
+    private(set) var housingRect: NSRect?
     private let wingsModel = ScreenBarWingsModel()
     private var wingsHosting: NSHostingView<ScreenBarWingsView>?
     /// Settings › Screen Bar › Minimum glow, pushed in live: it scales the
@@ -129,6 +144,13 @@ final class ScreenBarView: NSView {
         updateOutline()
         outlineLayer.actions = ["path": NSNull(), "strokeColor": NSNull()]
 
+        // The island's own material: plain black, no stroke — the same
+        // `.fill(.black)` the island's background wears.
+        housingLayer.fillColor = CGColor(gray: 0, alpha: 1)
+        housingLayer.isHidden = true
+        housingLayer.actions = ["path": NSNull(), "position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
+
+        root.addSublayer(housingLayer)
         root.addSublayer(haloLayer)
         root.addSublayer(bandLayer)
         root.addSublayer(outlineLayer)
@@ -154,7 +176,25 @@ final class ScreenBarView: NSView {
 
     func relayout() {
         let size = bounds.size
-        let rect = ScreenBarGeometry.bandRect(in: size, preferredSpan: bandSpan > 0 ? bandSpan : nil)
+        // Coupled to our island when it is drawn over a real notch: the
+        // strip spans the island edge to edge and the black housing
+        // continues its silhouette. Anything else — Notch off, an
+        // external provider, a notch-less screen — is the standalone band.
+        let rect: NSRect
+        if let islandFrame, wingGeometry.notchDepth > 0,
+           islandFrame.intersects(CGRect(origin: .zero, size: size)) {
+            let coupling = ScreenBarGeometry.coupledBand(in: size, island: islandFrame,
+                                                         notchDepth: wingGeometry.notchDepth,
+                                                         cornerRadius: notchCornerRadius)
+            rect = coupling.band
+            housingRect = coupling.housing
+            housingLayer.path = Self.housingPath(coupling.housing, radius: coupling.cornerRadius)
+            housingLayer.isHidden = false
+        } else {
+            rect = ScreenBarGeometry.bandRect(in: size, preferredSpan: bandSpan > 0 ? bandSpan : nil)
+            housingRect = nil
+            housingLayer.isHidden = true
+        }
         bandRect = rect
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -250,6 +290,29 @@ final class ScreenBarView: NSView {
         }
         wingsHosting?.frame = bounds
         wingsHosting?.isHidden = false
+    }
+
+    /// Square at the top, rounded at the bottom — the housing's
+    /// silhouette in the view's unflipped coordinates: the straight top
+    /// edge disappears into the island's face while the bottom corners
+    /// carry the notch profile's radius.
+    private static func housingPath(_ rect: CGRect, radius: CGFloat) -> CGPath {
+        let r = max(0, min(radius, rect.height, rect.width / 2.0))
+        let path = CGMutablePath()
+        guard r > 0 else {
+            path.addRect(rect)
+            return path
+        }
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + r))
+        path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
+                    radius: r, startAngle: 0, endAngle: -.pi / 2, clockwise: true)
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.minY))
+        path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r),
+                    radius: r, startAngle: -.pi / 2, endAngle: .pi, clockwise: true)
+        path.closeSubpath()
+        return path
     }
 
     /// An ear's drawn width — a fixed complication on the bezel's edge:

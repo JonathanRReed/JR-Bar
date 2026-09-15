@@ -19,6 +19,7 @@ from jrbar.dot_role import (
     migrated_role_for_display,
     normalize_dot_role,
     plan_dot_surface,
+    shift_program_phase,
 )
 from jrbar.presentation_compiler import compile_presentation_program
 
@@ -308,6 +309,79 @@ def test_plan_applies_the_dots_brightness_as_one_leading_line__and_2_more() -> N
 def test_unknown_role_plans_as_extend():
     plan = plan_dot_surface(role="whatever", strip_program=LIVE_DOT_DEFECT, strip_led_count=8)
     assert plan.role == "extend"
+
+
+# --- skew compensation: the late restart plays the strip's phase ------------
+
+
+def test_shift_program_phase_reanchors_the_loop_by_the_skew__and_3_more() -> None:
+    # --- scenario: a_late_dot_enters_its_loop_mid_step
+    """Written 250 ms after the strip, the Dot's restart is 250 ms late
+    every lap: the strip is mid-fade while the Dot is still starting.
+    Re-sequencing the loop to begin 250 ms in is the same cycle from the
+    same instant the strip's write landed."""
+    assert shift_program_phase("#FF0000 500ms\noff 500ms\nrepeat", 250) == (
+        "0:#FF0000 250ms; 1:#FF0000 250ms\n"
+        "off 500ms\n"
+        "0:#800000 250ms; 1:#800000 250ms\n"
+        "repeat"
+    )
+
+    # --- scenario: a_cut_on_a_step_boundary_is_a_pure_rotation
+    assert shift_program_phase("#FF0000 500ms\noff 500ms\nrepeat", 500) == (
+        "off 500ms\n#FF0000 500ms\nrepeat"
+    )
+
+    # --- scenario: a_shift_of_a_whole_lap_changes_nothing
+    program = "#FF0000 500ms\noff 500ms\nrepeat"
+    assert shift_program_phase(program, 1000) == program
+
+    # --- scenario: a_pulse_cut_mid_flight_cannot_be_spelled
+    assert shift_program_phase("#FF0000 500ms pulse\noff 500ms\nrepeat", 250) is None
+
+
+def test_the_plan_reports_the_shift_it_baked_in__and_2_more() -> None:
+    # --- scenario: the_correction_rotates_and_reports
+    """``corrected_ms`` is what the program was shifted by. The plan no
+    longer guesses an anchor -- the rotated program's true start is the
+    Dot's own write completion minus the shift, which only the runtime
+    can know."""
+    plan = plan_dot_surface(
+        role="extend",
+        strip_program="#FF0000 500ms\noff 500ms\nrepeat",
+        strip_led_count=8,
+        skew_correction_ms=250.0,
+    )
+    assert plan is not None
+    assert plan.corrected_ms == 250.0
+    assert plan.program == (
+        "0:#FF0000 250ms; 1:#FF0000 250ms\n"
+        "off 500ms\n"
+        "0:#800000 250ms; 1:#800000 250ms\n"
+        "repeat"
+    )
+    assert "skew:250" in plan.reasons
+
+    # --- scenario: the_shift_is_capped_at_a_quarter_second
+    plan = plan_dot_surface(
+        role="extend",
+        strip_program="#FF0000 500ms\noff 500ms\nrepeat",
+        strip_led_count=8,
+        skew_correction_ms=400.0,
+    )
+    assert plan is not None
+    assert plan.corrected_ms == 250.0
+
+    # --- scenario: a_program_that_cannot_rotate_plays_unshifted
+    plan = plan_dot_surface(
+        role="extend",
+        strip_program="#FF0000 500ms pulse\noff 500ms\nrepeat",
+        strip_led_count=8,
+        skew_correction_ms=250.0,
+    )
+    assert plan is not None
+    assert plan.corrected_ms == 0.0
+    assert plan.program == "#FF0000 500ms pulse\noff 500ms\nrepeat"
 
 
 # --- the write boundary: no program for the wrong device, ever --------------

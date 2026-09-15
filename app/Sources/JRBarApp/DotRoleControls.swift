@@ -32,6 +32,7 @@ struct DotRoleControls: View {
         DotRoleReadout.make(chosen: chosen, includeCompletions: includeCompletions, linked: linked,
                             link: link, linkedSkewMs: store.core.lights?.linkedSkewMs,
                             linkedSkewFresh: store.core.lights?.isLinkedSkewFresh ?? false,
+                            linkedSkewCorrectedMs: store.core.lights?.linkedSkewCorrectedMs,
                             dot: store.core.lights?.dot)
     }
 

@@ -82,6 +82,8 @@ OUTPUT_RECEIPT_MESSAGES: Final = {
     "ready": "Creator Micro 2 ready.",
     "unsupported_firmware": "Creator Micro 2 firmware does not expose agent-status output.",
     "device_conflict": "Creator Micro 2 stopped after detecting conflicting device traffic.",
+    "contention": "Another app wrote to the pad; JR-Bar re-asserted its layer.",
+    "external_layer": "The pad is on a layer assigned to another app; JR-Bar is not painting it.",
     # Over Bluetooth the pad's keyboard and vendor collections share one macOS
     # HID device, so opening it needs Input Monitoring. Without this sentence
     # the refusal reads as a pad that keeps disconnecting.
@@ -189,16 +191,22 @@ def plan_document(plan: KeymapPlan) -> dict[str, Any]:
     }
 
 
-def keymap_layer_rows(raw: str | None, layer_scopes: dict[int, str] | None = None) -> list[dict[str, Any]]:
+def keymap_layer_rows(
+    raw: str | None,
+    layer_scopes: dict[int, str] | None = None,
+    layer_owners: dict[int, str] | None = None,
+) -> list[dict[str, Any]]:
     """``keymap.layers`` from a keymap JSON text (the inspected original or
     the backup's); empty when there is none or it does not parse. Each row
-    carries the board scope the layer map assigns it, or ``automatic``."""
+    carries the board scope the layer map assigns it (or ``automatic``) and
+    the writer the layer map hands it to (or ``jrbar``, the auto layer)."""
     if not isinstance(raw, str) or not raw:
         return []
     try:
         return [
             {"profile": profile, "layer": layer, "label": label,
-             "scope": (layer_scopes or {}).get(layer, "automatic")}
+             "scope": (layer_scopes or {}).get(layer, "automatic"),
+             "owner": (layer_owners or {}).get(layer, "jrbar")}
             for profile, layer, label in keymap_layers(raw)
         ]
     except (ValueError, TypeError):
@@ -411,6 +419,11 @@ def build_deck_document(
                 for layer, layer_scope in (settings.get("layer_map") or [])
             ],
             "scopes": [scope_name for scope_name in (settings.get("scopes") or [])],
+            "ownership": settings.get("ownership") if settings.get("ownership") in ("yield", "hold") else "yield",
+            "layer_owners": [
+                {"layer": layer, "owner": owner}
+                for layer, owner in (settings.get("layer_owners") or [])
+            ],
         },
     }
 

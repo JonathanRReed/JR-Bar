@@ -26,18 +26,23 @@ public struct AppState: Codable, Equatable, Sendable {
     /// The Toys page's state (docs/TOYS.md): everything it persists lives
     /// here because the daemon's document is not the toys' to write in.
     public var toys: ToysState
+    /// The Utilities page's state (docs/UTILITIES.md): the same file and
+    /// the same tolerant decode as `toys`.
+    public var utilities: UtilitiesState
 
     public init(bundledHooksInstalledFor: String? = nil, loginItemRegistered: Bool = false, showScreenBar: Bool = true,
-                menuBarIconStyle: String? = nil, toys: ToysState = ToysState()) {
+                menuBarIconStyle: String? = nil, toys: ToysState = ToysState(),
+                utilities: UtilitiesState = UtilitiesState()) {
         self.bundledHooksInstalledFor = bundledHooksInstalledFor
         self.loginItemRegistered = loginItemRegistered
         self.showScreenBar = showScreenBar
         self.menuBarIconStyle = menuBarIconStyle
         self.toys = toys
+        self.utilities = utilities
     }
 
     private enum CodingKeys: String, CodingKey {
-        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle, toys
+        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle, toys, utilities
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys are
@@ -49,6 +54,7 @@ public struct AppState: Codable, Equatable, Sendable {
         showScreenBar = (try? container.decodeIfPresent(Bool.self, forKey: .showScreenBar)) ?? true
         menuBarIconStyle = (try? container.decodeIfPresent(String.self, forKey: .menuBarIconStyle)) ?? nil
         toys = (try? container.decodeIfPresent(ToysState.self, forKey: .toys)) ?? ToysState()
+        utilities = (try? container.decodeIfPresent(UtilitiesState.self, forKey: .utilities)) ?? UtilitiesState()
     }
 }
 

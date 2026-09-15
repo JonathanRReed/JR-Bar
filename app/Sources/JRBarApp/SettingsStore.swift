@@ -14,7 +14,7 @@ import UserNotifications
 @Observable
 final class SettingsStore {
     enum Page: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, usage, devices, lighting, toys, notifications, remote, advanced
+        case general, agents, usage, devices, utilities, lighting, toys, notifications, remote, advanced
 
         var id: String { rawValue }
 
@@ -24,6 +24,7 @@ final class SettingsStore {
             case .agents: return "Agents"
             case .usage: return "Usage"
             case .devices: return "Devices & Screen Bar"
+            case .utilities: return "Utilities"
             case .lighting: return "Lighting"
             case .toys: return "Toys"
             case .notifications: return "Notifications & Focus"
@@ -38,6 +39,7 @@ final class SettingsStore {
             case .agents: return "person.2.fill"
             case .usage: return "chart.bar.fill"
             case .devices: return "light.beacon.max.fill"
+            case .utilities: return "wrench.and.screwdriver"
             case .lighting: return "paintpalette.fill"
             case .toys: return "party.popper.fill"
             case .notifications: return "bell.badge.fill"
@@ -53,6 +55,7 @@ final class SettingsStore {
             case .agents: return Color(nsColor: .systemBlue)
             case .usage: return Color(nsColor: .systemGreen)
             case .devices: return Color(nsColor: .systemOrange)
+            case .utilities: return Color(nsColor: .systemIndigo)
             case .lighting: return Color(nsColor: .systemPink)
             // The Toys tint is a warm magenta from the contract, not the
             // palette's pink — Lighting already owns that one.
@@ -73,6 +76,9 @@ final class SettingsStore {
     /// The Toys page's store, created beside this one in the delegate.
     /// Weak: the delegate owns it.
     weak var toys: ToysStore?
+    /// The Utilities page's store, same seat as `toys`. Weak: the
+    /// delegate owns it.
+    weak var utilities: UtilitiesStore?
     /// Lighting › Effects… opens the Effect Studio window.
     var onOpenEffects: (@MainActor () -> Void)?
     /// Devices › Creator Micro 2 › Open Control Center…
@@ -450,8 +456,43 @@ final class SettingsStore {
         core.state?.intakeHealth
     }
 
+    /// A result line the Agents page shows ON the provider's row — the
+    /// reply's own words for 6 s, secondary on success, red on failure.
+    struct HookNote: Equatable {
+        let text: String
+        let isError: Bool
+    }
+    private(set) var hookNotes: [String: HookNote] = [:]
+    @ObservationIgnored private var hookNoteClear: [String: DispatchWorkItem] = [:]
+
+    private func noteHook(_ provider: String, _ text: String, isError: Bool) {
+        hookNotes[provider] = HookNote(text: text, isError: isError)
+        hookNoteClear[provider]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.hookNotes[provider] = nil }
+        }
+        hookNoteClear[provider] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+    }
+
+    /// The same transient line for the Creator Micro card — the enable
+    /// toggle's answer lands on its row, not only in the banner.
+    private(set) var deckNote: HookNote?
+    @ObservationIgnored private var deckNoteClear: DispatchWorkItem?
+
+    func noteDeck(_ text: String, isError: Bool) {
+        deckNote = HookNote(text: text, isError: isError)
+        deckNoteClear?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.deckNote = nil }
+        }
+        deckNoteClear = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+    }
+
     /// `install_hooks` awaited: the reply's `results[provider]` carries
-    /// `ok`, `changed`, `warning`; a refusal becomes the error line.
+    /// `ok`, `changed`, `warning`; a refusal becomes the error line —
+    /// and the row note, so the answer lands where the click happened.
     func installHooks(_ provider: String) {
         runHook(provider: provider, verb: "Install") { try await self.core.installHooksNow(providers: [provider]) }
     }
@@ -461,7 +502,11 @@ final class SettingsStore {
     }
 
     private func runHook(provider: String, verb: String, _ body: @escaping @MainActor () async throws -> CoreReply) {
-        guard core.isLive, !hookBusy.contains(provider) else { return }
+        guard !hookBusy.contains(provider) else { return }
+        guard core.isLive else {
+            noteHook(provider, "Monitor offline", isError: true)
+            return
+        }
         hookBusy.insert(provider)
         Task { [weak self] in
             guard let self else { return }
@@ -469,18 +514,26 @@ final class SettingsStore {
             do {
                 let reply = try await body()
                 if !reply.ok {
-                    self.report(error: "\(verb) hooks for \(provider): \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    let message = reply.error?.message ?? reply.error?.code ?? "refused"
+                    self.noteHook(provider, message, isError: true)
+                    self.report(error: "\(verb) hooks for \(provider): \(message)")
                     return
                 }
                 let result = reply.result?["results"]?[provider]
                 if result?["ok"]?.boolValue == false {
-                    self.report(error: "\(verb) hooks for \(provider): \(result?["error"]?.stringValue ?? "failed")")
+                    let message = result?["error"]?.stringValue ?? "failed"
+                    self.noteHook(provider, message, isError: true)
+                    self.report(error: "\(verb) hooks for \(provider): \(message)")
                 } else if let warning = result?["warning"]?.stringValue, !warning.isEmpty {
+                    self.noteHook(provider, warning, isError: true)
                     self.report(error: "\(provider): \(warning)")
                 } else {
+                    self.noteHook(provider, verb == "Install" ? "Hooks installed" : "Removed",
+                                  isError: false)
                     self.show(status: verb == "Install" ? "Hooks installed for \(provider)" : "Hooks removed for \(provider)")
                 }
             } catch {
+                self.noteHook(provider, String(describing: error), isError: true)
                 self.report(error: "\(verb) hooks for \(provider): \(error)")
             }
         }

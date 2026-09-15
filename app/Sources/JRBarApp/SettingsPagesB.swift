@@ -26,18 +26,16 @@ struct LightingPage: View {
     private let swatchColumns = [GridItem(.adaptive(minimum: 160), alignment: .leading)]
 
     var body: some View {
-        Section {
+        SettingGroup("Provider colours") {
             LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
                 ForEach(SettingsKey.providers, id: \.self) { provider in
                     ProviderSwatch(store: store, provider: provider)
                 }
             }
             .padding(.vertical, 2)
-        } header: {
-            Text("Provider colours")
         }
 
-        Section {
+        SettingGroup("Blend") {
             Provided(store, "colors.blend_mode") {
                 Picker(selection: store.string("colors.blend_mode", default: "color_blend")) {
                     ForEach(Self.blendModes, id: \.value) { Text($0.label).tag($0.value) }
@@ -48,61 +46,51 @@ struct LightingPage: View {
                 .fixedSize()
             }
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
-            SettingToggle(store, "Celebrate completions", subtitle: "A twinkle-then-bloom flourish when a session settles into Done.",
+            SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
-            LabeledContent {
+            SettingRow("Celebration preview", subtitle: "The ripple, bloom and hold the strip plays.") {
                 LEDStripPreview(program: LightingPreviewPrograms.celebration(colorHex: celebrationColor), style: .dots, dotSize: 9, spacing: 6)
                     .frame(width: 168)
                     .opacity((store.document.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
                     .accessibilityLabel("Done celebration preview")
-            } label: {
-                SettingLabel(title: "Celebration preview", subtitle: "The ripple, bloom and hold the strip plays; the Screen Bar blends the same frames.")
             }
-        } header: {
-            Text("Blend")
         }
 
-        Section {
+        SettingGroup("State colours", note: "What each state looks like, whoever is running. Ask and Error are deliberately separate — set them to the same colour and the lights still pull them apart.") {
             LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
                 ForEach(SettingsKey.modes, id: \.self) { mode in
                     ModeSwatch(store: store, mode: mode)
                 }
             }
             .padding(.vertical, 2)
-        } header: {
-            Text("State colours")
-        } footer: {
-            SectionNote("What each state looks like, whoever is running. Ask and Error are separate colours on purpose: \"it needs you\" and \"it broke\" used to be the same light, and if you set them to the same colour the lights will still pull them apart.")
         }
 
-        Section {
-            ForEach(SettingsKey.fadeModes, id: \.self) { mode in
-                FadeRow(store: store, mode: mode)
+        SettingGroup("Pulse range") {
+            DisclosureRow("Fine-tune pulsing", subtitle: "Floor and ceiling of each pulsing mode's brightness.") {
+                ForEach(SettingsKey.fadeModes, id: \.self) { mode in
+                    FadeRow(store: store, mode: mode)
+                }
             }
-        } header: {
-            Text("Pulse range")
-        } footer: {
-            SectionNote("Floor and ceiling of each pulsing mode's brightness, as fractions of the device brightness.")
         }
 
-        Section("Dimming") {
+        SettingGroup("Dimming") {
             SettingToggle(store, "Dim when idle", path: "idle_dim_enabled", default: true)
             SettingSlider(store, "After", path: "idle_dim_after_minutes", in: 1...180, step: 1, default: 10, format: SettingsStore.minutes)
                 .disabled(!(store.document.bool("idle_dim_enabled") ?? true))
             SettingSlider(store, "Idle brightness", path: "idle_dim_fraction", in: 0.05...1, default: 0.3, format: SettingsStore.percent)
                 .disabled(!(store.document.bool("idle_dim_enabled") ?? true))
-            SettingToggle(store, "Dim when the display sleeps", path: "sleep_dim_enabled", default: true)
+            SettingToggle(store, "Dim on display sleep", path: "sleep_dim_enabled", default: true)
             SettingSlider(store, "Sleep brightness", path: "sleep_dim_fraction", in: 0.05...1, default: 0.2, format: SettingsStore.percent)
                 .disabled(!(store.document.bool("sleep_dim_enabled") ?? true))
-            SettingToggle(store, "Turn off after a long idle", path: "idle_auto_off_enabled")
+            SettingToggle(store, "Turn off when idle", subtitle: "After a long idle the lights switch off entirely.", path: "idle_auto_off_enabled")
             SettingSlider(store, "Off after", path: "idle_auto_off_after_minutes", in: 5...1440, step: 5, default: 60, format: SettingsStore.minutes)
                 .disabled(!(store.document.bool("idle_auto_off_enabled") ?? false))
         }
 
         AutoDimSection(store: store)
 
-        Section {
-            SettingPicker(store, "Active scene", subtitle: "Chooses which scene-scoped effect assignments are in force.",
+        SettingGroup("Scene") {
+            SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
             if let pack = store.document.string("active_scene_pack"), !pack.isEmpty {
                 Text("Scene pack “\(pack)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
@@ -110,24 +98,16 @@ struct LightingPage: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            LabeledContent {
+            SettingRow("Effect Studio", subtitle: "Tune effects live and assign looks to states, scenes, providers and devices.") {
                 Button("Effect Studio…") { store.onOpenEffects?() }
-            } label: {
-                SettingLabel(title: "Effect Studio", subtitle: "Browse the registry and packs, tune parameters with a live preview, and assign looks to states, scenes, providers and devices.")
             }
-        } header: {
-            Text("Scene")
         }
 
-        Section {
-            SettingToggle(store, "Rainstick idle", subtitle: "One dim pixel drifts along the strip every thirty seconds while nothing else needs it — a quiet \"JR-Bar is alive\". Reduce Motion shows it as a single stationary pixel.",
+        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb, night and low power.") {
+            SettingToggle(store, "Rainstick idle", subtitle: "A dim pixel drifts along the strip every thirty seconds while nothing else needs it.",
                           path: "rainstick_idle_enabled")
-            SettingToggle(store, "Completion milestones", subtitle: "A short finite celebration when the count of finished sessions crosses a milestone.",
+            SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
                           path: "milestone_odometer_enabled")
-        } header: {
-            Text("Ambient cues")
-        } footer: {
-            SectionNote("Both are opt-in and content-free: they carry no state you have to read, yield to every real signal, and stay dark during Do Not Disturb, night, low power and thermal pressure.")
         }
     }
 
@@ -157,7 +137,7 @@ struct AutoDimSection: View {
     private var provided: Bool { store.hasDocument && AutoDimSettings.isProvided(in: store.document) }
 
     var body: some View {
-        Section {
+        SettingGroup("Auto-dim", note: "Multiplies every light's brightness on top of idle and sleep dimming; the why popover names it when it is in effect.") {
             Provided(store, AutoDimSettings.modePath.description) {
                 VStack(alignment: .leading, spacing: 6) {
                     Picker("Auto-dim", selection: store.string(AutoDimSettings.modePath.description, default: "off")) {
@@ -177,7 +157,7 @@ struct AutoDimSection: View {
                 EmptyView()
             case .schedule:
                 Provided(store, AutoDimSettings.scheduleStartPath.description, AutoDimSettings.scheduleEndPath.description) {
-                    LabeledContent {
+                    SettingRow("Between", subtitle: "A start after the end wraps midnight.") {
                         HStack(spacing: 8) {
                             DatePicker("", selection: store.minutesOfDay(AutoDimSettings.scheduleStartPath.description, default: AutoDimSettings.defaults.scheduleStartMinutes),
                                        displayedComponents: .hourAndMinute).labelsHidden()
@@ -185,8 +165,6 @@ struct AutoDimSection: View {
                             DatePicker("", selection: store.minutesOfDay(AutoDimSettings.scheduleEndPath.description, default: AutoDimSettings.defaults.scheduleEndMinutes),
                                        displayedComponents: .hourAndMinute).labelsHidden()
                         }
-                    } label: {
-                        SettingLabel(title: "Between", subtitle: "Minutes of the day; a start after the end wraps midnight.")
                     }
                 }
                 SettingSlider(store, "Dim to", path: AutoDimSettings.scheduleFractionPath.description, in: AutoDimSettings.minFraction...1,
@@ -202,24 +180,18 @@ struct AutoDimSection: View {
                 SettingNumberField(store, "Bright above", subtitle: "Full brightness at this reading; must be above the dark mark.", path: AutoDimSettings.ambientLuxCeilingPath.description,
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxCeiling, unit: "lux")
                 Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
-                    LabeledContent {
+                    SettingRow("Marks from room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.") {
                         Button("Use current light") { useRoomLight() }
                             .controlSize(.small)
                             .disabled(roomMarks == nil)
                             .help(roomMarks.map { "Writes “Dark below” \(Int($0.floor)) lux and “Bright above” \(Int($0.ceiling)) lux" }
                                   ?? "Needs a live ambient reading; the monitor is not reporting one")
-                    } label: {
-                        SettingLabel(title: "Marks from this room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.")
                     }
                 }
             }
             if provided, mode != .off {
                 AutoDimReadoutRow(result: store.core.lights?.autoDim, settings: settings)
             }
-        } header: {
-            Text("Auto-dim")
-        } footer: {
-            SectionNote("Multiplies every light's brightness on top of idle and sleep dimming; the why popover names it when it is in effect.")
         }
     }
 
@@ -410,8 +382,8 @@ struct NotificationsPage: View {
     ]
 
     var body: some View {
-        Section("Completion") {
-            SettingToggle(store, "Notification banner", subtitle: "A macOS notification when a main session finishes. Needs the system notification permission.",
+        SettingGroup("Completion") {
+            SettingToggle(store, "Notification banner", subtitle: "A macOS banner when a main session finishes; needs the system notification permission.",
                           path: "completion_notification_enabled")
             if store.notificationPermissionDenied {
                 HStack(spacing: 8) {
@@ -424,11 +396,11 @@ struct NotificationsPage: View {
                     }
                 }
             }
-            SettingToggle(store, "Completion sweep", subtitle: "Sweep the bar in the finishing agent's colour the moment any session completes.",
+            SettingToggle(store, "Completion sweep", subtitle: "Sweeps the bar in the finishing agent's colour when a session completes.",
                           path: "completion_sweep_enabled", default: true)
         }
 
-        Section {
+        SettingGroup("Escalation") {
             SettingPicker(store, "Loudest stage", subtitle: "How far an ignored ask may escalate.", path: "escalation_tier", options: [
                 ("light", "Light only"), ("menu_bar", "Menu bar"), ("chime", "Chime"), ("takeover", "Take over"),
             ], default: "menu_bar")
@@ -437,14 +409,12 @@ struct NotificationsPage: View {
             SettingNumberField(store, "Final stage after", path: "escalation_final_seconds", in: 5...14400, default: 300, unit: "s")
             SettingStepper(store, "Alert burst", subtitle: "Repetitions a courtesy signal gets before it settles; critical signals ignore this.",
                            path: "alert_burst", in: 1...10, default: 3, unit: "×")
-        } header: {
-            Text("Escalation")
         }
 
-        Section {
-            SettingToggle(store, "Quiet schedule", path: "dnd_schedule_enabled")
+        SettingGroup("Quiet hours") {
+            SettingToggle(store, "Schedule", subtitle: "The lights quiet down between the hours below.", path: "dnd_schedule_enabled")
             Provided(store, "dnd_schedule_start_minutes", "dnd_schedule_end_minutes") {
-                LabeledContent("From") {
+                SettingRow("From") {
                     HStack(spacing: 8) {
                         DatePicker("", selection: store.minutesOfDay("dnd_schedule_start_minutes", default: 1320), displayedComponents: .hourAndMinute).labelsHidden()
                         Text("to").foregroundStyle(.secondary)
@@ -457,42 +427,32 @@ struct NotificationsPage: View {
                 .disabled(!(store.document.bool("dnd_schedule_enabled") ?? false))
             SettingSlider(store, "Dim to", path: "dnd_dim_fraction", in: 0...1, default: 0.15, format: SettingsStore.percent)
                 .disabled(!(store.document.bool("dnd_schedule_enabled") ?? false) || store.document.string("dnd_schedule_mode") != "dim")
-        } header: {
-            Text("Quiet hours")
         }
 
-        Section {
-            SettingToggle(store, "React to Focus modes", subtitle: "Reads the active Focus, which needs Full Disk Access for this app.", path: "focus_sync_enabled")
+        SettingGroup("Focus", note: "A Focus without a rule uses the idle brightness from Lighting.") {
+            SettingToggle(store, "React to Focus modes", subtitle: "Reads the active Focus; needs Full Disk Access for this app.", path: "focus_sync_enabled")
             SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
                 .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
             ForEach(Self.knownFocuses, id: \.id) { focus in
                 FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
                     .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
             }
-        } header: {
-            Text("Focus")
-        } footer: {
-            SectionNote("A Focus without a rule uses the idle brightness from Lighting.")
         }
 
-        Section {
-            SettingToggle(store, "Keep the Mac awake while agents run", subtitle: "Prevents system sleep, not display sleep.", path: "agent_keep_awake_enabled", default: true)
-            SettingToggle(store, "Keep the display awake too", path: "keep_display_awake")
-            SettingPicker(store, "With the lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
+        SettingGroup("Power") {
+            SettingToggle(store, "Keep Mac awake", subtitle: "While agents run; prevents system sleep, not display sleep.", path: "agent_keep_awake_enabled", default: true)
+            SettingToggle(store, "Keep display awake", path: "keep_display_awake")
+            SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
                 ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
             ], default: "never")
             SettingToggle(store, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.", path: "keep_awake_on_battery", default: true)
-        } header: {
-            Text("Power")
         }
 
-        Section {
+        SettingGroup("Battery") {
             SettingToggle(store, "Low battery alert", subtitle: "Every surface switches to the slow red breathe until power returns.",
                           path: "battery_monitoring.low_battery_alert_enabled", default: true)
             SettingSlider(store, "Below", path: "battery_monitoring.low_battery_threshold_percent", in: 1...50, step: 1, default: 5) { "\(Int($0)) %" }
                 .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
-        } header: {
-            Text("Battery")
         }
         .task { store.refreshNotificationPermission() }
     }
@@ -534,7 +494,7 @@ struct FocusRuleRow: View {
                 ValueText(text: rule.map(SettingsStore.percent) ?? "idle dim")
             }
         } label: {
-            SettingLabel(title: name, subtitle: focusID)
+            SettingLabel(title: name, subtitle: "Dim to this level while the Focus is on.")
         }
     }
 }
@@ -549,11 +509,11 @@ struct RemotePage: View {
     ]
 
     var body: some View {
-        Section {
+        SettingGroup("Peers") {
             SettingToggle(store, "Remote peers", subtitle: "Discover other Macs running JR-Bar and show their agents here.", path: "remote_peers.enabled")
-            SettingToggle(store, "Publish this Mac", subtitle: "Let peers read this desk's sessions.", path: "remote_peers.publish_enabled")
+            SettingToggle(store, "Publish this Mac", subtitle: "Lets peers read this desk's sessions.", path: "remote_peers.publish_enabled")
                 .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
-            SettingToggle(store, "Mute remote interrupts", subtitle: "A peer's asks may not take a light here until you unmute that machine by name.",
+            SettingToggle(store, "Mute remote asks", subtitle: "A peer's asks take no light here until you unmute that machine.",
                           path: "remote_peers.remote_interrupts_muted", default: true)
                 .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
             MachineList(store: store, path: "remote_peers.unmuted_machines", title: "Unmuted machines")
@@ -570,30 +530,24 @@ struct RemotePage: View {
                     }
                 }
             }
-        } header: {
-            Text("Peers")
         }
 
-        Section {
+        SettingGroup("Serve", note: "The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.") {
             SettingToggle(store, "Serve status", subtitle: "Opens a loopback endpoint so local tools can read this desk's status.", path: "serve_enabled")
             Provided(store, "serve_enabled") {
-                LabeledContent("Bearer token") {
+                SettingRow("Bearer token") {
                     Button("Copy token") { store.copyServeToken() }
                         .controlSize(.small)
                         .disabled(!(store.document.bool("serve_enabled") ?? false) || !store.core.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
-        } header: {
-            Text("Serve")
-        } footer: {
-            SectionNote("The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.")
         }
 
-        Section {
+        SettingGroup("Cloud ingest") {
             SettingToggle(store, "Cloud ingest", subtitle: "Opens a loopback port so off-machine agents can post their own lifecycle.", path: "cloud_ingest_enabled")
             Provided(store, "cloud_ingest_token_path") {
-                LabeledContent("Token") {
+                SettingRow("Token file") {
                     HStack(spacing: 8) {
                         Text(store.document.string("cloud_ingest_token_path") ?? "")
                             .font(.callout.monospaced())
@@ -610,25 +564,17 @@ struct RemotePage: View {
                     }
                 }
             }
-        } header: {
-            Text("Cloud")
         }
 
-        Section {
+        SettingGroup("Webhook") {
             SettingTextField(store, "Webhook URL", subtitle: "POSTs stage-3 escalations whenever set.", path: "escalation_webhook_url", prompt: "https://", monospaced: true)
             Provided(store, "webhook_events") {
-                LabeledContent("Also send") {
-                    HStack(spacing: 14) {
-                        ForEach(Self.webhookEvents, id: \.value) { event in
-                            Toggle(event.label, isOn: store.listMember("webhook_events", event.value))
-                                .toggleStyle(.checkbox)
-                        }
-                    }
-                }
+                MultiSelectMenu(store, "Also send",
+                                subtitle: "Extra events to post alongside escalations.",
+                                path: "webhook_events",
+                                options: Self.webhookEvents)
             }
             .disabled((store.document.string("escalation_webhook_url") ?? "").isEmpty)
-        } header: {
-            Text("Webhook")
         }
     }
 }
@@ -713,18 +659,16 @@ struct StreamDeckCard: View {
     }
 
     var body: some View {
-        Section {
+        SettingGroup("Stream Deck", note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
             SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
                           path: "serve_enabled")
-            LabeledContent {
+            SettingRow("Endpoint") {
                 HStack(spacing: 6) {
                     Circle().fill(statusColor).frame(width: 7, height: 7)
                     Text(statusText).foregroundStyle(.secondary)
                 }
-            } label: {
-                Text("Endpoint")
             }
-            LabeledContent {
+            SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
                 HStack(spacing: 8) {
                     Text("http://127.0.0.1:8737/status.json")
                         .font(.callout.monospaced())
@@ -735,13 +679,7 @@ struct StreamDeckCard: View {
                         .disabled(!enabled || !store.core.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
-            } label: {
-                SettingLabel(title: "Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.")
             }
-        } header: {
-            Text("Stream Deck")
-        } footer: {
-            SectionNote("In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.")
         }
         .task(id: enabled && store.core.isLive) { await refreshServeState() }
     }
@@ -767,7 +705,7 @@ struct AdvancedPage: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        Section("Diagnostics") {
+        SettingGroup("Diagnostics") {
             LabeledContent("Connection", value: connectionWord)
             LabeledContent("Core version", value: store.core.hello?.coreVersion ?? "—")
             LabeledContent("Socket") {
@@ -780,14 +718,16 @@ struct AdvancedPage: View {
                     .frame(maxWidth: 380, alignment: .trailing)
             }
             LabeledContent("Generations", value: "state \(store.core.state?.generation ?? 0) · settings \(store.generation)")
-            HStack(spacing: 8) {
-                Button("Reveal State Folder") { store.revealStateFolder() }
+            SettingRow("State folder", subtitle: "The monitor's data on this Mac.") {
+                Button("Reveal in Finder") { store.revealStateFolder() }
+            }
+            SettingRow("Doctor", subtitle: "Checks the monitor's health.") {
                 Button(store.doctorRunning ? "Running…" : "Run Doctor") { store.runDoctor() }
                     .disabled(!store.core.isLive || store.doctorRunning)
             }
         }
 
-        Section {
+        SettingGroup {
             LogTail(entries: store.core.logTail)
         } header: {
             HStack {
@@ -797,20 +737,18 @@ struct AdvancedPage: View {
             }
         }
 
-        Section {
+        SettingGroup(note: "Each button puts that page's settings back to the monitor's defaults. Devices keep their identities.") {
             // `catalogue == nil` pages (Toys) hold no daemon settings and
             // have nothing to reset.
-            ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
-                LabeledContent(page.title) {
-                    Button("Reset…") { store.resetTarget = page }
-                        .controlSize(.small)
-                        .disabled(!store.core.isLive)
+            DisclosureRow("Reset to defaults", subtitle: "Rarely needed — puts one page's settings back.") {
+                ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
+                    LabeledContent(page.title) {
+                        Button("Reset…") { store.resetTarget = page }
+                            .controlSize(.small)
+                            .disabled(!store.core.isLive)
+                    }
                 }
             }
-        } header: {
-            Text("Reset to defaults")
-        } footer: {
-            SectionNote("Each button puts that page's settings back to the monitor's defaults. Devices keep their identities.")
         }
     }
 

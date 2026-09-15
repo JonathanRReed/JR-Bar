@@ -99,9 +99,11 @@ final class NotchHUD {
 @MainActor
 final class NotchHUDPanel: NSPanel {
     private let hosting: BuddyHostingView<NotchHUDView>
-    /// The toast's backing: quiet HUD material, never liquid glass. The
-    /// buddy does not wear it — a pet hangs under the notch bare, or it
-    /// reads as a blob crowding the menu bar.
+    /// The toast's backing: quiet HUD material. The material rule —
+    /// Liquid Glass only on surfaces that visibly float off the notch —
+    /// is the drop-down card's (`NotchCardPanel`); the toast keeps its
+    /// HUD chrome, and the buddy does not wear it — a pet hangs under
+    /// the notch bare, or it reads as a blob crowding the menu bar.
     private let chrome: NSVisualEffectView
     /// The buddy's container: nothing but the hosting view on a clear
     /// window, so the creature floats instead of sitting in a pill.

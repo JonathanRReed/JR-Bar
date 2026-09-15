@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -940,6 +941,237 @@ def codex_app_server_probe(
     }
 
 
+# ---------------------------------------------------------------------------
+# "Re-sign in": a user-clicked re-pull of whatever sign-in the provider's
+# own tooling holds. Works whether or not the card is carrying a staged
+# action label -- the Usage Center button is always there, so the answer
+# is always there.
+
+
+@dataclass(frozen=True, slots=True)
+class ResignInResult:
+    """What one re-sign-in click did. Never silent."""
+
+    provider_id: str
+    #: Complete sentence, safe to render verbatim.
+    message: str
+    #: Set when the honest remedy is a page only the user can sign in to.
+    sign_in_url: str | None = None
+    #: True when a stored credential changed -- the caller force-refreshes.
+    changed: bool = False
+
+
+def reconnect_provider(
+    provider_id: str,
+    source_instance_id: str = "default",
+    *,
+    reason_code: str | None = None,
+    credential_store=None,
+    home: Path | None = None,
+    now: float | None = None,
+    keychain_payload_reader: Callable[[], object] | None = None,
+    clipboard_reader: Callable[[], str] | None = None,
+    session_importer=None,
+) -> ResignInResult:
+    """One clicked "Re-sign in": re-pull the provider's sign-in and report.
+
+    JR-Bar can only re-read what the provider's own tooling holds -- the
+    Keychain item Claude Code keeps, the grok CLI's auth file, a consented
+    browser session, a key on the clipboard. When the sign-in itself is
+    what lapsed, the message names the provider's own remedy (``grok
+    login``, the ``gemini`` CLI, a sign-in page) rather than claiming a
+    reconnect nothing performed. The caller owns the forced refresh and
+    the outcome watch.
+    """
+    from .provider_usage_platform import provider_descriptor
+
+    descriptor = provider_descriptor(provider_id)
+    stamp = float(time.time() if now is None else now)
+    root = Path.home() if home is None else home
+    store = credential_store
+    if store is None:
+        from .provider_credential_store import ProviderCredentialStore
+
+        store = ProviderCredentialStore()
+
+    if provider_id == "claude":
+        reader = keychain_payload_reader
+        if reader is None:
+            try:
+                from .credentials import (
+                    CLAUDE_CODE_KEYCHAIN,
+                    CredentialOutcome,
+                    KeychainConsentLedger,
+                    read_keychain_secret,
+                )
+                from .providers import default_state_dir
+
+                # User-initiated: the click is the path the user just
+                # took, so a consent prompt is allowed here.
+                result = read_keychain_secret(
+                    CLAUDE_CODE_KEYCHAIN,
+                    allow_prompt=True,
+                    ledger=KeychainConsentLedger(
+                        default_state_dir() / "keychain-consent.json"
+                    ),
+                )
+            except Exception as exc:
+                return ResignInResult(
+                    provider_id,
+                    f"Could not read the Claude Code sign-in: {exc}",
+                )
+            if not result.ok:
+                message = {
+                    CredentialOutcome.DENIED: (
+                        "Keychain access was declined — click Re-sign in "
+                        "again and choose Allow."
+                    ),
+                    CredentialOutcome.COOLING_DOWN: (
+                        "Keychain access was declined recently — try "
+                        "again in a few minutes."
+                    ),
+                }.get(
+                    result.outcome,
+                    "Claude Code's sign-in was not found in the Keychain.",
+                )
+                return ResignInResult(provider_id, message)
+            secret = result.secret
+            reader = lambda: secret
+        try:
+            repair = repair_claude_credential(
+                store,
+                now=stamp,
+                keychain_payload_reader=reader,
+                source_instance_id=source_instance_id,
+            )
+        except Exception as exc:
+            return ResignInResult(
+                provider_id,
+                f"Could not re-read the Claude Code sign-in: {exc}",
+            )
+        return ResignInResult(provider_id, repair.message, changed=repair.changed)
+
+    if provider_id == "grok":
+        try:
+            repair = repair_grok_credential(
+                store,
+                home=root,
+                now=stamp,
+                server_rejected=reason_code == "authentication_required",
+            )
+            return ResignInResult(provider_id, repair.message, changed=repair.changed)
+        except Exception:
+            return ResignInResult(
+                provider_id,
+                f"Run `grok login` in a terminal — {PRODUCT_DISPLAY_NAME} reads the "
+                "CLI's sign-in automatically on the refresh this click started.",
+            )
+
+    if provider_id == "codex":
+        # Codex's sign-in belongs to its CLI; the honest re-pull is a
+        # rescan that names the evidence it found.
+        try:
+            return ResignInResult(provider_id, codex_activity_report(root, stamp))
+        except Exception:
+            return ResignInResult(provider_id, "Rescanning Codex CLI activity now.")
+
+    if provider_id == "devin":
+        imported = None
+        try:
+            from .provider_browser_access import _import_browser_session
+
+            importer = session_importer or _import_browser_session
+            imported = (
+                importer(provider_id)
+                if source_instance_id == "default"
+                else importer(provider_id, source_instance_id)
+            )
+        except Exception:
+            imported = None
+        if imported is not None:
+            return ResignInResult(provider_id, imported, changed=True)
+        return ResignInResult(
+            provider_id,
+            "Devin's sign-in lives in your browser session. Sign in at "
+            "app.devin.ai in the browser and profile you granted, then "
+            "click 'Import Devin browser session' on the same card — or "
+            "copy an API key and use that import.",
+            sign_in_url="https://app.devin.ai",
+        )
+
+    if provider_id == "openai-api":
+        try:
+            from .provider_browser_access import _clipboard_text, plausible_token
+
+            text = (clipboard_reader or _clipboard_text)()
+        except Exception:
+            text = ""
+        cleaned = text.strip()
+        if cleaned and plausible_token(cleaned):
+            try:
+                if source_instance_id == "default":
+                    store.set("openai-api", "admin-key", cleaned)
+                else:
+                    store.set_for_instance(
+                        ProviderInstanceKey("openai-api", source_instance_id),
+                        "admin-key",
+                        cleaned,
+                    )
+            except Exception as exc:
+                return ResignInResult(
+                    provider_id,
+                    f"Could not store the OpenAI Admin key: {exc}",
+                )
+            return ResignInResult(
+                provider_id,
+                "OpenAI Admin key stored — refreshing usage now.",
+                changed=True,
+            )
+        return ResignInResult(
+            provider_id,
+            "Copy an OpenAI ADMIN key (platform.openai.com → Settings → "
+            "Admin keys), then click Re-sign in again — "
+            f"{PRODUCT_DISPLAY_NAME} reads it from the clipboard only when you click.",
+        )
+
+    if provider_id == "gemini":
+        return ResignInResult(
+            provider_id,
+            "Gemini's sign-in belongs to the gemini CLI. Run `gemini` once "
+            "in a terminal and complete its sign-in — "
+            f"{PRODUCT_DISPLAY_NAME} re-reads ~/.gemini/oauth_creds.json on the "
+            "refresh this click started.",
+        )
+    if provider_id == "antigravity":
+        return ResignInResult(
+            provider_id,
+            "Antigravity's usage comes from its local service. Open the "
+            "Antigravity app (or run `agy` in a terminal) so its endpoint "
+            f"is running — {PRODUCT_DISPLAY_NAME} reads it on the refresh this "
+            "click started.",
+        )
+    if provider_id == "opencode":
+        return ResignInResult(
+            provider_id,
+            "OpenCode's sign-in belongs to its own CLI (`opencode auth "
+            f"login`). {PRODUCT_DISPLAY_NAME} re-reads its local auth on the "
+            "refresh this click started.",
+        )
+    if provider_id == "cursor":
+        return ResignInResult(
+            provider_id,
+            "Cursor's sign-in belongs to the Cursor app — sign in there "
+            f"and {PRODUCT_DISPLAY_NAME} re-reads it on the refresh this "
+            "click started.",
+            sign_in_url="https://cursor.com/settings",
+        )
+    return ResignInResult(
+        provider_id,
+        f"Refreshing {descriptor.label} — its sign-in is managed by its "
+        "own app or CLI.",
+    )
+
+
 __all__ = [
     "CODEX_FRESH_SECONDS",
     "CREDENTIAL_SOURCE_FILES",
@@ -947,6 +1179,7 @@ __all__ = [
     "FailureGate",
     "RepairOutcome",
     "RepairResult",
+    "ResignInResult",
     "codex_activity_report",
     "codex_app_server_probe",
     "connection_loss_transitions",
@@ -954,6 +1187,7 @@ __all__ = [
     "grok_auth_status",
     "newest_codex_rollout_age",
     "note_failure",
+    "reconnect_provider",
     "repair_claude_credential",
     "repair_grok_credential",
     "should_collect",

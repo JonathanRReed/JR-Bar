@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var rail: DeckRailController?
     private var events: EventCoordinator?
     private var toysStore: ToysStore?
+    private var utilitiesStore: UtilitiesStore?
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
     private var updater: SparkleUpdater?
@@ -118,7 +119,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // like the rest of the app's remembered facts, so the delegate
         // stays the file's only writer and the store just hands back
         // the blob.
-        let toysStore = ToysStore(core: core, settings: settingsStore, state: appState.toys)
+        // The card's timers and tray are one store behind both surfaces
+        // — the glass card and the island's grown card read the same
+        // files, so twin models would fire a timer twice and clobber
+        // each other's persist.
+        let cardTimers = ShelfTimerModel()
+        let cardTray = ShelfTrayModel()
+        let toysStore = ToysStore(core: core, settings: settingsStore, state: appState.toys,
+                                  cardModel: NotchCardModel(timers: cardTimers, tray: cardTray))
         toysStore.onPersist = { [weak self] state in
             guard let self else { return }
             self.appState.toys = state
@@ -126,6 +134,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         self.toysStore = toysStore
         settingsStore.toys = toysStore
+        // Utilities: the serious half. Its state lives beside the toys'
+        // in `app-state.json` under `utilities`, same single-writer rule
+        // — the store hands back the blob and the delegate writes it.
+        let utilitiesStore = UtilitiesStore(core: core, settings: settingsStore,
+                                            state: appState.utilities)
+        utilitiesStore.onPersist = { [weak self] state in
+            guard let self else { return }
+            self.appState.utilities = state
+            self.persistAppState()
+        }
+        self.utilitiesStore = utilitiesStore
+        settingsStore.utilities = utilitiesStore
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
@@ -163,23 +183,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onQuit = { NSApp.terminate(nil) }
 
+        // The notch's glass drop-down — the band's peek and pin drive
+        // it. It is the fallback surface: while the Notch island is
+        // drawn the island itself grows into the card and the band's
+        // gestures route to the toy instead, so the two can never both
+        // be up. It hangs under the band, else the notch itself.
+        let notchCard = NotchCardPresenter(
+            model: NotchCardModel(timers: cardTimers, tray: cardTray))
+        notchCard.focus = { [weak self] in self?.store?.screenBarFocus }
+        notchCard.sessionRows = { [weak self] in
+            NotchIsland.summarize(self?.core?.sessions ?? []).rows
+        }
+        notchCard.meters = { [weak self] in
+            guard self?.toysStore?.state.notch.showUsage ?? true else { return [] }
+            return NotchIsland.meters(self?.core?.state?.usage)
+        }
+        notchCard.anchor = { [weak self] in
+            self?.screenBar?.bandScreenRect
+                ?? NotchCardPresenter.notchAnchor()
+        }
+        // The docked buddy and toasts hang under the band; the card
+        // drops below them, and their frame joins its hover corridor.
+        notchCard.clearance = { [weak self] in
+            self?.events?.hud.panelClearance ?? 0
+        }
+        notchCard.onOpenSession = { [weak self] session in
+            self?.core?.openSession(session)
+        }
+
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.
         let interaction = ScreenBarInteraction(
+            card: notchCard,
             hitRects: { [weak screenBar] in screenBar?.hoverScreenRects ?? [] },
-            bandRect: { [weak screenBar] in screenBar?.bandScreenRect },
-            focus: { [weak store] in store?.screenBarFocus },
-            onOpen: { [weak core] session in core?.openSession(session) }
+            focus: { [weak store] in store?.screenBarFocus }
         )
         self.interaction = interaction
-        // The docked buddy and toasts hang under the band; the peek
-        // drops below them, and their frame joins its hover corridor.
-        interaction.underBandClearance = { [weak self] in
-            self?.events?.hud.panelClearance ?? 0
-        }
         interaction.underBandRegion = { [weak self] in
             self?.events?.hud.panelFrame
         }
+        // The island's frame is part of the region — a click on the
+        // island (or its grown card) must not read as outside.
+        interaction.extraHitRects = { [weak self] in
+            self?.toysStore?.notch.islandScreenRect.map { [$0] } ?? []
+        }
+        // While the island is drawn it IS the notch's card: the band's
+        // hover arms nothing, and its pin/dismiss grow and fold the
+        // island instead of touching the glass panel.
+        interaction.islandOwnsNotch = { [weak self] in
+            self?.toysStore?.notch.isDrawingIsland ?? false
+        }
+        interaction.islandExpanded = { [weak self] in
+            self?.toysStore?.notch.islandExpanded ?? false
+        }
+        interaction.onIslandExpand = { [weak self] in
+            self?.toysStore?.notch.expandFromBand()
+        }
+        interaction.onIslandCollapse = { [weak self] in
+            self?.toysStore?.notch.collapseFromBand()
+        }
+        // The grown island's card reads the same facts the glass one
+        // does.
+        toysStore.notch.cardFocus = { [weak self] in self?.store?.screenBarFocus }
         // Wing gestures: an outward flick dismisses a side, a horizontal
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
@@ -188,14 +253,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
         interaction.onWingPull = { [weak screenBar] side, dx in screenBar?.pullWing(side, to: dx) }
         interaction.onWingPullEnd = { [weak screenBar] side in screenBar?.releaseWingPull(side) }
-        // W12 timers: a due timer is one banner, never an agent launch.
-        interaction.timers.onFire = { [weak self] entry in
+        // The card's timers: a due timer is one banner, never an agent
+        // launch. Both card surfaces share `cardTimers`, so one wiring
+        // covers the glass card and the grown island alike.
+        let fireTimer: @MainActor @Sendable (ShelfTimerModel.Entry) -> Void = { [weak self] entry in
             self?.events?.notifications.deliver(.init(
                 identifier: "shelf-timer:\(entry.id)",
                 title: entry.label,
                 body: "Timer done.",
                 category: .plain))
         }
+        cardTimers.onFire = fireTimer
         screenBar.focusProvider = { [weak store] in store?.screenBarFocus }
         screenBar.onGeometryChange = { [weak interaction] in interaction?.geometryChanged() }
         // Alcove: the band follows the capsule while the setting is on and Alcove is up.
@@ -224,8 +292,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.overviewWindow = overviewWindow
         store.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         statusItem.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
-        // The pinned card's roster affordance opens the same window.
-        interaction.tooltipModel.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+        // The pinned card's roster affordance opens the same window —
+        // on the glass card and on the island's grown one.
+        notchCard.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+        toysStore.notch.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+        utilitiesStore.agents.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
 
         // Event Replay: the read-only journaled-events surface (S7.4).
         let replayStore = ReplayStore(core: core)
@@ -332,7 +403,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         feed.start()
         monitor.start()
         core.start()
-        toysStore.launchExternalAppsAtStartup()
+        // Turn on whatever the Utilities page has on — a parked utility
+        // owns nothing until this lands.
+        utilitiesStore.applySettings()
+
+        // The first-run walkthrough: agents, permissions, menu bar.
+        // `shouldPresentOnLaunch` gates the auto-show; Settings ›
+        // General's "Run Setup Again" opens the same window.
+        let setup = SetupWindowController.shared
+        setup.store.model = .live(core: core)
+        setup.store.model.screenBarShown = { [weak self] in self?.appState.showScreenBar ?? true }
+        setup.store.model.setScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
+        setup.store.model.iconStyle = { [weak settingsStore] in
+            settingsStore?.menuBarIconStyle ?? StatusIconStyle.agents.rawValue
+        }
+        setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
+        setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(page: .toys) }
+        if setup.store.shouldPresentOnLaunch { setup.show() }
 
         // Developer switches: `JRBAR_OPEN_PANEL=1` opens the panel shortly
         // after launch (screenshots, design passes) without a click;
@@ -454,6 +541,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction?.stop()
         screenBar?.hide()
         events?.reset()
+        // A clean quit puts the menu bar's hidden items back before the
+        // spacers vanish with the process.
+        utilitiesStore?.stop()
         // The child gets SIGTERM and three seconds before SIGKILL.
         supervisor?.stop(gracePeriod: 3.0)
         core?.stop()

@@ -1,4 +1,5 @@
 import AppKit
+import os
 import UniformTypeIdentifiers
 
 /// W12's file tray: a bounded strip of file references on the pinned
@@ -124,24 +125,25 @@ struct ShelfTrayDrop {
     /// receivers through their delivered URL, plain file URLs directly.
     static func urls(from providers: [NSItemProvider],
                      completion: @escaping @MainActor ([URL]) -> Void) {
-        var urls: [URL] = []
+        // `loadItem` completions can run on different queues — the
+        // collection lives behind a lock so the appends can't race.
+        let urls = OSAllocatedUnfairLock<[URL]>(initialState: [])
         let group = DispatchGroup()
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     defer { group.leave() }
-                    if let url = item as? URL {
-                        urls.append(url)
-                    } else if let data = item as? Data,
-                              let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        urls.append(url)
+                    let url = (item as? URL)
+                        ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                    if let url {
+                        urls.withLock { $0.append(url) }
                     }
                 }
             }
         }
         group.notify(queue: .main) {
-            MainActor.assumeIsolated { completion(urls) }
+            MainActor.assumeIsolated { completion(urls.withLock { $0 }) }
         }
     }
 }

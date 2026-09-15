@@ -150,6 +150,12 @@ struct DotRoleTests {
         let stale = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
                                         link: link, linkedSkewMs: 11.0, linkedSkewFresh: false, dot: dot)
         #expect(stale.detail?.contains("In step") == false)
+        // A corrected write replaces the quote with the correction.
+        let kept = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                       link: link, linkedSkewMs: 11.0, linkedSkewFresh: true,
+                                       linkedSkewCorrectedMs: 11.0, dot: dot)
+        #expect(kept.detail?.contains("Kept in step: the Dot was 11 ms behind, now corrected.") == true)
+        #expect(kept.detail?.contains("In step") == false)
         // `linked_skew_at` is what makes a skew fresh: it must be present
         // and inside the last 30 minutes.
         let now = Date().timeIntervalSince1970
