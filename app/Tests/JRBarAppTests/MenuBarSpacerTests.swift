@@ -112,12 +112,14 @@ struct MenuBarSpacerTests {
     func spacerLengths() {
         let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
                                          controls: controls, regionMin: regionMin)
-        // Chevron right edge 950 − 852 − 12 = 86.
-        #expect(plan.hiddenControlLength == 86)
-        // Always-hidden right edge 904 − 852 − 12 = 40.
-        #expect(plan.alwaysHiddenControlLength == 40)
+        // Chevron right edge 950 − 852 − 22 = 76: the « needs its room.
+        #expect(plan.hiddenControlLength == 76)
+        // Always-hidden right edge 904 − 852 − 22 = 30.
+        #expect(plan.alwaysHiddenControlLength == 30)
         #expect(MenuBarItemHider.spacerLength(
-            controlFrame: CGRect(x: 926, y: 0, width: 24, height: 24), regionMin: regionMin) == 86)
+            controlFrame: CGRect(x: 926, y: 0, width: 24, height: 24), regionMin: regionMin) == 76)
+        #expect(MenuBarItemHider.spacerMargin > 17, "wider than the « button")
+        #expect(MenuBarItemHider.spacerMargin < 22 + 1, "narrower than any item")
     }
 
     @Test("a revealed section collapses its control to the glyph; an unknown region collapses both")
@@ -126,7 +128,7 @@ struct MenuBarSpacerTests {
                                              controls: controls, regionMin: regionMin,
                                              revealed: [.hidden])
         #expect(revealed.hiddenControlLength == MenuBarControlFrames.glyphLength)
-        #expect(revealed.alwaysHiddenControlLength == 40)
+        #expect(revealed.alwaysHiddenControlLength == 30)
         let unknown = MenuBarItemHider.plan(items: [], sections: [:], row: row,
                                             controls: controls, regionMin: nil)
         #expect(unknown.hiddenControlLength == MenuBarControlFrames.glyphLength)
@@ -156,7 +158,7 @@ struct MenuBarSpacerTests {
             alwaysHidden: CGRect(x: 7, y: 970, width: 24, height: 24))
         let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
                                          controls: pushed, regionMin: regionMin)
-        #expect(plan.hiddenControlLength == 86)
+        #expect(plan.hiddenControlLength == 76)
         #expect(plan.alwaysHiddenControlLength == nil)
     }
 
@@ -184,14 +186,14 @@ struct MenuBarSpacerTests {
         let (hider, writes) = makeHider(controls: { self.controls })
         hider.reconcile()
         #expect(writes().map(\.0) == [.hidden, .alwaysHidden])
-        #expect(writes().map(\.1) == [86, 40])
+        #expect(writes().map(\.1) == [76, 30])
         hider.reconcile()
         #expect(writes().count == 2, "an unchanged length is not rewritten")
         hider.reveal([.hidden])
         #expect(writes().last?.0 == .hidden)
         #expect(writes().last?.1 == MenuBarControlFrames.glyphLength)
         hider.hide()
-        #expect(writes().last?.1 == 86)
+        #expect(writes().last?.1 == 76)
     }
 
     @MainActor
@@ -200,20 +202,20 @@ struct MenuBarSpacerTests {
         var frames = controls
         let (hider, writes) = makeHider(controls: { frames })
         hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 86)
+        #expect(hider.assignedLengths[.hidden] == 76)
         // macOS parked it: the frame reports off the row.
-        frames.hidden = CGRect(x: 0, y: 1000, width: 86, height: 24)
+        frames.hidden = CGRect(x: 0, y: 1000, width: 76, height: 24)
         hider.reconcile()
-        #expect(hider.caps.hidden == 86 - MenuBarItemHider.capStep)
+        #expect(hider.caps.hidden == 76 - MenuBarItemHider.capStep)
         #expect(writes().last?.0 == .hidden)
         #expect(writes().last?.1 == MenuBarControlFrames.glyphLength)
         // Back on the row, it grows again — but only to the cap.
         frames.hidden = CGRect(x: 926, y: 0, width: 24, height: 24)
         hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 46)
+        #expect(hider.assignedLengths[.hidden] == 36)
         hider.resetCaps()
         hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 86)
+        #expect(hider.assignedLengths[.hidden] == 76)
     }
 
     @MainActor
@@ -227,7 +229,7 @@ struct MenuBarSpacerTests {
         frames.alwaysHidden = CGRect(x: 7, y: 970, width: 40, height: 24)
         hider.reconcile()
         #expect(hider.caps.alwaysHidden == .infinity)
-        #expect(hider.assignedLengths[.alwaysHidden] == 40)
+        #expect(hider.assignedLengths[.alwaysHidden] == 30)
     }
 
     @MainActor
@@ -291,7 +293,7 @@ extension MenuBarSpacerTests {
         let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
                                          controls: pushed, regionMin: regionMin)
         #expect(plan.alwaysHiddenControlLength == nil, "no slot to size from")
-        #expect(plan.hiddenControlLength == 121)
+        #expect(plan.hiddenControlLength == 111)
         // Side by side, both stand.
         #expect(!MenuBarItemHider.alwaysHiddenPushed(controls: controls, row: row))
     }
@@ -302,7 +304,7 @@ extension MenuBarSpacerTests {
         var frames = controls
         let (hider, writes) = makeHider(controls: { frames })
         hider.reconcile()
-        #expect(hider.assignedLengths[.alwaysHidden] == 40)
+        #expect(hider.assignedLengths[.alwaysHidden] == 30)
         frames.hidden = CGRect(x: 833, y: 0, width: 152, height: 24)
         frames.alwaysHidden = CGRect(x: 840, y: 0, width: 140, height: 24)
         hider.reconcile()
@@ -320,6 +322,39 @@ extension MenuBarSpacerTests {
         hider.controlsReinstalled()
         hider.reconcile()
         #expect(writes().count == before + 2, "both lengths are handed to the fresh items")
+    }
+
+    @Test("the « landing on our glyph means the chevron itself was overflowed")
+    func overflowDetection() {
+        let chevron = CGRect(x: 851, y: 0, width: 135, height: 24)
+        let overflowOnGlyph = item("«", owner: "MenuBarAgent", x: 976, w: 17, overflow: true)
+        #expect(MenuBarItemHider.controlOverflowed(controlFrame: chevron, items: [overflowOnGlyph], row: row))
+        let overflowLeft = item("«", owner: "MenuBarAgent", x: 848, w: 17, overflow: true)
+        #expect(!MenuBarItemHider.controlOverflowed(controlFrame: chevron, items: [overflowLeft], row: row))
+        #expect(!MenuBarItemHider.controlOverflowed(controlFrame: chevron, items: [], row: row))
+    }
+
+    @MainActor
+    @Test("an overflowed chevron lowers its cap a step at a time until it fits")
+    func overflowLearnsCap() {
+        var items: [MenuBarItem] = []
+        let hider = MenuBarItemHider()
+        hider.listItems = { items }
+        hider.rowRect = { self.row }
+        hider.controlFrames = { self.controls }
+        hider.regionMin = { self.regionMin }
+        hider.shuttersSuppressed = true
+        hider.settings = { MenuBarSettings(enabled: true) }
+        hider.reconcile()
+        #expect(hider.assignedLengths[.hidden] == 76)
+        items = [item("«", owner: "MenuBarAgent", x: 940, w: 17, overflow: true)]
+        hider.reconcile()
+        #expect(hider.caps.hidden == 76 - MenuBarItemHider.overflowStep)
+        #expect(hider.assignedLengths[.hidden] == 68)
+        // The « moved left of the glyph: no further shrink.
+        items = [item("«", owner: "MenuBarAgent", x: 860, w: 17, overflow: true)]
+        hider.reconcile()
+        #expect(hider.caps.hidden == 68)
     }
 }
 

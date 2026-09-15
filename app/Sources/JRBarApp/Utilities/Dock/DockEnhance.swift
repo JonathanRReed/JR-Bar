@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import JRBarCore
 import Observation
+import OSLog
 import QuartzCore
 import ScreenCaptureKit
 
@@ -217,11 +218,16 @@ enum AppleDockReader {
             .first?.processIdentifier
     }
 
-    /// The dock's `AXList` element (subrole `AXDockList`).
+    /// The dock's `AXList` element. Older releases gave it the
+    /// `AXDockList` subrole; macOS 26 reports no subrole at all
+    /// (verified live), so the role is the key and the subrole only a
+    /// tie-break.
     static func dockList(pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
-        return axChildren(app).first { axString($0, kAXSubroleAttribute) == "AXDockList" }
+        let children = axChildren(app)
+        return children.first { axString($0, kAXSubroleAttribute) == "AXDockList" }
+            ?? children.first { axString($0, kAXRoleAttribute) == kAXListRole }
     }
 
     /// The application tile under `point` (AX coordinates), or nil —
@@ -408,8 +414,13 @@ final class DockEnhanceController {
 
     static let pollInterval: TimeInterval = 0.05
     /// How long a dock-list frame stays trusted while the pointer is
-    /// away from it.
+    /// away from it — and a much shorter trust while the pointer is
+    /// near a screen edge, where an auto-hidden Dock slides in and its
+    /// frame moves on screen.
     nonisolated static let listFrameTTL: TimeInterval = 1.0
+    nonisolated static let edgeListFrameTTL: TimeInterval = 0.2
+    /// How close to a screen edge counts as "near" for the fast refresh.
+    nonisolated static let edgeReach: CGFloat = 120
     /// Air between the dock and the preview panel.
     static let panelGap: CGFloat = 10
     /// The dock list's frame, inflated toward the screen so a
@@ -458,6 +469,7 @@ final class DockEnhanceController {
         guard !running else { return }
         running = true
         refreshPermissions(force: true)
+        Self.log.notice("enhance start: accessibility \(self.accessibilityTrusted, privacy: .public), screen recording \(self.screenCaptureGranted, privacy: .public), dock list \(AppleDockReader.dockPID().flatMap { AppleDockReader.dockList(pid: $0) } != nil, privacy: .public)")
         timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -507,13 +519,18 @@ final class DockEnhanceController {
                                   now: CACurrentMediaTime(), delay: preferences.previewDelay)
         switch action {
         case .show:
-            if let hovered { showPreview(for: hovered) }
+            if let hovered {
+                Self.log.notice("preview: \(hovered.hoverID, privacy: .public)")
+                showPreview(for: hovered)
+            }
         case .hide:
             hidePreview()
         case .none:
             break
         }
     }
+
+    static let log = Logger(subsystem: "devin.jrbar", category: "dock")
 
     /// The dock list, re-read from AX when the cache is stale or the
     /// pointer is inside the last known frame (a magnified or moved
@@ -523,7 +540,8 @@ final class DockEnhanceController {
         if let cached = cachedList {
             let inside = cached.frame.insetBy(dx: -Self.listSlop.width, dy: -Self.listSlop.height)
                 .contains(point)
-            if !inside, now - cached.at < Self.listFrameTTL {
+            let ttl = Self.nearScreenEdge(point) ? Self.edgeListFrameTTL : Self.listFrameTTL
+            if !inside, now - cached.at < ttl {
                 return (cached.element, cached.frame)
             }
         }
@@ -535,6 +553,18 @@ final class DockEnhanceController {
         }
         cachedList = (list, frame, now)
         return (list, frame)
+    }
+
+    /// Whether an AX-space point is within `edgeReach` of the bottom,
+    /// left or right edge of the screen that holds it — where an
+    /// auto-hidden Dock lives.
+    private static func nearScreenEdge(_ axPoint: CGPoint) -> Bool {
+        let height = mainScreenHeight()
+        let appKit = CGPoint(x: axPoint.x, y: height - axPoint.y)
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(appKit) }) else { return false }
+        let f = screen.frame
+        return appKit.y - f.minY < Self.edgeReach || appKit.x - f.minX < Self.edgeReach
+            || f.maxX - appKit.x < Self.edgeReach
     }
 
     private func pointerInPanel() -> Bool {

@@ -142,9 +142,13 @@ final class MenuBarItemHider {
     /// How often the AX listing re-scans while the utility runs.
     nonisolated static let listingInterval: TimeInterval = 2.0
     /// The empty bar a spacer leaves between the region's edge and
-    /// itself — the pushed items need to *not* fit, and a margin this
-    /// small is narrower than any item.
-    nonisolated static let spacerMargin: CGFloat = 12
+    /// itself. Verified live: macOS 26 draws a status item only when it
+    /// fits in the visible run, and puts its own overflow control
+    /// (`«`, 17 pt) at the run's left end — so the spacer must leave
+    /// room for that button or it is itself overflowed and its glyph
+    /// never draws. The room is the button plus a few points, still
+    /// narrower than any item, so nothing hidden slips back in.
+    nonisolated static let spacerMargin: CGFloat = 22
     /// How much a cap drops each time a control is found parked.
     nonisolated static let capStep: CGFloat = 40
     /// The beat after a length change before the plan is re-read —
@@ -280,6 +284,7 @@ final class MenuBarItemHider {
         let row = rowRect()
         let controls = controlFrames()
         learnCaps(controls: controls, row: row)
+        learnOverflow(controls: controls, row: row, items: listItems())
         // A pushed always-hidden control keeps only its glyph, so when
         // the chevron collapses it comes back small and grows from a
         // measured slot rather than returning oversized and parking.
@@ -334,6 +339,34 @@ final class MenuBarItemHider {
             }
         }
     }
+
+    /// macOS's own overflow control sits at the left end of the visible
+    /// run; when it sits at or past our control's glyph, our control
+    /// itself was overflowed (not drawn) — the spacer reached too far.
+    /// Lower the cap under what was asked so the next pass sizes it to
+    /// fit. Pure on the frames, so a test can pin it.
+    nonisolated static func controlOverflowed(controlFrame: CGRect, items: [MenuBarItem],
+                                              row: CGRect) -> Bool {
+        guard let overflow = items.first(where: {
+            $0.isNativeOverflowControl && $0.bounds.intersects(row)
+        }) else { return false }
+        return overflow.bounds.minX >= controlFrame.maxX - MenuBarControlFrames.glyphLength - 4
+    }
+
+    private func learnOverflow(controls: MenuBarControlFrames, row: CGRect, items: [MenuBarItem]) {
+        guard let hidden = controls.hidden, hidden.intersects(row),
+              !revealed.contains(.hidden),
+              let asked = assignedLengths[.hidden],
+              asked > MenuBarControlFrames.glyphLength + 1,
+              Self.controlOverflowed(controlFrame: hidden, items: items, row: row) else { return }
+        let cap = max(MenuBarControlFrames.glyphLength, asked - Self.overflowStep)
+        guard cap < caps.hidden else { return }
+        caps.hidden = cap
+        Self.log.notice("chevron overflowed at \(asked, privacy: .public)pt (the « sits on it); cap now \(cap, privacy: .public)")
+    }
+
+    /// How much a spacer gives back when the overflow control lands on it.
+    nonisolated static let overflowStep: CGFloat = 8
 
     /// Hand a length to the utility only when it changes — a status
     /// item's length write reflows the whole bar.
