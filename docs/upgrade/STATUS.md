@@ -1172,3 +1172,47 @@ battery, blue/green/grey."
   show the bezel sitting inside one continuous shape.
 - Verified: `swift build` clean; 581 Swift tests green (+12); signed,
   installed, running.
+
+## Daily-driver pass — menu bar spacers, one dock, notch shoulders, resident fish — LANDED
+
+Owner (2026-09-15, grilled then "lgtm, get it all working … go until
+full done"): daily-driver bar (quit Alcove, DockDoor, Ice, Bartender for
+a week), WIP floor committed first, Bartender-style collapse, agent
+HUD first on the notch, Enhanced-only dock, aquarium/Fold/buddy after
+the utilities, closed hardware list (Mac, Creator Micro 2, Screen Bar,
+LED strip, hinge), captures + checklist as the verification.
+
+- Verified live before designing: a 3 000 pt status item is parked by
+  macOS 26 itself; a 250 pt item inserted mid-row stays and pushes
+  cmux/ChatGPT/our own controls into the native overflow with no
+  holes. Screenshots cannot show `sharingType = .none` windows (covers,
+  Item Bar, island) — verification is the AX listing and the
+  `devin.jrbar:menubar` plan log.
+- Menu Bar: positional sections, the chevron and the always-hidden
+  control as spacers, overrides-only covers, cover-era map cleared and
+  controls reseated once (`controlsSeated`), learned fit caps, the
+  native overflow button listed so stacked items read as parked, the
+  reseat calibrated off the chevron's own slot. 18 new tests.
+- Dock: Replace cut (−4 000 lines); `AppleDockControl.restore()` runs
+  on every apply so an old hide is undone; Enhance gained TCC caching,
+  a cached dock list, click-away, frame-matched thumbnails, off-screen
+  windows, close/minimize/Hide/Quit, glass, large cards.
+- Notch: shoulder layout (`NotchIdleLayout`), bare under the Screen
+  Bar's ears, `MediaFeed` (one monitor, refcounted readers),
+  `CoreProviderUsage.headlineWindow` as the one meter rule, slot-based
+  anchors, one reused height probe.
+- Aquarium: `FishCare.label/provider` via `identify`,
+  `AquariumGame.residents`, `Fish.isResident`, the reducer appends
+  residents after the roster and hands a returning session its fish
+  back.
+- Services check: daemon 0.9.8 answers with 9 providers (6 ready;
+  Cursor needs a browser import, Gemini a Code Assist project id,
+  openai-api disabled), Screen Bar + SidePulse Pro + Dot connected and
+  writing.
+- Not verified by eye: the display was asleep and the session locked
+  for the whole pass. Fold's feel, the reseated chevron, the dock
+  panel and the island shoulders need the owner's checklist.
+- Verified: `swift build` clean; 929 Swift tests green; 3 537 Python
+  tests green; Ruff clean; 0.9.8 packaged, Developer ID signed,
+  installed.
+

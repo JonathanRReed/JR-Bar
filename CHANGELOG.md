@@ -4,6 +4,47 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.8 (unreleased)
 
+- Menu Bar hides like Bartender now, not like a blindfold. macOS 26
+  parks any status item that no longer fits into its own overflow, and
+  an item inserted mid-row pushes everything left of it there — so the
+  chevron is the separator: items left of it are hidden, hiding is the
+  chevron's own width growing from its glyph to reach the notch's edge,
+  revealing is it collapsing back. No holes, nothing moved, the pointer
+  never touched. The section map is overrides only (an item marked
+  Cover by hand while it sits right of the chevron is still covered in
+  place, honestly a hole); cover-era maps are cleared once and the
+  controls reseat just left of JR-Bar's own status item. A chevron
+  found parked under a wide app menu learns a cap and collapses; caps
+  reset on screen and frontmost-app changes. Every plan change logs to
+  `devin.jrbar:menubar`.
+- Dock is one mode. Enhance keeps Apple's Dock and floats window
+  previews over it; the Replace bar is gone (a replacement dock has to
+  get minimize animation, drag-to-dock, Exposé and Stage Manager right
+  first — each is weeks). Previews match thumbnails by window frame so
+  untitled and same-titled windows get their own capture, include
+  windows on other Spaces and minimized ones, carry hover-revealed
+  close and minimize buttons, offer Hide/Quit (or Open) in the header,
+  close on a click anywhere else, sit on glass, and come in a large
+  size. The permission probes that ran twenty times a second are
+  cached for three seconds; the Dock's AX list is cached while the
+  pointer is away.
+- Notch: the resting island's dots were drawn centred under the
+  hardware notch, where nobody can see them, animating at 15 fps. The
+  content lives in the shoulders now — agents on the left (a dot per
+  working provider plus the count), attention on the right (open asks
+  in amber with their count, failures in red) or the Now Playing strip
+  — and the island stays a bare housing while the Screen Bar draws its
+  own ears there. One Now Playing feed serves the island and the card
+  (two perl helpers used to run). Every quota meter — notch card, ear
+  ring, menu bar, Usage Center — leads with the same most-constrained
+  window, so a provider can no longer read 17 % in one place and 100 %
+  in another.
+- Aquarium: sessions stay fish. A fish raised to stage 1 or beyond
+  keeps swimming after its session leaves — a resident, idling under
+  its remembered name in its provider's species, up to six, living on
+  feeding alone and still starving down a stage at a time. A returning
+  session takes its fish back, same swim.
+
 - Fold actually shows again: a captured desktop frame that arrived
   before the overlay existed was dropped, leaving an ordered-in window
   with no texture — invisible forever on a static screen, where
