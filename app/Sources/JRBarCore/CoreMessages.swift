@@ -1193,6 +1193,34 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         guard let fidelity else { return false }
         return fidelity != "official"
     }
+
+    /// The window every surface leads with — the Usage Center's
+    /// headline, the menu-bar meter, the notch card's meter, the Screen
+    /// Bar's ear ring: the daemon's `constrained` pick when it names a
+    /// real window (least headroom of the applicable measured lanes),
+    /// the same least-headroom rule computed locally when it does not,
+    /// else the 5h convention. A weekly lane at 100 % outranks a 5h
+    /// lane with headroom: the tighter constraint is always the story,
+    /// never the shorter clock. One rule, one place — a provider can
+    /// never read 17 % in the notch and 100 % in the menu bar.
+    public var headlineWindow: CoreUsageWindow? {
+        if let constrained,
+           let match = windows.first(where: { $0.id == constrained.id || $0.name == constrained.name }) {
+            return match
+        }
+        let measured = windows.filter { $0.bindable && $0.usedPct != nil }
+        if let worst = measured.max(by: { ($0.usedPct ?? 0) < ($1.usedPct ?? 0) }) {
+            return worst
+        }
+        return conventionalWindow
+    }
+
+    /// The 5h convention: what the pick would be before exhaustion is
+    /// consulted — the baseline a "Watching it" note compares against
+    /// when the constrained pick differs.
+    public var conventionalWindow: CoreUsageWindow? {
+        windows.first { $0.name.lowercased() == "5h" } ?? windows.first
+    }
 }
 
 public struct CoreUsage: Codable, Hashable, Sendable {

@@ -137,12 +137,14 @@ public enum NotchIsland {
         return s
     }
 
-    /// Each provider's first window as a meter — the headline reading —
-    /// skipping providers that carry no windows at all. Ordered as the
-    /// daemon sent them, capped at `meterLimit`.
+    /// Each provider's headline window as a meter — the most-constrained
+    /// lane, the same pick the menu bar and the Usage Center lead with
+    /// (`CoreProviderUsage.headlineWindow`) — skipping providers that
+    /// carry no windows at all. Ordered as the daemon sent them, capped
+    /// at `meterLimit`.
     public static func meters(_ usage: CoreUsage?) -> [NotchIslandMeter] {
         (usage?.providers ?? []).compactMap { provider in
-            guard let window = provider.windows.first else { return nil }
+            guard let window = provider.headlineWindow else { return nil }
             return NotchIslandMeter(id: provider.identity, provider: provider.id,
                                     window: window.shortName, percent: window.usedPct)
         }.prefix(meterLimit).map { $0 }
@@ -160,6 +162,72 @@ public enum NotchIsland {
         var width = CGFloat(dots) * 5 + CGFloat(dots - 1) * 4
         if live > 0 { width += 4 + (live < 100 ? 14 : 22) }
         return width
+    }
+}
+
+/// What the resting island draws in each shoulder beside the notch.
+/// Nothing ever sits under the hardware: the slot is the notch, and a
+/// dot centred there is a dot nobody sees. The left shoulder is the
+/// agent HUD — a dot per working provider and the live count; the
+/// right shoulder is attention — the open-ask count in amber, a
+/// failure count in red — or, when neither is up, the Now Playing
+/// strip. While the Screen Bar draws its own ears over the same
+/// shoulders the island stays a bare housing, so the two never stack.
+public struct NotchIdleLayout: Equatable, Sendable {
+    /// Points of content in the left shoulder; 0 draws nothing there.
+    public var leftWidth: CGFloat = 0
+    /// Points of content in the right shoulder; 0 draws nothing there.
+    public var rightWidth: CGFloat = 0
+    /// What the right shoulder carries.
+    public var right: Right = .nothing
+    /// The idle face is a bare housing — the ears carry the HUD.
+    public var bare: Bool = false
+
+    public enum Right: Equatable, Sendable {
+        case nothing
+        /// Open asks — amber.
+        case attention(count: Int)
+        /// Failures — red.
+        case failed(count: Int)
+        case media
+    }
+
+    public init() {}
+
+    /// The wider shoulder's content — both shoulders match it, so the
+    /// island stays centred on the slot.
+    public var contentWidth: CGFloat { max(leftWidth, rightWidth) }
+}
+
+extension NotchIsland {
+    /// Room a count takes beside its dot.
+    static func countWidth(_ n: Int) -> CGFloat { n < 100 ? 14 : 22 }
+
+    /// The resting island's shoulders for a summary. `earsDrawn` is the
+    /// Screen Bar's own wings over the same shoulders: then the island
+    /// is bare, whatever the summary says.
+    public static func idleLayout(_ summary: NotchIslandSummary, media: AlcoveMedia?,
+                                  earsDrawn: Bool) -> NotchIdleLayout {
+        var layout = NotchIdleLayout()
+        if earsDrawn {
+            layout.bare = true
+            return layout
+        }
+        let dots = min(summary.workingProviders.count, dotLimit)
+        if dots > 0 {
+            layout.leftWidth = CGFloat(dots) * 5 + CGFloat(dots - 1) * 4 + 4 + countWidth(summary.working)
+        }
+        if summary.waiting > 0 {
+            layout.right = .attention(count: summary.waiting)
+            layout.rightWidth = 5 + 3 + countWidth(summary.waiting)
+        } else if summary.failed > 0 {
+            layout.right = .failed(count: summary.failed)
+            layout.rightWidth = 5 + 3 + countWidth(summary.failed)
+        } else if media != nil {
+            layout.right = .media
+            layout.rightWidth = mediaContentWidth
+        }
+        return layout
     }
 }
 
@@ -218,17 +286,29 @@ public enum NotchIslandLayout {
         notchDepth > 0 ? notchDepth + expandedNotchInset + ledClearance : expandedNotchInset
     }
 
-    /// The collapsed capsule: at least as wide as the notch plus a small
-    /// shoulder each side — the island reads as the notch grown, not a
-    /// pill parked beside it — and exactly the notch's depth, so at rest
-    /// nothing but the Screen Bar's band draws below the hardware.
-    /// Notch-less screens get a floating pill sized to the content.
+    /// Air around a shoulder's content.
+    public static let shoulderPad: CGFloat = 7
+
+    /// The collapsed capsule: the notch plus a shoulder each side —
+    /// `shoulder` bare, or wide enough for the content the shoulder
+    /// carries (`contentWidth` is the wider side's; both match so the
+    /// island stays centred on the slot) — and exactly the notch's
+    /// depth, so at rest nothing but the Screen Bar's band draws below
+    /// the hardware. The island reads as the notch grown, not a pill
+    /// parked beside it. Notch-less screens get a floating pill sized
+    /// to the content.
     public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat, contentWidth: CGFloat) -> CGSize {
         guard notchDepth > 0 else {
             return CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
         }
-        return CGSize(width: max(idleMinWidth, slotWidth + 2 * shoulder, contentWidth + 28),
+        return CGSize(width: max(idleMinWidth, slotWidth + 2 * shoulderWidth(contentWidth: contentWidth)),
                       height: notchDepth)
+    }
+
+    /// One shoulder's width for its content — the bare shoulder, or the
+    /// content plus its air.
+    public static func shoulderWidth(contentWidth: CGFloat) -> CGFloat {
+        contentWidth > 0 ? max(shoulder, contentWidth + 2 * shoulderPad) : shoulder
     }
 
     /// The hover wink: a resting island under the pointer swells this

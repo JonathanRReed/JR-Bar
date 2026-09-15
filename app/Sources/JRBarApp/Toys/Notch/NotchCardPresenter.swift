@@ -151,7 +151,11 @@ final class NotchCardPresenter {
     static func notchAnchor() -> NSRect? {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return nil }
         let depth = ScreenBarGeometry.notchDepth(of: screen)
-        return NSRect(x: screen.frame.midX - 90, y: screen.frame.maxY - depth - 6,
-                      width: 180, height: 6)
+        let slot = NotchIslandLayout.slot(left: screen.auxiliaryTopLeftArea,
+                                          right: screen.auxiliaryTopRightArea)
+        let width = slot?.width ?? ScreenBarGeometry.slotWidth(of: screen)
+        let centerX = slot?.centerX ?? screen.frame.midX
+        return NSRect(x: centerX - width / 2, y: screen.frame.maxY - depth - 6,
+                      width: width, height: 6)
     }
 }

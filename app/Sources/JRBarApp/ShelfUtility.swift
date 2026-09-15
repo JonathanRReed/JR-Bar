@@ -22,7 +22,8 @@ final class ShelfUtilityModel {
     /// the card. 4 MiB comfortably covers real album art.
     static let maxArtworkBytes = 4 * 1024 * 1024
 
-    private let mediaMonitor = AlcoveMediaMonitor()
+    private let feed: MediaFeed
+    private var feedToken: UUID?
     private let powerMonitor = AlcovePowerMonitor()
 
     /// The current now-playing media, or nil when no certified source
@@ -35,32 +36,35 @@ final class ShelfUtilityModel {
     private(set) var power = AlcovePowerMonitor.read()
     private(set) var running = false
 
-    init() {
-        mediaMonitor.onChange = { [weak self] media in self?.media = media }
+    /// `feed` is the shared Now Playing source; tests pass their own so
+    /// a unit test never spawns the helper.
+    init(feed: MediaFeed? = nil) {
+        self.feed = feed ?? MediaFeed.shared
         powerMonitor.onTransition = { [weak self] _, new in self?.power = new }
     }
 
     func start() {
         guard !running else { return }
         running = true
-        mediaMonitor.start()
+        feedToken = feed.subscribe { [weak self] media in self?.media = media }
         powerMonitor.start()
     }
 
     func stop() {
         guard running else { return }
         running = false
-        mediaMonitor.stop()
+        if let feedToken { feed.unsubscribe(feedToken) }
+        feedToken = nil
         powerMonitor.stop()
         media = nil
     }
 
-    /// Transport commands ride the monitor's live path (entitled
-    /// adapter first, in-process bridge otherwise). No-op without a
-    /// live source — sending into silence is a lie.
+    /// Transport commands ride the feed's live path (entitled adapter
+    /// first, in-process bridge otherwise). No-op without a live source
+    /// — sending into silence is a lie.
     func send(_ command: MediaRemoteBridge.Command) {
         guard media != nil else { return }
-        mediaMonitor.send(command)
+        feed.send(command)
     }
 
     /// Artwork for the card, or nil when the payload is absent,

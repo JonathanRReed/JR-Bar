@@ -259,12 +259,22 @@ final class NotchIslandWindow: NSPanel {
     /// card is on screen, so the layout answers off-screen.
     func expandedCardHeight(width: CGFloat) -> CGFloat {
         guard let toy else { return 0 }
-        let probe = NSHostingView(rootView: NotchCardView(model: toy.cardModel,
-                                                        style: .island,
-                                                        width: width))
+        let view = NotchCardView(model: toy.cardModel, style: .island, width: width)
+        // One probe for the window's life — `reconcile` re-measures on
+        // every sessions doc, and a fresh hosting view per pass is a
+        // whole SwiftUI tree built to be thrown away.
+        let probe: NSHostingView<NotchCardView>
+        if let existing = heightProbe {
+            existing.rootView = view
+            probe = existing
+        } else {
+            probe = NSHostingView(rootView: view)
+            heightProbe = probe
+        }
         probe.layoutSubtreeIfNeeded()
         return max(1, probe.fittingSize.height)
     }
+    private var heightProbe: NSHostingView<NotchCardView>?
 
     /// A resize that keeps the top edge pinned: the caller hands a frame
     /// that already hangs from the screen's top, so the ease is only the

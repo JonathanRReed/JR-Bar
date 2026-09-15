@@ -454,24 +454,14 @@ final class UsageCenterStore {
     /// weekly lane at 100 % outranks a 5h lane with headroom: the tighter
     /// constraint is always the story, never the shorter clock.
     static func primaryWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
-        if let constrained = provider.constrained,
-           let match = provider.windows.first(where: { $0.id == constrained.id || $0.name == constrained.name }) {
-            return match
-        }
-        // A daemon that names no constrained lane still gets the same
-        // rule: the measured, applicable window with the least headroom.
-        let measured = provider.windows.filter { $0.bindable && $0.usedPct != nil }
-        if let worst = measured.max(by: { ($0.usedPct ?? 0) < ($1.usedPct ?? 0) }) {
-            return worst
-        }
-        return conventionalWindow(of: provider)
+        provider.headlineWindow
     }
 
     /// The 5h convention: what the pick would be before exhaustion is
     /// consulted — the baseline the card's "Watching it" note compares
     /// against when the constrained pick differs.
     static func conventionalWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
-        provider.windows.first { $0.name.lowercased() == "5h" } ?? provider.windows.first
+        provider.conventionalWindow
     }
 
     func isCelebrating(_ provider: String) -> Bool {

@@ -105,9 +105,12 @@ final class NotchToy: Toy {
     /// it could never draw over the card, so `expand` shelves it here
     /// and `collapseIsland` re-shows it while it is still fresh.
     @ObservationIgnored private(set) var shelvedCapsule: (notice: AlcoveNotice, at: Date)?
-    /// The Now Playing source; exists only while the island is ours,
-    /// shown, and `mediaEnabled`. A parked island holds no listener.
-    @ObservationIgnored private var mediaMonitor: AlcoveMediaMonitor?
+    /// The Now Playing reader's token on the shared feed; held only
+    /// while the island is ours, shown, and `mediaEnabled`. A parked
+    /// island holds no listener.
+    @ObservationIgnored private var mediaToken: UUID?
+    /// The shared Now Playing source — one helper for every surface.
+    @ObservationIgnored private let mediaFeed: MediaFeed
     /// The battery poller; exists only while the island is ours, shown,
     /// and `capsuleNotifications` + `capsuleKinds.charging` are on.
     @ObservationIgnored private var powerMonitor: AlcovePowerMonitor?
@@ -121,10 +124,11 @@ final class NotchToy: Toy {
     /// notice capsule, the grown card.
     private enum NotchIslandFace { case idle, notice, expanded }
 
-    init(core: CoreModel, store: ToysStore, cardModel: NotchCardModel) {
+    init(core: CoreModel, store: ToysStore, cardModel: NotchCardModel, mediaFeed: MediaFeed? = nil) {
         self.core = core
         self.store = store
         self.cardModel = cardModel
+        self.mediaFeed = mediaFeed ?? MediaFeed.shared
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
@@ -351,6 +355,21 @@ final class NotchToy: Toy {
     var screenBarLive: Bool {
         SettingsDocument(core.settings?.document ?? .object([:]))
             .bool("virtual_status_device_enabled") ?? false
+    }
+
+    /// Whether the Screen Bar draws its ears over the notch's shoulders
+    /// (`screen_bar_notch_wings`, on by default) — then the island's
+    /// resting face stays a bare housing so the two never stack marks.
+    var earsDrawn: Bool {
+        guard screenBarLive, notchDepth > 0 else { return false }
+        return SettingsDocument(core.settings?.document ?? .object([:]))
+            .bool("screen_bar_notch_wings") ?? true
+    }
+
+    /// What the resting island draws in its shoulders — the view and
+    /// the frame read the same answer.
+    var idleLayout: NotchIdleLayout {
+        NotchIsland.idleLayout(islandSummary, media: idleMedia, earsDrawn: earsDrawn)
     }
 
     /// True while Fold's overlay is covering the screen — the island is
@@ -613,9 +632,13 @@ final class NotchToy: Toy {
                               notchDepth: depth, ledClearance: ledClearance)
                               + content)
         case .idle:
+            // Notched: the shoulders carry the content, the slot stays
+            // the notch. Notch-less: the floating pill wraps the row.
+            let content = depth > 0
+                ? idleLayout.contentWidth
+                : NotchIsland.idleContentWidth(islandSummary, media: idleMedia)
             var idle = NotchIslandLayout.idleSize(
-                slotWidth: slot?.width ?? 0, notchDepth: depth,
-                contentWidth: NotchIsland.idleContentWidth(islandSummary, media: idleMedia))
+                slotWidth: slot?.width ?? 0, notchDepth: depth, contentWidth: content)
             if islandHoverPeek {
                 // The wink's frame half — a few points of grow under
                 // the pointer, symmetric, never the card.
@@ -869,20 +892,19 @@ final class NotchToy: Toy {
 
     // MARK: Now Playing
 
-    /// The monitor lives exactly as long as the island is shown with
-    /// `mediaEnabled` on; `reconcile`/`parkIsland` both land here.
+    /// The feed subscription lives exactly as long as the island is
+    /// shown with `mediaEnabled` on; `reconcile`/`parkIsland` both land
+    /// here. The feed itself is shared with the card's row, so the two
+    /// can never disagree about the track.
     private func syncMediaMonitor() {
         let want = islandVisible && settings.mediaEnabled
         if want {
-            if mediaMonitor == nil {
-                let monitor = AlcoveMediaMonitor()
-                monitor.onChange = { [weak self] media in self?.noteMedia(media) }
-                mediaMonitor = monitor
+            if mediaToken == nil {
+                mediaToken = mediaFeed.subscribe { [weak self] media in self?.noteMedia(media) }
             }
-            mediaMonitor?.start()
         } else {
-            mediaMonitor?.stop()
-            mediaMonitor = nil
+            if let mediaToken { mediaFeed.unsubscribe(mediaToken) }
+            mediaToken = nil
             if islandMedia != nil {
                 islandMedia = nil
                 reframeCurrent(animated: false)
@@ -902,8 +924,8 @@ final class NotchToy: Toy {
     }
 
     /// The island's swipe transport lands here.
-    func mediaNextTrack() { mediaMonitor?.send(.nextTrack) }
-    func mediaPreviousTrack() { mediaMonitor?.send(.previousTrack) }
+    func mediaNextTrack() { mediaFeed.send(.nextTrack) }
+    func mediaPreviousTrack() { mediaFeed.send(.previousTrack) }
 
     // MARK: Power
 
@@ -1041,7 +1063,7 @@ final class NotchToy: Toy {
             _ = store?.state.notch
             _ = core.sessions
             _ = core.state?.usage
-            _ = core.settings?.document   // virtual_status_device_enabled → ledClearance
+            _ = core.settings?.document   // virtual_status_device_enabled → ledClearance; screen_bar_notch_wings → earsDrawn
             _ = displayVersion
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in

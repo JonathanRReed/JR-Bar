@@ -98,7 +98,7 @@ struct NotchIslandTests {
         #expect(summary.workingProviders == ["claude", "codex", "gemini"])
     }
 
-    @Test("each provider's first window becomes its meter; empty ones drop out")
+    @Test("each provider's headline window becomes its meter; empty ones drop out")
     func meters() {
         let usage = CoreUsage(providers: [
             CoreProviderUsage(id: "claude", windows: [
@@ -117,6 +117,27 @@ struct NotchIslandTests {
         #expect(NotchIsland.meters(nil).isEmpty)
     }
 
+    @Test("the meter is the tightest lane — a weekly at 100 % outranks a calm 5h, the menu bar's own rule")
+    func metersLeadWithTheConstrainedLane() {
+        let exhausted = CoreProviderUsage(id: "claude", windows: [
+            CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 12),
+            CoreUsageWindow(key: "weekly", name: "7d", usedPct: 100),
+        ])
+        #expect(exhausted.headlineWindow?.name == "7d")
+        #expect(NotchIsland.meters(CoreUsage(providers: [exhausted]))[0].window == "7d")
+        // The daemon's own constrained pick wins over the local rule.
+        var named = exhausted
+        named.constrained = CoreConstrainedLane(name: "5h", usedPct: 12, reason: "test")
+        #expect(named.headlineWindow?.name == "5h")
+        // Nothing measured: the 5h convention, else the first window.
+        let unmeasured = CoreProviderUsage(id: "codex", windows: [
+            CoreUsageWindow(key: "daily", name: "Daily", usedPct: nil),
+            CoreUsageWindow(key: "five-hour", name: "5h", usedPct: nil),
+        ])
+        #expect(unmeasured.headlineWindow?.name == "5h")
+        #expect(CoreProviderUsage(id: "pi").headlineWindow == nil)
+    }
+
     // MARK: Layout
 
     @Test("the slot is the gap between the menu-bar areas")
@@ -132,13 +153,20 @@ struct NotchIslandTests {
 
     @Test("the idle capsule is the notch plus shoulders, tucked to its depth")
     func idleSize() {
-        let size = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 30)
-        #expect(size.width == 185 + 2 * NotchIslandLayout.shoulder)
+        // A bare housing: the notch plus the resting shoulder each side.
+        let bare = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 0)
+        #expect(bare.width == 185 + 2 * NotchIslandLayout.shoulder)
         // Tucked into the notch's own depth — nothing hangs below it.
-        #expect(size.height == 32)
-        // Wide content widens the capsule past the shoulders.
-        let busy = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 300)
-        #expect(busy.width == 328)
+        #expect(bare.height == 32)
+        // Content lives in the shoulders, never under the notch: each
+        // shoulder grows to the wider side's content plus its air.
+        let size = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 30)
+        #expect(size.width == 185 + 2 * (30 + 2 * NotchIslandLayout.shoulderPad))
+        #expect(NotchIslandLayout.shoulderWidth(contentWidth: 0) == NotchIslandLayout.shoulder)
+        #expect(NotchIslandLayout.shoulderWidth(contentWidth: 2) == 2 + 2 * NotchIslandLayout.shoulderPad,
+                "any content earns its air; the bare shoulder is only the floor")
+        let busy = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 148)
+        #expect(busy.width == 185 + 2 * (148 + 2 * NotchIslandLayout.shoulderPad))
         // No notch: a floating pill sized to the content.
         let floating = NotchIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 30)
         #expect(floating.height == 24)
@@ -159,6 +187,41 @@ struct NotchIslandTests {
                                                size: CGSize(width: 96, height: 24),
                                                topInset: NotchIslandLayout.floatingTopInset)
         #expect(floating.maxY == 982 - NotchIslandLayout.floatingTopInset)
+    }
+
+    @Test("the resting shoulders: agents left, attention or media right, bare under the Screen Bar's ears")
+    func idleLayout() {
+        var s = NotchIslandSummary()
+        #expect(NotchIsland.idleLayout(s, media: nil, earsDrawn: false) == NotchIdleLayout(),
+                "nothing live, nothing playing: both shoulders empty")
+        s.working = 2
+        s.workingProviders = ["claude", "codex"]
+        var layout = NotchIsland.idleLayout(s, media: nil, earsDrawn: false)
+        #expect(layout.leftWidth == 32, "\(layout)")
+        #expect(layout.right == .nothing)
+        #expect(layout.contentWidth == layout.leftWidth)
+        // An ask takes the right shoulder, in amber, with its count.
+        s.waiting = 3
+        layout = NotchIsland.idleLayout(s, media: nil, earsDrawn: false)
+        #expect(layout.right == .attention(count: 3))
+        #expect(layout.rightWidth == 22, "\(layout)")
+        // Failures show only when no ask is open.
+        s.waiting = 0
+        s.failed = 1
+        #expect(NotchIsland.idleLayout(s, media: nil, earsDrawn: false).right == .failed(count: 1))
+        // Media takes the right shoulder only when nothing needs a hand.
+        let media = AlcoveMedia(title: "Papillon", playing: true)
+        #expect(NotchIsland.idleLayout(s, media: media, earsDrawn: false).right == .failed(count: 1))
+        s.failed = 0
+        layout = NotchIsland.idleLayout(s, media: media, earsDrawn: false)
+        #expect(layout.right == .media)
+        #expect(layout.rightWidth == NotchIsland.mediaContentWidth)
+        #expect(layout.contentWidth == NotchIsland.mediaContentWidth)
+        // The Screen Bar's ears over the same shoulders: bare, whatever
+        // is live.
+        let bare = NotchIsland.idleLayout(s, media: media, earsDrawn: true)
+        #expect(bare.bare)
+        #expect(bare.contentWidth == 0)
     }
 
     @Test("the idle content width follows the dots and the count")

@@ -87,53 +87,138 @@ struct NotchIslandView: View {
 
     // MARK: Idle
 
-    /// The lip row: the Now Playing strip when media is up, then a dot
-    /// per working provider in its colour, an orange one for open asks,
-    /// a red one for failures, then the live count. Idle it is a single
-    /// dim dot — the island is present, not busy. The breath is the same
-    /// slow cosine the status chip uses, paused outright when nothing
-    /// works, under Reduce Motion, or while the island is ordered out.
+    /// The resting face. Notched: the shoulders carry everything and the
+    /// slot stays the notch — a dot centred under the hardware is a dot
+    /// nobody sees. Left is the agent HUD (a dot per working provider
+    /// in its colour, then the live count); right is attention (open
+    /// asks in amber, failures in red) or the Now Playing strip. While
+    /// the Screen Bar draws its ears over the same shoulders the face is
+    /// a bare housing. Notch-less: the old centred row in a pill. The
+    /// breath is the same slow cosine the status chip uses, paused
+    /// outright when nothing works, under Reduce Motion, while the
+    /// island is ordered out, or while the face is bare.
     private func idle(summary: NotchIslandSummary) -> some View {
+        let layout = toy.idleLayout
+        let notched = toy.notchDepth > 0
         let live = summary.working > 0 && toy.islandVisible && !reduceMotion
+            && !(notched && layout.bare)
         return TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !live)) { context in
             let breath = live
                 ? (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi * 2 / 2.6)) / 2
                 : 0
-            HStack(spacing: 4) {
-                if let media = toy.islandMedia, toy.settings.mediaEnabled {
-                    mediaStrip(media)
-                }
-                ForEach(summary.workingProviders.prefix(NotchIsland.dotLimit), id: \.self) { provider in
-                    Circle()
-                        .fill(ProviderStyle.style(for: provider).accent)
-                        .frame(width: 5, height: 5)
-                }
-                if summary.waiting > 0 {
-                    Circle().fill(.orange).frame(width: 5, height: 5)
-                }
-                if summary.failed > 0 {
-                    Circle().fill(.red).frame(width: 5, height: 5)
-                }
-                if summary.working + summary.waiting + summary.failed > 0 {
-                    Text("\(summary.working + summary.waiting + summary.failed)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.85))
+            Group {
+                if notched {
+                    shoulders(summary: summary, layout: layout)
                 } else {
-                    Circle().fill(.white.opacity(0.28)).frame(width: 4, height: 4)
+                    centredRow(summary: summary)
                 }
             }
             .opacity(0.75 + 0.25 * breath)
             // The hover wink's other half — the frame grows a few
             // points (the toy's `islandHoverPeek` reframe), and the
-            // dots swell inside it. A passing cursor earns only this.
+            // marks swell inside it. A passing cursor earns only this.
             .scaleEffect(toy.islandHoverPeek ? 1.12 : 1)
             .animation(reduceMotion ? .easeInOut(duration: 0.12)
                                     : .spring(response: 0.22, dampingFraction: 0.75),
                        value: toy.islandHoverPeek)
-            // The idle capsule is exactly the notch's depth, so the dots
-            // centre inside it — the silhouette is the hardware's own.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+    }
+
+    /// The notched layout: a shoulder each side of the slot, both the
+    /// same width so the island stays centred on the notch, content
+    /// centred inside each.
+    private func shoulders(summary: NotchIslandSummary, layout: NotchIdleLayout) -> some View {
+        let shoulder = NotchIslandLayout.shoulderWidth(contentWidth: layout.contentWidth)
+        return HStack(spacing: 0) {
+            Group {
+                if !layout.bare, layout.leftWidth > 0 {
+                    agentRow(summary: summary)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: shoulder)
+            Spacer(minLength: 0)
+            Group {
+                if !layout.bare {
+                    switch layout.right {
+                    case .attention(let count):
+                        markCount(count, color: .orange)
+                    case .failed(let count):
+                        markCount(count, color: .red)
+                    case .media:
+                        if let media = toy.islandMedia, toy.settings.mediaEnabled {
+                            mediaStrip(media)
+                        } else {
+                            Color.clear
+                        }
+                    case .nothing:
+                        Color.clear
+                    }
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: shoulder)
+        }
+    }
+
+    /// A dot per working provider in its colour, then the working count.
+    private func agentRow(summary: NotchIslandSummary) -> some View {
+        HStack(spacing: 4) {
+            ForEach(summary.workingProviders.prefix(NotchIsland.dotLimit), id: \.self) { provider in
+                Circle()
+                    .fill(ProviderStyle.style(for: provider).accent)
+                    .frame(width: 5, height: 5)
+            }
+            Text("\(summary.working)")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .accessibilityLabel(Text("\(summary.working) working"))
+    }
+
+    /// The attention mark: a coloured dot and the count beside it.
+    private func markCount(_ count: Int, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text("\(count)")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(color)
+        }
+    }
+
+    /// The notch-less pill's row: the Now Playing strip when media is
+    /// up, then a dot per working provider, an orange one for open
+    /// asks, a red one for failures, then the live count — or a single
+    /// dim dot when nothing is live.
+    private func centredRow(summary: NotchIslandSummary) -> some View {
+        HStack(spacing: 4) {
+            if let media = toy.islandMedia, toy.settings.mediaEnabled {
+                mediaStrip(media)
+            }
+            ForEach(summary.workingProviders.prefix(NotchIsland.dotLimit), id: \.self) { provider in
+                Circle()
+                    .fill(ProviderStyle.style(for: provider).accent)
+                    .frame(width: 5, height: 5)
+            }
+            if summary.waiting > 0 {
+                Circle().fill(.orange).frame(width: 5, height: 5)
+            }
+            if summary.failed > 0 {
+                Circle().fill(.red).frame(width: 5, height: 5)
+            }
+            if summary.working + summary.waiting + summary.failed > 0 {
+                Text("\(summary.working + summary.waiting + summary.failed)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.85))
+            } else {
+                Circle().fill(.white.opacity(0.28)).frame(width: 4, height: 4)
+            }
         }
     }
 

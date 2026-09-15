@@ -95,7 +95,7 @@ final class MediaRemoteBridge: @unchecked Sendable {
 /// on; stopped otherwise — a parked island holds no listener, no child
 /// process, and asks for nothing.
 @MainActor
-final class AlcoveMediaMonitor {
+class AlcoveMediaMonitor {
     /// MediaRemote's distributed notification names — the constants'
     /// string values are their own names, so no symbol lookup is needed.
     /// They only fire for registered readers; on gated releases they
@@ -128,6 +128,10 @@ final class AlcoveMediaMonitor {
     /// The toy's hook: the freshly reduced media (or nil when nothing
     /// plays / no path produced one).
     var onChange: (@MainActor (AlcoveMedia?) -> Void)?
+
+    /// A test double's write to `running` — the real paths flip it in
+    /// `start`/`stop`.
+    func markRunning(_ value: Bool) { running = value }
 
     func start() {
         guard !running else { return }
@@ -271,5 +275,62 @@ final class AlcoveMediaMonitor {
                 }
             }
         }
+    }
+}
+
+/// The one Now Playing source every surface reads. `AlcoveMediaMonitor`
+/// spawns a perl helper and registers distributed observers; two of
+/// them running (the island's and the pinned card's) meant two helpers,
+/// two dylib maps, and two surfaces that could disagree about the
+/// track. The feed owns exactly one monitor, starts it when the first
+/// reader subscribes and stops it when the last leaves, and hands
+/// every reader the same `media`.
+@MainActor
+final class MediaFeed {
+    static let shared = MediaFeed()
+
+    private let monitor: AlcoveMediaMonitor
+    private var readers: [UUID: @MainActor (AlcoveMedia?) -> Void] = [:]
+    /// The latest reduce — a new reader gets it on subscribe.
+    private(set) var media: AlcoveMedia?
+
+    init(monitor: AlcoveMediaMonitor? = nil) {
+        self.monitor = monitor ?? AlcoveMediaMonitor()
+        self.monitor.onChange = { [weak self] media in
+            guard let self else { return }
+            self.media = media
+            for reader in self.readers.values { reader(media) }
+        }
+    }
+
+    var isRunning: Bool { monitor.running }
+    var readerCount: Int { readers.count }
+
+    /// Subscribe; the monitor starts with the first reader. The current
+    /// media is delivered immediately so a late reader is never blank
+    /// until the next change.
+    @discardableResult
+    func subscribe(_ reader: @escaping @MainActor (AlcoveMedia?) -> Void) -> UUID {
+        let token = UUID()
+        readers[token] = reader
+        if readers.count == 1 { monitor.start() }
+        reader(media)
+        return token
+    }
+
+    /// Unsubscribe; the monitor stops with the last reader and the held
+    /// media clears — nothing plays for nobody.
+    func unsubscribe(_ token: UUID) {
+        guard readers.removeValue(forKey: token) != nil else { return }
+        if readers.isEmpty {
+            monitor.stop()
+            media = nil
+        }
+    }
+
+    /// A transport command on the live path — a no-op with no source.
+    func send(_ command: MediaRemoteBridge.Command) {
+        guard media != nil else { return }
+        monitor.send(command)
     }
 }

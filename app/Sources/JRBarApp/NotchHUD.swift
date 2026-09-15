@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 /// A brief glass pill under the notch: "SidePulse connected". Click-through,
@@ -77,7 +78,12 @@ final class NotchHUD {
         let screen = ScreenBarGeometry.preferredScreen() ?? NSScreen.main
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let depth = screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0
-        return NSRect(x: frame.midX - 90, y: frame.maxY - depth - 8, width: 180, height: 6)
+        let slot = screen.flatMap {
+            NotchIslandLayout.slot(left: $0.auxiliaryTopLeftArea, right: $0.auxiliaryTopRightArea)
+        }
+        let width = slot?.width ?? screen.map { ScreenBarGeometry.slotWidth(of: $0) } ?? 180
+        let centerX = slot?.centerX ?? frame.midX
+        return NSRect(x: centerX - width / 2, y: frame.maxY - depth - 8, width: width, height: 6)
     }
 
     /// The vertical room the HUD panel claims under the band — docked
