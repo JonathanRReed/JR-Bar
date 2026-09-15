@@ -414,9 +414,18 @@ final class MenuBarUtility: Toy {
         return (chevron, chevron + 30)
     }
 
+    /// A reseat is mid-flight — the controls are down and the second
+    /// phase is scheduled.
+    @ObservationIgnored private var reseatInFlight = false
+    /// The beat between tearing the controls down and seating the new
+    /// ones: `removeStatusItem` deletes the item's autosave key, and
+    /// the old item's own teardown can land a turn later — a key
+    /// written before that lands is wiped with it (seen live).
+    nonisolated static let reseatSettle: TimeInterval = 0.35
+
     /// Run the reseat once the controls stand and the listing is in.
     func reseatControlsIfNeeded() {
-        guard !settings().controlsSeated,
+        guard !settings().controlsSeated, !reseatInFlight,
               !settings().combinedStatusItem,
               let chevron, let chevronFrame = Self.quartzFrame(of: chevron),
               chevronFrame.intersects(MenuBarItemLister.menuBarRow()),
@@ -430,14 +439,24 @@ final class MenuBarUtility: Toy {
             chevronGlyphMinX: chevronFrame.maxX - MenuBarControlFrames.glyphLength,
             chevronPreferred: preferred)
         MenuBarItemHider.log.notice("reseating controls next to the JR-Bar item at \(main.bounds.minX, privacy: .public): chevron \(positions.chevron, privacy: .public), always-hidden \(positions.alwaysHidden, privacy: .public)")
+        reseatInFlight = true
         removeSeparateControls()
-        UserDefaults.standard.set(positions.chevron,
-                                  forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron")
-        UserDefaults.standard.set(positions.alwaysHidden,
-                                  forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
-        installSeparateControls()
-        hider.controlsReinstalled()
-        update { $0.controlsSeated = true }
+        // Phase two after the old items' teardown has drained.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.reseatSettle) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                UserDefaults.standard.set(positions.chevron,
+                                          forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron")
+                UserDefaults.standard.set(positions.alwaysHidden,
+                                          forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
+                if self.running, !self.settings().combinedStatusItem {
+                    self.installSeparateControls()
+                }
+                self.hider.controlsReinstalled()
+                self.reseatInFlight = false
+                self.update { $0.controlsSeated = true }
+            }
+        }
     }
 
     private func start() {
