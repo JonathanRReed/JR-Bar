@@ -80,6 +80,18 @@ All notable changes to JR-Bar are documented here.
   "Hide the way macOS hides" anyway for a bar without our icon.
   Attribution in docs/PRIOR-ART.md; the audit in
   docs/AUDIT-2026-09-16.md.
+- Battery. JR-Bar sat in "Using Significant Energy". Measured on an
+  idle desk: the app at 3% (an Accessibility round trip to every
+  running app twice a second, and three pointer polls at 10–20 Hz) and
+  the daemon at 2% in bursts (a whole-table `ps` on every state build,
+  `diskutil` per mount, the 15 s refresh). The listing now asks only
+  the apps known to own items and walks every app once in twenty
+  seconds or on a launch/quit; the pointer polls fall to 4 Hz while
+  the pointer is far from their zone; the daemon caches the process
+  table for ten seconds and sweeps liveness every fifteen.
+- The Screen Bar's ears end where the hardware ends: no 6 pt chin
+  below the bezel, ears 24 pt wide — the black no longer reads as the
+  notch grown down and sideways.
 - The `‹` beside the icon is gone: macOS's own « already marks the
   run's other end, and two left-pointing marks 200 points apart read
   as clutter. The tooltip and the blank stretch are the affordance.

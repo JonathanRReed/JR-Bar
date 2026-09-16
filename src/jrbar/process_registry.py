@@ -37,7 +37,7 @@ MAX_SESSION_ID_LENGTH = 200
 PS_TIMEOUT_SECONDS = 1.5
 # The process table is cheap to list but not free; the sweep reads it at
 # most this often even when the app refreshes faster.
-SWEEP_MIN_INTERVAL_SECONDS = 2.0
+SWEEP_MIN_INTERVAL_SECONDS = 15.0
 # lstart has one-second resolution; allow drift between sources that
 # report milliseconds (Claude's session index) and ps.
 START_TOLERANCE_SECONDS = 5.0
@@ -192,8 +192,30 @@ def _parse_lstart(text: str) -> float | None:
     return None
 
 
+# The whole-table ``ps`` costs ~100 ms of CPU; callers ask for it on
+# every state build (a terminal lookup per session), which was the
+# daemon's per-second burst on an idle desk (measured 2026-09-16). One
+# table serves every caller for ``TABLE_CACHE_SECONDS``; an injected
+# runner (tests) bypasses the cache.
+TABLE_CACHE_SECONDS = 10.0
+_table_cache: tuple[float, dict[int, ProcessEntry]] | None = None
+
+
 def list_processes(runner=subprocess.run) -> dict[int, ProcessEntry]:
     """One ``ps`` fork for the whole table; empty on any failure."""
+    global _table_cache
+    cacheable = runner is subprocess.run
+    if cacheable and _table_cache is not None:
+        at, table = _table_cache
+        if time.monotonic() - at < TABLE_CACHE_SECONDS:
+            return table
+    table = _list_processes_uncached(runner)
+    if cacheable and table:
+        _table_cache = (time.monotonic(), table)
+    return table
+
+
+def _list_processes_uncached(runner) -> dict[int, ProcessEntry]:
     # comm= is the executable path (no arguments), placed last so that a
     # path with spaces ("Application Support") stays intact.
     try:
