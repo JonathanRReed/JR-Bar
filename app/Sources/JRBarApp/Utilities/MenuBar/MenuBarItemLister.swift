@@ -229,22 +229,40 @@ enum MenuBarItemLister {
         return trusted
     }
 
+    /// The owners the last full scan found items for. A quick scan asks
+    /// only these — an Accessibility round trip to every running app
+    /// twice a second was the app's whole idle CPU.
+    @MainActor
+    private(set) static var axOwnerPIDs: Set<pid_t> = []
+    @MainActor
+    private static var lastFullScanAt = Date.distantPast
+    /// How long a quick scan may stand in for a full one. App launches
+    /// and quits trigger a full scan on their own.
+    nonisolated static let fullScanInterval: TimeInterval = 20
+    /// Forces the next scan to walk every app.
+    @MainActor
+    static func invalidateOwners() { lastFullScanAt = .distantPast }
+
     /// Re-run the AX scan off the main actor and refill `axItems`.
     /// Callers pick the cadence; the in-flight flag makes overlap a
     /// no-op. Returns the fresh list.
     @MainActor
     @discardableResult
-    static func refreshAXItems() async -> [MenuBarItem] {
+    static func refreshAXItems(full: Bool = false) async -> [MenuBarItem] {
         if axScanInFlight { return axItems }
         axScanInFlight = true
         defer { axScanInFlight = false }
         let row = menuBarRow()
+        let now = Date()
+        let walkAll = full || axOwnerPIDs.isEmpty
+            || now.timeIntervalSince(lastFullScanAt) >= fullScanInterval
         // Our own app stays in the scan — its extras items list as
         // protected, so the chevron and the always-hidden control split
         // cover runs instead of disappearing under a merged one.
         let targets = NSWorkspace.shared.runningApplications.compactMap { app -> MenuBarAX.Target? in
             guard !app.isTerminated,
                   let name = app.localizedName, !name.isEmpty else { return nil }
+            if !walkAll, !axOwnerPIDs.contains(app.processIdentifier) { return nil }
             return MenuBarAX.Target(pid: app.processIdentifier, name: name)
         }
         let scanned = await Task.detached {
@@ -252,6 +270,10 @@ enum MenuBarItemLister {
         }.value
         axItems = scanned
         axGeneration += 1
+        if walkAll {
+            axOwnerPIDs = Set(scanned.map(\.ownerPID))
+            lastFullScanAt = now
+        }
         return scanned
     }
 

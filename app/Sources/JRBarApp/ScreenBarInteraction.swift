@@ -47,6 +47,9 @@ final class ScreenBarInteraction {
     /// The hover poll's cadence — ~20 Hz reads the pointer often enough
     /// that entry feels instant and costs nothing per tick.
     nonisolated static let moveInterval: TimeInterval = 0.05
+    /// The cadence while the pointer is far below the bar.
+    nonisolated static let farMoveInterval: TimeInterval = 0.25
+    nonisolated static let nearReach: CGFloat = 120
     /// The peek is a glance, not a label: it leaves on its own while the
     /// pointer is away…
     static let maxTooltipLife: TimeInterval = 4.0
@@ -150,12 +153,7 @@ final class ScreenBarInteraction {
         // `NSEvent.mouseLocation` at `moveInterval` hits the same code
         // path for free, and `pointerMoved` reads the live location
         // rather than an event, so nothing is lost.
-        let timer = Timer(timeInterval: Self.moveInterval, repeats: true,
-                          block: { [weak self] _ in
-            MainActor.assumeIsolated { self?.pointerMoved() }
-        })
-        RunLoop.main.add(timer, forMode: .common)
-        hoverTimer = timer
+        scheduleMovePoll(after: Self.moveInterval)
         if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
             let time = event.timestamp
@@ -196,6 +194,24 @@ final class ScreenBarInteraction {
             Task { @MainActor [weak self] in self?.pointerScrolled(event) }
             return event
         }) { localMonitors.append(scroll) }
+    }
+
+    /// One-shot, re-armed at the cadence the pointer's distance earns:
+    /// 20 Hz within reach of the bar, 4 Hz far below it.
+    private func scheduleMovePoll(after interval: TimeInterval) {
+        hoverTimer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pointerMoved()
+                let point = NSEvent.mouseLocation
+                let top = NSScreen.screens.first { $0.frame.contains(point) }?.frame.maxY ?? point.y
+                let near = top - point.y <= Self.nearReach || self.hovering || self.isTooltipShown
+                self.scheduleMovePoll(after: near ? Self.moveInterval : Self.farMoveInterval)
+            }
+        })
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
     }
 
     func stop() {

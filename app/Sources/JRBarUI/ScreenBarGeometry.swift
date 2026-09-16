@@ -179,11 +179,11 @@ public enum ScreenBarGeometry {
     public static let notchlessSlotMaxWidth: CGFloat = 84
     public static let notchlessSlotHeight: CGFloat = 18
     /// The tray's chin: how far the wings' shared black shape hangs below
-    /// the bezel's bottom edge while a wing claims room — the wrap that
-    /// makes the notch sit in the shape instead of beside it. It fills
-    /// the space between the bezel and the band, so the window grows by
-    /// exactly this much.
-    public static let wingTrayChin: CGFloat = 6
+    /// the bezel's bottom edge while a wing claims room. Zero: the ears
+    /// end exactly where the hardware ends. A 6 pt chin read as the
+    /// notch grown downward — "expanding past the notch" (owner,
+    /// 2026-09-16) — on a bar whose menu bar is 33 pt to the notch's 32.
+    public static let wingTrayChin: CGFloat = 0
 
     /// The screen the Screen Bar belongs on: the first with a safe-area
     /// inset (the notched built-in), else the main screen.

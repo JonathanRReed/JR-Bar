@@ -70,8 +70,14 @@ final class MenuBarReveal {
     /// How far past the row's band a pointer can sit and still count as
     /// "on the bar" — the reveal is not a pixel hunt.
     nonisolated static let rowSlack: CGFloat = 3
-    /// The hover poll's cadence — fast enough that entry feels instant.
+    /// The hover poll's cadence — fast enough that entry feels instant
+    /// near the bar; a pointer far below it is read a few times a
+    /// second (twenty wakeups a second across three polls kept the
+    /// CPU from idling).
     nonisolated static let hoverPollInterval: TimeInterval = 0.1
+    nonisolated static let farPollInterval: TimeInterval = 0.33
+    /// How far below the row "far" starts.
+    nonisolated static let nearReach: CGFloat = 120
     /// A gesture burst this close together is one reveal, not many —
     /// a scroll stream would otherwise reconcile per tick.
     nonisolated static let revealThrottle: TimeInterval = 0.5
@@ -97,9 +103,19 @@ final class MenuBarReveal {
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .scrollWheel],
             handler: { [weak self] event in self?.noteGlobalEvent(event) })
-        let timer = Timer(timeInterval: Self.hoverPollInterval, repeats: true,
-                          block: { [weak self] _ in
-            MainActor.assumeIsolated { self?.pollHover() }
+        scheduleHoverPoll(after: Self.hoverPollInterval)
+    }
+
+    /// One-shot, re-armed at the cadence the pointer's distance earns.
+    private func scheduleHoverPoll(after interval: TimeInterval) {
+        hoverTimer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pollHover()
+                let near = (self.row().map { $0.minY - Self.nearReach } ?? 0) <= self.mouseLocation().y
+                self.scheduleHoverPoll(after: near ? Self.hoverPollInterval : Self.farPollInterval)
+            }
         })
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer

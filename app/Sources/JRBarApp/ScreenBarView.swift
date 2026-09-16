@@ -330,7 +330,9 @@ final class ScreenBarView: NSView {
 
     /// An ear's drawn width — a fixed complication on the bezel's edge:
     /// the mark's room plus its padding. The claim only ever caps it.
-    private static let earWidth: CGFloat = 30
+    /// The ring is 16 pt; 4 pt of air each side. Wider ears read as
+    /// the notch grown sideways.
+    private static let earWidth: CGFloat = 24
 
     /// A dismiss-pull drags the ear off the bezel: outward travel only
     /// (inward pulls meet the notch), eased by `tanh` so it resists as

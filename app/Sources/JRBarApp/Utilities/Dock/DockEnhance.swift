@@ -435,6 +435,9 @@ final class DockEnhanceController {
     nonisolated static let permissionTTL: TimeInterval = 3
 
     static let pollInterval: TimeInterval = 0.05
+    /// The cadence while the pointer is far from every screen edge a
+    /// Dock could live on.
+    nonisolated static let farPollInterval: TimeInterval = 0.25
     /// How long a dock-list frame stays trusted while the pointer is
     /// away from it — and a much shorter trust while the pointer is
     /// near a screen edge, where an auto-hidden Dock slides in and its
@@ -505,9 +508,7 @@ final class DockEnhanceController {
         running = true
         refreshPermissions(force: true)
         Self.log.notice("enhance start: accessibility \(self.accessibilityTrusted, privacy: .public), screen recording \(self.screenCaptureGranted, privacy: .public), dock list \(AppleDockReader.dockPID().flatMap { AppleDockReader.dockList(pid: $0) } != nil, privacy: .public)")
-        timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
-        }
+        scheduleTick(after: Self.pollInterval)
     }
 
     func stop() {
@@ -530,6 +531,21 @@ final class DockEnhanceController {
     }
 
     // MARK: The tick
+
+    /// One-shot, re-armed at the cadence the pointer's position earns:
+    /// 20 Hz near a screen edge or while a panel is up, 4 Hz elsewhere.
+    private func scheduleTick(after interval: TimeInterval) {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.running else { return }
+                self.tick()
+                let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation, mainScreenHeight: Self.mainScreenHeight())
+                let near = Self.nearScreenEdge(axPoint) || self.tracker.shown != nil || self.pointerInPanel()
+                self.scheduleTick(after: near ? Self.pollInterval : Self.farPollInterval)
+            }
+        }
+    }
 
     private func tick() {
         refreshPermissions()
@@ -656,9 +672,11 @@ final class DockEnhanceController {
 
         let panel = ensurePanel()
         let size = panel.fittingSize()
-        panel.present(frame: DockEnhanceMath.panelFrame(
+        let target = DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: edge, size: size,
-            screen: screenFrame, gap: Self.panelGap), dockedAt: edge)
+            screen: screenFrame, gap: Self.panelGap)
+        Self.log.notice("preview geometry: tile \(String(format: "%.0f–%.0f", itemFrame.minX, itemFrame.maxX), privacy: .public) (mid \(String(format: "%.0f", itemFrame.midX), privacy: .public)), list \(String(format: "%.0f–%.0f", listFrame.minX, listFrame.maxX), privacy: .public), pointer \(String(format: "%.0f", pointer.x), privacy: .public), size \(String(format: "%.0fx%.0f", size.width, size.height), privacy: .public), panel \(String(format: "%.0f–%.0f", target.minX, target.maxX), privacy: .public) (mid \(String(format: "%.0f", target.midX), privacy: .public)), \(self.preview.windows.count, privacy: .public) windows")
+        panel.present(frame: target, dockedAt: edge)
         watchers.start(escape: true, clickAway: true)
 
         if preferences.showThumbnails, screenCaptureGranted, let pid = preview.processIdentifier {
