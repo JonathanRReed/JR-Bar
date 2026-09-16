@@ -6046,7 +6046,7 @@ def run_core(argv: list[str] | None = None) -> int:
 
         from .state_paths import default_state_dir
 
-        stacks = open(default_state_dir() / "core-stacks.log", "a", buffering=1)  # noqa: SIM115
+        stacks = open(default_state_dir() / "core-stacks.log", "a", buffering=1)
         faulthandler.register(signal.SIGUSR1, file=stacks, all_threads=True, chain=False)
     except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
         pass
