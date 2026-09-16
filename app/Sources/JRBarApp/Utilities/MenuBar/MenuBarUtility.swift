@@ -102,6 +102,7 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
     /// Whether the concealer drives hiding right now.
     var concealing: Bool { concealer != nil }
+    @ObservationIgnored private var ownAdoptionLogged = false
 
     /// The boundary's host — the app's own status item. Everything
     /// left of it is the hidden run; it grows the spacer, draws the
@@ -488,7 +489,15 @@ final class MenuBarUtility: Toy {
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.syncConcealer() }
+                MainActor.assumeIsolated {
+                    guard let self, let concealer = self.concealer else { return }
+                    // The agent defers adopting an item registered while an
+                    // assertion holds: a beat with no assertion lets a
+                    // freshly launched app's item land before the
+                    // allowlist (now including it) goes back up.
+                    self.syncConcealer()
+                    Task { await concealer.suspend(for: MenuBarConcealer.adoptionBeat) }
+                }
             })
         }
         MenuBarAssessmentBackend.log.notice("conceal: engine up (MenuBarClientCore resolved)")
@@ -572,6 +581,21 @@ final class MenuBarUtility: Toy {
         // Nothing of ours grows under the agent — whatever the spacer
         // engine wrote on the seeding pass folds back.
         host?.setBoundarySpacer(0)
+        // Not before our own icon stands on the row: an item registered
+        // while an assertion holds is not adopted by the agent, and the
+        // first assertion at launch left JR-Bar's own icon parked
+        // unseen (measured 2026-09-16).
+        let row = MenuBarItemLister.menuBarRow()
+        let ownOnRow = lastPlan.shown.contains {
+            !Self.isForeignOwner($0.ownerName) && $0.bounds.intersects(row)
+        }
+        guard ownOnRow || concealer.isConcealing else {
+            if !ownAdoptionLogged {
+                ownAdoptionLogged = true
+                MenuBarAssessmentBackend.log.notice("conceal: waiting for our own icon to land before the first assertion")
+            }
+            return
+        }
         var concealed = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
                                                      revealed: hider.revealed)
         if let own = Bundle.main.bundleIdentifier { concealed.remove(own) }

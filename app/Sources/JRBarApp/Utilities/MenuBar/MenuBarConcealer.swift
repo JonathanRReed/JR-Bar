@@ -231,6 +231,10 @@ final class MenuBarConcealer {
     private(set) var lastError: String?
     var onChange: (@MainActor () -> Void)?
 
+    /// The assertion-free beat a newly registered item needs to be
+    /// adopted by the agent.
+    nonisolated static let adoptionBeat: TimeInterval = 0.35
+
     init(backend: any MenuBarConcealBackend = MenuBarAssessmentBackend()) {
         self.backend = backend
     }
