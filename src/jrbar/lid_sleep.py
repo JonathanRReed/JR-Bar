@@ -72,11 +72,69 @@ def closed_lid_awake_should_hold(policy: str, *, agents_active: bool) -> bool:
     return False
 
 
+def _iokit_root_domain_bool(property_name: str) -> bool | None:
+    """Read a boolean off IOPMrootDomain in-process through IOKit — the
+    same answer ``ioreg`` prints, without forking a process for it. The
+    lid poll asked every couple of seconds, and each ``ioreg`` fork was
+    ~50 ms of CPU on an idle desk (measured 2026-09-16). None when IOKit
+    is unavailable or the property is absent; callers fall back to
+    ``ioreg`` then."""
+    try:
+        import ctypes
+        import ctypes.util
+
+        iokit = ctypes.cdll.LoadLibrary(ctypes.util.find_library("IOKit"))
+        cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+    except (OSError, TypeError, AttributeError):
+        return None
+    try:
+        iokit.IOServiceMatching.restype = ctypes.c_void_p
+        iokit.IOServiceMatching.argtypes = [ctypes.c_char_p]
+        iokit.IOServiceGetMatchingService.restype = ctypes.c_uint32
+        iokit.IOServiceGetMatchingService.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        iokit.IORegistryEntryCreateCFProperty.restype = ctypes.c_void_p
+        iokit.IORegistryEntryCreateCFProperty.argtypes = [ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32]
+        iokit.IOObjectRelease.argtypes = [ctypes.c_uint32]
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        cf.CFBooleanGetValue.restype = ctypes.c_bool
+        cf.CFBooleanGetValue.argtypes = [ctypes.c_void_p]
+        cf.CFGetTypeID.restype = ctypes.c_ulong
+        cf.CFGetTypeID.argtypes = [ctypes.c_void_p]
+        cf.CFBooleanGetTypeID.restype = ctypes.c_ulong
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+        service = iokit.IOServiceGetMatchingService(0, iokit.IOServiceMatching(b"IOPMrootDomain"))
+        if not service:
+            return None
+        try:
+            key = cf.CFStringCreateWithCString(None, property_name.encode("utf-8"), 0x08000100)
+            try:
+                value = iokit.IORegistryEntryCreateCFProperty(service, key, None, 0)
+            finally:
+                cf.CFRelease(key)
+            if not value:
+                return None
+            try:
+                if cf.CFGetTypeID(value) != cf.CFBooleanGetTypeID():
+                    return None
+                return bool(cf.CFBooleanGetValue(value))
+            finally:
+                cf.CFRelease(value)
+        finally:
+            iokit.IOObjectRelease(service)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
 def read_lid_closed(
     *,
     runner: CommandRunner = subprocess.run,
     command: Sequence[str] = IOREG_CLAMSHELL_COMMAND,
 ) -> bool | None:
+    if runner is subprocess.run and command is IOREG_CLAMSHELL_COMMAND:
+        direct = _iokit_root_domain_bool("AppleClamshellState")
+        if direct is not None:
+            return direct
     result = runner(
         list(command),
         check=True,
@@ -92,6 +150,10 @@ def read_sleep_disabled(
     runner: CommandRunner = subprocess.run,
     command: Sequence[str] = IOREG_SLEEP_DISABLED_COMMAND,
 ) -> bool | None:
+    if runner is subprocess.run and command is IOREG_SLEEP_DISABLED_COMMAND:
+        direct = _iokit_root_domain_bool("SleepDisabled")
+        if direct is not None:
+            return direct
     result = runner(
         list(command),
         check=True,
