@@ -6038,18 +6038,21 @@ def run_core(argv: list[str] | None = None) -> int:
     from .ipc import another_instance_alive
     from .memory_probe import start_if_requested
 
-    # `kill -USR1 <core pid>` dumps every Python thread's stack to stderr
-    # (core.err.log) — the one way to name a CPU burst from outside on a
-    # machine where py-spy needs root.
-    try:
-        import faulthandler
+    # JRBAR_STACK_DUMPS=1: `kill -USR1 <core pid>` appends every Python
+    # thread's stack to core-stacks.log — the one way to name a CPU burst
+    # from outside on a machine where py-spy needs root. Opt-in: a
+    # signal landing mid-syscall took the daemon down once (2026-09-16),
+    # so it is never armed on a production launch.
+    if os.environ.get("JRBAR_STACK_DUMPS") == "1":
+        try:
+            import faulthandler
 
-        from .state_paths import default_state_dir
+            from .state_paths import default_state_dir
 
-        stacks = open(default_state_dir() / "core-stacks.log", "a", buffering=1)
-        faulthandler.register(signal.SIGUSR1, file=stacks, all_threads=True, chain=False)
-    except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
-        pass
+            stacks = open(default_state_dir() / "core-stacks.log", "a", buffering=1)
+            faulthandler.register(signal.SIGUSR1, file=stacks, all_threads=True, chain=False)
+        except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
+            pass
 
     # JRBAR_TRACEMALLOC=1 profiles retained allocations from here on.
     start_if_requested(lambda message: legacy_module.log_status_bar(message))
