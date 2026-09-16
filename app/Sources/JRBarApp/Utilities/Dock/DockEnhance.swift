@@ -467,6 +467,12 @@ final class DockEnhanceController {
     @ObservationIgnored private var generation = 0
     /// The dock list element and its AX frame, with the time read.
     @ObservationIgnored private var cachedList: (element: AXUIElement, frame: CGRect, at: TimeInterval)?
+    /// Apple's Dock magnification, re-read with the permission probe.
+    /// Under magnification the tiles' Accessibility frames are the
+    /// unmagnified layout while the icons slide under the pointer: a
+    /// panel centred on the frame sat 200 pt off the icon (measured:
+    /// tile 288–325, pointer 542). The pointer is where the icon is.
+    @ObservationIgnored private var magnificationOn = false
     /// The list's app tiles, read once per `itemsTTL` for the list
     /// frame they were read under.
     @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)?
@@ -528,6 +534,15 @@ final class DockEnhanceController {
         permissionsCheckedAt = Date()
         accessibilityTrusted = AXIsProcessTrusted()
         screenCaptureGranted = CGPreflightScreenCaptureAccess()
+        magnificationOn = UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "magnification") ?? false
+    }
+
+    /// The frame a panel anchors on: the tile's, or under magnification
+    /// the tile's size at the pointer's x.
+    private func anchorFrame(for item: DockAXItem, pointer: NSPoint) -> CGRect {
+        let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: Self.mainScreenHeight())
+        guard magnificationOn else { return tile }
+        return CGRect(x: pointer.x - tile.width / 2, y: tile.minY, width: tile.width, height: tile.height)
     }
 
     // MARK: The tick
@@ -660,10 +675,10 @@ final class DockEnhanceController {
         }
 
         let mainHeight = Self.mainScreenHeight()
-        let itemFrame = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: mainHeight)
         // The screen under the pointer: a sliding Dock's tiles report
         // below the screen, where no screen contains them.
         let pointer = NSEvent.mouseLocation
+        let itemFrame = anchorFrame(for: item, pointer: pointer)
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) }
             ?? NSScreen.screens.first { $0.frame.contains(itemFrame.origin) }
             ?? NSScreen.main ?? NSScreen.screens.first
@@ -710,7 +725,7 @@ final class DockEnhanceController {
     /// retarget.
     private func anchorPanel(to item: DockAXItem) {
         guard let panel, panel.isVisible, let anchor else { return }
-        let itemFrame = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: Self.mainScreenHeight())
+        let itemFrame = anchorFrame(for: item, pointer: NSEvent.mouseLocation)
         let size = panel.fittingSize()
         let target = DockEnhanceMath.panelFrame(anchor: itemFrame, edge: anchor.edge, size: size,
                                                 screen: anchor.screen, gap: Self.panelGap)
