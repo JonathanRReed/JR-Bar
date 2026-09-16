@@ -582,7 +582,11 @@ final class DockEnhanceController {
     /// list has not moved, else one walk.
     private func tiles(of list: (element: AXUIElement, frame: CGRect)) -> [DockAXItem] {
         let now = CACurrentMediaTime()
-        if let cached = cachedItems, cached.listFrame == list.frame, now - cached.at < Self.itemsTTL {
+        // Fresh frames while a panel is up: under magnification the
+        // tiles move with the pointer, and a panel anchored on a
+        // quarter-second-old frame sat visibly off its icon.
+        let live = tracker.shown != nil
+        if !live, let cached = cachedItems, cached.listFrame == list.frame, now - cached.at < Self.itemsTTL {
             return cached.items
         }
         let items = AppleDockReader.items(list: list.element)
