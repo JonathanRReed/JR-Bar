@@ -1291,3 +1291,31 @@ the dock usable, clean up the entire app."
   the fixes (so the pipeline runs); the panel's placement after the
   fixes needs a hover to see.
 
+## Late evening, third pass — the shift, the ears, the Dock panel — LANDED
+
+Owner (9:35 PM): "Notch is coming in from the side … the wings don't
+respond nearly as well as Alcove … the menu bar is still god-awful …
+the dock hover is off-center."
+
+- The 9:31 PM flap in the log was not the two-item dance (fixed) but
+  the whole bar shifting left 56 pt under macOS's screen-recording
+  indicator — which every Dock thumbnail capture summons — and the
+  spacer chasing it. `CGWindowListCreateImage` is unavailable on this
+  SDK, so captures stay ScreenCaptureKit; the spacer now waits 5 s
+  before any shrink and a shift never teaches the fit edge. During
+  the shift the boundary sits in macOS's overflow and returns on its
+  own; nothing left of it can repack (overflow is the run's tail).
+- Ears: the interaction's hover region now drives the island's hover
+  (`onIslandHover` → `NotchToy.bandHover`), `pointerOnBand` keeps the
+  collapse timer from firing while the pointer is still on an ear,
+  island hover delay 0.12 s, expand response 0.34.
+- "From the side": the frame spring is provably centred every tick
+  (`growStaysCentred`); the island's grow swells down from the notch.
+  What he saw is unverified — possibly the tray/LED coupling — needs
+  his eyes with `JRBAR_CAPTURE_CARD=1`.
+- Dock panel: hosting view fills the glass (autoresizing) and the
+  panel is sized from `intrinsicContentSize` — the content sat in the
+  panel's corner.
+- Reveal gestures and rehides log to `devin.jrbar:menubar` so the next
+  "hover did nothing" has evidence.
+

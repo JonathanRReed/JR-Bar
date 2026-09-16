@@ -216,12 +216,17 @@ final class MenuBarItemHider {
     private var writeAtOnce = false
     /// Test seam for the cooldown clock.
     var now: @MainActor () -> Date = { Date() }
-    /// The boundary's right edge when its length last went out — the
-    /// pack anchors there. A right edge that moved left with the
-    /// length unchanged is the whole bar shifting (macOS's recording
-    /// indicator appearing beside the clock, a wider battery readout),
-    /// not a change in what the spacer should reach.
+    /// The boundary's right edge the current length was computed from —
+    /// the pack anchors there. A right edge that moved with the length
+    /// unchanged is the whole bar shifting (macOS's recording indicator
+    /// appearing beside the clock, a wider battery or weather readout,
+    /// the clock ticking to a wider time), not a change in what the
+    /// spacer should reach — and an overflow read under a shift is the
+    /// shift's doing, never the edge's.
     private var restMaxX: CGFloat?
+    /// The right edge the pass now planning read — `assign` keeps it as
+    /// `restMaxX` when the length goes out.
+    private var planningMaxX: CGFloat?
     /// Since when a shorter length has been wanted.
     private var shrinkWantedSince: Date?
     /// The fit edge learned for this screen — nil until the first
@@ -421,6 +426,7 @@ final class MenuBarItemHider {
         learnCaps(controls: controls, row: row)
         learnOverflow(controls: controls, row: row, items: items)
         let edge = fitEdge
+        planningMaxX = controls.hidden.flatMap { $0.intersects(row) ? $0.maxX : nil }
         let plan = Self.plan(items: items,
                              sections: settings().sections, row: row,
                              controls: controls, fitEdge: edge,
@@ -481,17 +487,14 @@ final class MenuBarItemHider {
               !revealed.contains(.hidden),
               let asked = assignedLengths[.hidden],
               asked > controls.hiddenGlyph + 1 else { return }
-        // The right edge the pack anchored this length at, taken from
-        // the first settled read after the write.
-        if restMaxX == nil, abs(hidden.width - asked) < 2 { restMaxX = hidden.maxX }
         guard Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
                                      glyph: controls.hiddenGlyph) else {
             overflowStreak = 0
             return
         }
-        // Overflowed because the whole bar moved left under the same
-        // length: the edge is where it was; the shift will pass.
-        if let restMaxX, hidden.maxX < restMaxX - 2 { return }
+        // Overflowed because the whole bar moved under the same length:
+        // the edge is where it was; the shift will pass.
+        if let restMaxX, abs(hidden.maxX - restMaxX) > 2 { return }
         guard generation != overflowSeenAtGeneration else { return }
         overflowSeenAtGeneration = generation
         overflowStreak += 1
@@ -554,7 +557,7 @@ final class MenuBarItemHider {
         assignedLengths[section] = rounded
         lengthWrittenAtGeneration = listingGeneration()
         lastWriteAt = now()
-        restMaxX = nil
+        restMaxX = planningMaxX
         setControlLength(section, rounded)
         scheduleSettle()
     }
