@@ -297,7 +297,7 @@ final class MenuBarConcealer {
             live = Live(concealed: concealed, allowlist: allowlist, token: token)
             if let old { backend.invalidate(old.token) }
             lastError = nil
-            MenuBarAssessmentBackend.log.notice("conceal: \(concealed.count, privacy: .public) apps hidden by the agent (\(concealed.sorted().joined(separator: ", "), privacy: .public))")
+            MenuBarAssessmentBackend.log.notice("conceal: \(concealed.count, privacy: .public) apps hidden by the agent (\(concealed.sorted().joined(separator: ", "), privacy: .public)); allowlist \(allowlist.count, privacy: .public) apps, ours \(allowlist.contains(Bundle.main.bundleIdentifier ?? "-") ? "in" : "MISSING", privacy: .public)")
         } catch {
             lastError = String(describing: error)
             MenuBarAssessmentBackend.log.error("conceal: \(String(describing: error), privacy: .public)")

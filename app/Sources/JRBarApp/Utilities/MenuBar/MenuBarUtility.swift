@@ -103,6 +103,13 @@ final class MenuBarUtility: Toy {
     /// Whether the concealer drives hiding right now.
     var concealing: Bool { concealer != nil }
     @ObservationIgnored private var ownAdoptionLogged = false
+    /// When the concealer came up — the first assertion waits
+    /// `adoptionGrace` past it so a relaunch's dying assertion has
+    /// drained and our own icon is adopted by the agent first.
+    @ObservationIgnored private var concealerStartedAt = Date.distantPast
+    @ObservationIgnored private var adoptionRetries = 0
+    @ObservationIgnored private var adoptionCheck: Task<Void, Never>?
+    nonisolated static let adoptionGrace: TimeInterval = 2.5
 
     /// The boundary's host — the app's own status item. Everything
     /// left of it is the hidden run; it grows the spacer, draws the
@@ -478,6 +485,8 @@ final class MenuBarUtility: Toy {
         let concealer = MenuBarConcealer()
         concealer.onChange = { [weak self] in self?.concealerChanged() }
         self.concealer = concealer
+        concealerStartedAt = Date()
+        adoptionRetries = 0
         hider.shuttersSuppressed = true
         host?.setBoundarySpacer(0)
         let bridge = MenuBarSystemClickBridge { [weak self] point in
@@ -585,11 +594,9 @@ final class MenuBarUtility: Toy {
         // while an assertion holds is not adopted by the agent, and the
         // first assertion at launch left JR-Bar's own icon parked
         // unseen (measured 2026-09-16).
-        let row = MenuBarItemLister.menuBarRow()
-        let ownOnRow = lastPlan.shown.contains {
-            !Self.isForeignOwner($0.ownerName) && $0.bounds.intersects(row)
-        }
-        guard ownOnRow || concealer.isConcealing else {
+        let settled = !ownIconStale()
+            && Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionGrace
+        guard settled || concealer.isConcealing else {
             if !ownAdoptionLogged {
                 ownAdoptionLogged = true
                 MenuBarAssessmentBackend.log.notice("conceal: waiting for our own icon to land before the first assertion")
@@ -606,6 +613,38 @@ final class MenuBarUtility: Toy {
     private func concealerChanged() {
         clickBridge?.update(items: lastPlan.shown, concealing: concealer?.isConcealing ?? false)
         refreshChevron()
+        scheduleAdoptionCheck()
+    }
+
+    /// Our own icon, as the agent draws it: an item the agent has not
+    /// adopted keeps a frame from before — stacked on a neighbour, or
+    /// off the row. A stale icon after an assertion means the agent
+    /// deferred it; a beat with no assertion lets it land (Pelmet's
+    /// adoption window), three tries at most.
+    private func ownIconStale() -> Bool {
+        let row = MenuBarItemLister.menuBarRow()
+        guard let own = lastPlan.shown.first(where: { !Self.isForeignOwner($0.ownerName) }) else { return true }
+        guard own.bounds.intersects(row) else { return true }
+        let concealed = concealer?.concealedApps ?? []
+        return lastPlan.shown.contains { other in
+            Self.isForeignOwner(other.ownerName) && other.bounds.intersects(row)
+                && other.bundleID.map { !concealed.contains($0) } ?? true
+                && other.bounds.intersection(own.bounds).width > 3
+        }
+    }
+
+    private func scheduleAdoptionCheck() {
+        adoptionCheck?.cancel()
+        adoptionCheck = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled, let self, let concealer = self.concealer, concealer.isConcealing else { return }
+            _ = await MenuBarItemLister.refreshAXItems()
+            self.hider.reconcile()
+            guard self.ownIconStale(), self.adoptionRetries < 3 else { return }
+            self.adoptionRetries += 1
+            MenuBarAssessmentBackend.log.notice("conceal: our own icon reads stale under the assertion — adoption window \(self.adoptionRetries, privacy: .public)/3")
+            await concealer.suspend(for: 0.8)
+        }
     }
 
     /// A held-back click on the clock, battery or Wi-Fi: lift, replay,
