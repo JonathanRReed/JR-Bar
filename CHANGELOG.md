@@ -57,6 +57,9 @@ All notable changes to JR-Bar are documented here.
   the island's own hover, a pointer still on the band is not a leave,
   the hover grows the card after 0.12 s, and the grow itself runs a
   beat quicker.
+- The `‹` beside the icon is gone: macOS's own « already marks the
+  run's other end, and two left-pointing marks 200 points apart read
+  as clutter. The tooltip and the blank stretch are the affordance.
 - The island grows straight down from the notch. Its hosting view had
   no sizing contract, so mid-grow the 320-point card was laid out at
   the window's left edge and marched with it, then snapped centred at

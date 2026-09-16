@@ -240,11 +240,15 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     }
 
     /// The face the button wears: the natural image, or — with a spacer
-    /// out — a wider template composite with the icon at its right end
-    /// and a small chevron just left of it while anything is hidden.
+    /// out — a wider template composite with the icon at its right end.
+    /// No hint glyph beside it: macOS's own « already says "more here"
+    /// at the run's other end, and two left-pointing marks 200 points
+    /// apart read as clutter. The tooltip and the blank stretch itself
+    /// are the affordance. (`folded(_:spacer:chevron:)` keeps the hint
+    /// for the fallback chevron item.)
     private func refold() {
         guard let button = statusItem.button, let source = naturalImage else { return }
-        let chevron = boundarySpacer > 0 && hiddenCount > 0 && !hiddenRevealed
+        let chevron = false
         if boundarySpacer <= 0 {
             if button.image !== source { button.image = source }
             button.imageScaling = .scaleProportionallyDown
