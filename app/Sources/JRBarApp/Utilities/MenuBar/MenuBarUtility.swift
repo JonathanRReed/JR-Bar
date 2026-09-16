@@ -509,7 +509,11 @@ final class MenuBarUtility: Toy {
     /// universe. An app that launches later is re-applied for by the
     /// workspace observers.
     private static func runningBundleIDs() -> Set<String> {
-        Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        var ids = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        // Ourselves, always: the workspace list can omit the current
+        // process, and an allowlist without us concealed our own icon.
+        if let own = Bundle.main.bundleIdentifier { ids.insert(own) }
+        return ids
     }
 
     /// The plan the card and the Item Bar read under the concealer: the
@@ -565,8 +569,12 @@ final class MenuBarUtility: Toy {
     /// Hand the concealer its target for the current reveal state.
     private func syncConcealer() {
         guard let concealer else { return }
-        let concealed = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
+        // Nothing of ours grows under the agent — whatever the spacer
+        // engine wrote on the seeding pass folds back.
+        host?.setBoundarySpacer(0)
+        var concealed = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
                                                      revealed: hider.revealed)
+        if let own = Bundle.main.bundleIdentifier { concealed.remove(own) }
         concealer.apply(concealed: concealed, running: Self.runningBundleIDs())
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
     }
@@ -947,6 +955,11 @@ final class MenuBarUtility: Toy {
     /// and redraws its glyph flush right so the spacer part reads as
     /// empty bar.
     private func setControlLength(_ section: MenuBarItemSection, length: CGFloat) {
+        if concealer != nil {
+            // The agent hides; nothing of ours ever grows.
+            host?.setBoundarySpacer(0)
+            return
+        }
         switch section {
         case .hidden:
             if let host {
@@ -965,7 +978,10 @@ final class MenuBarUtility: Toy {
     /// The live control frame for the hider: the host's item (or the
     /// fallback chevron), with the boundary's glyph share.
     private func controlFrames() -> MenuBarControlFrames {
-        MenuBarControlFrames(
+        // Under the concealer there is no boundary once the map is
+        // seeded: no positional sections, no spacer, no « to read.
+        if concealer != nil, settings().concealSeeded { return MenuBarControlFrames() }
+        return MenuBarControlFrames(
             hidden: host?.boundaryFrame ?? Self.quartzFrame(of: chevron),
             hiddenGlyph: host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength)
     }
