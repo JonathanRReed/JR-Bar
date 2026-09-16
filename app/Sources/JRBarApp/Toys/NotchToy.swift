@@ -390,10 +390,21 @@ final class NotchToy: Toy {
     /// owns the island, so the hover is only remembered then — it
     /// lands its grow when the capsule steps down.
     private static let collapseDelay: TimeInterval = 0.18
-    /// Long enough that a pointer crossing the notch to reach a menu
-    /// never opens the card; short enough that a pointer parked on it
-    /// feels answered.
-    private static let hoverExpandDelay: TimeInterval = 0.35
+    /// Alcove-quick: a pointer that reaches the notch or an ear wants
+    /// the card, and the notch sits where nothing else is aimed at.
+    private static let hoverExpandDelay: TimeInterval = 0.12
+
+    /// Whether the pointer is on the Screen Bar's region — its ears,
+    /// tray or the island — right now. The band's hover is the
+    /// island's hover; a leave from the island's own window onto an
+    /// ear is not a leave.
+    var pointerOnBand: @MainActor () -> Bool = { false }
+
+    /// The band's hover, forwarded: the ears are the island's hover
+    /// surface while the island owns the notch.
+    func bandHover(_ hovering: Bool) {
+        setHovered(hovering)
+    }
 
     func setHovered(_ hovering: Bool) {
         let s = settings
@@ -454,7 +465,7 @@ final class NotchToy: Toy {
     /// grew is its master's to let go.
     private func collapseTimerFired() {
         collapseWork = nil
-        guard !hoverHeld, !pullActive else { return }
+        guard !hoverHeld, !pullActive, !pointerOnBand() else { return }
         if islandExpanded && !expandHeld { collapseIsland() }
     }
 

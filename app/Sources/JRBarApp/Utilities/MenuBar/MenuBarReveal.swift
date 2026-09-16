@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import OSLog
 
 /// The gestures that bring the hidden run back: the pointer entering
 /// the menu bar row, a click on empty bar space (one that lands on no
@@ -186,8 +187,11 @@ final class MenuBarReveal {
         pointerEnteredRow()
     }
 
+    static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
+
     func pointerEnteredRow() {
         guard settings().revealOnHover else { return }
+        Self.log.notice("reveal: hover entered the blank stretch")
         triggerReveal()
     }
 
@@ -197,11 +201,13 @@ final class MenuBarReveal {
         // that item's, a click on the far side of the bar is nobody's.
         if let zone = revealZone(), !zone.contains(point) { return }
         guard !itemFrames().contains(where: { $0.contains(point) }) else { return }
+        Self.log.notice("reveal: click on the blank stretch")
         triggerReveal()
     }
 
     func scrolled() {
         guard settings().revealOnScroll else { return }
+        Self.log.notice("reveal: scroll on the bar")
         triggerReveal()
     }
 
@@ -272,6 +278,7 @@ final class MenuBarReveal {
             return
         }
         revealed = false
+        Self.log.notice("reveal: rehide")
         onHide()
     }
 }

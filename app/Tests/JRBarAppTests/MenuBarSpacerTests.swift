@@ -237,11 +237,58 @@ struct MenuBarSpacerTests {
             hider.reconcile()
         }
         #expect(writes().count == 1, "no two passes agreed, so nothing went out")
-        // Settled at the narrower frame: two passes agree and it goes out.
+        // Settled at the narrower frame: a shorter length waits out the
+        // shrink hold (the fast clock leaps past it), then goes out.
         frames.hidden = mid
-        settle(hider)
+        for _ in 0..<4 { settle(hider) }
         #expect(writes().count == 2)
         #expect(writes().last?.1 == 70)
+    }
+
+    @MainActor
+    @Test("a bar that shifted left under the same length is held, not chased — and teaches nothing")
+    func shiftIsHeld() {
+        var t = Date()
+        var frames = controls
+        var items: [MenuBarItem] = []
+        var generation = 0
+        let store = MenuBarMemoryFitEdgeStore()
+        let (hider, writes) = makeHider(controls: { frames }, store: store)
+        hider.listItems = { items }
+        hider.listingGeneration = { generation }
+        hider.now = { t }
+        settle(hider)
+        #expect(writes().map(\.1) == [122])
+        // The spacer landed: 902–1024.
+        frames.hidden = CGRect(x: 902, y: 0, width: 122, height: 24)
+        generation += 1
+        hider.reconcile()
+        // macOS shows its recording indicator beside the clock: the whole
+        // bar shifts left 56 points, our item with it, and the « lands
+        // on our glyph because we no longer fit.
+        frames.hidden = CGRect(x: 846, y: 0, width: 122, height: 24)
+        items = [item("«", owner: "MenuBarAgent", x: 1000, w: 17, overflow: true)]
+        for _ in 0..<4 {
+            t += 1.1
+            generation += 1
+            hider.reconcile()
+        }
+        #expect(writes().count == 1, "a shorter length is held through the shift")
+        #expect(hider.learnedFitEdge == nil, "an overflow from a shift is not a lesson")
+        // The indicator leaves, the bar shifts back: nothing to do.
+        frames.hidden = CGRect(x: 902, y: 0, width: 122, height: 24)
+        items = []
+        t += 1.1
+        settle(hider)
+        #expect(writes().count == 1)
+        // A shift that lasts past the hold is a real change.
+        frames.hidden = CGRect(x: 846, y: 0, width: 122, height: 24)
+        t += MenuBarItemHider.shrinkHold + 0.5
+        settle(hider)
+        #expect(writes().count == 1, "the hold starts when the shorter length is first wanted")
+        t += MenuBarItemHider.shrinkHold + 0.5
+        settle(hider)
+        #expect(writes().last?.1 == 66)
     }
 
     @MainActor

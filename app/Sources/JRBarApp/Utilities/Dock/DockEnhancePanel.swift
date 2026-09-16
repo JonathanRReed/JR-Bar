@@ -39,9 +39,16 @@ final class DockPreviewPanel: NSPanel {
 
     init(content: DockPreviewContent) {
         hosting = NSHostingView(rootView: DockPreviewView(content: content, actions: actions))
+        // The panel is sized from the content's intrinsic size and the
+        // hosting view fills the glass — a hosting view left at its
+        // initial frame drew the content in the panel's bottom-left
+        // corner, which read as "the preview is off-centre".
+        hosting.sizingOptions = [.intrinsicContentSize]
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 96))
         glass.cornerRadius = Self.cornerRadius
         glass.style = .regular
+        hosting.frame = glass.bounds
+        hosting.autoresizingMask = [.width, .height]
         glass.contentView = hosting
         super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 96),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -80,8 +87,9 @@ final class DockPreviewPanel: NSPanel {
     /// The size the content wants, clamped so a many-windowed app
     /// can't sprawl the panel across the screen.
     func fittingSize() -> CGSize {
+        hosting.invalidateIntrinsicContentSize()
         hosting.layoutSubtreeIfNeeded()
-        let fit = hosting.fittingSize
+        let fit = hosting.intrinsicContentSize
         let limit = (NSScreen.main?.frame.width ?? 1200) - 40
         return CGSize(width: min(fit.width, min(720, limit)), height: fit.height)
     }

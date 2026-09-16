@@ -245,6 +245,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction.onIslandCollapse = { [weak self] in
             self?.toysStore?.notch.collapseFromBand()
         }
+        // Hovering an ear is hovering the island — and a pointer still
+        // on the band is not a leave for the island's collapse timer.
+        interaction.onIslandHover = { [weak self] hovering in
+            self?.toysStore?.notch.bandHover(hovering)
+        }
+        toysStore.notch.pointerOnBand = { [weak interaction] in interaction?.hovering ?? false }
         // The grown island's card reads the same facts the glass one
         // does.
         toysStore.notch.cardFocus = { [weak self] in self?.store?.screenBarFocus }

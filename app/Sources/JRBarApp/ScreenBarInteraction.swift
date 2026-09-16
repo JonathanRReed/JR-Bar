@@ -43,7 +43,7 @@ final class ScreenBarInteraction {
     /// Deliberate-intent delay: long enough that a pointer cutting across
     /// the notch never arms a peek, short enough that aiming at one feels
     /// immediate.
-    static let hoverDelay: TimeInterval = 0.18
+    static let hoverDelay: TimeInterval = 0.12
     /// The hover poll's cadence — ~20 Hz reads the pointer often enough
     /// that entry feels instant and costs nothing per tick.
     nonisolated static let moveInterval: TimeInterval = 0.05
@@ -97,7 +97,7 @@ final class ScreenBarInteraction {
     /// The hover poll — `moveInterval` cadence, replaces the moved
     /// event tap whose every delivery cost a `TCCAccessRequest`.
     private var hoverTimer: Timer?
-    private var hovering = false
+    private(set) var hovering = false
     private var showWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
     private var lifeWork: DispatchWorkItem?
@@ -116,6 +116,11 @@ final class ScreenBarInteraction {
     /// the island owns the notch.
     var onIslandExpand: @MainActor () -> Void = {}
     var onIslandCollapse: @MainActor () -> Void = {}
+    /// The pointer entered (true) or left (false) the band's region —
+    /// the ears, the tray, the island — while the island owns the
+    /// notch. The island's own hover machine takes it from there: the
+    /// ears are the island's hover surface, the way Alcove's wings are.
+    var onIslandHover: @MainActor (Bool) -> Void = { _ in }
 
     /// The "is the card pinned" read — the glass panel's pin normally,
     /// the grown island's hold while it owns the notch.
@@ -274,9 +279,10 @@ final class ScreenBarInteraction {
         hideWork = nil
         if inside {
             if islandOwnsNotch() {
-                // The island is the peek — its own hover grows it; the
-                // band arms nothing. A leftover glass card goes away.
+                // The island is the peek: hovering an ear is hovering
+                // the island. A leftover glass card goes away.
                 if isTooltipShown { hideTooltip() }
+                onIslandHover(true)
             } else if isTooltipShown {
                 // Back inside before the grace fired — the peek never went
                 // anywhere; refresh it if the focus moved on.
@@ -291,6 +297,8 @@ final class ScreenBarInteraction {
                 showWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
             }
+        } else if islandOwnsNotch() {
+            onIslandHover(false)
         } else if isTooltipShown && !card.isPinned {
             let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
             hideWork = work

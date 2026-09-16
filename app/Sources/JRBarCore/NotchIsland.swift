@@ -526,7 +526,7 @@ public struct NotchFrameSpring: Equatable, Sendable {
     }
 
     /// The grow: the island opening into the card, or any swell.
-    public static let expandMotion = Motion(response: 0.40, dampingFraction: 0.86)
+    public static let expandMotion = Motion(response: 0.34, dampingFraction: 0.86)
     /// The fold: collapse runs a beat faster than the grow.
     public static let collapseMotion = Motion(response: 0.32, dampingFraction: 0.95)
     /// Content-driven nudges — a dot arriving, a row refilling.

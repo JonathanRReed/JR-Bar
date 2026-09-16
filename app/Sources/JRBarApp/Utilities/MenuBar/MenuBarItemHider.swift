@@ -216,6 +216,14 @@ final class MenuBarItemHider {
     private var writeAtOnce = false
     /// Test seam for the cooldown clock.
     var now: @MainActor () -> Date = { Date() }
+    /// The boundary's right edge when its length last went out — the
+    /// pack anchors there. A right edge that moved left with the
+    /// length unchanged is the whole bar shifting (macOS's recording
+    /// indicator appearing beside the clock, a wider battery readout),
+    /// not a change in what the spacer should reach.
+    private var restMaxX: CGFloat?
+    /// Since when a shorter length has been wanted.
+    private var shrinkWantedSince: Date?
     /// The fit edge learned for this screen — nil until the first
     /// overflow moved it off the guess. Loaded from `edgeStore`.
     private(set) var learnedFitEdge: CGFloat?
@@ -243,6 +251,16 @@ final class MenuBarItemHider {
     /// bar; frames read while it settles disagree with frames read at
     /// rest, and acting on each one is what a dance is made of.
     nonisolated static let writeCooldown: TimeInterval = 1.0
+    /// How long a shorter length must be wanted before it goes out.
+    /// The bar shifts left for a few seconds when macOS shows its
+    /// screen-recording indicator (every Dock thumbnail capture); a
+    /// spacer that chased it shrank, the indicator left, the spacer
+    /// grew — a reflow each way, several times a preview. Overflowed
+    /// for the shift's few seconds, the boundary and everything left
+    /// of it simply sit in macOS's own overflow, and come back on
+    /// their own when the bar shifts back. Nothing reappears: the
+    /// overflow is the run's tail, and the boundary heads it.
+    nonisolated static let shrinkHold: TimeInterval = 5.0
 
     /// Starts the reconcile cadence and the AX refresh loop. Safe to
     /// call twice.
@@ -463,11 +481,17 @@ final class MenuBarItemHider {
               !revealed.contains(.hidden),
               let asked = assignedLengths[.hidden],
               asked > controls.hiddenGlyph + 1 else { return }
+        // The right edge the pack anchored this length at, taken from
+        // the first settled read after the write.
+        if restMaxX == nil, abs(hidden.width - asked) < 2 { restMaxX = hidden.maxX }
         guard Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
                                      glyph: controls.hiddenGlyph) else {
             overflowStreak = 0
             return
         }
+        // Overflowed because the whole bar moved left under the same
+        // length: the edge is where it was; the shift will pass.
+        if let restMaxX, hidden.maxX < restMaxX - 2 { return }
         guard generation != overflowSeenAtGeneration else { return }
         overflowSeenAtGeneration = generation
         overflowStreak += 1
@@ -495,12 +519,22 @@ final class MenuBarItemHider {
         let rounded = length.rounded()
         if let current = assignedLengths[.hidden], abs(current - rounded) < 1 {
             pendingLength = nil
+            shrinkWantedSince = nil
             return
         }
         if writeAtOnce {
             pendingLength = nil
+            shrinkWantedSince = nil
             assign(.hidden, length: rounded)
             return
+        }
+        if let current = assignedLengths[.hidden], rounded < current {
+            // A shorter spacer waits out `shrinkHold` — see there.
+            let since = shrinkWantedSince ?? now()
+            shrinkWantedSince = since
+            guard now().timeIntervalSince(since) >= Self.shrinkHold else { return }
+        } else {
+            shrinkWantedSince = nil
         }
         guard now().timeIntervalSince(lastWriteAt) >= Self.writeCooldown else { return }
         if let pending = pendingLength, abs(pending - rounded) < 1 {
@@ -520,6 +554,7 @@ final class MenuBarItemHider {
         assignedLengths[section] = rounded
         lengthWrittenAtGeneration = listingGeneration()
         lastWriteAt = now()
+        restMaxX = nil
         setControlLength(section, rounded)
         scheduleSettle()
     }

@@ -298,6 +298,21 @@ struct NotchIslandTests {
                                     islandVisible: false) == .glass)
     }
 
+    @Test("the grow keeps its centre on the notch every tick — it swells down, never in from a side")
+    func growStaysCentred() {
+        let idle = CGRect(x: 656, y: 945, width: 200, height: 37)
+        let grown = CGRect(x: 596, y: 682, width: 320, height: 300)
+        var spring = NotchFrameSpring(at: idle)
+        spring.retarget(grown, motion: NotchFrameSpring.expandMotion)
+        var ticks = 0
+        while spring.integrate(dt: 1.0 / 120), ticks < 600 {
+            ticks += 1
+            #expect(abs(spring.frame.midX - 756) < 0.5, "tick \(ticks): \(spring.frame)")
+            #expect(abs(spring.frame.maxY - 982) < 0.5, "the top edge stays on the screen's edge")
+        }
+        #expect(ticks > 10 && ticks < 600)
+    }
+
     @Test("the grown card's content clears the notch, its inset and a live band")
     func expandedTopInset() {
         #expect(NotchIslandLayout.expandedTopInset(notchDepth: 32, ledClearance: 0)

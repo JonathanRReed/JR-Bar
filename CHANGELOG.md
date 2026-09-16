@@ -43,6 +43,20 @@ All notable changes to JR-Bar are documented here.
   before growing the card (and does nothing when "Card on hover" is
   off), the card is 320 pt wide so its rows fit, and the settings say
   what the island does under the ears.
+- The menu bar holds still while macOS shows its screen-recording
+  indicator. Every Dock thumbnail capture makes macOS put the purple
+  indicator beside the clock for a few seconds; the whole bar shifts
+  left under it and back. The spacer used to chase the shift — shrink,
+  grow, shrink — a reflow each way, several times a preview. A shorter
+  spacer now waits five seconds before it goes out: for the shift's
+  few seconds the boundary and everything left of it sit in macOS's own
+  overflow and come back on their own, and a shift never teaches the
+  fit edge anything. Every reveal gesture and rehide logs.
+- Notch: hovering an ear is hovering the island, the way Alcove's
+  wings work — the Screen Bar's hover region (ears, tray, island) drives
+  the island's own hover, a pointer still on the band is not a leave,
+  the hover grows the card after 0.12 s, and the grow itself runs a
+  beat quicker.
 - Dock previews are usable on an auto-hidden Dock: the panel follows
   the tile while the Dock slides in and never leaves the screen, sits
   one level under the Dock so a magnified icon still takes its click,
@@ -52,7 +66,10 @@ All notable changes to JR-Bar are documented here.
   rather than every window, matches a late thumbnail to its card by
   identity, reads the Dock's tiles once a quarter-second instead of
   twenty times a second on the main thread, and stays out of screen
-  recordings. The card's copy says what the toggles do.
+  recordings. The panel's content fills the glass and the panel is
+  sized from its intrinsic size — the hosting view used to sit at its
+  first frame in the panel's corner, which read as off-centre. The
+  card's copy says what the toggles do.
 - Dock is one mode. Enhance keeps Apple's Dock and floats window
   previews over it; the Replace bar is gone (a replacement dock has to
   get minimize animation, drag-to-dock, Exposé and Stage Manager right
