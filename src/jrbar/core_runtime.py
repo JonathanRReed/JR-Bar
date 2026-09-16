@@ -6043,7 +6043,6 @@ def run_core(argv: list[str] | None = None) -> int:
     # machine where py-spy needs root.
     try:
         import faulthandler
-        import signal
 
         faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
     except (ImportError, AttributeError, RuntimeError, ValueError):
