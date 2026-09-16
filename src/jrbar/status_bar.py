@@ -69,7 +69,9 @@ def _device_identity_cache() -> DeviceIdentityCache:
 def _request_device_identity_refresh(now: float | None = None) -> None:
     global _LAST_DEVICE_REFRESH_REQUEST
     reference = time.monotonic() if now is None else float(now)
-    if reference - _LAST_DEVICE_REFRESH_REQUEST < 15.0:
+    # One disk-info fork per mount each time; a minute between
+    # refreshes is plenty for a strip that mounts once and stays.
+    if reference - _LAST_DEVICE_REFRESH_REQUEST < 60.0:
         return
     _LAST_DEVICE_REFRESH_REQUEST = reference
     _legacy._jrbar_last_device_refresh_request = reference
