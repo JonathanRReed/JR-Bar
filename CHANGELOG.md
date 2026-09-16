@@ -57,6 +57,23 @@ All notable changes to JR-Bar are documented here.
   the island's own hover, a pointer still on the band is not a leave,
   the hover grows the card after 0.12 s, and the grow itself runs a
   beat quicker.
+- **Menu Bar hides the way macOS 27 hides.** This Mac runs macOS 27
+  (`sw_vers`), where the menu bar is one surface drawn by
+  `MenuBarAgent` and a spacer can only ever feed Apple's « overflow —
+  the «, the blank stretch and the fit-edge guessing were that
+  mechanism's ceiling. The utility now drives the agent's own
+  assessment mode (the private `MenuBarClientCore` assertion every
+  working 27 manager uses — Bartender 7, Thaw, Pelmet, Ice's pending
+  branch): an allowlist of apps stays, the agent conceals the rest.
+  No spacer, no blank, no «, nothing of ours drawn. Sections are per
+  app (Hidden / Always under Overrides), seeded once from what the
+  spacer hid; hover, click or scroll on the empty bar beside the notch
+  reveals; the rehide clock conceals again; a click on the clock,
+  battery or Wi-Fi — which the agent ignores under any assertion — is
+  held at an event tap, concealment lifted for the click, the click
+  replayed at the same point. The spacer engine remains the fallback
+  where the framework does not resolve. Attribution in
+  docs/PRIOR-ART.md; the audit in docs/AUDIT-2026-09-16.md.
 - The `‹` beside the icon is gone: macOS's own « already marks the
   run's other end, and two left-pointing marks 200 points apart read
   as clutter. The tooltip and the blank stretch are the affordance.

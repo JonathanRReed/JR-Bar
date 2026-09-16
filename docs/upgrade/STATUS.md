@@ -1332,3 +1332,17 @@ the dock hover is off-center."
   "Undo clear" has no ticker; `MenuBarZones`/`MenuBarItemMover.plan`
   are test-only.
 
+## 2026-09-16 — the audit, the Fold grey, the concealer — LANDED
+
+Owner: "audit all of our systems … compare ourselves against them";
+"the fold … super gray now instead of black."
+
+- Audit: `docs/AUDIT-2026-09-16.md`. The reframing fact: this Mac is
+  macOS 27.0 (26A428). Spacer hiding was the wrong mechanism for it.
+- Fold grey = the Frost knob at its 0.65 default; default 0 now, the
+  shipped value migrates, his file set to 0.
+- Menu Bar: `MenuBarConcealer` (assessment-mode assertion), per-app
+  map `concealedApps` seeded from the spacer plan, click bridge for
+  the agent's items, spacer engine as fallback. Verified after
+  install: see the ledger line below.
+

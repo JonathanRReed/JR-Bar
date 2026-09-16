@@ -38,7 +38,9 @@ struct MenuBarUtilityControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             SettingLabel(title: "How it works",
-                         subtitle: "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it. Items left of ··· stay hidden even while the rest are revealed.")
+                         subtitle: utility.concealing
+                            ? "macOS itself hides the apps you choose — no spacer, no blank stretch, no «. Pick Hidden or Always for an app under Overrides; hover or click the empty bar beside the notch, or scroll it, to bring them back for a moment. Clicks on the clock, battery and Wi-Fi are relayed while the rest are hidden."
+                            : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
 
             LabeledContent {
                 Text(countsText)
@@ -177,7 +179,7 @@ struct MenuBarUtilityControls: View {
     private func overrideRow(_ item: MenuBarItem) -> some View {
         LabeledContent {
             Picker(selection: Binding(
-                get: { utility.section(for: item.id) },
+                get: { utility.effectiveSection(for: item) },
                 set: { utility.setSection($0, for: item.id) }
             )) {
                 Text("Auto").tag(MenuBarItemSection.shown)
@@ -203,7 +205,7 @@ struct MenuBarUtilityControls: View {
     /// Where the plan put the item — the position-derived section, or
     /// the override that covers it.
     private func placement(of item: MenuBarItem) -> String {
-        let override = utility.section(for: item.id)
+        let override = utility.effectiveSection(for: item)
         if utility.lastPlan.alwaysHidden.contains(item) {
             return "covered · always"
         }

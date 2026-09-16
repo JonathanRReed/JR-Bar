@@ -105,3 +105,25 @@ Apple's public AppKit contracts.
 JR-Bar began as a fork of SidePulse and has since diverged substantially.
 P3.35 continues that pattern: original implementation, explicit attribution,
 and ideas adapted from upstream and peers without code copying. See `LICENSE`.
+
+## Pelmet, Ice (PR #995), Thaw, Barometer — macOS 27 menu bar concealment
+
+Studied 2026-09-16 for the Menu Bar utility's macOS 27 engine.
+Pelmet (<https://github.com/fif7y/pelmet>, GPL-3), Thaw and Barometer
+(GPL-3) and Ice's pending macOS 27 branch
+(<https://github.com/jordanbaird/Ice/pull/995>, MIT, with GPL-derived
+files) all document the same fact about the OS: the only mechanism that
+removes another app's item from the macOS 27 menu bar is
+`MenuBarAgent`'s assessment (exam-lockdown) mode, driven through the
+private `MenuBarClientCore` framework — `MBAssessmentModeConfiguration`
+(`initWithAllowedSystemItems:allowedBundleIdentifiers:`, system items
+numbered 0–8) and `MBAssessmentModeAssertion`
+(`activateWithConfiguration:completionHandler:`, `invalidate`). We
+adopted the *facts* they measured — only a signed bundle's allowlist is
+honoured, assertions union their allowlists so a change activates the
+new one before invalidating the old, the agent ignores clicks on its
+own clock/battery/Wi-Fi under any assertion (Control Center answers an
+AX press), concealed items leave or go stale in Accessibility, the
+agent reorders the bar on its own — and wrote our own implementation
+(`MenuBarConcealer.swift`): no code was copied from any of them. Our
+probe on this Mac confirmed the concealment and the allowlist rule.

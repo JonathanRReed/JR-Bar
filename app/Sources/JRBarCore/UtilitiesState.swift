@@ -106,6 +106,14 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// The trigger rules — "when X, do Y" rows evaluated by the app's
     /// trigger engine.
     public var triggerRules: [MenuBarTriggerRule]
+    /// The concealer's map (macOS 27): bundle identifier → hidden or
+    /// always-hidden. An unlisted app is shown. Per application, not
+    /// per item — the agent conceals by process, and it reorders the
+    /// bar on its own, so a position can never be the setting.
+    public var concealedApps: [String: MenuBarItemSection]
+    /// Whether `concealedApps` was seeded once from the spacer model's
+    /// plan — the apps left of the JR-Bar icon at the first run.
+    public var concealSeeded: Bool
 
     /// The cover's visual-effect material, persisted as its raw name so
     /// a newer build's materials keep their data.
@@ -173,7 +181,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 combinedStatusItem: Bool = false,
                 profiles: [Profile] = [], arrangeOrder: [String] = [],
                 hotkeyBindings: [MenuBarHotkeyBinding] = [],
-                triggerRules: [MenuBarTriggerRule] = []) {
+                triggerRules: [MenuBarTriggerRule] = [],
+                concealedApps: [String: MenuBarItemSection] = [:],
+                concealSeeded: Bool = false) {
         self.enabled = enabled
         self.sections = sections
         self.revealOnHover = revealOnHover
@@ -191,6 +201,8 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.arrangeOrder = arrangeOrder
         self.hotkeyBindings = hotkeyBindings
         self.triggerRules = triggerRules
+        self.concealedApps = concealedApps
+        self.concealSeeded = concealSeeded
     }
 
     static func clampedRehide(_ value: Double) -> Double {
@@ -219,6 +231,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         case enabled, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
+        case concealedApps, concealSeeded
     }
 
     public init(from decoder: any Decoder) throws {
@@ -250,6 +263,10 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                                                  forKey: .hotkeyBindings)) ?? []
         triggerRules = (try? c.decodeIfPresent([MenuBarTriggerRule].self,
                                                forKey: .triggerRules)) ?? []
+        let rawApps = (try? c.decodeIfPresent([String: String].self, forKey: .concealedApps)) ?? [:]
+        concealedApps = rawApps.compactMapValues { MenuBarItemSection(rawValue: $0) }
+            .filter { $0.value != .shown }
+        concealSeeded = (try? c.decodeIfPresent(Bool.self, forKey: .concealSeeded)) ?? false
     }
 }
 

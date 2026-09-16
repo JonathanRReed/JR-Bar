@@ -40,6 +40,10 @@ struct MenuBarItem: Equatable, Sendable {
     var owner: NSRunningApplication? {
         NSRunningApplication(processIdentifier: ownerPID)
     }
+
+    /// The owning app's bundle identifier — the concealer's key. nil
+    /// for a bare helper process, which the agent can never conceal.
+    var bundleID: String? { owner?.bundleIdentifier }
 }
 
 /// Enumerates the menu bar's items off the window list. The filter is a
