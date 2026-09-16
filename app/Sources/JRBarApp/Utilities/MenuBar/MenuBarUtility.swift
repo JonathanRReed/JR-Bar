@@ -109,6 +109,7 @@ final class MenuBarUtility: Toy {
             guard let self else { return }
             self.lastPlan = plan
             self.refreshChevron()
+            self.publishEarAvoidance(plan)
         }
         // Our own controls are never covered — their live frames split
         // cover runs even on the no-AX path where they cannot list.
@@ -671,6 +672,7 @@ final class MenuBarUtility: Toy {
         host?.setBoundarySpacer(0)
         host?.hiddenCount = 0
         host?.hiddenRevealed = false
+        ScreenBarGeometry.earAvoidScreenRect = nil
     }
 
     /// Left-click on the fallback chevron toggles the hidden run;
@@ -833,6 +835,20 @@ final class MenuBarUtility: Toy {
             hidden: host?.boundaryFrame ?? Self.quartzFrame(of: chevron),
             alwaysHidden: Self.quartzFrame(of: alwaysHiddenControl),
             hiddenGlyph: host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength)
+    }
+
+    /// The « the run hides beside, handed to the Screen Bar so its right
+    /// ear stops short of it (screen coordinates, AppKit). nil when the
+    /// run is revealed or nothing is hidden.
+    private func publishEarAvoidance(_ plan: MenuBarHidePlan) {
+        let rect: NSRect? = plan.overflowControlFrame.map { frame in
+            let height = CGDisplayBounds(CGMainDisplayID()).height
+            return NSRect(x: frame.minX - MenuBarItemHider.overflowCoverLead, y: height - frame.maxY,
+                          width: frame.width + MenuBarItemHider.overflowCoverLead, height: frame.height)
+        }
+        if ScreenBarGeometry.earAvoidScreenRect != rect {
+            ScreenBarGeometry.earAvoidScreenRect = rect
+        }
     }
 
     /// The stretch a hover or an empty-space click reveals: from the

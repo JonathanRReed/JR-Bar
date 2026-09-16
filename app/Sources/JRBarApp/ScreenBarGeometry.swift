@@ -11,6 +11,14 @@ typealias ScreenBarWingSide = JRBarUI.ScreenBarWingSide
 typealias NotchProfile = JRBarUI.NotchProfile
 
 extension ScreenBarGeometry {
+    /// The frame macOS's own « overflow control occupies, in screen
+    /// coordinates, while the Menu Bar utility is hiding a run beside
+    /// it — the Screen Bar's right ear stops short of it so the two
+    /// never overlap, and the utility's cover can take the whole «.
+    /// nil while nothing is hidden. Written by `MenuBarUtility`, read
+    /// by `ScreenBarController`'s reposition.
+    @MainActor static var earAvoidScreenRect: NSRect?
+
     /// The notch island's live frame in screen coordinates while it is
     /// ours and on screen — the same answer `NotchToy.islandScreenRect`
     /// gives, read off the window itself so a morph's in-flight frame is

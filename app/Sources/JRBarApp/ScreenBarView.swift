@@ -48,6 +48,15 @@ final class ScreenBarView: NSView {
     var wingGeometry = ScreenBarWingGeometry() {
         didSet { if wingGeometry != oldValue { updateWingChips() } }
     }
+    /// The x (view coordinates) the right ear may not reach past —
+    /// macOS's « sits there while the Menu Bar utility hides a run.
+    /// nil is no limit.
+    var rightEarLimit: CGFloat? {
+        didSet { if rightEarLimit != oldValue { updateWingChips() } }
+    }
+    /// The narrowest ear still worth drawing — the ring plus a point
+    /// of air each side.
+    static let minimumEarWidth: CGFloat = 18
     /// The tray's bottom corner — the notch profile's resolution
     /// (`screen_bar_notch_profile` + `screen_bar_notch_corner`), pushed
     /// by the controller so the wrap's silhouette is the bezel's own.
@@ -236,7 +245,11 @@ final class ScreenBarView: NSView {
             // Notch-less: the capsule chip carries itself in the claim.
             guard wingGeometry.notchDepth > 0 else { return (slot, claim) }
             let depth = wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin
-            let width = min(claim.width, Self.earWidth)
+            var width = min(claim.width, Self.earWidth)
+            if side == .right, let limit = rightEarLimit {
+                width = min(width, limit - claim.minX)
+                guard width >= Self.minimumEarWidth else { return nil }
+            }
             let x = side == .left ? claim.maxX - width : claim.minX
             return (slot, CGRect(x: x, y: size.height - depth, width: width, height: depth))
         }

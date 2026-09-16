@@ -292,9 +292,13 @@ final class ScreenBarController {
     /// too, so the morph's steps and the poll share one dedup.
     private func islandFrameChanged() {
         let island = ScreenBarGeometry.islandScreenRect
-        guard island != lastIslandScan else { return }
+        let avoid = ScreenBarGeometry.earAvoidScreenRect
+        guard island != lastIslandScan || avoid != lastEarAvoid else { return }
         reposition()
     }
+
+    /// The « frame the right ear was last laid out against.
+    private var lastEarAvoid: NSRect?
 
     /// The safety poll lives exactly as long as the band is shown: a
     /// hidden band has no silhouette to keep in step.
@@ -462,6 +466,7 @@ final class ScreenBarController {
         // keeps the standalone band, as does any other provider's.
         let island = ScreenBarGeometry.islandScreenRect
         lastIslandScan = island
+        lastEarAvoid = ScreenBarGeometry.earAvoidScreenRect
         let coupledIsland = island.flatMap { rect -> NSRect? in
             guard depth > 0, rect.width > 1,
                   screen.frame.contains(NSPoint(x: rect.midX, y: rect.midY)) else { return nil }
@@ -483,6 +488,9 @@ final class ScreenBarController {
         view.wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
                                                   bandSpan: view.bandSpan,
                                                   leftExtent: extents.left, rightExtent: extents.right)
+        // The right ear stops short of macOS's « while the Menu Bar
+        // utility hides a run beside it (screen x → view x).
+        view.rightEarLimit = lastEarAvoid.map { $0.minX - frame.minX - 2 }
         syncWings()
         if panel.frame != frame {
             panel.setFrame(frame, display: false)

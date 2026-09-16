@@ -110,6 +110,9 @@ struct MenuBarHidePlan: Equatable, Sendable {
     /// The length the always-hidden control should claim; nil when it
     /// is not on the row.
     var alwaysHiddenControlLength: CGFloat?
+    /// macOS's own « while it stands beside a hidden run and wears a
+    /// cover — the Screen Bar's ear stops short of it. Quartz.
+    var overflowControlFrame: CGRect?
 }
 
 /// The hide machinery. Two mechanisms, one plan:
@@ -218,10 +221,10 @@ final class MenuBarItemHider {
     /// How far right the fit edge moves each time the « lands on the
     /// boundary's glyph.
     nonisolated static let overflowStep: CGFloat = 8
-    /// Points of the « left bare under the ear so its ring never clips —
-    /// the ring ends within a point of the «'s left edge on this
-    /// hardware, and any more shows as a sliver of the glyph.
-    nonisolated static let overflowCoverInset: CGFloat = 1
+    /// Points the «'s cover reaches left of its reported frame — the
+    /// drawn glyph starts a few points before the accessibility frame,
+    /// and the Screen Bar's ear stops short of the frame anyway.
+    nonisolated static let overflowCoverLead: CGFloat = 6
     /// The beat after a length change before the plan is re-read —
     /// the bar reflows asynchronously.
     nonisolated static let settleDelay: TimeInterval = 0.35
@@ -633,16 +636,16 @@ final class MenuBarItemHider {
         plan.hiddenCovers = coverRuns(covered: hiddenToCover, blockers: blockers)
         plan.alwaysHiddenCovers = coverRuns(covered: ahToCover, blockers: blockers)
         // macOS's own « sits at the visible run's left end — flush
-        // against the boundary's spacer, half under the Screen Bar's
-        // ear. While the run is hidden it is redundant with the
-        // boundary (its popover lists what the Item Bar lists), so it
-        // wears the bar's material; the click it swallowed is the
-        // reveal gesture. Its first point stays bare so the ear's ring
-        // is never clipped.
+        // against the boundary's spacer. While the run is hidden it is
+        // redundant with the boundary (its popover lists what the Item
+        // Bar lists), so it wears the bar's material — the whole glyph,
+        // a few points left of its frame included — and the click it
+        // swallowed is the reveal gesture. The Screen Bar's ear reads
+        // the frame and stops short of it.
         if let hiddenControl, !revealed.contains(.hidden),
-           let overflow = overflowFrames.first(where: { $0.maxX <= hiddenControl.minX + 4 }),
-           overflow.width > overflowCoverInset + 4 {
-            plan.hiddenCovers.append((overflow.minX + overflowCoverInset)...overflow.maxX)
+           let overflow = overflowFrames.first(where: { $0.maxX <= hiddenControl.minX + 4 }) {
+            plan.hiddenCovers.append((overflow.minX - overflowCoverLead)...overflow.maxX)
+            plan.overflowControlFrame = overflow
         }
 
         // Spacer lengths.
