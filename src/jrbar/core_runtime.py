@@ -6038,6 +6038,17 @@ def run_core(argv: list[str] | None = None) -> int:
     from .ipc import another_instance_alive
     from .memory_probe import start_if_requested
 
+    # `kill -USR1 <core pid>` dumps every Python thread's stack to stderr
+    # (core.err.log) — the one way to name a CPU burst from outside on a
+    # machine where py-spy needs root.
+    try:
+        import faulthandler
+        import signal
+
+        faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+    except (ImportError, AttributeError, RuntimeError, ValueError):
+        pass
+
     # JRBAR_TRACEMALLOC=1 profiles retained allocations from here on.
     start_if_requested(lambda message: legacy_module.log_status_bar(message))
 
