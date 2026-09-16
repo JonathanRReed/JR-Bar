@@ -97,10 +97,11 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 
 ### Item management
 
-- Three sections: **shown** (right of the chevron), **hidden** (left of
-  the chevron — packed off by its spacer, reveal via the chevron or a
-  gesture), **always-hidden** (left of the ··· control — its own spacer,
-  reveal via the Item Bar). **Built.**
+- Three sections: **shown** (right of the JR-Bar icon), **hidden** (left
+  of the icon — packed off by its spacer, reveal via the blank stretch
+  or a gesture), **always-hidden** (an override only: a cover where the
+  item sits, hidden even while the run is revealed, reachable through
+  the Item Bar). **Built.**
 - Reveal triggers: hover over the menu bar's empty space, click empty space,
   scroll/swipe on the menu bar, hotkey per section. Auto-rehide after N s
   (default 4, off when the Item Bar panel is pinned). **Built** except the
