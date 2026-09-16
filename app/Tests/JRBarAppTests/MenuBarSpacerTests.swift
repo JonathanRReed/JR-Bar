@@ -372,24 +372,24 @@ struct MenuBarSpacerTests {
         hider.stop()
     }
 
-    @Test("the « beside a hidden run wears the bar's material, bare for the ear's ring; revealed, it stands")
-    func overflowCover() {
+    @Test("the « beside a hidden run is reported for the ear to dodge, never covered; revealed, nothing")
+    func overflowBesideTheRun() {
         let boundary = MenuBarControlFrames(hidden: CGRect(x: 902, y: 0, width: 122, height: 24))
         let overflow = item("«", owner: "MenuBarAgent", x: 877, w: 18, overflow: true)
         let hidden = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
                                            controls: boundary, fitEdge: fitEdge)
-        #expect(hidden.hiddenCovers == [(877 - MenuBarItemHider.overflowCoverLead)...895])
+        #expect(hidden.hiddenCovers.isEmpty, "a cover under the « hides nothing — it draws above us")
         #expect(hidden.overflowControlFrame == CGRect(x: 877, y: 0, width: 18, height: 24))
         let revealed = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
                                              controls: boundary, fitEdge: fitEdge,
                                              revealed: [.hidden])
         #expect(revealed.hiddenCovers.isEmpty)
         #expect(revealed.overflowControlFrame == nil)
-        // A « on the glyph (our boundary overflowed) is not beside the run — no cover.
+        // A « on the glyph (our boundary overflowed) is not beside the run.
         let onGlyph = item("«", owner: "MenuBarAgent", x: 1010, w: 18, overflow: true)
         let overflowed = MenuBarItemHider.plan(items: [onGlyph], sections: [:], row: row,
                                                controls: boundary, fitEdge: fitEdge)
-        #expect(overflowed.hiddenCovers.isEmpty)
+        #expect(overflowed.overflowControlFrame == nil)
     }
 
     // MARK: Migration and the control face

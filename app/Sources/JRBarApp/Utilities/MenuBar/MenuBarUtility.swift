@@ -843,8 +843,7 @@ final class MenuBarUtility: Toy {
     private func publishEarAvoidance(_ plan: MenuBarHidePlan) {
         let rect: NSRect? = plan.overflowControlFrame.map { frame in
             let height = CGDisplayBounds(CGMainDisplayID()).height
-            return NSRect(x: frame.minX - MenuBarItemHider.overflowCoverLead, y: height - frame.maxY,
-                          width: frame.width + MenuBarItemHider.overflowCoverLead, height: frame.height)
+            return NSRect(x: frame.minX, y: height - frame.maxY, width: frame.width, height: frame.height)
         }
         if ScreenBarGeometry.earAvoidScreenRect != rect {
             ScreenBarGeometry.earAvoidScreenRect = rect
