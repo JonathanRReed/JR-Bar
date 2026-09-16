@@ -94,6 +94,14 @@ enum DockThumbnailer {
     /// minimized ones — the window server still holds their pixels.
     /// `isStale` lets the caller bail mid-flight when the preview
     /// retargeted or hid while a capture was in flight.
+    /// Captures kept per window for `captureLifetime`: every capture
+    /// makes macOS flash its recording indicator beside the clock (and
+    /// shift the menu bar under it), so a window hovered twice in half
+    /// a minute shows the same still. DockDoor's answer to the same
+    /// complaint, at the same lifetime.
+    @MainActor private static var captureCache: [CGWindowID: (image: NSImage, at: Date)] = [:]
+    nonisolated static let captureLifetime: TimeInterval = 30
+
     static func attach(to content: DockPreviewContent,
                        bundleID: String?, pid: pid_t,
                        includeOffscreen: Bool,
@@ -114,6 +122,13 @@ enum DockThumbnailer {
             // The row's identity, not its index: a card closed while
             // this capture was in flight would shift the rows under it.
             let rowID = content.windows[index].id
+            let now = Date()
+            if let cached = captureCache[scWindow.windowID],
+               now.timeIntervalSince(cached.at) < captureLifetime {
+                content.windows[index].thumbnail = cached.image
+                continue
+            }
+            captureCache = captureCache.filter { now.timeIntervalSince($0.value.at) < captureLifetime }
             let configuration = SCStreamConfiguration()
             let bounds = scWindow.frame
             let factor = min(1, Self.pointLimit / max(bounds.width, bounds.height, 1)) * scale
@@ -124,11 +139,13 @@ enum DockThumbnailer {
             guard let cgImage = try? await SCScreenshotManager.captureImage(
                 contentFilter: SCContentFilter(desktopIndependentWindow: scWindow),
                 configuration: configuration) else { continue }
-            guard !isStale(), let row = content.windows.firstIndex(where: { $0.id == rowID }) else { continue }
-            content.windows[row].thumbnail = NSImage(
+            let image = NSImage(
                 cgImage: cgImage,
                 size: NSSize(width: CGFloat(cgImage.width) / scale,
                              height: CGFloat(cgImage.height) / scale))
+            captureCache[scWindow.windowID] = (image, Date())
+            guard !isStale(), let row = content.windows.firstIndex(where: { $0.id == rowID }) else { continue }
+            content.windows[row].thumbnail = image
         }
     }
 }

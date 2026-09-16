@@ -51,7 +51,7 @@ struct DockUtilityControls: View {
             }
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
-                             subtitle: "A capture of each window, taken when the preview opens (needs Screen Recording); off shows icon + title cards.")
+                             subtitle: "A capture of each window, kept for half a minute (needs Screen Recording — each fresh capture flashes macOS's recording dot); off shows icon + title cards.")
             }
             Toggle(isOn: largePreviews) {
                 SettingLabel(title: "Large cards",
