@@ -27,7 +27,8 @@ final class ToysStore {
     }
 
     /// The cards, in contract order: Fold, Aquarium, Notch Buddy,
-    /// Confetti, Notch. The page renders whatever is here.
+    /// Confetti. The Notch toy lives on the Utilities page. The page
+    /// renders whatever is here.
     private(set) var toys: [any Toy]
 
     /// Typed handles for the toys that other parts of the app drive:

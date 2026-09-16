@@ -197,18 +197,23 @@ public struct NotchIdleLayout: Equatable, Sendable {
     /// The wider shoulder's content.
     public var contentWidth: CGFloat { max(leftWidth, rightWidth) }
 
-    /// Each shoulder's own width: nothing at all while bare — the
-    /// housing is then exactly the notch, so no black reaches past the
-    /// hardware and no menu-bar click lands on it — else the resting
-    /// shoulder, or the content plus its air. The two are independent:
-    /// a 148-point media strip on the right never earns the left an
-    /// empty 148-point slab (that was the "black blob").
+    /// Each shoulder's own content width: nothing at all while bare —
+    /// the housing is then exactly the notch, so no black reaches past
+    /// the hardware and no menu-bar click lands on it — else the
+    /// resting shoulder, or the content plus its air.
     public var leftShoulder: CGFloat {
         bare ? 0 : NotchIslandLayout.shoulderWidth(contentWidth: leftWidth)
     }
     public var rightShoulder: CGFloat {
         bare ? 0 : NotchIslandLayout.shoulderWidth(contentWidth: rightWidth)
     }
+    /// The window's shoulder — the wider side, on both sides, so the
+    /// window stays centred on the notch and every face (idle, notice,
+    /// card) shares one centre: a morph between faces then swells in
+    /// place instead of sliding sideways. Content hugs the notch inside
+    /// it (`NotchIslandView.shoulders`), so the narrower side's spare
+    /// room is at its outer end.
+    public var windowShoulder: CGFloat { max(leftShoulder, rightShoulder) }
 }
 
 extension NotchIsland {
@@ -320,11 +325,11 @@ public enum NotchIslandLayout {
         CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
     }
 
-    /// Where the island's centre sits for uneven shoulders: the slot's
-    /// centre, shifted so the slot still lands on the notch.
+    /// Where the island's centre sits: always the slot's — every face
+    /// shares it, so a morph never travels sideways.
     public static func idleCenterX(slotCenterX: CGFloat, leftShoulder: CGFloat,
                                    rightShoulder: CGFloat) -> CGFloat {
-        slotCenterX + (rightShoulder - leftShoulder) / 2
+        slotCenterX
     }
 
     /// One shoulder's width for its content — the bare shoulder, or the

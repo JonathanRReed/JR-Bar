@@ -177,8 +177,11 @@ struct NotchIslandTests {
         #expect(NotchIslandLayout.shoulderWidth(contentWidth: 0) == NotchIslandLayout.shoulder)
         #expect(NotchIslandLayout.shoulderWidth(contentWidth: 2) == 2 + 2 * NotchIslandLayout.shoulderPad,
                 "any content earns its air; the bare shoulder is only the floor")
-        // Uneven shoulders shift the centre so the slot stays on the notch.
-        #expect(NotchIslandLayout.idleCenterX(slotCenterX: 756, leftShoulder: 44, rightShoulder: 12) == 740)
+        // The window takes the wider shoulder on both sides and stays
+        // centred on the notch — every face shares one centre, so a
+        // morph never travels sideways.
+        #expect(uneven.windowShoulder == 44)
+        #expect(NotchIslandLayout.idleCenterX(slotCenterX: 756, leftShoulder: 44, rightShoulder: 12) == 756)
         // No notch: a floating pill sized to the content.
         let floating = NotchIslandLayout.floatingSize(contentWidth: 30)
         #expect(floating.height == 24)
@@ -230,7 +233,9 @@ struct NotchIslandTests {
         #expect(layout.rightWidth == NotchIsland.mediaContentWidth)
         #expect(layout.rightShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad)
         #expect(layout.leftShoulder == 46,
-                "the left is its own two dots and count plus air — never the strip's 148")
+                "the left is its own two dots and count plus air")
+        #expect(layout.windowShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad,
+                "the window's shoulder is the wider side, both sides — centred on the notch")
         // The Screen Bar's ears over the same shoulders: bare, whatever
         // is live — and a bare housing has no shoulders at all.
         let bare = NotchIsland.idleLayout(s, media: media, earsDrawn: true)

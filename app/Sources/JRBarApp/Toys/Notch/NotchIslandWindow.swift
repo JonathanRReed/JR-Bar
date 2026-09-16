@@ -178,6 +178,15 @@ final class NotchIslandWindow: NSPanel {
     init(toy: NotchToy) {
         self.toy = toy
         hosting = NotchIslandHostingView(rootView: NotchIslandView(toy: toy))
+        // The toy owns the frame; the hosting view must never push back
+        // with the content's own size. Left at the default sizing
+        // options, a 320-point card inside a 200-point window mid-grow
+        // was laid out at the window's left edge and marched with it —
+        // the card "came in from the side" and snapped centred at the
+        // last tick.
+        hosting.sizingOptions = []
+        hosting.frame = NSRect(x: 0, y: 0, width: 140, height: 30)
+        hosting.autoresizingMask = [.width, .height]
         super.init(contentRect: NSRect(x: 0, y: 0, width: 140, height: 30),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         contentView = hosting

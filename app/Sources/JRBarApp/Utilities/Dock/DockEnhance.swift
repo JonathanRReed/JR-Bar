@@ -311,7 +311,7 @@ enum AppleDockReader {
         guard let element = window.element else { return false }
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &value) == .success,
-              let button = value else { return false }
+              let button = value, CFGetTypeID(button) == AXUIElementGetTypeID() else { return false }
         return AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success
     }
 
@@ -360,7 +360,9 @@ enum AppleDockReader {
         var sizeValue: AnyObject?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
               AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
-              let positionValue, let sizeValue else { return nil }
+              let positionValue, let sizeValue,
+              CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
         var point = CGPoint.zero
         var size = CGSize.zero
         // AXValue wraps CGPoint/CGSize; the casts are the documented pattern.

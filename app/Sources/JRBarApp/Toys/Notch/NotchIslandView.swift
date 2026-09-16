@@ -125,30 +125,31 @@ struct NotchIslandView: View {
         }
     }
 
-    /// The notched layout: a shoulder each side of the slot, each its
-    /// own width (the frame shifts so the slot still lands on the
-    /// notch), content centred inside each.
+    /// The notched layout: the window's shoulder each side of the slot
+    /// (the wider side's width, so the window stays centred on the
+    /// notch), each side's content hugging the notch inside it.
     private func shoulders(summary: NotchIslandSummary, layout: NotchIdleLayout) -> some View {
         HStack(spacing: 0) {
             Group {
                 if !layout.bare, layout.leftWidth > 0 {
                     agentRow(summary: summary)
+                        .padding(.trailing, NotchIslandLayout.shoulderPad)
                 } else {
                     Color.clear
                 }
             }
-            .frame(width: layout.leftShoulder)
+            .frame(width: layout.windowShoulder, alignment: .trailing)
             Spacer(minLength: 0)
             Group {
                 if !layout.bare {
                     switch layout.right {
                     case .attention(let count):
-                        markCount(count, color: .orange)
+                        markCount(count, color: .orange).padding(.leading, NotchIslandLayout.shoulderPad)
                     case .failed(let count):
-                        markCount(count, color: .red)
+                        markCount(count, color: .red).padding(.leading, NotchIslandLayout.shoulderPad)
                     case .media:
                         if let media = toy.islandMedia, toy.settings.mediaEnabled {
-                            mediaStrip(media)
+                            mediaStrip(media).padding(.leading, NotchIslandLayout.shoulderPad)
                         } else {
                             Color.clear
                         }
@@ -159,7 +160,7 @@ struct NotchIslandView: View {
                     Color.clear
                 }
             }
-            .frame(width: layout.rightShoulder)
+            .frame(width: layout.windowShoulder, alignment: .leading)
         }
     }
 

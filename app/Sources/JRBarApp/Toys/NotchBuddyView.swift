@@ -33,7 +33,9 @@ struct NotchBuddyView: View {
     private static let hopDuration: TimeInterval = 1.1
 
     var body: some View {
-        TimelineView(.animation) { context in
+        // Paused under Reduce Motion — every other timeline in the app
+        // is; this one redrew at display rate regardless.
+        TimelineView(.animation(paused: reduceMotion)) { context in
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)

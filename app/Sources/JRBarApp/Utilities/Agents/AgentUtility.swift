@@ -154,7 +154,7 @@ final class AgentUtility: Toy {
             .sorted { $0.sortRank < $1.sortRank }
             .map { activity in
                 let count = tally[activity] ?? 0
-                return count == 1 ? "1 \(activity.word.lowercased())" : "\(count) \(activity.word.lowercased())"
+                return "\(count) \(activity.word.lowercased())"
             }
     }
 
@@ -281,9 +281,15 @@ final class AgentUtility: Toy {
         runClear(sessions: [row.id])
     }
 
+    /// Exactly the rows this card counted — the organizer's cut, not
+    /// every finished session the monitor holds: with "Ended sessions"
+    /// off the button used to read as clearing two and clear nine.
     func clearFinished() {
-        guard completedCount > 0 else { show(notice: "Nothing to clear"); return }
-        runClear(sessions: nil, expected: completedCount)
+        let ids = organized
+            .filter { SessionActivity.reduce($0).isClearable || $0.stale }
+            .map(\.id)
+        guard !ids.isEmpty else { show(notice: "Nothing to clear"); return }
+        runClear(sessions: ids, expected: ids.count)
     }
 
     /// `undo_clear` for `CoreModel.lastClear`, while it still stands.

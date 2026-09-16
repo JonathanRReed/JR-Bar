@@ -57,6 +57,20 @@ All notable changes to JR-Bar are documented here.
   the island's own hover, a pointer still on the band is not a leave,
   the hover grows the card after 0.12 s, and the grow itself runs a
   beat quicker.
+- The island grows straight down from the notch. Its hosting view had
+  no sizing contract, so mid-grow the 320-point card was laid out at
+  the window's left edge and marched with it, then snapped centred at
+  the last tick — "the notch comes in from the side". The toy owns the
+  frame now. And every face shares the notch's centre: the idle window
+  takes the wider shoulder on both sides and the content hugs the
+  notch, so a morph between faces never travels sideways.
+- Maintenance: a settings edit re-applies only the utility it
+  belongs to (a dragged Agents slider used to reconcile the menu bar
+  and rewrite the Dock's defaults a dozen times over); the aquarium's
+  economy ticks and writes to disk only while the toy is on; "Clear
+  finished" clears exactly the rows the card counted; the buddy's
+  timeline pauses under Reduce Motion; Accessibility values are
+  type-checked before the casts that could crash on a stray item.
 - Dock previews are usable on an auto-hidden Dock: the panel follows
   the tile while the Dock slides in and never leaves the screen, sits
   one level under the Dock so a magnified icon still takes its click,

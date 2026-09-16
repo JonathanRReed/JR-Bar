@@ -50,7 +50,7 @@ enum MenuBarAX {
     private nonisolated static func point(_ element: AXUIElement,
                                           _ attribute: String) -> CGPoint {
         var point = CGPoint.zero
-        if let v = value(element, attribute) {
+        if let v = value(element, attribute), CFGetTypeID(v) == AXValueGetTypeID() {
             AXValueGetValue(v as! AXValue, .cgPoint, &point)
         }
         return point
@@ -59,7 +59,7 @@ enum MenuBarAX {
     private nonisolated static func size(_ element: AXUIElement,
                                          _ attribute: String) -> CGSize {
         var size = CGSize.zero
-        if let v = value(element, attribute) {
+        if let v = value(element, attribute), CFGetTypeID(v) == AXValueGetTypeID() {
             AXValueGetValue(v as! AXValue, .cgSize, &size)
         }
         return size
@@ -79,7 +79,8 @@ enum MenuBarAX {
         AXUIElementSetMessagingTimeout(app, Float(messagingTimeout))
         var extras: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras) == .success,
-              let bar = extras as! AXUIElement? else { return [] }
+              let extras, CFGetTypeID(extras) == AXUIElementGetTypeID() else { return [] }
+        let bar = extras as! AXUIElement
         AXUIElementSetMessagingTimeout(bar, Float(messagingTimeout))
         guard let children = value(bar, kAXChildrenAttribute) as? [AXUIElement] else { return [] }
         var items: [AXUIElement] = []

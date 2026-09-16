@@ -23,12 +23,16 @@ final class UtilitiesStore {
     let settings: SettingsStore
 
     /// Everything the utilities persist; mirrors `AppState.utilities`.
-    /// A settings write re-applies the touched utility so a card toggle
-    /// lands the moment it is made.
+    /// A settings write re-applies the utility whose settings changed —
+    /// only that one: re-applying all three on every keystroke meant a
+    /// dragged Agents slider reconciled the menu bar and rewrote the
+    /// Dock's defaults a dozen times over.
     var state: UtilitiesState {
         didSet {
             scheduleSave()
-            applySettings()
+            if state.menuBar != oldValue.menuBar { menuBar.applySettings() }
+            if state.dock != oldValue.dock { applyDock() }
+            if state.agents != oldValue.agents { agents.applySettings() }
         }
     }
 
@@ -82,9 +86,13 @@ final class UtilitiesStore {
     /// distinguishes start/stop/re-apply itself.
     func applySettings() {
         menuBar.applySettings()
+        applyDock()
+        agents.applySettings()
+    }
+
+    private func applyDock() {
         if state.dock.enabled { dock.start() } else { dock.stop() }
         dock.applySettings()
-        agents.applySettings()
     }
 
     /// `applicationWillTerminate`'s stop: collapses the menu bar's

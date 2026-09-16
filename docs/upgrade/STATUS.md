@@ -1318,4 +1318,17 @@ the dock hover is off-center."
   panel's corner.
 - Reveal gestures and rehides log to `devin.jrbar:menubar` so the next
   "hover did nothing" has evidence.
+- "From the side", found by the second pass: `NotchIslandWindow`'s
+  hosting view had default sizing options; a 320-pt card in a 200-pt
+  window mid-grow pinned to minX and marched with it. `sizingOptions =
+  []` + autoresizing (the NotchHUD idiom). Idle window is symmetric
+  again (wider shoulder both sides, content hugs the notch) so every
+  face shares the notch's centre.
+- Maintenance from the Agents/toys sweep: per-utility apply in
+  `UtilitiesStore`, aquarium timer gated on `isOn` with a deinit,
+  `clearFinished` passes ids, buddy timeline pauses, AX casts guarded,
+  stale comments fixed. Left: `UtilitiesState.enabled` is persisted
+  but never read (the page has no master switch yet); the card's
+  "Undo clear" has no ticker; `MenuBarZones`/`MenuBarItemMover.plan`
+  are test-only.
 

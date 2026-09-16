@@ -657,7 +657,7 @@ final class NotchToy: Toy {
             var idle = depth > 0
                 ? NotchIslandLayout.idleSize(
                     slotWidth: slot?.width ?? 0, notchDepth: depth,
-                    leftShoulder: layout.leftShoulder, rightShoulder: layout.rightShoulder)
+                    leftShoulder: layout.windowShoulder, rightShoulder: layout.windowShoulder)
                 : NotchIslandLayout.floatingSize(
                     contentWidth: NotchIsland.idleContentWidth(islandSummary, media: idleMedia))
             if islandHoverPeek {
@@ -667,14 +667,6 @@ final class NotchToy: Toy {
                 idle.width += 2 * NotchIslandLayout.peekGrow
             }
             size = idle
-            if depth > 0, let slot {
-                return NotchIslandLayout.frame(
-                    screenFrame: screen.frame,
-                    centerX: NotchIslandLayout.idleCenterX(
-                        slotCenterX: slot.centerX, leftShoulder: layout.leftShoulder,
-                        rightShoulder: layout.rightShoulder),
-                    size: size)
-            }
         }
         return NotchIslandLayout.frame(
             screenFrame: screen.frame, centerX: centerX, size: size,

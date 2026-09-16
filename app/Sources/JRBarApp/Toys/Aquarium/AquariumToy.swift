@@ -52,18 +52,34 @@ final class AquariumToy: Toy {
         game.apply(.setWindowOpen(false), now: Date())
         refreshFish()
         observeSessions()
-        // The economy runs whenever the app does — the window being
+        // The economy runs whenever the toy is on — the window being
         // closed is exactly when the away counters fill. Twenty
         // seconds of live time per tick; nothing accrues while the
-        // app is not running (no wall-clock catch-up anywhere).
-        gameTimer = Timer.scheduledTimer(
-            withTimeInterval: AquariumRules.tickInterval, repeats: true
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.gameTick() }
-        }
+        // app is not running (no wall-clock catch-up anywhere), and
+        // nothing ticks or writes to disk while the toy is off.
+        syncGameTimer()
         // Left on at quit: the tank comes back at launch, without
         // stealing focus for it.
         if isOn { present(activate: false) }
+    }
+
+    /// The tick runs exactly while the toy is on.
+    private func syncGameTimer() {
+        if isOn {
+            guard gameTimer == nil else { return }
+            gameTimer = Timer.scheduledTimer(
+                withTimeInterval: AquariumRules.tickInterval, repeats: true
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.gameTick() }
+            }
+        } else {
+            gameTimer?.invalidate()
+            gameTimer = nil
+        }
+    }
+
+    isolated deinit {
+        gameTimer?.invalidate()
     }
 
     let id = "aquarium"
@@ -75,6 +91,7 @@ final class AquariumToy: Toy {
         get { store?.state.aquarium.enabled ?? false }
         set {
             store?.state.aquarium.enabled = newValue
+            syncGameTimer()
             if newValue {
                 present(activate: true)
             } else {

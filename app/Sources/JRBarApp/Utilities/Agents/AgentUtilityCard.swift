@@ -249,7 +249,7 @@ struct AgentUtilityControls: View {
             .fixedSize()
             .padding(.top, 2)
         }
-        .help(row.help(now: now) ?? "")
+        .help(row.help(now: now).map(Text.init) ?? Text(""))
         .contextMenu { rowMenu(row) }
     }
 
@@ -282,7 +282,7 @@ struct AgentUtilityControls: View {
                     utility.snoozeUntilMorning(row)
                 }
             }
-            if row.cwd != nil {
+            if let cwd = row.cwd, !cwd.isEmpty {
                 Divider()
                 Button("Copy path") { utility.copyPath(row) }
                 Button("Reveal in Finder") { utility.reveal(row) }

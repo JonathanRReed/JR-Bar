@@ -3,8 +3,8 @@ import JRBarCore
 import SwiftUI
 
 /// The Utilities page (docs/UTILITIES.md): the monogram header, then
-/// one card per utility in contract order — Menu Bar first; Dock and
-/// the Notch card land here as their phases do. The cards reuse
+/// one card per utility in contract order — Menu Bar, Notch, Dock,
+/// Agent Overview. The cards reuse
 /// `ToyCard`'s shape so the page reads like Toys: same tile, name,
 /// blurb, status chip, on/off toggle and disclosure body.
 struct UtilitiesPage: View {
