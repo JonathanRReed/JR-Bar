@@ -194,9 +194,21 @@ public struct NotchIdleLayout: Equatable, Sendable {
 
     public init() {}
 
-    /// The wider shoulder's content — both shoulders match it, so the
-    /// island stays centred on the slot.
+    /// The wider shoulder's content.
     public var contentWidth: CGFloat { max(leftWidth, rightWidth) }
+
+    /// Each shoulder's own width: nothing at all while bare — the
+    /// housing is then exactly the notch, so no black reaches past the
+    /// hardware and no menu-bar click lands on it — else the resting
+    /// shoulder, or the content plus its air. The two are independent:
+    /// a 148-point media strip on the right never earns the left an
+    /// empty 148-point slab (that was the "black blob").
+    public var leftShoulder: CGFloat {
+        bare ? 0 : NotchIslandLayout.shoulderWidth(contentWidth: leftWidth)
+    }
+    public var rightShoulder: CGFloat {
+        bare ? 0 : NotchIslandLayout.shoulderWidth(contentWidth: rightWidth)
+    }
 }
 
 extension NotchIsland {
@@ -268,10 +280,12 @@ public enum NotchIslandLayout {
     /// notch itself swelling (Alcove-style), never a detached wide
     /// panel parked over it.
     public static let expandedShoulder: CGFloat = 30
-    public static let expandedMinWidth: CGFloat = 240
+    /// The card's rows are designed at 320 points (`NotchCardView`);
+    /// narrower clipped the tray row.
+    public static let expandedMinWidth: CGFloat = 320
     public static let expandedMaxWidth: CGFloat = 380
     /// Clearance the expanded card's content keeps under the notch.
-    public static let expandedNotchInset: CGFloat = 8
+    public static let expandedNotchInset: CGFloat = 4
 
     /// The grown card's width: the slot plus its shoulders, bounded —
     /// wider than the notice, never the whole menu bar.
@@ -289,20 +303,28 @@ public enum NotchIslandLayout {
     /// Air around a shoulder's content.
     public static let shoulderPad: CGFloat = 7
 
-    /// The collapsed capsule: the notch plus a shoulder each side —
-    /// `shoulder` bare, or wide enough for the content the shoulder
-    /// carries (`contentWidth` is the wider side's; both match so the
-    /// island stays centred on the slot) — and exactly the notch's
-    /// depth, so at rest nothing but the Screen Bar's band draws below
-    /// the hardware. The island reads as the notch grown, not a pill
-    /// parked beside it. Notch-less screens get a floating pill sized
-    /// to the content.
-    public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat, contentWidth: CGFloat) -> CGSize {
-        guard notchDepth > 0 else {
-            return CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
-        }
-        return CGSize(width: max(idleMinWidth, slotWidth + 2 * shoulderWidth(contentWidth: contentWidth)),
-                      height: notchDepth)
+    /// The collapsed capsule: the notch plus each shoulder's own width
+    /// (`NotchIdleLayout.leftShoulder`/`rightShoulder` — zero while
+    /// bare, so the housing is exactly the hardware) and exactly the
+    /// notch's depth, so at rest nothing but the Screen Bar's band
+    /// draws below the hardware. The island reads as the notch grown,
+    /// not a pill parked beside it. Notch-less screens get a floating
+    /// pill sized to the content.
+    public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat,
+                                leftShoulder: CGFloat, rightShoulder: CGFloat) -> CGSize {
+        CGSize(width: slotWidth + leftShoulder + rightShoulder, height: notchDepth)
+    }
+
+    /// The notch-less floating pill, sized to its content.
+    public static func floatingSize(contentWidth: CGFloat) -> CGSize {
+        CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
+    }
+
+    /// Where the island's centre sits for uneven shoulders: the slot's
+    /// centre, shifted so the slot still lands on the notch.
+    public static func idleCenterX(slotCenterX: CGFloat, leftShoulder: CGFloat,
+                                   rightShoulder: CGFloat) -> CGFloat {
+        slotCenterX + (rightShoulder - leftShoulder) / 2
     }
 
     /// One shoulder's width for its content — the bare shoulder, or the

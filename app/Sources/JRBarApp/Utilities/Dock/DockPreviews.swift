@@ -111,6 +111,9 @@ enum DockThumbnailer {
             guard let index = DockEnhanceMath.matchRow(
                 scFrame: scWindow.frame, scTitle: scWindow.title, rows: rows),
                   content.windows[index].thumbnail == nil else { continue }
+            // The row's identity, not its index: a card closed while
+            // this capture was in flight would shift the rows under it.
+            let rowID = content.windows[index].id
             let configuration = SCStreamConfiguration()
             let bounds = scWindow.frame
             let factor = min(1, Self.pointLimit / max(bounds.width, bounds.height, 1)) * scale
@@ -121,8 +124,8 @@ enum DockThumbnailer {
             guard let cgImage = try? await SCScreenshotManager.captureImage(
                 contentFilter: SCContentFilter(desktopIndependentWindow: scWindow),
                 configuration: configuration) else { continue }
-            guard !isStale(), index < content.windows.count else { return }
-            content.windows[index].thumbnail = NSImage(
+            guard !isStale(), let row = content.windows.firstIndex(where: { $0.id == rowID }) else { continue }
+            content.windows[row].thumbnail = NSImage(
                 cgImage: cgImage,
                 size: NSSize(width: CGFloat(cgImage.width) / scale,
                              height: CGFloat(cgImage.height) / scale))

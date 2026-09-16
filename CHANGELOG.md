@@ -13,18 +13,46 @@ All notable changes to JR-Bar are documented here.
   own), revealing is it folding back. ⌘-drag any item across the icon
   to choose; hover or click the blank stretch, or scroll the bar, to
   peek; the icon's right-click menu lists what is hidden.
+  No holes, nothing moved, the pointer never touched. The section map
+  is overrides only (an item marked Cover by hand while it sits right
+  of the icon is still covered in place, honestly a hole); cover-era
+  maps are cleared once. A boundary found parked under a wide app menu
+  learns a cap and collapses; caps reset on screen and frontmost-app
+  changes. Every plan change logs to `devin.jrbar:menubar`.
+- The menu bar no longer dances. JR-Bar had two status items — the
+  icon and a separate always-hidden control — and a length write
+  re-sorts the bar, so the two traded places on every reflow and each
+  swap changed the spacer again: a two-state flap three times a
+  second, ninety cycles in two minutes in the log. There is exactly
+  one status item now ("always hidden" is an override cover, not a
+  second boundary), a length goes out only when two passes agree and
+  a second has passed since the last write, and a fit-edge lesson
+  needs two fresh listings — one can be the launch handoff.
 - The display stays awake while agents run. The Mac itself never
   slept — the daemon held a system-sleep assertion all day — but the
   screen was allowed to sleep and the lock followed, which reads as
   "it went to sleep while my agents were running". Keep display awake
-  is on by default now; both power switches say exactly what they hold. No holes, nothing moved, the pointer
-  never touched. The section map is overrides only (an item marked
-  Cover by hand while it sits right of the chevron is still covered in
-  place, honestly a hole); cover-era maps are cleared once, and the
-  controls sit where you ⌘-drag them, Bartender-style. A chevron
-  found parked under a wide app menu learns a cap and collapses; caps
-  reset on screen and frontmost-app changes. Every plan change logs to
-  `devin.jrbar:menubar`.
+  is on by default now; both power switches say exactly what they hold.
+- Notch: with the Screen Bar drawing its ears the island used to be a
+  bare black slab 12 pt wider than the notch on each side, with
+  nothing in it, and it swallowed menu-bar clicks under those
+  shoulders. A bare housing is exactly the notch now. With the ears
+  off, each shoulder is its own width (a Now Playing strip on the
+  right no longer earns the left an empty 148 pt slab), the marks are
+  a point larger and brighter, the hover waits a third of a second
+  before growing the card (and does nothing when "Card on hover" is
+  off), the card is 320 pt wide so its rows fit, and the settings say
+  what the island does under the ears.
+- Dock previews are usable on an auto-hidden Dock: the panel follows
+  the tile while the Dock slides in and never leaves the screen, sits
+  one level under the Dock so a magnified icon still takes its click,
+  gets mouse-moved events so the hover × and – actually appear, keeps
+  the tile's rest clock across the seam between two tiles, previews
+  nothing for an app with no windows, raises the picked window
+  rather than every window, matches a late thumbnail to its card by
+  identity, reads the Dock's tiles once a quarter-second instead of
+  twenty times a second on the main thread, and stays out of screen
+  recordings. The card's copy says what the toggles do.
 - Dock is one mode. Enhance keeps Apple's Dock and floats window
   previews over it; the Replace bar is gone (a replacement dock has to
   get minimize animation, drag-to-dock, Exposé and Stage Manager right

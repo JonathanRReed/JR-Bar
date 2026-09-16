@@ -190,7 +190,7 @@ struct NotchCapsuleTests {
         toy.setHovered(true)
         #expect(toy.islandHoverPeek)
         #expect(!toy.islandExpanded, "hover alone never grows the card")
-        try await Task.sleep(for: .seconds(0.3))
+        try await Task.sleep(for: .seconds(0.55))
         #expect(toy.islandExpanded, "a hover that stayed earned the card")
         toy.islandSwipe(.down)
         #expect(!toy.islandExpanded)

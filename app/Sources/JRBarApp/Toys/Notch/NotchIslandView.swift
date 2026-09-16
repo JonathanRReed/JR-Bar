@@ -113,7 +113,7 @@ struct NotchIslandView: View {
                     centredRow(summary: summary)
                 }
             }
-            .opacity(0.75 + 0.25 * breath)
+            .opacity(0.85 + 0.15 * breath)
             // The hover wink's other half — the frame grows a few
             // points (the toy's `islandHoverPeek` reframe), and the
             // marks swell inside it. A passing cursor earns only this.
@@ -125,12 +125,11 @@ struct NotchIslandView: View {
         }
     }
 
-    /// The notched layout: a shoulder each side of the slot, both the
-    /// same width so the island stays centred on the notch, content
-    /// centred inside each.
+    /// The notched layout: a shoulder each side of the slot, each its
+    /// own width (the frame shifts so the slot still lands on the
+    /// notch), content centred inside each.
     private func shoulders(summary: NotchIslandSummary, layout: NotchIdleLayout) -> some View {
-        let shoulder = NotchIslandLayout.shoulderWidth(contentWidth: layout.contentWidth)
-        return HStack(spacing: 0) {
+        HStack(spacing: 0) {
             Group {
                 if !layout.bare, layout.leftWidth > 0 {
                     agentRow(summary: summary)
@@ -138,7 +137,7 @@ struct NotchIslandView: View {
                     Color.clear
                 }
             }
-            .frame(width: shoulder)
+            .frame(width: layout.leftShoulder)
             Spacer(minLength: 0)
             Group {
                 if !layout.bare {
@@ -160,7 +159,7 @@ struct NotchIslandView: View {
                     Color.clear
                 }
             }
-            .frame(width: shoulder)
+            .frame(width: layout.rightShoulder)
         }
     }
 
@@ -173,9 +172,9 @@ struct NotchIslandView: View {
                     .frame(width: 5, height: 5)
             }
             Text("\(summary.working)")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(.system(size: 10, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.white.opacity(0.92))
         }
         .accessibilityLabel(Text("\(summary.working) working"))
     }
@@ -185,7 +184,7 @@ struct NotchIslandView: View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 5, height: 5)
             Text("\(count)")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(.system(size: 10, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(color)
         }

@@ -1258,3 +1258,36 @@ if an agent is running."
 - Verified: 937 Swift tests, Python power suites, fast gate, Ruff; the
   Mac runs the 19:49 build.
 
+## Evening, second pass — the dance, the slab, the Dock — LANDED
+
+Owner (screenshot at 8:46 PM): "the menu is literally just dancing
+and constantly moving … fix the top bar, make the notch better, make
+the dock usable, clean up the entire app."
+
+- The dance, from the log: a two-state flap every 370 ms, 90 cycles
+  in two minutes. The separate always-hidden status item (`···`)
+  traded places with the JR-Bar icon on every reflow (a length write
+  re-sorts the bar; the two keys straddled the spacer's range), and
+  each swap changed the boundary's frame, so the plan asked for a new
+  length, and the bar reflowed again. Removed the second item; the
+  always-hidden section is override-only. Length writes are damped
+  (two agreeing passes, one-second cooldown; reveal/hide/parked/
+  overflow write at once). A fit-edge lesson needs two fresh listings
+  (the launch handoff produced a false one and ratcheted the edge
+  right 902 → 910 → 926).
+- Notch: with the Screen Bar's ears on, the island was a bare black
+  slab 12 pt past the notch each side, nothing in it, eating clicks.
+  Bare = exactly the notch now; shoulders are independent widths;
+  hover 0.35 s and gated on the setting; card 320 pt; copy honest.
+- Dock: panel clamped to the screen and re-anchored each tick while
+  hovered (the Dock slides in under it); level dockWindow − 1;
+  `acceptsMouseMovedEvents`; seam grace 0.12 s; no panel for a
+  windowless app; plain `activate()`; thumbnails matched by row id;
+  tiles cached 0.25 s; `sharingType = .none` (dev escape
+  `JRBAR_CAPTURE_CARD`).
+- Verified: 940-odd Swift tests green; installed and watched — 4
+  plan lines in the first ten seconds after launch, then none.
+  Dock previews fired for T3 Code, Claude and Zen in the log before
+  the fixes (so the pipeline runs); the panel's placement after the
+  fixes needs a hover to see.
+

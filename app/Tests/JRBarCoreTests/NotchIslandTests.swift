@@ -151,24 +151,36 @@ struct NotchIslandTests {
         #expect(NotchIslandLayout.slot(left: left, right: CGRect(x: 500, y: 0, width: 100, height: 32)) == nil)
     }
 
-    @Test("the idle capsule is the notch plus shoulders, tucked to its depth")
+    @Test("the idle capsule is the notch plus each shoulder's own width, tucked to its depth")
     func idleSize() {
-        // A bare housing: the notch plus the resting shoulder each side.
-        let bare = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 0)
-        #expect(bare.width == 185 + 2 * NotchIslandLayout.shoulder)
+        // A bare housing is exactly the notch: no black past the
+        // hardware, no menu-bar click landing on it.
+        var bare = NotchIdleLayout()
+        bare.bare = true
+        #expect(bare.leftShoulder == 0 && bare.rightShoulder == 0)
+        let housing = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
+                                                 leftShoulder: 0, rightShoulder: 0)
+        #expect(housing.width == 185)
         // Tucked into the notch's own depth — nothing hangs below it.
-        #expect(bare.height == 32)
+        #expect(housing.height == 32)
         // Content lives in the shoulders, never under the notch: each
-        // shoulder grows to the wider side's content plus its air.
-        let size = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 30)
-        #expect(size.width == 185 + 2 * (30 + 2 * NotchIslandLayout.shoulderPad))
+        // shoulder is its own content plus its air, independent of the
+        // other side.
+        var uneven = NotchIdleLayout()
+        uneven.leftWidth = 30
+        #expect(uneven.leftShoulder == 30 + 2 * NotchIslandLayout.shoulderPad)
+        #expect(uneven.rightShoulder == NotchIslandLayout.shoulder, "the resting shoulder, not a mirror")
+        let size = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
+                                              leftShoulder: uneven.leftShoulder,
+                                              rightShoulder: uneven.rightShoulder)
+        #expect(size.width == 241)
         #expect(NotchIslandLayout.shoulderWidth(contentWidth: 0) == NotchIslandLayout.shoulder)
         #expect(NotchIslandLayout.shoulderWidth(contentWidth: 2) == 2 + 2 * NotchIslandLayout.shoulderPad,
                 "any content earns its air; the bare shoulder is only the floor")
-        let busy = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 148)
-        #expect(busy.width == 185 + 2 * (148 + 2 * NotchIslandLayout.shoulderPad))
+        // Uneven shoulders shift the centre so the slot stays on the notch.
+        #expect(NotchIslandLayout.idleCenterX(slotCenterX: 756, leftShoulder: 44, rightShoulder: 12) == 740)
         // No notch: a floating pill sized to the content.
-        let floating = NotchIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 30)
+        let floating = NotchIslandLayout.floatingSize(contentWidth: 30)
         #expect(floating.height == 24)
         #expect(floating.width == 96)
     }
@@ -216,12 +228,15 @@ struct NotchIslandTests {
         layout = NotchIsland.idleLayout(s, media: media, earsDrawn: false)
         #expect(layout.right == .media)
         #expect(layout.rightWidth == NotchIsland.mediaContentWidth)
-        #expect(layout.contentWidth == NotchIsland.mediaContentWidth)
+        #expect(layout.rightShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad)
+        #expect(layout.leftShoulder == 46,
+                "the left is its own two dots and count plus air — never the strip's 148")
         // The Screen Bar's ears over the same shoulders: bare, whatever
-        // is live.
+        // is live — and a bare housing has no shoulders at all.
         let bare = NotchIsland.idleLayout(s, media: media, earsDrawn: true)
         #expect(bare.bare)
         #expect(bare.contentWidth == 0)
+        #expect(bare.leftShoulder == 0 && bare.rightShoulder == 0)
     }
 
     @Test("the idle content width follows the dots and the count")
@@ -237,9 +252,10 @@ struct NotchIslandTests {
 
     @Test("the grown card is the slot plus modest wings — the notch swelling, not a panel")
     func expandedWidth() {
-        // 185 + 30 a side: wider than the notice, still the notch's own.
-        #expect(NotchIslandLayout.expandedWidth(slotWidth: 185)
-                == 185 + 2 * NotchIslandLayout.expandedShoulder)
+        // 185 + 30 a side is under the card's 320-point floor — the
+        // rows are designed at 320, so the floor wins on this notch.
+        #expect(NotchIslandLayout.expandedWidth(slotWidth: 185) == NotchIslandLayout.expandedMinWidth)
+        #expect(NotchIslandLayout.expandedWidth(slotWidth: 300) == 360)
         // A tiny or absent slot still earns the card's floor.
         #expect(NotchIslandLayout.expandedWidth(slotWidth: 0)
                 == NotchIslandLayout.expandedMinWidth)

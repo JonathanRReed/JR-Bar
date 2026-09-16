@@ -300,12 +300,12 @@ struct AlcoveEventsTests {
         // The resting capsule is exactly the notch's depth — the band
         // hangs below it, so no clearance is owed.
         #expect(NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
-                                           contentWidth: 20).height == 32)
+                                           leftShoulder: 34, rightShoulder: 12).height == 32)
         #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
                                              ledClearance: c).height
                 == 32 + NotchIslandLayout.noticeLip + c)
         // No notch, no band — a floating pill never grows.
-        #expect(NotchIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 20).height == 24)
+        #expect(NotchIslandLayout.floatingSize(contentWidth: 20).height == 24)
     }
 
     @Test("the new settings default on and decode tolerantly")

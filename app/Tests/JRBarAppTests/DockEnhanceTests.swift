@@ -109,6 +109,29 @@ import Testing
             size: CGSize(width: 300, height: 100), screen: screen, gap: 10)
         #expect(frame.minX >= screen.minX, "an edge icon clamps the panel inside")
         #expect(frame.maxX <= screen.maxX + 1)
+        // A hidden Dock's tile reports below the screen; the panel does
+        // not follow it off.
+        let sliding = DockEnhanceMath.panelFrame(
+            anchor: CGRect(x: 700, y: -60, width: 40, height: 40), edge: .bottom,
+            size: CGSize(width: 300, height: 100), screen: screen, gap: 10)
+        #expect(sliding.minY >= screen.minY)
+    }
+
+    @Test func aSeamBetweenTilesDoesNotRestartTheRestClock() {
+        var tracker = DockHoverTracker()
+        _ = tracker.note(hovered: "Safari", pointerInPanel: false, now: 0, delay: 0.25)
+        // One tick reads nothing at the seam, then the same tile again.
+        _ = tracker.note(hovered: nil, pointerInPanel: false, now: 0.1, delay: 0.25)
+        #expect(tracker.note(hovered: "Safari", pointerInPanel: false,
+                             now: 0.26, delay: 0.25) == .show("Safari"),
+                "the rest clock started at 0, not at the return")
+        // A longer absence does start over.
+        var fresh = DockHoverTracker()
+        _ = fresh.note(hovered: "Safari", pointerInPanel: false, now: 0, delay: 0.25)
+        _ = fresh.note(hovered: nil, pointerInPanel: false, now: 0.1, delay: 0.25)
+        _ = fresh.note(hovered: nil, pointerInPanel: false, now: 0.1 + DockHoverTracker.seamGrace + 0.01, delay: 0.25)
+        #expect(fresh.note(hovered: "Safari", pointerInPanel: false,
+                           now: 0.3, delay: 0.25) == .none)
     }
 
     // MARK: autohide-delay save/restore

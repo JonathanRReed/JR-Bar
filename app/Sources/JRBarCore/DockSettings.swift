@@ -43,13 +43,14 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var previewDelay: Double {
         didSet { previewDelay = Self.clampedDelay(previewDelay) }
     }
-    /// Live thumbnails need Screen Recording; off is icon + title cards.
+    /// Thumbnails (one capture per window when the preview opens) need
+    /// Screen Recording; off is icon + title cards.
     public var showThumbnails: Bool
-    /// Bigger cards — 192×120 instead of 144×90 — for people who read
+    /// Bigger cards — 208×130 instead of 144×90 — for people who read
     /// the thumbnail rather than the title.
     public var largePreviews: Bool
-    /// Windows on other Spaces and minimized windows list too (their
-    /// thumbnails come from the window server, not the screen).
+    /// Thumbnails for windows on other Spaces and minimized windows
+    /// too; the cards list every window either way.
     public var includeOffscreenWindows: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0

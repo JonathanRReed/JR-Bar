@@ -56,11 +56,22 @@ final class DockPreviewPanel: NSPanel {
         isMovable = false
         becomesKeyOnlyIfNeeded = true
         animationBehavior = .none
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .fullScreenAuxiliary, .ignoresCycle]
+        // The cards' hover verbs (× and –) need mouse-moved events, which
+        // a non-key panel does not get unless it asks.
+        acceptsMouseMovedEvents = true
         title = "JR-Bar Dock Preview"
-        // Just over the Dock's own level so a magnified icon can't
-        // draw across the panel.
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+        // Just under the Dock's own level: above every app window, but
+        // a magnified icon that swells into the panel's band still
+        // draws over it and still takes its click. One level over the
+        // Dock made the upper half of every magnified icon dead.
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+        // Out of screen recordings and window captures — and out of its
+        // own app's window list, so hovering JR-Bar's tile never
+        // previews the preview. JRBAR_CAPTURE_CARD is the dev escape.
+        if ProcessInfo.processInfo.environment["JRBAR_CAPTURE_CARD"] == nil {
+            sharingType = .none
+        }
     }
 
     override var canBecomeKey: Bool { false }

@@ -38,7 +38,7 @@ struct DockUtilityControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             SettingLabel(title: "Hover previews",
-                         subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows float above it: click to raise, × to close, – to minimize, Quit and Hide in the header.")
+                         subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window, hover it for × (close) and – (minimize); Quit and Hide sit in the header. Apps with no windows open nothing.")
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: previewDelay, in: DockEnhancePreferences.delayRange)
@@ -51,15 +51,15 @@ struct DockUtilityControls: View {
             }
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
-                             subtitle: "Live captures via Screen Recording; off shows icon + title cards.")
+                             subtitle: "A capture of each window, taken when the preview opens (needs Screen Recording); off shows icon + title cards.")
             }
             Toggle(isOn: largePreviews) {
                 SettingLabel(title: "Large cards",
                              subtitle: "Bigger thumbnails for reading the window, not just the title.")
             }
             Toggle(isOn: offscreen) {
-                SettingLabel(title: "Every window",
-                             subtitle: "Include windows on other Spaces and minimized ones.")
+                SettingLabel(title: "Capture every window",
+                             subtitle: "Thumbnails for windows on other Spaces and minimized ones too; the cards list them either way.")
             }
             if utility.isOn && !utility.enhance.accessibilityTrusted {
                 HStack(spacing: 8) {

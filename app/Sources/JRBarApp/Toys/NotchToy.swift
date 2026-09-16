@@ -191,7 +191,8 @@ final class NotchToy: Toy {
                 : .unavailable("Boring Notch isn't running")
         case .jrbar:
             if !settings.enabled { return .off }
-            return settings.islandEnabled ? .on : .paused("Island hidden")
+            guard settings.islandEnabled else { return .paused("Island hidden") }
+            return earsDrawn ? .paused("Bare — the Screen Bar's ears carry the HUD") : .on
         }
     }
 
@@ -389,20 +390,26 @@ final class NotchToy: Toy {
     /// owns the island, so the hover is only remembered then — it
     /// lands its grow when the capsule steps down.
     private static let collapseDelay: TimeInterval = 0.18
-    private static let hoverExpandDelay: TimeInterval = 0.16
+    /// Long enough that a pointer crossing the notch to reach a menu
+    /// never opens the card; short enough that a pointer parked on it
+    /// feels answered.
+    private static let hoverExpandDelay: TimeInterval = 0.35
 
     func setHovered(_ hovering: Bool) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled else { return }
         hoverHeld = hovering
-        islandHoverPeek = hovering
+        // The wink only where it means something: a card that can grow
+        // on hover, and a face that draws — a bare housing under the
+        // Screen Bar's ears has nothing to swell.
+        islandHoverPeek = hovering && !islandExpanded && s.expandOnHover && !idleLayout.bare
         collapseWork?.cancel()
         collapseWork = nil
         expandWork?.cancel()
         expandWork = nil
         guard activeCapsule == nil else { return }
         if hovering {
-            if !islandExpanded {
+            if !islandExpanded, s.expandOnHover {
                 // The wink lands now; the card only after the pause.
                 reframeCurrent(
                     animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -632,20 +639,31 @@ final class NotchToy: Toy {
                               notchDepth: depth, ledClearance: ledClearance)
                               + content)
         case .idle:
-            // Notched: the shoulders carry the content, the slot stays
-            // the notch. Notch-less: the floating pill wraps the row.
-            let content = depth > 0
-                ? idleLayout.contentWidth
-                : NotchIsland.idleContentWidth(islandSummary, media: idleMedia)
-            var idle = NotchIslandLayout.idleSize(
-                slotWidth: slot?.width ?? 0, notchDepth: depth, contentWidth: content)
+            // Notched: each shoulder carries its own content, the slot
+            // stays the notch. Notch-less: the floating pill wraps the
+            // row.
+            let layout = idleLayout
+            var idle = depth > 0
+                ? NotchIslandLayout.idleSize(
+                    slotWidth: slot?.width ?? 0, notchDepth: depth,
+                    leftShoulder: layout.leftShoulder, rightShoulder: layout.rightShoulder)
+                : NotchIslandLayout.floatingSize(
+                    contentWidth: NotchIsland.idleContentWidth(islandSummary, media: idleMedia))
             if islandHoverPeek {
                 // The wink's frame half — a few points of grow under
-                // the pointer, symmetric, never the card.
+                // the pointer, symmetric, never the card. Width only:
+                // a taller housing would drop below the hardware.
                 idle.width += 2 * NotchIslandLayout.peekGrow
-                idle.height += NotchIslandLayout.peekGrow
             }
             size = idle
+            if depth > 0, let slot {
+                return NotchIslandLayout.frame(
+                    screenFrame: screen.frame,
+                    centerX: NotchIslandLayout.idleCenterX(
+                        slotCenterX: slot.centerX, leftShoulder: layout.leftShoulder,
+                        rightShoulder: layout.rightShoulder),
+                    size: size)
+            }
         }
         return NotchIslandLayout.frame(
             screenFrame: screen.frame, centerX: centerX, size: size,
@@ -1137,11 +1155,13 @@ private struct NotchControlsView: View {
         case .jrbar:
             Toggle(isOn: toy.bind(\.islandEnabled)) {
                 SettingLabel(title: "Show the island",
-                             subtitle: "The capsule under the notch.")
+                             subtitle: toy.earsDrawn
+                                ? "The housing under the notch — hover or click it for the card. The Screen Bar's ears are drawing the HUD beside it, so the island itself stays bare."
+                                : "The housing under the notch: working agents in the left shoulder, asks or the track in the right. Hover or click it for the card.")
             }
             Toggle(isOn: toy.bind(\.expandOnHover)) {
                 SettingLabel(title: "Card on hover",
-                             subtitle: "A hover that stays grows the island into the notch card.")
+                             subtitle: "A pointer that rests on the notch for a third of a second grows the card. Off, only a click or a pull opens it.")
             }
             Toggle(isOn: toy.bind(\.pullGestures)) {
                 SettingLabel(title: "Pull & swipe gestures",
@@ -1174,7 +1194,9 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.mediaEnabled)) {
                 SettingLabel(title: "Now Playing",
-                             subtitle: "The capsule carries the current track; the card gains transport buttons.")
+                             subtitle: toy.earsDrawn
+                                ? "The card carries the track and transport buttons. (The island's own strip is off while the Screen Bar's ears draw.)"
+                                : "The right shoulder carries the track when nothing needs a hand; the card gains transport buttons.")
             }
         case .alcove:
             if let settings = toy.store?.settings {

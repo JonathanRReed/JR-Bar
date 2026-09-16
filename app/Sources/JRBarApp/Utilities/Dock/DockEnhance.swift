@@ -79,18 +79,27 @@ struct DockHoverTracker {
     /// The grace a stray reading gets before the panel closes — covers
     /// the gap between dock and panel and jitter across item edges.
     static let grace: TimeInterval = 0.22
+    /// How long a reading of "no tile" is forgiven before the rest
+    /// clock restarts: the pointer crossing the seam between two
+    /// tiles reads as nothing for a tick, and a sweep along the Dock
+    /// never opened anything when each seam started the clock over.
+    static let seamGrace: TimeInterval = 0.12
 
     @discardableResult
     mutating func note(hovered item: String?, pointerInPanel: Bool,
                        now: TimeInterval, delay: TimeInterval) -> Action {
-        if item != hovered {
-            hovered = item
-            hoveredSince = item == nil ? nil : now
-        }
-        if item == nil {
-            if emptySince == nil { emptySince = now }
-        } else {
+        if let item {
+            if item != hovered {
+                hovered = item
+                hoveredSince = now
+            }
             emptySince = nil
+        } else {
+            if emptySince == nil { emptySince = now }
+            if let left = emptySince, now - left >= Self.seamGrace {
+                hovered = nil
+                hoveredSince = nil
+            }
         }
         // A rested item opens — or retargets — the panel.
         if let item, shown != item, let since = hoveredSince, now - since >= delay {
@@ -150,8 +159,11 @@ enum DockEnhanceMath {
         case .bottom:
             let x = min(max(itemFrame.midX - size.width / 2, screen.minX + 8),
                         max(screen.minX + 8, screen.maxX - size.width - 8))
-            return CGRect(x: x, y: itemFrame.maxY + gap,
-                          width: size.width, height: size.height)
+            // An auto-hidden Dock reports its tiles below the screen
+            // while it slides; the panel never follows them off it.
+            let y = min(max(itemFrame.maxY + gap, screen.minY + 8),
+                        max(screen.minY + 8, screen.maxY - size.height - 8))
+            return CGRect(x: x, y: y, width: size.width, height: size.height)
         case .left:
             let y = min(max(itemFrame.midY - size.height / 2, screen.minY + 8),
                         max(screen.minY + 8, screen.maxY - size.height - 8))
@@ -230,18 +242,24 @@ enum AppleDockReader {
             ?? children.first { axString($0, kAXRoleAttribute) == kAXListRole }
     }
 
-    /// The application tile under `point` (AX coordinates), or nil —
-    /// spacers, folders, the Trash and minimized-window tiles are
-    /// skipped: previews are an app feature.
-    static func item(list: AXUIElement, at point: CGPoint) -> DockAXItem? {
-        for child in axChildren(list) {
+    /// Every application tile in the list, in Dock order — spacers,
+    /// folders, the Trash and minimized-window tiles are skipped:
+    /// previews are an app feature. One walk; the caller keeps the
+    /// result for a beat and hit-tests in memory, so the tick never
+    /// re-walks the whole tree.
+    static func items(list: AXUIElement) -> [DockAXItem] {
+        axChildren(list).compactMap { child in
             guard axString(child, kAXSubroleAttribute) == "AXApplicationDockItem",
-                  let frame = axFrame(child), frame.contains(point) else { continue }
+                  let frame = axFrame(child) else { return nil }
             return DockAXItem(element: child, frame: frame,
                               title: axString(child, kAXTitleAttribute),
                               url: axURL(child))
         }
-        return nil
+    }
+
+    /// The application tile under `point` (AX coordinates), or nil.
+    static func item(list: AXUIElement, at point: CGPoint) -> DockAXItem? {
+        items(list: list).first { $0.frame.contains(point) }
     }
 
     static func frame(of element: AXUIElement) -> CGRect? { axFrame(element) }
@@ -281,7 +299,9 @@ enum AppleDockReader {
             AXUIElementPerformAction(element, "AXRaise" as CFString)
             AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, true as CFTypeRef)
         }
-        app?.activate(options: [.activateAllWindows])
+        // Plain activate: `.activateAllWindows` brought every window of
+        // the app forward and buried the one that was picked.
+        app?.activate()
     }
 
     /// The card's ×: press the window's close button. Returns false
@@ -419,6 +439,10 @@ final class DockEnhanceController {
     /// frame moves on screen.
     nonisolated static let listFrameTTL: TimeInterval = 1.0
     nonisolated static let edgeListFrameTTL: TimeInterval = 0.2
+    /// How long the tiles read from the list stay trusted while the
+    /// pointer is over it — the tick hit-tests these in memory instead
+    /// of walking the Dock's tree twenty times a second.
+    nonisolated static let itemsTTL: TimeInterval = 0.25
     /// How close to a screen edge counts as "near" for the fast refresh.
     nonisolated static let edgeReach: CGFloat = 120
     /// Air between the dock and the preview panel.
@@ -438,6 +462,15 @@ final class DockEnhanceController {
     @ObservationIgnored private var generation = 0
     /// The dock list element and its AX frame, with the time read.
     @ObservationIgnored private var cachedList: (element: AXUIElement, frame: CGRect, at: TimeInterval)?
+    /// The list's app tiles, read once per `itemsTTL` for the list
+    /// frame they were read under.
+    @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)?
+    /// The tile the visible panel is anchored to and the edge it opens
+    /// from — re-anchored every tick while the pointer stays on the
+    /// tile, so a Dock still sliding in carries the panel with it and
+    /// a size measured before the content settled is corrected a beat
+    /// later.
+    @ObservationIgnored private var anchor: (item: DockAXItem, edge: DockEdge, screen: CGRect)?
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -509,10 +542,7 @@ final class DockEnhanceController {
         if let list = dockList(near: axPoint) {
             let reach = list.frame.insetBy(dx: -Self.listSlop.width, dy: -Self.listSlop.height)
             if reach.contains(axPoint) {
-                hovered = AppleDockReader.item(list: list.element, at: axPoint)
-                // The inflated read can hit an icon a magnification
-                // grew past its frame — only the item's own frame wins.
-                if let item = hovered, !item.frame.contains(axPoint) { hovered = nil }
+                hovered = tiles(of: list).first { $0.frame.contains(axPoint) }
             }
         }
         let action = tracker.note(hovered: hovered?.hoverID, pointerInPanel: inPanel,
@@ -526,8 +556,20 @@ final class DockEnhanceController {
         case .hide:
             hidePreview()
         case .none:
-            break
+            if let hovered, hovered.hoverID == tracker.shown { anchorPanel(to: hovered) }
         }
+    }
+
+    /// The list's app tiles — the cached read while it is fresh and the
+    /// list has not moved, else one walk.
+    private func tiles(of list: (element: AXUIElement, frame: CGRect)) -> [DockAXItem] {
+        let now = CACurrentMediaTime()
+        if let cached = cachedItems, cached.listFrame == list.frame, now - cached.at < Self.itemsTTL {
+            return cached.items
+        }
+        let items = AppleDockReader.items(list: list.element)
+        cachedItems = (list.frame, items, now)
+        return items
     }
 
     static let log = Logger(subsystem: "devin.jrbar", category: "dock")
@@ -585,16 +627,30 @@ final class DockEnhanceController {
         let generationAtShow = generation
         preview.largeCards = preferences.largePreviews
         fill(preview, for: item)
+        // Nothing to preview — no windows to raise — is no panel. A
+        // running app with no windows earned a header-only chip on
+        // every pass before; an app not running has the Dock's own
+        // click to open it. The tracker keeps the tile as shown, so
+        // this does not retry on every tick.
+        guard !preview.windows.isEmpty else {
+            hidePreview()
+            return
+        }
 
         let mainHeight = Self.mainScreenHeight()
         let itemFrame = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: mainHeight)
-        let screen = NSScreen.screens.first { $0.frame.contains(itemFrame.origin) }
+        // The screen under the pointer: a sliding Dock's tiles report
+        // below the screen, where no screen contains them.
+        let pointer = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(pointer) }
+            ?? NSScreen.screens.first { $0.frame.contains(itemFrame.origin) }
             ?? NSScreen.main ?? NSScreen.screens.first
         let screenFrame = screen?.frame ?? .zero
         let listFrame = cachedList.map {
             DockEnhanceMath.appKitRect($0.frame, mainScreenHeight: mainHeight)
         } ?? itemFrame
         let edge = DockEnhanceMath.dockEdge(listFrame: listFrame, screen: screenFrame)
+        anchor = (item, edge, screenFrame)
 
         let panel = ensurePanel()
         let size = panel.fittingSize()
@@ -618,8 +674,27 @@ final class DockEnhanceController {
 
     private func hidePreview() {
         generation += 1
+        anchor = nil
         watchers.stop()
         panel?.dismiss()
+    }
+
+    /// Keep the visible panel on its tile: the tile's frame moves while
+    /// an auto-hidden Dock slides in, and the content's fitting size
+    /// settles a beat after it was first measured. Only a real change
+    /// moves the frame, without animation — it is a correction, not a
+    /// retarget.
+    private func anchorPanel(to item: DockAXItem) {
+        guard let panel, panel.isVisible, let anchor else { return }
+        let itemFrame = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: Self.mainScreenHeight())
+        let size = panel.fittingSize()
+        let target = DockEnhanceMath.panelFrame(anchor: itemFrame, edge: anchor.edge, size: size,
+                                                screen: anchor.screen, gap: Self.panelGap)
+        self.anchor = (item, anchor.edge, anchor.screen)
+        if abs(target.minX - panel.frame.minX) > 1 || abs(target.minY - panel.frame.minY) > 1
+            || abs(target.width - panel.frame.width) > 1 || abs(target.height - panel.frame.height) > 1 {
+            panel.setFrame(target, display: true)
+        }
     }
 
     private func ensurePanel() -> DockPreviewPanel {
@@ -715,14 +790,21 @@ final class DockEnhanceController {
         hidePreview()
     }
 
-    /// The panel's content changed size (a card left): re-fit at the
-    /// same anchor edge.
+    /// The panel's content changed size (a card left): re-fit on the
+    /// same tile, from the same edge, clamped to the same screen.
     private func reframe() {
         guard let panel, panel.isVisible else { return }
-        let size = panel.fittingSize()
-        var frame = panel.frame
-        frame.origin.x += (frame.width - size.width) / 2
-        frame.size = size
-        panel.setFrame(frame, display: true)
+        guard let anchor else {
+            let size = panel.fittingSize()
+            var frame = panel.frame
+            frame.origin.x += (frame.width - size.width) / 2
+            frame.size = size
+            panel.setFrame(frame, display: true)
+            return
+        }
+        let itemFrame = DockEnhanceMath.appKitRect(anchor.item.frame, mainScreenHeight: Self.mainScreenHeight())
+        panel.setFrame(DockEnhanceMath.panelFrame(
+            anchor: itemFrame, edge: anchor.edge, size: panel.fittingSize(),
+            screen: anchor.screen, gap: Self.panelGap), display: true)
     }
 }

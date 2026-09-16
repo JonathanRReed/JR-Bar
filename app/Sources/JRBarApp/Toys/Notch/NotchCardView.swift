@@ -286,9 +286,6 @@ struct NotchCardView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(style.subColor)
                 Spacer(minLength: 8)
-                Text("⌘O")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(style.faintColor)
             }
             .contentShape(Rectangle())
         }
