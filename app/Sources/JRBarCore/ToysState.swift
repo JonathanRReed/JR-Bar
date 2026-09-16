@@ -57,11 +57,12 @@ public struct ToysState: Codable, Equatable, Sendable {
 /// Fold: the desktop folds into the screen as the lid comes down — one
 /// style now, the portal room seen through a frosted-PP cover, with
 /// Perspective/Blur/Shade/Frost as the knobs. The shipped defaults —
-/// 65°, shade 0.7, frost 0.65 — are the ones that read as the
+/// 65°, shade 0.7, frost 0 — are the ones that read as the
 /// hold-the-angle illusion rather than a warp: early enough that the
 /// fold starts while the lid is still visibly moving, dim enough that
-/// the fold reads as shadow before it reads as distortion, milky
-/// enough to read as translucent plastic rather than a dark void.
+/// the fold reads as shadow before it reads as distortion, and a black
+/// room behind it — the frost knob lifts the void to a grey milk, and
+/// at 0.65 the whole fold read as "super grey instead of black".
 public struct FoldSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var activationAngle: Double
@@ -78,7 +79,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     public init(enabled: Bool = false, activationAngle: Double = 65,
                 perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
                 jitterTolerance: Double = 0, provider: FoldProvider = .jrbar,
-                frost: Double = 0.65) {
+                frost: Double = 0) {
         self.enabled = enabled
         self.activationAngle = activationAngle
         self.perspective = perspective
@@ -106,20 +107,23 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         shade = (try? c.decodeIfPresent(Double.self, forKey: .shade)) ?? 0.7
         jitterTolerance = (try? c.decodeIfPresent(Double.self, forKey: .jitterTolerance)) ?? 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
-        frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0.65
+        frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0
         // Each past default set is treated as untouched and moved to the
         // current one; any deliberate change means the file survives.
         // A file old enough to migrate never wrote `frost`, so the knob
         // reads its default there — a moved frost is a deliberate change.
         if activationAngle == 110, style == "tilt", perspective == 0.6,
-           blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0.65 {
+           blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0 {
             activationAngle = 65
             shade = 0.7
         } else if activationAngle == 82, style == "dusk", perspective == 0.6,
-                  blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0.65 {
+                  blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0 {
             activationAngle = 65
             shade = 0.7
         }
+        // The 0.65 milk shipped as a default for one build; a file that
+        // still carries exactly that value never chose it.
+        if frost == 0.65 { frost = 0 }
     }
 
     /// `style` is decode-only — a saved file never writes the retired key,

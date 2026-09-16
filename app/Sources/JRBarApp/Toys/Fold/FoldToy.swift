@@ -828,7 +828,7 @@ private struct FoldControlsView: View {
                     ValueText(text: percent(toy.settings.frost))
                 }
             } label: {
-                SettingLabel(title: "Frost", subtitle: "How milky the cover is — higher reads more like frosted plastic.")
+                SettingLabel(title: "Frost", subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic.")
             }
 
             LabeledContent {
