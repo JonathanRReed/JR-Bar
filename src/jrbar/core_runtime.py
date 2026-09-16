@@ -6044,8 +6044,11 @@ def run_core(argv: list[str] | None = None) -> int:
     try:
         import faulthandler
 
-        faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
-    except (ImportError, AttributeError, RuntimeError, ValueError):
+        from .state_paths import default_state_dir
+
+        stacks = open(default_state_dir() / "core-stacks.log", "a", buffering=1)  # noqa: SIM115
+        faulthandler.register(signal.SIGUSR1, file=stacks, all_threads=True, chain=False)
+    except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
         pass
 
     # JRBAR_TRACEMALLOC=1 profiles retained allocations from here on.

@@ -453,7 +453,24 @@ def _presence_from_window_info(info: object) -> bool | None:
         return None
 
 
+def _alcove_process_running() -> bool | None:
+    """Whether Alcove's process is up at all — a LaunchServices lookup,
+    microseconds. None when AppKit is unavailable (tests, a bare CLI)."""
+    try:
+        from AppKit import NSRunningApplication
+
+        return len(NSRunningApplication.runningApplicationsWithBundleIdentifier_(ALCOVE_BUNDLE_ID)) > 0
+    except Exception:
+        return None
+
+
 def _query_alcove_window_presence() -> bool | None:
+    # No process, no capsule: skip the window list. Listing every
+    # on-screen window through Quartz every 1.5 s — hundreds of records
+    # converted into Python each time — was the daemon's steady CPU
+    # burst on a Mac where Alcove is not even running (2026-09-16).
+    if _alcove_process_running() is False:
+        return False
     try:
         quartz = _quartz()
         info = quartz.CGWindowListCopyWindowInfo(
