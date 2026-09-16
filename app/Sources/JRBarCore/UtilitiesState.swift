@@ -114,6 +114,11 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Whether `concealedApps` was seeded once from the spacer model's
     /// plan — the apps left of the JR-Bar icon at the first run.
     public var concealSeeded: Bool
+    /// Use the agent's concealment even from a build that is not
+    /// notarized — where the agent hides JR-Bar's own icon along with
+    /// the rest (measured: an allowlisted app stays only when it passes
+    /// Gatekeeper). Off, an unnotarized build falls back to the spacer.
+    public var concealUnnotarized: Bool
 
     /// The cover's visual-effect material, persisted as its raw name so
     /// a newer build's materials keep their data.
@@ -183,7 +188,8 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 hotkeyBindings: [MenuBarHotkeyBinding] = [],
                 triggerRules: [MenuBarTriggerRule] = [],
                 concealedApps: [String: MenuBarItemSection] = [:],
-                concealSeeded: Bool = false) {
+                concealSeeded: Bool = false,
+                concealUnnotarized: Bool = false) {
         self.enabled = enabled
         self.sections = sections
         self.revealOnHover = revealOnHover
@@ -203,6 +209,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.triggerRules = triggerRules
         self.concealedApps = concealedApps
         self.concealSeeded = concealSeeded
+        self.concealUnnotarized = concealUnnotarized
     }
 
     static func clampedRehide(_ value: Double) -> Double {
@@ -231,7 +238,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         case enabled, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
-        case concealedApps, concealSeeded
+        case concealedApps, concealSeeded, concealUnnotarized
     }
 
     public init(from decoder: any Decoder) throws {
@@ -267,6 +274,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         concealedApps = rawApps.compactMapValues { MenuBarItemSection(rawValue: $0) }
             .filter { $0.value != .shown }
         concealSeeded = (try? c.decodeIfPresent(Bool.self, forKey: .concealSeeded)) ?? false
+        concealUnnotarized = (try? c.decodeIfPresent(Bool.self, forKey: .concealUnnotarized)) ?? false
     }
 }
 

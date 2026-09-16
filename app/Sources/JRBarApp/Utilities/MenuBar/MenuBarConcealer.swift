@@ -158,6 +158,27 @@ final class MenuBarAssessmentBackend: MenuBarConcealBackend {
     /// Whether this macOS build offers the mechanism.
     nonisolated static var isAvailable: Bool { classes != nil }
 
+    /// Whether this app bundle passes Gatekeeper — notarized. Measured
+    /// on 27.0 (26A428): an allowlisted app stays on the bar under an
+    /// assertion only when it does; an unnotarized Developer ID build
+    /// is concealed along with everything else, its own icon included.
+    /// One `spctl` run per launch, off the main actor.
+    nonisolated static func bundleIsNotarized() async -> Bool {
+        let path = Bundle.main.bundlePath
+        return await Task.detached(priority: .utility) { () -> Bool in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/spctl")
+            process.arguments = ["--assess", "--verbose=2", "--type", "execute", path]
+            let pipe = Pipe()
+            process.standardError = pipe
+            process.standardOutput = pipe
+            do { try process.run() } catch { return false }
+            process.waitUntilExit()
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            return output.contains("source=Notarized")
+        }.value
+    }
+
     nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
 
     private final class OnceFlag: @unchecked Sendable {

@@ -41,6 +41,12 @@ struct MenuBarUtilityControls: View {
                          subtitle: utility.concealing
                             ? "macOS itself hides the apps you choose — no spacer, no blank stretch, no «. Pick Hidden or Always for an app under Overrides; hover or click the empty bar beside the notch, or scroll it, to bring them back for a moment. Clicks on the clock, battery and Wi-Fi are relayed while the rest are hidden."
                             : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
+            if utility.concealerAvailable, !utility.concealing {
+                Toggle(isOn: utility.bind(\.concealUnnotarized)) {
+                    SettingLabel(title: "Hide the way macOS hides",
+                                 subtitle: "This build of JR-Bar isn't notarized, and macOS keeps only notarized apps on the bar while it hides the rest — JR-Bar's own icon would go too. Notarize the build (make package with the jrbar-notary profile) to get this without losing the icon, or turn it on anyway.")
+                }
+            }
 
             LabeledContent {
                 Text(countsText)

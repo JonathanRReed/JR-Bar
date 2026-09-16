@@ -102,6 +102,10 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
     /// Whether the concealer drives hiding right now.
     var concealing: Bool { concealer != nil }
+    /// Whether the agent's mechanism resolves on this macOS at all.
+    var concealerAvailable: Bool { MenuBarAssessmentBackend.isAvailable }
+    /// Whether this build passes Gatekeeper — nil until probed.
+    private(set) var notarized: Bool?
     @ObservationIgnored private var ownAdoptionLogged = false
     /// When the concealer came up — the first assertion waits
     /// `adoptionGrace` past it so a relaunch's dying assertion has
@@ -414,8 +418,22 @@ final class MenuBarUtility: Toy {
             // The control set is settings-driven too — a combined-mode
             // flip or a profile apply lands here between covers.
             installChevron()
+            syncConcealerChoice()
             hider.reconcile()
             syncActions()
+        }
+    }
+
+    /// The card's "hide anyway" switch: bring the agent up or down to
+    /// match, on an unnotarized build.
+    private func syncConcealerChoice() {
+        guard MenuBarAssessmentBackend.isAvailable, host != nil, let notarized else { return }
+        let wanted = notarized || settings().concealUnnotarized
+        if wanted, concealer == nil {
+            startConcealer()
+        } else if !wanted, concealer != nil {
+            stopConcealer()
+            host?.setBoundarySpacer(0)
         }
     }
 
@@ -445,7 +463,21 @@ final class MenuBarUtility: Toy {
         probeAccessibility()
         installChevron()
         if MenuBarAssessmentBackend.isAvailable, host != nil {
-            startConcealer()
+            // The agent honours an allowlist only for apps that pass
+            // Gatekeeper: from an unnotarized build the agent hides
+            // JR-Bar's own icon too. The spacer stands in unless the
+            // person chose the agent anyway.
+            Task { [weak self] in
+                let notarized = await MenuBarAssessmentBackend.bundleIsNotarized()
+                guard let self, self.running else { return }
+                self.notarized = notarized
+                if notarized || self.settings().concealUnnotarized {
+                    self.startConcealer()
+                    self.hider.reconcile()
+                } else {
+                    MenuBarAssessmentBackend.log.notice("conceal: build is not notarized — the agent would hide our own icon; spacer engine stands in")
+                }
+            }
         }
         hider.start()
         reveal.start()

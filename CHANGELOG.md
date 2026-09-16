@@ -72,8 +72,14 @@ All notable changes to JR-Bar are documented here.
   battery or Wi-Fi — which the agent ignores under any assertion — is
   held at an event tap, concealment lifted for the click, the click
   replayed at the same point. The spacer engine remains the fallback
-  where the framework does not resolve. Attribution in
-  docs/PRIOR-ART.md; the audit in docs/AUDIT-2026-09-16.md.
+  where the framework does not resolve — and, for now, on this build:
+  the agent keeps an allowlisted app on the bar only when it passes
+  Gatekeeper, and an unnotarized build's own icon is concealed with
+  the rest (measured with probe apps). A notarized build (the
+  `jrbar-notary` profile) turns the concealer on; the card offers
+  "Hide the way macOS hides" anyway for a bar without our icon.
+  Attribution in docs/PRIOR-ART.md; the audit in
+  docs/AUDIT-2026-09-16.md.
 - The `‹` beside the icon is gone: macOS's own « already marks the
   run's other end, and two left-pointing marks 200 points apart read
   as clutter. The tooltip and the blank stretch are the affordance.
