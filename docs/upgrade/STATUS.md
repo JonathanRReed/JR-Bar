@@ -1346,3 +1346,31 @@ Owner: "audit all of our systems … compare ourselves against them";
   the agent's items, spacer engine as fallback. Verified after
   install: see the ledger line below.
 
+## 2026-09-16 afternoon — energy, flush ears, Dock offset — IN PROGRESS
+
+Owner: "it's this app draining the battery"; "the notch is expanding
+past it"; "the dock is offset whenever it shows a preview".
+
+- Energy, measured on an idle desk before: app 3.1%, daemon 2.3% with
+  10–30% bursts. App causes: an AX round trip to every running app
+  every 2 s (four concurrent threads), three pointer polls at 10–20 Hz.
+  Daemon causes: a whole-table `ps` on every state build, `ioreg`
+  forks for the lid, `diskutil` per mount, and — the steady one — the
+  Alcove follower listing every on-screen window through Quartz every
+  1.5 s while Alcove is not running. Fixes: known-owner AX scans (full
+  walk every 20 s / on launch-quit), adaptive polls (4 Hz when far),
+  process table cached 10 s, liveness sweep 15 s, IOKit lid read,
+  Alcove probe gated on the process. App after: 1.2–1.8%. Daemon after
+  warm-up: measurement pending (a fresh daemon spends minutes scanning
+  transcripts; measure after 10 min).
+- A SIGUSR1 stack dump was added for attribution and made opt-in
+  (`JRBAR_STACK_DUMPS=1`) after a signal mid-syscall killed the daemon.
+- Ears: tray chin 6 → 0, ear width 30 → 24; the black ends at the
+  hardware's edge (notch 185×32 on this Mac, menu bar 33).
+- Dock: magnification is on here; tile frames are read live while a
+  panel is up, and each preview logs tile/pointer/size/panel geometry
+  (`dock] preview geometry`) so the offset can be read from the log
+  after the owner's next hover.
+- Menu bar: unchanged this pass — the concealer waits on notarization
+  (the `jrbar-notary` profile).
+
