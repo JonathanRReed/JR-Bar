@@ -6,9 +6,9 @@ import Testing
 
 /// The Menu Bar utility's positional model (docs/UTILITIES.md): an
 /// item's section is where it sits relative to the controls, hiding is
-/// the control's spacer growing to pack the items left of it off the
-/// row, and the section map is overrides only. All pure inputs — no
-/// screen, no status items.
+/// the control's spacer growing from the fit edge to pack the items
+/// left of it off the row, and the section map is overrides only. All
+/// pure inputs — no screen, no status items.
 @Suite("Menu Bar — spacers")
 struct MenuBarSpacerTests {
     private func item(_ id: String, owner: String = "App", x: Double, y: Double = 0,
@@ -19,22 +19,23 @@ struct MenuBarSpacerTests {
     }
 
     private let row = CGRect(x: 0, y: 0, width: 1512, height: 24)
-    /// The notch's right edge on a 1512-point display.
-    private let regionMin: CGFloat = 852
-    /// Collapsed controls: the always-hidden control at 880, the
-    /// chevron at 926 — both one glyph wide.
+    /// The fit edge on a 1512-point display: the notch's right edge
+    /// (848) plus the room the system keeps for its «.
+    private let fitEdge: CGFloat = 902
+    /// Collapsed controls: the always-hidden control at 930, the
+    /// boundary chevron at 1000 — both one glyph wide.
     private let controls = MenuBarControlFrames(
-        hidden: CGRect(x: 926, y: 0, width: 24, height: 24),
-        alwaysHidden: CGRect(x: 880, y: 0, width: 24, height: 24))
+        hidden: CGRect(x: 1000, y: 0, width: 24, height: 24),
+        alwaysHidden: CGRect(x: 930, y: 0, width: 24, height: 24))
 
     // MARK: Sections are positional
 
-    @Test("left of the chevron is hidden, left of the always-hidden control is deeper, the rest shown")
+    @Test("left of the boundary is hidden, left of the always-hidden control is deeper, the rest shown")
     func positionalSections() {
-        let items = [item("Deep", x: 856), item("Mid", x: 900), item("Up", x: 964),
-                     item("Up2", x: 1002)]
+        let items = [item("Deep", x: 906), item("Mid", x: 960), item("Up", x: 1030),
+                     item("Up2", x: 1070)]
         let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                         controls: controls, regionMin: regionMin)
+                                         controls: controls, fitEdge: fitEdge)
         #expect(plan.alwaysHidden.map(\.id) == ["Deep"])
         #expect(plan.hidden.map(\.id) == ["Mid"])
         #expect(plan.shown.map(\.id) == ["Up", "Up2"])
@@ -45,13 +46,11 @@ struct MenuBarSpacerTests {
 
     @Test("an item under an expanded control's spacer counts as hidden, not shown")
     func underSpacer() {
-        // The chevron has grown to span 864…986; an item macOS stacked
-        // at 956 reports inside that span.
         let expanded = MenuBarControlFrames(
-            hidden: CGRect(x: 864, y: 0, width: 122, height: 24))
-        let items = [item("Stacked", x: 956), item("Up", x: 998)]
+            hidden: CGRect(x: 902, y: 0, width: 122, height: 24))
+        let items = [item("Stacked", x: 956), item("Up", x: 1030)]
         let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                         controls: expanded, regionMin: regionMin)
+                                         controls: expanded, fitEdge: fitEdge)
         #expect(plan.hidden.map(\.id) == ["Stacked"])
         #expect(plan.shown.map(\.id) == ["Up"])
     }
@@ -61,28 +60,39 @@ struct MenuBarSpacerTests {
         let overflow = item("Overflow", owner: "MenuBarAgent", x: 970, w: 17, overflow: true)
         let items = [overflow, item("Stacked", x: 966), item("Up", x: 1002)]
         let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                         controls: MenuBarControlFrames(), regionMin: regionMin)
+                                         controls: MenuBarControlFrames(), fitEdge: fitEdge)
         #expect(plan.hidden.map(\.id) == ["Stacked"])
         #expect(plan.shown.map(\.id) == ["Overflow", "Up"],
                 "the system's control is protected and lists as shown for the hit test")
     }
 
-    @Test("an override covers an item that sits right of the chevron; a shown override is no override")
+    @Test("two overflowed items sharing one spot keep a stable order across listings")
+    func stableOrder() {
+        let items = [item("B", x: 855), item("A", x: 855), item("Up", x: 1130)]
+        let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                         controls: controls, fitEdge: fitEdge)
+        let swapped = MenuBarItemHider.plan(items: items.reversed(), sections: [:], row: row,
+                                            controls: controls, fitEdge: fitEdge)
+        #expect(swapped == plan, "listing order never changes the plan")
+        #expect(plan.alwaysHidden.map(\.id) == ["A", "B"], "left of the always-hidden control")
+    }
+
+    @Test("an override covers an item that sits right of the boundary; a shown override is no override")
     func overridesCover() {
-        let items = [item("Up", x: 964), item("Up2", x: 1002)]
+        let items = [item("Up", x: 1030), item("Up2", x: 1070)]
         let plan = MenuBarItemHider.plan(items: items,
                                          sections: ["Up": .hidden, "Up2": .shown], row: row,
-                                         controls: controls, regionMin: regionMin)
+                                         controls: controls, fitEdge: fitEdge)
         #expect(plan.hidden.map(\.id) == ["Up"])
-        #expect(plan.hiddenCovers == [964...988])
+        #expect(plan.hiddenCovers == [1030...1054])
         #expect(plan.shown.map(\.id) == ["Up2"])
     }
 
-    @Test("an override on an item already left of the chevron changes its section but draws no cover")
+    @Test("an override on an item already left of the boundary changes its section but draws no cover")
     func overrideDeeper() {
-        let items = [item("Mid", x: 900)]
+        let items = [item("Mid", x: 960)]
         let plan = MenuBarItemHider.plan(items: items, sections: ["Mid": .alwaysHidden],
-                                         row: row, controls: controls, regionMin: regionMin)
+                                         row: row, controls: controls, fitEdge: fitEdge)
         #expect(plan.alwaysHidden.map(\.id) == ["Mid"])
         #expect(plan.alwaysHiddenCovers.isEmpty)
     }
@@ -91,16 +101,16 @@ struct MenuBarSpacerTests {
     func parkedItems() {
         let items = [item("P", x: 7, y: 970), item("Q", x: 7, y: 970)]
         let plan = MenuBarItemHider.plan(items: items, sections: ["Q": .alwaysHidden],
-                                         row: row, controls: controls, regionMin: regionMin)
+                                         row: row, controls: controls, fitEdge: fitEdge)
         #expect(plan.hidden.map(\.id) == ["P"])
         #expect(plan.alwaysHidden.map(\.id) == ["Q"])
     }
 
     @Test("without controls on the row nothing is positionally hidden")
     func noControls() {
-        let items = [item("A", x: 900), item("B", x: 1002)]
+        let items = [item("A", x: 960), item("B", x: 1070)]
         let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                         controls: MenuBarControlFrames(), regionMin: regionMin)
+                                         controls: MenuBarControlFrames(), fitEdge: fitEdge)
         #expect(plan.shown.map(\.id) == ["A", "B"])
         #expect(plan.hiddenControlLength == nil)
         #expect(plan.alwaysHiddenControlLength == nil)
@@ -108,29 +118,28 @@ struct MenuBarSpacerTests {
 
     // MARK: Spacer lengths
 
-    @Test("a control on the row claims the stretch from the region's margin to its right edge")
+    @Test("a control on the row claims the stretch from the fit edge to its right edge")
     func spacerLengths() {
         let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
-                                         controls: controls, regionMin: regionMin)
-        // Chevron right edge 950 − 852 − 22 = 76: the « needs its room.
-        #expect(plan.hiddenControlLength == 76)
-        // Always-hidden right edge 904 − 852 − 22 = 30.
-        #expect(plan.alwaysHiddenControlLength == 30)
+                                         controls: controls, fitEdge: fitEdge)
+        // Boundary right edge 1024 − 902 = 122.
+        #expect(plan.hiddenControlLength == 122)
+        // Always-hidden right edge 954 − 902 = 52.
+        #expect(plan.alwaysHiddenControlLength == 52)
         #expect(MenuBarItemHider.spacerLength(
-            controlFrame: CGRect(x: 926, y: 0, width: 24, height: 24), regionMin: regionMin) == 76)
-        #expect(MenuBarItemHider.spacerMargin > 17, "wider than the « button")
-        #expect(MenuBarItemHider.spacerMargin < 22 + 1, "narrower than any item")
+            controlFrame: CGRect(x: 1000, y: 0, width: 24, height: 24), fitEdge: fitEdge) == 122)
+        #expect(MenuBarItemHider.fitInset > 17, "wider than the « button")
     }
 
-    @Test("a revealed section collapses its control to the glyph; an unknown region collapses both")
+    @Test("a revealed section collapses its control to the glyph; an unknown edge collapses both")
     func revealedCollapses() {
         let revealed = MenuBarItemHider.plan(items: [], sections: [:], row: row,
-                                             controls: controls, regionMin: regionMin,
+                                             controls: controls, fitEdge: fitEdge,
                                              revealed: [.hidden])
         #expect(revealed.hiddenControlLength == MenuBarControlFrames.glyphLength)
-        #expect(revealed.alwaysHiddenControlLength == 30)
+        #expect(revealed.alwaysHiddenControlLength == 52)
         let unknown = MenuBarItemHider.plan(items: [], sections: [:], row: row,
-                                            controls: controls, regionMin: nil)
+                                            controls: controls, fitEdge: nil)
         #expect(unknown.hiddenControlLength == MenuBarControlFrames.glyphLength)
         #expect(unknown.alwaysHiddenControlLength == MenuBarControlFrames.glyphLength)
     }
@@ -138,27 +147,27 @@ struct MenuBarSpacerTests {
     @Test("a cap bounds the spacer and never drops it under the glyph")
     func caps() {
         let capped = MenuBarItemHider.plan(items: [], sections: [:], row: row,
-                                           controls: controls, regionMin: regionMin,
+                                           controls: controls, fitEdge: fitEdge,
                                            caps: MenuBarSpacerCaps(hidden: 50))
         #expect(capped.hiddenControlLength == 50)
         #expect(MenuBarItemHider.spacerLength(
-            controlFrame: CGRect(x: 926, y: 0, width: 24, height: 24),
-            regionMin: regionMin, cap: 10) == MenuBarControlFrames.glyphLength)
-        // A control whose right edge is already at the margin claims
-        // just the glyph.
+            controlFrame: CGRect(x: 1000, y: 0, width: 24, height: 24),
+            fitEdge: fitEdge, cap: 10) == MenuBarControlFrames.glyphLength)
+        // A control whose right edge is already at the edge claims just
+        // the glyph.
         #expect(MenuBarItemHider.spacerLength(
-            controlFrame: CGRect(x: 852, y: 0, width: 24, height: 24),
-            regionMin: regionMin) == MenuBarControlFrames.glyphLength)
+            controlFrame: CGRect(x: 890, y: 0, width: 24, height: 24),
+            fitEdge: fitEdge) == MenuBarControlFrames.glyphLength)
     }
 
     @Test("a control off the row reports no length — nothing to write until it is back")
     func offRowControl() {
         let pushed = MenuBarControlFrames(
-            hidden: CGRect(x: 926, y: 0, width: 24, height: 24),
+            hidden: CGRect(x: 1000, y: 0, width: 24, height: 24),
             alwaysHidden: CGRect(x: 7, y: 970, width: 24, height: 24))
         let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
-                                         controls: pushed, regionMin: regionMin)
-        #expect(plan.hiddenControlLength == 76)
+                                         controls: pushed, fitEdge: fitEdge)
+        #expect(plan.hiddenControlLength == 122)
         #expect(plan.alwaysHiddenControlLength == nil)
     }
 
@@ -166,14 +175,18 @@ struct MenuBarSpacerTests {
 
     @MainActor
     private func makeHider(controls: @escaping @MainActor () -> MenuBarControlFrames,
-                           items: [MenuBarItem] = []) -> (MenuBarItemHider, () -> [(MenuBarItemSection, CGFloat)]) {
+                           items: [MenuBarItem] = [],
+                           store: MenuBarMemoryFitEdgeStore = MenuBarMemoryFitEdgeStore())
+        -> (MenuBarItemHider, () -> [(MenuBarItemSection, CGFloat)]) {
         final class Box { var writes: [(MenuBarItemSection, CGFloat)] = [] }
         let box = Box()
         let hider = MenuBarItemHider()
         hider.listItems = { items }
         hider.rowRect = { self.row }
         hider.controlFrames = controls
-        hider.regionMin = { self.regionMin }
+        hider.guessedFitEdge = { self.fitEdge }
+        hider.edgeKey = { "test" }
+        hider.edgeStore = store
         hider.shuttersSuppressed = true
         hider.settings = { MenuBarSettings(enabled: true) }
         hider.setControlLength = { section, length in box.writes.append((section, length)) }
@@ -186,50 +199,48 @@ struct MenuBarSpacerTests {
         let (hider, writes) = makeHider(controls: { self.controls })
         hider.reconcile()
         #expect(writes().map(\.0) == [.hidden, .alwaysHidden])
-        #expect(writes().map(\.1) == [76, 30])
+        #expect(writes().map(\.1) == [122, 52])
         hider.reconcile()
         #expect(writes().count == 2, "an unchanged length is not rewritten")
         hider.reveal([.hidden])
         #expect(writes().last?.0 == .hidden)
         #expect(writes().last?.1 == MenuBarControlFrames.glyphLength)
         hider.hide()
-        #expect(writes().last?.1 == 76)
+        #expect(writes().last?.1 == 122)
     }
 
     @MainActor
-    @Test("a chevron found parked lowers its cap and collapses; the next pass grows it under the cap")
-    func parkedChevronLearnsCap() {
+    @Test("a boundary found parked lowers its cap and collapses; the next pass grows it under the cap")
+    func parkedBoundaryLearnsCap() {
         var frames = controls
         let (hider, writes) = makeHider(controls: { frames })
         hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 76)
+        #expect(hider.assignedLengths[.hidden] == 122)
         // macOS parked it: the frame reports off the row.
-        frames.hidden = CGRect(x: 0, y: 1000, width: 76, height: 24)
+        frames.hidden = CGRect(x: 0, y: 1000, width: 122, height: 24)
         hider.reconcile()
-        #expect(hider.caps.hidden == 76 - MenuBarItemHider.capStep)
+        #expect(hider.caps.hidden == 122 - MenuBarItemHider.capStep)
         #expect(writes().last?.0 == .hidden)
         #expect(writes().last?.1 == MenuBarControlFrames.glyphLength)
         // Back on the row, it grows again — but only to the cap.
-        frames.hidden = CGRect(x: 926, y: 0, width: 24, height: 24)
+        frames.hidden = CGRect(x: 1000, y: 0, width: 24, height: 24)
         hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 36)
+        #expect(hider.assignedLengths[.hidden] == 82)
         hider.resetCaps()
         hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 76)
+        #expect(hider.assignedLengths[.hidden] == 122)
     }
 
     @MainActor
-    @Test("the always-hidden control pushed off by an expanded chevron is not a parked control")
+    @Test("the always-hidden control pushed off by an expanded boundary is not a parked control")
     func pushedAlwaysHiddenIsNotParked() {
         var frames = controls
         let (hider, _) = makeHider(controls: { frames })
         hider.reconcile()
-        // The chevron is expanded (86) and the ah control went with the
-        // hidden run: expected, no cap learned.
         frames.alwaysHidden = CGRect(x: 7, y: 970, width: 40, height: 24)
         hider.reconcile()
         #expect(hider.caps.alwaysHidden == .infinity)
-        #expect(hider.assignedLengths[.alwaysHidden] == 30)
+        #expect(hider.assignedLengths[.alwaysHidden] == 52)
     }
 
     @MainActor
@@ -243,6 +254,141 @@ struct MenuBarSpacerTests {
         #expect(hider.assignedLengths[.hidden] == MenuBarControlFrames.glyphLength)
         #expect(hider.assignedLengths[.alwaysHidden] == MenuBarControlFrames.glyphLength)
         #expect(writes().last?.1 == MenuBarControlFrames.glyphLength)
+    }
+
+    @Test("an always-hidden control stacked under the expanded boundary is pushed, not a boundary")
+    func pushedAlwaysHidden() {
+        let pushed = MenuBarControlFrames(
+            hidden: CGRect(x: 902, y: 0, width: 122, height: 24),
+            alwaysHidden: CGRect(x: 902, y: 0, width: 122, height: 24))
+        #expect(MenuBarItemHider.alwaysHiddenPushed(controls: pushed, row: row))
+        let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
+                                         controls: pushed, fitEdge: fitEdge)
+        #expect(plan.alwaysHiddenControlLength == nil, "no slot to size from")
+        #expect(plan.hiddenControlLength == 122)
+        // Side by side, both stand.
+        #expect(!MenuBarItemHider.alwaysHiddenPushed(controls: controls, row: row))
+    }
+
+    @MainActor
+    @Test("a pushed always-hidden control collapses to its glyph so it returns small")
+    func pushedCollapses() {
+        var frames = controls
+        let (hider, writes) = makeHider(controls: { frames })
+        hider.reconcile()
+        #expect(hider.assignedLengths[.alwaysHidden] == 52)
+        frames.hidden = CGRect(x: 902, y: 0, width: 122, height: 24)
+        frames.alwaysHidden = CGRect(x: 910, y: 0, width: 110, height: 24)
+        hider.reconcile()
+        #expect(hider.assignedLengths[.alwaysHidden] == MenuBarControlFrames.glyphLength)
+        #expect(writes().contains { $0.0 == .alwaysHidden && $0.1 == MenuBarControlFrames.glyphLength })
+        #expect(hider.caps.alwaysHidden == .infinity, "pushed is not parked — no cap learned")
+    }
+
+    @MainActor
+    @Test("reinstalled controls forget the old lengths so the new items get sized again")
+    func reinstallForgets() {
+        let (hider, writes) = makeHider(controls: { self.controls })
+        hider.reconcile()
+        let before = writes().count
+        hider.controlsReinstalled()
+        hider.reconcile()
+        #expect(writes().count == before + 2, "both lengths are handed to the fresh items")
+    }
+
+    // MARK: The fit edge — learned from the «, remembered per screen
+
+    @Test("the « landing on our glyph means the boundary itself was overflowed")
+    func overflowDetection() {
+        let boundary = CGRect(x: 902, y: 0, width: 122, height: 24)
+        let overflowOnGlyph = item("«", owner: "MenuBarAgent", x: 1010, w: 17, overflow: true)
+        #expect(MenuBarItemHider.controlOverflowed(controlFrame: boundary, items: [overflowOnGlyph], row: row))
+        let overflowLeft = item("«", owner: "MenuBarAgent", x: 880, w: 17, overflow: true)
+        #expect(!MenuBarItemHider.controlOverflowed(controlFrame: boundary, items: [overflowLeft], row: row))
+        #expect(!MenuBarItemHider.controlOverflowed(controlFrame: boundary, items: [], row: row))
+    }
+
+    @MainActor
+    @Test("an overflowed boundary moves the fit edge right one step per fresh listing, and remembers it")
+    func overflowLearnsFitEdge() {
+        var items: [MenuBarItem] = []
+        var generation = 0
+        let store = MenuBarMemoryFitEdgeStore()
+        let hider = MenuBarItemHider()
+        hider.listItems = { items }
+        hider.rowRect = { self.row }
+        hider.controlFrames = { self.controls }
+        hider.guessedFitEdge = { self.fitEdge }
+        hider.edgeKey = { "1512x982" }
+        hider.edgeStore = store
+        hider.listingGeneration = { generation }
+        hider.shuttersSuppressed = true
+        hider.settings = { MenuBarSettings(enabled: true) }
+        hider.reconcile()
+        #expect(hider.assignedLengths[.hidden] == 122)
+        #expect(hider.fitEdge == fitEdge)
+        // A « on the glyph in a listing from before the write proves
+        // nothing — the bar has not reflowed yet.
+        items = [item("«", owner: "MenuBarAgent", x: 1005, w: 17, overflow: true)]
+        hider.reconcile()
+        #expect(hider.learnedFitEdge == nil, "stale frames never move the edge")
+        generation += 1
+        hider.reconcile()
+        // The spacer was placed at 1024 − 122 = 902; the edge steps
+        // right of that.
+        #expect(hider.learnedFitEdge == 902 + MenuBarItemHider.overflowStep)
+        #expect(store.edges["1512x982"] == 910)
+        #expect(hider.assignedLengths[.hidden] == 114)
+        // The same listing again: one step per reflow, never three.
+        hider.reconcile()
+        #expect(hider.learnedFitEdge == 910)
+        // The « moved left of the glyph: the edge stays where it is —
+        // it is never moved back left on its own.
+        generation += 1
+        items = [item("«", owner: "MenuBarAgent", x: 880, w: 17, overflow: true)]
+        hider.reconcile()
+        #expect(hider.learnedFitEdge == 910)
+        hider.forgetFitEdge()
+        #expect(hider.learnedFitEdge == nil)
+        #expect(store.edges["1512x982"] == nil)
+        #expect(hider.assignedLengths[.hidden] == 122)
+    }
+
+    @MainActor
+    @Test("a screen change reloads the edge learned for that screen")
+    func edgePerScreen() {
+        let store = MenuBarMemoryFitEdgeStore()
+        store.save(930, key: "1512x982")
+        var key = "1512x982"
+        let (hider, _) = makeHider(controls: { self.controls }, store: store)
+        hider.edgeKey = { key }
+        hider.start()
+        #expect(hider.fitEdge == 930, "the learned edge outranks the guess")
+        #expect(hider.assignedLengths[.hidden] == 94)
+        key = "2560x1440"
+        hider.stop()
+        hider.start()
+        #expect(hider.fitEdge == fitEdge, "a screen with no lesson uses the guess")
+        hider.stop()
+    }
+
+    @Test("the « beside a hidden run wears the bar's material, bare for the ear's ring; revealed, it stands")
+    func overflowCover() {
+        let boundary = MenuBarControlFrames(hidden: CGRect(x: 902, y: 0, width: 122, height: 24))
+        let overflow = item("«", owner: "MenuBarAgent", x: 877, w: 18, overflow: true)
+        let hidden = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
+                                           controls: boundary, fitEdge: fitEdge)
+        #expect(hidden.hiddenCovers == [(877 + MenuBarItemHider.overflowCoverInset)...895])
+        #expect(MenuBarItemHider.overflowCoverInset <= 1, "more shows a sliver of the « glyph")
+        let revealed = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
+                                             controls: boundary, fitEdge: fitEdge,
+                                             revealed: [.hidden])
+        #expect(revealed.hiddenCovers.isEmpty)
+        // A « on the glyph (our boundary overflowed) is not beside the run — no cover.
+        let onGlyph = item("«", owner: "MenuBarAgent", x: 1010, w: 18, overflow: true)
+        let overflowed = MenuBarItemHider.plan(items: [onGlyph], sections: [:], row: row,
+                                               controls: boundary, fitEdge: fitEdge)
+        #expect(overflowed.hiddenCovers.isEmpty)
     }
 
     // MARK: Migration and the control face
@@ -261,7 +407,6 @@ struct MenuBarSpacerTests {
         #expect(state.layoutModel == MenuBarSettings.currentLayoutModel)
         utility.migrateSectionsIfNeeded()
         #expect(writes == 1)
-        // A fresh override written under the current model survives.
         state.sections = ["B": .hidden]
         utility.migrateSectionsIfNeeded()
         #expect(state.sections == ["B": .hidden])
@@ -278,151 +423,6 @@ struct MenuBarSpacerTests {
                                                    description: "x")
         #expect(expanded?.size.width == 112)
         #expect(expanded?.size.height == collapsed?.size.height)
-    }
-}
-
-extension MenuBarSpacerTests {
-    @Test("an always-hidden control stacked under the expanded chevron is pushed, not a boundary")
-    func pushedAlwaysHidden() {
-        // The chevron grew to 833…985; macOS reports the pushed control
-        // stacked inside that span.
-        let pushed = MenuBarControlFrames(
-            hidden: CGRect(x: 833, y: 0, width: 152, height: 24),
-            alwaysHidden: CGRect(x: 833, y: 0, width: 152, height: 24))
-        #expect(MenuBarItemHider.alwaysHiddenPushed(controls: pushed, row: row))
-        let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
-                                         controls: pushed, regionMin: regionMin)
-        #expect(plan.alwaysHiddenControlLength == nil, "no slot to size from")
-        #expect(plan.hiddenControlLength == 111)
-        // Side by side, both stand.
-        #expect(!MenuBarItemHider.alwaysHiddenPushed(controls: controls, row: row))
-    }
-
-    @MainActor
-    @Test("a pushed always-hidden control collapses to its glyph so it returns small")
-    func pushedCollapses() {
-        var frames = controls
-        let (hider, writes) = makeHider(controls: { frames })
-        hider.reconcile()
-        #expect(hider.assignedLengths[.alwaysHidden] == 30)
-        frames.hidden = CGRect(x: 833, y: 0, width: 152, height: 24)
-        frames.alwaysHidden = CGRect(x: 840, y: 0, width: 140, height: 24)
-        hider.reconcile()
-        #expect(hider.assignedLengths[.alwaysHidden] == MenuBarControlFrames.glyphLength)
-        #expect(writes().contains { $0.0 == .alwaysHidden && $0.1 == MenuBarControlFrames.glyphLength })
-        #expect(hider.caps.alwaysHidden == .infinity, "pushed is not parked — no cap learned")
-    }
-
-    @MainActor
-    @Test("reinstalled controls forget the old lengths so the new items get sized again")
-    func reinstallForgets() {
-        let (hider, writes) = makeHider(controls: { self.controls })
-        hider.reconcile()
-        let before = writes().count
-        hider.controlsReinstalled()
-        hider.reconcile()
-        #expect(writes().count == before + 2, "both lengths are handed to the fresh items")
-    }
-
-    @Test("the « landing on our glyph means the chevron itself was overflowed")
-    func overflowDetection() {
-        let chevron = CGRect(x: 851, y: 0, width: 135, height: 24)
-        let overflowOnGlyph = item("«", owner: "MenuBarAgent", x: 976, w: 17, overflow: true)
-        #expect(MenuBarItemHider.controlOverflowed(controlFrame: chevron, items: [overflowOnGlyph], row: row))
-        let overflowLeft = item("«", owner: "MenuBarAgent", x: 848, w: 17, overflow: true)
-        #expect(!MenuBarItemHider.controlOverflowed(controlFrame: chevron, items: [overflowLeft], row: row))
-        #expect(!MenuBarItemHider.controlOverflowed(controlFrame: chevron, items: [], row: row))
-    }
-
-    @MainActor
-    @Test("an overflowed chevron lowers its cap one step per fresh listing until it fits")
-    func overflowLearnsCap() {
-        var items: [MenuBarItem] = []
-        var generation = 0
-        let hider = MenuBarItemHider()
-        hider.listItems = { items }
-        hider.rowRect = { self.row }
-        hider.controlFrames = { self.controls }
-        hider.regionMin = { self.regionMin }
-        hider.listingGeneration = { generation }
-        hider.shuttersSuppressed = true
-        hider.settings = { MenuBarSettings(enabled: true) }
-        hider.reconcile()
-        #expect(hider.assignedLengths[.hidden] == 76)
-        // A « on the glyph in a listing from before the write proves
-        // nothing — the bar has not reflowed yet.
-        items = [item("«", owner: "MenuBarAgent", x: 940, w: 17, overflow: true)]
-        hider.reconcile()
-        #expect(hider.caps.hidden == .infinity, "stale frames never shrink the spacer")
-        generation += 1
-        hider.reconcile()
-        #expect(hider.caps.hidden == 76 - MenuBarItemHider.overflowStep)
-        #expect(hider.assignedLengths[.hidden] == 68)
-        // The same listing again: one step per reflow, never three.
-        hider.reconcile()
-        #expect(hider.caps.hidden == 68)
-        // The « moved left of the glyph: no further shrink.
-        generation += 1
-        items = [item("«", owner: "MenuBarAgent", x: 860, w: 17, overflow: true)]
-        hider.reconcile()
-        #expect(hider.caps.hidden == 68)
-    }
-
-    @Test("a « standing clear of the chevron's glyph is the region's real left edge, and it is remembered")
-    func overflowEdgeIsTheRegion() {
-        let chevron = MenuBarControlFrames(hidden: CGRect(x: 926, y: 0, width: 24, height: 24))
-        let overflowLeft = item("«", owner: "MenuBarAgent", x: 876, w: 17, overflow: true)
-        #expect(MenuBarItemHider.observedRegionEdge(controls: chevron, items: [overflowLeft], row: row) == 876)
-        // Under an expanded spacer but clear of the glyph: still the edge.
-        let expanded = MenuBarControlFrames(hidden: CGRect(x: 846, y: 0, width: 158, height: 24))
-        #expect(MenuBarItemHider.observedRegionEdge(controls: expanded, items: [overflowLeft], row: row) == 876)
-        // On the glyph, it says nothing about the edge.
-        let overflowOnGlyph = item("«", owner: "MenuBarAgent", x: 930, w: 17, overflow: true)
-        #expect(MenuBarItemHider.observedRegionEdge(controls: chevron, items: [overflowOnGlyph], row: row) == nil)
-        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, knownEdge: 876) == 876)
-        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, knownEdge: nil) == regionMin)
-        #expect(MenuBarItemHider.effectiveRegionMin(nil, knownEdge: 876) == nil)
-        // The spacer then lands flush against the «: 950 − 876 − 22 = 52.
-        let plan = MenuBarItemHider.plan(items: [overflowLeft], sections: [:], row: row,
-                                         controls: chevron, regionMin: 876)
-        #expect(plan.hiddenControlLength == 52)
-    }
-
-    @Test("the « beside a hidden run wears the bar's material, bare for the ear's ring; revealed, it stands")
-    func overflowCover() {
-        let chevron = MenuBarControlFrames(hidden: CGRect(x: 894, y: 0, width: 107, height: 24))
-        let overflow = item("«", owner: "MenuBarAgent", x: 869, w: 18, overflow: true)
-        let hidden = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
-                                           controls: chevron, regionMin: regionMin)
-        #expect(hidden.hiddenCovers == [(869 + MenuBarItemHider.overflowCoverInset)...887])
-        #expect(MenuBarItemHider.overflowCoverInset <= 1, "more shows a sliver of the « glyph")
-        let revealed = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
-                                             controls: chevron, regionMin: regionMin,
-                                             revealed: [.hidden])
-        #expect(revealed.hiddenCovers.isEmpty)
-        // A « on the glyph (our chevron overflowed) is not beside the run — no cover.
-        let onGlyph = item("«", owner: "MenuBarAgent", x: 976, w: 18, overflow: true)
-        let overflowed = MenuBarItemHider.plan(items: [onGlyph], sections: [:], row: row,
-                                               controls: chevron, regionMin: regionMin)
-        #expect(overflowed.hiddenCovers.isEmpty)
-    }
-
-    @MainActor
-    @Test("the remembered « edge survives an app switch's cap reset and sizes the spacer in one pass")
-    func edgeSurvivesCapReset() {
-        var items: [MenuBarItem] = [item("«", owner: "MenuBarAgent", x: 876, w: 17, overflow: true)]
-        let (hider, writes) = makeHider(controls: { self.controls }, items: items)
-        hider.listItems = { items }
-        hider.reconcile()
-        #expect(hider.knownRegionEdge == 876)
-        // 950 − 876 − 22 = 52, straight away.
-        #expect(hider.assignedLengths[.hidden] == 52)
-        hider.resetCaps()
-        items = []
-        hider.reconcile()
-        #expect(hider.knownRegionEdge == 876, "no « in this listing changes nothing")
-        #expect(hider.assignedLengths[.hidden] == 52)
-        #expect(writes().count == 2)
     }
 
     // MARK: The boundary host — JR-Bar's own status item
@@ -449,16 +449,18 @@ extension MenuBarSpacerTests {
         utility.settings = { MenuBarSettings(enabled: true) }
         utility.host = host
         utility.hider.rowRect = { self.row }
-        utility.hider.regionMin = { 876 }
+        utility.hider.guessedFitEdge = { 902 }
+        utility.hider.edgeStore = MenuBarMemoryFitEdgeStore()
+        utility.hider.edgeKey = { "test" }
         utility.hider.shuttersSuppressed = true
         utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
         utility.installChevron()
         #expect(utility.chevron == nil, "the host stands in for the chevron")
         #expect(utility.alwaysHiddenControl != nil)
         utility.hider.reconcile()
-        // The icon's right edge is 1123: 1123 − 876 − 22 = 225 of length,
-        // less the 39-point icon = 186 of spacer.
-        #expect(host.spacers.last == 186)
+        // The icon's right edge is 1123: 1123 − 902 = 221 of length,
+        // less the 39-point icon = 182 of spacer.
+        #expect(host.spacers.last == 182)
         #expect(utility.lastPlan.hidden.map(\.id) == ["Left"])
         #expect(utility.lastPlan.shown.map(\.id) == ["Right"])
         #expect(host.hiddenCount == 1)
@@ -477,7 +479,7 @@ extension MenuBarSpacerTests {
         let plain = StatusItemController.folded(icon, spacer: 120, chevron: false)
         #expect(plain.size.width == 159)
         #expect(plain.isTemplate)
-        let hinted = StatusItemController.folded(icon, spacer: 120, chevron: true)
+        let hinted = StatusItemController.folded(icon, spacer: 120, chevron: true, hintTint: .white)
         #expect(hinted.size.width == 159)
         #expect(StatusItemController.clickIsOnSpacer(x: 30, spacer: 120))
         #expect(!StatusItemController.clickIsOnSpacer(x: 130, spacer: 120))
@@ -490,29 +492,11 @@ extension MenuBarSpacerTests {
                                         hiddenGlyph: 39)
         let items = [item("UnderIcon", x: 1090), item("Right", x: 1130)]
         let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                         controls: wide, regionMin: 876)
+                                         controls: wide, fitEdge: 902)
         #expect(plan.hidden.isEmpty, "an item overlapping the icon itself is not under a spacer")
-        #expect(plan.hiddenControlLength == 225)
+        #expect(plan.hiddenControlLength == 221)
         let collapsed = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                              controls: wide, regionMin: nil)
-        #expect(collapsed.hiddenControlLength == 39, "no region: the icon alone")
-    }
-
-    @Test("two items stacked on one spot are both parked, and the order is stable across listings")
-    func stackedItemsArePark() {
-        let items = [item("A", x: 855), item("B", x: 855), item("Up", x: 1130)]
-        let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
-                                         controls: MenuBarControlFrames(), regionMin: regionMin)
-        #expect(plan.hidden.map(\.id) == ["A", "B"])
-        #expect(plan.shown.map(\.id) == ["Up"])
-        let swapped = MenuBarItemHider.plan(items: items.reversed(), sections: [:], row: row,
-                                            controls: MenuBarControlFrames(), regionMin: regionMin)
-        #expect(swapped == plan, "listing order never changes the plan")
-        // Two items merely touching are not stacked.
-        let touching = [item("A", x: 855), item("B", x: 875)]
-        #expect(MenuBarItemHider.plan(items: touching, sections: [:], row: row,
-                                      controls: MenuBarControlFrames(), regionMin: regionMin)
-                .shown.map(\.id) == ["A", "B"])
+                                              controls: wide, fitEdge: nil)
+        #expect(collapsed.hiddenControlLength == 39, "no edge: the icon alone")
     }
 }
-

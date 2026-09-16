@@ -84,7 +84,7 @@ def test_power_actions_save_exact_setting_and_sync_current_mode__and_1_more(monk
 
     actions.toggleAgentKeepAwake_(_switch(False))
     assert target.settings.agent_keep_awake_enabled is False
-    assert target.settings.keep_display_awake is False
+    assert target.settings.keep_display_awake is True  # its own switch
     assert saved[-1] == target.settings
     assert target.sync_modes[-1] is AgentMode.WORKING
 
@@ -99,7 +99,7 @@ def test_power_actions_save_exact_setting_and_sync_current_mode__and_1_more(monk
     monkeypatch.undo()
     target = _Target.alloc().init()
     previous = target.settings
-    failed_switch = _switch(True)
+    failed_switch = _switch(False)
     target.settings_buttons = {"keep_display_awake": failed_switch}
 
     def fail_save(_settings) -> None:
@@ -110,11 +110,11 @@ def test_power_actions_save_exact_setting_and_sync_current_mode__and_1_more(monk
         target
     )
 
-    actions.toggleKeepDisplayAwake_(_switch(True))
+    actions.toggleKeepDisplayAwake_(_switch(False))
 
     assert target.settings is previous
     assert target.sync_modes == []
-    assert failed_switch.state() == 0
+    assert failed_switch.state() == 1  # back to the default: on
     assert target.messages[-1].startswith("Could not save display power setting:")
 
 
@@ -151,7 +151,7 @@ def test_power_pane_exposes_accessible_controls_and_retains_action_target() -> N
         == power_settings_pane.POWER_CHOICE_LABELS["display"]
     )
     assert buttons["agent_keep_awake_enabled"].state() == 1
-    assert buttons["keep_display_awake"].state() == 0
+    assert buttons["keep_display_awake"].state() == 1
 
 
 def test_settings_window_delegates_power_pane_and_shrinks(monkeypatch) -> None:

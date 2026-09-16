@@ -843,7 +843,9 @@ final class MenuBarUtility: Toy {
         guard let boundary = frames.hidden else { return nil }
         let row = MenuBarItemLister.menuBarRow()
         guard boundary.intersects(row) else { return nil }
-        let edge = hider.knownRegionEdge ?? MenuBarItemHider.currentRegionMin() ?? boundary.minX
+        // The blank stretch starts where the spacer may land, less the
+        // room the « takes — a gesture on the « is a gesture on the run.
+        let edge = (hider.fitEdge ?? boundary.minX) - 30
         let height = CGDisplayBounds(CGMainDisplayID()).height
         let minX = min(edge, boundary.minX)
         return NSRect(x: minX, y: height - row.maxY,

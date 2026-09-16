@@ -280,11 +280,13 @@ class AgentMonitorSettings:
     led_display: str = LED_DISPLAY_AGENT
     devices: tuple[DeviceDisplaySetting, ...] = ()
     virtual_status_device_enabled: bool = False
-    # Ordinary agent work may prevent automatic system sleep without
-    # asserting display wake. These are separate owner choices so a long
-    # background task does not need to pin the screen on.
+    # Agent work keeps the Mac awake — and, by default, the display too:
+    # a screen that sleeps locks, and a locked Mac reads as "it went to
+    # sleep while my agents were running" however awake the CPU stayed.
+    # Both are the owner's to turn off (a long background task on a
+    # closed lid does not need the panel on).
     agent_keep_awake_enabled: bool = True
-    keep_display_awake: bool = False
+    keep_display_awake: bool = True
     closed_lid_awake_policy: str = CLOSED_LID_AWAKE_NEVER
     # How long (minutes) to keep holding the lid-closed awake state after
     # agent activity *looks* like it stopped, before actually letting the
@@ -1961,7 +1963,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         agent_keep_awake_enabled=_bool_setting(
             data.get("agent_keep_awake_enabled"), True
         ),
-        keep_display_awake=_bool_setting(data.get("keep_display_awake"), False),
+        keep_display_awake=_bool_setting(data.get("keep_display_awake"), True),
         closed_lid_awake_policy=_closed_lid_awake_policy(
             data.get("closed_lid_awake_policy"),
         ),

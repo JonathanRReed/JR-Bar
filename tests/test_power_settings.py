@@ -6,26 +6,28 @@ from pathlib import Path
 from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
 
-def test_power_hold_defaults_keep_system_working_but_allow_display_sleep__and_1_more() -> None:
-    # --- scenario: power_hold_defaults_keep_system_working_but_allow_display_sleep
+def test_power_hold_defaults_keep_system_and_display_awake__and_1_more() -> None:
+    # --- scenario: power_hold_defaults_keep_system_and_display_awake
+    # A screen that sleeps locks, and a locked Mac reads as "it slept
+    # while my agents ran" -- so the display hold is on by default too.
     settings = AgentMonitorSettings()
 
     assert settings.agent_keep_awake_enabled is True
-    assert settings.keep_display_awake is False
+    assert settings.keep_display_awake is True
     assert settings.keep_awake_on_battery is True
     assert settings.closed_lid_awake_policy == "never"
 
     # --- scenario: agent_and_display_choices_are_immutable_and_independent
     defaults = AgentMonitorSettings()
     no_agent_hold = defaults.with_agent_keep_awake_enabled(False)
-    display_hold = no_agent_hold.with_keep_display_awake(True)
+    display_hold = no_agent_hold.with_keep_display_awake(False)
 
     assert defaults.agent_keep_awake_enabled is True
-    assert defaults.keep_display_awake is False
+    assert defaults.keep_display_awake is True
     assert no_agent_hold.agent_keep_awake_enabled is False
-    assert no_agent_hold.keep_display_awake is False
+    assert no_agent_hold.keep_display_awake is True
     assert display_hold.agent_keep_awake_enabled is False
-    assert display_hold.keep_display_awake is True
+    assert display_hold.keep_display_awake is False
     assert display_hold.keep_awake_on_battery is True
     assert display_hold.closed_lid_awake_policy == "never"
 
@@ -65,7 +67,7 @@ def test_agent_and_display_choices_round_trip_independently__and_2_more(tmp_path
     reloaded = load_settings(target)
 
     assert reloaded.agent_keep_awake_enabled is True
-    assert reloaded.keep_display_awake is False
+    assert reloaded.keep_display_awake is True
 
     # --- scenario: ambiguous_power_choice_values_use_safe_defaults
     target = tmp_path / "settings.json"
@@ -78,7 +80,7 @@ def test_agent_and_display_choices_round_trip_independently__and_2_more(tmp_path
     reloaded = load_settings(target)
 
     assert reloaded.agent_keep_awake_enabled is True
-    assert reloaded.keep_display_awake is False
+    assert reloaded.keep_display_awake is True  # the default, not the garbage
 
 
 

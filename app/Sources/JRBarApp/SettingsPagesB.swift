@@ -440,8 +440,8 @@ struct NotificationsPage: View {
         }
 
         SettingGroup("Power") {
-            SettingToggle(store, "Keep Mac awake", subtitle: "While agents run; prevents system sleep, not display sleep.", path: "agent_keep_awake_enabled", default: true)
-            SettingToggle(store, "Keep display awake", path: "keep_display_awake")
+            SettingToggle(store, "Keep Mac awake", subtitle: "While agents run, the Mac never idles to sleep.", path: "agent_keep_awake_enabled", default: true)
+            SettingToggle(store, "Keep display awake", subtitle: "While agents run, the screen stays on too — so it never locks mid-run. Off lets the display sleep while the Mac stays up.", path: "keep_display_awake", default: true)
             SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
                 ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
             ], default: "never")
