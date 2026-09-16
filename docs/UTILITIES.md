@@ -63,8 +63,16 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > Revealing collapses the spacer and the run packs back where it was;
 > a click on the blank stretch, a hover on it, or a scroll over the
 > bar is the reveal, and the icon's right-click menu carries a "Hidden
-> Menu Bar Items" submenu. The always-hidden
-> control (`···`, seeded far left) does the same for the deeper run. A
+> Menu Bar Items" submenu. There is exactly one
+> status item of ours on purpose: a second one (the old always-hidden
+> control, `···`) swapped places with the boundary on every reflow —
+> a length write re-sorts the bar, and two of our keys straddled the
+> spacer's range — and each swap changed the spacer again, a
+> two-state dance at three beats a second. "Always hidden" is an
+> override (a cover where the item sits) rather than a second
+> boundary. Length writes are damped: a length goes out only when two
+> passes in a row want it and a second has passed since the last
+> write, except after a reveal or a hide, which write on the spot. A
 > control found parked (its spacer did not fit under a wide app menu)
 > lowers a learned cap and collapses; caps reset on screen changes and
 > when the frontmost app changes. A separate chevron item remains only

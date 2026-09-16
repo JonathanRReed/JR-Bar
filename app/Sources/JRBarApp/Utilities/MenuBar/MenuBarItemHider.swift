@@ -2,16 +2,21 @@ import AppKit
 import JRBarCore
 import OSLog
 
-/// Where the utility's controls sit right now, in Quartz coordinates.
+/// Where the utility's control sits right now, in Quartz coordinates.
 /// A control that is not installed — or that macOS has parked off the
 /// row — reports nil, and the plan treats its boundary as unknown.
+///
+/// One control, on purpose. A second status item of ours (the old
+/// always-hidden control) traded places with the boundary every time
+/// the spacer changed — a length write re-sorts the bar, and two of
+/// our keys straddled the spacer's range — and each swap changed the
+/// spacer again: a two-state dance at three beats a second, verified
+/// live. The always-hidden section is override-only now.
 struct MenuBarControlFrames: Equatable, Sendable {
     /// The boundary's live frame: the hidden run's edge and spacer —
     /// JR-Bar's own status item when it hosts the run, else the
     /// separate chevron.
     var hidden: CGRect?
-    /// The always-hidden control's live frame.
-    var alwaysHidden: CGRect?
     /// The boundary's glyph share — the icon's own width when JR-Bar's
     /// item hosts the run (a strip of session dots is wider than a
     /// chevron), `glyphLength` for the separate chevron.
@@ -23,25 +28,21 @@ struct MenuBarControlFrames: Equatable, Sendable {
     /// row.
     nonisolated static let glyphLength: CGFloat = 24
 
-    init(hidden: CGRect? = nil, alwaysHidden: CGRect? = nil,
-         hiddenGlyph: CGFloat = MenuBarControlFrames.glyphLength) {
+    init(hidden: CGRect? = nil, hiddenGlyph: CGFloat = MenuBarControlFrames.glyphLength) {
         self.hidden = hidden
-        self.alwaysHidden = alwaysHidden
         self.hiddenGlyph = hiddenGlyph
     }
 }
 
-/// The longest spacer each control may claim before macOS parks the
+/// The longest spacer the control may claim before macOS parks the
 /// control itself — learned live: a control found off the row while it
 /// should stand on it lowers its cap. Reset when the bar's geometry
 /// changes (a screen reconfigure, another app's menus taking the left).
 struct MenuBarSpacerCaps: Equatable, Sendable {
     var hidden: CGFloat = .infinity
-    var alwaysHidden: CGFloat = .infinity
 
-    init(hidden: CGFloat = .infinity, alwaysHidden: CGFloat = .infinity) {
+    init(hidden: CGFloat = .infinity) {
         self.hidden = hidden
-        self.alwaysHidden = alwaysHidden
     }
 }
 
@@ -93,8 +94,9 @@ struct MenuBarHidePlan: Equatable, Sendable {
     /// Items left of the boundary, items macOS has parked, and items
     /// covered in place by an explicit override.
     var hidden: [MenuBarItem] = []
-    /// Items left of the always-hidden control, or overridden into
-    /// the deeper section.
+    /// Items overridden into the deeper section — hidden even while the
+    /// hidden run is revealed. Override-only: there is no second
+    /// control to stand left of.
     var alwaysHidden: [MenuBarItem] = []
     /// The Quartz x-ranges the hidden shutter covers — only overrides
     /// need one: an item that sits right of the boundary but was
@@ -106,9 +108,6 @@ struct MenuBarHidePlan: Equatable, Sendable {
     /// The length the boundary should claim; nil when it is not on the
     /// row (leave it be).
     var hiddenControlLength: CGFloat?
-    /// The length the always-hidden control should claim; nil when it
-    /// is not on the row.
-    var alwaysHiddenControlLength: CGFloat?
     /// macOS's own « while it stands beside a hidden run — the Screen
     /// Bar's ear stops short of it. Quartz.
     var overflowControlFrame: CGRect?
@@ -116,11 +115,11 @@ struct MenuBarHidePlan: Equatable, Sendable {
 
 /// The hide machinery. Two mechanisms, one plan:
 ///
-///   * **Spacers** (the default, positional): each control grows a
-///     spacer that reaches from the *fit edge* to the control's glyph,
-///     so every item left of the control is packed off the row into
-///     macOS's own overflow. Revealing collapses the spacer and the
-///     items pack back where they were.
+///   * **Spacer** (the default, positional): the boundary grows a
+///     spacer that reaches from the *fit edge* to its glyph, so every
+///     item left of it is packed off the row into macOS's own
+///     overflow. Revealing collapses the spacer and the items pack
+///     back where they were.
 ///   * **Covers** (overrides only): an item the person assigned hidden
 ///     by hand while it sits right of the boundary is covered in place
 ///     by a shutter panel — the only way to hide an item without
@@ -200,6 +199,16 @@ final class MenuBarItemHider {
     /// The listing generation at the last length write — frames from
     /// that generation predate the reflow the write caused.
     private var lengthWrittenAtGeneration = -1
+    /// The length the last pass wanted but did not write yet — a write
+    /// needs two passes in a row to agree (see `request`).
+    private(set) var pendingLength: CGFloat?
+    /// When the last length went out; the next waits `writeCooldown`.
+    private var lastWriteAt: Date = .distantPast
+    /// A reveal or a hide writes on the very next pass — the person is
+    /// waiting on it. Set by `reveal`/`hide`, spent by the next write.
+    private var writeAtOnce = false
+    /// Test seam for the cooldown clock.
+    var now: @MainActor () -> Date = { Date() }
     /// The fit edge learned for this screen — nil until the first
     /// overflow moved it off the guess. Loaded from `edgeStore`.
     private(set) var learnedFitEdge: CGFloat?
@@ -223,6 +232,10 @@ final class MenuBarItemHider {
     /// The beat after a length change before the plan is re-read —
     /// the bar reflows asynchronously.
     nonisolated static let settleDelay: TimeInterval = 0.35
+    /// The least time between two length writes. A write reflows the
+    /// bar; frames read while it settles disagree with frames read at
+    /// rest, and acting on each one is what a dance is made of.
+    nonisolated static let writeCooldown: TimeInterval = 1.0
 
     /// Starts the reconcile cadence and the AX refresh loop. Safe to
     /// call twice.
@@ -305,9 +318,8 @@ final class MenuBarItemHider {
         revealed = []
         hiddenShutter.orderOut()
         alwaysHiddenShutter.orderOut()
-        for section in [MenuBarItemSection.hidden, .alwaysHidden] {
-            assign(section, length: MenuBarControlFrames.glyphLength)
-        }
+        pendingLength = nil
+        assign(.hidden, length: MenuBarControlFrames.glyphLength)
         lastPlan = MenuBarHidePlan()
         onPlan?(lastPlan)
     }
@@ -322,6 +334,8 @@ final class MenuBarItemHider {
     /// the lengths handed to the old items mean nothing to the new ones.
     func controlsReinstalled() {
         assignedLengths = [:]
+        pendingLength = nil
+        lastWriteAt = .distantPast
         resetCaps()
         scheduleSettle()
     }
@@ -350,6 +364,7 @@ final class MenuBarItemHider {
     /// pushes them off again.
     func reveal(_ sections: Set<MenuBarItemSection>) {
         revealed.formUnion(sections)
+        writeAtOnce = true
         reconcile()
         scheduleSettle()
     }
@@ -358,6 +373,7 @@ final class MenuBarItemHider {
     func hide() {
         guard !revealed.isEmpty else { return }
         revealed = []
+        writeAtOnce = true
         reconcile()
         scheduleSettle()
     }
@@ -379,13 +395,6 @@ final class MenuBarItemHider {
         let items = listItems()
         learnCaps(controls: controls, row: row)
         learnOverflow(controls: controls, row: row, items: items)
-        // A pushed always-hidden control keeps only its glyph, so when
-        // the boundary collapses it comes back small and grows from a
-        // measured slot rather than returning oversized and parking.
-        if Self.alwaysHiddenPushed(controls: controls, row: row),
-           (assignedLengths[.alwaysHidden] ?? 0) > MenuBarControlFrames.glyphLength + 1 {
-            assign(.alwaysHidden, length: MenuBarControlFrames.glyphLength)
-        }
         let edge = fitEdge
         let plan = Self.plan(items: items,
                              sections: settings().sections, row: row,
@@ -394,15 +403,14 @@ final class MenuBarItemHider {
                              protectedFrames: protectedFrames())
         let changed = plan != lastPlan
         lastPlan = plan
-        if let length = plan.hiddenControlLength { assign(.hidden, length: length) }
-        if let length = plan.alwaysHiddenControlLength { assign(.alwaysHidden, length: length) }
+        if let length = plan.hiddenControlLength { request(length) }
         updateShutters(plan: plan, rowHeight: row.height)
         onPlan?(plan)
         if changed {
             let describe = { (r: CGRect?) -> String in
                 r.map { String(format: "%.0f–%.0f@%.0f", $0.minX, $0.maxX, $0.minY) } ?? "none"
             }
-            Self.log.notice("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); ah \(describe(controls.alwaysHidden), privacy: .public) → \(plan.alwaysHiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(\.id).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(\.id).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(\.id).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
+            Self.log.notice("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(\.id).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(\.id).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(\.id).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
         }
     }
 
@@ -413,25 +421,12 @@ final class MenuBarItemHider {
     private func learnCaps(controls: MenuBarControlFrames, row: CGRect) {
         let glyph = controls.hiddenGlyph
         let hiddenOnRow = controls.hidden.map { $0.intersects(row) } ?? true
-        let hiddenExpanded = (assignedLengths[.hidden] ?? 0) > glyph + 1
         if controls.hidden != nil, !hiddenOnRow {
             let asked = assignedLengths[.hidden] ?? glyph
             if asked > glyph + 1 {
                 caps.hidden = max(glyph, asked - Self.capStep)
                 Self.log.notice("boundary parked at \(asked, privacy: .public)pt; cap now \(self.caps.hidden, privacy: .public)")
                 assign(.hidden, length: glyph)
-            }
-        }
-        // The always-hidden control is expected on the row only while
-        // the boundary is collapsed — an expanded boundary pushes it off
-        // by design.
-        let ahOnRow = controls.alwaysHidden.map { $0.intersects(row) } ?? true
-        if controls.alwaysHidden != nil, !ahOnRow, !hiddenExpanded {
-            let asked = assignedLengths[.alwaysHidden] ?? MenuBarControlFrames.glyphLength
-            if asked > MenuBarControlFrames.glyphLength + 1 {
-                caps.alwaysHidden = max(MenuBarControlFrames.glyphLength, asked - Self.capStep)
-                Self.log.notice("always-hidden control parked at \(asked, privacy: .public)pt; cap now \(self.caps.alwaysHidden, privacy: .public)")
-                assign(.alwaysHidden, length: MenuBarControlFrames.glyphLength)
             }
         }
     }
@@ -467,16 +462,48 @@ final class MenuBarItemHider {
         let next = max(current, placedEdge) + Self.overflowStep
         learnedFitEdge = next
         edgeStore.save(next, key: edgeKey())
+        // One step per listing, and the shorter spacer goes out on this
+        // pass: an overflowed boundary is not drawn at all.
+        lengthWrittenAtGeneration = listingGeneration()
+        writeAtOnce = true
         Self.log.notice("boundary overflowed at \(asked, privacy: .public)pt (the « sits on it); fit edge now \(next, privacy: .public)")
+    }
+
+    /// The plan's length for the boundary, damped: it goes out when two
+    /// passes in a row want it and `writeCooldown` has passed since the
+    /// last write — except after a reveal or a hide, which write on the
+    /// spot because a person is waiting on them. A length that flips
+    /// between passes never goes out at all: that is the reflow being
+    /// read mid-way, and writing it would keep the bar reflowing.
+    private func request(_ length: CGFloat) {
+        let rounded = length.rounded()
+        if let current = assignedLengths[.hidden], abs(current - rounded) < 1 {
+            pendingLength = nil
+            return
+        }
+        if writeAtOnce {
+            pendingLength = nil
+            assign(.hidden, length: rounded)
+            return
+        }
+        guard now().timeIntervalSince(lastWriteAt) >= Self.writeCooldown else { return }
+        if let pending = pendingLength, abs(pending - rounded) < 1 {
+            pendingLength = nil
+            assign(.hidden, length: rounded)
+        } else {
+            pendingLength = rounded
+        }
     }
 
     /// Hand a length to the utility only when it changes — a status
     /// item's length write reflows the whole bar.
     private func assign(_ section: MenuBarItemSection, length: CGFloat) {
         let rounded = length.rounded()
+        writeAtOnce = false
         if let current = assignedLengths[section], abs(current - rounded) < 1 { return }
         assignedLengths[section] = rounded
         lengthWrittenAtGeneration = listingGeneration()
+        lastWriteAt = now()
         setControlLength(section, rounded)
         scheduleSettle()
     }
@@ -517,15 +544,6 @@ final class MenuBarItemHider {
         return "\(Int(screen.frame.width))x\(Int(screen.frame.height))"
     }
 
-    /// True while the always-hidden control sits under the boundary's
-    /// expanded spacer: macOS packed it off the row and reports its
-    /// frame stacked inside the boundary's.
-    nonisolated static func alwaysHiddenPushed(controls: MenuBarControlFrames, row: CGRect) -> Bool {
-        guard let hidden = controls.hidden, let ah = controls.alwaysHidden,
-              hidden.intersects(row), ah.intersects(row) else { return false }
-        return ah.intersection(hidden).width > 4
-    }
-
     // MARK: Plan (pure)
 
     /// The spacer a control on the row should claim so that every item
@@ -539,18 +557,18 @@ final class MenuBarItemHider {
     }
 
     /// The layout for a candidate list: an item's section is its
-    /// position relative to the controls — left of the always-hidden
-    /// control is always-hidden, left of the boundary's glyph is
-    /// hidden, the rest shown — unless an explicit override assigns it
-    /// deeper, in which case it is covered where it sits. Protected
+    /// position relative to the boundary — left of its glyph is hidden,
+    /// the rest shown — unless an explicit override assigns it deeper
+    /// (hidden, or always-hidden), in which case it is covered where
+    /// it sits. Protected
     /// owners always report shown. Items macOS has parked off the row,
     /// or stacked under its overflow control, are hidden regardless —
     /// the Item Bar reaches them through `AXPress`.
     ///
-    /// The control lengths come out of the same pass: a control on the
-    /// row claims `spacerLength` unless its section is revealed, in
-    /// which case it collapses to the glyph. A control off the row
-    /// reports nil — nothing to do until it is back.
+    /// The boundary's length comes out of the same pass: on the row it
+    /// claims `spacerLength` unless the run is revealed, in which case
+    /// it collapses to the glyph. Off the row it reports nil — nothing
+    /// to do until it is back.
     nonisolated static func plan(items: [MenuBarItem],
                                  sections: [String: MenuBarItemSection],
                                  row: CGRect,
@@ -567,15 +585,9 @@ final class MenuBarItemHider {
             $0.bounds.minX != $1.bounds.minX ? $0.bounds.minX < $1.bounds.minX : $0.id < $1.id
         }
         let hiddenControl = controls.hidden.flatMap { $0.intersects(row) ? $0 : nil }
-        // A control the boundary's spacer pushed off reports a frame
-        // stacked inside the boundary's own — not a boundary, and not a
-        // slot to size a spacer from.
-        let ahControl = alwaysHiddenPushed(controls: controls, row: row)
-            ? nil : controls.alwaysHidden.flatMap { $0.intersects(row) ? $0 : nil }
         // The boundary is the glyph's left edge: an item under the
-        // spacer part of a control has been pushed, not shown.
+        // spacer part of the control has been pushed, not shown.
         let hiddenBoundary = hiddenControl.map { $0.maxX - controls.hiddenGlyph }
-        let ahBoundary = ahControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
         let overflowFrames = sorted.filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
             .map(\.bounds)
 
@@ -594,9 +606,7 @@ final class MenuBarItemHider {
                 continue
             }
             let positional: MenuBarItemSection
-            if let ahBoundary, item.bounds.minX < ahBoundary {
-                positional = .alwaysHidden
-            } else if let hiddenBoundary, item.bounds.minX < hiddenBoundary {
+            if let hiddenBoundary, item.bounds.minX < hiddenBoundary {
                 positional = .hidden
             } else {
                 positional = .shown
@@ -641,7 +651,7 @@ final class MenuBarItemHider {
             plan.overflowControlFrame = overflow
         }
 
-        // Spacer lengths.
+        // The spacer length.
         if let hiddenControl {
             if revealed.contains(.hidden) || fitEdge == nil {
                 plan.hiddenControlLength = controls.hiddenGlyph
@@ -649,14 +659,6 @@ final class MenuBarItemHider {
                 plan.hiddenControlLength = spacerLength(
                     controlFrame: hiddenControl, fitEdge: fitEdge, cap: caps.hidden,
                     glyph: controls.hiddenGlyph)
-            }
-        }
-        if let ahControl {
-            if revealed.contains(.alwaysHidden) || fitEdge == nil {
-                plan.alwaysHiddenControlLength = MenuBarControlFrames.glyphLength
-            } else if let fitEdge {
-                plan.alwaysHiddenControlLength = spacerLength(
-                    controlFrame: ahControl, fitEdge: fitEdge, cap: caps.alwaysHidden)
             }
         }
         return plan

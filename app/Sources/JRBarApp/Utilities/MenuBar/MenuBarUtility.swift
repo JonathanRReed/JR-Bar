@@ -3,19 +3,19 @@ import JRBarCore
 import Observation
 import SwiftUI
 
-/// The Menu Bar utility (docs/UTILITIES.md): owns the hider's spacers
+/// The Menu Bar utility (docs/UTILITIES.md): owns the hider's spacer
 /// and override covers, the reveal gestures, the glass Item Bar, and
-/// the controls — the boundary (JR-Bar's own status item, hosting the
-/// hidden run's spacer) and the always-hidden control that does the
-/// same for the deeper run and opens the Item Bar. `UtilitiesStore`
-/// keeps it; the page's card reads it as a `Toy`, so one shell serves
-/// every utility.
+/// the boundary — JR-Bar's own status item, hosting the hidden run's
+/// spacer. `UtilitiesStore` keeps it; the page's card reads it as a
+/// `Toy`, so one shell serves every utility.
 ///
-/// The model is Bartender's: items left of the JR-Bar icon are hidden,
-/// items left of the always-hidden control are always-hidden, and the
-/// person ⌘-drags items across the controls to choose. Hiding is the
-/// control growing a spacer that packs those items off the row into
-/// macOS's own overflow; revealing collapses it. The object itself is
+/// The model is Bartender's: items left of the JR-Bar icon are hidden
+/// and the person ⌘-drags items across the icon to choose; "always
+/// hidden" is an override (a cover where the item sits) rather than a
+/// second boundary — a second status item of ours swapped places with
+/// the first on every reflow. Hiding is the boundary growing a spacer
+/// that packs those items off the row into macOS's own overflow;
+/// revealing collapses it. The object itself is
 /// a façade — the rules live in the pieces it wires: `MenuBarItemHider`
 /// measures and plans, `MenuBarReveal` decides what counts as a
 /// gesture, and the boundary's click toggles the run by hand. Nothing
@@ -88,9 +88,6 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private let chevronActions = MenuBarChevronActions()
     /// Readable for the teardown test; only `install`/`removeChevron` write it.
     @ObservationIgnored private(set) var chevron: NSStatusItem?
-    /// The always-hidden control — a narrower item whose click opens
-    /// the Item Bar, the deeper run's only surface.
-    @ObservationIgnored private(set) var alwaysHiddenControl: NSStatusItem?
     /// The boundary's host — the app's own status item. Everything
     /// left of it is the hidden run; it grows the spacer, draws the
     /// hint, takes the reveal click and carries the hidden-items
@@ -111,12 +108,11 @@ final class MenuBarUtility: Toy {
             self.refreshChevron()
             self.publishEarAvoidance(plan)
         }
-        // Our own controls are never covered — their live frames split
-        // cover runs even on the no-AX path where they cannot list.
+        // Our own control is never covered — its live frame splits
+        // cover runs even on the no-AX path where it cannot list.
         hider.protectedFrames = { [weak self] in
-            guard let self else { return [] }
-            let frames = self.controlFrames()
-            return [frames.hidden, frames.alwaysHidden].compactMap { $0 }
+            guard let self, let frame = self.controlFrames().hidden else { return [] }
+            return [frame]
         }
         hider.controlFrames = { [weak self] in
             self?.controlFrames() ?? MenuBarControlFrames()
@@ -148,7 +144,6 @@ final class MenuBarUtility: Toy {
 
     isolated deinit {
         if let chevron { NSStatusBar.system.removeStatusItem(chevron) }
-        if let alwaysHiddenControl { NSStatusBar.system.removeStatusItem(alwaysHiddenControl) }
     }
 
     // MARK: Toy
@@ -580,7 +575,7 @@ final class MenuBarUtility: Toy {
         up?.post(tap: .cghidEventTap)
     }
 
-    // MARK: Controls (the boundary + always-hidden)
+    // MARK: The boundary
 
     /// Seed our own items' preferred positions — the system stores them
     /// in our defaults under this key, so the first run lands the
@@ -594,18 +589,20 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// The boundary and the always-hidden control. With a host — the
-    /// app's own status item — the boundary is the host and no chevron
-    /// item exists; without one (tests, a build that never wired it)
-    /// the separate chevron stands in. Safe to call any time — each
-    /// half guards on its own reference.
+    /// The boundary. With a host — the app's own status item — the
+    /// boundary is the host and no chevron item exists; without one
+    /// (tests, a build that never wired it) the separate chevron stands
+    /// in. Safe to call any time — it guards on its own reference.
     func installChevron() {
         if host == nil {
             installChevronItem()
         } else if chevron != nil {
             removeChevronItem()
         }
-        installAlwaysHiddenControl()
+        // The always-hidden control of earlier builds left its slot in
+        // our defaults; a stale key is harmless but says nothing true.
+        UserDefaults.standard.removeObject(
+            forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
     }
 
     /// The fallback chevron: a status item of its own.
@@ -626,26 +623,6 @@ final class MenuBarUtility: Toy {
         chevron = item
     }
 
-    /// The deeper run's control: everything left of it stays hidden
-    /// even while the hidden run is revealed. Seeded far left so a
-    /// fresh install always-hides nothing until the person drags an
-    /// item across it. Its click opens the Item Bar.
-    private func installAlwaysHiddenControl() {
-        guard alwaysHiddenControl == nil else { return }
-        Self.seedPreferredPosition(700, autosaveName: "com.jonathanreed.jrbar.menubar-ah-control")
-        let deeper = NSStatusBar.system.statusItem(withLength: MenuBarControlFrames.glyphLength)
-        deeper.autosaveName = "com.jonathanreed.jrbar.menubar-ah-control"
-        if let button = deeper.button {
-            Self.style(button, symbol: "ellipsis", length: MenuBarControlFrames.glyphLength,
-                       description: "JR-Bar always-hidden items")
-            button.toolTip = "JR-Bar — items left of this stay hidden even when the rest are revealed. Click for the Item Bar."
-            button.target = chevronActions
-            button.action = #selector(MenuBarChevronActions.alwaysHiddenClicked(_:))
-            button.sendAction(on: [.leftMouseUp])
-        }
-        alwaysHiddenControl = deeper
-    }
-
     private func removeChevronItem() {
         guard let chevron else { return }
         chevron.button?.target = nil
@@ -654,21 +631,12 @@ final class MenuBarUtility: Toy {
         self.chevron = nil
     }
 
-    private func removeAlwaysHiddenControl() {
-        guard let alwaysHiddenControl else { return }
-        alwaysHiddenControl.button?.target = nil
-        alwaysHiddenControl.button?.action = nil
-        NSStatusBar.system.removeStatusItem(alwaysHiddenControl)
-        self.alwaysHiddenControl = nil
-    }
-
     /// The whole teardown: off the bar, target/action dropped, the
-    /// references nil, the host's spacer folded — a disable can never
+    /// reference nil, the host's spacer folded — a disable can never
     /// leave a dead control parked and a re-enable never stacks a
-    /// second one (the installs guard on the references).
+    /// second one (the install guards on the reference).
     func removeChevron() {
         removeChevronItem()
-        removeAlwaysHiddenControl()
         host?.setBoundarySpacer(0)
         host?.hiddenCount = 0
         host?.hiddenRevealed = false
@@ -684,12 +652,6 @@ final class MenuBarUtility: Toy {
         } else {
             toggleHiddenSection()
         }
-    }
-
-    /// The always-hidden control's click: the Item Bar is the deeper
-    /// run's only surface.
-    fileprivate func alwaysHiddenControlClicked() {
-        bar.toggle()
     }
 
     /// The host's blank stretch was clicked: the hidden run toggles.
@@ -803,9 +765,9 @@ final class MenuBarUtility: Toy {
 
     /// The hider's length write. For the hidden run the host takes
     /// everything past its own glyph as spacer (a length at or under
-    /// the glyph folds it); the fallback chevron and the always-hidden
-    /// control take the whole length and redraw their glyph flush
-    /// right so the spacer part reads as empty bar.
+    /// the glyph folds it); the fallback chevron takes the whole length
+    /// and redraws its glyph flush right so the spacer part reads as
+    /// empty bar.
     private func setControlLength(_ section: MenuBarItemSection, length: CGFloat) {
         switch section {
         case .hidden:
@@ -817,23 +779,16 @@ final class MenuBarUtility: Toy {
             if abs(chevron.length - length) >= 1 { chevron.length = length }
             Self.style(button, symbol: Self.chevronSymbol(revealed: hider.revealed.contains(.hidden)),
                        length: length, description: "JR-Bar hidden items")
-        case .alwaysHidden:
-            guard let alwaysHiddenControl, let button = alwaysHiddenControl.button else { return }
-            if abs(alwaysHiddenControl.length - length) >= 1 { alwaysHiddenControl.length = length }
-            Self.style(button, symbol: "ellipsis", length: length,
-                       description: "JR-Bar always-hidden items")
-        case .shown:
+        case .alwaysHidden, .shown:
             return
         }
     }
 
-    /// The live control frames for the hider: the host's item (or the
-    /// fallback chevron) and the always-hidden control, with the
-    /// boundary's glyph share.
+    /// The live control frame for the hider: the host's item (or the
+    /// fallback chevron), with the boundary's glyph share.
     private func controlFrames() -> MenuBarControlFrames {
         MenuBarControlFrames(
             hidden: host?.boundaryFrame ?? Self.quartzFrame(of: chevron),
-            alwaysHidden: Self.quartzFrame(of: alwaysHiddenControl),
             hiddenGlyph: host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength)
     }
 
@@ -1019,10 +974,6 @@ private final class MenuBarChevronActions: NSObject {
 
     @objc func clicked(_ sender: Any?) {
         utility?.chevronClicked()
-    }
-
-    @objc func alwaysHiddenClicked(_ sender: Any?) {
-        utility?.alwaysHiddenControlClicked()
     }
 
     @objc func menuToggleHidden(_ sender: NSMenuItem) {

@@ -205,7 +205,7 @@ struct MenuBarUtilityControls: View {
     private func placement(of item: MenuBarItem) -> String {
         let override = utility.section(for: item.id)
         if utility.lastPlan.alwaysHidden.contains(item) {
-            return override == .alwaysHidden ? "covered · always" : "always hidden"
+            return "covered · always"
         }
         if utility.lastPlan.hidden.contains(item) {
             if override == .hidden { return "covered" }

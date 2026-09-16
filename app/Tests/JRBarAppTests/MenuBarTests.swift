@@ -611,22 +611,19 @@ struct MenuBarTests {
     }
 
     @MainActor
-    @Test("the controls install once per run and stop tears them all the way down")
+    @Test("the control installs once per run and stop tears it all the way down")
     func chevronLifecycle() {
         let utility = MenuBarUtility()
         utility.installChevron()
         let first = utility.chevron
         #expect(first != nil)
-        #expect(utility.alwaysHiddenControl != nil)
         utility.installChevron()
         #expect(utility.chevron === first, "a second install must not stack a status item")
         utility.removeChevron()
         #expect(utility.chevron == nil)
-        #expect(utility.alwaysHiddenControl == nil)
-        // disable → enable leaves exactly one of each; disable again drops them.
+        // disable → enable leaves exactly one; disable again drops it.
         utility.installChevron()
         #expect(utility.chevron != nil)
-        #expect(utility.alwaysHiddenControl != nil)
         utility.removeChevron()
         #expect(utility.chevron == nil)
         // stop on a parked utility is a no-op.
