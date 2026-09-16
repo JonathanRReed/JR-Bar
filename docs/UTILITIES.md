@@ -48,16 +48,22 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > overflow, with no holes. So **JR-Bar's own status item is Bartender's
 > separator**: items left of it are hidden, and hiding is the item's
 > own `length` growing a blank spacer left of its icon
-> (`StatusItemController.boundarySpacer`) that reaches `spacerMargin`
-> right of the region's real left edge — the left edge of macOS's own
-> `«` overflow control, ~28 pt right of the notch, remembered once seen
-> — which packs the hidden run off the row. macOS draws a status item
-> only when it fits in the visible run, so the spacer leaves exactly
-> the `«`'s room (narrower than any item) and the `«` itself wears a
-> cover while the run is hidden. Revealing collapses the spacer and the
-> run packs back where it was; a click on the blank stretch, a hover on
-> it, or a scroll over the bar is the reveal, and the icon's right-click
-> menu carries a "Hidden Menu Bar Items" submenu. The always-hidden
+> (`StatusItemController.boundarySpacer`) that reaches the **fit edge**
+> — the screen x where a spacer's left edge may land and still be
+> drawn (macOS draws a status item only when it fits in the visible
+> run; one that reaches too far is overflowed with its glyph and hides
+> nothing visibly). The edge is a property of the screen: it starts
+> `fitInset` (54 pt, measured) right of the notch's edge, moves right by
+> a step only when macOS's own `«` lands on the icon's glyph — the
+> proof of an overflowed boundary — on a listing taken after the
+> reflow, is never moved left on its own, and is remembered per screen
+> size in `UserDefaults`. The `«` itself stays visible beside the run
+> (it draws above any panel of ours; it says "more here", which is
+> true) and the Screen Bar's right ear narrows to stop short of it.
+> Revealing collapses the spacer and the run packs back where it was;
+> a click on the blank stretch, a hover on it, or a scroll over the
+> bar is the reveal, and the icon's right-click menu carries a "Hidden
+> Menu Bar Items" submenu. The always-hidden
 > control (`···`, seeded far left) does the same for the deeper run. A
 > control found parked (its spacer did not fit under a wide app menu)
 > lowers a learned cap and collapses; caps reset on screen changes and

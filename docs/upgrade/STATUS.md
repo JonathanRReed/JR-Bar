@@ -1219,3 +1219,42 @@ LED strip, hinge), captures + checklist as the verification.
   tests green; Ruff clean; 0.9.8 packaged, Developer ID signed,
   installed.
 
+## Daily-driver pass, evening — the icon is the boundary — LANDED
+
+Owner: "the menu bar still isn't working. None of it feels right … make
+this a finished, good product" and "the computer should not go to sleep
+if an agent is running."
+
+- With the display awake the bar was photographed at every step. The
+  separate chevron item hid one item by default (its slot was macOS's
+  choice), so JR-Bar's own status item is the boundary now:
+  `StatusItemController` hosts `boundarySpacer`, folds the icon to the
+  spacer's right end with a `‹` hint, takes the reveal click on the
+  blank part, carries a "Hidden Menu Bar Items" submenu, and says in
+  its tooltip how many items are tucked away.
+- Three sizing models were tried live and the survivors are: a *fit
+  edge* per screen (54 pt right of the notch, moved right only on the
+  «'s proof of overflow, remembered in UserDefaults); no learning of
+  the edge from the «'s position (a transient reflow collapsed the
+  spacer to zero that way); no "stacked frames are parked" rule (stale
+  third-party AX frames overlap while both are drawn).
+- macOS's « draws above any panel of ours — a cover under it hides
+  nothing — so it stays, and the Screen Bar's right ear narrows to
+  stop short of it (19 pt, ring intact).
+- The hover/click hit test excludes our own item's frame (the spacer
+  is the zone), the reveal gestures are confined to the blank stretch,
+  and the settings card was rebuilt: how it works, what is hidden now,
+  the reveal gestures, then Overrides and Advanced.
+- Dock: the list has no subrole on macOS 26; the watcher keys on the
+  role, refreshes fast near the auto-hidden edge, and logs its gates.
+- Power: `keep_display_awake` defaults on; the daemon confirmed
+  `PreventUserIdleDisplaySleep` held the moment it was set.
+- Verified by eye (unlocked): cmux, ChatGPT, Tailscale and Creative
+  Cloud gone; ring · « · blank · ‹ icon · Passwords · Wi-Fi · battery ·
+  weather · clock; the spacer settled at 220 pt in one pass, no
+  corrections; stable across a minute of listings.
+- Not verified by eye: the hover/click reveal cycle and a Dock preview
+  — both need a hand on the pointer.
+- Verified: 937 Swift tests, Python power suites, fast gate, Ruff; the
+  Mac runs the 19:49 build.
+
