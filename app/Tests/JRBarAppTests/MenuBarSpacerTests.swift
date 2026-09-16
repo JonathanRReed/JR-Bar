@@ -351,9 +351,13 @@ struct MenuBarSpacerTests {
         #expect(hider.learnedFitEdge == nil, "stale frames never move the edge")
         generation += 1
         hider.reconcile()
-        // The spacer was placed at 1024 − 122 = 902; the edge steps
-        // right of that, and the shorter spacer goes out on the spot —
-        // an overflowed boundary is not drawn.
+        hider.reconcile()
+        #expect(hider.learnedFitEdge == nil, "one fresh listing can be the launch handoff — not proof")
+        generation += 1
+        hider.reconcile()
+        // Two fresh listings agree. The spacer was placed at 1024 − 122
+        // = 902; the edge steps right of that, and the shorter spacer
+        // goes out on the spot — an overflowed boundary is not drawn.
         #expect(hider.learnedFitEdge == 902 + MenuBarItemHider.overflowStep)
         #expect(store.edges["1512x982"] == 910)
         #expect(hider.assignedLengths[.hidden] == 114)
@@ -361,11 +365,16 @@ struct MenuBarSpacerTests {
         hider.reconcile()
         #expect(hider.learnedFitEdge == 910)
         // The « moved left of the glyph: the edge stays where it is —
-        // it is never moved back left on its own.
+        // it is never moved back left on its own — and a lone proof
+        // after that starts the count over.
         generation += 1
         items = [item("«", owner: "MenuBarAgent", x: 880, w: 17, overflow: true)]
         hider.reconcile()
         #expect(hider.learnedFitEdge == 910)
+        generation += 1
+        items = [item("«", owner: "MenuBarAgent", x: 1005, w: 17, overflow: true)]
+        hider.reconcile()
+        #expect(hider.learnedFitEdge == 910, "a transient after a clean listing is one, not two")
         hider.forgetFitEdge()
         #expect(hider.learnedFitEdge == nil)
         #expect(store.edges["1512x982"] == nil)

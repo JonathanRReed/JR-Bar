@@ -199,6 +199,13 @@ final class MenuBarItemHider {
     /// The listing generation at the last length write — frames from
     /// that generation predate the reflow the write caused.
     private var lengthWrittenAtGeneration = -1
+    /// Fresh listings in a row that showed the « on our glyph. A lesson
+    /// needs two: one listing's proof can be the handoff at launch (the
+    /// old instance's item still on the bar, so the new one's spacer
+    /// briefly did not fit) or a reflow read half-way — both moved the
+    /// edge right for nothing, and the edge never comes back on its own.
+    private var overflowStreak = 0
+    private var overflowSeenAtGeneration = -1
     /// The length the last pass wanted but did not write yet — a write
     /// needs two passes in a row to agree (see `request`).
     private(set) var pendingLength: CGFloat?
@@ -446,17 +453,26 @@ final class MenuBarItemHider {
 
     /// The proof of an overflowed boundary moves the fit edge right —
     /// past the left edge the spacer was placed at — and remembers it
-    /// for this screen. Only on a listing taken after the last length
-    /// write: earlier frames predate the reflow, and acting on them
-    /// moved the edge three times for one cause.
+    /// for this screen. Only on listings taken after the last length
+    /// write (earlier frames predate the reflow), and only when two
+    /// fresh listings in a row agree (one can be a transient).
     private func learnOverflow(controls: MenuBarControlFrames, row: CGRect, items: [MenuBarItem]) {
-        guard listingGeneration() > lengthWrittenAtGeneration else { return }
+        let generation = listingGeneration()
+        guard generation > lengthWrittenAtGeneration else { return }
         guard let hidden = controls.hidden, hidden.intersects(row),
               !revealed.contains(.hidden),
               let asked = assignedLengths[.hidden],
-              asked > controls.hiddenGlyph + 1,
-              Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
-                                     glyph: controls.hiddenGlyph) else { return }
+              asked > controls.hiddenGlyph + 1 else { return }
+        guard Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
+                                     glyph: controls.hiddenGlyph) else {
+            overflowStreak = 0
+            return
+        }
+        guard generation != overflowSeenAtGeneration else { return }
+        overflowSeenAtGeneration = generation
+        overflowStreak += 1
+        guard overflowStreak >= 2 else { return }
+        overflowStreak = 0
         let placedEdge = hidden.maxX - asked
         let current = fitEdge ?? placedEdge
         let next = max(current, placedEdge) + Self.overflowStep

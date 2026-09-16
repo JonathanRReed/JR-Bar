@@ -589,9 +589,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let isFirstLaunch = !appState.loginItemRegistered
         if appState.bundledHooksInstalledFor != stamp {
             core.appendLocalLog(level: "supervisor", "first launch of \(stamp): installing provider hooks for \(bundled.hookShim)")
-            DispatchQueue.global(qos: .utility).async {
+            DispatchQueue.global(qos: .utility).async { [weak self, weak core] in
                 let result = bundled.run(["agent-monitor", "install", "all"])
-                Task { @MainActor [weak self, weak core] in
+                Task { @MainActor in
                     for line in result.output.split(separator: "\n") where !line.isEmpty {
                         core?.appendLocalLog(level: "hooks", String(line))
                     }
