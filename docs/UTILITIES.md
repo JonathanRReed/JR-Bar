@@ -47,6 +47,19 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > item inserted mid-row stays and pushes everything left of it into that
 > overflow, with no holes. So **JR-Bar's own status item is Bartender's
 > separator**: items left of it are hidden, and hiding is the item's
+> **macOS 27 (this Mac): the concealer.** The menu bar is one surface
+> `MenuBarAgent` draws, and the utility drives the agent's own
+> assessment mode through the private `MenuBarClientCore` framework
+> (`MenuBarConcealer.swift`, facts in docs/PRIOR-ART.md): an allowlist
+> of running apps stays, the agent conceals the rest — no spacer, no
+> blank stretch, no «. Sections are per app (`concealedApps`), seeded
+> once from the spacer plan; reveal = invalidate, rehide = re-activate,
+> a new assertion goes up before the old comes down; clicks on the
+> agent's own clock/battery/Wi-Fi are held at an event tap, lifted for
+> and replayed. Everything below describes the **spacer engine**, the
+> fallback where the framework does not resolve.
+>
+> The spacer engine: JR-Bar's
 > own `length` growing a blank spacer left of its icon
 > (`StatusItemController.boundarySpacer`) that reaches the **fit edge**
 > — the screen x where a spacer's left edge may land and still be
