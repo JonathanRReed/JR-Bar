@@ -1374,3 +1374,39 @@ past it"; "the dock is offset whenever it shows a preview".
 - Menu bar: unchanged this pass — the concealer waits on notarization
   (the `jrbar-notary` profile).
 
+
+## Parity pass — Dock hold-out, Notch hover, Agent HUD — LANDED
+
+Owner: "make the utilities as good as Bartender 7, DockDoor Pro,
+Alcove". Audit order: Dock → Notch → Agent HUD.
+
+- Dock: the preview panel now holds the Dock out through the private
+  `CoreDockSetAutoHideEnabled` (probed via dlopen, fail-soft, crash-safe
+  restore on close/exit — `DockHold.swift`); cards gained Fullscreen and
+  New Window verbs, the dead `onOpenApp` path for windowless apps is
+  replaced by a real Open, and tiles past the configurable compact-list
+  limit render a row-per-window list. 35 DockEnhance tests.
+- Notch: the hover tell lives on the Screen Bar ear chips (outward swell
+  only — the bare island could never show it); arrivals from the
+  menu-bar row wait the third-of-a-second floor while a direct island
+  hover keeps 0.12 s, and ear→island crossing keeps the original
+  deadline; hover-open suppresses while a fullscreen app is frontmost
+  (presentation options); an optional haptic tick fires on open
+  (`NotchSettings.hapticTick`, tolerant decode).
+- Agent HUD: smart suppression — an ask whose terminal pane is
+  frontmost keeps its banner but loses the burst, the pulse and the
+  chime (`AskingPane` mirrors `answer_local`'s bundle + proc_pidinfo
+  ancestry proof; the stage's noise re-decides on every frontmost-app
+  flip, gated by `AgentOrganizerSettings.quietWhenPaneFrontmost` —
+  app-state, not the daemon document). Incidents ride the wire now:
+  `core_projection` emits the `incident` the usage runtime already
+  stamped; `CoreProviderUsage.incident` decodes it; the ear's ring
+  flips amber, the panel row and Usage Center badge it with the feed's
+  own text. Countdown on the ring: `NotchIslandMeter` carries
+  `resetsAt` + the lane's span (`UsageWindowLabel.windowSpan`), the ear
+  draws a drain arc inside the fill, the peek and the island card name
+  it in words.
+- Verified: swift build clean; 970 tests across the four Swift targets
+  pass (incl. new AskingPane, EventPolicy suppression, meter/reset
+  suites); the projection's Python tests pass with `incident` on the
+  fixture. Docs: CHANGELOG, UTILITIES, FEATURE-MATRIX, TOY-PARITY.

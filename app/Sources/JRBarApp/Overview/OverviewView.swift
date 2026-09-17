@@ -172,6 +172,7 @@ struct OverviewView: View {
     private var content: some View {
         VStack(spacing: 0) {
             summaryStrip
+            connectionsStrip
             if let error = store.error, !store.roster.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -305,6 +306,147 @@ struct OverviewView: View {
         .accessibilityElement(children: .combine)
     }
 
+    // MARK: Connections
+
+    /// The wiring row: core link, this Mac, each peer, each device,
+    /// each provider — the live connections the roster runs on, visible
+    /// even when no session is. A chip focuses the same link's facts in
+    /// the inspector.
+    @ViewBuilder
+    private var connectionsStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(store.links) { link in
+                    connectionChip(link)
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.bottom, 5)
+    }
+
+    private func connectionChip(_ link: OverviewLink) -> some View {
+        let selected = store.selectedLinkID == link.id
+        return Button {
+            store.selectLink(selected ? nil : link.id)
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(link.tone.color)
+                    .frame(width: 5, height: 5)
+                connectionGlyph(link)
+                Text(link.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                if let subtitle = link.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3.5)
+            .background(Capsule().fill(.primary.opacity(selected ? 0.14 : 0.06)))
+            .overlay(Capsule().strokeBorder(
+                selected ? Color.accentColor.opacity(0.6) : .primary.opacity(0.08),
+                lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .help(link.helpText)
+        .accessibilityLabel("\(link.group.title): \(link.title)")
+    }
+
+    /// Providers draw their brand tile; everything else takes the link's
+    /// SF Symbol.
+    @ViewBuilder
+    private func connectionGlyph(_ link: OverviewLink) -> some View {
+        if link.group == .providers {
+            let raw = String(link.id.dropFirst("provider:".count))
+            let pid = raw.split(separator: "|").first.map(String.init) ?? raw
+            ProviderTile(style: ProviderStyle.style(for: pid), size: 12)
+        } else {
+            Image(systemName: link.symbol)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// A focused chip's facts — the same labelled grid the session
+    /// inspector uses, every line carrying the daemon's own words.
+    private func connectionInspector(_ link: OverviewLink) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    connectionGlyph(link)
+                    Text(link.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(2)
+                    Circle().fill(link.tone.color).frame(width: 7, height: 7)
+                }
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
+                    ForEach(link.facts, id: \.label) { item in
+                        fact(item.label, item.value, evidence: .reported)
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minWidth: 220)
+    }
+
+    /// The inspector's idle state: the whole wiring, grouped — core,
+    /// nodes, devices, providers — so an empty roster still answers
+    /// "what is connected". A row focuses that link.
+    private var connectionsBrowser: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Connections")
+                    .font(.system(size: 15, weight: .semibold))
+                ForEach(OverviewLink.Group.allCases, id: \.self) { group in
+                    let links = store.links.filter { $0.group == group }
+                    if !links.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(group.title)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                            ForEach(links) { link in
+                                Button { store.selectLink(link.id) } label: {
+                                    HStack(spacing: 7) {
+                                        Circle().fill(link.tone.color).frame(width: 6, height: 6)
+                                        connectionGlyph(link)
+                                        Text(link.title)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .lineLimit(1)
+                                        if let subtitle = link.subtitle {
+                                            Text(subtitle)
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer(minLength: 4)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help(link.helpText)
+                            }
+                        }
+                    }
+                }
+                Text("Select a session row for its inspector.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minWidth: 220)
+    }
+
     @ViewBuilder
     private func stateCell(_ entry: CoreRosterEntry) -> some View {
         let activity = SessionActivity.reduce(entry.session)
@@ -375,8 +517,10 @@ struct OverviewView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minWidth: 220)
+        } else if let link = store.selectedLink {
+            connectionInspector(link)
         } else {
-            Text("Select a row").foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity)
+            connectionsBrowser
         }
     }
 
@@ -790,6 +934,20 @@ private extension OverviewPreset {
         case .thisProject: return "folder"
         case .thisMac: return "desktopcomputer"
         case .all: return "globe"
+        }
+    }
+}
+
+private extension OverviewLink.Tone {
+    /// The status dot's colour — the same green-means-live vocabulary
+    /// the panel's device chips already speak.
+    var color: Color {
+        switch self {
+        case .good: return .green
+        case .busy: return .blue
+        case .warn: return .orange
+        case .down: return .red
+        case .idle: return .secondary.opacity(0.35)
         }
     }
 }

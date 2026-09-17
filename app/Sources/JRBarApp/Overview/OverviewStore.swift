@@ -47,6 +47,49 @@ final class OverviewStore {
         self.core = core
     }
 
+    // MARK: Connections
+
+    /// The live wiring the window reports — the core link, this Mac,
+    /// each reachable peer, each device, each provider — lifted off the
+    /// daemon's `state` push so the strip is as fresh as the rows and
+    /// can never tell a second story (S7.1).
+    var links: [OverviewLink] {
+        var connecting = false
+        var offlineReason: String?
+        switch core.connection {
+        case .connecting: connecting = true
+        case .disconnected(let reason): offlineReason = reason
+        default: break
+        }
+        return OverviewLinkage.links(OverviewLinkage.Snapshot(
+            connected: core.isLive,
+            connecting: connecting,
+            offlineReason: offlineReason,
+            coreVersion: core.hello?.coreVersion,
+            corePID: core.hello?.pid,
+            connectedAt: core.connectedAt,
+            inFlight: core.inFlightCommands,
+            localName: Host.current().localizedName ?? "This Mac",
+            localSessions: roster.filter { !$0.session.remote }.count,
+            peers: core.state?.peers ?? [],
+            devices: core.state?.devices ?? [],
+            providers: core.state?.usage?.providers ?? [],
+            deck: core.state?.deck?.device
+        ), now: now)
+    }
+
+    /// The connections chip the inspector focuses — session selection
+    /// and link selection are exclusive over the one detail column.
+    /// Stored as an id so the inspector always resolves the link's
+    /// CURRENT facts off the latest state, not the chip it clicked.
+    var selectedLinkID: String?
+    var selectedLink: OverviewLink? { links.first { $0.id == selectedLinkID } }
+
+    func selectLink(_ id: String?) {
+        selectedLinkID = id
+        if id != nil { selectedID = nil; selectedIDs = [] }
+    }
+
     // MARK: Derived
 
     /// The rows the active cut keeps, after search and sorting. The sort
@@ -127,6 +170,7 @@ final class OverviewStore {
 
     func windowDidOpen() {
         now = Date()
+        selectedLinkID = nil
         lastEventID = core.lastEvent?.id
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -188,6 +232,7 @@ final class OverviewStore {
         let next = max(0, min(list.count - 1, index + delta))
         selectedID = list[next].id
         selectedIDs = [list[next].id]
+        selectedLinkID = nil
     }
 
     /// The table reports its selection set; `selectedID` follows the
@@ -195,6 +240,7 @@ final class OverviewStore {
     func selectionChanged(to ids: Set<String>) {
         selectedIDs = ids
         selectedID = rows.first { ids.contains($0.id) }?.id
+        if !ids.isEmpty { selectedLinkID = nil }
     }
 
     // MARK: Compare

@@ -82,6 +82,18 @@ final class ShelfTrayModel {
         return NSSharingService.sharingServices(forItems: [fresh.url])
     }
 
+    /// The dedicated one-click path: straight to AirDrop, no picker —
+    /// Alcove's headline shelf verb. Returns whether the service ran.
+    @discardableResult
+    func sendViaAirDrop(_ entry: Entry) -> Bool {
+        revalidate()
+        guard let fresh = entries.first(where: { $0.id == entry.id }),
+              !fresh.missing,
+              let service = NSSharingService(named: .sendViaAirDrop) else { return false }
+        service.perform(withItems: [fresh.url])
+        return true
+    }
+
     /// File size for the attach bound — nil when unresolvable.
     func size(of entry: Entry) -> Int64? {
         guard let values = try? entry.url.resourceValues(forKeys: [.fileSizeKey]),

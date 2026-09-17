@@ -20,11 +20,13 @@ final class MediaRemoteBridge: @unchecked Sendable {
     private typealias BoolFunc = @convention(c) (DispatchQueue, @escaping (Bool) -> Void) -> Void
     private typealias SendFunc = @convention(c) (Int, AnyObject?) -> Bool
     private typealias RegisterFunc = @convention(c) (DispatchQueue) -> Void
+    private typealias SeekFunc = @convention(c) (Double) -> Bool
 
     private let getNowPlayingInfo: InfoFunc?
     private let getIsPlaying: BoolFunc?
     private let sendCommand: SendFunc?
     private let registerForNowPlayingNotifications: RegisterFunc?
+    private let setElapsedTime: SeekFunc?
 
     /// nil when the framework or its entry points can't be resolved —
     /// a perfectly ordinary outcome, handled by never building one.
@@ -42,6 +44,7 @@ final class MediaRemoteBridge: @unchecked Sendable {
         sendCommand = symbol("MRMediaRemoteSendCommand", as: SendFunc.self)
         registerForNowPlayingNotifications = symbol("MRMediaRemoteRegisterForNowPlayingNotifications",
                                                     as: RegisterFunc.self)
+        setElapsedTime = symbol("MRMediaRemoteSetElapsedTime", as: SeekFunc.self)
         // Info alone is the feature; everything else is decoration on
         // top. On the way out, hand the framework back.
         guard getNowPlayingInfo != nil else { dlclose(handle); return nil }
@@ -74,6 +77,14 @@ final class MediaRemoteBridge: @unchecked Sendable {
     @discardableResult
     func send(_ command: Command) -> Bool {
         sendCommand?(command.rawValue, nil) ?? false
+    }
+
+    /// A scrub: the playhead to `seconds` — `MRMediaRemoteSetElapsedTime`
+    /// is a command the same entitlement-free surface `send` rides, so
+    /// it answers where reads are gated.
+    @discardableResult
+    func seek(to seconds: Double) -> Bool {
+        setElapsedTime?(seconds) ?? false
     }
 }
 
@@ -231,6 +242,17 @@ class AlcoveMediaMonitor {
         scheduleRefresh(after: 0.5)
     }
 
+    /// A scrub — both live paths take it; the one that lands is the
+    /// one mediaremoted is answering. The follow-up refresh reports
+    /// the playhead where it settled.
+    func seek(to seconds: Double) {
+        if adapterLive, let adapter {
+            adapter.seek(to: seconds)
+        }
+        bridge?.seek(to: seconds)
+        scheduleRefresh(after: 0.4)
+    }
+
     /// Notifications arrive in bursts (info + is-playing + app-change
     /// for one track change); one refresh 0.2 s out answers them all.
     private func scheduleRefresh(after delay: TimeInterval = 0.2) {
@@ -332,5 +354,11 @@ final class MediaFeed {
     func send(_ command: MediaRemoteBridge.Command) {
         guard media != nil else { return }
         monitor.send(command)
+    }
+
+    /// A scrub — same live-path rule as `send`.
+    func seek(to seconds: Double) {
+        guard media != nil else { return }
+        monitor.seek(to: seconds)
     }
 }

@@ -1046,6 +1046,15 @@ struct UsageRow: View {
                             .lineLimit(1)
                             .help("Derived estimate (\(usage.fidelity ?? "derived")), not the provider's own figure")
                     }
+                    if let incident = usage.incident, !incident.isEmpty {
+                        // The vendor's status feed says so — amber, never
+                        // the quota bar's red: an outage is not a limit.
+                        Text("incident")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.orange)
+                            .lineLimit(1)
+                            .help(incident)
+                    }
                     if let hint = PanelStore.paceHint(usage.forecast?.pace,
                                                     exhaustsAt: usage.forecast?.exhaustsAt,
                                                     resetsAt: primary?.resetsAt, now: store.now) {

@@ -96,6 +96,28 @@ struct UtilitiesStateTests {
         #expect((try? decode(MenuBarSettings.self, #"{"spacerLength": 8000}"#)) != nil)
     }
 
+    @Test("item spacing decodes with its managed flag; a bare value implies managed")
+    func itemSpacingDecode() throws {
+        // Nothing on file: untouched, and the writer stays out of it.
+        let fresh = try decode(MenuBarSettings.self, "{}")
+        #expect(fresh.itemSpacing == 0)
+        #expect(fresh.itemSpacingManaged == false)
+        // A file that carried a value but predates the flag was written
+        // by us — managed so the default choice can remove the keys.
+        let legacy = try decode(MenuBarSettings.self, #"{"itemSpacing": 8}"#)
+        #expect(legacy.itemSpacing == 8)
+        #expect(legacy.itemSpacingManaged == true)
+        // An explicit flag wins; a negative gap clamps to untouched.
+        #expect(try decode(MenuBarSettings.self,
+                           #"{"itemSpacing": 4, "itemSpacingManaged": false}"#).itemSpacingManaged == false)
+        #expect(try decode(MenuBarSettings.self, #"{"itemSpacing": -9}"#).itemSpacing == 0)
+        var state = MenuBarSettings()
+        state.itemSpacing = 8
+        state.itemSpacingManaged = true
+        #expect(try JSONDecoder().decode(MenuBarSettings.self,
+                                         from: JSONEncoder().encode(state)) == state)
+    }
+
     @Test("AppState carries utilities and round-trips them through the file")
     func appStateRoundTrip() throws {
         var app = AppState(showScreenBar: false)

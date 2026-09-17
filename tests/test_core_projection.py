@@ -175,6 +175,10 @@ def fixture_inputs() -> dict:
                 output_tokens=300,
                 estimated_cost_usd=None,
                 credits_remaining=None,
+                # The status feed's live incident, stamped by the usage
+                # runtime — the wire carries it so the ear and the rows
+                # can badge a vendor's bad day without re-polling.
+                incident="Anthropic: Elevated errors",
                 lanes=(
                     SimpleNamespace(lane_id="five_hour", label="5h", remaining_percent=58.0, reset_at=NOW + 8040.0, scope="account", model=None),
                     SimpleNamespace(lane_id="seven_day", label="7d", remaining_percent=39.0, reset_at=NOW + 277200.0, scope="account", model=None),
@@ -193,6 +197,7 @@ def fixture_inputs() -> dict:
                 output_tokens=0,
                 estimated_cost_usd=None,
                 credits_remaining=None,
+                incident=None,
                 lanes=(
                     SimpleNamespace(lane_id="five_hour", label="5h", remaining_percent=88.0, reset_at=None, scope="account", model=None),
                     # A window the provider HAS but has not stated a
@@ -378,6 +383,10 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert usage["refreshed_at"] == NOW - 42.4
     claude, codex = usage["providers"]
     assert claude["id"] == "claude" and claude["fidelity"] == "official"
+    # The incident the usage runtime stamped rides the wire verbatim;
+    # a quiet feed is an explicit null, never a missing key.
+    assert claude["incident"] == "Anthropic: Elevated errors"
+    assert codex["incident"] is None
     assert [window["name"] for window in claude["windows"]] == ["5h", "7d"]
     assert claude["windows"][0]["used_pct"] == 42.0
     assert claude["windows"][1]["resets_at"] == NOW + 277200.0

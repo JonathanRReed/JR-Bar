@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import OSLog
 import SwiftUI
 
 /// A brief glass pill under the notch: "SidePulse connected". Click-through,
@@ -7,6 +8,19 @@ import SwiftUI
 @MainActor
 final class NotchHUD {
     static let life: TimeInterval = 2.0
+    static let log = Logger(subsystem: "devin.jrbar", category: "hud")
+
+    /// The media-key tap feeding the level capsules. It watches the
+    /// session's system-defined stream and never swallows a press —
+    /// `mediaHUDAllowed` (the notch's setting) is consulted per press.
+    let mediaKeys = HUDKeyMonitor()
+    /// Focus toggles and Bluetooth connects, announced in the pill.
+    let announcements = NotchAnnouncements()
+    /// The notch settings' vote on media capsules, wired by the delegate.
+    var mediaHUDAllowed: () -> Bool = { true }
+    /// The notch settings' votes on announcements and the felt tick.
+    var alertsAllowed: () -> Bool = { true }
+    var soundEffectsAllowed: () -> Bool = { true }
 
     private let panel = NotchHUDPanel()
     /// The buddy's other home: its own pill when a drag parks it on the
@@ -40,11 +54,48 @@ final class NotchHUD {
         panel.buddyDrag = buddyDrag
         buddyPanel.buddyDrag = buddyDrag
         buddyDrag.dockPoint = { [weak self] in self?.dockPoint() ?? .zero }
+        mediaKeys.isAllowed = { [weak self] in self?.mediaHUDAllowed() ?? true }
+        mediaKeys.onLevel = { [weak self] key, value, muted in
+            self?.showMeter(for: key, value: value, muted: muted)
+        }
+        mediaKeys.start()
+        announcements.isAllowed = { [weak self] in self?.alertsAllowed() ?? true }
+        announcements.announce = { [weak self] text, symbol in self?.show(text, symbol: symbol) }
+        announcements.start()
+    }
+
+    private func tick() {
+        if soundEffectsAllowed() { NotchSounds.tick() }
     }
 
     func show(_ text: String, symbol: String = "cable.connector") {
         let band = anchorRect() ?? Self.fallbackAnchor()
         panel.present(text: text, symbol: symbol, under: band)
+        tick()
+        hide?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.panel.dismiss() } }
+        hide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.life, execute: work)
+    }
+
+    /// A volume or brightness key press: the level capsule hangs under
+    /// the notch — the Alcove HUD. A key we cannot read (an output
+    /// with no hardware volume, a desk of externals) draws nothing.
+    private func showMeter(for key: MediaKeyPress.Key, value: Float?, muted: Bool?) {
+        let symbol: String
+        switch key {
+        case .volumeUp, .volumeDown, .mute:
+            symbol = muted == true ? "speaker.slash.fill" : "speaker.wave.2.fill"
+        case .brightnessUp, .brightnessDown:
+            symbol = "sun.max.fill"
+        case .illuminationUp, .illuminationDown, .illuminationToggle:
+            symbol = "keyboard"
+        }
+        guard let value else { return }
+        let band = anchorRect() ?? Self.fallbackAnchor()
+        panel.presentMeter(symbol: symbol, fraction: Double(min(1, max(0, value))),
+                           muted: muted == true, under: band)
+        tick()
         hide?.cancel()
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.panel.dismiss() } }
         hide = work
@@ -77,10 +128,8 @@ final class NotchHUD {
     static func fallbackAnchor() -> NSRect {
         let screen = ScreenBarGeometry.preferredScreen() ?? NSScreen.main
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let depth = screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0
-        let slot = screen.flatMap {
-            NotchIslandLayout.slot(left: $0.auxiliaryTopLeftArea, right: $0.auxiliaryTopRightArea)
-        }
+        let depth = screen.map { ScreenBarGeometry.islandDepth(of: $0) } ?? 0
+        let slot = screen.flatMap { ScreenBarGeometry.islandSlot(on: $0) }
         let width = slot?.width ?? screen.map { ScreenBarGeometry.slotWidth(of: $0) } ?? 180
         let centerX = slot?.centerX ?? frame.midX
         return NSRect(x: centerX - width / 2, y: frame.maxY - depth - 8, width: width, height: 6)
@@ -189,6 +238,7 @@ final class NotchHUDPanel: NSPanel {
         buddyDrag?.cancel()
         model.text = text
         model.symbol = symbol
+        model.meter = nil
         model.toastActive = true
         // A toast is a sign, not a button: clicks fall straight through.
         ignoresMouseEvents = true
@@ -208,6 +258,35 @@ final class NotchHUDPanel: NSPanel {
         if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 6)) }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = reduced ? 0.1 : 0.22
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+            animator().alphaValue = 1
+            if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
+        }
+    }
+
+    /// The level capsule — a media key's answer: the symbol and the
+    /// segmented bar. Wider than a text toast, so the meter reads.
+    func presentMeter(symbol: String, fraction: Double, muted: Bool, under band: NSRect) {
+        buddyDrag?.cancel()
+        model.meter = NotchHUDModel.Meter(symbol: symbol, fraction: fraction, muted: muted)
+        model.toastActive = true
+        ignoresMouseEvents = true
+        lastBand = band
+        wearChrome(true)
+        hosting.rootView = NotchHUDView(model: model)
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        let height = max(30, size.height)
+        let width = max(150, size.width)
+        chrome.layer?.cornerRadius = height / 2
+        let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
+        let wasVisible = isVisible && alphaValue > 0.01
+        setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
+        orderFrontRegardless()
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 6)) }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = reduced ? 0.1 : (wasVisible ? 0.12 : 0.22)
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
             animator().alphaValue = 1
             if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
@@ -275,8 +354,20 @@ final class NotchHUDPanel: NSPanel {
 @MainActor
 @Observable
 final class NotchHUDModel {
+    /// A volume/brightness capsule's payload — a symbol and the level
+    /// it landed on.
+    struct Meter: Equatable {
+        var symbol: String
+        /// The level, 0…1.
+        var fraction: Double
+        /// A muted meter draws the slashed speaker and a dimmed bar.
+        var muted: Bool = false
+    }
+
     var text = ""
     var symbol = "cable.connector"
+    /// A level capsule is occupying the pill instead of words.
+    var meter: Meter?
     /// A toast is occupying the pill; the buddy steps aside until it ends.
     var toastActive = false
     /// The Notch Buddy the panel hosts while no toast is up.
@@ -289,7 +380,28 @@ struct NotchHUDView: View {
     @Bindable var model: NotchHUDModel
 
     var body: some View {
-        if model.toastActive {
+        if model.toastActive, let meter = model.meter {
+            // The level capsule: the key's symbol, then the segmented
+            // bar — sixteen steps like the system's own meter.
+            HStack(spacing: 10) {
+                Image(systemName: meter.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(meter.muted ? .red : .secondary)
+                HStack(spacing: 2.5) {
+                    let lit = Int((meter.fraction * 16).rounded())
+                    ForEach(0..<16, id: \.self) { i in
+                        Capsule(style: .continuous)
+                            .fill(i < lit
+                                  ? (meter.muted ? Color.red.opacity(0.85) : Color.white.opacity(0.92))
+                                  : Color.white.opacity(0.22))
+                            .frame(width: 5, height: 8)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .fixedSize()
+        } else if model.toastActive {
             HStack(spacing: 7) {
                 Image(systemName: model.symbol)
                     .font(.system(size: 12, weight: .semibold))

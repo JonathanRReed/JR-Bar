@@ -95,26 +95,108 @@ import Testing
         let bottom = DockEnhanceMath.panelFrame(anchor: item, edge: .bottom,
                                                 size: size, screen: screen, gap: 10)
         #expect(bottom == CGRect(x: 620, y: 50, width: 200, height: 100),
-                "centred on the icon, floating above it")
+                "centred on the tile (mid 720), floating off the dock")
         let right = DockEnhanceMath.panelFrame(
             anchor: CGRect(x: 1400, y: 400, width: 40, height: 40), edge: .right,
             size: size, screen: screen, gap: 10)
         #expect(right.origin.x == 1190, "a right-edge dock opens left of it")
     }
 
+    @Test func thePanelCentresOnTheTileClampedToTheScreen() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 200, height: 100)
+        // The panel sits over its app — the DockDoor read — and only
+        // leaves the tile's axis when the screen's edge demands it.
+        let middle = DockEnhanceMath.panelFrame(
+            anchor: CGRect(x: 700, y: 0, width: 40, height: 40), edge: .bottom,
+            size: size, screen: screen, gap: 10)
+        #expect(middle.midX == 720, "mid-screen tile: panel centred on it")
+        let leftTile = DockEnhanceMath.panelFrame(
+            anchor: CGRect(x: 0, y: 0, width: 40, height: 40), edge: .bottom,
+            size: size, screen: screen, gap: 10)
+        #expect(leftTile.minX == 8, "edge tile: clamped inside, still over it")
+        #expect(leftTile.minX <= 20 && leftTile.maxX >= 20,
+                "the tile's mid stays under the panel")
+        let rightTile = DockEnhanceMath.panelFrame(
+            anchor: CGRect(x: 1400, y: 0, width: 40, height: 40), edge: .bottom,
+            size: size, screen: screen, gap: 10)
+        #expect(rightTile.maxX == 1432, "right-edge tile: clamped inside")
+        #expect(rightTile.minX <= 1420 && rightTile.maxX >= 1420)
+        // A mid-list tile off-centre centres the panel on it, not on
+        // the screen.
+        let offCentre = DockEnhanceMath.panelFrame(
+            anchor: CGRect(x: 200, y: 0, width: 40, height: 40), edge: .bottom,
+            size: size, screen: screen, gap: 10)
+        #expect(offCentre.midX == 220, "tile mid 220, not screen mid 720")
+        for y in [CGFloat(430), CGFloat(860)] {
+            let left = DockEnhanceMath.panelFrame(
+                anchor: CGRect(x: 0, y: y, width: 40, height: 40), edge: .left,
+                size: size, screen: screen, gap: 10)
+            #expect(left.midY == min(max(y + 20, 8 + 50), 900 - 8 - 50),
+                    "left dock: panel on the tile's axis at \(y)")
+            let right = DockEnhanceMath.panelFrame(
+                anchor: CGRect(x: 1400, y: y, width: 40, height: 40), edge: .right,
+                size: size, screen: screen, gap: 10)
+            #expect(right.midY == left.midY, "right dock mirrors it")
+        }
+    }
+
     @Test func thePanelStaysOnScreenAtTheEdges() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        // A panel wider than the screen clamps its origin inside — it
+        // cannot fit, but it must not start off-screen.
         let frame = DockEnhanceMath.panelFrame(
             anchor: CGRect(x: 0, y: 0, width: 40, height: 40), edge: .bottom,
-            size: CGSize(width: 300, height: 100), screen: screen, gap: 10)
-        #expect(frame.minX >= screen.minX, "an edge icon clamps the panel inside")
-        #expect(frame.maxX <= screen.maxX + 1)
+            size: CGSize(width: 2000, height: 100), screen: screen, gap: 10)
+        #expect(frame.minX >= screen.minX, "an oversize panel clamps inside")
         // A hidden Dock's tile reports below the screen; the panel does
         // not follow it off.
         let sliding = DockEnhanceMath.panelFrame(
             anchor: CGRect(x: 700, y: -60, width: 40, height: 40), edge: .bottom,
             size: CGSize(width: 300, height: 100), screen: screen, gap: 10)
         #expect(sliding.minY >= screen.minY)
+    }
+
+    // MARK: The corridor
+
+    @Test func theCorridorCoversTheRoadToThePanel() {
+        // Bottom dock, tile at the screen's left, panel centred: the
+        // road between them is the funnel from tile to panel.
+        let item = CGRect(x: 40, y: 0, width: 48, height: 48)
+        let panel = CGRect(x: 520, y: 58, width: 400, height: 120)
+        // Straight run from the tile's centre to the panel's centre —
+        // every step of it is inside.
+        for t in stride(from: 0.1, through: 0.9, by: 0.2) {
+            let point = CGPoint(x: 64 + (720 - 64) * t, y: 48 + (58 - 48) * t)
+            #expect(DockEnhanceMath.inCorridor(item: item, panel: panel, edge: .bottom,
+                                               point: point, slop: 6),
+                    "t=\(t) on the tile→panel line is travelling")
+        }
+        // Off the funnel — far right of the panel's reach — is leaving.
+        #expect(!DockEnhanceMath.inCorridor(
+            item: item, panel: panel, edge: .bottom,
+            point: CGPoint(x: 1100, y: 53), slop: 6))
+        // Below the ramp, moving away along the desk — not the road.
+        #expect(!DockEnhanceMath.inCorridor(
+            item: item, panel: panel, edge: .bottom,
+            point: CGPoint(x: 900, y: 20), slop: 6))
+    }
+
+    @Test func theCorridorFollowsTheDockEdge() {
+        // Left dock: the funnel runs horizontally, tile → panel right.
+        let item = CGRect(x: 0, y: 800, width: 48, height: 48)
+        let panel = CGRect(x: 58, y: 350, width: 200, height: 200)
+        #expect(DockEnhanceMath.inCorridor(item: item, panel: panel, edge: .left,
+                                           point: CGPoint(x: 53, y: 700), slop: 6))
+        #expect(!DockEnhanceMath.inCorridor(item: item, panel: panel, edge: .left,
+                                            point: CGPoint(x: 53, y: 100), slop: 6))
+        // Right dock: panel sits left of the tile.
+        let rItem = CGRect(x: 1392, y: 100, width: 48, height: 48)
+        let rPanel = CGRect(x: 992, y: 350, width: 200, height: 200)
+        #expect(DockEnhanceMath.inCorridor(item: rItem, panel: rPanel, edge: .right,
+                                           point: CGPoint(x: 1387, y: 200), slop: 6))
+        #expect(!DockEnhanceMath.inCorridor(item: rItem, panel: rPanel, edge: .right,
+                                            point: CGPoint(x: 1300, y: 800), slop: 6))
     }
 
     @Test func aSeamBetweenTilesDoesNotRestartTheRestClock() {
@@ -415,4 +497,255 @@ import Testing
         #expect(DockEnhanceController.permissionTTL >= 1,
                 "a TCC probe is an IPC round trip; the tick must not pay it 20× a second")
     }
+
+    // MARK: Dock hold-out
+
+    /// The in-memory driver — the CoreDock verbs as a fake so the hold
+    /// state machine is what gets pinned, not the Dock.
+    private final class FakeAutohideDriver: DockAutohideDriver {
+        var enabled = true
+        var writes: [Bool] = []
+        var isAutohideEnabled: Bool { enabled }
+        func setAutohideEnabled(_ newValue: Bool) {
+            writes.append(newValue)
+            enabled = newValue
+        }
+    }
+
+    @Test func aHoldPinsAutohideOffUntilThePanelCloses() {
+        let driver = FakeAutohideDriver()
+        let hold = DockAutohideHold(driver: driver,
+                                    persistence: freshPersistence("hold"))
+        hold.fallbackWrite = { _ in }
+
+        hold.hold()
+        #expect(hold.holding)
+        #expect(driver.writes == [false])
+        hold.hold()
+        #expect(driver.writes == [false], "a second preview in the same hold doesn't re-write")
+
+        hold.release()
+        #expect(!hold.holding)
+        #expect(driver.writes == [false, true],
+                "release hands the user's own value back")
+    }
+
+    @Test func aDockThatNeverHidesNeedsNoHolding() {
+        let driver = FakeAutohideDriver()
+        driver.enabled = false
+        let hold = DockAutohideHold(driver: driver,
+                                    persistence: freshPersistence("alwaysOut"))
+        hold.hold()
+        #expect(!hold.holding)
+        #expect(driver.writes.isEmpty, "autohide already off — nothing to hold")
+    }
+
+    @Test func aMissingDriverMeansNoHold() {
+        let hold = DockAutohideHold(driver: nil,
+                                    persistence: freshPersistence("noDriver"))
+        hold.hold()
+        #expect(!hold.holding)
+        hold.release() // must not throw or write
+    }
+
+    @Test func aCrashMidHoldIsRecoveredOnTheNextLaunch() {
+        let suite = freshPersistence("crashHold")
+        let driver = FakeAutohideDriver()
+        let first = DockAutohideHold(driver: driver, persistence: suite)
+        first.hold()
+        #expect(driver.writes == [false])
+        // …process dies before release runs.
+
+        let second = DockAutohideHold(driver: driver, persistence: suite)
+        #expect(second.savedAutohide == true,
+                "the marker survives into the next launch")
+        second.recoverIfNeeded()
+        #expect(driver.writes == [false, true],
+                "recovery hands autohide back even though release never ran")
+    }
+
+    @Test func recoverySkipsALiveHold() {
+        let driver = FakeAutohideDriver()
+        let hold = DockAutohideHold(driver: driver,
+                                    persistence: freshPersistence("liveHold"))
+        hold.hold()
+        // `applySettings()` reaches `recoverIfNeeded()` on every card
+        // edit — a live preview's hold must survive it.
+        hold.recoverIfNeeded()
+        #expect(hold.holding)
+        #expect(driver.writes == [false], "still held — recovery is not a release")
+    }
+
+    @Test func recoveryWithoutADriverUsesTheFallback() {
+        let suite = freshPersistence("fallback")
+        let first = DockAutohideHold(driver: FakeAutohideDriver(), persistence: suite)
+        first.hold()
+        // The next life boots where the CoreDock verbs don't resolve.
+        var fallbackWrites: [Bool] = []
+        let second = DockAutohideHold(driver: nil, persistence: suite,
+                                      fallbackWrite: { fallbackWrites.append($0) })
+        second.recoverIfNeeded()
+        #expect(fallbackWrites == [true],
+                "a stranded hold is worth one defaults write + Dock bounce")
+    }
+
+    // MARK: Compact list
+
+    @Test func theCompactListTurnsOnPastTheLimit() {
+        #expect(!DockEnhanceMath.compactList(windowCount: 5, limit: 6))
+        #expect(DockEnhanceMath.compactList(windowCount: 6, limit: 6),
+                "at the limit counts as past it — a 6-window app gets the list")
+        #expect(DockEnhanceMath.compactList(windowCount: 20, limit: 6))
+        #expect(!DockEnhanceMath.compactList(windowCount: 20, limit: 0),
+                "0 is never — thumbnails no matter the count")
+    }
+
+    @Test func compactAndHoldSettingsDecodeTolerantly() throws {
+        // A file from before these knobs existed decodes to defaults.
+        let data = Data("{}".utf8)
+        let decoded = try JSONDecoder().decode(DockEnhanceSettings.self, from: data)
+        #expect(decoded.holdDockOpen == true)
+        #expect(decoded.compactListLimit == DockEnhanceSettings.defaultCompactLimit)
+
+        var clamped = DockEnhanceSettings()
+        clamped.compactListLimit = 99
+        #expect(clamped.compactListLimit == DockEnhanceSettings.compactLimitRange.upperBound)
+        clamped.compactListLimit = -3
+        #expect(clamped.compactListLimit == 0)
+    }
+
+    // MARK: Folder pop
+
+    @Test func aFolderPopListsDirectoriesFirstThenFinderNameOrder() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        FileManager.default.createFile(atPath: dir.appendingPathComponent("b.txt").path, contents: nil)
+        FileManager.default.createFile(atPath: dir.appendingPathComponent("a.txt").path, contents: nil)
+        FileManager.default.createFile(atPath: dir.appendingPathComponent(".hidden").path, contents: nil)
+        try FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("c-sub"), withIntermediateDirectories: false)
+
+        let entries = DockEnhanceController.folderEntries(of: dir)
+        #expect(entries.map(\.name) == ["c-sub", "a.txt", "b.txt"],
+                "directories lead, then Finder's name order — hidden files never list")
+        #expect(entries.first?.isDirectory == true)
+    }
+
+    @Test func aMissingFolderPopsEmptyAndAnUnreadableOneToo() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
+        #expect(DockEnhanceController.folderEntries(of: missing).isEmpty)
+    }
+
+    @Test func aForbiddenFolderReadsDeniedNotEmpty() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000], ofItemAtPath: dir.path)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let listing = DockEnhanceController.folderListing(of: dir)
+        #expect(listing.entries.isEmpty)
+        #expect(listing.denied, "EACCES is a consent problem, not an empty folder")
+    }
+}
+
+
+// MARK: - Card gestures
+
+extension DockEnhanceTests {
+    @Test("a fast left-right-left wiggle is one shake; a slow drift is not")
+    func shakeDetects() {
+        var shake = DockEnhanceMath.ShakeDetector()
+        // note() mutates — bind the answers, then expect on them.
+        var fired = [shake.note(x: 0, now: 0),
+                     shake.note(x: 10, now: 0.05),
+                     shake.note(x: 0, now: 0.10),   // first reversal
+                     shake.note(x: 10, now: 0.15),  // second reversal
+                     shake.note(x: 0, now: 0.20)]   // third reversal is the shake
+        #expect(fired == [false, false, false, false, true])
+        fired = [shake.note(x: 10, now: 0.25)]
+        #expect(fired == [false], "one shake per rest — no machine-gun")
+        shake.reset()
+        #expect(shake.note(x: 0, now: 2.0) == false, "a re-armed detector starts cold")
+    }
+
+    @Test("small wiggles and stale reversals never reach the shake")
+    func shakeIgnoresDrift() {
+        var shake = DockEnhanceMath.ShakeDetector()
+        // Steps under 6 pt are pointer noise, not reversals.
+        var fired = false
+        for i in 0..<8 {
+            fired = fired || shake.note(x: CGFloat(i % 2 == 0 ? 2 : -2), now: Double(i) * 0.05)
+        }
+        #expect(!fired)
+        // Reversals spaced past the window restart the count.
+        shake.reset()
+        _ = shake.note(x: 0, now: 0)
+        _ = shake.note(x: 10, now: 0.1)
+        _ = shake.note(x: 0, now: 1.2)
+        #expect(shake.note(x: 10, now: 1.3) == false, "0.9 s later the window closed")
+    }
+
+    @Test("a downward flick past the threshold minimizes; up restores; a pause restarts")
+    func swipeAccumulates() {
+        var acc = DockEnhanceMath.SwipeAccumulator()
+        // Natural scrolling: fingers down → +deltaY is a down-flick.
+        var flicks = [acc.note(deltaY: 20, inverted: true, now: 0),
+                      acc.note(deltaY: 20, inverted: true, now: 0.1),
+                      acc.note(deltaY: 20, inverted: true, now: 0.2)]
+        #expect(flicks == [nil, nil, .down])
+        // The counter reset at the fire — an up-flick earns its own run.
+        #expect(acc.note(deltaY: -60, inverted: true, now: 1.0) == .up)
+        // A long pause is a new flick, not a stacked one.
+        #expect(acc.note(deltaY: 20, inverted: true, now: 5.0) == nil)
+        // A reversal restarts the count mid-flick.
+        #expect(acc.note(deltaY: -30, inverted: true, now: 5.1) == nil)
+        #expect(acc.note(deltaY: 30, inverted: true, now: 5.2) == nil,
+                "the direction flip discarded the −30")
+    }
+}
+
+/// A purged backing store reads as a fully transparent CGImage — the
+/// thumbnailer must reject it; a black window is still a real capture.
+@Test("fullyTransparent rejects purged captures, keeps dark windows")
+func transparentCaptureCheck() throws {
+    func makeImage(alpha: UInt8) throws -> CGImage {
+        var pixels = [UInt8](repeating: 0, count: 16 * 16 * 4)
+        for i in stride(from: 3, to: pixels.count, by: 4) { pixels[i] = alpha }
+        let context = CGContext(data: &pixels, width: 16, height: 16,
+                                bitsPerComponent: 8, bytesPerRow: 64,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        return try #require(context.makeImage())
+    }
+    #expect(DockThumbnailer.fullyTransparent(try makeImage(alpha: 0)) == true)
+    #expect(DockThumbnailer.fullyTransparent(try makeImage(alpha: 255)) == false)
+}
+
+/// A capture whose content hugs one edge — purged margin or shadow
+/// inset — gets cropped to its alpha bounds so the thumbnail centres
+/// in the card.
+@Test("trimmed crops transparent margins, keeps full captures")
+func trimmedCropCheck() throws {
+    // Opaque only in the left quarter of a 64×32 image.
+    var pixels = [UInt8](repeating: 0, count: 64 * 32 * 4)
+    for y in 0..<32 { for x in 0..<16 {
+        pixels[(y * 64 + x) * 4 + 3] = 255
+    } }
+    let context = CGContext(data: &pixels, width: 64, height: 32,
+                            bitsPerComponent: 8, bytesPerRow: 256,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let image = try #require(context.makeImage())
+    let trimmed = DockThumbnailer.trimmed(image)
+    #expect(trimmed.width < image.width, "the transparent right half is cropped")
+    #expect(trimmed.width >= 12, "the kept cells hold the opaque quarter plus the one-cell margin")
+    #expect(trimmed.height <= image.height)
 }

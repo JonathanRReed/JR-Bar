@@ -240,15 +240,14 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     }
 
     /// The face the button wears: the natural image, or — with a spacer
-    /// out — a wider template composite with the icon at its right end.
-    /// No hint glyph beside it: macOS's own « already says "more here"
-    /// at the run's other end, and two left-pointing marks 200 points
-    /// apart read as clutter. The tooltip and the blank stretch itself
-    /// are the affordance. (`folded(_:spacer:chevron:)` keeps the hint
-    /// for the fallback chevron item.)
+    /// out — a wider template composite with the icon at its right end
+    /// and a ‹ mark in the spacer's last points. The spacer is always
+    /// at least the affordance floor while the Menu Bar utility is on,
+    /// so the mark is the standing "drag items behind here" sign —
+    /// a blank stretch nobody can see was no affordance.
     private func refold() {
         guard let button = statusItem.button, let source = naturalImage else { return }
-        let chevron = false
+        let chevron = boundarySpacer > 0
         if boundarySpacer <= 0 {
             if button.image !== source { button.image = source }
             button.imageScaling = .scaleProportionallyDown
@@ -574,6 +573,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         // utility's reveal, whichever button.
         if let event, let button = statusItem.button, boundarySpacer > 0 {
             let x = button.convert(event.locationInWindow, from: nil).x
+            MenuBarCombinedItem.log.notice("status click: x=\(x, privacy: .public) spacer=\(self.boundarySpacer, privacy: .public) win=\(event.locationInWindow.x, privacy: .public) type=\(event.type.rawValue, privacy: .public)")
             if Self.clickIsOnSpacer(x: x, spacer: boundarySpacer) {
                 onBoundaryClick?()
                 return

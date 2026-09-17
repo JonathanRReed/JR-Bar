@@ -172,6 +172,10 @@ final class MenuBarItemHider {
     /// Where the learned edge persists.
     var edgeStore: any MenuBarFitEdgeStore = MenuBarDefaultsFitEdgeStore()
     var protectedFrames: @MainActor () -> [CGRect] = { [] }
+    /// On-row zones where an item is drawn but unreachable — the
+    /// notch band, the stretch the front app's menus overdraw. Items
+    /// there plan as hidden so the Item Bar can reach them.
+    var obscuredFrames: @MainActor () -> [CGRect] = { [] }
     /// The listing's generation — bumped per completed AX scan — so a
     /// rule that reads item frames after a length write can wait for a
     /// listing taken after the bar reflowed.
@@ -441,7 +445,8 @@ final class MenuBarItemHider {
                              sections: settings().sections, row: row,
                              controls: controls, fitEdge: edge,
                              revealed: revealed, caps: caps,
-                             protectedFrames: protectedFrames())
+                             protectedFrames: protectedFrames(),
+                             obscuredFrames: obscuredFrames())
         let changed = plan != lastPlan
         lastPlan = plan
         if let length = plan.hiddenControlLength { request(length) }
@@ -640,7 +645,8 @@ final class MenuBarItemHider {
                                  fitEdge: CGFloat? = nil,
                                  revealed: Set<MenuBarItemSection> = [],
                                  caps: MenuBarSpacerCaps = MenuBarSpacerCaps(),
-                                 protectedFrames: [CGRect] = []) -> MenuBarHidePlan {
+                                 protectedFrames: [CGRect] = [],
+                                 obscuredFrames: [CGRect] = []) -> MenuBarHidePlan {
         var plan = MenuBarHidePlan()
         // A stable order: two overflowed items macOS stacks on one
         // position would otherwise trade places between listings and
@@ -676,7 +682,17 @@ final class MenuBarItemHider {
                 positional = .shown
             }
             let override = sections[item.id].flatMap { $0 == .shown ? nil : $0 }
-            let final = override ?? positional
+            var final = override ?? positional
+            // An item under the notch or under the front app's menus is
+            // drawn but unreachable — macOS leaves it behind the glass.
+            // Hiding it is honest: the Item Bar lists it and a cover
+            // marks the stretch as ours, never the item's pixels as
+            // the bar's own blank space. An always-hidden override
+            // already outranks the band.
+            if final == .shown,
+               obscuredFrames.contains(where: { $0.intersects(item.bounds) }) {
+                final = .hidden
+            }
             switch final {
             case .shown:
                 plan.shown.append(item)
@@ -775,6 +791,35 @@ final class MenuBarItemHider {
             out.append(contentsOf: segments.map { $0.0...$0.1 })
         }
         return out
+    }
+
+    /// "Show for updates": a hidden item whose title changed between
+    /// scans updated itself — a clock's minute, a VPN's "Connected", a
+    /// download's percent. Bartender reveals the run for it; so do we.
+    /// The bounds are not the signal (our own reveal moves them); the
+    /// title the app writes is. `sections` empty means nothing new —
+    /// `signatures` is the fresh map either way, so a change that lands
+    /// while a reveal is open seeds quietly instead of firing late.
+    nonisolated static func updatedHidden(
+        previous: [String: String],
+        hidden: [MenuBarItem],
+        alwaysHidden: [MenuBarItem]
+    ) -> (sections: Set<MenuBarItemSection>, signatures: [String: String]) {
+        var sections = Set<MenuBarItemSection>()
+        var signatures: [String: String] = [:]
+        for item in hidden {
+            signatures[item.id] = item.title ?? ""
+            if let old = previous[item.id], old != signatures[item.id] {
+                sections.insert(.hidden)
+            }
+        }
+        for item in alwaysHidden {
+            signatures[item.id] = item.title ?? ""
+            if let old = previous[item.id], old != signatures[item.id] {
+                sections.insert(.alwaysHidden)
+            }
+        }
+        return (sections, signatures)
     }
 
     /// The card's override write: the single mapping, kept honest — a

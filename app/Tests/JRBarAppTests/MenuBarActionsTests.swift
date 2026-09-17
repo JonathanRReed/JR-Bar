@@ -543,6 +543,49 @@ struct MenuBarActionsTests {
                 == [.hideAll, .applyProfile(name: "Away")])
     }
 
+    @Test("wifi edges: a join names the network, the drop fires leave, the first sample is a baseline")
+    func triggerWiFi() {
+        var engine = MenuBarTriggerEngine()
+        let rules = [rule(.wifiJoined(ssid: "Home"), .applyProfile(name: "Home"), id: "join"),
+                     rule(.wifiLeft, .hideAll, id: "left"),
+                     rule(.wifiJoined(ssid: ""), .reveal(seconds: 2), id: "any")]
+        // Baseline — already on "Home" when the source starts: no edge.
+        #expect(engine.actions(for: .wifiSSID("Home"), rules: rules).isEmpty)
+        // Home → Office: nobody claimed Office, and leaving for another
+        // network is not "wifi left".
+        #expect(engine.actions(for: .wifiSSID("Office"), rules: rules).isEmpty)
+        // Office → nothing is the leave edge.
+        #expect(engine.actions(for: .wifiSSID(nil), rules: rules) == [.hideAll])
+        // Nothing → Home is the join edge.
+        #expect(engine.actions(for: .wifiSSID("Home"), rules: rules)
+                == [.applyProfile(name: "Home")])
+        // The unnamed change event fires only the nameless rule.
+        #expect(engine.actions(for: .wifiChanged, rules: rules)
+                == [.reveal(seconds: 2)])
+    }
+
+    @Test("the mic and Focus fire on edges only — repeats and baselines stay silent")
+    func triggerMicFocus() {
+        var engine = MenuBarTriggerEngine()
+        let rules = [rule(.microphoneInUse, .hideAll, id: "mic-on"),
+                     rule(.microphoneIdle, .showAll, id: "mic-off"),
+                     rule(.focusEnabled, .applyProfile(name: "Deep"), id: "focus-on"),
+                     rule(.focusDisabled, .reveal(seconds: 3), id: "focus-off")]
+        // Baselines: mic already live, Focus already on — nothing fires.
+        #expect(engine.actions(for: .micInUse(true), rules: rules).isEmpty)
+        #expect(engine.actions(for: .focusOn(true), rules: rules).isEmpty)
+        // Same levels again: still nothing.
+        #expect(engine.actions(for: .micInUse(true), rules: rules).isEmpty)
+        #expect(engine.actions(for: .focusOn(true), rules: rules).isEmpty)
+        // The real edges.
+        #expect(engine.actions(for: .micInUse(false), rules: rules) == [.showAll])
+        #expect(engine.actions(for: .focusOn(false), rules: rules)
+                == [.reveal(seconds: 3)])
+        #expect(engine.actions(for: .micInUse(true), rules: rules) == [.hideAll])
+        #expect(engine.actions(for: .focusOn(true), rules: rules)
+                == [.applyProfile(name: "Deep")])
+    }
+
     // MARK: The facade — the maintainer's wiring contract
 
     /// A delegate that records — the routing table is the contract.

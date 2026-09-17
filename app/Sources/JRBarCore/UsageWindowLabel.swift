@@ -64,4 +64,29 @@ public enum UsageWindowLabel {
         guard let usedPct else { return "no reading" }
         return "\(Int(usedPct.rounded())) percent used"
     }
+
+    /// The lane's own length in seconds — a reset countdown drawn as a
+    /// draining arc needs the window's full span for its denominator.
+    /// Only the horizons the daemon's lane ids actually name; a
+    /// `credits` balance or an unclassified lane has no clock to drain
+    /// and returns nil.
+    public static func windowSpan(id: String?, name: String?) -> TimeInterval? {
+        let candidates = [id, name].compactMap { $0 }
+        for raw in candidates {
+            let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
+            switch key {
+            case "5h", "five_hour", "5_hour", "fivehour", "five_hours", "5_hours", "5hr", "5hrs":
+                return 5 * 3600
+            case "7d", "seven_day", "7_day", "sevenday", "seven_days", "7_days", "weekly", "week":
+                return 7 * 86400
+            case "daily", "day", "24h", "1d", "one_day":
+                return 86400
+            case "monthly", "month", "30d":
+                return 30 * 86400
+            default: continue
+            }
+        }
+        return nil
+    }
 }

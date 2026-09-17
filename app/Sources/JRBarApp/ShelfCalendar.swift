@@ -97,7 +97,9 @@ final class ShelfCalendarModel {
     /// EventKit → card model: title, times, and a joinable URL only
     /// when the event carries an http(s) one — `url` first, then the
     /// first safe link in the notes. Anything else is unjoinable.
-    static func project(_ event: EKEvent) -> Event {
+    /// Pure, so a detached reader (the Dock tile's preview) projects
+    /// without hopping to main.
+    nonisolated static func project(_ event: EKEvent) -> Event {
         Event(title: event.title?.isEmpty == false ? event.title! : "Untitled",
               start: event.startDate, end: event.endDate,
               url: joinableURL(for: event))
@@ -105,14 +107,14 @@ final class ShelfCalendarModel {
 
     /// The event's joinable link: `event.url` when http(s), else the
     /// first http(s) URL in the notes. Everything else returns nil.
-    static func joinableURL(for event: EKEvent) -> URL? {
+    nonisolated static func joinableURL(for event: EKEvent) -> URL? {
         joinableURL(event.url, notes: event.notes)
     }
 
     /// The pure half so tests don't need an `EKEvent` (which can't be
     /// constructed): explicit url first, then the first safe link in
     /// the notes — both gated to http(s).
-    static func joinableURL(_ url: URL?, notes: String?) -> URL? {
+    nonisolated static func joinableURL(_ url: URL?, notes: String?) -> URL? {
         if let url, let scheme = url.scheme?.lowercased(),
            scheme == "https" || scheme == "http" {
             return url

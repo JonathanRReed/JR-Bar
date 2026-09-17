@@ -89,6 +89,23 @@ import Testing
         #expect(empty.height == 1)
     }
 
+    @Test func bandRectAnchorsToTheBezelNotTheWindowFloor() {
+        // A window grown 7 pt for the ear lobes keeps the strip at the
+        // bezel's bottom edge — the same seat it has at the base height.
+        let tall = ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 45),
+                                              underBezel: 32)
+        #expect(tall.minY == 8)
+        #expect(tall.maxY == 14)
+        // At the base height the anchor agrees with the floor's answer.
+        #expect(ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 38),
+                                           underBezel: 32)
+                == ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 38)))
+        // No bezel → the standalone band keeps its bottom seat.
+        let notchless = ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 45),
+                                                   underBezel: 0)
+        #expect(notchless.minY == 1)
+    }
+
     // MARK: Content wings (`screen_bar_notch_wings`)
 
     static func wingedFrame(contentExtent: CGFloat, auxiliaryLeft: CGFloat = 300,
@@ -174,43 +191,45 @@ import Testing
     }
 
     @Test func coupledStripKissesTheIslandEdges() {
-        // The coupled window: 41 tall (coupledWindowHeight(32)), island
-        // 209 wide — slot 185 + 12 pt shoulders — centred inside it.
-        let size = NSSize(width: 213, height: 41)
+        // The coupled window: 42 tall (coupledWindowHeight(islandBottom:
+        // 32)), island 209 wide — slot 185 + 12 pt shoulders — centred.
+        let size = NSSize(width: 213, height: 42)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 209, height: 32, in: size),
-                                                     notchDepth: 32, cornerRadius: 8)
-        // The strip keeps its seat — 31…37 below the screen's top — but
-        // runs the island's full width: end caps kissing its side edges.
+                                                     cornerRadius: 8)
+        // The strip rides the island's bottom edge — 32…38 below the
+        // screen's top — and runs the island's full width: end caps
+        // kissing its side edges.
         #expect(coupling.band == CGRect(x: 2, y: 4, width: 209, height: 6))
         // The housing swallows the island's bottom corners (its top runs
         // to 32 - 8 = 24 below the top) and ends 3 pt under the strip.
-        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 16))
+        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 17))
         #expect(coupling.cornerRadius == 8)
     }
 
-    @Test func coupledHousingHidesInsideAGrownIsland() {
-        // The grown card's bottom is far below the band — the housing's
-        // lip only has to reach the strip, since the island's own black
-        // face is already behind everything.
-        let size = NSSize(width: 380, height: 41)
+    @Test func coupledStripRidesTheGrownIslandBottom() {
+        // The grown card's bottom edge is the seat: the strip and its
+        // seat hang under the island's lip — never a bar clipped across
+        // the card's face.
+        let size = NSSize(width: 380, height: 310)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 380, height: 300, in: size),
-                                                     notchDepth: 32, cornerRadius: 8)
+                                                     cornerRadius: 8)
         #expect(coupling.band == CGRect(x: 0, y: 4, width: 380, height: 6))
-        // Top at 31 - 4 = 27 below the top; bottom at 40 — a 13 pt lip
+        // Top at 300 - 8 = 292 below the top; bottom at 309 — the lip
         // whose only visible edge is the corner curve under the strip.
-        #expect(coupling.housing == CGRect(x: 0, y: 1, width: 380, height: 13))
+        #expect(coupling.housing == CGRect(x: 0, y: 1, width: 380, height: 17))
     }
 
     @Test func coupledIslandGrowsTheWindowTowardIt() {
         // A grown island (the expanded card's 380) widens the window to
-        // its own edges and seats the housing; the top stays pinned.
+        // its own edges and drops the strip's seat to its bottom edge;
+        // the top stays pinned.
         let island = CGRect(x: 566, y: 682, width: 380, height: 300)
         let frame = ScreenBarGeometry.windowFrame(screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
                                                   auxiliaryLeft: 300, auxiliaryRight: 300,
                                                   hardwareSlot: 185, wrapMenuBar: true,
                                                   coupledIsland: island)
-        #expect(frame == CGRect(x: 566, y: 982 - 41, width: 380, height: 41))
-        #expect(ScreenBarGeometry.coupledWindowHeight(notchDepth: 32) == 41)
+        #expect(frame == CGRect(x: 566, y: 982 - 310, width: 380, height: 310))
+        #expect(ScreenBarGeometry.coupledWindowHeight(islandBottom: 300) == 310)
     }
 
     @Test func coupledIslandNeverShrinksTheWindow() {
@@ -221,7 +240,7 @@ import Testing
                                                   auxiliaryLeft: 300, auxiliaryRight: 300,
                                                   hardwareSlot: 185, wrapMenuBar: true,
                                                   coupledIsland: island)
-        #expect(frame == CGRect(x: 649.5, y: 982 - 41, width: 213, height: 41))
+        #expect(frame == CGRect(x: 649.5, y: 982 - 42, width: 213, height: 42))
         // And nil is the standalone frame, untouched.
         #expect(Self.frame().height == 38)
     }
@@ -270,5 +289,30 @@ import Testing
     @Test func machineModelReadsHwModel() {
         #expect(!NotchProfile.machineModel.isEmpty, "sysctl hw.model always answers on a Mac")
         #expect(!NotchProfile.machineFamily.isEmpty)
+    }
+}
+
+extension ScreenBarGeometryTests {
+    @Test func aSimulatedNotchClaimsACenteredHousingAndDefersToTheRealOne() {
+        let frame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        // No aux areas, simulate off → no slot (the floating pill).
+        #expect(ScreenBarGeometry.islandSlot(auxLeft: nil, auxRight: nil,
+                                             screenFrame: frame, simulated: false) == nil)
+        // Simulate on → a centered synthetic band.
+        let sim = ScreenBarGeometry.islandSlot(auxLeft: nil, auxRight: nil,
+                                               screenFrame: frame, simulated: true)
+        #expect(sim?.centerX == 720)
+        #expect(sim?.width == ScreenBarGeometry.simulatedNotchWidth)
+        // A real notch wins over the simulation.
+        let left = CGRect(x: 0, y: 950, width: 600, height: 32)
+        let right = CGRect(x: 800, y: 950, width: 640, height: 32)
+        let real = ScreenBarGeometry.islandSlot(auxLeft: left, auxRight: right,
+                                                screenFrame: frame, simulated: true)
+        #expect(real?.centerX == 700 && real?.width == 200)
+        // Depth: real wins, simulated falls back, off stays zero.
+        #expect(ScreenBarGeometry.islandDepth(real: 34, simulated: true) == 34)
+        #expect(ScreenBarGeometry.islandDepth(real: 0, simulated: true)
+                == ScreenBarGeometry.fallbackNotchDepth)
+        #expect(ScreenBarGeometry.islandDepth(real: 0, simulated: false) == 0)
     }
 }

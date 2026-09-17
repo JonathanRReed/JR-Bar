@@ -134,6 +134,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         self.toysStore = toysStore
         settingsStore.toys = toysStore
+        // The card's weather row: both card surfaces read the same
+        // notch settings — on, ours, and the city text.
+        let weatherSettings = { [weak toysStore] in
+            let notch = toysStore?.state.notch ?? NotchSettings()
+            return (on: notch.enabled && notch.provider == .jrbar && notch.weather,
+                    city: notch.weatherCity)
+        }
+        toysStore.notch.cardModel.utility.weather.settings = weatherSettings
         // Utilities: the serious half. Its state lives beside the toys'
         // in `app-state.json` under `utilities`, same single-writer rule
         // — the store hands back the blob and the delegate writes it.
@@ -193,6 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // be up. It hangs under the band, else the notch itself.
         let notchCard = NotchCardPresenter(
             model: NotchCardModel(timers: cardTimers, tray: cardTray))
+        notchCard.model.utility.weather.settings = weatherSettings
+        notchCard.model.mirrorEnabled = { [weak toysStore] in toysStore?.state.notch.mirror ?? false }
         notchCard.focus = { [weak self] in self?.store?.screenBarFocus }
         notchCard.sessionRows = { [weak self] in
             NotchIsland.summarize(self?.core?.sessions ?? []).rows
@@ -247,13 +257,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // Hovering an ear is hovering the island — and a pointer still
         // on the band is not a leave for the island's collapse timer.
-        interaction.onIslandHover = { [weak self] hovering in
-            self?.toysStore?.notch.bandHover(hovering)
+        // `fromBar` carries how the pointer arrived so the island's
+        // debounce keeps its menu-bar floor.
+        interaction.onIslandHover = { [weak self] hovering, fromBar in
+            self?.toysStore?.notch.bandHover(hovering, fromBar: fromBar)
         }
+        // The ear under the pointer swells — the tell that the notch is
+        // alive while the island's debounce decides on the card.
+        interaction.onWingHover = { [weak screenBar] side in screenBar?.hoverWing(side) }
         toysStore.notch.pointerOnBand = { [weak interaction] in interaction?.hovering ?? false }
         // The grown island's card reads the same facts the glass one
         // does.
         toysStore.notch.cardFocus = { [weak self] in self?.store?.screenBarFocus }
+        // The island's Screen-Bar-live read: the local show/hide flag,
+        // never the daemon doc — a dead core must not un-bare the
+        // island over the bar's ears.
+        toysStore.notch.screenBarShown = { [weak store] in store?.screenBarShown ?? false }
         // Wing gestures: an outward flick dismisses a side, a horizontal
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
@@ -262,6 +281,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
         interaction.onWingPull = { [weak screenBar] side, dx in screenBar?.pullWing(side, to: dx) }
         interaction.onWingPullEnd = { [weak screenBar] side in screenBar?.releaseWingPull(side) }
+        // The left ear's mark IS the focused session — a click opens it
+        // outright rather than only growing the card past it.
+        interaction.onWingActivate = { [weak self] side in
+            guard let self, side == .left else { return false }
+            let focus = self.store?.screenBarFocus
+            guard let session = focus?.focusSession ?? focus?.clickSession else { return false }
+            self.core?.openSession(session)
+            return true
+        }
+        // The hidden-run ‹ lives in the island's own surface — a status
+        // item kept parking under our own window, this one cannot.
+        screenBar.menuHandleProvider = { [weak self] in
+            self?.utilitiesStore?.menuBar.menuHandleRevealed
+        }
+        interaction.menuHandleAt = { [weak screenBar] point in
+            screenBar?.menuHandle(atScreenPoint: point) ?? false
+        }
+        interaction.onMenuHandle = { [weak self] in
+            self?.utilitiesStore?.menuBar.toggleMenuHandle()
+        }
         // The card's timers: a due timer is one banner, never an agent
         // launch. Both card surfaces share `cardTimers`, so one wiring
         // covers the glass card and the grown island alike.
@@ -306,6 +345,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         toysStore.notch.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         utilitiesStore.agents.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+        // The Menu Bar utility's agent item reads the same merged feed
+        // the panel header does — daemon-live over the file fallback.
+        utilitiesStore.menuBar.agentState = { [weak store] in
+            guard let store else { return (.idle, "") }
+            return (store.aggregate, store.headerCounts)
+        }
+        utilitiesStore.menuBar.onOpenOverview = { [weak overviewWindow] in
+            overviewWindow?.show()
+        }
 
         // Event Replay: the read-only journaled-events surface (S7.4).
         let replayStore = ReplayStore(core: core)
@@ -348,9 +396,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
         self.events = events
         events.toys = toysStore
+        // Smart suppression is the Agent utility's own toggle — a
+        // session's pane already in front earns silence, not noise.
+        events.quietWhenPaneFrontmost = { [weak utilitiesStore] in
+            utilitiesStore?.agents.settings().quietWhenPaneFrontmost ?? true
+        }
         // The HUD panel is the Notch Buddy's home: it lives there between
         // toasts and steps aside while one is up.
         events.hud.buddy = toysStore.notchBuddy
+        // The level capsules ride the notch's own switch and provider:
+        // they draw while the notch is ours and on.
+        events.hud.mediaHUDAllowed = { [weak toysStore] in
+            let notch = toysStore?.state.notch ?? NotchSettings()
+            return notch.enabled && notch.provider == .jrbar && notch.mediaHUD
+        }
+        events.hud.alertsAllowed = { [weak toysStore] in
+            let notch = toysStore?.state.notch ?? NotchSettings()
+            return notch.enabled && notch.provider == .jrbar && notch.alerts
+        }
+        events.hud.soundEffectsAllowed = { [weak toysStore] in
+            let notch = toysStore?.state.notch ?? NotchSettings()
+            return notch.enabled && notch.provider == .jrbar && notch.soundEffects
+        }
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
         // Approve/Deny on a banner are awaited, so a refused answer is
         // heard: the bridge turns it into a follow-up banner that opens
@@ -405,6 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         let shown = appState.showScreenBar
+        ScreenBarInteraction.diag("didFinishLaunching shown=\(shown)")
         statusItem.isScreenBarShown = shown
         store.screenBarShown = shown
         if shown { screenBar.show(); interaction.start() }
@@ -901,6 +969,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             _ = core.lights
             _ = core.hello
             _ = core.settings?.generation
+            // The media ear rides the shared feed's reduce — tracked so
+            // a track starting or pausing re-lays the wings on its own.
+            _ = store?.media
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.coreDidChange()

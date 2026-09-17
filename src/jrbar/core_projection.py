@@ -1203,6 +1203,11 @@ def usage_document(
                 "constrained": constrained,
                 "fidelity": "stale" if state == "stale" else "official",
                 "state": state,
+                # The status-feed incident the usage runtime stamped on
+                # this snapshot ("Anthropic: Elevated errors") — already
+                # None on a stale or unanswered feed, so the wire never
+                # invents one.
+                "incident": getattr(snapshot, "incident", None),
                 "reason": getattr(snapshot, "reason_code", None),
                 "action": getattr(snapshot, "action_label", None),
                 "observed_at": epoch(getattr(snapshot, "observed_at", None)),

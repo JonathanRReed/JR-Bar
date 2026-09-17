@@ -19,9 +19,34 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         store.windowDidOpen()
-        NSApp.activate(ignoringOtherApps: true)
+        // An accessory app is never frontmost on its own; the window needs
+        // the app active to draw as key. `activate(ignoringOtherApps:)` is
+        // the deprecated call that used to open the Overview behind the
+        // frontmost app — the "nothing happens" report — so this runs the
+        // same dance Settings does.
+        NSRunningApplication.current.activate()
+        NSApp.activate()
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        // A window left on another Space orders front there and reads as
+        // nothing happening; moveToActiveSpace pulls it onto this one for
+        // the order-in, then comes straight off so it stays put.
+        if !window.isOnActiveSpace {
+            window.collectionBehavior.insert(.moveToActiveSpace)
+        }
         window.makeKeyAndOrderFront(nil)
+        window.makeKey()
+        window.collectionBehavior.remove(.moveToActiveSpace)
         installKeyMonitor()
+        // Activation is cooperative on macOS 14+: when the frontmost app
+        // does not yield, the request above is dropped. Opening ourselves
+        // through Launch Services is the sanctioned way through anyway.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard !NSApp.isActive else { return }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.createsNewApplicationInstance = false
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
+        }
     }
 
     private func installKeyMonitor() {

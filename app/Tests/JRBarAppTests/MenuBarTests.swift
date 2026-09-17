@@ -267,6 +267,47 @@ struct MenuBarTests {
         #expect(plan.hiddenCovers == [300...324])
     }
 
+    @Test("an item under an obscured band is hidden and covered — not left drawn behind glass")
+    func planObscured() {
+        // The notch sits at x≈590–630; an item drawn there is
+        // unreachable, so the plan treats it as hidden and marks the
+        // stretch with a cover.
+        let notch = CGRect(x: 590, y: 0, width: 40, height: 24)
+        let items = [item("Free", x: 800), item("UnderNotch", x: 600)]
+        let plan = MenuBarItemHider.plan(items: items, sections: [:],
+                                         row: row, obscuredFrames: [notch])
+        #expect(plan.shown.map(\.id) == ["Free"])
+        #expect(plan.hidden.map(\.id) == ["UnderNotch"])
+        #expect(plan.hiddenCovers == [600...624])
+    }
+
+    @Test("an always-hidden override outranks the band — it covers in the deep lane")
+    func planObscuredAlwaysHidden() {
+        let notch = CGRect(x: 590, y: 0, width: 40, height: 24)
+        let items = [item("Deep", x: 600), item("Up", x: 800)]
+        let plan = MenuBarItemHider.plan(items: items,
+                                         sections: ["Deep": .alwaysHidden],
+                                         row: row, obscuredFrames: [notch])
+        #expect(plan.alwaysHidden.map(\.id) == ["Deep"])
+        #expect(plan.alwaysHiddenCovers == [600...624])
+        #expect(plan.hidden.isEmpty)
+    }
+
+    @Test("a shown override cannot beat the band — the item is behind glass regardless")
+    func planObscuredOverride() {
+        // An explicit "shown" wish on an item sitting under the notch
+        // is unfulfillable — macOS keeps it hidden. The plan treats it
+        // as hidden and covers the stretch so the lane stays honest.
+        let notch = CGRect(x: 590, y: 0, width: 40, height: 24)
+        let items = [item("Keep", x: 600), item("Up", x: 800)]
+        let plan = MenuBarItemHider.plan(items: items,
+                                         sections: ["Keep": .shown],
+                                         row: row, obscuredFrames: [notch])
+        #expect(plan.hidden.map(\.id) == ["Keep"])
+        #expect(plan.shown.map(\.id) == ["Up"])
+        #expect(plan.hiddenCovers == [600...624])
+    }
+
     // MARK: Mover — position seeding
 
     @Test("an assigned item in the wrong zone earns a drag into its zone")
@@ -645,5 +686,44 @@ struct MenuBarTests {
         #expect(hider.revealed.isEmpty)
         #expect(hider.lastPlan == MenuBarHidePlan())
         #expect(emitted.last == MenuBarHidePlan())
+    }
+
+    @Test("show for updates: a hidden item's changed title names its section")
+    func updatedHidden() {
+        func titled(_ id: String, _ title: String?) -> MenuBarItem {
+            MenuBarItem(id: id, ownerPID: 500, ownerName: "App",
+                        bounds: CGRect(x: 700, y: 0, width: 24, height: 24),
+                        title: title, windowID: 0)
+        }
+        // The first scan seeds — a baseline title is not an update.
+        var result = MenuBarItemHider.updatedHidden(
+            previous: [:], hidden: [titled("clock", "10:40")], alwaysHidden: [])
+        #expect(result.sections.isEmpty)
+        #expect(result.signatures["clock"] == "10:40")
+        // The minute turns — the hidden run reveals.
+        result = MenuBarItemHider.updatedHidden(
+            previous: result.signatures,
+            hidden: [titled("clock", "10:41")], alwaysHidden: [])
+        #expect(result.sections == [.hidden])
+        // Same title next scan — nothing to announce.
+        result = MenuBarItemHider.updatedHidden(
+            previous: result.signatures,
+            hidden: [titled("clock", "10:41")], alwaysHidden: [])
+        #expect(result.sections.isEmpty)
+        // An always-hidden item's update names its own run — the
+        // hidden run stays parked for it.
+        var ah = MenuBarItemHider.updatedHidden(
+            previous: [:], hidden: [], alwaysHidden: [titled("vpn", "Connecting")])
+        ah = MenuBarItemHider.updatedHidden(
+            previous: ah.signatures,
+            hidden: [], alwaysHidden: [titled("vpn", "Connected")])
+        #expect(ah.sections == [.alwaysHidden])
+        // A brand-new item is seeded, not announced — its first sighting
+        // is a baseline like the first scan's.
+        result = MenuBarItemHider.updatedHidden(
+            previous: ah.signatures,
+            hidden: [titled("fresh", "just appeared")], alwaysHidden: [])
+        #expect(result.sections.isEmpty)
+        #expect(result.signatures["fresh"] == "just appeared")
     }
 }

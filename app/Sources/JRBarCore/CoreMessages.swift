@@ -1121,12 +1121,18 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// lead with it and say why (S6.4). Nil when nothing applicable was
     /// measured.
     public var constrained: CoreConstrainedLane?
+    /// The provider status feed's live incident ("Anthropic: Elevated
+    /// errors") — the daemon already stamps it on the snapshot and drops
+    /// it the moment the feed goes quiet or stale, so a non-nil value
+    /// here is current by construction. An outage on the vendor's side,
+    /// never a quota verdict.
+    public var incident: String?
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
                 instance: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,
                 estimatedCostUSD: Double? = nil, creditsRemaining: Double? = nil, observedAt: Double? = nil,
-                constrained: CoreConstrainedLane? = nil) {
+                constrained: CoreConstrainedLane? = nil, incident: String? = nil) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
@@ -1142,6 +1148,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         self.creditsRemaining = creditsRemaining
         self.observedAt = observedAt
         self.constrained = constrained
+        self.incident = incident
     }
 
     public init(from decoder: Decoder) throws {
@@ -1164,6 +1171,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         creditsRemaining = try? c.decodeIfPresent(Double.self, forKey: .creditsRemaining)
         observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
         constrained = try? c.decodeIfPresent(CoreConstrainedLane.self, forKey: .constrained)
+        incident = try? c.decodeIfPresent(String.self, forKey: .incident)
     }
 
     /// Stable identity across multi-account rows of the same provider;
@@ -1174,7 +1182,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, windows, fidelity, state, forecast, account, action, reason, instance, tokens, constrained
+        case id, windows, fidelity, state, forecast, account, action, reason, instance, tokens, constrained, incident
         case quotaSource = "quota_source"
         case estimatedCostUSD = "estimated_cost_usd"
         case creditsRemaining = "credits_remaining"

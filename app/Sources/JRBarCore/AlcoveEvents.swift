@@ -305,15 +305,43 @@ public struct AlcoveMedia: Equatable, Sendable {
     /// The now-playing app's bundle id when the source named one — the
     /// adapter reports it; the raw info dict does not carry it.
     public var bundleIdentifier: String?
+    /// Track length in seconds — `kMRMediaRemoteNowPlayingInfoDuration`.
+    public var duration: Double?
+    /// The playhead at `timestamp` — `kMRMediaRemoteNowPlayingInfoElapsedTime`.
+    public var elapsed: Double?
+    /// When `elapsed` was true, as CFAbsoluteTime —
+    /// `kMRMediaRemoteNowPlayingInfoTimestamp`. With `playing` it lets
+    /// the playhead advance between pushes without a per-second line.
+    public var timestamp: Double?
 
     public init(title: String, artist: String? = nil, album: String? = nil,
-                playing: Bool, artworkData: Data? = nil, bundleIdentifier: String? = nil) {
+                playing: Bool, artworkData: Data? = nil, bundleIdentifier: String? = nil,
+                duration: Double? = nil, elapsed: Double? = nil, timestamp: Double? = nil) {
         self.title = title
         self.artist = artist
         self.album = album
         self.playing = playing
         self.artworkData = artworkData
         self.bundleIdentifier = bundleIdentifier
+        self.duration = duration
+        self.elapsed = elapsed
+        self.timestamp = timestamp
+    }
+
+    /// The playhead as of `date`: the sampled `elapsed` advanced by
+    /// wall-clock drift while playing (rate ≈ 1 — MediaRemote reports
+    /// the nominal speed for scrub-rate players, which overstates a
+    /// slowed stream less than a dead playhead would understate it).
+    /// nil when the source never named a playhead — the slider stays
+    /// hidden rather than sit at 0:00 lying.
+    public func liveElapsed(at date: Date = Date()) -> Double? {
+        guard let elapsed else { return nil }
+        var value = elapsed
+        if playing, let timestamp, timestamp > 0 {
+            value += max(0, date.timeIntervalSinceReferenceDate - timestamp)
+        }
+        if let duration, duration > 0 { value = min(value, duration) }
+        return max(0, value)
     }
 
     /// "Title — Artist" for the idle strip; the title alone when the
@@ -336,11 +364,22 @@ public struct AlcoveMedia: Equatable, Sendable {
         }
         guard let title = string("kMRMediaRemoteNowPlayingInfoTitle") else { return nil }
         let rate = (info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? NSNumber)?.doubleValue
+        func seconds(_ key: String) -> Double? {
+            guard let value = (info[key] as? NSNumber)?.doubleValue, value > 0 else { return nil }
+            return value
+        }
+        let timestamp = (info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date)?
+            .timeIntervalSinceReferenceDate
+            ?? (info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? NSNumber)?.doubleValue
         return AlcoveMedia(title: title,
                            artist: string("kMRMediaRemoteNowPlayingInfoArtist"),
                            album: string("kMRMediaRemoteNowPlayingInfoAlbum"),
                            playing: isPlaying ?? (rate.map { $0 > 0 } ?? false),
-                           artworkData: info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data)
+                           artworkData: info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data,
+                           duration: seconds("kMRMediaRemoteNowPlayingInfoDuration"),
+                           elapsed: (info["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? NSNumber)?
+                               .doubleValue,
+                           timestamp: timestamp)
     }
 
     /// The perl adapter's line — the same now-playing dictionary, already
@@ -359,7 +398,10 @@ public struct AlcoveMedia: Equatable, Sendable {
                            album: string("album"),
                            playing: (payload["playing"] as? Bool) ?? false,
                            artworkData: (payload["artworkData"] as? String).flatMap { Data(base64Encoded: $0) },
-                           bundleIdentifier: string("bundleIdentifier"))
+                           bundleIdentifier: string("bundleIdentifier"),
+                           duration: (payload["duration"] as? NSNumber)?.doubleValue,
+                           elapsed: (payload["elapsed"] as? NSNumber)?.doubleValue,
+                           timestamp: (payload["timestamp"] as? NSNumber)?.doubleValue)
     }
 
     /// Music's own `com.apple.Music.playerInfo` distributed payload —

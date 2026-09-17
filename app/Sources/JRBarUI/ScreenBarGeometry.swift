@@ -179,11 +179,18 @@ public enum ScreenBarGeometry {
     public static let notchlessSlotMaxWidth: CGFloat = 84
     public static let notchlessSlotHeight: CGFloat = 18
     /// The tray's chin: how far the wings' shared black shape hangs below
-    /// the bezel's bottom edge while a wing claims room. Zero: the ears
-    /// end exactly where the hardware ends. A 6 pt chin read as the
-    /// notch grown downward — "expanding past the notch" (owner,
-    /// 2026-09-16) — on a bar whose menu bar is 33 pt to the notch's 32.
+    /// the bezel's bottom edge BETWEEN the ears. Zero: the wrap ends
+    /// exactly where the hardware ends. A 6 pt chin across the whole
+    /// wrap read as the notch grown downward — "expanding past the
+    /// notch" (owner, 2026-09-16) — on a bar whose menu bar is 33 pt to
+    /// the notch's 32.
     public static let wingTrayChin: CGFloat = 0
+    /// How far each ear hangs below the bezel's bottom edge. Zero: a
+    /// narrow ear that dips under the menu-bar line reads as a loose
+    /// nub, not a wing — Alcove's closed island is flush with the
+    /// bezel and makes its case with WIDTH, not depth. The ears claim
+    /// `earWidth` of flank at the bezel's own height instead.
+    public static let wingEarDrop: CGFloat = 0
 
     /// The screen the Screen Bar belongs on: the first with a safe-area
     /// inset (the notched built-in), else the main screen.
@@ -194,6 +201,61 @@ public enum ScreenBarGeometry {
     public static func notchDepth(of screen: NSScreen) -> CGFloat {
         let depth = screen.safeAreaInsets.top
         return depth >= 1.0 ? depth : 0.0
+    }
+
+    // MARK: Simulated notch (`notch.simulateNotch`)
+
+    /// The "Simulate notch" toggle, synced by the notch toy whenever
+    /// its settings land. Every surface that hangs off the band — the
+    /// island, the HUD's fallback anchor, the card presenter — reads
+    /// through `islandSlot`/`islandDepth`, so a notch-less screen gets
+    /// one consistent synthetic housing instead of three guesses.
+    @MainActor public static var simulatedNotch = false
+
+    /// The synthetic housing's width — a laptop notch's measure.
+    public static let simulatedNotchWidth: CGFloat = 200
+
+    /// The island's slot: the real aux-area band, or — `simulated` on a
+    /// screen without one — a centered synthetic housing. Pure, so the
+    /// geometry rule is testable without an NSScreen.
+    public static func islandSlot(auxLeft: CGRect?, auxRight: CGRect?,
+                                  screenFrame: CGRect, simulated: Bool)
+        -> (centerX: CGFloat, width: CGFloat)? {
+        if let left = auxLeft, let right = auxRight, right.minX > left.maxX {
+            return ((left.maxX + right.minX) / 2, right.minX - left.maxX)
+        }
+        guard simulated else { return nil }
+        return (screenFrame.midX, simulatedNotchWidth)
+    }
+
+    /// The depth the island hugs: the real safe-area depth, or the
+    /// fallback depth a simulated housing claims.
+    public static func islandDepth(real: CGFloat, simulated: Bool) -> CGFloat {
+        real > 0 ? real : (simulated ? fallbackNotchDepth : 0)
+    }
+
+    /// `islandSlot` measured off the screen, honoring `simulatedNotch`.
+    @MainActor
+    public static func islandSlot(on screen: NSScreen) -> (centerX: CGFloat, width: CGFloat)? {
+        islandSlot(auxLeft: screen.auxiliaryTopLeftArea,
+                   auxRight: screen.auxiliaryTopRightArea,
+                   screenFrame: screen.frame, simulated: simulatedNotch)
+    }
+
+    /// `islandDepth` measured off the screen, honoring `simulatedNotch`.
+    @MainActor
+    public static func islandDepth(of screen: NSScreen) -> CGFloat {
+        islandDepth(real: notchDepth(of: screen), simulated: simulatedNotch)
+    }
+
+    /// The screen's current space reserves no menu-bar strip — a
+    /// fullscreen app is frontmost there (or the menu bar is set to
+    /// always hide; the legacy `space_hides_menu_bar` heuristic read
+    /// the same `visibleFrame` and accepted the ambiguity). While it
+    /// holds, a pointer at the top edge is reaching for a hidden bar's
+    /// strip, not for us — hover-open stays down.
+    public static func spaceHidesMenuBar(_ screen: NSScreen) -> Bool {
+        screen.frame.maxY - screen.visibleFrame.maxY < 1
     }
 
     public static func hasNotch(_ screen: NSScreen) -> Bool { notchDepth(of: screen) > 0 }
@@ -328,11 +390,11 @@ public enum ScreenBarGeometry {
     /// the silhouette's corner curve never clips the window's bounds.
     public static let coupledSlack: CGFloat = 1
 
-    /// The height the coupled window needs: the strip's notch-anchored
-    /// seat plus the housing's chin and a point of slack below it.
-    public static func coupledWindowHeight(notchDepth: CGFloat) -> CGFloat {
-        max(0, notchDepth) - ScreenBarDesign.verticalInset + ScreenBarDesign.bandHeight
-            + coupledChin + coupledSlack
+    /// The height the coupled window needs: the strip rides the island's
+    /// own bottom edge (`islandBottom` is that edge's distance from the
+    /// screen's top) plus the housing's chin and a point of slack.
+    public static func coupledWindowHeight(islandBottom: CGFloat) -> CGFloat {
+        max(0, islandBottom) + ScreenBarDesign.bandHeight + coupledChin + coupledSlack
     }
 
     /// The notch width the caller's settings resolve to — the
@@ -375,7 +437,7 @@ public enum ScreenBarGeometry {
         guard let coupledIsland, coupledIsland.width > 0 else { return base }
         let width = min(frame.width, max(base.width, coupledIsland.width))
         let centerX = min(frame.maxX - width / 2.0, max(frame.minX + width / 2.0, coupledIsland.midX))
-        let height = max(base.height, coupledWindowHeight(notchDepth: notchDepth))
+        let height = max(base.height, coupledWindowHeight(islandBottom: frame.maxY - coupledIsland.minY))
         return CGRect(x: centerX - width / 2.0, y: frame.maxY - height, width: width, height: height)
     }
 
@@ -413,33 +475,41 @@ public enum ScreenBarGeometry {
     /// `preferredSpan` is the width the band's own window would have had
     /// (notch plus the glow wings) — passing it keeps the band hugging the
     /// notch when the window is wider because a content wing claimed the
-    /// flanks.
-    public static func bandRect(in size: NSSize, preferredSpan: CGFloat? = nil) -> NSRect {
+    /// flanks. `underBezel` is the notch's depth while the window may be
+    /// taller for the ears' lobes: the band's seat is the bezel's bottom
+    /// edge (its last point overlapped), not the window's floor.
+    public static func bandRect(in size: NSSize, preferredSpan: CGFloat? = nil, underBezel bezelDepth: CGFloat = 0) -> NSRect {
         let (left, right) = roundedBandBounds(totalWidth: size.width,
                                               preferredWidth: preferredSpan.map { max(0, $0 - 2.0 * ScreenBarDesign.edgeInset) })
         let bandWidth = max(0, right - left)
         let bandHeight = min(ScreenBarDesign.bandHeight, max(1.0, size.height - ScreenBarDesign.verticalInset))
-        let y = min(ScreenBarDesign.verticalInset, max(0, size.height - bandHeight))
+        let y: CGFloat
+        if bezelDepth > 0 {
+            y = max(0, size.height - bezelDepth - bandHeight + ScreenBarDesign.verticalInset)
+        } else {
+            y = min(ScreenBarDesign.verticalInset, max(0, size.height - bandHeight))
+        }
         return NSRect(x: left, y: y, width: bandWidth, height: bandHeight)
     }
 
     /// The coupled band and its housing inside a window of `size`, given
     /// the island's `island` rect in the same view coordinates. The strip
-    /// keeps its usual seat — top edge `verticalInset` above the notch's
-    /// bottom edge — but spans the island's full width so its end caps
-    /// kiss the island's side edges. The housing is the strip's black
-    /// seat: its top runs up behind the island's bottom corner
-    /// (`cornerRadius`), or just `coupledLip` above the strip when a
-    /// grown island's face is already there, and its bottom edge —
-    /// `coupledChin` under the strip — carries the profile's radius, so
-    /// island and band read as one continuous black shape with the LED
-    /// strip inset.
-    public static func coupledBand(in size: NSSize, island: CGRect, notchDepth: CGFloat,
+    /// runs edge to edge UNDER the island — seated at the island's own
+    /// bottom edge, so it is the resting bezel's underlight and the grown
+    /// card's footlight alike, never a bar clipped across the island's
+    /// face — and spans the island's full width so its end caps kiss its
+    /// side edges. The housing is the strip's black seat: its top runs up
+    /// behind the island's bottom corner (`cornerRadius`), or just
+    /// `coupledLip` above the strip when a grown island's face is already
+    /// there, and its bottom edge — `coupledChin` under the strip —
+    /// carries the profile's radius, so island and band read as one
+    /// continuous black shape with the LED strip inset.
+    public static func coupledBand(in size: NSSize, island: CGRect,
                                    cornerRadius: CGFloat) -> ScreenBarCoupling {
         let radius = max(0, cornerRadius)
-        let stripTop = max(0, notchDepth - ScreenBarDesign.verticalInset)
-        let stripBottom = stripTop + ScreenBarDesign.bandHeight
         let islandBottom = size.height - island.minY
+        let stripTop = max(0, islandBottom)
+        let stripBottom = stripTop + ScreenBarDesign.bandHeight
         let housingTop = max(0, min(islandBottom - radius, stripTop - coupledLip))
         let housingBottom = stripBottom + coupledChin
         return ScreenBarCoupling(

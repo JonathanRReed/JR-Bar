@@ -13,9 +13,10 @@ import JRBarCore
 @Suite("Notch wrap render proof")
 @MainActor
 struct NotchRenderProofTests {
-    /// The scene the screenshots crop: a 185-pt bezel at the top of a
-    /// 500-pt window, our tray wrapping it. The bezel is drawn as the
-    /// test's own black bar — what the hardware shows.
+        /// The scene the screenshots crop: a 185-pt bezel at the top of a
+    /// 500-pt window, our tray wrapping it — ear lobes dropping below the
+    /// bezel's line. The bezel is drawn as the test's own black bar —
+    /// what the hardware shows.
     private static func scene(_ model: ScreenBarWingsModel) -> some View {
         ZStack(alignment: .top) {
             Color(white: 0.24)   // the menu bar's field
@@ -31,7 +32,7 @@ struct NotchRenderProofTests {
             }
             ScreenBarWingsView(model: model)
         }
-        .frame(width: 500, height: 40)
+        .frame(width: 500, height: 48)
         .environment(\.colorScheme, .dark)
     }
 
@@ -42,11 +43,12 @@ struct NotchRenderProofTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         // The claim the geometry answers for a 185-pt slot in a
-        // 500-pt window: the ears hug the bezel at full tray depth.
-        let size = NSSize(width: 500, height: 40)
-        let depth: CGFloat = 32 + ScreenBarGeometry.wingTrayChin
-        let leftRect = CGRect(x: 157.5 - 30, y: size.height - depth, width: 30, height: depth)
-        let rightRect = CGRect(x: 342.5, y: size.height - depth, width: 30, height: depth)
+        // 500-pt window: the ears hug the bezel at its own depth —
+        // flush with the hardware's bottom edge, 48 pt of wing.
+        let size = NSSize(width: 500, height: 48)
+        let depth: CGFloat = 32 + ScreenBarGeometry.wingEarDrop
+        let leftRect = CGRect(x: 157.5 - 48, y: size.height - depth, width: 48, height: depth)
+        let rightRect = CGRect(x: 342.5, y: size.height - depth, width: 48, height: depth)
 
         for (name, left, right, corner) in [
             ("standard-8pt", ScreenBarWingSlot(text: "Working", provider: "claude"),
@@ -62,9 +64,18 @@ struct NotchRenderProofTests {
             let model = ScreenBarWingsModel()
             model.viewHeight = size.height
             model.notchCorner = corner
-            model.chin = ScreenBarGeometry.wingTrayChin
-            model.tray = CGRect(x: leftRect.minX, y: size.height - depth,
-                                width: rightRect.maxX - leftRect.minX, height: depth)
+            model.earDrop = ScreenBarGeometry.wingEarDrop
+            // The bezel's side edges in tray-local x: 185-pt bezel centred
+            // in the 500-pt scene → 157.5 / 342.5, less the tray's origin.
+            // An unclaimed side ends the tray at its bezel edge, as
+            // `updateWingChips` builds it — that side must grow no lobe.
+            let trayMinX = left == nil ? 157.5 : leftRect.minX
+            let trayMaxX = right == nil ? 342.5 : rightRect.maxX
+            let trayRect = CGRect(x: trayMinX, y: size.height - depth,
+                                  width: trayMaxX - trayMinX, height: depth)
+            model.bezelLeft = 157.5 - trayRect.minX
+            model.bezelRight = 342.5 - trayRect.minX
+            model.tray = trayRect
             model.left = left.map { ($0, leftRect) }
             model.right = right.map { ($0, rightRect) }
 

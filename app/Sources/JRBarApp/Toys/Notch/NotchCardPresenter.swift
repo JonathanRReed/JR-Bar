@@ -147,12 +147,12 @@ final class NotchCardPresenter {
         isShown = true
     }
 
-    /// Nothing to hang from: the notch's own slot on the main screen.
+    /// Nothing to hang from: the notch's own slot on the main screen —
+    /// real or simulated (`islandSlot`/`islandDepth` fold the toggle in).
     static func notchAnchor() -> NSRect? {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return nil }
-        let depth = ScreenBarGeometry.notchDepth(of: screen)
-        let slot = NotchIslandLayout.slot(left: screen.auxiliaryTopLeftArea,
-                                          right: screen.auxiliaryTopRightArea)
+        let depth = ScreenBarGeometry.islandDepth(of: screen)
+        let slot = ScreenBarGeometry.islandSlot(on: screen)
         let width = slot?.width ?? ScreenBarGeometry.slotWidth(of: screen)
         let centerX = slot?.centerX ?? screen.frame.midX
         return NSRect(x: centerX - width / 2, y: screen.frame.maxY - depth - 6,

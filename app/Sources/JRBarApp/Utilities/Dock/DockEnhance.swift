@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import EventKit
 import JRBarCore
 import Observation
 import OSLog
@@ -45,6 +46,32 @@ final class DockEnhancePreferences {
     var includeOffscreenWindows: Bool {
         get { read().includeOffscreenWindows }
         set { write?({ var s = read(); s.includeOffscreenWindows = newValue; return s }()) }
+    }
+    /// Hold an auto-hiding Dock out while a preview is up.
+    var holdDockOpen: Bool {
+        get { read().holdDockOpen }
+        set { write?({ var s = read(); s.holdDockOpen = newValue; return s }()) }
+    }
+    /// Past this count the panel lists titles instead of thumbnails.
+    var compactListLimit: Int {
+        get { read().compactListLimit }
+        set { write?({ var s = read(); s.compactListLimit = newValue; return s }()) }
+    }
+    /// ⌥⇥ raises the window switcher.
+    var windowSwitcher: Bool {
+        get { read().windowSwitcher }
+        set { write?({ var s = read(); s.windowSwitcher = newValue; return s }()) }
+    }
+    /// ⌘⇥ raises the app switcher instead of the system's — off by
+    /// default, it eats the OS's own chord.
+    var appSwitcher: Bool {
+        get { read().appSwitcher }
+        set { write?({ var s = read(); s.appSwitcher = newValue; return s }()) }
+    }
+    /// Bundle ids that never earn a preview.
+    var excludedBundleIDs: [String] {
+        get { read().excludedBundleIDs }
+        set { write?({ var s = read(); s.excludedBundleIDs = newValue; return s }()) }
     }
 
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
@@ -151,8 +178,10 @@ enum DockEnhanceMath {
     }
 
     /// Where a preview panel of `size` opens for a hovered item: off
-    /// the dock toward the screen's middle, centred on the item, and
-    /// clamped inside the screen.
+    /// the dock toward the screen's middle, centred on the tile itself
+    /// along the dock's run — the DockDoor read, where the panel sits
+    /// over its app — and clamped inside the screen when the tile hugs
+    /// a screen edge.
     static func panelFrame(anchor itemFrame: CGRect, edge: DockEdge, size: CGSize,
                            screen: CGRect, gap: CGFloat) -> CGRect {
         switch edge {
@@ -177,9 +206,156 @@ enum DockEnhanceMath {
         }
     }
 
+    /// The safe road between a tile and its panel: the convex hull of
+    /// the two rects. The panel sits over its tile, but a wide panel
+    /// still reaches past the icon on both sides — and a clamped one
+    /// sits shifted off it — so the road is a hull, not a corridor
+    /// lined up on the tile. A point inside the hull is still
+    /// travelling, not leaving; a point past the hull's far corners
+    /// has left the road for good.
+    static func inCorridor(item: CGRect, panel: CGRect, edge: DockEdge,
+                           point: CGPoint, slop: CGFloat) -> Bool {
+        // Work in (a, o): `a` along the dock's run, `o` off it toward
+        // the panel — so the tile is always the lower rect, the panel
+        // the upper, and one hull construction serves all three edges.
+        func axis(_ x: CGFloat, _ y: CGFloat) -> (a: CGFloat, o: CGFloat) {
+            switch edge {
+            case .bottom: (x, y)
+            case .left: (y, x)
+            case .right: (y, -x)
+            }
+        }
+        func hullRect(_ r: CGRect) -> (a0: CGFloat, a1: CGFloat, o0: CGFloat, o1: CGFloat) {
+            let lo = axis(r.minX, r.minY), hi = axis(r.maxX, r.maxY)
+            return (min(lo.a, hi.a), max(lo.a, hi.a), min(lo.o, hi.o), max(lo.o, hi.o))
+        }
+        let item = hullRect(item), panel = hullRect(panel)
+        guard panel.o0 > item.o1 else { return false }
+        let p = axis(point.x, point.y)
+        // The hull, counter-clockwise from the tile's low corner: the
+        // ramp on each side passes through whichever rect reaches
+        // further along the axis.
+        var v: [(a: CGFloat, o: CGFloat)] = [(item.a0, item.o0), (item.a1, item.o0)]
+        if item.a1 < panel.a1 { v += [(panel.a1, panel.o0), (panel.a1, panel.o1)] }
+        else { v += [(item.a1, item.o1), (panel.a1, panel.o1)] }
+        v.append((panel.a0, panel.o1))
+        v.append(item.a0 > panel.a0 ? (panel.a0, panel.o0) : (item.a0, item.o1))
+        // Convex containment: the point sits left of every CCW edge —
+        // with `slop` of perpendicular forgiveness on each.
+        for i in v.indices {
+            let e = v[(i + 1) % v.count]
+            let da = e.a - v[i].a, do_ = e.o - v[i].o
+            let cross = da * (p.o - v[i].o) - do_ * (p.a - v[i].a)
+            if cross < -slop * (da * da + do_ * do_).squareRoot() { return false }
+        }
+        return true
+    }
+
     /// A window card's thumbnail box — 16:10, two sizes.
     static func cardSize(large: Bool) -> CGSize {
         large ? CGSize(width: 208, height: 130) : CGSize(width: 144, height: 90)
+    }
+
+    /// Whether `windowCount` crossed the compact-list limit — 0 is
+    /// "never compact", and a list at the limit counts as past it.
+    static func compactList(windowCount: Int, limit: Int) -> Bool {
+        limit > 0 && windowCount >= limit
+    }
+
+    /// Apps whose tiles earn the Now Playing row — the players a Dock
+    /// preview can plausibly drive with transport controls. When the
+    /// now-playing source named a bundle the row only shows on a
+    /// match; an anonymous source (the raw info dict carries none)
+    /// shows on any player.
+    static let playerBundleIDs: Set<String> = [
+        "com.apple.Music", "com.apple.podcasts", "com.apple.TV",
+        "com.spotify.client", "org.videolan.vlc", "com.colliderli.iina",
+    ]
+
+    static func showsMediaRow(mediaBundleID: String?, appBundleID: String?) -> Bool {
+        guard let appBundleID, playerBundleIDs.contains(appBundleID) else { return false }
+        return mediaBundleID == nil || mediaBundleID == appBundleID
+    }
+
+    /// The Calendar tile's bundle id — the only tile that earns the
+    /// next-event row.
+    static let calendarBundleID = "com.apple.iCal"
+
+    /// DockDoor's Aero shake: a fast left-right-left wiggle of the
+    /// pointer over a card. Counted as x-direction reversals past a
+    /// step inside a sliding window — 3+ reversals in `window` is a
+    /// shake. Fires once per rest (the caller resets on hover exit) so
+    /// a held wiggle can't machine-gun minimise.
+    struct ShakeDetector {
+        private var lastX: CGFloat?
+        private var direction = 0
+        private var reversals = 0
+        private var windowStart: TimeInterval = 0
+        private var fired = false
+
+        static let window: TimeInterval = 0.9
+        static let step: CGFloat = 6
+        static let needed = 3
+
+        mutating func note(x: CGFloat, now: TimeInterval) -> Bool {
+            guard !fired else { return false }
+            if now - windowStart > Self.window {
+                reversals = 0
+                direction = 0
+                windowStart = now
+            }
+            guard let last = lastX else {
+                lastX = x
+                return false
+            }
+            let dx = x - last
+            guard abs(dx) >= Self.step else { return false }
+            lastX = x
+            let dir = dx > 0 ? 1 : -1
+            if direction != 0, dir != direction { reversals += 1 }
+            direction = dir
+            if reversals >= Self.needed {
+                fired = true
+                return true
+            }
+            return false
+        }
+
+        mutating func reset() {
+            lastX = nil
+            direction = 0
+            reversals = 0
+            fired = false
+        }
+    }
+
+    /// A trackpad flick on a card: vertical scroll deltas accumulate
+    /// (normalised so "swipe down" means finger-down under either
+    /// scroll direction); past `threshold` the flick lands as
+    /// `.down` (minimise) or `.up` (restore). A pause or a reversal
+    /// restarts the count so an accidental brush can't stack into one.
+    struct SwipeAccumulator {
+        enum Flick: Equatable { case down, up }
+        private var total: CGFloat = 0
+        private var lastAt: TimeInterval = 0
+
+        static let threshold: CGFloat = 50
+        static let idle: TimeInterval = 0.3
+
+        mutating func note(deltaY: CGFloat, inverted: Bool,
+                           now: TimeInterval) -> Flick? {
+            // Finger-down is +deltaY under natural scrolling, -deltaY
+            // under traditional; normalise to finger motion.
+            let physical = inverted ? deltaY : -deltaY
+            if now - lastAt > Self.idle || (total != 0 && (physical > 0) != (total > 0)) {
+                total = 0
+            }
+            lastAt = now
+            total += physical
+            if total >= Self.threshold { total = 0; return .down }
+            if total <= -Self.threshold { total = 0; return .up }
+            return nil
+        }
     }
 
     /// Match a captured window to an AX row. Frames are the honest key
@@ -205,11 +381,23 @@ enum DockEnhanceMath {
 
 /// One application item in Apple's Dock list — frame in AX coordinates.
 struct DockAXItem {
+    /// The Dock's own tile class: `.app` tiles preview windows, `.folder`
+    /// tiles (Downloads, Stacks) pop their directory's contents.
+    enum Kind { case app, folder }
     let element: AXUIElement
     let frame: CGRect
     let title: String?
     /// `AXURL` — the file URL the tile points at, when the Dock shares it.
     let url: URL?
+    let kind: Kind
+
+    init(element: AXUIElement, frame: CGRect, title: String?, url: URL?, kind: Kind = .app) {
+        self.element = element
+        self.frame = frame
+        self.title = title
+        self.url = url
+        self.kind = kind
+    }
     /// Stable hover identity: the URL, else the title, else the slot —
     /// two tiles with one title (two copies of an app) still retarget.
     var hoverID: String {
@@ -242,18 +430,22 @@ enum AppleDockReader {
             ?? children.first { axString($0, kAXRoleAttribute) == kAXListRole }
     }
 
-    /// Every application tile in the list, in Dock order — spacers,
-    /// folders, the Trash and minimized-window tiles are skipped:
-    /// previews are an app feature. One walk; the caller keeps the
-    /// result for a beat and hit-tests in memory, so the tick never
-    /// re-walks the whole tree.
+    /// Every previewable tile in the list, in Dock order — spacers,
+    /// the Trash and minimized-window tiles are skipped; app tiles and
+    /// folder tiles (which pop instead of previewing) stay. One walk;
+    /// the caller keeps the result for a beat and hit-tests in memory,
+    /// so the tick never re-walks the whole tree.
     static func items(list: AXUIElement) -> [DockAXItem] {
-        axChildren(list).compactMap { child in
-            guard axString(child, kAXSubroleAttribute) == "AXApplicationDockItem",
-                  let frame = axFrame(child) else { return nil }
+        axChildren(list).compactMap { child -> DockAXItem? in
+            let subrole = axString(child, kAXSubroleAttribute)
+            let kind: DockAXItem.Kind
+            if subrole == "AXApplicationDockItem" { kind = .app }
+            else if subrole == "AXFolderDockItem" { kind = .folder }
+            else { return nil }
+            guard let frame = axFrame(child) else { return nil }
             return DockAXItem(element: child, frame: frame,
                               title: axString(child, kAXTitleAttribute),
-                              url: axURL(child))
+                              url: axURL(child), kind: kind)
         }
     }
 
@@ -267,23 +459,48 @@ enum AppleDockReader {
     /// One app's windows as preview rows — AX gives the title, the
     /// frame (the thumbnail match key), the minimized flag, and the
     /// element a later click can raise, close or minimize.
+    /// Per-list stamp folded into each row's `id`: plain indices repeat
+    /// across fills, and a thumbnail write in flight during a retarget
+    /// could then land on the next preview's same-indexed row. Stamped
+    /// ids never repeat, so a stale writer finds no row to land on.
+    @MainActor private static var rowStamp = 0
+
+    @MainActor
     static func windows(pid: pid_t) -> [DockPreviewWindow] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let elements = value as? [AXUIElement] else { return [] }
+        rowStamp &+= 1
+        let stamp = rowStamp << 20
+        var seen = Set<String>()
         return elements.enumerated().compactMap { index, element in
             // Sheets, drawers, floating palettes: not windows a person
             // switches to.
             let subrole = axString(element, kAXSubroleAttribute)
             if let subrole, subrole != "AXStandardWindow", subrole != "AXDialog" { return nil }
+            let frame = axFrame(element)
+            // A row without a real frame can never match a ScreenCaptureKit
+            // window — it only renders as an empty card (same floor the
+            // thumbnailer applies).
+            guard let frame,
+                  frame.width >= DockThumbnailer.minimumWindowEdge,
+                  frame.height >= DockThumbnailer.minimumWindowEdge else { return nil }
+            let title = axString(element, kAXTitleAttribute).flatMap { $0.isEmpty ? nil : $0 }
+                ?? "Untitled window"
+            // Some apps report the same window twice — once per AX
+            // surface. Two identical rows would leave one card empty
+            // forever, since one capture matches only one row.
+            let key = "\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width)),\(Int(frame.height))|\(title)"
+            guard seen.insert(key).inserted else { return nil }
             return DockPreviewWindow(
-                id: index,
-                title: axString(element, kAXTitleAttribute).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? "Untitled window",
+                id: stamp | index,
+                title: title,
                 minimized: axBool(element, kAXMinimizedAttribute),
-                frame: axFrame(element),
+                fullScreen: fullScreenState(of: element),
+                frame: frame,
+                documentURL: documentURL(of: element),
                 element: element)
         }
     }
@@ -321,6 +538,61 @@ enum AppleDockReader {
         guard let element = window.element else { return false }
         return AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
                                             minimized as CFTypeRef) == .success
+    }
+
+    /// The card's fullscreen verb: the window's own `AXFullScreen`
+    /// write — the same attribute the green button toggles. Apps that
+    /// never expose it (Finder) report the verb unsupported and the
+    /// card hides it.
+    @discardableResult
+    static func setFullScreen(_ window: DockPreviewWindow, _ on: Bool) -> Bool {
+        guard let element = window.element else { return false }
+        return AXUIElementSetAttributeValue(element, "AXFullScreen" as CFString,
+                                            on as CFTypeRef) == .success
+    }
+
+    /// The window's `AXDocument` — the file it shows, when the app
+    /// declares one. Cards carrying a document become drag sources:
+    /// dropping the card on another app's Dock tile is macOS's own
+    /// "open this in that app" (DockDoor's preview handoff).
+    static func documentURL(of element: AXUIElement) -> URL? {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXDocumentAttribute as CFString, &value) == .success
+        else { return nil }
+        if let url = value as? URL { return url.isFileURL ? url : nil }
+        if let string = value as? String, !string.isEmpty {
+            // Most apps report the document as a POSIX path.
+            if string.hasPrefix("/") { return URL(fileURLWithPath: string) }
+            return URL(string: string).flatMap { $0.isFileURL ? $0 : nil }
+        }
+        return nil
+    }
+
+    /// Whether `AXFullScreen` is there to write — and its value — read
+    /// at list time so the card knows whether to offer the verb.
+    /// Returns nil where the attribute is absent or not settable.
+    static func fullScreenState(of element: AXUIElement) -> Bool? {
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, "AXFullScreen" as CFString, &settable) == .success,
+              settable.boolValue else { return nil }
+        return axBool(element, "AXFullScreen")
+    }
+
+    /// The header's "New": the app's own ⌘N — activate it, then post
+    /// the chord straight to its event queue. Apps with no ⌘N do
+    /// nothing; nothing else is reachable without scripting rights.
+    static func newWindow(app: NSRunningApplication?) {
+        guard let app else { return }
+        app.activate()
+        // Virtual key 45 is 'n'. Posting to the pid lands the chord in
+        // the app's own queue — a real event, and a pid-targeted post
+        // asks for no scripting right.
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 45, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: 45, keyDown: false) else { return }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.postToPid(app.processIdentifier)
+        up.postToPid(app.processIdentifier)
     }
 
     // MARK: Primitives
@@ -381,12 +653,46 @@ struct DockPreviewWindow: Identifiable {
     let id: Int
     var title: String
     var minimized: Bool
+    /// `AXFullScreen` state; nil where the window doesn't offer the
+    /// write (Finder et al.) — the card hides the verb.
+    var fullScreen: Bool?
     /// The window's frame in Quartz coordinates, when AX reports one.
     var frame: CGRect?
+    /// The file the window shows (`AXDocument`), when it declares one —
+    /// a card carrying a document drags it onto another app's Dock tile.
+    var documentURL: URL? = nil
     var thumbnail: NSImage?
     /// The AX window element — the raise/close/minimize target. AX
     /// handles only ever touch the main actor here.
     let element: AXUIElement?
+}
+
+/// One entry in a folder pop (DockDoor's Folder Pop): the name, the
+/// type icon and the URL a click opens. Ids are indices — a folder
+/// fill is synchronous, there is no in-flight write to mis-land.
+struct DockFolderEntry: Identifiable {
+    let id: Int
+    let name: String
+    let url: URL
+    let icon: NSImage
+    let isDirectory: Bool
+}
+
+/// Where a folder pop's listing stands. `denied` is the TCC case —
+/// the app lacks Files-and-Folders consent for Downloads/Desktop/
+/// Documents, so the panel can offer the Settings shortcut rather
+/// than pretending the folder is empty.
+enum DockFolderState {
+    case loading, ready, denied, failed
+}
+
+/// The off-main result of reading one folder: the capped entries,
+/// the folder's own icon (resolved where a stall can't reach the UI)
+/// and whether the read was refused outright.
+struct DockFolderListing {
+    var entries: [DockFolderEntry] = []
+    var folderIcon: NSImage?
+    var denied = false
 }
 
 /// Everything the panel renders for one hovered dock icon — an
@@ -401,7 +707,31 @@ final class DockPreviewContent {
     var processIdentifier: pid_t?
     var isRunning = false
     var windows: [DockPreviewWindow] = []
+    /// Non-nil when the hovered tile is a folder: the panel pops the
+    /// directory's entries instead of window cards.
+    var folderURL: URL?
+    var folderEntries: [DockFolderEntry] = []
+    /// The entries load off the main actor — a directory can stall
+    /// (file provider, dead mount, a pending TCC consent) and the pop
+    /// shows "Loading…" until they land or fail. Only read when
+    /// `folderURL` is non-nil.
+    var folderState: DockFolderState = .loading
+    /// DockDoor's player row: while a media app's preview is up the
+    /// panel subscribes to `MediaFeed` and shows what the system says
+    /// that app is playing. nil until a track lands.
+    var media: AlcoveMedia?
+    /// The Calendar tile's next event, read only when the app already
+    /// holds Full Calendar Access — a hover never prompts.
+    var calendarEvent: ShelfCalendarModel.Event?
+    /// Calendar access was never asked: the row offers an explicit
+    /// "Show events" button rather than reading unprompted.
+    var calendarNeedsAuth = false
     var largeCards = false
+    /// True when the window count passed `compactListLimit` — the
+    /// panel lists titles instead of thumbnails and skips captures.
+    var compact = false
+    /// The keyboard-walked card — arrows move it, Return raises it.
+    var selectedWindowID: Int?
 }
 
 // MARK: - Controller
@@ -483,12 +813,27 @@ final class DockEnhanceController {
     /// later.
     @ObservationIgnored private var anchor: (item: DockAXItem, edge: DockEdge, screen: CGRect)?
 
+    /// The hold that keeps an auto-hiding Dock out while the panel is
+    /// up — injectable; the default resolves the CoreDock verbs.
+    @ObservationIgnored let autohideHold: DockAutohideHold
+    /// ⌥⇥ — the utility's window switcher, DockDoor's other half.
+    @ObservationIgnored let switcher = DockSwitcherController()
+    /// The quick-quit watch: ⌘+right-click on a Dock tile. A global
+    /// monitor (observe-only — the Dock's own menu still opens).
+    @ObservationIgnored private var quickQuitMonitor: Any?
+    /// The `MediaFeed` reader a player tile's preview holds — started
+    /// on show, released on hide, so the perl helper only lives while
+    /// a media card is actually up.
+    @ObservationIgnored private var mediaToken: UUID?
+
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
     /// `DockEnhancePreferences()` can't be a default value — callers
     /// pass nil and the main-actor body builds it.
-    init(preferences: DockEnhancePreferences? = nil) {
+    init(preferences: DockEnhancePreferences? = nil,
+         autohideHold: DockAutohideHold? = nil) {
         self.preferences = preferences ?? DockEnhancePreferences()
+        self.autohideHold = autohideHold ?? DockAutohideHold()
         watchers.onEscape = { [weak self] in
             self?.tracker.reset()
             self?.hidePreview()
@@ -500,6 +845,15 @@ final class DockEnhanceController {
         watchers.isInside = { [weak self] in
             guard let self, let panel, panel.isVisible else { return true }
             return panel.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation)
+        }
+        watchers.onKey = { [weak self] keyCode in
+            self?.panelKey(keyCode) ?? false
+        }
+        switcher.isAllowed = { [weak self] in
+            self?.preferences.read().windowSwitcher ?? true
+        }
+        switcher.isCmdAllowed = { [weak self] in
+            self?.preferences.read().appSwitcher ?? false
         }
     }
 
@@ -514,6 +868,14 @@ final class DockEnhanceController {
         running = true
         refreshPermissions(force: true)
         Self.log.notice("enhance start: accessibility \(self.accessibilityTrusted, privacy: .public), screen recording \(self.screenCaptureGranted, privacy: .public), dock list \(AppleDockReader.dockPID().flatMap { AppleDockReader.dockList(pid: $0) } != nil, privacy: .public)")
+        switcher.start()
+        switcher.syncSettings()
+        quickQuitMonitor = NSEvent.addGlobalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+            guard event.modifierFlags.contains(.command) else { return }
+            let force = event.modifierFlags.contains(.option)
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.quickQuit(at: point, force: force) }
+        }
         scheduleTick(after: Self.pollInterval)
     }
 
@@ -524,6 +886,9 @@ final class DockEnhanceController {
         timer = nil
         tracker.reset()
         cachedList = nil
+        if let quickQuitMonitor { NSEvent.removeMonitor(quickQuitMonitor) }
+        quickQuitMonitor = nil
+        switcher.stop()
         hidePreview()
     }
 
@@ -564,6 +929,7 @@ final class DockEnhanceController {
 
     private func tick() {
         refreshPermissions()
+        switcher.syncSettings()
         let inPanel = pointerInPanel()
         guard accessibilityTrusted else {
             if tracker.shown != nil { tracker.reset(); hidePreview() }
@@ -583,7 +949,6 @@ final class DockEnhanceController {
         switch action {
         case .show:
             if let hovered {
-                Self.log.notice("preview: \(hovered.hoverID, privacy: .public)")
                 showPreview(for: hovered)
             }
         case .hide:
@@ -648,7 +1013,15 @@ final class DockEnhanceController {
 
     private func pointerInPanel() -> Bool {
         guard let panel, panel.isVisible else { return false }
-        return panel.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation)
+        let pointer = NSEvent.mouseLocation
+        if panel.frame.insetBy(dx: -4, dy: -4).contains(pointer) { return true }
+        // The panel owns the screen's centre now — the road from the
+        // tile to it crosses open desk, and a pointer on that road is
+        // travelling, not leaving.
+        guard let anchor else { return false }
+        let itemFrame = anchorFrame(for: anchor.item, pointer: pointer)
+        return DockEnhanceMath.inCorridor(item: itemFrame, panel: panel.frame,
+                                          edge: anchor.edge, point: pointer, slop: 6)
     }
 
     private static func mainScreenHeight() -> CGFloat {
@@ -662,17 +1035,33 @@ final class DockEnhanceController {
     private func showPreview(for item: DockAXItem) {
         generation += 1
         let generationAtShow = generation
+        if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
+        mediaToken = nil
         preview.largeCards = preferences.largePreviews
         fill(preview, for: item)
+
         // Nothing to preview — no windows to raise — is no panel. A
         // running app with no windows earned a header-only chip on
         // every pass before; an app not running has the Dock's own
-        // click to open it. The tracker keeps the tile as shown, so
-        // this does not retry on every tick.
-        guard !preview.windows.isEmpty else {
+        // click to open it. A folder tile pops even when empty — the
+        // pop is the point of the hover — and a player or the Calendar
+        // tile earns its row even without a window. The tracker keeps
+        // the tile as shown, so this does not retry on every tick.
+        let earnsRow = preview.bundleID.map {
+            DockEnhanceMath.playerBundleIDs.contains($0)
+                || $0 == DockEnhanceMath.calendarBundleID
+        } ?? false
+        guard !preview.windows.isEmpty || preview.folderURL != nil || earnsRow else {
             hidePreview()
             return
         }
+        preview.compact = DockEnhanceMath.compactList(
+            windowCount: preview.windows.count, limit: preferences.compactListLimit)
+
+        // Hold an auto-hiding Dock out for the life of the panel —
+        // without it the Dock slides away the moment the pointer steps
+        // from an icon onto the cards.
+        if preferences.holdDockOpen { autohideHold.hold() }
 
         let mainHeight = Self.mainScreenHeight()
         // The screen under the pointer: a sliding Dock's tiles report
@@ -694,11 +1083,79 @@ final class DockEnhanceController {
         let target = DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: edge, size: size,
             screen: screenFrame, gap: Self.panelGap)
-        Self.log.notice("preview geometry: tile \(String(format: "%.0f–%.0f", itemFrame.minX, itemFrame.maxX), privacy: .public) (mid \(String(format: "%.0f", itemFrame.midX), privacy: .public)), list \(String(format: "%.0f–%.0f", listFrame.minX, listFrame.maxX), privacy: .public), pointer \(String(format: "%.0f", pointer.x), privacy: .public), size \(String(format: "%.0fx%.0f", size.width, size.height), privacy: .public), panel \(String(format: "%.0f–%.0f", target.minX, target.maxX), privacy: .public) (mid \(String(format: "%.0f", target.midX), privacy: .public)), \(self.preview.windows.count, privacy: .public) windows")
         panel.present(frame: target, dockedAt: edge)
         watchers.start(escape: true, clickAway: true)
 
-        if preferences.showThumbnails, screenCaptureGranted, let pid = preview.processIdentifier {
+        // A folder's entries list on a background queue — one stall
+        // inside the directory must never reach the main thread. The
+        // generation check is the same stale-guard the thumbnails use.
+        // The sleep races the read: a TCC consent that cannot prompt
+        // (~5s auth pend) or a stuck vnode resolves to `failed` rather
+        // than an eternal spinner; the abandoned read's write-back is
+        // generation-guarded away.
+        if let folderURL = preview.folderURL {
+            Task { @MainActor [weak self] in
+                let work = Task.detached(priority: .userInitiated) {
+                    Self.folderListing(of: folderURL)
+                }
+                let listing = await withTaskGroup(
+                    of: DockFolderListing?.self,
+                    returning: DockFolderListing?.self
+                ) { group in
+                    group.addTask { await work.value }
+                    group.addTask {
+                        try? await Task.sleep(for: .seconds(6))
+                        return nil
+                    }
+                    let first = await group.next() ?? nil
+                    group.cancelAll()
+                    return first
+                }
+                guard let self, self.generation == generationAtShow,
+                      self.preview.folderURL == folderURL else { return }
+                if let listing {
+                    self.preview.folderEntries = listing.entries
+                    if let icon = listing.folderIcon { self.preview.icon = icon }
+                    self.preview.folderState = listing.denied ? .denied : .ready
+                } else {
+                    self.preview.folderState = .failed
+                }
+            }
+        }
+
+        // A player tile subscribes to the shared Now Playing feed for
+        // the life of its panel; the reader applies the bundle match —
+        // a track from a different app never lands on this one.
+        if let bundleID = preview.bundleID,
+           DockEnhanceMath.playerBundleIDs.contains(bundleID) {
+            mediaToken = MediaFeed.shared.subscribe { [weak self] media in
+                guard let self, self.generation == generationAtShow else { return }
+                self.preview.media = media.flatMap {
+                    DockEnhanceMath.showsMediaRow(
+                        mediaBundleID: $0.bundleIdentifier,
+                        appBundleID: bundleID) ? $0 : nil
+                }
+                self.reframe()
+            }
+        }
+
+        // The Calendar tile: read today's next event only when the
+        // grant already exists — a hover never prompts, it offers.
+        if preview.bundleID == DockEnhanceMath.calendarBundleID {
+            switch EKEventStore.authorizationStatus(for: .event) {
+            case .fullAccess:
+                loadCalendarRow(generation: generationAtShow)
+            case .notDetermined, .writeOnly:
+                preview.calendarNeedsAuth = true
+            case .denied, .restricted:
+                break
+            @unknown default:
+                break
+            }
+        }
+
+        if preferences.showThumbnails, !preview.compact, screenCaptureGranted,
+           let pid = preview.processIdentifier {
             let bundleID = preview.bundleID
             let offscreen = preferences.includeOffscreenWindows
             Task { @MainActor [weak self] in
@@ -714,8 +1171,11 @@ final class DockEnhanceController {
     private func hidePreview() {
         generation += 1
         anchor = nil
+        if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
+        mediaToken = nil
         watchers.stop()
         panel?.dismiss()
+        autohideHold.release()
     }
 
     /// Keep the visible panel on its tile: the tile's frame moves while
@@ -742,18 +1202,83 @@ final class DockEnhanceController {
         panel.actions.onPick = { [weak self] window in self?.pick(window) }
         panel.actions.onClose = { [weak self] window in self?.close(window) }
         panel.actions.onMinimize = { [weak self] window in self?.toggleMinimized(window) }
-        panel.actions.onOpenApp = { [weak self] in self?.openApp() }
+        panel.actions.onFullScreen = { [weak self] window in self?.toggleFullScreen(window) }
+        panel.actions.onNewWindow = { [weak self] in self?.newWindow() }
         panel.actions.onQuitApp = { [weak self] in self?.quitApp() }
         panel.actions.onHideApp = { [weak self] in self?.hideApp() }
+        panel.actions.onMinimizeAll = { [weak self] in self?.minimizeAll() }
+        panel.actions.onOpen = { [weak self] url in self?.openItem(url) }
+        panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
+        panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
+        panel.actions.onSwipeMinimize = { [weak self] window, minimize in
+            self?.swipeMinimize(window, minimize)
+        }
+        panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
+        panel.actions.onCalendarJoin = { url in
+            guard let url else { return }
+            NSWorkspace.shared.open(url)
+        }
+        panel.actions.onDocumentDrop = { [weak self] url in self?.openDocumentInPreview(url) ?? false }
         self.panel = panel
         return panel
     }
 
+    /// A document card dropped on this preview: the previewed app
+    /// opens the file — the same verb as dropping the document on the
+    /// app's Dock tile, one panel nearer.
+    private func openDocumentInPreview(_ url: URL) -> Bool {
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path),
+              let bundleID = preview.bundleID,
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return false }
+        NSWorkspace.shared.open([url], withApplicationAt: appURL,
+                                configuration: NSWorkspace.OpenConfiguration())
+        Self.log.notice("document handoff: \(url.lastPathComponent, privacy: .public) → \(bundleID, privacy: .public)")
+        return true
+    }
+
     /// What a hovered tile resolves to: a running app via the tile's
     /// `AXURL`/bundle id or a title match, else a bare "open me" card.
+    /// A folder tile skips all of it and pops the directory's entries.
     private func fill(_ content: DockPreviewContent, for item: DockAXItem) {
         let appURL = item.url
+        content.folderURL = nil
+        content.folderEntries = []
+        content.media = nil
+        content.calendarEvent = nil
+        content.calendarNeedsAuth = false
+        if item.kind == .folder {
+            content.folderURL = appURL
+            content.appName = appURL?.lastPathComponent ?? item.title ?? "Folder"
+            // The generic folder glyph comes from LaunchServices — no
+            // file access. `icon(forFile:)` would open the folder and,
+            // on a TCC-gated path like Downloads, stall the main
+            // thread seconds while the consent check pends. The real
+            // icon upgrades with the entries off-actor.
+            content.icon = NSWorkspace.shared.icon(for: .folder)
+            content.folderEntries = []
+            content.folderState = .loading
+            content.bundleID = nil
+            content.appURL = appURL
+            content.processIdentifier = nil
+            content.isRunning = false
+            content.windows = []
+            return
+        }
         let bundleID = appURL.flatMap { Bundle(url: $0)?.bundleIdentifier }
+        // An excluded app rests and earns nothing — DockDoor's app
+        // filter. The tile reads as shown so the tick never retries.
+        if let bundleID, preferences.excludedBundleIDs.contains(bundleID) {
+            content.appName = item.title
+                ?? appURL?.deletingPathExtension().lastPathComponent ?? "Dock item"
+            content.icon = nil
+            content.bundleID = nil
+            content.appURL = nil
+            content.processIdentifier = nil
+            content.isRunning = false
+            content.windows = []
+            return
+        }
         let running = bundleID.flatMap {
             NSRunningApplication.runningApplications(withBundleIdentifier: $0).first
         } ?? NSWorkspace.shared.runningApplications.first {
@@ -768,6 +1293,7 @@ final class DockEnhanceController {
         content.icon = running?.icon
             ?? appURL.map { DockIconResolver.icon(appURL: $0, pointSize: 64, scale: 2) }
         content.windows = running.map { AppleDockReader.windows(pid: $0.processIdentifier) } ?? []
+        content.selectedWindowID = nil
     }
 
     // MARK: Verbs
@@ -778,6 +1304,32 @@ final class DockEnhanceController {
         AppleDockReader.raise(window, app: app)
         tracker.reset()
         hidePreview()
+    }
+
+    /// Arrows walk the window cards while the pointer rests on the
+    /// panel — ←/→ between cards, ↓/↑ in the compact list — and Return
+    /// raises the walked one. DockDoor's keyboard path over the same
+    /// non-activating surface.
+    private func panelKey(_ keyCode: UInt16) -> Bool {
+        let windows = preview.windows
+        guard !windows.isEmpty else { return false }
+        switch keyCode {
+        case 123, 124, 125, 126: // ← → ↓ ↑
+            let current = windows.firstIndex { $0.id == preview.selectedWindowID }
+            let delta = (keyCode == 123 || keyCode == 126) ? -1 : 1
+            let next = current.map {
+                ($0 + delta + windows.count) % windows.count
+            } ?? (delta > 0 ? 0 : windows.count - 1)
+            preview.selectedWindowID = windows[next].id
+            return true
+        case 36: // Return
+            guard let id = preview.selectedWindowID,
+                  let window = windows.first(where: { $0.id == id }) else { return false }
+            pick(window)
+            return true
+        default:
+            return false
+        }
     }
 
     /// The card's ×: close the window and drop its card; the panel
@@ -801,14 +1353,33 @@ final class DockEnhanceController {
         preview.windows[index].minimized = target
     }
 
-    /// The header's "Open" for a pinned app that isn't running.
-    private func openApp() {
-        if let url = preview.appURL {
-            NSWorkspace.shared.openApplication(
-                at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+    /// The card's fullscreen verb — toggles the window's own
+    /// `AXFullScreen` and keeps the panel up so several windows can
+    /// be flipped in a row.
+    private func toggleFullScreen(_ window: DockPreviewWindow) {
+        guard let element = window.element,
+              let current = AppleDockReader.fullScreenState(of: element) else { return }
+        guard AppleDockReader.setFullScreen(window, !current) else { return }
+        if let index = preview.windows.firstIndex(where: { $0.id == window.id }) {
+            preview.windows[index].fullScreen = !current
         }
-        tracker.reset()
-        hidePreview()
+    }
+
+    /// The header's "New" — the app's ⌘N. The window list refreshes a
+    /// beat later so the card for the new window lands while the panel
+    /// is still up.
+    private func newWindow() {
+        let app = preview.processIdentifier
+            .flatMap { NSRunningApplication(processIdentifier: $0) }
+        AppleDockReader.newWindow(app: app)
+        let generationAtNew = generation
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let self, self.generation == generationAtNew,
+                  let pid = self.preview.processIdentifier else { return }
+            self.preview.windows = AppleDockReader.windows(pid: pid)
+            self.reframe()
+        }
     }
 
     /// The header's "Quit" — a plain terminate, never forced.
@@ -816,6 +1387,169 @@ final class DockEnhanceController {
         preview.processIdentifier
             .flatMap { NSRunningApplication(processIdentifier: $0) }?
             .terminate()
+        tracker.reset()
+        hidePreview()
+    }
+
+    /// DockDoor's minimise-all: every open window of the previewed app
+    /// goes to the Dock in one verb. Minimized rows are left alone.
+    private func minimizeAll() {
+        var changed = false
+        for index in preview.windows.indices where !preview.windows[index].minimized {
+            if AppleDockReader.setMinimized(preview.windows[index], true) {
+                preview.windows[index].minimized = true
+                changed = true
+            }
+        }
+        if changed { reframe() }
+    }
+
+    /// Aero shake — minimise the rest of the app's windows, or bring
+    /// them all back when the shaken card is the only one left up.
+    private func shakeOthers(_ window: DockPreviewWindow) {
+        let others = preview.windows.filter { $0.id != window.id }
+        guard !others.isEmpty else { return }
+        let restore = others.allSatisfy(\.minimized)
+        var changed = false
+        for other in others {
+            guard AppleDockReader.setMinimized(other, !restore),
+                  let index = preview.windows.firstIndex(where: { $0.id == other.id })
+            else { continue }
+            preview.windows[index].minimized = !restore
+            changed = true
+        }
+        if changed { reframe() }
+    }
+
+    /// A vertical flick on a card — down minimises, up restores.
+    private func swipeMinimize(_ window: DockPreviewWindow, _ minimize: Bool) {
+        guard window.minimized != minimize,
+              AppleDockReader.setMinimized(window, minimize),
+              let index = preview.windows.firstIndex(where: { $0.id == window.id })
+        else { return }
+        preview.windows[index].minimized = minimize
+    }
+
+    /// A folder pop click — the entry (or the folder itself) opens.
+    private func openItem(_ url: URL) {
+        NSWorkspace.shared.open(url)
+        tracker.reset()
+        hidePreview()
+    }
+
+    /// The next event for the Calendar tile's row — the shelf's own
+    /// read (24 h, not all-day, earliest first) done off-main; an
+    /// EventKit query is a synchronous IPC to `calendard` and a hover
+    /// never waits on it.
+    private func loadCalendarRow(generation: Int) {
+        Task { @MainActor [weak self] in
+            let event = await Task.detached(priority: .userInitiated) {
+                Self.nextCalendarEvent()
+            }.value
+            guard let self, self.generation == generation else { return }
+            self.preview.calendarEvent = event
+            self.reframe()
+        }
+    }
+
+    /// The EventKit half of the calendar row — pure enough to run on a
+    /// worker: the grant is already checked, and `project`/`joinableURL`
+    /// are nonisolated. `nil` reads as "nothing upcoming".
+    nonisolated static func nextCalendarEvent() -> ShelfCalendarModel.Event? {
+        let store = EKEventStore()
+        let now = Date()
+        let predicate = store.predicateForEvents(
+            withStart: now, end: now.addingTimeInterval(24 * 3600), calendars: nil)
+        return store.events(matching: predicate)
+            .filter { !$0.isAllDay }
+            .sorted { $0.startDate < $1.startDate }
+            .first
+            .map { ShelfCalendarModel.project($0) }
+    }
+
+    /// The calendar row's explicit ask — "Show events" requests the
+    /// Full Calendar grant, then fills the row when it's given.
+    private func authorizeCalendar() {
+        let store = EKEventStore()
+        let generationAtAuth = generation
+        store.requestFullAccessToEvents { [weak self] granted, _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == generationAtAuth else { return }
+                self.preview.calendarNeedsAuth = false
+                if granted { self.loadCalendarRow(generation: generationAtAuth) }
+            }
+        }
+    }
+
+    /// A folder pop's contents: top-level entries, directories first,
+    /// Finder's name order — the Dock tile's own sort lives in the
+    /// Dock's plist, so the pop keeps a stable, predictable order.
+    /// Hidden files are skipped, like Finder's default view.
+    ///
+    /// Runs OFF the main actor (the pop shows Loading… until it
+    /// lands). The listing uses `atPath:` — a bare readdir — because
+    /// the URL variant's resource prefetch opens every file, and one
+    /// Reads names via POSIX `opendir`/`readdir` rather than
+    /// `contentsOfDirectory`: the Foundation enumerator's `DirEnumRead`
+    /// holds a syscall open in a way an EndpointSecurity client (e.g.
+    /// Defender) or a pending TCC consent can stall for seconds.
+    /// `readdir` needs one `opendir` and `d_type` carries the
+    /// directory flag for free — still one `open` per call, so this
+    /// must stay off the caller's thread.
+    ///
+    /// Capped at 60: the pop is a quick-open surface, not Finder.
+    nonisolated static func folderListing(of url: URL) -> DockFolderListing {
+        guard let dir = opendir(url.path) else {
+            // Downloads/Desktop/Documents gate behind Files-and-Folders
+            // consent — the denial surfaces as EACCES/EPERM, or EINTR
+            // when the auth upcall can't present its prompt.
+            let e = errno
+            return DockFolderListing(denied: e == EACCES || e == EPERM || e == EINTR)
+        }
+        defer { closedir(dir) }
+        var rows: [(name: String, url: URL, isDir: Bool)] = []
+        while let ent = readdir(dir) {
+            let name = withUnsafePointer(to: &ent.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: 256) {
+                    String(cString: $0)
+                }
+            }
+            guard name != ".", name != "..", !name.hasPrefix(".") else { continue }
+            rows.append((name, url.appendingPathComponent(name),
+                         ent.pointee.d_type == DT_DIR))
+        }
+        let capped = rows.sorted {
+            if $0.isDir != $1.isDir { return $0.isDir }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }.prefix(60)
+        return DockFolderListing(
+            entries: capped.enumerated().map { index, row in
+                DockFolderEntry(id: index, name: row.name, url: row.url,
+                                icon: NSWorkspace.shared.icon(forFile: row.url.path),
+                                isDirectory: row.isDir)
+            },
+            folderIcon: NSWorkspace.shared.icon(forFile: url.path))
+    }
+
+    /// The test seam — the entries half of `folderListing`.
+    nonisolated static func folderEntries(of url: URL) -> [DockFolderEntry] {
+        folderListing(of: url).entries
+    }
+
+    /// DockDoor's quick-quit: ⌘+right-click a Dock icon terminates the
+    /// app, ⌘⌥+right-click force-quits it. A global monitor — the Dock
+    /// keeps its own menu; ours just rides the same press.
+    private func quickQuit(at point: NSPoint, force: Bool) {
+        let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight())
+        guard let list = dockList(near: axPoint),
+              list.frame.insetBy(dx: -Self.listSlop.width, dy: -Self.listSlop.height).contains(axPoint),
+              let item = tiles(of: list).first(where: { $0.frame.contains(axPoint) }),
+              let appURL = item.url,
+              let bundleID = Bundle(url: appURL)?.bundleIdentifier,
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+        else { return }
+        Self.log.notice("quick quit: \(bundleID, privacy: .public) force=\(force, privacy: .public)")
+        if force { app.forceTerminate() } else { app.terminate() }
         tracker.reset()
         hidePreview()
     }

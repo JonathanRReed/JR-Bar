@@ -34,12 +34,41 @@ struct MenuBarUtilityControls: View {
     let utility: MenuBarUtility
     @ViewState private var showAdvanced = false
     @ViewState private var showOverrides = false
+    @ViewState private var showExtras = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            Picker(selection: utility.providerBinding) {
+                Text("JR-Bar").tag(MenuBarProvider.jrbar)
+                Text("Bartender").tag(MenuBarProvider.bartender)
+                Text("Ice").tag(MenuBarProvider.ice)
+                Text("Hidden Bar").tag(MenuBarProvider.hiddenBar)
+            } label: {
+                SettingLabel(title: "Render with",
+                             subtitle: "Hand the hiding to an installed counterpart — Bartender (paid), Ice or Hidden Bar (free). Ours parks while the pick stands.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+
+            if let note = utility.providerNote {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.secondary)
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if utility.externalURL != nil {
+                        Spacer()
+                        Button("Open") { utility.openExternal() }
+                            .controlSize(.small)
+                    }
+                }
+            }
+
             SettingLabel(title: "How it works",
                          subtitle: utility.concealing
-                            ? "macOS itself hides the apps you choose — no spacer, no blank stretch, no «. Pick Hidden or Always for an app under Overrides; hover or click the empty bar beside the notch, or scroll it, to bring them back for a moment. Clicks on the clock, battery and Wi-Fi are relayed while the rest are hidden."
+                            ? "Nothing is hidden until you choose it. Pick Hidden or Always under Overrides, or ⌘-drag an item left of the ‹ separator (or the macOS « caret while items are parked) — it joins the hidden run where it stays active and reachable. Drag it back right to show it again. Hover, click the empty bar, or scroll to peek at the hidden run."
                             : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
             if utility.concealerAvailable, !utility.concealing {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
@@ -92,6 +121,10 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Tuck away after",
                              subtitle: "How long a reveal lasts once the pointer leaves the bar.")
             }
+            Toggle(isOn: utility.bind(\.showForUpdates)) {
+                SettingLabel(title: "Show for updates",
+                             subtitle: "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen.")
+            }
             LabeledContent {
                 Button("Show Item Bar") { utility.bar.toggle() }
                     .controlSize(.small)
@@ -117,6 +150,41 @@ struct MenuBarUtilityControls: View {
             Divider()
                 .padding(.vertical, 4)
 
+            DisclosureGroup(isExpanded: $showExtras) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(isOn: utility.bind(\.hideUnderNotch)) {
+                        SettingLabel(title: "Keep items out of the notch",
+                                     subtitle: "An item that lands in the notch band is invisible anyway — it moves to the hidden run where the Item Bar can still reach it.")
+                    }
+                    Toggle(isOn: utility.bind(\.hideOnMenuOverlap)) {
+                        SettingLabel(title: "Hide items under app menus",
+                                     subtitle: "On a crowded bar the front app's menus draw over items — those hide instead of sitting unreachable.")
+                    }
+                    Toggle(isOn: utility.bind(\.barUnderlay)) {
+                        SettingLabel(title: "Tint the whole bar",
+                                     subtitle: "The cover's material and tint drawn under the full menu bar row, on every display.")
+                    }
+                    Toggle(isOn: utility.bind(\.agentStatusItem)) {
+                        SettingLabel(title: "Agent status item",
+                                     subtitle: "A dot in the bar showing what your agents are doing; click opens the Overview.")
+                    }
+                    Toggle(isOn: utility.bind(\.combinedSystemItem)) {
+                        SettingLabel(title: "One system item",
+                                     subtitle: "Battery, Wi-Fi, sound and Focus in a single item with a popover — the matching Control Center items hide while it runs.")
+                    }
+                    Divider()
+                        .padding(.vertical, 4)
+                    spacerEditor
+                    Divider()
+                        .padding(.vertical, 4)
+                    displayProfileEditor
+                }
+                .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "Extras",
+                             subtitle: "Spacer items, the bar underlay, the agent item, per-display profiles, and what the notch and menus cover.")
+            }
+
             DisclosureGroup(isExpanded: $showOverrides) {
                 VStack(alignment: .leading, spacing: 4) {
                     SettingLabel(title: "Cover in place",
@@ -134,6 +202,21 @@ struct MenuBarUtilityControls: View {
 
             DisclosureGroup(isExpanded: $showAdvanced) {
                 VStack(alignment: .leading, spacing: 4) {
+                    LabeledContent {
+                        Picker(selection: utility.bind(\.itemSpacing)) {
+                            Text("System").tag(0)
+                            Text("Roomy").tag(14)
+                            Text("Compact").tag(8)
+                            Text("Tight").tag(4)
+                        } label: { EmptyView() }
+                            .labelsHidden()
+                            .fixedSize()
+                    } label: {
+                        SettingLabel(title: "Item spacing",
+                                     subtitle: "A tighter gap between every app's items, system-wide. Items pick it up as they relaunch.")
+                    }
+                    Divider()
+                        .padding(.vertical, 4)
                     MenuBarProfilesControls(utility: utility)
                     Divider()
                         .padding(.vertical, 4)
@@ -142,7 +225,7 @@ struct MenuBarUtilityControls: View {
                 .padding(.top, 4)
             } label: {
                 SettingLabel(title: "Advanced",
-                             subtitle: "Profiles, the ⌘⇧K command bar, hotkeys, rules, and the arrange run.")
+                             subtitle: "Item spacing, profiles, the ⌘⇧K command bar, hotkeys, rules, and the arrange run.")
             }
         }
         .onAppear { utility.refreshListing() }
@@ -204,6 +287,74 @@ struct MenuBarUtilityControls: View {
                     .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.tail)
+            }
+        }
+    }
+
+    /// The spacer/label item rows plus the add button.
+    @ViewBuilder
+    private var spacerEditor: some View {
+        SettingLabel(title: "Spacer items",
+                     subtitle: "Fixed-width or labelled items of ours that sit anywhere in the bar — ⌘-drag them like any other. Clicking one reveals the hidden run.")
+        ForEach(Array(utility.settings().spacers.enumerated()), id: \.element.id) { index, spacer in
+            HStack(spacing: 8) {
+                TextField("Label", text: Binding(
+                    get: { spacer.label },
+                    set: { label in utility.updateSpacer(id: spacer.id) { $0.label = label } }))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                Stepper(value: Binding(
+                    get: { spacer.width },
+                    set: { width in utility.updateSpacer(id: spacer.id) { $0.width = width } }),
+                    in: 0...200, step: 4) {
+                    Text(spacer.width > 0 ? "\(Int(spacer.width)) pt" : "Hug")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .trailing)
+                }
+                .controlSize(.small)
+                Button(role: .destructive) {
+                    utility.removeSpacer(id: spacer.id)
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
+        HStack {
+            Button("Add spacer") { utility.addSpacer() }
+                .controlSize(.small)
+            Button("Add label") { utility.addSpacer(label: "•") }
+                .controlSize(.small)
+        }
+    }
+
+    /// One row per attached display: which profile the bar takes while
+    /// the pointer is on it.
+    @ViewBuilder
+    private var displayProfileEditor: some View {
+        let screens = NSScreen.screens
+        if screens.count > 1 {
+            SettingLabel(title: "Profile per display",
+                         subtitle: "The bar takes this profile while the pointer rests on that display — the mapping survives a logout, unlike a hotkey cycle.")
+            ForEach(screens, id: \.self) { screen in
+                if let key = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue {
+                    LabeledContent {
+                        Picker(selection: Binding(
+                            get: { utility.settings().displayProfiles[key] ?? "" },
+                            set: { utility.setDisplayProfile($0, displayKey: key) })) {
+                            Text("No change").tag("")
+                            ForEach(utility.settings().profiles) { profile in
+                                Text(profile.name).tag(profile.id)
+                            }
+                        } label: { EmptyView() }
+                        .labelsHidden()
+                        .fixedSize()
+                    } label: {
+                        SettingLabel(title: screen.localizedName)
+                    }
+                }
             }
         }
     }
@@ -361,6 +512,7 @@ private struct MenuBarAutomationControls: View {
     /// cannot appear here.
     @ViewState private var triggerKind = "unlock"
     @ViewState private var triggerBundleID = ""
+    @ViewState private var triggerSSID = ""
     @ViewState private var triggerHour = 9
     @ViewState private var triggerMinute = 0
     @ViewState private var actionKind = "hideAll"
@@ -443,12 +595,24 @@ private struct MenuBarAutomationControls: View {
                 Text("Time of day").tag("time")
                 Text("Charger in").tag("acOn")
                 Text("Charger out").tag("acOff")
+                Text("Wi-Fi joins").tag("wifiJoin")
+                Text("Wi-Fi changes").tag("wifiAny")
+                Text("Wi-Fi drops").tag("wifiLeft")
+                Text("Mic goes live").tag("micOn")
+                Text("Mic goes quiet").tag("micOff")
+                Text("Focus turns on").tag("focusOn")
+                Text("Focus turns off").tag("focusOff")
             } label: { EmptyView() }
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
             if triggerKind == "app" {
                 TextField("bundle id", text: $triggerBundleID)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+            }
+            if triggerKind == "wifiJoin" {
+                TextField("network name", text: $triggerSSID)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
             }
@@ -498,6 +662,9 @@ private struct MenuBarAutomationControls: View {
         if triggerKind == "app" && triggerBundleID.trimmingCharacters(in: .whitespaces).isEmpty {
             return false
         }
+        if triggerKind == "wifiJoin" && triggerSSID.trimmingCharacters(in: .whitespaces).isEmpty {
+            return false
+        }
         if actionKind == "reveal" && actionSeconds < 1 { return false }
         return true
     }
@@ -513,6 +680,14 @@ private struct MenuBarAutomationControls: View {
             minute: min(59, max(0, triggerMinute)))
         case "acOn": trigger = .chargerConnected
         case "acOff": trigger = .chargerDisconnected
+        case "wifiJoin": trigger = .wifiJoined(
+            ssid: triggerSSID.trimmingCharacters(in: .whitespaces))
+        case "wifiAny": trigger = .wifiJoined(ssid: "")
+        case "wifiLeft": trigger = .wifiLeft
+        case "micOn": trigger = .microphoneInUse
+        case "micOff": trigger = .microphoneIdle
+        case "focusOn": trigger = .focusEnabled
+        case "focusOff": trigger = .focusDisabled
         default: trigger = .screenUnlocked
         }
         let action: MenuBarTriggerAction
@@ -523,6 +698,11 @@ private struct MenuBarAutomationControls: View {
         default: action = .hideAll
         }
         utility.addTriggerRule(trigger: trigger, action: action)
+        // Focus rules read through INFocusStatusCenter — the add is the
+        // explicit user action the consent prompt is allowed to ride.
+        if trigger == .focusEnabled || trigger == .focusDisabled {
+            MenuBarSystemTriggerSource.requestFocusAuthorization { _ in }
+        }
     }
 
     // MARK: Arrange

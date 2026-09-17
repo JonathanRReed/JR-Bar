@@ -148,6 +148,7 @@ final class NotchToy: Toy {
             self.core.openSession(session)
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
+        cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
         observe()
         // The first pass: a toy that loads enabled must not wait for a
         // change to show its island.
@@ -192,7 +193,9 @@ final class NotchToy: Toy {
         case .jrbar:
             if !settings.enabled { return .off }
             guard settings.islandEnabled else { return .paused("Island hidden") }
-            return earsDrawn ? .paused("Bare — the Screen Bar's ears carry the HUD") : .on
+            // Ears drawn or island drawn, the notch HUD is live either
+            // way — the delegated mode is not a lesser state to badge.
+            return .on
         }
     }
 
@@ -308,8 +311,7 @@ final class NotchToy: Toy {
         guard let screen = ScreenBarGeometry.preferredScreen() else {
             return NotchIslandLayout.expandedMinWidth
         }
-        let slot = NotchIslandLayout.slot(left: screen.auxiliaryTopLeftArea,
-                                          right: screen.auxiliaryTopRightArea)
+        let slot = ScreenBarGeometry.islandSlot(on: screen)
         return NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
     }
 
@@ -336,7 +338,7 @@ final class NotchToy: Toy {
     var notchDepth: CGFloat {
         _ = displayVersion
         guard let screen = ScreenBarGeometry.preferredScreen() else { return 0 }
-        return ScreenBarGeometry.notchDepth(of: screen)
+        return ScreenBarGeometry.islandDepth(of: screen)
     }
 
     /// Points of dead space the island keeps under the notch while the
@@ -351,12 +353,18 @@ final class NotchToy: Toy {
         return NotchIslandLayout.ledBandClearance
     }
 
-    /// Whether the Screen Bar is up — read off the settings document the
-    /// delegate syncs with the window's visibility.
-    var screenBarLive: Bool {
-        SettingsDocument(core.settings?.document ?? .object([:]))
-            .bool("virtual_status_device_enabled") ?? false
-    }
+    /// Whether the Screen Bar's band is on screen — wired by the
+    /// delegate to `PanelStore.screenBarShown`, the flag the show/hide
+    /// calls flip with the window. The daemon's
+    /// `virtual_status_device_enabled` doc is deliberately NOT the read:
+    /// it freezes stale whenever the core link drops, and a dead monitor
+    /// left this false while the bar drew — the island grew its own
+    /// shoulders over the bar's ears, a ~500 pt black slab paving the
+    /// menu-bar items under it.
+    var screenBarShown: @MainActor () -> Bool = { false }
+
+    /// Whether the Screen Bar is up.
+    var screenBarLive: Bool { screenBarShown() }
 
     /// Whether the Screen Bar draws its ears over the notch's shoulders
     /// (`screen_bar_notch_wings`, on by default) — then the island's
@@ -382,7 +390,9 @@ final class NotchToy: Toy {
     /// only a cursor that STAYS, past `hoverExpandDelay`, earns the
     /// grow `expandOnHover` promised. A pointer cutting across the
     /// notch to reach a menu gets the wink and nothing else; that is
-    /// the whole reason the debounce exists. On the grown card the
+    /// the whole reason the debounce exists — and why an arrival by the
+    /// menu bar's row floors at `hoverExpandDelayFromBar` while one
+    /// straight onto the island answers quicker. On the grown card the
     /// hover just holds it open — the card IS the island's window, so
     /// the pointer wandering down into the rows is still the same
     /// hover — and leaving folds it on the short `collapseDelay`, so a
@@ -390,9 +400,17 @@ final class NotchToy: Toy {
     /// owns the island, so the hover is only remembered then — it
     /// lands its grow when the capsule steps down.
     private static let collapseDelay: TimeInterval = 0.18
-    /// Alcove-quick: a pointer that reaches the notch or an ear wants
-    /// the card, and the notch sits where nothing else is aimed at.
+    /// Alcove-quick: a pointer that reaches the notch itself wants the
+    /// card, and the notch sits where nothing else is aimed at.
     private static let hoverExpandDelay: TimeInterval = 0.12
+    /// Arriving down from the menu bar's row floors here instead — the
+    /// pointer that high may only be reaching a menu, so the tell shows
+    /// first and the card waits (Boring Notch's floor).
+    private static let hoverExpandDelayFromBar: TimeInterval = 0.30
+    /// The arrival path of the current hover, latched on the enter
+    /// edge: an ear or tray landing starts the longer clock, and the
+    /// pointer crossing on to the island mid-pause keeps it.
+    private var hoverArrivedFromBar = false
 
     /// Whether the pointer is on the Screen Bar's region — its ears,
     /// tray or the island — right now. The band's hover is the
@@ -400,38 +418,65 @@ final class NotchToy: Toy {
     /// ear is not a leave.
     var pointerOnBand: @MainActor () -> Bool = { false }
 
-    /// The band's hover, forwarded: the ears are the island's hover
-    /// surface while the island owns the notch.
-    func bandHover(_ hovering: Bool) {
-        setHovered(hovering)
+    /// The island's screen reserving no menu-bar strip — a fullscreen
+    /// app owns its space (the legacy `space_hides_menu_bar` read). A
+    /// closure so tests can answer without a screen.
+    var menuBarHidden: @MainActor () -> Bool = {
+        ScreenBarGeometry.preferredScreen().map(ScreenBarGeometry.spaceHidesMenuBar) ?? false
     }
 
-    func setHovered(_ hovering: Bool) {
+    /// The grow's felt edge — a soft trackpad tap as the card lands.
+    /// A closure so tests hear it without haptic hardware.
+    var expandHaptic: @MainActor () -> Void = {
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+    }
+
+    /// The band's hover, forwarded: the ears are the island's hover
+    /// surface while the island owns the notch.
+    func bandHover(_ hovering: Bool, fromBar: Bool = false) {
+        setHovered(hovering, fromBar: fromBar)
+    }
+
+    func setHovered(_ hovering: Bool, fromBar: Bool = false) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled else { return }
+        // The island window's own leave is not a leave while the
+        // pointer is still on the band's surface — stepping from the
+        // housing onto the tray or an ear keeps the hover, and the
+        // grow already armed, alive.
+        let hovering = hovering || (hoverHeld && pointerOnBand())
+        let arriving = hovering && !hoverHeld
+        if arriving { hoverArrivedFromBar = fromBar }
+        if !hovering { hoverArrivedFromBar = false }
         hoverHeld = hovering
-        // The wink only where it means something: a card that can grow
-        // on hover, and a face that draws — a bare housing under the
-        // Screen Bar's ears has nothing to swell.
-        islandHoverPeek = hovering && !islandExpanded && s.expandOnHover && !idleLayout.bare
+        // The wink wherever a resting hover lands: a drawn face swells
+        // sideways; the bare housing tells by growing straight down.
+        islandHoverPeek = hovering && !islandExpanded
         collapseWork?.cancel()
         collapseWork = nil
-        expandWork?.cancel()
-        expandWork = nil
         guard activeCapsule == nil else { return }
         if hovering {
             if !islandExpanded, s.expandOnHover {
                 // The wink lands now; the card only after the pause.
                 reframeCurrent(
                     animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-                let work = DispatchWorkItem { [weak self] in
-                    MainActor.assumeIsolated { self?.hoverExpandFired() }
+                // One arm per hover: a re-entrant true — the pointer
+                // crossing from an ear onto the island — keeps the
+                // deadline the arrival already set.
+                if expandWork == nil {
+                    let delay = hoverArrivedFromBar
+                        ? Self.hoverExpandDelayFromBar : Self.hoverExpandDelay
+                    let work = DispatchWorkItem { [weak self] in
+                        MainActor.assumeIsolated { self?.hoverExpandFired() }
+                    }
+                    expandWork = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay,
+                                                 execute: work)
                 }
-                expandWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverExpandDelay,
-                                             execute: work)
             }
         } else {
+            expandWork?.cancel()
+            expandWork = nil
             if !islandExpanded {
                 reframeCurrent(
                     animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -511,6 +556,8 @@ final class NotchToy: Toy {
             capsuleWork = nil
         }
         islandExpanded = true
+        // Alcove's felt edge: the grow lands with a soft trackpad tap.
+        if settings.hapticTick { expandHaptic() }
         feedCard()
         cardModel.pinned = true
         syncCardKeyMonitors()
@@ -586,9 +633,13 @@ final class NotchToy: Toy {
     }
 
     /// Hover on the island grows it — the full card, its Open and
-    /// transport live.
+    /// transport live. While the space hides the menu bar (a fullscreen
+    /// app is frontmost) the pointer at the top edge is reaching for a
+    /// bar that is not there, not for us — the grow stays down; the
+    /// wink still answers, it is only a tell.
     private func applyHover() {
-        guard hoverHeld, settings.expandOnHover, activeCapsule == nil else { return }
+        guard hoverHeld, settings.expandOnHover, activeCapsule == nil,
+              !menuBarHidden() else { return }
         expand(held: false)
     }
 
@@ -632,9 +683,8 @@ final class NotchToy: Toy {
     private func islandFrame(face: NotchIslandFace) -> NSRect? {
         _ = displayVersion
         guard let screen = ScreenBarGeometry.preferredScreen() else { return nil }
-        let slot = NotchIslandLayout.slot(left: screen.auxiliaryTopLeftArea,
-                                          right: screen.auxiliaryTopRightArea)
-        let depth = ScreenBarGeometry.notchDepth(of: screen)
+        let slot = ScreenBarGeometry.islandSlot(on: screen)
+        let depth = ScreenBarGeometry.islandDepth(of: screen)
         let centerX = slot?.centerX ?? screen.frame.midX
         let size: CGSize
         switch face {
@@ -662,9 +712,9 @@ final class NotchToy: Toy {
                     contentWidth: NotchIsland.idleContentWidth(islandSummary, media: idleMedia))
             if islandHoverPeek {
                 // The wink's frame half — a few points of grow under
-                // the pointer, symmetric, never the card. Width only:
-                // a taller housing would drop below the hardware.
-                idle.width += 2 * NotchIslandLayout.peekGrow
+                // the pointer, symmetric on a drawn face, straight
+                // down on the bare housing, never the card.
+                idle = NotchIslandLayout.peekAdjusted(idle, bare: layout.bare)
             }
             size = idle
         }
@@ -683,9 +733,17 @@ final class NotchToy: Toy {
     /// ordered in and framed while the island is ours, enabled and shown;
     /// fully ordered out otherwise — a parked island runs no timers.
     private func reconcile() {
+        // The simulate-notch flag every band-hanging surface reads.
+        ScreenBarGeometry.simulatedNotch = settings.simulateNotch
         // Sessions, usage or the focus may have moved while the card is
         // grown — refill before the frame re-measures its height.
         if islandExpanded { feedCard() }
+        // The weather toggle or city text changed — re-read now rather
+        // than on the half-hour tick.
+        cardModel.utility.weather.reload()
+        // The mirror toggle while the card is already pinned — the
+        // pin's own sync only runs on the edge.
+        cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror)
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
               islandFrame(face: currentFace) != nil else {
@@ -1084,7 +1142,8 @@ final class NotchToy: Toy {
             _ = store?.state.notch
             _ = core.sessions
             _ = core.state?.usage
-            _ = core.settings?.document   // virtual_status_device_enabled → ledClearance; screen_bar_notch_wings → earsDrawn
+            _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
+            _ = screenBarShown()          // PanelStore.screenBarShown → ledClearance, earsDrawn
             _ = displayVersion
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -1162,9 +1221,17 @@ private struct NotchControlsView: View {
                                 ? "The housing under the notch — hover or click it for the card. The Screen Bar's ears are drawing the HUD beside it, so the island itself stays bare."
                                 : "The housing under the notch: working agents in the left shoulder, asks or the track in the right. Hover or click it for the card.")
             }
+            Toggle(isOn: toy.bind(\.simulateNotch)) {
+                SettingLabel(title: "Simulate notch",
+                             subtitle: "On a display with no hardware notch, the island hugs the top as a synthetic housing instead of floating as a pill.")
+            }
             Toggle(isOn: toy.bind(\.expandOnHover)) {
                 SettingLabel(title: "Card on hover",
-                             subtitle: "A pointer that rests on the notch for a third of a second grows the card. Off, only a click or a pull opens it.")
+                             subtitle: "A pointer resting on the notch or an ear grows the card — a third of a second arriving down from the menu bar, a touch quicker straight onto the island. Off, only a click or a pull opens it.")
+            }
+            Toggle(isOn: toy.bind(\.hapticTick)) {
+                SettingLabel(title: "Haptic tick",
+                             subtitle: "A soft trackpad tap as the island grows open. Nothing happens on a Mac without haptics.")
             }
             Toggle(isOn: toy.bind(\.pullGestures)) {
                 SettingLabel(title: "Pull & swipe gestures",
@@ -1200,6 +1267,32 @@ private struct NotchControlsView: View {
                              subtitle: toy.earsDrawn
                                 ? "The card carries the track and transport buttons. (The island's own strip is off while the Screen Bar's ears draw.)"
                                 : "The right shoulder carries the track when nothing needs a hand; the card gains transport buttons.")
+            }
+            Toggle(isOn: toy.bind(\.mediaHUD)) {
+                SettingLabel(title: "Volume & brightness capsules",
+                             subtitle: "The level keys hang a metered capsule under the notch — the Alcove HUD. The key still does its job; we only draw it.")
+            }
+            Toggle(isOn: toy.bind(\.alerts)) {
+                SettingLabel(title: "System alerts",
+                             subtitle: "A Focus mode turning on or a Bluetooth device connecting gets the pill.")
+            }
+            Toggle(isOn: toy.bind(\.soundEffects)) {
+                SettingLabel(title: "Capsule tick",
+                             subtitle: "A quiet sound when a capsule shows.")
+            }
+            Toggle(isOn: toy.bind(\.weather)) {
+                SettingLabel(title: "Weather",
+                             subtitle: "A conditions row in the card — keyless Open-Meteo; your city below, or the IP's place when empty.")
+            }
+            if toy.settings.weather {
+                TextField("City (empty = where the IP lands)", text: toy.bind(\.weatherCity))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout)
+                    .padding(.leading, 28)
+            }
+            Toggle(isOn: toy.bind(\.mirror)) {
+                SettingLabel(title: "Mirror",
+                             subtitle: "A live camera preview row in the card — boring.notch's Mirror. The camera's consent is asked when you turn it on; the lens closes when the card folds away.")
             }
         case .alcove:
             if let settings = toy.store?.settings {

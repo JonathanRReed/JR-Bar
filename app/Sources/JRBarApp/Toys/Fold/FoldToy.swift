@@ -123,6 +123,18 @@ final class FoldToy: Toy {
     @ObservationIgnored private var paused = false
     /// The half-second "all clear" before a paused fold resumes.
     @ObservationIgnored private var resumeWork: DispatchWorkItem?
+    /// The dwell pause — a lid parked mid-fold past `dwellTimeout`
+    /// hands the desktop back until the hinge moves again. Unlike the
+    /// safety `paused`, the capture streams stay armed so the return
+    /// is instant.
+    @ObservationIgnored private var dwellPaused = false
+    /// The angle the dwell timer parked on — a move past the jitter
+    /// deadband from here wakes the fold.
+    @ObservationIgnored private var dwellAnchor: Double?
+    @ObservationIgnored private var dwellWork: DispatchWorkItem?
+    /// Tracks whether the fold was ever up this run, so the restore
+    /// click only sounds on a real unwind, not on every at-rest tick.
+    @ObservationIgnored private var foldWasUp = false
     /// The last diagnostic line logged — the log only speaks when the
     /// machine's state actually changes, so a parked fold stays silent.
     @ObservationIgnored private var lastDiag = ""
@@ -288,6 +300,10 @@ final class FoldToy: Toy {
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
+            dwellWork?.cancel()
+            dwellWork = nil
+            dwellPaused = false
+            dwellAnchor = nil
             arming.reset()
             scheduleCooldown(nil)
             tracker.reset()
@@ -317,6 +333,10 @@ final class FoldToy: Toy {
             paused = true
             resumeWork?.cancel()
             resumeWork = nil
+            dwellWork?.cancel()
+            dwellWork = nil
+            dwellPaused = false
+            dwellAnchor = nil
             arming.reset()
             scheduleCooldown(nil)
             chase.reset()
@@ -356,6 +376,47 @@ final class FoldToy: Toy {
         } else {
             standDown()
         }
+        // Dwell pause: parked mid-fold past `dwellTimeout`, the desktop
+        // comes back until the hinge moves past the deadband. The gate
+        // closing or any real move clears it — `dwellAnchor` keeps the
+        // ±1° sensor wobble from counting as a move.
+        if dwellPaused {
+            let moved = gateAngle.flatMap { angle in
+                dwellAnchor.map { abs(angle - $0) > max(settings.jitterTolerance, 2) }
+            } ?? true
+            if !outcome.capture || !arming.foldGateOpen || moved {
+                dwellPaused = false
+                dwellAnchor = nil
+            }
+        } else {
+            let dwellSeconds = settings.dwellTimeout
+            let dwellArmed = dwellSeconds > 0 && outcome.capture
+                && arming.foldGateOpen && tracker.atRest && chase.atRest
+                && targetDelta > 0.002
+            if dwellArmed {
+                // One pending timer per rest stretch — reconcile runs
+                // per sensor sample inside the band, so re-arming every
+                // pass would push the deadline out forever.
+                if dwellWork == nil {
+                    dwellAnchor = gateAngle
+                    let work = DispatchWorkItem { [weak self] in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            self.dwellWork = nil
+                            self.dwellPaused = true
+                            self.reconcile()
+                        }
+                    }
+                    dwellWork = work
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + dwellSeconds, execute: work)
+                }
+            } else {
+                dwellWork?.cancel()
+                dwellWork = nil
+                dwellAnchor = nil
+            }
+        }
         if displayVersion != reframedVersion {
             overlay?.reframe()
             reframedVersion = displayVersion
@@ -394,7 +455,7 @@ final class FoldToy: Toy {
     /// when the gate shuts mid-motion the chase unwinds the displayed
     /// delta home instead of snapping it.
     private var targetDelta: Double {
-        guard arming.foldGateOpen, pauseReason == nil,
+        guard arming.foldGateOpen, pauseReason == nil, !dwellPaused,
               let angle = renderAngle ?? gateAngle else { return 0 }
         return FoldMath.deltaRadians(
             angle: angle, reference: settings.activationAngle)
@@ -447,6 +508,13 @@ final class FoldToy: Toy {
         // unwind when the gate snaps it to 0 mid-motion, so opening
         // counter-rotates back through the hinge instead of snapping.
         displayedDelta = chase.tick(target: targetDelta, dt: dt)
+        // Bendy's return click: the fold fully unwound after being up.
+        if displayedDelta > 0.05 {
+            foldWasUp = true
+        } else if foldWasUp, displayedDelta <= 0.002 {
+            foldWasUp = false
+            if settings.restoreSound { NotchSounds.tick() }
+        }
         let wantVisible = FoldMath.showsOverlay(
             delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
         noteDiag(stage: "tick")
@@ -839,6 +907,24 @@ private struct FoldControlsView: View {
                 }
             } label: {
                 SettingLabel(title: "Jitter", subtitle: "Ignore angle wobbles smaller than this.")
+            }
+
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: toy.bind(\.dwellTimeout), in: 0...10, step: 1)
+                        .frame(width: 180)
+                    ValueText(text: toy.settings.dwellTimeout == 0
+                              ? "Off" : "\(Int(toy.settings.dwellTimeout))s")
+                }
+            } label: {
+                SettingLabel(title: "Release when parked", subtitle: "Seconds a lid held mid-fold waits before the desktop comes back — until the hinge moves again.")
+            }
+
+            LabeledContent {
+                Toggle("", isOn: toy.bind(\.restoreSound))
+                    .labelsHidden()
+            } label: {
+                SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
             }
 
             LabeledContent {

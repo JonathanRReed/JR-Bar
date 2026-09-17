@@ -32,17 +32,88 @@ final class DockUtility {
     /// True while the watcher runs.
     private(set) var running = false
 
+    // MARK: Provider — who renders
+
+    /// Re-resolved on every workspace launch/terminate so an external
+    /// pick's running/installed state flips live in the card — the
+    /// notch's pattern; stored so Observation tracks the read.
+    private(set) var workspaceVersion = 0
+    /// The provider watch's observers — installed for the object's
+    /// life in `init`.
+    @ObservationIgnored private var providerObservers: [NSObjectProtocol] = []
+
+    /// The picked counterpart's probe — nil while JR-Bar renders.
+    private var externalProbe: ExternalAppProbe? {
+        switch settings().provider {
+        case .jrbar: return nil
+        case .dockDoor: return ExternalProviders.dockDoor
+        case .activeDock: return ExternalProviders.activeDock
+        }
+    }
+
+    /// The card's write path for the picker — same shape as `bind`.
+    var providerBinding: Binding<DockProvider> {
+        Binding(get: { self.settings().provider },
+                set: { p in self.update { $0.provider = p } })
+    }
+
+    /// The counterpart's app URL — the card's "Open" button.
+    var externalURL: URL? {
+        _ = workspaceVersion
+        return externalProbe?.url
+    }
+
+    /// What the card's chip says while a counterpart owns the surface —
+    /// nil under `.jrbar`, so the card falls back to the watcher copy.
+    var providerNote: String? {
+        guard let probe = externalProbe else { return nil }
+        _ = workspaceVersion
+        let name = providerName
+        if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
+        return probe.running
+            ? "\(name) is rendering the previews — ours is parked"
+            : "\(name) isn't running — ours stays parked"
+    }
+
+    /// The picked counterpart's display name for the note.
+    private var providerName: String {
+        switch settings().provider {
+        case .jrbar: return "JR-Bar"
+        case .dockDoor: return "DockDoor"
+        case .activeDock: return "ActiveDock"
+        }
+    }
+
+    /// The card's "Open" — launches the picked counterpart.
+    func openExternal() { externalProbe?.open() }
+
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
     /// `AppleDockControl()` can't be a default value — callers pass
     /// nil and the main-actor body builds it.
-    init(appleDock: AppleDockControl? = nil) {
+    init(appleDock: AppleDockControl? = nil,
+         autohideHold: DockAutohideHold? = nil) {
         self.appleDock = appleDock ?? AppleDockControl()
+        let hold = autohideHold ?? DockAutohideHold()
+        hold.onLog = { DockEnhanceController.log.notice("\($0, privacy: .public)") }
         let preferences = DockEnhancePreferences()
-        self.enhance = DockEnhanceController(preferences: preferences)
+        self.enhance = DockEnhanceController(preferences: preferences, autohideHold: hold)
         preferences.read = { [weak self] in self?.settings().enhance ?? DockEnhanceSettings() }
         preferences.write = { [weak self] updated in
             self?.update { $0.enhance = updated }
+        }
+        // Provider watch: a counterpart launching or quitting flips
+        // the card's note live while ours is parked under it.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification,
+                     NSWorkspace.didTerminateApplicationNotification] {
+            providerObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.workspaceVersion += 1
+                    if self.settings().provider != .jrbar { self.applySettings() }
+                }
+            })
         }
     }
 
@@ -51,7 +122,7 @@ final class DockUtility {
     /// first.
     func start() {
         guard !running else { return }
-        guard settings().enabled else { return }
+        guard settings().enabled, settings().provider == .jrbar else { return }
         running = true
         appleDock.restore()
         enhance.start()
@@ -68,14 +139,17 @@ final class DockUtility {
     /// re-applying.
     func applySettings() {
         migrateLegacyEnhanceDefaults()
+        // A preview hold the last life never released left `autohide`
+        // off in `com.apple.dock` — hand it back before anything else.
+        enhance.autohideHold.recoverIfNeeded()
         // A previous life's Replace bar may have left Apple's Dock
         // hidden under our saved values — hand them back regardless of
         // whether the watcher is running.
         appleDock.restore()
         let current = settings()
-        if current.enabled, !running {
+        if current.enabled, current.provider == .jrbar, !running {
             start()
-        } else if !current.enabled, running {
+        } else if !(current.enabled && current.provider == .jrbar), running {
             stop()
         }
     }

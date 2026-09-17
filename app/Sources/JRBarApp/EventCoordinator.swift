@@ -18,6 +18,19 @@ final class EventCoordinator {
     /// Weak — the delegate owns it.
     weak var toys: ToysStore?
 
+    /// The Agent utility's "quiet while the ask's pane is in front"
+    /// setting, wired by the delegate; on by default.
+    var quietWhenPaneFrontmost: @MainActor () -> Bool = { true }
+    /// The frontmost-app read, injectable so tests can stage the pane.
+    var frontmostApp: @MainActor () -> (bundleID: String?, pid: Int32?) = {
+        let app = NSWorkspace.shared.frontmostApplication
+        return (app?.bundleIdentifier, app?.processIdentifier)
+    }
+    /// The last escalation_stage the daemon announced — remembered so a
+    /// frontmost flip can re-decide the noise without waiting for the
+    /// next stage boundary.
+    private var lastEscalation: CoreEvent?
+
     init(core: CoreModel, hudAnchor: @escaping @MainActor () -> NSRect?) {
         self.core = core
         hud = NotchHUD(anchorRect: hudAnchor)
@@ -25,6 +38,14 @@ final class EventCoordinator {
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
         notifications.onOpenSession = { [weak core] session in core?.openSession(session) }
         notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
+        // The coordinator lives for the app's lifetime; the observer's
+        // weak self is cleanup enough (a nonisolated deinit could not
+        // touch the isolated token anyway).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reapplyEscalationNoise() }
+        }
         trackState()
     }
 
@@ -42,6 +63,10 @@ final class EventCoordinator {
                 guard let self else { return }
                 if let state = self.core.state {
                     self.toys?.confetti.noteState(state)
+                    // The daemon's focus_sync reading — a Focus toggle
+                    // announces in the notch pill.
+                    self.hud.announcements.noteDaemonFocus(mode: state.focus?.mode,
+                                                           source: state.focus?.source)
                 }
                 self.trackState()
             }
@@ -50,7 +75,9 @@ final class EventCoordinator {
 
     func handle(_ event: CoreEvent) {
         let settings = core.settings.map { SettingsDocument($0.document) }
-        let delivery = EventPolicy.delivery(for: event, state: core.state, settings: settings)
+        let delivery = EventPolicy.delivery(for: event, state: core.state, settings: settings,
+                                            askingFrontmost: askingPaneFrontmost(sessionID: event.session))
+        if event.kind == "escalation_stage" { lastEscalation = event }
         apply(delivery, for: event)
         var summary = "event \(event.kind)"
         if let label = event.label, !label.isEmpty { summary += " · \(label)" }
@@ -99,8 +126,49 @@ final class EventCoordinator {
         toys?.notch.noteEvent(event)
     }
 
+    /// The ask the event names is on screen: the user is already looking
+    /// at it, so the escalation ladder's noise stays down. The proof is
+    /// `answer_local`'s own — the host app's bundle on the frontmost app,
+    /// and when the session names a process the frontmost pid on that
+    /// process's ancestry (`AskingPane`). A remote session has no pane
+    /// here at all, so it can never quiet the ladder.
+    private func askingPaneFrontmost(sessionID: String?) -> Bool {
+        guard quietWhenPaneFrontmost(), let sessionID,
+              let session = core.state?.session(withID: sessionID), !session.remote else { return false }
+        let expected = Set([session.terminal?.bundleId, session.origin?.bundleId].compactMap { $0 })
+        let front = frontmostApp()
+        return AskingPane.isFrontmost(expectedBundleIDs: expected, sessionPID: session.pid,
+                                      frontmostBundleID: front.bundleID, frontmostPID: front.pid)
+    }
+
+    /// The frontmost app changed: if the asking pane just came forward
+    /// the escalation's noise goes quiet now — and walking away from a
+    /// stage that had been suppressed lets it speak up without waiting
+    /// for the next boundary. Only the pulse and the chime re-decide;
+    /// sounds and banners already fired are gone either way.
+    private func reapplyEscalationNoise() {
+        guard let event = lastEscalation, asksStillOpen else { return }
+        let settings = core.settings.map { SettingsDocument($0.document) }
+        let delivery = EventPolicy.delivery(for: event, state: core.state, settings: settings,
+                                            askingFrontmost: askingPaneFrontmost(sessionID: event.session))
+        if let pulse = delivery.statusPulse, pulse != isPulsing {
+            isPulsing = pulse
+            onStatusPulse?(pulse)
+        }
+        switch delivery.chime {
+        case .start: sounds.startChime(EventPolicy.chimeSound, interval: EventPolicy.chimeInterval)
+        case .stop: sounds.stopChime()
+        case .unchanged: break
+        }
+    }
+
+    private var asksStillOpen: Bool {
+        (core.state?.asks.isEmpty == false) || (core.state?.mainSessions.contains { $0.ask != nil } ?? false)
+    }
+
     /// The daemon went away: nothing is escalating any more.
     func reset() {
+        lastEscalation = nil
         sounds.stopChime()
         if isPulsing {
             isPulsing = false

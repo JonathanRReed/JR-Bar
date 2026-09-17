@@ -328,3 +328,50 @@ struct AlcoveEventsTests {
         #expect(decoded.notch.capsuleKinds.charging == false)
     }
 }
+
+extension AlcoveEventsTests {
+    @Test("a playing track's playhead advances with the clock; paused stays put; duration clamps")
+    func liveElapsed() {
+        let stamp = Date().timeIntervalSinceReferenceDate - 10
+        let playing = AlcoveMedia(title: "A", playing: true, duration: 200,
+                                  elapsed: 30, timestamp: stamp)
+        let advanced = playing.liveElapsed()
+        #expect(advanced != nil && advanced! > 39.5 && advanced! < 40.5,
+                "10 s of wall clock on a playing track moves the playhead ~10 s")
+        let paused = AlcoveMedia(title: "A", playing: false, duration: 200,
+                                 elapsed: 30, timestamp: stamp)
+        #expect(paused.liveElapsed() == 30, "a paused playhead does not drift")
+        // A source that names no playhead draws no slider — 0:00 would lie.
+        #expect(AlcoveMedia(title: "A", playing: true).liveElapsed() == nil)
+        // The drift can never overshoot the track's end.
+        let done = AlcoveMedia(title: "A", playing: true, duration: 35,
+                               elapsed: 30, timestamp: stamp)
+        #expect(done.liveElapsed() == 35)
+        // A missing timestamp can't advance — the sample is all we have.
+        let timeless = AlcoveMedia(title: "A", playing: true, duration: 200,
+                                   elapsed: 30, timestamp: nil)
+        #expect(timeless.liveElapsed() == 30)
+    }
+
+    @Test("the now-playing dict's elapsed/duration/timestamp reduce through summarize")
+    func summarizeTimes() {
+        let stamp = Date().timeIntervalSinceReferenceDate - 5
+        let media = AlcoveMedia.summarize([
+            "kMRMediaRemoteNowPlayingInfoTitle": "Papillon",
+            "kMRMediaRemoteNowPlayingInfoPlaybackRate": NSNumber(value: 1),
+            "kMRMediaRemoteNowPlayingInfoDuration": NSNumber(value: 210.5),
+            "kMRMediaRemoteNowPlayingInfoElapsedTime": NSNumber(value: 12.0),
+            "kMRMediaRemoteNowPlayingInfoTimestamp": NSNumber(value: stamp),
+        ])
+        #expect(media?.duration == 210.5)
+        #expect(media?.elapsed == 12)
+        #expect(media?.timestamp == stamp)
+        // A zero duration is no duration — the slider hides rather than
+        // divide by nothing.
+        let noLen = AlcoveMedia.summarize([
+            "kMRMediaRemoteNowPlayingInfoTitle": "Papillon",
+            "kMRMediaRemoteNowPlayingInfoDuration": NSNumber(value: 0),
+        ])
+        #expect(noLen?.duration == nil)
+    }
+}

@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import OSLog
 
 /// What the card currently names: the top-priority session, or the
 /// aggregate when there is none.
@@ -40,6 +41,21 @@ struct ScreenBarFocus: Equatable {
 /// arms it (a release there is never an outside-click either).
 @MainActor
 final class ScreenBarInteraction {
+    nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "wings")
+    /// Diagnostics channel that bypasses os_log capture quirks — appends
+    /// one line to /tmp/jrbar-wings.log per call, but only when the
+    /// JRBAR_WING_DEBUG env var is set so a shipping build stays silent.
+    private nonisolated static let wingDebug = ProcessInfo.processInfo.environment["JRBAR_WING_DEBUG"] != nil
+    nonisolated static func diag(_ message: String) {
+        guard wingDebug else { return }
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/jrbar-wings.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
     /// Deliberate-intent delay: long enough that a pointer cutting across
     /// the notch never arms a peek, short enough that aiming at one feels
     /// immediate.
@@ -85,6 +101,17 @@ final class ScreenBarInteraction {
     var onWingPull: @MainActor (ScreenBarWingSide, CGFloat) -> Void = { _, _ in }
     /// The pull ended without a dismiss — the ear springs home.
     var onWingPullEnd: @MainActor (ScreenBarWingSide) -> Void = { _ in }
+    /// A plain click on an ear — the ear does what its mark shows (the
+    /// left ear is the focused session's glyph: one click opens that
+    /// session). Return true when the ear's own action consumed the
+    /// click; false falls back to the band's pin.
+    var onWingActivate: @MainActor (ScreenBarWingSide) -> Bool = { _ in false }
+    /// The hidden-run handle's slice of the right ear, in screen
+    /// coordinates — a click inside it is the run's toggle, not the
+    /// wing's.
+    var menuHandleAt: @MainActor (NSPoint) -> Bool = { _ in false }
+    /// The handle was clicked — reveal or rehide the run.
+    var onMenuHandle: @MainActor () -> Void = {}
 
     /// Points of vertical travel before a press-on-the-band becomes a
     /// swipe — small enough that a deliberate pull feels instant, large
@@ -121,9 +148,15 @@ final class ScreenBarInteraction {
     var onIslandCollapse: @MainActor () -> Void = {}
     /// The pointer entered (true) or left (false) the band's region —
     /// the ears, the tray, the island — while the island owns the
-    /// notch. The island's own hover machine takes it from there: the
-    /// ears are the island's hover surface, the way Alcove's wings are.
-    var onIslandHover: @MainActor (Bool) -> Void = { _ in }
+    /// notch. `fromBar` says the arrival was on the bar's row rather
+    /// than straight onto the island, so the island's debounce can keep
+    /// its longer floor for a pointer only crossing the menu bar.
+    var onIslandHover: @MainActor (Bool, _ fromBar: Bool) -> Void = { _, _ in }
+    /// The drawn ear under the pointer right now — the hover tell's
+    /// target. Fires on the side's edges only, nil off the ears.
+    var onWingHover: @MainActor (ScreenBarWingSide?) -> Void = { _ in }
+    /// The side `onWingHover` last announced.
+    private var hoveredWing: ScreenBarWingSide?
 
     /// The "is the card pinned" read — the glass panel's pin normally,
     /// the grown island's hold while it owns the notch.
@@ -143,6 +176,7 @@ final class ScreenBarInteraction {
     }
 
     func start() {
+        Self.diag("start() monitors=\(globalMonitors.count)")
         guard globalMonitors.isEmpty else { return }
         // Global: events bound for other apps (the band is click-through, so
         // that is every pointer event over it while we are not active).
@@ -156,9 +190,12 @@ final class ScreenBarInteraction {
         scheduleMovePoll(after: Self.moveInterval)
         if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
+            Self.diag("global down raw (\(Int(point.x)),\(Int(point.y)))")
             let time = event.timestamp
             Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time) }
-        }) { globalMonitors.append(down) }
+        }) { globalMonitors.append(down) } else {
+            Self.diag("global down monitor FAILED")
+        }
         if let drag = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
             let time = event.timestamp
@@ -227,6 +264,7 @@ final class ScreenBarInteraction {
         dragFlick = NotchPullGesture()
         scrollLive = false
         scrollFired = false
+        if hoveredWing != nil { hoveredWing = nil; onWingHover(nil) }
         hideTooltip()
         // A band going away takes a grown island with it — the card is
         // the band's guest, it cannot outlive its host.
@@ -284,6 +322,14 @@ final class ScreenBarInteraction {
         // lingering as the one thing a switched-off utility drew.
         if isTooltipShown, card.surface() != .glass { hideTooltip() }
         let inside = pointerInHitRegion()
+        // The ear tell tracks every tick while the pointer is in the
+        // region, not just the region's edges — crossing between ears
+        // and tray inside it is the whole point of the tell.
+        let wing = inside ? wingSideAt(NSEvent.mouseLocation) : nil
+        if wing != hoveredWing {
+            hoveredWing = wing
+            onWingHover(wing)
+        }
         guard inside != hovering else {
             if inside, isTooltipShown, let current = focus(), current != lastFocus { showTooltip(current) }
             return
@@ -296,9 +342,12 @@ final class ScreenBarInteraction {
         if inside {
             if islandOwnsNotch() {
                 // The island is the peek: hovering an ear is hovering
-                // the island. A leftover glass card goes away.
+                // the island. A leftover glass card goes away. The
+                // arrival reports whether it came by the bar's row —
+                // the island's hover debounce floors longer for a
+                // pointer that may only be crossing the menu bar.
                 if isTooltipShown { hideTooltip() }
-                onIslandHover(true)
+                onIslandHover(true, !onIsland(NSEvent.mouseLocation))
             } else if isTooltipShown {
                 // Back inside before the grace fired — the peek never went
                 // anywhere; refresh it if the focus moved on.
@@ -314,7 +363,7 @@ final class ScreenBarInteraction {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
             }
         } else if islandOwnsNotch() {
-            onIslandHover(false)
+            onIslandHover(false, false)
         } else if isTooltipShown && !card.isPinned {
             let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
             hideWork = work
@@ -398,8 +447,11 @@ final class ScreenBarInteraction {
     private var dragFlick = NotchPullGesture()
 
     private func pointerDown(at point: NSPoint, time: TimeInterval) {
+        let islandRects = self.extraHitRects().map { String(describing: $0) }.joined(separator: ";")
+        Self.diag("down (\(Int(point.x)),\(Int(point.y))) islandRects=\(islandRects)")
         pressOnIsland = false
         if onIsland(point) {
+            Self.diag("island press unarmed")
             // The island's window answers its own presses — tap to
             // toggle, pull to grow or fold. The press is inside, so it
             // is never the outside-click dismissal either.
@@ -416,8 +468,17 @@ final class ScreenBarInteraction {
             swipeFired = false
             dragFlick = NotchPullGesture()
             dragFlick.move(translation: 0, at: time)
+            let rects = self.hitRects().map { String(describing: $0) }.joined(separator: ";")
+            Self.diag("down inside region=\(swipeRegion) rects=\(rects)")
         } else {
             swipeStart = nil
+            // Diagnostics: a down near the top edge that missed the hit
+            // region is worth a line — it means the drawn rects and the
+            // pointer disagree about where our capsules are.
+            if point.y > (NSScreen.screens.first { $0.frame.contains(point) }?.frame.maxY ?? 0) - 60 {
+                let rects = self.hitRects().map { String(describing: $0) }.joined(separator: ";")
+                Self.diag("down OUTSIDE (\(Int(point.x)),\(Int(point.y))) rects=\(rects)")
+            }
             // Outside: only the dismiss-a-pinned-card case, and it wants
             // the press, not the release.
             if case .unpin = Self.clickOutcome(pinned: cardPinned(), inside: false) { unpin() }
@@ -437,10 +498,12 @@ final class ScreenBarInteraction {
             switch Self.wingSwipeOutcome(region: swipeRegion, deltaX: point.x - start.x) {
             case .dismiss(let side):
                 swipeFired = true
+                Self.diag("drag dismiss dx=\(Int(point.x - start.x)) side=\(side)")
                 onWingPullEnd(side)
                 onWingDismiss(side)
             case .restore:
                 swipeFired = true
+                Self.diag("drag restore dx=\(Int(point.x - start.x))")
                 onWingRestore()
             case .none:
                 return
@@ -465,6 +528,7 @@ final class ScreenBarInteraction {
     }
 
     private func pointerReleased(at time: TimeInterval) {
+        Self.diag("released fired=\(swipeFired) armed=\(swipeStart != nil) island=\(pressOnIsland)")
         let wasSwipe = swipeFired
         let armed = swipeStart != nil
         let pinnedAtDown = swipePinnedAtDown
@@ -487,9 +551,11 @@ final class ScreenBarInteraction {
         case .none: break
         }
         // A press that never crossed the threshold is the click it always
-        // was — pinned cards route inside clicks to their buttons, so
-        // only the pin path is left to resolve here.
+        // was — the handle's own toggle gets first claim, then an ear's
+        // own action (the mark's session opens directly), then the pin.
         if case .pin = Self.clickOutcome(pinned: cardPinned(), inside: pointerInHitRegion()) {
+            if menuHandleAt(NSEvent.mouseLocation) { onMenuHandle(); return }
+            if let side = wingSideAt(NSEvent.mouseLocation), onWingActivate(side) { return }
             pinCard()
         }
     }

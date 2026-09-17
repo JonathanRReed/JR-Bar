@@ -117,6 +117,43 @@ struct NotchIslandTests {
         #expect(NotchIsland.meters(nil).isEmpty)
     }
 
+    @Test("the meter carries the reset clock and the incident flag the ear draws")
+    func metersCarryResetAndIncident() {
+        let resetsAt = Date().timeIntervalSince1970 + 2 * 3600
+        let usage = CoreUsage(providers: [
+            CoreProviderUsage(id: "claude", windows: [
+                CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 62, resetsAt: resetsAt),
+            ], incident: "Anthropic: Elevated errors"),
+            CoreProviderUsage(id: "codex", windows: [
+                CoreUsageWindow(key: "credits", name: "Credits", usedPct: 40),
+            ]),
+        ])
+        let meters = NotchIsland.meters(usage)
+        #expect(meters[0].incident)
+        #expect(meters[0].resetsAt == resetsAt)
+        #expect(meters[0].windowSpan == 18000)
+        // 2h left of a 5h window drains to 0.4.
+        #expect(meters[0].resetFraction(now: Date())! > 0.35)
+        #expect(meters[0].resetFraction(now: Date())! < 0.45)
+        // A credits lane has no clock: no span, no arc.
+        #expect(meters[1].windowSpan == nil)
+        #expect(meters[1].resetFraction(now: Date()) == nil)
+        #expect(!meters[1].incident)
+    }
+
+    @Test("the drain fraction clamps: a past reset is 0, a far-future one is 1")
+    func resetFractionBounds() {
+        var meter = NotchIslandMeter(id: "claude", provider: "claude", window: "5h", percent: 50,
+                                     resetsAt: nil, windowSpan: 5 * 3600)
+        let now = Date()
+        meter.resetsAt = now.timeIntervalSince1970 - 10
+        #expect(meter.resetFraction(now: now) == 0)
+        meter.resetsAt = now.timeIntervalSince1970 + 10 * 3600
+        #expect(meter.resetFraction(now: now) == 1)
+        meter.resetsAt = nil
+        #expect(meter.resetFraction(now: now) == nil, "no reset time draws no arc")
+    }
+
     @Test("the meter is the tightest lane — a weekly at 100 % outranks a calm 5h, the menu bar's own rule")
     func metersLeadWithTheConstrainedLane() {
         let exhausted = CoreProviderUsage(id: "claude", windows: [

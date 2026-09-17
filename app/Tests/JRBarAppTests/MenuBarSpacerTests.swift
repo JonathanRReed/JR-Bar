@@ -533,7 +533,10 @@ struct MenuBarSpacerTests {
         utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
         utility.hider.now = Self.fastClock()
         utility.installChevron()
-        #expect(utility.chevron == nil, "the host stands in for the chevron")
+        // The item stays registered — visibility, not existence, is the
+        // engine's call: a remove/install cycle is what parked its
+        // surface under the island on macOS 26.
+        #expect(utility.chevron != nil, "the host stands in for the chevron")
         settle(utility.hider)
         // The icon's right edge is 1123: 1123 − 902 = 221 of length,
         // less the 39-point icon = 182 of spacer.
@@ -542,13 +545,13 @@ struct MenuBarSpacerTests {
         #expect(utility.lastPlan.shown.map(\.id) == ["Right"])
         #expect(host.hiddenCount == 1)
         utility.hider.reveal([.hidden])
-        #expect(host.spacers.last == 0, "revealed, the icon folds to itself")
+        #expect(host.spacers.last == 30, "revealed, the affordance floor keeps the drop zone visible")
         #expect(host.hiddenRevealed)
         utility.removeChevron()
         #expect(host.hiddenCount == 0)
     }
 
-    @Test("the host folds the icon at the right end of its spacer, chevron only while something hides")
+    @Test("the host folds the icon at the right end of its spacer, ‹ mark drawn inside it")
     func hostFold() {
         let icon = NSImage(size: NSSize(width: 39, height: 18), flipped: false) { _ in true }
         icon.isTemplate = true

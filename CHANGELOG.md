@@ -4,6 +4,219 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.8 (unreleased)
 
+- Provider pickers everywhere a counterpart exists: each utility card
+  now carries "Render with" — Menu Bar delegates to Bartender, Ice, or
+  Hidden Bar; Dock to DockDoor or ActiveDock; the Notch already had
+  Alcove and Boring Notch. An external pick parks our engine entirely
+  (the settings persist through `MenuBarSettings.provider` /
+  `DockSettings.provider`, decoded tolerantly), the card shows a live
+  installed/running note with an Open button, and a workspace launch
+  watch flips the note the moment the counterpart starts or quits.
+- The menu-bar drag boundary is finally *visible*: the JR-Bar icon's
+  item now keeps a standing 30 pt drop zone with a ‹ mark while the
+  utility is on — the separator Bartender's always-on-bar caret is.
+  The hint glyph existed but was deliberately disabled ("the blank
+  stretch is the affordance") and the spacer collapsed to 0 when
+  nothing was hidden — a drag target nobody could see. The floor
+  applies under both engines and the mark rides inside it.
+- Dock previews centre for real: captures are alpha-trimmed to their
+  content bounds before display, so a purged margin or shadow inset
+  can no longer drift the window's image off-centre inside the card;
+  the strip's `ViewThatFits` centring shipped earlier — the two halves
+  were each needed.
+- The ‹ and › affordances now answer every click. They routed to the
+  hidden-run toggle all along, but the toggle keyed on `revealed` —
+  a hover could leave the run revealed with no surface up, so the
+  click folded it back and read as dead. The click now keys on the
+  Item Bar instead: closed → the run reveals and the bar opens (the
+  surface macOS's full bar cannot show); open → the run rehides and
+  the bar closes. An empty run pops the hidden-items menu with a
+  teach row instead of swallowing the click.
+- The Dock preview header trades its spelled-out buttons for macOS
+  traffic lights — Quit, Hide, and New (plus Min-all when several
+  windows are up) are tinted circles like DockDoor's compact header,
+  with the action names kept as tooltips and accessibility labels.
+  The row is ~110 pt narrower; the folder face's Open is a circle too.
+- ⌘-drag hiding finally works end to end under the concealer. Three
+  stacked bugs killed it: the learn measured macOS's « caret while the
+  visible ‹ mark sits ~30 pt right of it, so a drop between the two
+  read "shown"; the ⌘ stamp only counted key-*downs*, so a slow drag's
+  learn window lapsed before the reconcile saw the flip; and an item
+  parked from the gap flipped only its membership, which the side-flip
+  test could not see. The boundary now prefers the visible mark, the
+  stamp covers ⌘-up too, and the learn flips on side *or* membership —
+  plus the card's list shows macOS-parked items nobody mapped with a
+  truthful "in overflow" label, so nothing hides invisibly.
+- The Screen Bar's ears yield 8 pt to the nearest status item instead
+  of 2 — transient indicators macOS drops in the flank (the mic pill,
+  a recording mark) land inside the flank gap and a 2 pt seam read as
+  the ear overlapping them.
+- Dock thumbnails lose the dark band on top: the alpha probe's opaque
+  threshold rose to 64 so a soft shadow cell crops out instead of
+  keeping a dead strip, and the .fit letterbox backs with the card's
+  own surface instead of a black wash. And the strip finally centres:
+  `ViewThatFits` alone only centres inside its own content-hugging
+  bounds, and the body's `VStack` left-aligns it — a single card sat
+  hard left with the panel's dead glass on its right, reading as a
+  phantom second slot. Spacers now hand the row's full width to the
+  fit-or-scroll choice, so a fitting set truly centres and an
+  overflowing set scrolls edge to edge.
+- The notch card's "Bare — the Screen Bar's ears carry the HUD" tag is
+  gone — ears-drawn is simply On, and no "Screen Bar" text truncates
+  into the status line anywhere.
+
+- The "notch too long" doubling is fixed — and the menu bar stretch it
+  paved is back. The island read the daemon's
+  `virtual_status_device_enabled` doc for "is the Screen Bar live", so
+  any dead monitor (or the missing bundled daemon — `build-app.sh`
+  never copied `Contents/Helpers`) left it stale-false: the island grew
+  its own ~160 pt shoulders over the bar's ears — a ~500 pt black slab
+  that sat over the menu bar and covered the status items inside it.
+  The read is now the local show/hide flag (`PanelStore.screenBarShown`,
+  tracked, reconciled on flip), so a down core can never un-bare the
+  island. `build-app.sh` also bundles `jrbar-core.app` + `jrbar-hook`
+  and signs inside-out like the pkg pipeline, so the installed app
+  supervises its own monitor instead of hunting a dead socket.
+- The Bluetooth notification thread no longer spins a core: an idle
+  `RunLoop.run(mode:before:)` returns instantly with zero sources, so
+  the worker hot-looped (~100% CPU). A keep-alive mach port parks it on
+  the real wait.
+- The media adapter reaps itself when orphaned: the perl helper's
+  stdin-EOF exit never fires after a SIGKILL'd parent, so helpers
+  leaked. A watcher thread exits once `getppid` reports it orphaned.
+- Mirror's capture session lives in a queue-owned box instead of
+  `nonisolated(unsafe)` state, and pinning in and out while a TCC
+  prompt is up can't stack `requestAccess` calls behind it.
+- Parity pass 2: the last honest gaps closed. Mirror joins the notch
+  card — a live camera preview row behind a toggle (consent is asked
+  on the toggle, the lens closes when the card folds away, frames flow
+  through `AVCaptureVideoPreviewLayer` on a private queue). The
+  switcher takes type-ahead: hold the chord and spell — "saf" lands
+  Safari, ⌫ widens again, and the buffer shows itself under the strip.
+  Dock previews accept document drops: drag a card carrying
+  `AXDocument` onto another app's preview and that app opens the file —
+  the same verb as dropping on its Dock tile, one panel nearer. Menu
+  Bar learned Bartender's "Show for updates": a hidden item that
+  rewrites its title — a clock's minute, a VPN's "Connected" — reveals
+  its run for the re-hide interval, seeded silently and never
+  announcing its own motion.
+- Screen-recording indicator is a documented Won't: macOS 26 exposes
+  no public capture signal (`kCGSSessionScreenIsCaptured` is gone, the
+  purple dot is WindowServer-composited, `replayd` keeps its state
+  private) — verified live against `screencapture`. Alcove reaches it
+  through private API; we won't link private frameworks for a capsule.
+- Launch can no longer hang inside Bluetooth. `IOBluetoothDevice`
+  `.register` synchronizes on the CoreBluetooth coordinator's
+  first-contact handshake, and with a Bluetooth TCC answer still
+  pending that semaphore held the main thread inside
+  `applicationDidFinishLaunching` — the run loop never spun, so no
+  utility ever started. Registration now lives on a dedicated thread
+  (which IOBluetooth needs anyway — notifications deliver on the
+  registering thread's runloop), so a wedged handshake only ever parks
+  that worker and the announcements just stay quiet.
+- Media-key HUDs listen, they don't intercept: the event tap is
+  `.listenOnly`, which is the permission the app actually holds
+  (Listen Event). The active `.defaultTap` variant silently required
+  Post Event consent and `tapCreate` returned nil on every launch.
+- The hidden run's handle lives in the island now, where nothing can
+  park it. The agent refuses to composite a second status item of ours
+  no matter when it registers — early, born-visible, fresh autosave,
+  adoption beat: parked every time, a blank slot while the surface sat
+  under our own wing. So the right ear's outer slice is a permanent
+  `‹`/`›` handle while the concealer runs — drawn by our own window,
+  hover reveals, click toggles, `›` while the run is out, and the ears
+  yield to whatever real status item lands in the flank (its frame is
+  published, the ear clamps to the free gap or collapses under a
+  readable width) instead of drawing over it. The standalone chevron
+  stays the fallback where the concealer can't run.
+- Parity pass 3: Menu Bar stops hiding things you never asked it to.
+  The v1 concealer auto-seeded every parked app into `concealedApps`
+  once, then kept hiding them forever — layout model 3 wipes that map
+  and the seed can never write it again, so hiding is strictly opt-in
+  (items stay active by default; macOS's own « overflow still parks
+  what genuinely doesn't fit, and hover/click reveal reaches it). The
+  boundary is real again under the concealer too — ⌘-dragging any item
+  across the native « caret, the host boundary, or the fallback
+  chevron learns its section, so position alone picks hidden vs
+  shown, the Bartender model. "Show for updates" now watches covered
+  items' tiles as well as hidden items' titles.
+- Dock previews stop showing purged windows as blank cards.
+  ScreenCaptureKit hands back a fully transparent CGImage when the
+  window's backing store is gone (occluded, off-Space, minimized), and
+  the old code cached it for 30 s — an empty dark rect where a window
+  should be. Transparent captures are rejected at the seam now, and a
+  slot with no image shows the app icon and title instead of a ghost
+  glyph. The panel takes the keyboard too: arrows walk the strip with
+  a selection ring, Return raises the window, Escape folds — the
+  DockDoor verbs.
+- The right ear's quota ring lost its stray line — a second, finer
+  reset-countdown arc in near-white sat inside the provider-colored
+  usage ring and read as a scratch, not a feature. The reset timing
+  still lives in the mark's tooltip; the ring is one color now. And
+  the ears teach themselves: the notch card carries a dismissible
+  "the ears take gestures" line until the first flick or swipe lands,
+  and the media row animates a little equalizer while something's
+  playing (boring.notch's telltale, ours stops when playback does).
+- The separator is back on the row under the agent. The concealer hid
+  the standalone chevron outright ("the island's ‹ is the affordance"),
+  but a handle outside the item flow can never be a drag anchor — there
+  was nothing to pull an item behind, so position-based hiding could
+  not bootstrap. The chevron now stands whenever no host boundary does
+  (registered born-visible before the first assertion, protected like
+  every item of ours): click toggles the hidden run, and ⌘-dragging an
+  item across it — or across macOS's own « while a run is parked —
+  writes its section, the Ice/Bartender model. The learn itself is
+  gated on ⌘: a global flagsChanged watch timestamps the last press,
+  and only a side-flip with real travel inside a 1.5 s window writes —
+  space-parking, reveals, arrivals and width churn never carry ⌘, so
+  they can never fake a drag. One drag moves one item, so only the
+  biggest mover writes; an "always" pick survives a stray drag out.
+- The media ear is alive: while a track plays, whichever notch flank
+  is free draws the three-bar equalizer (the island strip's grammar —
+  animated, stilled under Reduce Motion, gone when playback stops).
+  The session slot still owns the left while work runs and the meter
+  the right; media fills the quiet ear or an unmetered right. The
+  PanelStore reader shares the app's single media monitor and stands
+  down when the Screen Bar hides.
+- Dock previews centre the strip when it fits: one card left-anchored
+  beside dead glass read as a second, empty slot (and a notch of
+  see-through desktop). `ViewThatFits` centres any run that fits the
+  panel; only an overflowing set scrolls.
+- Notch announces the small system toggles Alcove announces: Caps Lock
+  (a flagsChanged monitor on both the global stream and our own
+  windows, so it fires even while a JR-Bar panel is key), a display
+  arriving or leaving, and the Focus and Bluetooth capsules that were
+  already wired.
+- Dock previews learned the rest of DockDoor's verbs. "Min all" sits in
+  the header of a multi-window preview and minimizes the whole set at
+  once; ⌘-right-click on a tile quits the app (⌘⌥ force-quits) without
+  opening anything; middle-click on a card closes its window.
+- Dock folders pop now, DockDoor-style: an `AXFolderDockItem` tile opens
+  a capped, directories-first strip of its contents with an Open verb
+  and per-entry opens. The listing runs on a POSIX `readdir` off the
+  main actor behind the same generation guard as thumbnails, and the
+  header icon is the generic LaunchServices folder — nothing on main
+  ever touches the folder, because a folder is exactly where an open()
+  can pend: Downloads, Desktop and Documents gate behind
+  Files-and-Folders consent, and an agent's first access waits ~5s on
+  the TCC prompt before it resolves. A denied or timed-out folder says
+  so — "No access to this folder" with a Settings shortcut — instead of
+  spinning forever. Apps can be excluded from previews outright via the
+  Dock card's filter list.
+- Dock thumbnails can't wear another app's pixels anymore. A row's id
+  used to be its index — a capture still in flight when the preview
+  retargeted could write its pixels onto the new app's card at the same
+  index. Row ids are stamped per fill now (an old preview's write finds
+  no row), the capture cache keys on owner-pid + window id (a recycled
+  CGWindowID can't serve another app's still), and a post-capture check
+  re-verifies the preview still belongs to the app that asked.
+- Fold's parked battery drain is gone. The hinge sensor jitters ±1° at
+  rest, and with the Jitter deadband at its old 0 default every wobble
+  retargeted the slew tracker — which never reached its moving target,
+  never rested, and held the vsync link open at frame rate forever
+  (a parked fold was a 60 fps timer plus a log line a frame). The
+  deadband defaults to 1.5° now — above the integer sensor's noise,
+  below any real lid swing, which still streams every sample through.
 - Menu Bar hides like Bartender now, not like a blindfold. macOS 26
   parks any status item that no longer fits into its own overflow, and
   an item inserted mid-row pushes everything left of it there — so the
@@ -174,6 +387,34 @@ All notable changes to JR-Bar are documented here.
   Event triggers dedup against a persisted ring so a restart can't
   re-celebrate, and document edges seed a baseline on the first state
   so nothing fires on facts older than the app.
+- The second `‹` on the bar is gone for good. The Screen Bar's
+  right ear carved a handle slice and drew the glyph whenever the ear
+  existed — the provider's nil answer only stopped the click, not the
+  mark — so the ear's `‹` stood ~100 pt from the status item's own
+  mark with nothing behind it. The slice now exists only while the
+  provider reports a real revealed handle.
+- The ears take Alcove's gestures for real. A dismissed wing used to
+  resurrect on the next tick: dismissal matched the slot's *value*,
+  and the right ear's usage meter mutates its own value every refresh,
+  so the lobe was back within a second — and with nothing left
+  dismissed, the summon swipe found nothing to restore. Dismissal now
+  keys on the wing's subject (provider + symbol + visualizer kind), so
+  value churn can't wake it while a different subject claiming the
+  side still revives it. The summon surface is the ghost: the lobe's
+  last rect stays in the hit region in *screen* coordinates — it used
+  to keep view coordinates and reconvert them after the relayout, which
+  threw the ghost a screen-height off the top. Flick dismiss, swipe the
+  ghost or the band to summon, drag down for the card.
+- A Bluetooth reconnect can no longer crash the run loop.
+  `IOBluetoothDevice.value(forKey: "batteryPercent")` raises
+  NSUnknownKeyException on devices that don't publish the key (it does
+  not return nil), and a device connecting mid-session threw on the
+  main queue — wedging the gesture monitors with it. The read is
+  gated on `responds(to:)` now.
+- Dock preview traffic lights went traffic-light small: 13 pt discs
+  inside an 18 pt hit ring each, so the header hugs the card title
+  instead of padding around fingertip targets, and a window title that
+  just repeats the app name isn't printed twice in the header.
 - Fold's residual judder is gone. Three sources, each measured: an edge
   timestamped across a 20 ms floor could claim a 500 °/s slam (now
   capped at a physical 240 °/s); a 1° wobble mid-close snapped the
@@ -304,6 +545,62 @@ All notable changes to JR-Bar are documented here.
   ghost anchor.
 - Confetti's window lives 3.4 s — the slowest streamer was still
   visibly falling when 2.6 s used to vanish it.
+- Dock previews hold the Dock out. A preview panel used to sit over an
+  auto-hidden Dock that slid away the moment the pointer left its tile,
+  taking the hover with it; the utility now drives the Dock's own
+  autohide (`CoreDockSetAutoHideEnabled`, the private call DockDoor
+  uses, probed at launch and fail-soft) so the Dock stays raised while
+  a preview is up and its autohide setting is restored — never bounced
+  — when the panel closes or the app exits, even after a crash.
+  Preview cards gained Fullscreen and New Window verbs and actually
+  open windowless apps now (the Open button's path used to dead-end
+  before it could render), and a tile with more windows than the new
+  compact-list limit falls back to a row-per-window list instead of
+  outgrowing the screen.
+- Notch: the ears answer a hover. A pointer resting on a Screen Bar
+  ear swells the ear's mark outward — the tell the bare island could
+  never show — and the grown card's deadline depends on where the
+  pointer came from: straight onto the island opens after 0.12 s, a
+  drift down from the menu-bar row waits a third of a second (the copy
+  always said so; the code now agrees), and crossing ear-to-island
+  keeps the original deadline instead of re-arming the short one.
+  Hover-open holds back entirely while a fullscreen app is frontmost,
+  and an optional haptic tick lands when the card opens (Notch
+  settings).
+- The escalation ladder notices when you're already watching. An ask
+  whose own terminal pane is frontmost — proven the daemon's way, the
+  host app's bundle plus the frontmost process on the session's
+  ancestry — gets its banner for the record but no sound burst, no
+  menu-bar pulse and no chime, and walking away from the pane re-arms
+  the stage without waiting for the next boundary. Toggle in the Agent
+  Overview card ("Quiet while you watch"). The quota ear now reads the
+  window's reset too: a fine arc inside the ring drains toward the
+  reset, the peek and the island card name it in words, and a live
+  incident from the provider's status feed — the daemon polled them
+  all along; the wire simply dropped the field — badges the ear amber,
+  the panel row and the Usage Center header with the feed's own text.
+- Agent Overview actually opens now. The window used the weak,
+  deprecated activation call, so from a menu-bar accessory the panel
+  could order front on another Space and look like "nothing happens" —
+  `show()` now does the house's activation dance, un-minimizes, and
+  re-centers a frame autosaved off-screen. And it earns its name: the
+  window opens on a Connections browser built from the state the
+  daemon already pushes — the core link and version, each node with
+  its session count, every device with its link state, every provider
+  with its quota read — with the honest "source not found" /
+  "disabled" labels instead of invented ones, alongside the roster
+  table and graph it always had.
+- The Screen Bar is part of the notch, not a slab over it. The strip
+  used to seat at the bezel's depth no matter how tall the island
+  grew, so with the card up the band and its housing cut straight
+  across the island's face — the "clipping into the notch" read. The
+  strip now rides the island's live bottom edge at every size, and
+  the housing's top corners are scooped where they would pave the
+  bezel's rounded arcs (even-odd fill, so the corner gaps are real
+  holes). The wings grew actual lobes: claimed ears drop below the
+  bezel line as rounded feet with the mark centered in the ear — the
+  Alcove silhouette — while the shared tray stays flush under the
+  bezel between them and an unclaimed side grows no lobe at all.
 
 ## 0.9.7 (unreleased)
 

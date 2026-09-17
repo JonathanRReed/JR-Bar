@@ -33,16 +33,36 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
     /// The window's short name (`5h`, `7d`, `Daily`).
     public var window: String
     public var percent: Double?
+    /// The window's `resets_at` — the countdown the ring drains toward.
+    public var resetsAt: Double?
+    /// The lane's own length (5h → 18000 s) — a reset countdown needs a
+    /// denominator; nil for a lane whose span is not one of the known
+    /// horizons, and the ring simply carries no drain arc.
+    public var windowSpan: TimeInterval?
+    /// The provider's status feed names a live incident — the ear
+    /// flips to the attention tone and the card row says so.
+    public var incident: Bool
 
-    public init(id: String, provider: String, window: String, percent: Double?) {
+    public init(id: String, provider: String, window: String, percent: Double?,
+                resetsAt: Double? = nil, windowSpan: TimeInterval? = nil, incident: Bool = false) {
         self.id = id
         self.provider = provider
         self.window = window
         self.percent = percent
+        self.resetsAt = resetsAt
+        self.windowSpan = windowSpan
+        self.incident = incident
     }
 
     /// `42%`, or `—` when the provider stated no number.
     public var percentText: String { UsageWindowLabel.percent(percent) }
+
+    /// The fraction of the window still to run (1 → fresh, 0 → resetting
+    /// now) — the drain arc the ear's ring carries under the fill.
+    public func resetFraction(now: Date) -> Double? {
+        guard let resetsAt, let windowSpan, windowSpan > 0 else { return nil }
+        return min(1, max(0, (resetsAt - now.timeIntervalSince1970) / windowSpan))
+    }
 }
 
 public struct NotchIslandSummary: Equatable, Sendable {
@@ -146,7 +166,10 @@ public enum NotchIsland {
         (usage?.providers ?? []).compactMap { provider in
             guard let window = provider.headlineWindow else { return nil }
             return NotchIslandMeter(id: provider.identity, provider: provider.id,
-                                    window: window.shortName, percent: window.usedPct)
+                                    window: window.shortName, percent: window.usedPct,
+                                    resetsAt: window.resetsAt,
+                                    windowSpan: UsageWindowLabel.windowSpan(id: window.id, name: window.name),
+                                    incident: provider.incident?.isEmpty == false)
         }.prefix(meterLimit).map { $0 }
     }
 
@@ -343,6 +366,16 @@ public enum NotchIslandLayout {
     /// decides whether the hover meant the card. A pointer passing
     /// through only ever earns this, never the grow.
     public static let peekGrow: CGFloat = 3
+
+    /// The wink applied to an idle size. A drawn face swells its width
+    /// symmetrically — the island reads as the notch grown sideways.
+    /// The bare housing is exactly the notch: sideways paint would reach
+    /// past the hardware and sit under menu-bar clicks, so its tell
+    /// grows straight down instead — the island's own direction.
+    public static func peekAdjusted(_ size: CGSize, bare: Bool) -> CGSize {
+        bare ? CGSize(width: size.width, height: size.height + peekGrow)
+             : CGSize(width: size.width + 2 * peekGrow, height: size.height)
+    }
 
     /// The window's frame: centred on `centerX`, its top edge `topInset`
     /// below the screen's top edge, clamped inside the screen with

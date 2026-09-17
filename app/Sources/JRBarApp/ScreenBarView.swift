@@ -49,14 +49,36 @@ final class ScreenBarView: NSView {
         didSet { if wingGeometry != oldValue { updateWingChips() } }
     }
     /// The x (view coordinates) the right ear may not reach past —
-    /// macOS's « sits there while the Menu Bar utility hides a run.
+    /// the nearest status item's edge on the notch's right flank.
     /// nil is no limit.
     var rightEarLimit: CGFloat? {
         didSet { if rightEarLimit != oldValue { updateWingChips() } }
     }
-    /// The narrowest ear still worth drawing — the ring plus a point
-    /// of air each side.
-    static let minimumEarWidth: CGFloat = 18
+    /// The x (view coordinates) the left ear may not reach past — the
+    /// nearest status item's edge on the left flank. nil is no limit.
+    var leftEarLimit: CGFloat? {
+        didSet { if leftEarLimit != oldValue { updateWingChips() } }
+    }
+    /// The narrowest ear still worth drawing — a bare cap continues the
+    /// band toward whatever item claimed the flank, so a thin ear is a
+    /// shoulder, not a sliver.
+    static let minimumEarWidth: CGFloat = 12
+    /// An ear narrower than this has no room for its mark — the cap
+    /// draws but the glyph stays out of a space it would clip.
+    static let markMinWidth: CGFloat = 26
+    /// The hidden-run handle — the concealed items' ‹ — drawn inside
+    /// the island's own surface as the right ear's outer cap while the
+    /// menu-bar concealer runs. A status item can park its surface
+    /// under the island and never re-composite; the island's own glyph
+    /// cannot. nil hides it.
+    var menuHandleRevealed: Bool? {
+        didSet { if menuHandleRevealed != oldValue { updateWingChips() } }
+    }
+    /// The handle's slice of the right ear in view coordinates — what
+    /// the click route answers to.
+    private(set) var menuHandleRect: NSRect?
+    /// The handle's share of the right ear — a slim cap, not a mark.
+    private static let handleWidth: CGFloat = 22
     /// The tray's bottom corner — the notch profile's resolution
     /// (`screen_bar_notch_profile` + `screen_bar_notch_corner`), pushed
     /// by the controller so the wrap's silhouette is the bezel's own.
@@ -156,6 +178,9 @@ final class ScreenBarView: NSView {
         // The island's own material: plain black, no stroke — the same
         // `.fill(.black)` the island's background wears.
         housingLayer.fillColor = CGColor(gray: 0, alpha: 1)
+        // Even-odd: the corner-gap subpaths `housingPath` adds under the
+        // island's bottom corners punch back out of the silhouette.
+        housingLayer.fillRule = .evenOdd
         housingLayer.isHidden = true
         housingLayer.actions = ["path": NSNull(), "position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
 
@@ -193,14 +218,15 @@ final class ScreenBarView: NSView {
         if let islandFrame, wingGeometry.notchDepth > 0,
            islandFrame.intersects(CGRect(origin: .zero, size: size)) {
             let coupling = ScreenBarGeometry.coupledBand(in: size, island: islandFrame,
-                                                         notchDepth: wingGeometry.notchDepth,
                                                          cornerRadius: notchCornerRadius)
             rect = coupling.band
             housingRect = coupling.housing
-            housingLayer.path = Self.housingPath(coupling.housing, radius: coupling.cornerRadius)
+            housingLayer.path = Self.housingPath(coupling.housing, radius: coupling.cornerRadius,
+                                                 islandMinY: islandFrame.minY)
             housingLayer.isHidden = false
         } else {
-            rect = ScreenBarGeometry.bandRect(in: size, preferredSpan: bandSpan > 0 ? bandSpan : nil)
+            rect = ScreenBarGeometry.bandRect(in: size, preferredSpan: bandSpan > 0 ? bandSpan : nil,
+                                              underBezel: wingGeometry.notchDepth)
             housingRect = nil
             housingLayer.isHidden = true
         }
@@ -238,28 +264,53 @@ final class ScreenBarView: NSView {
         // is only the ceiling on the room it may take, never its width.
         // The ear's own bounds are what hit regions answer to, so empty
         // claim space is not a dead-zone magnet.
-        func ear(_ side: ScreenBarWingSide, _ slot: ScreenBarWingSlot?) -> (slot: ScreenBarWingSlot, rect: CGRect)? {
-            guard let slot,
-                  let claim = ScreenBarGeometry.wingSlotRect(side, in: size, geometry: wingGeometry)
+        func earRect(_ side: ScreenBarWingSide, hasContent: Bool) -> CGRect? {
+            guard let claim = ScreenBarGeometry.wingSlotRect(side, in: size, geometry: wingGeometry)
             else { return nil }
             // Notch-less: the capsule chip carries itself in the claim.
-            guard wingGeometry.notchDepth > 0 else { return (slot, claim) }
-            let depth = wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin
-            var width = min(claim.width, Self.earWidth)
-            if side == .right, let limit = rightEarLimit {
-                width = min(width, limit - claim.minX)
-                guard width >= Self.minimumEarWidth else { return nil }
+            guard wingGeometry.notchDepth > 0 else { return hasContent ? claim : nil }
+            // The ear's rect runs the bezel's height plus the lobe's
+            // drop — the drawn lobe IS the ear, hit regions included.
+            let depth = wingGeometry.notchDepth + ScreenBarGeometry.wingEarDrop
+            // The right ear carries the menu handle's slice too — a slim
+            // outer cap past the mark's span.
+            let handleW: CGFloat = (side == .right && menuHandleRevealed != nil) ? Self.handleWidth : 0
+            var width = min(claim.width, (hasContent ? Self.earWidth : 0) + handleW)
+            // Each ear yields to the nearest status item on its flank:
+            // a wing that paves a real item hides it and eats its clicks.
+            switch side {
+            case .right:
+                if let limit = rightEarLimit { width = min(width, limit - claim.minX) }
+            case .left:
+                if let limit = leftEarLimit { width = min(width, claim.maxX - limit) }
             }
+            guard width >= Self.minimumEarWidth else { return nil }
             let x = side == .left ? claim.maxX - width : claim.minX
-            return (slot, CGRect(x: x, y: size.height - depth, width: width, height: depth))
+            return CGRect(x: x, y: size.height - depth, width: width, height: depth)
         }
-        let left = ear(.left, wings.left)
-        let right = ear(.right, wings.right)
-        leftWingRect = left?.rect
-        rightWingRect = right?.rect
-        guard left != nil || right != nil else {
+        let leftRect = earRect(.left, hasContent: wings.left != nil)
+        let rightRect = earRect(.right, hasContent: wings.right != nil)
+        // The handle's slice: the right ear's outer cap — only while the
+        // provider says there is a run for it to toggle. A nil answer
+        // draws no glyph and keeps no hit slice; carving it anyway left a
+        // dead ‹ on the ear that duplicated the status item's mark. The
+        // mark yields first when the flank clamps, the control keeps the
+        // edge.
+        let handleW = menuHandleRevealed == nil ? 0 : min(Self.handleWidth, rightRect?.width ?? 0)
+        let handleRect: CGRect? = handleW > 0 ? rightRect.map { CGRect(
+            x: $0.maxX - handleW, y: $0.minY, width: handleW, height: $0.height) } : nil
+        let rightMarkRect = rightRect.map { CGRect(
+            x: $0.minX, y: $0.minY, width: max(0, $0.width - handleW), height: $0.height) }
+        let left = leftRect.flatMap { r in wings.left.map { (slot: $0, rect: r) } }
+        let right = rightMarkRect.flatMap { r in wings.right.map { (slot: $0, rect: r) } }
+        leftWingRect = leftRect
+        rightWingRect = rightRect
+        menuHandleRect = handleRect
+        guard leftRect != nil || rightRect != nil else {
             wingsModel.left = nil
             wingsModel.right = nil
+            wingsModel.rightEar = nil
+            wingsModel.rightHandle = nil
             wingsModel.tray = nil
             trayRect = nil
             wingsHosting?.isHidden = true
@@ -271,19 +322,19 @@ final class ScreenBarView: NSView {
             wingsHosting = hosting
         }
         // The tray is the one continuous shape: from the left ear's outer
-        // edge, under the bezel, to the right ear's outer edge — the chin
-        // below the bezel so the notch visibly sits in the shape. An
+        // edge, under the bezel, to the right ear's outer edge — dropping
+        // into a lobe below the menu-bar line under each claimed ear. An
         // unclaimed side ends the tray at its own bezel edge; the bezel
         // hides the middle.
         var tray: CGRect?
         if wingGeometry.notchDepth > 0 {
             let sideExtent = max(0, (size.width - wingGeometry.notchWidth) / 2.0)
             tray = CGRect(
-                x: left?.rect.minX ?? sideExtent,
-                y: size.height - (wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin),
-                width: (right?.rect.maxX ?? (sideExtent + wingGeometry.notchWidth))
-                    - (left?.rect.minX ?? sideExtent),
-                height: wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin)
+                x: leftRect?.minX ?? sideExtent,
+                y: size.height - (wingGeometry.notchDepth + ScreenBarGeometry.wingEarDrop),
+                width: (rightRect?.maxX ?? (sideExtent + wingGeometry.notchWidth))
+                    - (leftRect?.minX ?? sideExtent),
+                height: wingGeometry.notchDepth + ScreenBarGeometry.wingEarDrop)
         }
         trayRect = tray
         // The island morphs rather than pops: tray and ears spring to
@@ -291,10 +342,18 @@ final class ScreenBarView: NSView {
         let mutate = {
             self.wingsModel.tray = tray
             self.wingsModel.notchCorner = self.notchCornerRadius
-            self.wingsModel.chin = tray == nil ? 0 : ScreenBarGeometry.wingTrayChin
+            // The bezel's side edges in tray-local x: the shape scoops
+            // its bottom-corner arcs back out of the wrap's fill.
+            let sideExtent = max(0, (size.width - self.wingGeometry.notchWidth) / 2.0)
+            self.wingsModel.bezelLeft = tray.map { sideExtent - $0.minX } ?? 0
+            self.wingsModel.bezelRight = tray.map { sideExtent + self.wingGeometry.notchWidth - $0.minX } ?? 0
+            self.wingsModel.earDrop = tray == nil ? 0 : ScreenBarGeometry.wingEarDrop
             self.wingsModel.viewHeight = size.height
             self.wingsModel.left = left
             self.wingsModel.right = right
+            self.wingsModel.rightEar = rightRect
+            self.wingsModel.rightHandle = handleRect
+            self.wingsModel.rightHandleRevealed = self.menuHandleRevealed ?? false
         }
         if Self.reduceMotion {
             mutate()
@@ -308,8 +367,13 @@ final class ScreenBarView: NSView {
     /// Square at the top, rounded at the bottom — the housing's
     /// silhouette in the view's unflipped coordinates: the straight top
     /// edge disappears into the island's face while the bottom corners
-    /// carry the notch profile's radius.
-    private static func housingPath(_ rect: CGRect, radius: CGFloat) -> CGPath {
+    /// carry the notch profile's radius. `islandMinY` is the island's
+    /// bottom edge in the same coordinates: where the housing passes
+    /// under the island's rounded bottom corners it must keep their arcs
+    /// — a square top would fill the corner gaps and pave the curve —
+    /// so each corner square gets the below-arc part punched out by the
+    /// layer's even-odd fill.
+    private static func housingPath(_ rect: CGRect, radius: CGFloat, islandMinY: CGFloat? = nil) -> CGPath {
         let r = max(0, min(radius, rect.height, rect.width / 2.0))
         let path = CGMutablePath()
         guard r > 0 else {
@@ -325,14 +389,49 @@ final class ScreenBarView: NSView {
         path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r),
                     radius: r, startAngle: -.pi / 2, endAngle: .pi, clockwise: true)
         path.closeSubpath()
+        // The corner gaps: the part of each bottom-corner square that is
+        // outside the island's silhouette. Only while the island's bottom
+        // edge lands inside the housing — a grown card whose face already
+        // covers the whole housing needs no punch. The square must sit
+        // fully inside the housing's height or its spill would paint.
+        if let islandMinY, islandMinY > rect.minY + 0.5, islandMinY + r <= rect.maxY + 0.5 {
+            path.addPath(cornerGapPath(square: CGRect(x: rect.minX, y: islandMinY, width: r, height: r),
+                                       leading: true))
+            path.addPath(cornerGapPath(square: CGRect(x: rect.maxX - r, y: islandMinY, width: r, height: r),
+                                       leading: false))
+        }
         return path
     }
 
-    /// An ear's drawn width — a fixed complication on the bezel's edge:
-    /// the mark's room plus its padding. The claim only ever caps it.
-    /// The ring is 16 pt; 4 pt of air each side. Wider ears read as
-    /// the notch grown sideways.
-    private static let earWidth: CGFloat = 24
+    /// The below-arc region of a bottom-corner square — the sliver the
+    /// island's silhouette leaves open and the housing must keep open
+    /// too. `leading` picks the island's left corner; the arcs follow
+    /// the bezel's own curve (view coordinates, y up).
+    private static func cornerGapPath(square: CGRect, leading: Bool) -> CGPath {
+        let path = CGMutablePath()
+        if leading {
+            path.move(to: CGPoint(x: square.minX, y: square.maxY))
+            path.addLine(to: CGPoint(x: square.minX, y: square.minY))
+            path.addLine(to: CGPoint(x: square.maxX, y: square.minY))
+            path.addArc(center: CGPoint(x: square.maxX, y: square.maxY), radius: square.width,
+                        startAngle: -.pi / 2, endAngle: .pi, clockwise: true)
+        } else {
+            path.move(to: CGPoint(x: square.maxX, y: square.maxY))
+            path.addLine(to: CGPoint(x: square.maxX, y: square.minY))
+            path.addLine(to: CGPoint(x: square.minX, y: square.minY))
+            path.addArc(center: CGPoint(x: square.minX, y: square.maxY), radius: square.width,
+                        startAngle: -.pi / 2, endAngle: 0, clockwise: false)
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    /// An ear's drawn width — a wing of notch black on the bezel's
+    /// flank, wide enough that the mark inside reads as the island's
+    /// end cap rather than a floating menu-bar icon. The claim only
+    /// ever caps it. Alcove's closed island wins with width: a 24 pt
+    /// ear read as a vestigial nub.
+    private static let earWidth: CGFloat = 48
 
     /// A dismiss-pull drags the ear off the bezel: outward travel only
     /// (inward pulls meet the notch), eased by `tanh` so it resists as
@@ -349,6 +448,22 @@ final class ScreenBarView: NSView {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.65), write)
         } else {
             write()
+        }
+    }
+
+    /// The hover tell: the ear under the pointer swells a few points
+    /// outward — proof the notch is alive while the island's intent
+    /// debounce decides whether the hover meant the card. A nil side
+    /// settles both.
+    func setWingHover(_ side: ScreenBarWingSide?) {
+        let write = { [wingsModel] in
+            wingsModel.leftSwell = side == .left
+            wingsModel.rightSwell = side == .right
+        }
+        if Self.reduceMotion {
+            write()
+        } else {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.65), write)
         }
     }
 

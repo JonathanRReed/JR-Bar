@@ -29,6 +29,11 @@ final class MenuBarReveal {
     /// rule) — a pointer crossing the app menus or the notch's island
     /// must not pop the run, so the utility always supplies one.
     var revealZone: @MainActor () -> NSRect? = { nil }
+    /// Item frames hovering which reveals anyway — the « control itself:
+    /// Bartender's chevron opens on hover, and an affordance that waits
+    /// for a click reads as dead. Kept out of `itemFrames` so a click on
+    /// it stays its own action, not a second reveal.
+    var hotFrames: @MainActor () -> [NSRect] = { [] }
     /// The Item Bar panel's frame while it is up — a surface a reveal
     /// stays alive for.
     var barFrame: @MainActor () -> NSRect? = { nil }
@@ -195,8 +200,9 @@ final class MenuBarReveal {
     /// timer already re-arms while the pointer stays on the row.
     func pollHover() {
         let point = mouseLocation()
-        let inZone = (revealZone() ?? row() ?? .zero).contains(point)
-            && !itemFrames().contains(where: { $0.contains(point) })
+        let inZone = ((revealZone() ?? row() ?? .zero).contains(point)
+            && !itemFrames().contains(where: { $0.contains(point) }))
+            || hotFrames().contains(where: { $0.contains(point) })
         let entered = inZone && !hoverInside
         hoverInside = inZone
         guard entered else { return }

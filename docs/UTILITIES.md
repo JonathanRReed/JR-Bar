@@ -38,7 +38,17 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > spacers, the override covers, the reveal gestures, the Item Bar (live
 > tiles + `AXPress` click-through), the per-item override pickers, the
 > arrange editor, the ⌘⇧K command bar, hotkeys, triggers, profiles,
-> cover appearance, and the combined control.
+> cover appearance, the combined control, and the provider picker —
+> the card's "Render with" hands the whole surface to an installed
+> counterpart (Bartender, Ice, Hidden Bar; `MenuBarSettings.provider`)
+> and parks our engine while the pick stands, with a live
+> installed/running note that flips on workspace launch and quit.
+>
+> **The boundary affordance is standing.** While the utility is on, the
+> JR-Bar item keeps a 30 pt drop zone with a ‹ mark inside it
+> (`MenuBarUtility.boundaryAffordance` → `StatusItemController`'s
+> folded face) — the separator the person ⌘-drags items across, visible
+> whether or not anything is hidden yet and under both engines.
 >
 > **How hiding works on macOS 26 — verified live (2026-09-15).** macOS 26
 > packs the status region right-to-left and *parks* whatever no longer
@@ -76,7 +86,10 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > Revealing collapses the spacer and the run packs back where it was;
 > a click on the blank stretch, a hover on it, or a scroll over the
 > bar is the reveal, and the icon's right-click menu carries a "Hidden
-> Menu Bar Items" submenu. There is exactly one
+> Menu Bar Items" submenu. The click answers in the Item Bar, not the
+> row: macOS only un-parks what fits, so a ‹ or › click toggles the
+> Item Bar open or closed (the run follows), and an empty run pops
+> the hidden-items menu with a teach row — a click is never dead. There is exactly one
 > status item of ours on purpose: a second one (the old always-hidden
 > control, `···`) swapped places with the boundary on every reflow —
 > a length write re-sorts the bar, and two of our keys straddled the
@@ -199,9 +212,16 @@ quit — the Dock Replace save-and-restore pattern.
 
 The utility that replaces "a dozen terminal tabs you can't see": one card
 summarizing every live agent session `CoreModel.sessions` knows about, plus
-a **Full overview…** button that opens the existing Overview window (list +
-force-directed graph).
+a **Full overview…** button that opens the Overview window (list +
+force-directed graph) — its own independent panel, opened from the app
+menu, the status-item menu, the notch card, the utility card, or ⌘O.
 
+- **Connections browser**: the Overview's idle inspector is a wiring
+  diagram of everything the daemon already pushes — the core link and
+  version, each node with its session count, every device with its link
+  state, every provider with its quota read. Evidence stays honest:
+  "source not found" and "disabled" show as what they are instead of
+  invented numbers (`OverviewLinks`, a pure builder over `CoreModel`).
 - **Counts that matter**: sessions grouped by state (working, asking,
   done, idle) and by provider; asks always surface first — a pending ask
   is the thing that stalls a run.
@@ -211,6 +231,26 @@ force-directed graph).
   re-tracked; the card is a lens over the daemon's session feed.
 - Settings: enabled toggle plus which state groups count toward the
   card's badge; the session source of truth stays `CoreModel` either way.
+- **Smart suppression** ("Quiet while you watch"): when the ask's own
+  terminal pane is frontmost the escalation ladder stays silent — no
+  sound burst, no amber pulse, no stage-3 chime — because the user is
+  already looking at it. The banner still lands for the record, and a
+  frontmost-app change re-decides the noise without waiting for the next
+  stage boundary. The proof is `answer_local`'s own: the host app's
+  bundle on the frontmost app plus the frontmost pid on the session's
+  process ancestry (`AskingPane`); a pane the daemon cannot prove keeps
+  its noise.
+- **Incident badges**: the daemon's status feeds already stamp a live
+  vendor incident on each usage snapshot; `CoreProviderUsage.incident`
+  carries it now. The Screen Bar's quota ear flips to the attention tone
+  and names it in the peek, the panel's usage row tags "incident", and
+  the Usage Center header badges it — always with the feed's own text on
+  hover, never presented as a quota verdict.
+- **Countdown on the ring**: the ear's fill ring gets a finer inner arc
+  draining toward the window's reset (the lane's own span is the
+  denominator — a `credits` lane has no clock and draws none), the peek
+  and the island card name it in words, and the panel/Usage Center
+  countdowns are unchanged.
 
 ## Cohesion contract
 

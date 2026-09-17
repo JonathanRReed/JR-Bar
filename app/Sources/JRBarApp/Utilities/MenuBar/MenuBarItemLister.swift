@@ -211,6 +211,12 @@ enum MenuBarItemLister {
     @MainActor
     private static var axScanInFlight = false
 
+    /// The front app's rightmost menu edge, refilled by each AX scan —
+    /// items left of it draw under menu text and are unreachable.
+    /// nil when the front app did not answer its AXMenuBar.
+    @MainActor
+    private(set) static var appMenuEdge: CGFloat?
+
     /// `AXIsProcessTrusted` is a `TCCAccessRequest` IPC — never call it
     /// per reconcile pass or per event. The lister keeps its own short
     /// cache; `MenuBarUtility.probeAccessibility` holds the card's copy.
@@ -265,16 +271,19 @@ enum MenuBarItemLister {
             if !walkAll, !axOwnerPIDs.contains(app.processIdentifier) { return nil }
             return MenuBarAX.Target(pid: app.processIdentifier, name: name)
         }
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let scanned = await Task.detached {
-            MenuBarAX.items(targets: targets, row: row)
+            (MenuBarAX.items(targets: targets, row: row),
+             frontPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) })
         }.value
-        axItems = scanned
+        axItems = scanned.0
+        appMenuEdge = scanned.1
         axGeneration += 1
         if walkAll {
-            axOwnerPIDs = Set(scanned.map(\.ownerPID))
+            axOwnerPIDs = Set(scanned.0.map(\.ownerPID))
             lastFullScanAt = now
         }
-        return scanned
+        return scanned.0
     }
 
     /// The live list: the AX snapshot when Accessibility is granted,

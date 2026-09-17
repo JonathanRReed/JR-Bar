@@ -66,6 +66,7 @@ at the end so nobody claims them.
 | Effects: builtins and provider animations, data-only packs, assignments by device / project / provider instance / provider / scene / state / default, reserved Needs-you and Failed effects, 2 Hz clamp (1 Hz saturated red), Reduce Motion fallback | Ships | Provider animations |
 | Signals: asks, failures, completions, low battery, calendar, reminders, quota crossed, quota reset sunrise | Ships, per-feature opt-ins | Mixed |
 | Escalation: light ramp → menu-bar pulse → chime every 30 s; webhook | Ships | Conservative timings |
+| Smart suppression: an ask whose terminal pane is frontmost gets its banner but no burst, pulse or chime (host bundle + process-ancestry proof, `answer_local`'s read); walking away re-arms the stage | Ships | On |
 | Studio: hand-written LEDS programs, `INIT.LED` burn | Daemon only | Off |
 
 ## Quiet, Focus and power
@@ -87,6 +88,7 @@ at the end so nobody claims them.
 | Forecast: one sample per window when the percentage moves or five minutes pass, least-squares over the last 90 minutes, `pace` and `exhausts_at`; the app extrapolates locally until the daemon has enough spread | Ships | On |
 | Tokens and cost by day or hour from local transcripts (7d–365d), cache savings, list-price disclosure | Ships (the daemon reports no price table yet, so the cost lines read as approximate) | On |
 | Quota alerts: threshold effects, pace notifications, reset sunrise sweep and banner | Ships | Off |
+| Reset countdown on the quota ear (drain arc inside the ring + words in the peek and island card) and provider incident badges from the status feeds (ear tone, panel row, Usage Center header) | Ships | On |
 | Quota Runway device display | Ships | Selectable per device |
 | Capacity history and operator history behind retention consent | Ships | Off |
 | Browser-session import for provider auth, secrets in Keychain | Daemon only | Off |

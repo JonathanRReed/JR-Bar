@@ -54,8 +54,19 @@ public enum MenuBarItemSection: String, Codable, CaseIterable, Sendable {
 /// The Menu Bar utility's persisted state: which item sits in which
 /// section, how a hidden run is revealed, and how long it stays before
 /// the spacer comes back.
+/// Who renders the menu-bar utility (docs/TOY-PARITY.md): JR-Bar's own
+/// engine, or an installed counterpart handed the surface — Bartender
+/// (paid), Ice or Hidden Bar (free). An external pick parks our
+/// machinery entirely while the choice stands.
+public enum MenuBarProvider: String, Codable, CaseIterable, Sendable {
+    case jrbar, bartender, ice, hiddenBar
+}
+
 public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
+    /// Who draws the hiding. `.jrbar` is the native engine; anything
+    /// else delegates to the named app and parks ours.
+    public var provider: MenuBarProvider
     /// Item-identity string → section. An unlisted item is `shown`.
     /// Decoded tolerantly: an unknown section value (a newer build's, a
     /// hand edit) is dropped rather than carried or fatal.
@@ -119,6 +130,43 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// the rest (measured: an allowlisted app stays only when it passes
     /// Gatekeeper). Off, an unnotarized build falls back to the spacer.
     public var concealUnnotarized: Bool
+    /// The system-wide status-item gap — Bartender's "reduce spacing"
+    /// verbatim (it writes NSStatusItemSpacing into the current-host
+    /// global domain; items pick it up as they launch). 0 leaves the
+    /// bar's own spacing alone.
+    public var itemSpacing: Int
+    /// Whether this build wrote the spacing keys — so choosing the
+    /// system default again removes them instead of leaving a stale
+    /// value behind.
+    public var itemSpacingManaged: Bool
+    /// Items drawn under the notch are unreachable — the plan hides
+    /// them so the Item Bar lists them. Only acts when an item's frame
+    /// actually intersects the notch band.
+    public var hideUnderNotch: Bool
+    /// Items the front app's menus overdraw are unreachable the same
+    /// way: they plan hidden instead of sitting behind menu text.
+    public var hideOnMenuOverlap: Bool
+    /// Extra fixed-width status items carrying a text label — the
+    /// spacer rows Bartender scatters through the bar. Each is born
+    /// visible like the chevron; its click reveals the hidden run.
+    public var spacers: [Spacer]
+    /// A tint panel drawn under the whole menu bar row — the full-bar
+    /// underlay, same material dials as the covers.
+    public var barUnderlay: Bool
+    /// A status item mirroring the agent feed's state dot; its click
+    /// opens the Overview.
+    public var agentStatusItem: Bool
+    /// One status item standing in for the Control Center items it
+    /// covers — battery, Wi-Fi, sound, Focus — whose system items are
+    /// hidden through the Control Center defaults while this is on.
+    public var combinedSystemItem: Bool
+    /// Display number → profile name: the profile follows the screen
+    /// the pointer is on.
+    public var displayProfiles: [String: String]
+    /// Bartender's signature: when a hidden item's title changes — a
+    /// VPN's "Connected", a download's percent — the hidden run
+    /// reveals for a beat so the update is seen, then re-hides.
+    public var showForUpdates: Bool
 
     /// The cover's visual-effect material, persisted as its raw name so
     /// a newer build's materials keep their data.
@@ -162,6 +210,21 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         }
     }
 
+    /// A spacer item: a fixed-width status item carrying a text label.
+    /// `width` 0 hugs the label's own measure.
+    public struct Spacer: Codable, Equatable, Sendable, Identifiable {
+        public var id: String
+        public var label: String
+        public var width: Double
+
+        public init(id: String = UUID().uuidString, label: String = "",
+                    width: Double = 0) {
+            self.id = id
+            self.label = label
+            self.width = max(0, width)
+        }
+    }
+
     /// The card's rehide dial.
     public static let rehideRange: ClosedRange<Double> = 1...15
     /// The default reveal window.
@@ -169,14 +232,18 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// The hiding model this build writes: 2 is positional sections
     /// with overrides; 0 (or absent with a map) is the cover era's
     /// all-covered map, cleared once on first apply.
-    public static let currentLayoutModel = 2
+    /// Model 3: the concealer's first-run seed hid whatever sat left of
+    /// the boundary without asking — the map it wrote is cleared once,
+    /// and nothing is concealed until the person picks or drags it.
+    public static let currentLayoutModel = 3
     /// The card's cover-roundness dial — past half the row's depth the
     /// run ends are a pill anyway.
     public static let coverRoundnessRange: ClosedRange<Double> = 0...14
     /// The tint's default strength.
     public static let defaultCoverTintOpacity: Double = 0.35
 
-    public init(enabled: Bool = false, sections: [String: MenuBarItemSection] = [:],
+    public init(enabled: Bool = false, provider: MenuBarProvider = .jrbar,
+                sections: [String: MenuBarItemSection] = [:],
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
                 layoutModel: Int = MenuBarSettings.currentLayoutModel,
@@ -189,8 +256,19 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 triggerRules: [MenuBarTriggerRule] = [],
                 concealedApps: [String: MenuBarItemSection] = [:],
                 concealSeeded: Bool = false,
-                concealUnnotarized: Bool = false) {
+                concealUnnotarized: Bool = false,
+                itemSpacing: Int = 0,
+                itemSpacingManaged: Bool = false,
+                hideUnderNotch: Bool = true,
+                hideOnMenuOverlap: Bool = true,
+                spacers: [Spacer] = [],
+                barUnderlay: Bool = false,
+                agentStatusItem: Bool = false,
+                combinedSystemItem: Bool = false,
+                displayProfiles: [String: String] = [:],
+                showForUpdates: Bool = false) {
         self.enabled = enabled
+        self.provider = provider
         self.sections = sections
         self.revealOnHover = revealOnHover
         self.revealOnClick = revealOnClick
@@ -210,6 +288,16 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.concealedApps = concealedApps
         self.concealSeeded = concealSeeded
         self.concealUnnotarized = concealUnnotarized
+        self.itemSpacing = max(0, itemSpacing)
+        self.itemSpacingManaged = itemSpacingManaged
+        self.hideUnderNotch = hideUnderNotch
+        self.hideOnMenuOverlap = hideOnMenuOverlap
+        self.spacers = spacers
+        self.barUnderlay = barUnderlay
+        self.agentStatusItem = agentStatusItem
+        self.combinedSystemItem = combinedSystemItem
+        self.displayProfiles = displayProfiles
+        self.showForUpdates = showForUpdates
     }
 
     static func clampedRehide(_ value: Double) -> Double {
@@ -235,15 +323,18 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
+        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
-        case concealedApps, concealSeeded, concealUnnotarized
+        case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
+        case hideUnderNotch, hideOnMenuOverlap, spacers, barUnderlay
+        case agentStatusItem, combinedSystemItem, displayProfiles, showForUpdates
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        provider = (try? c.decodeIfPresent(MenuBarProvider.self, forKey: .provider)) ?? .jrbar
         let raw = (try? c.decodeIfPresent([String: String].self, forKey: .sections)) ?? [:]
         sections = raw.compactMapValues { MenuBarItemSection(rawValue: $0) }
         revealOnHover = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnHover)) ?? true
@@ -275,6 +366,19 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             .filter { $0.value != .shown }
         concealSeeded = (try? c.decodeIfPresent(Bool.self, forKey: .concealSeeded)) ?? false
         concealUnnotarized = (try? c.decodeIfPresent(Bool.self, forKey: .concealUnnotarized)) ?? false
+        let spacing = (try? c.decodeIfPresent(Int.self, forKey: .itemSpacing)) ?? 0
+        itemSpacing = max(0, spacing)
+        itemSpacingManaged = (try? c.decodeIfPresent(Bool.self, forKey: .itemSpacingManaged))
+            ?? (spacing > 0)
+        hideUnderNotch = (try? c.decodeIfPresent(Bool.self, forKey: .hideUnderNotch)) ?? true
+        hideOnMenuOverlap = (try? c.decodeIfPresent(Bool.self, forKey: .hideOnMenuOverlap)) ?? true
+        spacers = (try? c.decodeIfPresent([Spacer].self, forKey: .spacers)) ?? []
+        barUnderlay = (try? c.decodeIfPresent(Bool.self, forKey: .barUnderlay)) ?? false
+        agentStatusItem = (try? c.decodeIfPresent(Bool.self, forKey: .agentStatusItem)) ?? false
+        combinedSystemItem = (try? c.decodeIfPresent(Bool.self, forKey: .combinedSystemItem)) ?? false
+        displayProfiles = (try? c.decodeIfPresent([String: String].self,
+                                                 forKey: .displayProfiles)) ?? [:]
+        showForUpdates = (try? c.decodeIfPresent(Bool.self, forKey: .showForUpdates)) ?? false
     }
 }
 
@@ -331,6 +435,11 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
     public var showIdle: Bool
     /// The trailing "12m" column.
     public var showElapsed: Bool
+    /// When the ask's own terminal pane is already frontmost the
+    /// escalation ladder stays quiet — no pulse, no chime, no sound
+    /// burst — because the user is already looking at it. The banner
+    /// still lands for the record.
+    public var quietWhenPaneFrontmost: Bool
     /// The most rows the card lists; the rest collapse into a "+N more"
     /// line. A card is not the roster — the Overview window is.
     public var rowLimit: Int
@@ -340,13 +449,15 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
 
     public init(enabled: Bool = true, grouping: AgentGrouping = .state,
                 showRemote: Bool = true, showEnded: Bool = true, showIdle: Bool = false,
-                showElapsed: Bool = true, rowLimit: Int = AgentOrganizerSettings.defaultRowLimit) {
+                showElapsed: Bool = true, quietWhenPaneFrontmost: Bool = true,
+                rowLimit: Int = AgentOrganizerSettings.defaultRowLimit) {
         self.enabled = enabled
         self.grouping = grouping
         self.showRemote = showRemote
         self.showEnded = showEnded
         self.showIdle = showIdle
         self.showElapsed = showElapsed
+        self.quietWhenPaneFrontmost = quietWhenPaneFrontmost
         self.rowLimit = Self.clampedRowLimit(rowLimit)
     }
 
@@ -355,7 +466,7 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, grouping, showRemote, showEnded, showIdle, showElapsed, rowLimit
+        case enabled, grouping, showRemote, showEnded, showIdle, showElapsed, quietWhenPaneFrontmost, rowLimit
     }
 
     public init(from decoder: any Decoder) throws {
@@ -366,6 +477,7 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
         showEnded = (try? c.decodeIfPresent(Bool.self, forKey: .showEnded)) ?? true
         showIdle = (try? c.decodeIfPresent(Bool.self, forKey: .showIdle)) ?? false
         showElapsed = (try? c.decodeIfPresent(Bool.self, forKey: .showElapsed)) ?? true
+        quietWhenPaneFrontmost = (try? c.decodeIfPresent(Bool.self, forKey: .quietWhenPaneFrontmost)) ?? true
         rowLimit = Self.clampedRowLimit(
             (try? c.decodeIfPresent(Int.self, forKey: .rowLimit)) ?? Self.defaultRowLimit)
     }

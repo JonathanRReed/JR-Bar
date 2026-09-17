@@ -81,7 +81,14 @@ public enum EventPolicy {
     /// the kind's own default so a typo in the daemon never silences an ask.
     public static let knownSounds: Set<String> = ["basso", "blow", "bottle", "frog", "funk", "glass", "hero", "morse", "ping", "pop", "purr", "sosumi", "submarine", "tink"]
 
-    public static func delivery(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?) -> EventDelivery {
+    /// `askingFrontmost` is the Agent utility's smart suppression: the
+    /// ask's own terminal pane is already in front, so the user can see
+    /// it — the banner still lands for the record but the sound burst,
+    /// the menu-bar pulse and the chime would only interrupt the very
+    /// work being watched. Callers that cannot prove it pass false and
+    /// every rung fires as before.
+    public static func delivery(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,
+                                askingFrontmost: Bool = false) -> EventDelivery {
         let focus = (state?.focus?.mode ?? "normal").lowercased()
         let soundsSuppressed = ["dim", "dark", "pause"].contains(focus)
         let chimeSuppressed = focus == "pause"
@@ -116,7 +123,7 @@ public enum EventPolicy {
             if session?.isSubagent == true, settings?.bool("subagent_asks_alert") == false { return .nothing }
             guard notify else { return .nothing }
             let burst = max(1, min(5, settings?.int("alert_burst") ?? 1))
-            var delivery = EventDelivery(sound: sound(askSound), soundRepeats: burst)
+            var delivery = EventDelivery(sound: askingFrontmost ? nil : sound(askSound), soundRepeats: burst)
             delivery.notification = .init(identifier: "ask:\(event.session ?? event.id)", title: "\(label) needs you",
                                           body: event.detail ?? session?.ask?.summary ?? "\(providerName) is waiting for an answer.",
                                           category: .ask, session: event.session)
@@ -156,8 +163,8 @@ public enum EventPolicy {
         case "escalation_stage":
             let stage = min(event.stage ?? state?.escalation?.stageNumber ?? 0, tierCeiling)
             var delivery = EventDelivery()
-            delivery.statusPulse = stage >= 2
-            if stage >= 3 {
+            delivery.statusPulse = stage >= 2 && !askingFrontmost
+            if stage >= 3, !askingFrontmost {
                 delivery.chime = (chimeSuppressed || soundsSuppressed) ? .stop : .start
             } else {
                 delivery.chime = .stop

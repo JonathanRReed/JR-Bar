@@ -17,11 +17,34 @@ final class NotchCardModel {
             if pinned {
                 utility.start()
                 tray.revalidate()
+                mirror.sync(enabled: mirrorEnabled())
+                wingHint = Self.wingHintDue()
             } else {
                 utility.stop()
                 calendar.stop()
+                reminders.stop()
+                mirror.sync(enabled: false)
             }
         }
+    }
+    /// The one-line ear-gesture hint — drawn in the pinned card until
+    /// the person has either flicked a wing once (the knowledge exists)
+    /// or dismissed the line outright.
+    var wingHint = false
+    /// Marks the gesture vocabulary as learned — a real flick counts.
+    static var wingGesturesUsed: Bool {
+        get { UserDefaults.standard.bool(forKey: "jrbar.wingGesturesUsed") }
+        set { UserDefaults.standard.set(newValue, forKey: "jrbar.wingGesturesUsed") }
+    }
+    private static var wingHintDismissed: Bool {
+        UserDefaults.standard.bool(forKey: "jrbar.wingHintDismissed")
+    }
+    private static func wingHintDue() -> Bool {
+        !wingGesturesUsed && !wingHintDismissed
+    }
+    func dismissWingHint() {
+        wingHint = false
+        UserDefaults.standard.set(true, forKey: "jrbar.wingHintDismissed")
     }
     /// The live sessions under the focus header — the island's rows
     /// minus the session the header already names.
@@ -44,6 +67,14 @@ final class NotchCardModel {
     /// The calendar glance — reads only while pinned (privacy: no
     /// background polling of the owner's schedule).
     let calendar = ShelfCalendarModel()
+    /// The reminders glance — same privacy rule as the calendar.
+    let reminders = ShelfRemindersModel()
+    /// The mirror row — the camera's own preview, live only while the
+    /// card is pinned *and* the setting says so.
+    let mirror = ShelfMirrorModel()
+    /// The toys state's mirror vote — the presenter hands it through so
+    /// a flip lands on the next pin without rebuilding the model.
+    var mirrorEnabled: () -> Bool = { false }
     var onOpenSession: (() -> Void)?
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
@@ -120,6 +151,7 @@ struct NotchCardView: View {
     private var card: some View {
         VStack(alignment: .leading, spacing: 6) {
             focusHeader(pinned: true)
+            if model.wingHint { wingHintRow }
             if !model.rows.isEmpty {
                 ForEach(model.rows.prefix(NotchIsland.rowLimit), id: \.id) { row in
                     sessionRow(row)
@@ -133,11 +165,14 @@ struct NotchCardView: View {
             }
             ShelfMediaRow(utility: model.utility, style: style)
             ShelfBatteryRow(power: model.utility.power, style: style)
+            ShelfWeatherRow(weather: model.utility.weather, style: style)
             ShelfTrayRow(tray: model.tray, style: style)
             if !model.timers.entries.isEmpty {
                 ShelfTimersRow(timers: model.timers, style: style)
             }
             ShelfCalendarRow(calendar: model.calendar, style: style)
+            ShelfRemindersRow(reminders: model.reminders, style: style)
+            ShelfMirrorRow(mirror: model.mirror, style: style)
             if !model.meters.isEmpty {
                 ForEach(model.meters, id: \.id) { meter in
                     meterRow(meter)
@@ -153,6 +188,29 @@ struct NotchCardView: View {
                 model.tray.add(urls)
             }
             return true
+        }
+    }
+
+    /// The ear-gesture vocabulary in one line — the marks-only ears
+    /// cannot explain themselves, and nothing else says they take
+    /// flicks. Stays until a real flick lands or the × sends it away.
+    private var wingHintRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(style.faintColor)
+            Text("Flick an ear outward to hide it · swipe the bar sideways to bring it back")
+                .font(.system(size: 10))
+                .foregroundStyle(style.faintColor)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button { model.dismissWingHint() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(style.faintColor)
+            }
+            .buttonStyle(.plain)
+            .help("Don't show this hint again")
         }
     }
 
@@ -245,7 +303,9 @@ struct NotchCardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// One quota meter: provider, window, a short bar, the percent.
+    /// One quota meter: provider, window, a short bar, the percent —
+    /// with the reset countdown the ear's drain arc only hints at, and
+    /// the status feed's incident mark when the vendor is having a day.
     private func meterRow(_ meter: NotchIslandMeter) -> some View {
         HStack(spacing: 6) {
             Text(ProviderStyle.style(for: meter.provider).name)
@@ -255,6 +315,19 @@ struct NotchCardView: View {
             Text(meter.window)
                 .font(.system(size: 9))
                 .foregroundStyle(style.faintColor)
+            if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date()) {
+                Text(countdown)
+                    .font(.system(size: 9))
+                    .monospacedDigit()
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(1)
+            }
+            if meter.incident {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .help("The provider's status feed reports an incident")
+            }
             Spacer(minLength: 4)
             Capsule()
                 .fill(style.chipFill)
@@ -303,39 +376,75 @@ private struct ShelfMediaRow: View {
 
     var body: some View {
         if let media = utility.media {
-            HStack(spacing: 6) {
-                Group {
-                    if let artwork = utility.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(style.subColor)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Group {
+                        if let artwork = utility.artwork {
+                            Image(nsImage: artwork)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } else {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(style.subColor)
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(media.displayLine)
+                            .font(.system(size: 11))
+                            .foregroundStyle(style.titleColor)
+                            .lineLimit(1)
+                        Text(utility.sourceName ?? "Now playing")
+                            .font(.system(size: 9))
+                            .foregroundStyle(style.faintColor)
+                            .lineLimit(1)
+                    }
+                    if media.playing {
+                        ShelfEqualizer(color: style.faintColor)
+                    }
+                    Spacer(minLength: 4)
+                    transportButton("backward.fill") { utility.send(.previousTrack) }
+                    transportButton(media.playing ? "pause.fill" : "play.fill") {
+                        utility.send(.togglePlayPause)
+                    }
+                    transportButton("forward.fill") { utility.send(.nextTrack) }
+                }
+                if let duration = media.duration, duration > 1,
+                   media.elapsed != nil {
+                    TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
+                        HStack(spacing: 6) {
+                            Text(Self.clock(utility.elapsedShown(at: context.date)))
+                                .font(.system(size: 9))
+                                .monospacedDigit()
+                                .foregroundStyle(style.faintColor)
+                            Slider(value: Binding(
+                                    get: { utility.elapsedShown(at: context.date) },
+                                    set: { utility.mediaScrub = $0 }),
+                                   in: 0...duration) { editing in
+                                if editing {
+                                    utility.beginScrub()
+                                } else {
+                                    utility.commitScrub()
+                                }
+                            }
+                            .controlSize(.mini)
+                            Text("−" + Self.clock(duration - utility.elapsedShown(at: context.date)))
+                                .font(.system(size: 9))
+                                .monospacedDigit()
+                                .foregroundStyle(style.faintColor)
+                        }
                     }
                 }
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(media.displayLine)
-                        .font(.system(size: 11))
-                        .foregroundStyle(style.titleColor)
-                        .lineLimit(1)
-                    Text(utility.sourceName ?? "Now playing")
-                        .font(.system(size: 9))
-                        .foregroundStyle(style.faintColor)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                transportButton("backward.fill") { utility.send(.previousTrack) }
-                transportButton(media.playing ? "pause.fill" : "play.fill") {
-                    utility.send(.togglePlayPause)
-                }
-                transportButton("forward.fill") { utility.send(.nextTrack) }
             }
             .accessibilityElement(children: .combine)
         }
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded(.down)))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     private func transportButton(_ symbol: String,
@@ -348,6 +457,30 @@ private struct ShelfMediaRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The playing tell: five bars breathing on staggered phases — the
+/// honest version of the notch apps' visualizer (no audio tap, so it
+/// marks "something is playing", not a real spectrum).
+private struct ShelfEqualizer: View {
+    let color: Color
+    private let phases: [Double] = [0.0, 0.35, 0.7, 0.25, 0.55]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.22)) { context in
+            HStack(alignment: .bottom, spacing: 1.5) {
+                ForEach(phases.indices, id: \.self) { i in
+                    let t = context.date.timeIntervalSinceReferenceDate * 3 + phases[i] * .pi * 2
+                    let h = 4 + 6 * abs(sin(t))
+                    RoundedRectangle(cornerRadius: 0.8, style: .continuous)
+                        .fill(color)
+                        .frame(width: 2.2, height: h)
+                }
+            }
+            .frame(height: 10, alignment: .bottom)
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -385,6 +518,32 @@ private struct ShelfBatteryRow: View {
             parts.append(power.onAC ? "On AC" : "On battery")
         }
         return parts.isEmpty ? "Battery" : parts.joined(separator: " · ")
+    }
+}
+
+/// The card's weather row: the Open-Meteo reading beside the battery —
+/// symbol, temperature, the place the reading is for. Absent while the
+/// setting is off or no fetch has landed; the row never invents a sky.
+private struct ShelfWeatherRow: View {
+    let weather: NotchWeather
+    let style: NotchCardStyle
+
+    var body: some View {
+        if let reading = weather.reading {
+            let (symbol, label) = NotchWeather.symbol(for: reading.code)
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.subColor)
+                    .frame(width: 18)
+                Text([label, reading.temperatureText, reading.place]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " · "))
+                    .font(.system(size: 11))
+                    .foregroundStyle(style.subColor)
+                    .lineLimit(1)
+            }
+        }
     }
 }
 
@@ -428,6 +587,7 @@ private struct ShelfTrayRow: View {
         .contextMenu {
             if !entry.missing {
                 Button("Reveal in Finder") { tray.reveal(entry) }
+                Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
                 shareMenu(for: entry)
             }
             Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
@@ -550,4 +710,122 @@ private struct ShelfCalendarRow: View {
             }
         }
     }
+}
+
+/// The card's reminders rows: a check-off circle, the title, the due
+/// time — overdue reads "Overdue", dueless rows carry no time. Drawn
+/// only while the state has something to say; permission stays an
+/// explicit button like the calendar's.
+private struct ShelfRemindersRow: View {
+    let reminders: ShelfRemindersModel
+    let style: NotchCardStyle
+
+    var body: some View {
+        switch reminders.state {
+        case .hidden:
+            EmptyView()
+        case .needsPermission:
+            Button {
+                reminders.authorizeAndLoad()
+            } label: {
+                Label("Show reminders", systemImage: "checklist")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.faintColor)
+            }
+            .buttonStyle(.plain)
+        case .idle:
+            Label("No reminders due", systemImage: "checklist")
+                .font(.system(size: 10))
+                .foregroundStyle(style.faintColor)
+        case .items(let items):
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(items.prefix(ShelfRemindersModel.rowLimit)) { entry in
+                    row(entry)
+                }
+                if items.count > ShelfRemindersModel.rowLimit {
+                    Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
+                        .font(.system(size: 9))
+                        .foregroundStyle(style.faintColor)
+                        .padding(.leading, 20)
+                }
+            }
+        }
+    }
+
+    private func row(_ entry: ShelfRemindersModel.Entry) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                reminders.complete(entry)
+            } label: {
+                Image(systemName: "circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.subColor)
+            }
+            .buttonStyle(.plain)
+            .help("Mark done")
+            Text(entry.title)
+                .font(.system(size: 10))
+                .foregroundStyle(style.titleColor)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if let due = entry.due {
+                Text(due < Date() ? "Overdue"
+                    : due.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(due < Date() ? Color.orange : style.faintColor)
+            }
+        }
+        .contextMenu {
+            Button("Open in Reminders") { reminders.openInReminders(entry) }
+        }
+    }
+}
+
+/// The card's mirror row: the camera's own feed while the lens is
+/// live, or the honest reason it isn't. `off` renders nothing — the
+/// row is the feature's whole surface.
+private struct ShelfMirrorRow: View {
+    let mirror: ShelfMirrorModel
+    let style: NotchCardStyle
+
+    var body: some View {
+        switch mirror.state {
+        case .off:
+            EmptyView()
+        case .live:
+            MirrorPreview(view: mirror.preview)
+                .frame(height: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityLabel("Camera mirror")
+        case .denied:
+            HStack(spacing: 6) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.faintColor)
+                Text("Camera access is off")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.faintColor)
+                Spacer(minLength: 4)
+                Button("Settings…") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .controlSize(.mini)
+            }
+        case .unavailable:
+            Label("No camera", systemImage: "camera.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(style.faintColor)
+        }
+    }
+}
+
+/// The `MirrorPreviewView` in the SwiftUI tree — the session's layer
+/// is already on the view, so updates are a no-op.
+private struct MirrorPreview: NSViewRepresentable {
+    let view: MirrorPreviewView
+
+    func makeNSView(context: Context) -> MirrorPreviewView { view }
+    func updateNSView(_ nsView: MirrorPreviewView, context: Context) {}
 }

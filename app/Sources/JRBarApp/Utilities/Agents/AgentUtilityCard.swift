@@ -66,6 +66,10 @@ struct AgentUtilityControls: View {
                 SettingLabel(title: "Elapsed time",
                              subtitle: "The trailing \"12m\" column.")
             }
+            Toggle(isOn: utility.bind(\.quietWhenPaneFrontmost)) {
+                SettingLabel(title: "Quiet while you watch",
+                             subtitle: "An ask whose terminal pane is already in front gets no pulse, chime or sound — the banner still lands for the record.")
+            }
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: rowLimit, in: Self.rowLimitRange, step: 1)

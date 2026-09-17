@@ -92,6 +92,14 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>JR-Bar announces a device connecting in the notch — "AirPods connected". Nothing is paired or sent.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>JR-Bar's Mirror row shows the Mac's own camera in the notch card — and only while the row is on. Nothing is recorded or sent.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>JR-Bar shows the next event on the shelf and the Dock's Calendar tile, and only after you ask it to. Nothing leaves the Mac.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>JR-Bar lists your next reminders on the shelf — and only after you ask it to. Checking one off writes back to Reminders; nothing else is sent anywhere.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
@@ -129,17 +137,55 @@ if [[ -n "${JRBAR_ICONSET_KEEP:-}" ]]; then
 fi
 rm -rf "$ICON_TMP"
 
+# Contents/Helpers: the PyInstaller daemon + the hook shim, the same
+# pair packaging/build_macos_pkg.sh lays down. A bundle without them
+# leaves the app hunting a socket nothing listens on — "Monitor not
+# connected", every daemon-fed surface stale. Present only after
+# `make package` (or the pkg script) has built them; absent, the app
+# still builds and falls back to whatever core is running.
+CORE_APP="$APP_DIR/../build/macos-pkg/pyinstaller/jrbar-core.app"
+HOOK_BIN="$APP_DIR/../build/macos-pkg/hook/jrbar-hook"
+HELPERS="$BUNDLE/Contents/Helpers"
+if [[ -x "$CORE_APP/Contents/MacOS/jrbar-core" ]]; then
+    echo "==> bundling Contents/Helpers (jrbar-core.app + jrbar-hook)"
+    mkdir -p "$HELPERS"
+    ditto "$CORE_APP" "$HELPERS/jrbar-core.app"
+    CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$CORE_PLIST" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$CORE_PLIST"
+    /usr/libexec/PlistBuddy -c "Add :LSAppNapIsDisabled bool true" "$CORE_PLIST" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Set :LSAppNapIsDisabled true" "$CORE_PLIST"
+    if [[ -x "$HOOK_BIN" ]]; then
+        install -m 755 "$HOOK_BIN" "$HELPERS/jrbar-hook"
+    fi
+else
+    echo "==> no PyInstaller daemon at $CORE_APP — bundle will rely on an external core"
+fi
+
 if [[ "${JRBAR_SKIP_SIGN:-0}" == "1" ]]; then
     echo "built $BUNDLE (unsigned: JRBAR_SKIP_SIGN=1)"
     exit 0
 fi
 echo "==> codesign"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\"" \
-    && codesign --force --sign "$IDENTITY" --timestamp=none "$BUNDLE" 2>/dev/null; then
-    echo "signed with identity: $IDENTITY"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+    SIGN_IDENTITY="$IDENTITY"
+    echo "signing with identity: $IDENTITY"
 else
-    codesign --force --sign - "$BUNDLE"
-    echo "signed ad-hoc (identity \"$IDENTITY\" unavailable or failed)"
+    SIGN_IDENTITY="-"
+    echo "signing ad-hoc (identity \"$IDENTITY\" unavailable or failed)"
 fi
+# Nested code first, the enclosing bundle last — the same inside-out
+# order the packaging script signs in.
+if [[ -d "$HELPERS" ]]; then
+    find "$HELPERS" -type f \( -name "*.dylib" -o -perm +111 \) -print0 \
+        | while IFS= read -r -d '' f; do
+            codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$f" 2>/dev/null || true
+        done
+    find "$HELPERS" -maxdepth 1 -name "*.app" -print0 \
+        | while IFS= read -r -d '' helper; do
+            codesign --force --deep --sign "$SIGN_IDENTITY" --timestamp=none "$helper" 2>/dev/null || true
+        done
+fi
+codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$BUNDLE"
 codesign --verify --deep --strict "$BUNDLE" && echo "codesign verify: ok"
 echo "built $BUNDLE"

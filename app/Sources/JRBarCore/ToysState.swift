@@ -75,11 +75,18 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// How milky the cover is: 0 is the bare dark portal room, 1 a
     /// fully frosted-polypropylene sheet over the room.
     public var frost: Double
+    /// Mac Duo's pause-at-angle: a lid parked mid-fold hands the
+    /// desktop back after this many seconds until the hinge moves
+    /// again. 0 keeps the fold however long the lid sits.
+    public var dwellTimeout: Double
+    /// Bendy's return click — a Tink when the fold fully unwinds.
+    public var restoreSound: Bool
 
     public init(enabled: Bool = false, activationAngle: Double = 65,
                 perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
-                jitterTolerance: Double = 0, provider: FoldProvider = .jrbar,
-                frost: Double = 0) {
+                jitterTolerance: Double = 1.5, provider: FoldProvider = .jrbar,
+                frost: Double = 0, dwellTimeout: Double = 0,
+                restoreSound: Bool = false) {
         self.enabled = enabled
         self.activationAngle = activationAngle
         self.perspective = perspective
@@ -88,6 +95,8 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         self.jitterTolerance = jitterTolerance
         self.provider = provider
         self.frost = frost
+        self.dwellTimeout = dwellTimeout
+        self.restoreSound = restoreSound
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -95,6 +104,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // a file parked on an old default set still migrates; nothing
         // reads it now and a stale value like "fog" decodes fine.
         case enabled, activationAngle, style, perspective, blur, shade, jitterTolerance, provider, frost
+        case dwellTimeout, restoreSound
     }
 
     public init(from decoder: any Decoder) throws {
@@ -105,21 +115,35 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         perspective = (try? c.decodeIfPresent(Double.self, forKey: .perspective)) ?? 0.6
         blur = (try? c.decodeIfPresent(Double.self, forKey: .blur)) ?? 0.5
         shade = (try? c.decodeIfPresent(Double.self, forKey: .shade)) ?? 0.7
-        jitterTolerance = (try? c.decodeIfPresent(Double.self, forKey: .jitterTolerance)) ?? 0
+        // The hinge sensor wobbles ±1° while the lid sits still; with no
+        // deadband that noise feeds the tracker forever and the vsync
+        // link never stands down — a parked fold was a 60 fps timer.
+        // 1.5 clears integer-sensor jitter while every real swing (a
+        // move of 2°+ from the anchor) still streams through.
+        // `storedJitter` keeps the raw file value for the legacy-default
+        // checks below: a file that never wrote the key (or wrote the
+        // old 0 default) still counts as untouched.
+        let storedJitter = try? c.decodeIfPresent(Double.self, forKey: .jitterTolerance)
+        jitterTolerance = storedJitter ?? 1.5
+        let jitterUntouched = storedJitter == nil || storedJitter == 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
         frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0
+        dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
+        restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
         // Each past default set is treated as untouched and moved to the
         // current one; any deliberate change means the file survives.
         // A file old enough to migrate never wrote `frost`, so the knob
         // reads its default there — a moved frost is a deliberate change.
         if activationAngle == 110, style == "tilt", perspective == 0.6,
-           blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0 {
+           blur == 0.5, shade == 0.4, jitterUntouched, frost == 0 {
             activationAngle = 65
             shade = 0.7
+            jitterTolerance = 1.5
         } else if activationAngle == 82, style == "dusk", perspective == 0.6,
-                  blur == 0.5, shade == 0.4, jitterTolerance == 0, frost == 0 {
+                  blur == 0.5, shade == 0.4, jitterUntouched, frost == 0 {
             activationAngle = 65
             shade = 0.7
+            jitterTolerance = 1.5
         }
         // The 0.65 milk shipped as a default for one build; a file that
         // still carries exactly that value never chose it.
@@ -138,6 +162,8 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(jitterTolerance, forKey: .jitterTolerance)
         try c.encode(provider, forKey: .provider)
         try c.encode(frost, forKey: .frost)
+        try c.encode(dwellTimeout, forKey: .dwellTimeout)
+        try c.encode(restoreSound, forKey: .restoreSound)
     }
 }
 
@@ -640,12 +666,44 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// a two-finger swipe down puts it away. Off leaves click and
     /// hover — the gestures default on, the native behaviour.
     public var pullGestures: Bool
+    /// A soft trackpad tap as the island grows into the card —
+    /// Alcove's felt edge. No-op on Macs without haptic hardware.
+    public var hapticTick: Bool
+    /// Volume and brightness key presses hang a level capsule under the
+    /// notch — the HUD Alcove is known for. The key still does its job;
+    /// we only draw it.
+    public var mediaHUD: Bool
+    /// System announcements in the pill: a Focus mode turning on or a
+    /// Bluetooth device connecting.
+    public var alerts: Bool
+    /// A quiet tick when a capsule shows — Alcove's felt edge for the
+    /// HUD.
+    public var soundEffects: Bool
+    /// The card's weather row — a keyless Open-Meteo read of the
+    /// place `weatherCity` names, or the IP's coarse fix when empty.
+    /// Off by default: it phones a third-party API, so the person
+    /// turns it on.
+    public var weather: Bool
+    /// A city name to geocode ("London"); empty uses the IP's place.
+    public var weatherCity: String
+    /// On a screen with no hardware notch, draw a synthetic housing —
+    /// the island reads as a notch rather than a floating pill, like
+    /// Alcove's notch-on-any-display option. Off is the honest pill.
+    public var simulateNotch: Bool
+    /// The card's mirror row — a live camera preview, boring.notch's
+    /// Mirror. Off by default: the camera's consent is asked only when
+    /// the person turns the row on, and the lens never opens before it.
+    public var mirror: Bool
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
                 expandOnHover: Bool = true, capsuleNotifications: Bool = true,
                 mediaEnabled: Bool = true, capsuleKinds: AlcoveCapsuleKinds = AlcoveCapsuleKinds(),
-                pullGestures: Bool = true) {
+                pullGestures: Bool = true, hapticTick: Bool = true,
+                mediaHUD: Bool = true, alerts: Bool = true,
+                soundEffects: Bool = true, weather: Bool = false,
+                weatherCity: String = "", simulateNotch: Bool = false,
+                mirror: Bool = false) {
         self.enabled = enabled
         self.provider = provider
         self.islandEnabled = islandEnabled
@@ -655,11 +713,21 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         self.mediaEnabled = mediaEnabled
         self.capsuleKinds = capsuleKinds
         self.pullGestures = pullGestures
+        self.hapticTick = hapticTick
+        self.mediaHUD = mediaHUD
+        self.alerts = alerts
+        self.soundEffects = soundEffects
+        self.weather = weather
+        self.weatherCity = weatherCity
+        self.simulateNotch = simulateNotch
+        self.mirror = mirror
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, islandEnabled, showUsage, expandOnHover
         case capsuleNotifications, mediaEnabled, capsuleKinds, pullGestures
+        case hapticTick, mediaHUD, alerts, soundEffects, weather, weatherCity
+        case simulateNotch, mirror
     }
 
     public init(from decoder: any Decoder) throws {
@@ -673,6 +741,14 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         mediaEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .mediaEnabled)) ?? true
         capsuleKinds = (try? c.decodeIfPresent(AlcoveCapsuleKinds.self, forKey: .capsuleKinds)) ?? AlcoveCapsuleKinds()
         pullGestures = (try? c.decodeIfPresent(Bool.self, forKey: .pullGestures)) ?? true
+        hapticTick = (try? c.decodeIfPresent(Bool.self, forKey: .hapticTick)) ?? true
+        mediaHUD = (try? c.decodeIfPresent(Bool.self, forKey: .mediaHUD)) ?? true
+        alerts = (try? c.decodeIfPresent(Bool.self, forKey: .alerts)) ?? true
+        soundEffects = (try? c.decodeIfPresent(Bool.self, forKey: .soundEffects)) ?? true
+        weather = (try? c.decodeIfPresent(Bool.self, forKey: .weather)) ?? false
+        weatherCity = (try? c.decodeIfPresent(String.self, forKey: .weatherCity)) ?? ""
+        simulateNotch = (try? c.decodeIfPresent(Bool.self, forKey: .simulateNotch)) ?? false
+        mirror = (try? c.decodeIfPresent(Bool.self, forKey: .mirror)) ?? false
     }
 }
 

@@ -90,6 +90,31 @@ struct EventPolicyTests {
         #expect(CoreEscalation.stageNumber("none") == 0)
     }
 
+    @Test("a frontmost asking pane quiets the ladder but keeps the record")
+    func askingFrontmost() {
+        let ask = CoreEvent(id: "20", kind: "ask_opened", session: "codex:1", label: "sidepulse-core",
+                            sound: "funk", notify: true, detail: "Run: rm -rf build")
+        let quiet = EventPolicy.delivery(for: ask, state: Self.state(sessions: [Self.codex]),
+                                         settings: Self.settings(["alert_burst": .number(3)]),
+                                         askingFrontmost: true)
+        #expect(quiet.sound == nil, "the user is already looking at the pane — no burst")
+        #expect(quiet.notification?.category == .ask, "the banner still lands for the record")
+        let stage3 = CoreEvent(id: "21", kind: "escalation_stage", session: "codex:1", notify: true, stage: 3)
+        let suppressed = EventPolicy.delivery(for: stage3, state: Self.state(),
+                                              settings: Self.settings(["escalation_tier": .string("chime")]),
+                                              askingFrontmost: true)
+        #expect(suppressed.statusPulse == false, "no amber pulse while the pane is in front")
+        #expect(suppressed.chime == .stop)
+        // Walking away re-arms the same stage — the default argument is
+        // the unsuppressed read every existing caller already had.
+        let loud = EventPolicy.delivery(for: stage3, state: Self.state(),
+                                        settings: Self.settings(["escalation_tier": .string("chime")]))
+        #expect(loud.statusPulse == true)
+        #expect(loud.chime == .start)
+        let stage2 = CoreEvent(id: "22", kind: "escalation_stage", session: "codex:1", notify: true, stage: 2)
+        #expect(EventPolicy.delivery(for: stage2, state: Self.state(), settings: nil, askingFrontmost: true).statusPulse == false)
+    }
+
     @Test("resolving the last ask withdraws its banner and stops the noise")
     func resolved() {
         let event = CoreEvent(id: "10", kind: "ask_resolved", session: "codex:1")

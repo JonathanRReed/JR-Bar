@@ -29,7 +29,7 @@ struct ProviderStyle: Hashable, Sendable {
         ProviderStyle(id: "gemini", name: "Gemini", accentHex: "#34C759", glyph: .symbol("sparkle")),
         ProviderStyle(id: "pi", name: "Pi", accentHex: "#007AFF", glyph: .text("π")),
         ProviderStyle(id: "grok", name: "Grok", accentHex: "#636366", glyph: .symbol("bolt.fill")),
-        ProviderStyle(id: "devin", name: "Devin", accentHex: "#5C84B0", glyph: .symbol("hammer.fill")),
+        ProviderStyle(id: "devin", name: "Devin", accentHex: "#5C84B0", glyph: .symbol("diamond.fill")),
         ProviderStyle(id: "opencode", name: "OpenCode", accentHex: "#AF52DE", glyph: .symbol("terminal.fill")),
         ProviderStyle(id: "openclaw", name: "OpenClaw", accentHex: "#B23400", glyph: .symbol("pawprint.fill")),
         ProviderStyle(id: "antigravity", name: "Antigravity", accentHex: "#ABE17E", glyph: .symbol("arrow.up.to.line")),

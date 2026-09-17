@@ -34,6 +34,9 @@ final class ShelfUtilityModel {
     /// The latest power-source read; `hasBattery == false` hides the
     /// battery row entirely.
     private(set) var power = AlcovePowerMonitor.read()
+    /// The weather row's fetcher — the card toggle and city ride its
+    /// `settings` closure, wired by the delegate.
+    let weather = NotchWeather()
     private(set) var running = false
 
     /// `feed` is the shared Now Playing source; tests pass their own so
@@ -48,6 +51,7 @@ final class ShelfUtilityModel {
         running = true
         feedToken = feed.subscribe { [weak self] media in self?.media = media }
         powerMonitor.start()
+        weather.start()
     }
 
     func stop() {
@@ -56,6 +60,7 @@ final class ShelfUtilityModel {
         if let feedToken { feed.unsubscribe(feedToken) }
         feedToken = nil
         powerMonitor.stop()
+        weather.stop()
         media = nil
     }
 
@@ -65,6 +70,40 @@ final class ShelfUtilityModel {
     func send(_ command: MediaRemoteBridge.Command) {
         guard media != nil else { return }
         feed.send(command)
+    }
+
+    /// A scrub — same live path as `send`. The caller passes the
+    /// committed seconds; the optimistic playhead update belongs to
+    /// the view holding the drag.
+    func seek(to seconds: Double) {
+        guard media != nil else { return }
+        feed.seek(to: seconds)
+    }
+
+    /// The media row's in-flight scrub: the drag's playhead and how
+    /// long it holds after release — the feed's own timestamp lands
+    /// ~0.4 s later, so a brief hold keeps the slider from snapping
+    /// back mid-flight.
+    var mediaScrub: Double?
+    var mediaScrubHoldUntil = Date.distantPast
+
+    /// What the slider draws: the drag position while held (and
+    /// briefly after), the feed's interpolated playhead otherwise.
+    func elapsedShown(at date: Date = Date()) -> Double {
+        if let mediaScrub, date < mediaScrubHoldUntil { return mediaScrub }
+        return media?.liveElapsed(at: date) ?? 0
+    }
+
+    /// The drag began — the playhead follows the pointer until release.
+    func beginScrub() {
+        mediaScrubHoldUntil = .distantFuture
+    }
+
+    /// The drag released: seek, then hold the position a beat so the
+    /// next timeline tick doesn't flash the stale feed value.
+    func commitScrub() {
+        if let mediaScrub { seek(to: mediaScrub) }
+        mediaScrubHoldUntil = Date().addingTimeInterval(0.9)
     }
 
     /// Artwork for the card, or nil when the payload is absent,

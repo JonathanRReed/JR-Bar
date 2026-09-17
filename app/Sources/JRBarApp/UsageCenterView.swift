@@ -310,6 +310,15 @@ struct ProviderUsageCard: View {
                             .background(badge.color.opacity(0.15), in: Capsule())
                             .foregroundStyle(badge.color)
                     }
+                    if let incident = provider.incident, !incident.isEmpty {
+                        Text("Incident")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.orange)
+                            .help("The provider's status feed reports: \(incident)")
+                    }
                 }
                 Text(UsageCenterStore.accountLine(provider, history: history))
                     .font(.caption)

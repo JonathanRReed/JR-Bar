@@ -57,3 +57,48 @@ struct MediaFeedTests {
         #expect(shelf.media == nil)
     }
 }
+
+extension MediaFeedTests {
+    /// Records sends and seeks without touching the real adapter —
+    /// the base impl would schedule a refresh that erases the fake
+    /// media mid-test.
+    private final class RecordingMonitor: AlcoveMediaMonitor {
+        var seeks: [Double] = []
+        var sent: [MediaRemoteBridge.Command] = []
+        override func start() { markRunning(true) }
+        override func stop() { markRunning(false) }
+        override func send(_ command: MediaRemoteBridge.Command) { sent.append(command) }
+        override func seek(to seconds: Double) { seeks.append(seconds) }
+    }
+
+    @Test("a scrub rides the live path only while media exists — silence is a lie")
+    func seekRouting() {
+        let monitor = RecordingMonitor()
+        let feed = MediaFeed(monitor: monitor)
+        feed.seek(to: 42)
+        #expect(monitor.seeks.isEmpty, "no media means no player to seek")
+        let token = feed.subscribe { _ in }
+        monitor.onChange?(AlcoveMedia(title: "Papillon", playing: true))
+        feed.seek(to: 42)
+        #expect(monitor.seeks == [42])
+        feed.unsubscribe(token)
+    }
+
+    @Test("the shelf model's scrub forwards to the feed and the hold keeps the playhead")
+    func shelfScrub() {
+        let monitor = RecordingMonitor()
+        let feed = MediaFeed(monitor: monitor)
+        let shelf = ShelfUtilityModel(feed: feed)
+        shelf.start()
+        monitor.onChange?(AlcoveMedia(title: "Papillon", playing: true,
+                                      duration: 200, elapsed: 30,
+                                      timestamp: Date().timeIntervalSinceReferenceDate))
+        shelf.mediaScrub = 88
+        shelf.beginScrub()
+        #expect(shelf.elapsedShown() == 88, "the drag position is the playhead while held")
+        shelf.commitScrub()
+        #expect(monitor.seeks == [88])
+        #expect(shelf.elapsedShown() == 88, "the hold covers the feed's ~0.4 s catch-up")
+        shelf.stop()
+    }
+}

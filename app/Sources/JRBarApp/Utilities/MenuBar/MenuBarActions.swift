@@ -118,11 +118,12 @@ final class MenuBarActions {
     /// The hotkey/palette route in.
     func openCommandBar() { commandBar.toggle() }
 
-    /// The utility's start/stop: hotkeys and the trigger feed only
-    /// live while the utility does.
+    /// The utility's start/stop: hotkeys live while the utility does.
+    /// The trigger feed is the utility's call — `syncActions` starts it
+    /// only while an enabled rule can fire, so an actions start with no
+    /// rules leaves the source parked.
     func start() {
         hotkeys.start()
-        triggerSource?.start()
     }
 
     func stop() {

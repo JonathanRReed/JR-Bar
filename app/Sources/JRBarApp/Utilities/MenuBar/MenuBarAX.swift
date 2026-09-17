@@ -162,6 +162,37 @@ enum MenuBarAX {
         }
     }
 
+    /// The front app's menu extras' right edge — where its menus stop
+    /// in Quartz points. `AXMenuBar`'s `AXMenuBarItem` children are
+    /// the menus (Apple, app name, File…); the extras live on
+    /// `AXExtrasMenuBar` instead, so the rightmost menu item is the
+    /// far edge of the zone where a status item draws under menu text.
+    /// nil when the front app answers no AXMenuBar or Accessibility is
+    /// refused.
+    nonisolated static func frontMenuRightEdge(pid: pid_t) -> CGFloat? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, Float(messagingTimeout))
+        var bar: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, "AXMenuBar" as CFString, &bar) == .success,
+              let bar, CFGetTypeID(bar) == AXUIElementGetTypeID() else { return nil }
+        let barElement = bar as! AXUIElement
+        AXUIElementSetMessagingTimeout(barElement, Float(messagingTimeout))
+        guard let children = value(barElement, kAXChildrenAttribute) as? [AXUIElement]
+        else { return nil }
+        var edge: CGFloat = 0
+        var found = false
+        for child in children {
+            AXUIElementSetMessagingTimeout(child, Float(messagingTimeout))
+            guard role(child) == "AXMenuBarItem" else { continue }
+            let frame = CGRect(origin: point(child, kAXPositionAttribute),
+                               size: size(child, kAXSizeAttribute))
+            guard frame.width > 0 else { continue }
+            edge = max(edge, frame.maxX)
+            found = true
+        }
+        return found ? edge : nil
+    }
+
     // MARK: Pressing
 
     /// Re-resolve a listed item's `AXUIElement`: same owner, matching

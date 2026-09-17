@@ -1,4 +1,7 @@
 import AppKit
+import CoreAudio
+import CoreWLAN
+import Intents
 import IOKit.ps
 import JRBarCore
 
@@ -23,6 +26,17 @@ enum MenuBarTriggerEvent: Equatable, Sendable {
     /// not an event — send the current state whenever it is read; the
     /// engine turns it into connect/disconnect edges.
     case onACPower(Bool)
+    /// The system's "the network changed" — CoreWLAN's ssid-did-change
+    /// note. Fires whether or not the name is readable, so the unnamed
+    /// `wifiJoined("")` rule works without Location Services.
+    case wifiChanged
+    /// The readable SSID right now (nil = none or unreadable). A
+    /// sample like `onACPower` — the engine edges it.
+    case wifiSSID(String?)
+    /// Default-input-running sample — the mic is live somewhere.
+    case micInUse(Bool)
+    /// Focus-mode sample — true while any Focus is on.
+    case focusOn(Bool)
 }
 
 /// The evaluation engine. A mutable struct on purpose: the edge
@@ -35,6 +49,12 @@ struct MenuBarTriggerEngine: Sendable {
     /// is a baseline: a rule never fires for a state the machine was
     /// already in when the source started.
     private(set) var lastOnAC: Bool?
+    /// The last readable SSID sample — same baseline rule as AC.
+    private(set) var lastSSID: String?
+    /// The first sample must not read as a join/leave edge.
+    private(set) var ssidSeen = false
+    private(set) var lastMic: Bool?
+    private(set) var lastFocus: Bool?
     /// rule id → the day stamp it last fired on (timeOfDay dedupe).
     private(set) var lastTimeFired: [String: String] = [:]
 
@@ -45,15 +65,32 @@ struct MenuBarTriggerEngine: Sendable {
                           rules: [MenuBarTriggerRule],
                           dayStamp: String = "") -> [MenuBarTriggerAction] {
         var fired: [MenuBarTriggerAction] = []
-        // The power edge is computed before rule matching so the
+        // The level edges are computed before rule matching so each
         // sample updates state even with no rules at all.
         var acEdge: Bool?
         if case .onACPower(let onAC) = event {
             acEdge = lastOnAC == onAC || lastOnAC == nil ? nil : onAC
             lastOnAC = onAC
         }
+        var ssidEdge: (from: String?, to: String?)?
+        if case .wifiSSID(let ssid) = event {
+            if ssidSeen, ssid != lastSSID { ssidEdge = (lastSSID, ssid) }
+            lastSSID = ssid
+            ssidSeen = true
+        }
+        var micEdge: Bool?
+        if case .micInUse(let live) = event {
+            micEdge = lastMic == live || lastMic == nil ? nil : live
+            lastMic = live
+        }
+        var focusEdge: Bool?
+        if case .focusOn(let on) = event {
+            focusEdge = lastFocus == on || lastFocus == nil ? nil : on
+            lastFocus = on
+        }
         for rule in rules where rule.enabled {
             guard matches(rule.trigger, event: event, acEdge: acEdge,
+                          ssidEdge: ssidEdge, micEdge: micEdge, focusEdge: focusEdge,
                           ruleID: rule.id, dayStamp: dayStamp) else { continue }
             fired.append(rule.action)
         }
@@ -63,6 +100,9 @@ struct MenuBarTriggerEngine: Sendable {
     private mutating func matches(_ trigger: MenuBarTrigger,
                                   event: MenuBarTriggerEvent,
                                   acEdge: Bool?,
+                                  ssidEdge: (from: String?, to: String?)?,
+                                  micEdge: Bool?,
+                                  focusEdge: Bool?,
                                   ruleID: String,
                                   dayStamp: String) -> Bool {
         switch (trigger, event) {
@@ -80,6 +120,22 @@ struct MenuBarTriggerEngine: Sendable {
             return acEdge == true
         case (.chargerDisconnected, .onACPower):
             return acEdge == false
+        case (.wifiJoined(let wanted), .wifiChanged):
+            // The unnamed flavour — a network changed, name or no name.
+            return wanted.isEmpty
+        case (.wifiJoined(let wanted), .wifiSSID):
+            guard let to = ssidEdge?.to, !wanted.isEmpty else { return false }
+            return to.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+        case (.wifiLeft, .wifiSSID):
+            return ssidEdge?.to == nil && ssidEdge?.from != nil
+        case (.microphoneInUse, .micInUse):
+            return micEdge == true
+        case (.microphoneIdle, .micInUse):
+            return micEdge == false
+        case (.focusEnabled, .focusOn):
+            return focusEdge == true
+        case (.focusDisabled, .focusOn):
+            return focusEdge == false
         default:
             return false
         }
@@ -116,6 +172,10 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     private var observers: [NSObjectProtocol] = []
     private var distributedObservers: [NSObjectProtocol] = []
     private var timer: Timer?
+    /// The CoreWLAN client + delegate pair, kept for the run of the
+    /// source — the delegate is weak on the client, so both live here.
+    private var wifiClient: CWWiFiClient?
+    private var wifiDelegate: WiFiEventDelegate?
     /// The last minute a tick was emitted for — a 15 s poll can see
     /// the same minute twice and must not double-tick.
     private var lastMinuteKey: Int = -1
@@ -146,6 +206,21 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
                   let bundleID = app.bundleIdentifier else { return }
             MainActor.assumeIsolated { self?.onEvent?(.appActivated(bundleID: bundleID)) }
         })
+        // CoreWLAN's change event fires whether or not Location
+        // Services lets us read the name — the unnamed Wi-Fi rule
+        // rides it. The event surfaces through a client delegate, not
+        // NotificationCenter.
+        let client = CWWiFiClient()
+        let delegate = WiFiEventDelegate { [weak self] in
+            MainActor.assumeIsolated {
+                self?.onEvent?(.wifiChanged)
+                self?.onEvent?(.wifiSSID(Self.currentSSID()))
+            }
+        }
+        client.delegate = delegate
+        wifiClient = client
+        wifiDelegate = delegate
+        try? client.startMonitoringEvent(with: .ssidDidChange)
         let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
@@ -159,6 +234,10 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         timer?.invalidate()
         timer = nil
         lastMinuteKey = -1
+        if let wifiClient { try? wifiClient.stopMonitoringEvent(with: .ssidDidChange) }
+        wifiClient?.delegate = nil
+        wifiClient = nil
+        wifiDelegate = nil
         for observer in observers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -188,6 +267,49 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         if power.hasBattery {
             onEvent?(.onACPower(power.onAC))
         }
+        onEvent?(.wifiSSID(Self.currentSSID()))
+        onEvent?(.micInUse(Self.microphoneInUse()))
+        // Focus is read only once granted — a bare poll must never be
+        // the thing that raises the consent prompt.
+        if INFocusStatusCenter.default.authorizationStatus == .authorized {
+            onEvent?(.focusOn(INFocusStatusCenter.default.focusStatus.isFocused ?? false))
+        }
+    }
+
+    /// The network name, when Location Services lets CoreWLAN say it —
+    /// nil covers "no network" and "not allowed to know" alike.
+    nonisolated static func currentSSID() -> String? {
+        CWWiFiClient.shared().interface()?.ssid()
+    }
+
+    /// Whether anything holds the default input running — a CoreAudio
+    /// read, no mic permission needed (running-state isn't capture).
+    nonisolated static func microphoneInUse() -> Bool {
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
+        ) == noErr, deviceID != kAudioObjectUnknown else { return false }
+        var running: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        address.mSelector = kAudioDevicePropertyDeviceIsRunningSomewhere
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &running) == noErr
+        else { return false }
+        return running != 0
+    }
+
+    /// The card's ask for the Focus grant — only ever called from the
+    /// "add rule" path, so the prompt lands on an explicit user action.
+    static func requestFocusAuthorization(then: @escaping @MainActor (Bool) -> Void) {
+        INFocusStatusCenter.default.requestAuthorization { status in
+            Task { @MainActor in
+                then(status == .authorized)
+            }
+        }
     }
 
     /// The day stamp the engine's timeOfDay dedupe expects.
@@ -196,4 +318,13 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         return String(format: "%04d-%02d-%02d",
                       comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
     }
+}
+
+/// CoreWLAN events arrive on a client delegate, not NotificationCenter
+/// — one tiny forwarder per source. `ssidDidChange` fires with or
+/// without the Location grant; only reading the name needs it.
+final class WiFiEventDelegate: NSObject, CWEventDelegate {
+    let onChange: () -> Void
+    init(onChange: @escaping () -> Void) { self.onChange = onChange }
+    func ssidDidChangeForWiFiInterface(withName interfaceName: String) { onChange() }
 }

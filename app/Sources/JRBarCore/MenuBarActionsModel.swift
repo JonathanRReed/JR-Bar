@@ -28,6 +28,24 @@ public enum MenuBarTrigger: Equatable, Codable, Sendable {
     case chargerConnected
     /// AC → battery.
     case chargerDisconnected
+    /// Joined a Wi-Fi network — empty `ssid` means any change, a name
+    /// means that network specifically. Named matching needs Location
+    /// Services (CoreWLAN reads no name without it); the unnamed
+    /// flavour rides the system's change notification either way.
+    case wifiJoined(ssid: String)
+    /// Left Wi-Fi — the readable name went away. Needs the same
+    /// Location read `wifiJoined` does; an unreadable SSID can never
+    /// prove a leave.
+    case wifiLeft
+    /// The default input started running — a mic went live anywhere.
+    case microphoneInUse
+    /// Every consumer let the default input go.
+    case microphoneIdle
+    /// A Focus mode switched on (INFocusStatusCenter — needs the Focus
+    /// Status grant; the card asks when the rule is added).
+    case focusEnabled
+    /// The last Focus mode switched off.
+    case focusDisabled
 }
 
 public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
@@ -70,6 +88,12 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .timeOfDay(let h, let m): t = String(format: "at %02d:%02d", h, m)
         case .chargerConnected: t = "when the charger connects"
         case .chargerDisconnected: t = "when the charger disconnects"
+        case .wifiJoined(let ssid): t = ssid.isEmpty ? "when Wi-Fi changes" : "when Wi-Fi joins “\(ssid)”"
+        case .wifiLeft: t = "when Wi-Fi drops"
+        case .microphoneInUse: t = "when the microphone goes live"
+        case .microphoneIdle: t = "when the microphone goes quiet"
+        case .focusEnabled: t = "when a Focus turns on"
+        case .focusDisabled: t = "when the Focus turns off"
         }
         let a: String
         switch action {

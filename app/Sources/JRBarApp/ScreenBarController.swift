@@ -68,16 +68,37 @@ final class ScreenBarController {
     var wings: ScreenBarWings = .empty {
         didSet {
             if wings != oldValue {
-                // A dismissed wing's slot changing is new information —
-                // the dismissal was of what it showed, and it revives.
-                dismissedWings = dismissedWings.filter { wings[$0.key] == $0.value }
+                // A dismissal belongs to the wing's *subject* — the
+                // session ear, the meter ear, the media ear — not the
+                // exact words it carried. A meter's tick or a countdown's
+                // minute is the same ear still dismissed; a different
+                // subject claiming the side is new information that
+                // revives it.
+                dismissedWings = dismissedWings.filter { side, slot in
+                    wings[side].map { Self.sameWingSubject($0, slot) } ?? false
+                }
+                dismissedWingRects = dismissedWingRects.filter { dismissedWings[$0.key] != nil }
                 pushWings()
             }
         }
     }
     /// Sides the user flicked away, keyed by the slot that was dismissed.
-    /// Session-scoped — a relaunch brings the wings back.
+    /// The dismissal lasts until a summon, a relaunch, or a *different
+    /// subject* taking the side — not until the slot's words churn.
     private var dismissedWings: [ScreenBarWingSide: ScreenBarWingSlot] = [:]
+    /// Where a dismissed side's lobe last stood, in *screen* coordinates —
+    /// kept inside the hit region so a swipe across the ghost is the
+    /// summon gesture even though nothing draws there. Screen space because
+    /// the view's own frame shifts the moment the wing comes out.
+    private var dismissedWingRects: [ScreenBarWingSide: CGRect] = [:]
+
+    /// Two slots are the same wing when they present the same subject:
+    /// the provider glyph, the symbol, or the live equalizer. The meter
+    /// ticking 41%→42% is the same ear; the equalizer replacing the
+    /// meter is a different one.
+    nonisolated static func sameWingSubject(_ a: ScreenBarWingSlot, _ b: ScreenBarWingSlot) -> Bool {
+        a.provider == b.provider && a.symbol == b.symbol && a.visualizer == b.visualizer
+    }
     /// The device notice holding a side, and when it lets go.
     private var wingNotice: (side: ScreenBarWingSide, slot: ScreenBarWingSlot, until: Date)?
     private var wingNoticeWork: DispatchWorkItem?
@@ -195,9 +216,14 @@ final class ScreenBarController {
     /// drawn capsules, so a click on one is a click on something of ours.
     var hoverScreenRects: [NSRect] {
         guard isShown, panel.isVisible else { return [] }
-        return [view.bandRect, view.leftWingRect, view.rightWingRect, view.trayRect, view.housingRect]
-            .compactMap { $0 }
+        let drawn: [CGRect?] = [view.bandRect, view.leftWingRect, view.rightWingRect,
+                                view.trayRect, view.housingRect]
+        // A dismissed wing's ghost stays in the region: the lobe is gone
+        // but a swipe across where it stood is the summon gesture. Ghost
+        // rects are already screen-space — stored post-conversion.
+        return drawn.compactMap { $0 }
             .map { panel.convertToScreen(view.convert($0, to: nil)) }
+            + dismissedWingRects.values
     }
 
     var onGeometryChange: (@MainActor () -> Void)?
@@ -249,6 +275,7 @@ final class ScreenBarController {
 
     func hide() {
         isShown = false
+        ScreenBarGeometry.menuHandleScreenRect = nil
         updateNoticeMonitors()
         syncIslandWatch()
         if reduceMotion {
@@ -292,13 +319,35 @@ final class ScreenBarController {
     /// too, so the morph's steps and the poll share one dedup.
     private func islandFrameChanged() {
         let island = ScreenBarGeometry.islandScreenRect
-        let avoid = ScreenBarGeometry.earAvoidScreenRect
-        guard island != lastIslandScan || avoid != lastEarAvoid else { return }
+        let avoidL = ScreenBarGeometry.earItemLimitLeft
+        let avoidR = ScreenBarGeometry.earItemLimitRight
+        guard island != lastIslandScan || avoidL != lastEarAvoidLeft
+                || avoidR != lastEarAvoidRight
+                || menuHandleProvider?() != view.menuHandleRevealed else { return }
         reposition()
     }
 
-    /// The « frame the right ear was last laid out against.
-    private var lastEarAvoid: NSRect?
+    /// The hidden-run handle's state while the menu-bar concealer runs —
+    /// nil hides it. Read live by the island watch so the utility's
+    /// reveal/hide flips relayout on the poll's cadence.
+    var menuHandleProvider: (@MainActor () -> Bool?)?
+
+    /// The handle's slice of the right ear as a screen-space hit test —
+    /// a click inside it toggles the hidden run, it is not the wing's.
+    func menuHandle(atScreenPoint point: NSPoint) -> Bool {
+        guard isShown, panel.isVisible, let rect = view.menuHandleRect else {
+            MenuBarCombinedItem.log.notice("menuHandle: dead — shown=\(self.isShown) visible=\(self.panel.isVisible) rect=\(self.view.menuHandleRect == nil ? "nil" : "set")")
+            return false
+        }
+        let hit = panel.convertToScreen(view.convert(rect, to: nil))
+            .insetBy(dx: -2, dy: -3).contains(point)
+        MenuBarCombinedItem.log.notice("menuHandle: point=\(point.x, privacy: .public),\(point.y, privacy: .public) rect=\(rect.debugDescription, privacy: .public) hit=\(hit)")
+        return hit
+    }
+
+    /// The flank item edges the ears were last laid out against.
+    private var lastEarAvoidLeft: CGFloat?
+    private var lastEarAvoidRight: CGFloat?
 
     /// The safety poll lives exactly as long as the band is shown: a
     /// hidden band has no silhouette to keep in step.
@@ -345,7 +394,9 @@ final class ScreenBarController {
         }
         return (shown.left == nil ? 0
                     : ScreenBarGeometry.contentWingExtent(of: screen, side: .left, notchWidth: notchWidth),
-                shown.right == nil ? 0
+                // The menu handle claims the right flank even with no
+                // session wing — a handle with no ear has no home.
+                shown.right == nil && menuHandleProvider?() == nil ? 0
                     : ScreenBarGeometry.contentWingExtent(of: screen, side: .right, notchWidth: notchWidth))
     }
 
@@ -353,8 +404,10 @@ final class ScreenBarController {
     /// device notice — the wings the view and the geometry share.
     private var effectiveWings: ScreenBarWings {
         var shown = wings
-        for (side, dismissed) in dismissedWings where shown[side] == dismissed {
-            shown[side] = nil
+        for (side, dismissed) in dismissedWings {
+            if let slot = shown[side], Self.sameWingSubject(slot, dismissed) {
+                shown[side] = nil
+            }
         }
         if let notice = wingNotice, notice.until > Date() {
             shown[notice.side] = notice.slot
@@ -389,10 +442,16 @@ final class ScreenBarController {
         return nil
     }
 
-    /// The outward flick: the slot stays down until its content changes
-    /// or a summon brings it back.
+    /// The outward flick: the side stays down until a summon, a
+    /// relaunch, or a different subject claiming it — not until its
+    /// own words churn. The lobe's rect survives as the ghost a
+    /// summon swipe lands on.
     func dismissWing(_ side: ScreenBarWingSide) {
         guard let slot = wings[side] else { return }
+        NotchCardModel.wingGesturesUsed = true
+        if let viewRect = side == .left ? view.leftWingRect : view.rightWingRect {
+            dismissedWingRects[side] = panel.convertToScreen(view.convert(viewRect, to: nil))
+        }
         dismissedWings[side] = slot
         pushWings()
     }
@@ -400,7 +459,9 @@ final class ScreenBarController {
     /// The summon: every dismissed wing comes back.
     func restoreWings() {
         guard !dismissedWings.isEmpty else { return }
+        NotchCardModel.wingGesturesUsed = true
         dismissedWings = [:]
+        dismissedWingRects = [:]
         pushWings()
     }
 
@@ -414,6 +475,13 @@ final class ScreenBarController {
     /// The pull ended short of a flick — the ear springs home.
     func releaseWingPull(_ side: ScreenBarWingSide) {
         view.setWingPull(side, to: 0, springBack: true)
+    }
+
+    /// The pointer's ear — the hover tell the view swells. No `isShown`
+    /// gate: a settle under a hidden panel must still land, or the next
+    /// show would draw a stale swell.
+    func hoverWing(_ side: ScreenBarWingSide?) {
+        view.setWingHover(side)
     }
 
     /// A device transition holds the ambient wing for `life`, then the
@@ -457,7 +525,7 @@ final class ScreenBarController {
 
     private func reposition() {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
-        let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect)
+        let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect, view.menuHandleRect)
         let depth = ScreenBarGeometry.notchDepth(of: screen)
         // Our notch island, while it is drawn: the band couples to it —
         // the strip runs edge to edge under the island and the black
@@ -466,7 +534,8 @@ final class ScreenBarController {
         // keeps the standalone band, as does any other provider's.
         let island = ScreenBarGeometry.islandScreenRect
         lastIslandScan = island
-        lastEarAvoid = ScreenBarGeometry.earAvoidScreenRect
+        lastEarAvoidLeft = ScreenBarGeometry.earItemLimitLeft
+        lastEarAvoidRight = ScreenBarGeometry.earItemLimitRight
         let coupledIsland = island.flatMap { rect -> NSRect? in
             guard depth > 0, rect.width > 1,
                   screen.frame.contains(NSPoint(x: rect.midX, y: rect.midY)) else { return nil }
@@ -475,9 +544,9 @@ final class ScreenBarController {
         let notchWidth = ScreenBarGeometry.resolvedNotchWidth(slotWidth: ScreenBarGeometry.slotWidth(of: screen),
                                                             gapWidth: gapWidth)
         let extents = wingExtents(on: screen, notchWidth: notchWidth, notchDepth: depth)
-        // A claimed wing gets the tray's chin below the bezel — the
-        // window grows by exactly that much so the band drops clear.
-        let chin = extents.left > 0 || extents.right > 0 ? ScreenBarGeometry.wingTrayChin : 0
+        // A claimed wing gets the ears' lobes below the bezel — the
+        // window grows by exactly that much so the lobes have room.
+        let chin = extents.left > 0 || extents.right > 0 ? ScreenBarGeometry.wingEarDrop : 0
         let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
                                                   gapWidth: gapWidth, wingLength: wingLength, capsule: capsule,
                                                   contentExtent: max(extents.left, extents.right),
@@ -488,9 +557,20 @@ final class ScreenBarController {
         view.wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
                                                   bandSpan: view.bandSpan,
                                                   leftExtent: extents.left, rightExtent: extents.right)
-        // The right ear stops short of macOS's « while the Menu Bar
-        // utility hides a run beside it (screen x → view x).
-        view.rightEarLimit = lastEarAvoid.map { $0.minX - frame.minX - 2 }
+        // Each ear stops short of the nearest status item on its flank —
+        // the « a hidden run keeps beside the notch, our own chevron,
+        // whatever macOS parks there. A drawn wing paving a real item
+        // hides it and swallows its clicks (screen x → view x). The gap
+        // is a real 8 pt: transient indicators macOS drops in the flank
+        // — the mic pill, a voice-recording mark — are never in the
+        // listing, and a 2 pt seam reads as overlap when one lands.
+        view.rightEarLimit = lastEarAvoidRight.flatMap { limit in
+            limit > frame.midX ? limit - frame.minX - 8 : nil
+        }
+        view.leftEarLimit = lastEarAvoidLeft.flatMap { limit in
+            limit < frame.midX ? limit - frame.minX + 8 : nil
+        }
+        view.menuHandleRevealed = menuHandleProvider?()
         syncWings()
         if panel.frame != frame {
             panel.setFrame(frame, display: false)
@@ -503,9 +583,14 @@ final class ScreenBarController {
                    width: island.width, height: island.height)
         }
         view.relayout()
+        // The hidden-run handle's screen frame goes to the reveal engine —
+        // hovering the glyph is a reveal gesture, same as Bartender's «.
+        ScreenBarGeometry.menuHandleScreenRect = view.menuHandleRect.map {
+            panel.convertToScreen(view.convert($0, to: nil))
+        }
         // Wing chips come and go without a frame change; the hit region
         // follows the drawn capsules, not the window.
-        if (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect) != oldRects {
+        if (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect, view.menuHandleRect) != oldRects {
             onGeometryChange?()
         }
     }

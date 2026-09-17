@@ -28,9 +28,17 @@ final class AlcoveMediaAdapter {
 
     /// The perl driver: load the dylib, install `jrbar_mr_stream` as an
     /// xsub, call it. The function owns the process from there — it runs
-    /// the run loop and exits when stdin closes.
+    /// the run loop and exits when stdin closes. The watcher thread is
+    /// the SIGKILL case: a dead parent never closes the pipe, so the
+    /// helper reaps itself once `getppid` reports it orphaned instead of
+    /// leaking a MediaRemote client.
     private static let perlDriver = """
         use DynaLoader;
+        use threads;
+        threads->create(sub {
+            while (getppid() > 1) { sleep 2 }
+            kill 'KILL', $$;
+        })->detach();
         my $handle = DynaLoader::dl_load_file($ARGV[0], 0)
             or die "dl_load_file: ", DynaLoader::dl_error(), "\\n";
         my $symbol = DynaLoader::dl_find_symbol($handle, "jrbar_mr_stream")
@@ -134,6 +142,14 @@ final class AlcoveMediaAdapter {
     func send(_ command: MediaRemoteBridge.Command) {
         guard running, let stdin else { return }
         try? stdin.write(contentsOf: Data("send \(command.rawValue)\n".utf8))
+    }
+
+    /// A scrub: "seek <seconds>" — the helper calls
+    /// `MRMediaRemoteSetElapsedTime` and refreshes, so the next line
+    /// already carries the landed playhead.
+    func seek(to seconds: Double) {
+        guard running, let stdin else { return }
+        try? stdin.write(contentsOf: Data(String(format: "seek %.3f\n", seconds).utf8))
     }
 
     func stop() {

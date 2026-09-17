@@ -223,7 +223,15 @@ final class PanelStore {
     var fallbackState: AgentAggregateState = .idle
     var fallbackDetail: String = "No agent monitor state"
     var feedDescription: String = "resolving"
-    var screenBarShown = true
+    var screenBarShown = true {
+        didSet { syncMediaReader() }
+    }
+    /// The media ear's source — the shared feed's last reduce. Read by
+    /// `screenBarWings`, so a track starting or pausing re-lays the
+    /// wings on its own. The reader lives only while the bar shows:
+    /// hiding the bar lets the feed's monitor stand down.
+    private(set) var media: AlcoveMedia?
+    @ObservationIgnored private var mediaReader: UUID?
 
     // UI state.
     var isOpen = false
@@ -285,6 +293,24 @@ final class PanelStore {
             Task { @MainActor [weak self] in
                 self?.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             }
+        }
+        syncMediaReader()
+    }
+
+    /// The media ear rides the shared feed — one monitor for every
+    /// reader (the island, the card, the dock's media rows), so this
+    /// adds a reader, never a second helper. Subscribed while the bar
+    /// shows, released when it hides.
+    private func syncMediaReader() {
+        if screenBarShown, mediaReader == nil {
+            mediaReader = MediaFeed.shared.subscribe { [weak self] media in
+                self?.media = media
+            }
+            media = MediaFeed.shared.media
+        } else if !screenBarShown, let mediaReader {
+            MediaFeed.shared.unsubscribe(mediaReader)
+            self.mediaReader = nil
+            media = nil
         }
     }
 
@@ -532,9 +558,27 @@ final class PanelStore {
                     : pick.ask != nil || pick.activity == .waiting ? .attention
                     : .neutral)
         }
+        // The media ear — a live equalizer while the track plays —
+        // fills whichever side is free: the activity slot owns the
+        // left while a session runs, so media takes the left only in
+        // the quiet and otherwise spills to an unmetered right.
+        let mediaViz = media?.playing == true
+            ? ScreenBarWingSlot(text: media?.displayLine ?? "Playing", visualizer: true)
+            : nil
+        if left == nil { left = mediaViz }
         let right = NotchIsland.meters(core.state?.usage).first
-            .map { ScreenBarWingSlot(text: $0.percentText, provider: $0.provider,
-                                     meter: $0.percent.map { min(1, max(0, $0 / 100)) }) }
+            .map { meter in
+                // The ear's words: the percent, then the reset countdown
+                // and a live vendor incident — the peek and VoiceOver get
+                // the detail the 16 pt ring cannot spell out.
+                var text = meter.percentText
+                if let countdown = Self.countdown(to: meter.resetsAt, now: Date()) { text += " · \(countdown)" }
+                if meter.incident { text += " · incident" }
+                return ScreenBarWingSlot(text: text, provider: meter.provider,
+                                         meter: meter.percent.map { min(1, max(0, $0 / 100)) },
+                                         reset: meter.resetFraction(now: Date()),
+                                         tone: meter.incident ? .attention : .neutral)
+            } ?? (left?.visualizer == true ? nil : mediaViz)
         return ScreenBarWings(left: left, right: right)
     }
 
