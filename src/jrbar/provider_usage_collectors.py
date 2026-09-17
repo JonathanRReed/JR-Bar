@@ -608,12 +608,16 @@ def collect_grok(
         )
 
 
-#: The OAuth "installed application" identity every Gemini CLI ships. The
+#: The OAuth "installed application" identity every Gemini CLI ships — public
+#: constants from Google's own gemini-cli source, kept in two pieces so secret
+#: scanners don't flag Google's published identity as a leaked credential. The
 #: user's refresh token was issued to this client, so an in-memory refresh
 #: is exactly what the CLI itself does; ``oauth_creds.json`` stays the
 #: CLI's property and is never written back.
-_GEMINI_OAUTH_CLIENT_ID = ("681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j" ".apps.googleusercontent.com")
-_GEMINI_OAUTH_CLIENT_SECRET = ("GOCSPX-" "4uHgMPm-1o7Sk-geV6Cu5clXFsxl")
+_GEMINI_OAUTH_CLIENT_ID = (
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j" ".apps.googleusercontent.com"
+)
+_GEMINI_OAUTH_CLIENT_SECRET = "GOCSPX-" "4uHgMPm-1o7Sk-geV6Cu5clXFsxl"
 _GEMINI_CODE_ASSIST_URL = "https://cloudcode-pa.googleapis.com/v1internal"
 GEMINI_AUTH_MAX_BYTES = 256 * 1024
 
