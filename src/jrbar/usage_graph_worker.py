@@ -483,6 +483,125 @@ def build_usage_graph_model(
     return _build_payload(snapshot, t3_policy=t3_policy)[0]
 
 
+_VALID_DOCUMENT_DAYS = (7, 30, 90, 365)
+_VALID_DOCUMENT_METRICS = ("tokens", "cost", "sessions", "percent")
+
+
+def usage_graph_document(
+    settings,
+    *,
+    days=None,
+    metric=None,
+    provider_ids=None,
+    t3_policy: T3ReadOnlyPolicy | None = None,
+) -> dict:
+    """The ``usage_graph`` command's reply: ``{"graph": model, "summary": "..."}``.
+
+    days/metric/provider_ids are per-request overrides -- a pane asking
+    for 30 days does not rewrite the stored settings. The chart model's
+    heatmap is a frozen dataclass the socket cannot carry, so it is
+    projected to plain JSON here, next to the builder that owns its
+    shape. Invalid overrides raise ValueError; the command layer maps
+    that to invalid_args rather than silently substituting a range the
+    caller did not ask for.
+    """
+    snapshot = _settings_snapshot(settings)
+    # Wrong-TYPED overrides are invalid too: a string "30" or a
+    # non-list providers must not silently substitute the stored
+    # settings -- that is the same lie an invalid value would be.
+    resolved_days = snapshot.usage_graph_days
+    if days is not None:
+        if isinstance(days, bool) or not isinstance(days, (int, float)):
+            raise ValueError("days is one of 7, 30, 90, 365")
+        if isinstance(days, float) and not days.is_integer():
+            raise ValueError("days is one of 7, 30, 90, 365")
+        resolved_days = int(days)
+    if resolved_days not in _VALID_DOCUMENT_DAYS:
+        raise ValueError("days is one of 7, 30, 90, 365")
+    if metric is not None and not isinstance(metric, str):
+        raise ValueError("metric is tokens, cost, sessions, or percent")
+    resolved_metric = (
+        metric if isinstance(metric, str) else snapshot.usage_display_mode
+    )
+    if resolved_metric not in _VALID_DOCUMENT_METRICS:
+        raise ValueError("metric is tokens, cost, sessions, or percent")
+    if provider_ids is not None and not isinstance(provider_ids, (list, tuple)):
+        raise ValueError("providers must be a nonempty tuple")
+    resolved_providers = (
+        provider_ids
+        if provider_ids is not None
+        else snapshot.usage_graph_providers
+    )
+    if any(not isinstance(provider_id, str) for provider_id in resolved_providers):
+        raise ValueError("providers must be a nonempty tuple")
+    resolved_providers = tuple(
+        provider_id for provider_id in resolved_providers if provider_id
+    )
+    if not resolved_providers:
+        raise ValueError("providers must be a nonempty tuple")
+    model, summary = _build_payload(
+        _UsageGraphSettingsSnapshot(
+            usage_graph_days=resolved_days,
+            usage_display_mode=resolved_metric,
+            usage_graph_providers=resolved_providers,
+        ),
+        t3_policy=t3_policy,
+    )
+    model = dict(model)
+    # Echo the resolved request: series omits providers that had no
+    # samples, so without this a picker could not tell "unchecked"
+    # from "checked but empty".
+    model["providers"] = list(resolved_providers)
+    # Tuples ride json.dumps fine, but the document should be JSON
+    # shape before it ever meets the encoder.
+    model["labels"] = list(model.get("labels") or ())
+    model["partial_provider_ids"] = list(model.get("partial_provider_ids") or ())
+    model["series"] = [
+        {**series, "values": list(series.get("values") or ())}
+        if isinstance(series, dict) else series
+        for series in model.get("series") or ()
+    ]
+    heatmap = model.get("heatmap")
+    if heatmap is not None:
+        model["heatmap"] = _heatmap_document(heatmap)
+    return {"graph": model, "summary": summary or ""}
+
+
+def _heatmap_document(heatmap) -> dict:
+    """``UsageHeatmap`` -> the JSON-safe dict the socket can carry."""
+
+    def cell_document(cell) -> dict:
+        return {
+            "day": cell.day.isoformat(),
+            "tokens": cell.tokens,
+            "sessions": cell.sessions,
+            "intensity": cell.intensity,
+            "color": cell.color,
+            "accessibility_label": cell.accessibility_label,
+        }
+
+    def provider_document(provider) -> dict:
+        return {
+            "provider_id": provider.provider_id,
+            "cells": [cell_document(cell) for cell in provider.cells],
+            "totals": {
+                "tokens": provider.totals.tokens,
+                "sessions": provider.totals.sessions,
+            },
+            "data_status": provider.data_status,
+        }
+
+    return {
+        "days": [day.isoformat() for day in heatmap.days],
+        "providers": {
+            provider_id: provider_document(provider)
+            for provider_id, provider in heatmap.providers.items()
+        },
+        "aggregate": provider_document(heatmap.aggregate),
+        "timezone": heatmap.timezone,
+    }
+
+
 def scanning_placeholder(settings) -> dict:
     settings = _settings_snapshot(settings)
     days = settings.usage_graph_days

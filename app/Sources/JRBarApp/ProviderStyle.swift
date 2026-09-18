@@ -40,6 +40,9 @@ struct ProviderStyle: Hashable, Sendable {
         // `state.usage.providers` (`provider_usage_cli.py`), so the Usage
         // Center needs a name for it that is not "Openai-api".
         ProviderStyle(id: "openai-api", name: "OpenAI API", accentHex: "#10A37F", glyph: .symbol("key.horizontal.fill")),
+        // A usage source the daemon appends to the usage graph when its
+        // T3 coverage exists — matches the daemon's own "T3 Code" label.
+        ProviderStyle(id: "t3code", name: "T3 Code", accentHex: "#00B8D9", glyph: .symbol("cube")),
     ].map { ($0.id, $0) })
 
     static func style(for provider: String) -> ProviderStyle {

@@ -274,6 +274,30 @@ public final class CoreModel {
         return try ReplyDecoding.decode(CoreRunComparison.self, from: result)
     }
 
+    /// `usage_graph`: the shared-axis chart — per-provider series over
+    /// the range on one scale, the day-grid heatmap, and the scan's own
+    /// summary/disclosures. `days`, `metric`, `providers` are
+    /// per-request overrides — the daemon does not rewrite settings.
+    /// The scan is heavy on a cold cache (~30s), so the timeout runs
+    /// long and the view shows its scanning state meanwhile.
+    public func usageGraph(days: Int? = nil, metric: String? = nil,
+                           providers: [String]? = nil) async throws -> CoreUsageGraphDocument {
+        var args: [String: JSONValue] = [:]
+        if let days { args["days"] = .number(Double(days)) }
+        if let metric { args["metric"] = .string(metric) }
+        if let providers { args["providers"] = .array(providers.map(JSONValue.string)) }
+        // Commands dispatch serially per socket: a pick made mid-scan
+        // queues behind the in-flight cold scan (~60s measured) before
+        // running its own — warm, ~2s — so the budget covers one cold
+        // wait plus its own scan, with margin for a concurrent client.
+        let reply = try await send("usage_graph", args: args, timeout: 150)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "usage_graph failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "usage_graph: missing result")
+        }
+        return try ReplyDecoding.decode(CoreUsageGraphDocument.self, from: result)
+    }
+
     /// `replay_events`: the retained event journal for the Replay
     /// surface — read-only history with its coverage bounds (`retained`,
     /// `dropped`, `stream`) so the view can say exactly what it shows.

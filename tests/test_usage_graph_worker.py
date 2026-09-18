@@ -995,3 +995,180 @@ def test_scan_antigravity_records_parses_summaries(tmp_path):
     assert records[0][1] == "conv1"
     # Step counts establish activity, not a measured token count.
     assert sum(records[0][4:8]) == 0
+
+
+# --- usage_graph_document: the socket reply ------------------------------
+#
+# The command's contract has two edges the chart view never saw before:
+# the heatmap rides the reply as a frozen dataclass the JSON encoder
+# cannot carry, and per-request overrides must validate rather than
+# silently substitute a range the caller did not ask for.
+
+
+def _document_heatmap():
+    from datetime import date
+    from types import MappingProxyType
+
+    from jrbar.usage_heatmap import (
+        HeatmapCell,
+        HeatmapTotals,
+        ProviderHeatmap,
+        UsageHeatmap,
+    )
+
+    days = (date(2026, 9, 16), date(2026, 9, 17))
+    cells = (
+        HeatmapCell(
+            day=days[0], tokens=100, sessions=2, intensity=1,
+            color="#DDD6FE", accessibility_label="2026-09-16: 100 tokens",
+        ),
+        HeatmapCell(
+            day=days[1], tokens=0, sessions=0, intensity=0,
+            color="#E5E7EB", accessibility_label="2026-09-17: quiet",
+        ),
+    )
+    provider = ProviderHeatmap(
+        provider_id="claude", cells=cells,
+        totals=HeatmapTotals(tokens=100, sessions=2),
+        data_status="available",
+    )
+    return UsageHeatmap(
+        days=days,
+        providers=MappingProxyType({"claude": provider}),
+        aggregate=provider,
+        timezone="America/Los_Angeles",
+    )
+
+
+def _document_payload(settings, t3_policy=None):
+    return (
+        {
+            "days": int(settings.usage_graph_days),
+            "period_label": "Last 7 days",
+            "metric": str(settings.usage_display_mode),
+            "labels": ("09/16", ""),
+            "series": (
+                {"provider_id": "claude", "values": (100, 0)},
+            ),
+            "scale_max": 100.0,
+            "heatmap": _document_heatmap(),
+            "partial_provider_ids": (),
+        },
+        "Last 7 days: Claude 100 · 2 sessions",
+    )
+
+
+def test_usage_graph_document_serializes_for_the_socket(monkeypatch):
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", _document_payload)
+
+    document = usage_graph_worker.usage_graph_document(make_target().settings)
+
+    # The socket contract: json.dumps is the whole reply path — a stray
+    # dataclass or date would degrade the document to {"repr": ...}.
+    encoded = json.loads(json.dumps(document))
+    graph = encoded["graph"]
+    assert graph["providers"] == ["claude", "codex"]
+    assert graph["series"] == [{"provider_id": "claude", "values": [100, 0]}]
+    heatmap = graph["heatmap"]
+    assert heatmap["days"] == ["2026-09-16", "2026-09-17"]
+    assert heatmap["providers"]["claude"]["cells"][0]["day"] == "2026-09-16"
+    assert heatmap["providers"]["claude"]["totals"] == {"tokens": 100, "sessions": 2}
+    assert heatmap["aggregate"]["data_status"] == "available"
+    assert encoded["summary"] == "Last 7 days: Claude 100 · 2 sessions"
+
+
+def test_usage_graph_document_applies_per_request_overrides(monkeypatch):
+    seen = {}
+
+    def payload(settings, t3_policy=None):
+        seen["days"] = settings.usage_graph_days
+        seen["metric"] = settings.usage_display_mode
+        seen["providers"] = settings.usage_graph_providers
+        return _document_payload(settings)
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", payload)
+    settings = make_target(days=7, mode="tokens", providers=("claude",)).settings
+
+    document = usage_graph_worker.usage_graph_document(
+        settings, days=30.0, metric="sessions", provider_ids=("codex", "t3code"),
+    )
+
+    assert seen == {"days": 30, "metric": "sessions",
+                    "providers": ("codex", "t3code")}
+    # The override is echoed, not the stored set.
+    assert document["graph"]["providers"] == ["codex", "t3code"]
+
+
+def test_usage_graph_document_defaults_to_stored_settings(monkeypatch):
+    seen = {}
+
+    def payload(settings, t3_policy=None):
+        seen["days"] = settings.usage_graph_days
+        seen["metric"] = settings.usage_display_mode
+        return _document_payload(settings)
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", payload)
+    usage_graph_worker.usage_graph_document(
+        make_target(days=90, mode="cost").settings,
+    )
+    assert seen == {"days": 90, "metric": "cost"}
+
+
+def test_usage_graph_document_rejects_invalid_overrides(monkeypatch):
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", _document_payload)
+    settings = make_target().settings
+
+    with pytest.raises(ValueError, match="7, 30, 90, 365"):
+        usage_graph_worker.usage_graph_document(settings, days=14)
+    with pytest.raises(ValueError, match="tokens, cost"):
+        usage_graph_worker.usage_graph_document(settings, metric="flops")
+    with pytest.raises(ValueError, match="nonempty"):
+        usage_graph_worker.usage_graph_document(settings, provider_ids=())
+    with pytest.raises(ValueError, match="nonempty"):
+        usage_graph_worker.usage_graph_document(
+            make_target(providers=()).settings,
+        )
+
+
+def test_usage_graph_document_rejects_wrong_typed_overrides(monkeypatch):
+    """A string ``days`` or a scalar ``providers`` is an invalid request,
+    not a reason to silently substitute the stored settings -- the same
+    contract ``invalid_args`` makes of wrong values."""
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", _document_payload)
+    settings = make_target().settings
+
+    with pytest.raises(ValueError, match="7, 30, 90, 365"):
+        usage_graph_worker.usage_graph_document(settings, days="30")
+    with pytest.raises(ValueError, match="7, 30, 90, 365"):
+        usage_graph_worker.usage_graph_document(settings, days=30.5)
+    with pytest.raises(ValueError, match="7, 30, 90, 365"):
+        usage_graph_worker.usage_graph_document(settings, days=True)
+    with pytest.raises(ValueError, match="tokens, cost"):
+        usage_graph_worker.usage_graph_document(settings, metric=42)
+    with pytest.raises(ValueError, match="nonempty"):
+        usage_graph_worker.usage_graph_document(settings, provider_ids="claude")
+    with pytest.raises(ValueError, match="nonempty"):
+        usage_graph_worker.usage_graph_document(
+            settings, provider_ids=("claude", 42))
+    # And the honest types still pass: an integral float day and a
+    # provider list ride through untouched.
+    document = usage_graph_worker.usage_graph_document(
+        settings, days=30.0, provider_ids=["claude", "codex"])
+    assert document["graph"]["providers"] == ["claude", "codex"]
+
+
+def test_usage_graph_document_keeps_partial_and_cost_disclosures(monkeypatch):
+    def payload(settings, t3_policy=None):
+        model, summary = _document_payload(settings)
+        model["partial_provider_ids"] = ("t3code",)
+        model["cost_semantics"] = "api_equivalent_estimate"
+        return model, summary + " · Partial local history: T3 Code"
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", payload)
+    document = usage_graph_worker.usage_graph_document(
+        make_target(mode="cost").settings,
+    )
+    graph = document["graph"]
+    assert graph["partial_provider_ids"] == ["t3code"]
+    assert graph["cost_semantics"] == "api_equivalent_estimate"
+    assert "Partial local history" in document["summary"]

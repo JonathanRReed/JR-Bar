@@ -1,0 +1,1211 @@
+{
+ "graph": {
+  "days": 30,
+  "period_label": "Last 30 days",
+  "metric": "percent",
+  "labels": [
+   "09/03",
+   "",
+   "",
+   "",
+   "",
+   "09/08",
+   "",
+   "",
+   "",
+   "",
+   "09/13",
+   "",
+   "",
+   "",
+   "",
+   "09/18",
+   "",
+   "",
+   "",
+   "",
+   "09/23",
+   "",
+   "",
+   "",
+   "",
+   "09/28",
+   "",
+   "",
+   "",
+   ""
+  ],
+  "series": [
+   {
+    "provider_id": "claude",
+    "source_instance_id": "default",
+    "identity": [
+     "claude",
+     "default"
+    ],
+    "label": "claude",
+    "values": [
+     62,
+     68,
+     74,
+     80,
+     90,
+     63,
+     69,
+     75,
+     85,
+     91,
+     64,
+     70,
+     80,
+     86,
+     92,
+     65,
+     75,
+     81,
+     87,
+     60,
+     70,
+     76,
+     82,
+     88,
+     65,
+     71,
+     77,
+     83,
+     93,
+     66
+    ]
+   },
+   {
+    "provider_id": "codex",
+    "source_instance_id": "default",
+    "identity": [
+     "codex",
+     "default"
+    ],
+    "label": "codex",
+    "values": [
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     88.0,
+     87.1,
+     86.2,
+     85.3,
+     84.4,
+     83.5,
+     82.6,
+     81.7,
+     80.8,
+     79.9,
+     79.0,
+     78.1,
+     77.2,
+     76.3,
+     75.4,
+     74.5,
+     73.6,
+     72.7,
+     71.8,
+     70.9,
+     70.0,
+     69.1,
+     68.2,
+     67.3
+    ]
+   },
+   {
+    "provider_id": "codex",
+    "source_instance_id": "work",
+    "identity": [
+     "codex",
+     "work"
+    ],
+    "label": "codex \u00b7 work",
+    "values": [
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     -1.0,
+     54.0,
+     56.5,
+     59.0,
+     61.5,
+     64.0,
+     54.0,
+     56.5,
+     59.0,
+     61.5,
+     64.0,
+     54.0,
+     56.5,
+     59.0,
+     61.5,
+     64.0,
+     54.0,
+     56.5,
+     59.0
+    ]
+   }
+  ],
+  "scale_max": 100.0,
+  "heatmap": {
+   "days": [
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-05",
+    "2026-09-06",
+    "2026-09-07",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-12",
+    "2026-09-13",
+    "2026-09-14",
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17",
+    "2026-09-18",
+    "2026-09-19",
+    "2026-09-20",
+    "2026-09-21",
+    "2026-09-22",
+    "2026-09-23",
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-26",
+    "2026-09-27",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+    "2026-10-01",
+    "2026-10-02"
+   ],
+   "providers": {
+    "claude": {
+     "provider_id": "claude",
+     "cells": [
+      {
+       "day": "2026-09-03",
+       "tokens": 12000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-03: 12,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-04",
+       "tokens": 13500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-04: 13,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-05",
+       "tokens": 15000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-05: 15,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-06",
+       "tokens": 16500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-06: 16,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-07",
+       "tokens": 18000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-07: 18,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-08",
+       "tokens": 12000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-08: 12,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-09",
+       "tokens": 13500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-09: 13,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-10",
+       "tokens": 15000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-10: 15,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-11",
+       "tokens": 16500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-11: 16,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-12",
+       "tokens": 18000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-12: 18,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-13",
+       "tokens": 12000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-13: 12,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-14",
+       "tokens": 13500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-14: 13,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-15",
+       "tokens": 15000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-15: 15,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-16",
+       "tokens": 16500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-16: 16,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-17",
+       "tokens": 18000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-17: 18,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-18",
+       "tokens": 12000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-18: 12,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-19",
+       "tokens": 13500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-19: 13,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-20",
+       "tokens": 15000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-20: 15,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-21",
+       "tokens": 16500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-21: 16,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-22",
+       "tokens": 18000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-22: 18,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-23",
+       "tokens": 12000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-23: 12,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-24",
+       "tokens": 13500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-24: 13,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-25",
+       "tokens": 15000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-25: 15,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-26",
+       "tokens": 16500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-26: 16,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-27",
+       "tokens": 18000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-27: 18,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-28",
+       "tokens": 12000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-28: 12,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-29",
+       "tokens": 13500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-29: 13,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-30",
+       "tokens": 15000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-09-30: 15,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-10-01",
+       "tokens": 16500,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-10-01: 16,500 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-10-02",
+       "tokens": 18000,
+       "sessions": 2,
+       "intensity": 4,
+       "color": "#39d353",
+       "accessibility_label": "2026-10-02: 18,000 tokens, 2 sessions, local activity"
+      }
+     ],
+     "totals": {
+      "tokens": 450000,
+      "sessions": 60
+     },
+     "data_status": "available"
+    },
+    "codex": {
+     "provider_id": "codex",
+     "cells": [
+      {
+       "day": "2026-09-03",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-03: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-04",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-04: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-05",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-05: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-06",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-06: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-07",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-07: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-08",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-08: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-09",
+       "tokens": 10400,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-09: 10,400 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-10",
+       "tokens": 11600,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-10: 11,600 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-11",
+       "tokens": 8000,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-11: 8,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-12",
+       "tokens": 9200,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-12: 9,200 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-13",
+       "tokens": 10400,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-13: 10,400 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-14",
+       "tokens": 11600,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-14: 11,600 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-15",
+       "tokens": 8000,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-15: 8,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-16",
+       "tokens": 9200,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-16: 9,200 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-17",
+       "tokens": 10400,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-17: 10,400 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-18",
+       "tokens": 11600,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-18: 11,600 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-19",
+       "tokens": 8000,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-19: 8,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-20",
+       "tokens": 9200,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-20: 9,200 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-21",
+       "tokens": 10400,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-21: 10,400 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-22",
+       "tokens": 11600,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-22: 11,600 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-23",
+       "tokens": 8000,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-23: 8,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-24",
+       "tokens": 9200,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-24: 9,200 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-25",
+       "tokens": 10400,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-25: 10,400 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-26",
+       "tokens": 11600,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-26: 11,600 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-27",
+       "tokens": 8000,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-27: 8,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-28",
+       "tokens": 9200,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-28: 9,200 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-29",
+       "tokens": 10400,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-29: 10,400 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-09-30",
+       "tokens": 11600,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-09-30: 11,600 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-10-01",
+       "tokens": 8000,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-10-01: 8,000 tokens, 2 sessions, local activity"
+      },
+      {
+       "day": "2026-10-02",
+       "tokens": 9200,
+       "sessions": 2,
+       "intensity": 3,
+       "color": "#26a641",
+       "accessibility_label": "2026-10-02: 9,200 tokens, 2 sessions, local activity"
+      }
+     ],
+     "totals": {
+      "tokens": 235200,
+      "sessions": 48
+     },
+     "data_status": "available"
+    },
+    "cursor": {
+     "provider_id": "cursor",
+     "cells": [
+      {
+       "day": "2026-09-03",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-03: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-04",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-04: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-05",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-05: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-06",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-06: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-07",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-07: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-08",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-08: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-09",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-09: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-10",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-10: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-11",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-11: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-12",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-12: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-13",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-13: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-14",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-14: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-15",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-15: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-16",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-16: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-17",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-17: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-18",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-18: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-19",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-19: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-20",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-20: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-21",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-21: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-22",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-22: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-23",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-23: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-24",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-24: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-25",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-25: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-26",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-26: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-27",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-27: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-28",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-28: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-29",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-29: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-09-30",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-09-30: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-10-01",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-10-01: 0 tokens, 0 sessions, local activity"
+      },
+      {
+       "day": "2026-10-02",
+       "tokens": 0,
+       "sessions": 0,
+       "intensity": 0,
+       "color": "#1b1f23",
+       "accessibility_label": "2026-10-02: 0 tokens, 0 sessions, local activity"
+      }
+     ],
+     "totals": {
+      "tokens": 0,
+      "sessions": 0
+     },
+     "data_status": "unavailable"
+    }
+   },
+   "aggregate": {
+    "provider_id": "all",
+    "cells": [
+     {
+      "day": "2026-09-03",
+      "tokens": 12000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-03: 12,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-04",
+      "tokens": 13500,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-04: 13,500 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-05",
+      "tokens": 15000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-05: 15,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-06",
+      "tokens": 16500,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-06: 16,500 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-07",
+      "tokens": 18000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-07: 18,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-08",
+      "tokens": 12000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-08: 12,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-09",
+      "tokens": 23900,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-09: 23,900 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-10",
+      "tokens": 26600,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-10: 26,600 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-11",
+      "tokens": 24500,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-11: 24,500 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-12",
+      "tokens": 27200,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-12: 27,200 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-13",
+      "tokens": 22400,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-13: 22,400 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-14",
+      "tokens": 25100,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-14: 25,100 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-15",
+      "tokens": 23000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-15: 23,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-16",
+      "tokens": 25700,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-16: 25,700 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-17",
+      "tokens": 28400,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-17: 28,400 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-18",
+      "tokens": 23600,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-18: 23,600 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-19",
+      "tokens": 21500,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-19: 21,500 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-20",
+      "tokens": 24200,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-20: 24,200 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-21",
+      "tokens": 26900,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-21: 26,900 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-22",
+      "tokens": 29600,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-22: 29,600 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-23",
+      "tokens": 20000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-23: 20,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-24",
+      "tokens": 22700,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-24: 22,700 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-25",
+      "tokens": 25400,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-25: 25,400 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-26",
+      "tokens": 28100,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-26: 28,100 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-27",
+      "tokens": 26000,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-27: 26,000 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-28",
+      "tokens": 21200,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-28: 21,200 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-29",
+      "tokens": 23900,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-29: 23,900 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-09-30",
+      "tokens": 26600,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-09-30: 26,600 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-10-01",
+      "tokens": 24500,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-10-01: 24,500 tokens, 2 sessions, local activity"
+     },
+     {
+      "day": "2026-10-02",
+      "tokens": 27200,
+      "sessions": 2,
+      "intensity": 4,
+      "color": "#39d353",
+      "accessibility_label": "2026-10-02: 27,200 tokens, 2 sessions, local activity"
+     }
+    ],
+    "totals": {
+     "tokens": 685200,
+     "sessions": 60
+    },
+    "data_status": "available"
+   },
+   "timezone": "America/Los_Angeles"
+  },
+  "partial_provider_ids": [
+   "t3code"
+  ],
+  "providers": [
+   "claude",
+   "codex",
+   "cursor"
+  ]
+ },
+ "summary": "Remaining quota for Claude, Codex \u00b7 Last 30 days \u00b7 Partial local history: T3 Code"
+}

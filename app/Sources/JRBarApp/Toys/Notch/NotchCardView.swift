@@ -120,6 +120,11 @@ struct NotchCardView: View {
     /// The card's width — fixed on glass, the slot's measure on the
     /// island.
     var width: CGFloat = NotchCardView.width
+    /// The custom-timer popover — `ViewState`, not `@State`: the
+    /// Command Line Tools ship no `SwiftUIMacros` plugin.
+    @ViewState private var timerEntryShown = false
+    @ViewState private var timerEntryName = ""
+    @ViewState private var timerEntryMinutes = 10
 
     /// Narrow enough to read as the notch's own drop-down, wide enough
     /// for a session label.
@@ -259,6 +264,8 @@ struct NotchCardView: View {
                                 model.timers.add(label: preset.name, duration: preset.seconds)
                             }
                         }
+                        Divider()
+                        Button("Custom…") { timerEntryShown = true }
                     } label: {
                         Image(systemName: "timer")
                             .font(.system(size: 9))
@@ -269,6 +276,37 @@ struct NotchCardView: View {
                     .menuIndicator(.hidden)
                     .frame(width: 20)
                     .help("Add a timer")
+                    .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Custom timer")
+                                .font(.system(size: 11, weight: .semibold))
+                            TextField("Label (optional)", text: $timerEntryName)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11))
+                            Stepper(value: $timerEntryMinutes, in: 1...720, step: 1) {
+                                Text("\(timerEntryMinutes) min")
+                                    .font(.system(size: 11))
+                                    .monospacedDigit()
+                            }
+                            HStack {
+                                Spacer()
+                                Button("Start") {
+                                    let name = timerEntryName
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    model.timers.add(
+                                        label: name.isEmpty
+                                            ? "\(timerEntryMinutes)-minute timer" : name,
+                                        duration: TimeInterval(timerEntryMinutes) * 60)
+                                    timerEntryShown = false
+                                    timerEntryName = ""
+                                }
+                                .keyboardShortcut(.defaultAction)
+                                .controlSize(.small)
+                            }
+                        }
+                        .padding(10)
+                        .frame(width: 200)
+                    }
                     if model.focus.clickSession != nil {
                         Button("Open") { model.onOpenSession?() }
                             .controlSize(.mini)
@@ -655,15 +693,31 @@ private struct ShelfTrayRow: View {
     let style: NotchCardStyle
 
     var body: some View {
-        if !tray.entries.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(tray.entries) { entry in
-                        trayChip(entry)
+        VStack(alignment: .leading, spacing: 2) {
+            if !tray.entries.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(tray.entries) { entry in
+                            trayChip(entry)
+                        }
                     }
                 }
+                .frame(maxWidth: 280)
             }
-            .frame(maxWidth: 280)
+            if let notice = tray.evictionNotice {
+                Text(notice)
+                    .font(.system(size: 8))
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 280, alignment: .leading)
+                    .task(id: notice) {
+                        // Fades on its own; the next add/remove clears
+                        // it outright.
+                        try? await Task.sleep(for: .seconds(8))
+                        tray.clearEvictionNotice()
+                    }
+            }
         }
     }
 

@@ -54,18 +54,36 @@ final class ShelfTrayModel {
         let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
             ?? known.count
         known.insert(contentsOf: fresh, at: at)
+        evictionNotice = nil
         if known.count > Self.maxItems {
+            // The strip is bounded: the oldest chips drop their
+            // REFERENCE (the file itself is never touched — the tray
+            // only tracks paths). That must be said out loud: a shelf
+            // that silently forgets reads as data loss.
+            let dropped = known.prefix(known.count - Self.maxItems)
             known = Array(known.suffix(Self.maxItems))
+            let names = dropped.map { URL(fileURLWithPath: $0.path).lastPathComponent }
+            evictionNotice = names.count == 1
+                ? "Shelf full — \u{201C}\(names[0])\u{201D} dropped off (file untouched)"
+                : "Shelf full — \(names.count) oldest items dropped off (files untouched)"
         }
         entries = known
         revalidate()
         persist()
     }
 
+    /// Set when a bounded add pushed the oldest chips off — the strip
+    /// shows the sentence so a quiet eviction never reads as data
+    /// loss. Cleared by the next add/remove, or the row's fade.
+    private(set) var evictionNotice: String?
+
+    func clearEvictionNotice() { evictionNotice = nil }
+
     func remove(_ entry: Entry) {
         entries.removeAll { $0.id == entry.id }
         icons.removeValue(forKey: entry.path)
         pendingThumbs.remove(entry.path)
+        evictionNotice = nil
         persist()
     }
 

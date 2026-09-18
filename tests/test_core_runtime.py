@@ -36,6 +36,7 @@ REQUIRED_COMMANDS = {
     # app-proposed extensions (app/README.md): Effect Studio and Usage Center
     "list_effects", "render_effect", "list_assignments", "set_assignment", "clear_assignment",
     "import_effect_pack", "export_effect_pack", "remove_effect_pack", "usage_history",
+    "usage_graph",
     # History/remote/Scene-pack extensions the app's stores already call.
     "mark_history_seen", "dismiss_session", "serve_token",
     "list_scene_packs", "import_scene_pack", "preview_scene_pack",
@@ -3060,3 +3061,48 @@ def test_list_commands_reports_the_journal(headless) -> None:
     assert reply["counts"] == {"completed": 0, "failed": 0, "pending": 0}
     assert reply["outcome_unknown"] == []
     assert reply["commands"] == []
+
+
+def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None:
+    """``usage_graph`` is the Overview Usage pane's scan: it must run off
+    the main thread, reach ``usage_graph_document`` with per-request
+    overrides, and map a rejected pick to ``invalid_args`` — never a
+    silently substituted range."""
+    from jrbar import usage_graph_worker
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    seen = {}
+
+    def document(settings, *, days=None, metric=None, provider_ids=None, t3_policy=None):
+        seen.update(days=days, metric=metric, provider_ids=provider_ids)
+        return {"graph": {"days": 30, "metric": "tokens", "series": []},
+                "summary": "Last 30 days: nothing"}
+
+    monkeypatch.setattr(usage_graph_worker, "usage_graph_document", document)
+    monkeypatch.setattr(usage_graph_worker, "_drop_to_utility_qos", lambda: None)
+
+    reply = controller._core_dispatch(
+        "usage_graph",
+        {"days": 30, "metric": "tokens", "providers": ["claude", "codex"]},
+    )
+
+    assert reply["graph"]["days"] == 30
+    assert reply["summary"].startswith("Last 30 days")
+    # The wire value rides through verbatim — the document owns the
+    # type check, so a wrong-typed pick is `invalid_args` too, never a
+    # silent substitution.
+    assert seen == {
+        "days": 30,
+        "metric": "tokens",
+        "provider_ids": ["claude", "codex"],
+    }
+
+    def rejected(settings, **kwargs):
+        raise ValueError("days is one of 7, 30, 90, 365")
+
+    monkeypatch.setattr(usage_graph_worker, "usage_graph_document", rejected)
+    with pytest.raises(CommandError) as invalid:
+        controller._core_dispatch("usage_graph", {"days": 14})
+    assert invalid.value.code == "invalid_args"

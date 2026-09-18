@@ -2075,3 +2075,153 @@ public struct ProviderRow: Codable, Hashable, Sendable {
         observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
     }
 }
+
+// MARK: - usage_graph
+
+/// The `usage_graph` reply: one shared-axis chart model — strided day
+/// labels, per-provider series on a single `scaleMax`, the day-grid
+/// heatmap, and the disclosures the scan names for itself — plus the
+/// summary line (`"Last 30 days: Claude 12.3M · 45 sessions"`).
+public struct CoreUsageGraphDocument: Codable, Hashable, Sendable {
+    public var graph: CoreUsageGraph
+    public var summary: String
+
+    public init(graph: CoreUsageGraph = CoreUsageGraph(), summary: String = "") {
+        self.graph = graph
+        self.summary = summary
+    }
+}
+
+/// The chart model: `labels`/`values` are index-aligned, one slot per
+/// calendar day oldest→newest. A series value `< 0` is a gap day —
+/// before the provider had any samples — and the line must break
+/// there rather than pretend a flat zero.
+public struct CoreUsageGraph: Codable, Hashable, Sendable {
+    public var days: Int
+    public var periodLabel: String
+    /// `tokens` | `cost` | `sessions` | `percent`.
+    public var metric: String
+    public var labels: [String]
+    public var series: [Series]
+    public var scaleMax: Double
+    public var heatmap: CoreUsageHeatmap?
+    /// The resolved request set — the providers the daemon charted.
+    /// Series omits a checked-but-empty provider; this echo is what
+    /// the picker's checkmarks key on.
+    public var providers: [String]
+    /// Providers whose local history is incomplete for this range —
+    /// the pane names them rather than imply full coverage.
+    public var partialProviderIds: [String]
+    /// `api_equivalent_estimate` when `metric == cost`: the chart is
+    /// pricing the transcripts, not billing the subscription.
+    public var costSemantics: String?
+
+    public struct Series: Codable, Hashable, Sendable {
+        public var providerId: String
+        /// Percent mode charts one series per (provider, instance): two
+        /// rows can share `providerId`, so anything keying on it alone
+        /// would merge them into one fabricated line. Non-percent
+        /// series omit it entirely.
+        public var sourceInstanceId: String?
+        /// The daemon's display name — `provider · instance` for a
+        /// non-default instance, the bare provider otherwise.
+        public var label: String?
+        public var values: [Double]
+
+        /// The chart's identity for this row: `provider` when no
+        /// instance was sent, `provider·instance` when it was — unique
+        /// across the multi-instance rows percent mode emits.
+        public var seriesKey: String {
+            guard let instance = sourceInstanceId else { return providerId }
+            return "\(providerId)·\(instance)"
+        }
+
+        public init(providerId: String, sourceInstanceId: String? = nil,
+                    label: String? = nil, values: [Double]) {
+            self.providerId = providerId
+            self.sourceInstanceId = sourceInstanceId
+            self.label = label
+            self.values = values
+        }
+    }
+
+    public init() {
+        days = 7; periodLabel = ""; metric = "tokens"
+        labels = []; series = []; scaleMax = 1
+        heatmap = nil; providers = []; partialProviderIds = []; costSemantics = nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case days, metric, labels, series, heatmap, providers
+        case periodLabel = "period_label"
+        case scaleMax = "scale_max"
+        case partialProviderIds = "partial_provider_ids"
+        case costSemantics = "cost_semantics"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        days = (try? c.decodeIfPresent(Int.self, forKey: .days)) ?? 7
+        periodLabel = (try? c.decodeIfPresent(String.self, forKey: .periodLabel)) ?? ""
+        metric = (try? c.decodeIfPresent(String.self, forKey: .metric)) ?? "tokens"
+        labels = (try? c.decodeIfPresent([String].self, forKey: .labels)) ?? []
+        scaleMax = (try? c.decodeIfPresent(Double.self, forKey: .scaleMax)) ?? 1
+        heatmap = try? c.decodeIfPresent(CoreUsageHeatmap.self, forKey: .heatmap)
+        providers = (try? c.decodeIfPresent([String].self, forKey: .providers)) ?? []
+        partialProviderIds = (try? c.decodeIfPresent([String].self, forKey: .partialProviderIds)) ?? []
+        costSemantics = try? c.decodeIfPresent(String.self, forKey: .costSemantics)
+        series = ((try? c.decodeIfPresent([Series].self, forKey: .series)) ?? [])
+            .filter { !$0.providerId.isEmpty }
+    }
+}
+
+extension CoreUsageGraph.Series {
+    enum CodingKeys: String, CodingKey {
+        case values, label
+        case providerId = "provider_id"
+        case sourceInstanceId = "source_instance_id"
+    }
+}
+
+/// The GitHub-style day grid beside the chart: one cell per calendar
+/// day per provider plus an `aggregate` row, `intensity` 0–4.
+public struct CoreUsageHeatmap: Codable, Hashable, Sendable {
+    /// ISO `YYYY-MM-DD`, oldest→newest, local calendar days.
+    public var days: [String]
+    public var providers: [String: Provider]
+    public var aggregate: Provider
+    public var timezone: String
+
+    public struct Provider: Codable, Hashable, Sendable {
+        public var providerId: String
+        public var cells: [Cell]
+        public var totals: Totals
+        /// `available` | `unavailable` — no records observed at all.
+        public var dataStatus: String
+
+        public struct Totals: Codable, Hashable, Sendable {
+            public var tokens: Int
+            public var sessions: Int
+        }
+
+        public struct Cell: Codable, Hashable, Sendable {
+            public var day: String
+            public var tokens: Int
+            public var sessions: Int
+            public var intensity: Int
+            public var color: String
+            public var accessibilityLabel: String
+
+            enum CodingKeys: String, CodingKey {
+                case day, tokens, sessions, intensity, color
+                case accessibilityLabel = "accessibility_label"
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case cells, totals
+            case providerId = "provider_id"
+            case dataStatus = "data_status"
+        }
+    }
+}

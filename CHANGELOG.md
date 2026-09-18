@@ -43,12 +43,13 @@ All notable changes to JR-Bar are documented here.
   flipping the chip. The lock button puts the display to sleep
   (`pmset displaysleepnow`), which locks on wake wherever a password
   is required — the old `CGSession` binary is gone on macOS 27.
-- Two timing-sensitive tests got honest bounds: the notch hover
-  deadline test and the shared-timer delivery test both poll real
-  clocks (`asyncAfter` arms, a 1 s runloop `Timer`) that can slide
-  past their old timeouts under a parallel suite. The windows are
+- Three timing-sensitive tests got honest bounds: the notch hover
+  deadline test, the shared-timer delivery test, and the capsule
+  queue's unwedge test all poll real clocks (`asyncAfter` arms, a 1 s
+  runloop `Timer`) that can slide — or sit behind a blocked main queue
+  — past their old timeouts under a parallel suite. The windows are
   wider now — what each proves (the deadline is kept; the timer fires
-  exactly once) is unchanged.
+  exactly once; the queued capsule draws) is unchanged.
 - The right wing is visible again: its ear had collapsed to zero width
   whenever JR-Bar's own status item stood on the row — the ‹ glyph was
   deliberately suppressed to avoid duplicating that item's mark, and
@@ -139,6 +140,27 @@ All notable changes to JR-Bar are documented here.
   app — Yoink's summon — and folds it again on a second press. It
   shares the panel hotkey's Carbon plumbing with its own signature and
   settings row, and says so in Settings if the chord is taken.
+- The Overview's graph is back, grown into a utility: a new Usage pane
+  plots every provider on one shared-axis chart — tokens, cost,
+  sessions, or percent over 7/30/90/365 days — with provider-colored
+  lines and fills, a hover readout, a legend, and a GitHub-style
+  activity heatmap underneath. Metric, range, and provider pickers
+  ride along; gaps before a provider's first sample break the line
+  honestly instead of bridging to zero, cost is labeled the
+  API-equivalent estimate it is, and partial-history providers
+  disclose themselves. The daemon serves it as a new `usage_graph`
+  socket command — the transcript scan runs off the main thread
+  behind a long reply timeout (cold scans take near a minute; the
+  incremental cache answers warm ones in seconds), replies are
+  JSON-safe end to end, and a stale response can never overwrite a
+  picker change that landed after it.
+- A bounded shelf no longer evicts silently: when a drop past the
+  twelve-slot bound pushes the oldest chip off the tray, the card
+  names what it let go for a few seconds — the file itself stays on
+  disk where the shelf left it; only the slot moved on.
+- The timer menu takes customs now: a "Custom…" item opens a small
+  entry with an optional label and a minute stepper bounded by the
+  same 12-hour ceiling the model enforces.
 
 ## 0.9.8 (unreleased)
 

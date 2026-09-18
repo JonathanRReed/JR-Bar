@@ -78,7 +78,14 @@ struct NotchCapsuleTests {
         // the test waits for the draw itself.
         toy.offer(notice(.completed, key: "completed:c", id: "c"))
         #expect(toy.capsuleQueue.pending?.id == "c")
-        #expect(await waitForCapsule(toy, id: "c"),
+        // The longest chain in the file — B's replay `life` plus the
+        // minimum gap plus C's promotion, every hop a main-queue
+        // `asyncAfter`. Under the parallel suite the main queue itself
+        // backlogs (a blocked main thread starves every queued block,
+        // not just timers), so the bound outlasts the suite's whole
+        // congestion window, not just slide. The claim is still "the
+        // queued capsule draws" — a real wedge still fails, slowly.
+        #expect(await waitForCapsule(toy, id: "c", timeout: .seconds(60)),
                 "the queued capsule draws after the replay")
     }
 

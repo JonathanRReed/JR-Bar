@@ -79,31 +79,40 @@ struct OverviewView: View {
     @ViewBuilder
     private var sidebar: some View {
         List(selection: Binding(
-            get: { SidebarSelection(filter: store.filter, saved: store.activeSavedFilter) },
+            get: { SidebarSelection(filter: store.filter, saved: store.activeSavedFilter, pane: store.pane) },
             set: { selection in
                 guard let selection else { return }
-                store.filter = selection.filter
-                store.activeSavedFilter = selection.saved
+                if selection.pane == .usage {
+                    store.showUsage()
+                } else {
+                    store.pane = .roster
+                    store.filter = selection.filter
+                    store.activeSavedFilter = selection.saved
+                }
             }
         )) {
             Section("Views") {
                 ForEach(OverviewPreset.allCases, id: \.self) { preset in
                     presetRow(preset)
-                        .tag(SidebarSelection(filter: OverviewFilter(preset: preset), saved: nil))
+                        .tag(SidebarSelection(filter: OverviewFilter(preset: preset), saved: nil, pane: .roster))
                 }
+            }
+            Section("Insights") {
+                Label("Usage", systemImage: "chart.xyaxis.line")
+                    .tag(SidebarSelection(filter: store.filter, saved: nil, pane: .usage))
             }
             if !store.projects.isEmpty {
                 Section("Projects") {
                     ForEach(store.projects, id: \.self) { project in
                         Label(project, systemImage: "folder")
-                            .tag(SidebarSelection(filter: OverviewFilter(preset: .thisProject, project: project), saved: nil))
+                            .tag(SidebarSelection(filter: OverviewFilter(preset: .thisProject, project: project), saved: nil, pane: .roster))
                     }
                 }
             }
             Section {
                 ForEach(store.savedFilters) { saved in
                     Label(saved.name, systemImage: "line.3.horizontal.decrease.circle")
-                        .tag(SidebarSelection(filter: saved.filter, saved: saved.name))
+                        .tag(SidebarSelection(filter: saved.filter, saved: saved.name, pane: .roster))
                         .contextMenu {
                             Button("Delete", role: .destructive) { store.deleteSavedFilter(saved.name) }
                         }
@@ -145,17 +154,28 @@ struct OverviewView: View {
                    ? Text("\(store.counts.attention)") : nil)
     }
 
-    /// A sidebar selection is a filter definition + the saved name it came
-    /// from — selecting a preset drops the saved highlight.
+    /// A sidebar selection is a pane + the roster cut it implies —
+    /// the Usage row carries the current filter untouched so leaving
+    /// the pane never loses the roster's cut.
     struct SidebarSelection: Hashable {
         var filter: OverviewFilter
         var saved: String?
+        var pane: OverviewStore.Pane
     }
 
     // MARK: Content
 
     @ViewBuilder
     private var content: some View {
+        if store.pane == .usage {
+            UsageGraphView(store: store)
+        } else {
+            rosterContent
+        }
+    }
+
+    @ViewBuilder
+    private var rosterContent: some View {
         VStack(spacing: 0) {
             summaryStrip
             connectionsStrip
@@ -468,7 +488,9 @@ struct OverviewView: View {
 
     @ViewBuilder
     private var inspector: some View {
-        if let entry = store.selected {
+        if store.pane == .usage {
+            UsageGraphFacts(store: store)
+        } else if let entry = store.selected {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(entry.session.label ?? entry.session.shortId ?? "Session")

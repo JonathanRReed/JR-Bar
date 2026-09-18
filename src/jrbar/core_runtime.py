@@ -1989,6 +1989,35 @@ def _cmd_usage_history(self, args):
     return _usage_history_service(self).document(provider, range_name, account=account, state=source_state)
 
 
+@command("usage_graph", main_thread=False)
+def _cmd_usage_graph(self, args):
+    """The shared-axis usage chart -- the Overview's Usage pane.
+
+    Same local-transcript scan the old Settings graph ran. days,
+    metric and providers are per-request overrides: nothing the pane
+    picks rewrites the stored settings. Heavy (~9s warm, ~30s cold),
+    so it rides the client's socket thread at utility QoS and never
+    touches the menu.
+    """
+    from .t3_compat import T3ReadOnlyPolicy
+    from .usage_graph_worker import _drop_to_utility_qos, usage_graph_document
+
+    _drop_to_utility_qos()
+    t3_policy = getattr(self, "_t3_read_only_policy", None)
+    if type(t3_policy) is not T3ReadOnlyPolicy:
+        t3_policy = None
+    try:
+        return usage_graph_document(
+            self.settings,
+            days=args.get("days"),
+            metric=args.get("metric"),
+            provider_ids=args.get("providers"),
+            t3_policy=t3_policy,
+        )
+    except ValueError as error:
+        raise CommandError("invalid_args", str(error)) from error
+
+
 @command("refresh_usage")
 def _cmd_refresh_usage(self, args):
     providers = tuple(p for p in (args.get("providers") or []) if isinstance(p, str))

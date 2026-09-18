@@ -405,6 +405,126 @@ final class OverviewStore {
         }
     }
 
+    // MARK: Usage pane
+
+    /// Which workspace the content column shows — the roster table or
+    /// the Usage graph. Sidebar rows pick it; `filter`/`saved` only
+    /// apply to the roster.
+    enum Pane: String, Hashable {
+        case roster, usage
+    }
+    var pane: Pane = .roster
+
+    /// The `usage_graph` document — the shared-axis multi-provider
+    /// chart the daemon computes from local transcripts. The pane asks
+    /// per-request: a pick here never rewrites the stored settings.
+    var graph: CoreUsageGraphDocument?
+    var graphLoading = false
+    var graphError: String?
+    /// Which request `graph` belongs to — a stale reply cannot
+    /// overwrite a newer pick's document (same discipline as
+    /// `timelineSessionID`).
+    var graphRequestKey: String?
+    var graphDays = 30
+    /// `tokens` | `cost` | `sessions` | `percent`.
+    var graphMetric = "tokens"
+    /// nil = the daemon's stored provider set; once the user toggles,
+    /// the explicit set is what gets asked for.
+    var graphProviders: [String]?
+    /// Chartable provider ids for the picker — the daemon's registry
+    /// plus any series-only source (t3code) a reply names.
+    var graphProviderOptions: [String] = []
+    var graphProvidersLoaded = false
+
+    /// The sidebar's Usage row.
+    func showUsage() {
+        pane = .usage
+        Task { await loadGraphProvidersIfNeeded() }
+        if graph == nil { Task { await loadGraph() } }
+    }
+
+    /// Fetch the chart for the current picks. Slow on a cold transcript
+    /// cache (~30s) — the view shows its scanning state meanwhile.
+    func loadGraph() async {
+        let providers = graphProviders
+        let key = "\(graphDays)|\(graphMetric)|\((providers ?? []).joined(separator: ","))"
+        graphRequestKey = key
+        graphLoading = true
+        defer { if graphRequestKey == key { graphLoading = false } }
+        do {
+            let document = try await core.usageGraph(days: graphDays, metric: graphMetric,
+                                                     providers: providers)
+            guard graphRequestKey == key else { return }
+            graph = document
+            graphError = nil
+            // A reply can name a source the registry did not (t3code
+            // appears only when its T3 coverage exists).
+            for id in document.graph.providers + document.graph.series.map(\.providerId)
+            where !graphProviderOptions.contains(id) {
+                graphProviderOptions.append(id)
+            }
+        } catch {
+            guard graphRequestKey == key else { return }
+            graphError = Self.describe(error)
+        }
+    }
+
+    /// The provider picker's option set — the daemon's registry, so an
+    /// unchecked-but-chartable provider is still offered.
+    func loadGraphProvidersIfNeeded() async {
+        guard !graphProvidersLoaded else { return }
+        do {
+            let rows = try await core.listProviders()
+            var seen = Set<String>()
+            graphProviderOptions = rows.map(\.id).filter { seen.insert($0).inserted }
+            graphProvidersLoaded = true
+        } catch {
+            // The picker falls back to the ids the graph itself names —
+            // and a transient failure retries on the next pane open,
+            // not once per session.
+            graphProviderOptions = []
+        }
+    }
+
+    /// The provider set the checkmarks show: the explicit pick, else
+    /// the resolved set the last reply charted, else every option.
+    var graphCheckedProviders: Set<String> {
+        if let graphProviders { return Set(graphProviders) }
+        if let graph, !graph.graph.providers.isEmpty { return Set(graph.graph.providers) }
+        return Set(graphProviderOptions)
+    }
+
+    func setGraphDays(_ days: Int) {
+        guard graphDays != days else { return }
+        graphDays = days
+        Task { await loadGraph() }
+    }
+
+    func setGraphMetric(_ metric: String) {
+        guard graphMetric != metric else { return }
+        graphMetric = metric
+        Task { await loadGraph() }
+    }
+
+    /// Toggling the first time pins the effective set explicitly — the
+    /// stored default stays untouched daemon-side.
+    func toggleGraphProvider(_ id: String) {
+        var checked = graphCheckedProviders
+        if checked.contains(id) {
+            // An empty set is not a request the daemon will honour —
+            // keep the last provider checked rather than chart nothing.
+            guard checked.count > 1 else { return }
+            checked.remove(id)
+        } else {
+            checked.insert(id)
+        }
+        // Registry order so the picker's chips and the request agree.
+        let ordered = graphProviderOptions.filter { checked.contains($0) }
+            + checked.subtracting(graphProviderOptions).sorted()
+        graphProviders = ordered
+        Task { await loadGraph() }
+    }
+
     // MARK: Search
 
     /// Titles, project labels, tool and event names, and the row's own

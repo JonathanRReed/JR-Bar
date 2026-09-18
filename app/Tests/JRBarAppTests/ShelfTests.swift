@@ -29,6 +29,38 @@ import JRBarCore
         #expect(Set(tray.entries.map(\.path)).count == tray.entries.count)
     }
 
+    @Test func evictionSpeaksItsName() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "jrbar.shelfTray.paths")
+        let tray = ShelfTrayModel()
+        defer { defaults.removeObject(forKey: "jrbar.shelfTray.paths") }
+
+        // The strip is bounded, but a dropped reference must be said
+        // out loud — a shelf that silently forgets reads as data loss.
+        #expect(tray.evictionNotice == nil)
+        tray.add((0..<20).map { URL(fileURLWithPath: "/tmp/evict-\($0).txt") })
+        #expect(tray.entries.count == ShelfTrayModel.maxItems)
+        #expect(tray.evictionNotice?.contains("8 oldest items") == true)
+        #expect(tray.evictionNotice?.contains("untouched") == true)
+
+        // A non-evicting add clears the stale sentence.
+        tray.remove(tray.entries.first!)
+        #expect(tray.evictionNotice == nil)
+        tray.add([URL(fileURLWithPath: "/tmp/evict-new.txt")])
+        #expect(tray.evictionNotice == nil)
+
+        // Fill again and a single dropped chip names itself.
+        tray.add((0..<ShelfTrayModel.maxItems).map {
+            URL(fileURLWithPath: "/tmp/refill-\($0).txt")
+        })
+        tray.add([URL(fileURLWithPath: "/tmp/one-more.txt")])
+        #expect(tray.evictionNotice?.contains("refill-0.txt") == true)
+        #expect(tray.evictionNotice?.contains("dropped off") == true)
+        #expect(tray.evictionNotice?.contains("untouched") == true)
+        tray.clearEvictionNotice()
+        #expect(tray.evictionNotice == nil)
+    }
+
     @Test func missingFilesMarkNotVanish() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "jrbar.shelfTray.paths")

@@ -841,6 +841,122 @@ def usage_history(provider: str, range_name: str, now: float, *, partial: bool =
     return document
 
 
+_HEATMAP_COLORS = ["#E5E7EB", "#DDD6FE", "#C4B5FD", "#A78BFA", "#7C3AED"]
+
+
+def mock_usage_graph(provider_ids: list, range_name: str, metric: str, now: float) -> dict:
+    """The daemon's `usage_graph` document shape, built from the same
+    deterministic day rows `usage_history` vends — strided labels,
+    per-provider series, shared scale_max, the day-grid heatmap, the
+    resolved-providers echo, and the scan's own summary sentence."""
+    days_wanted = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}[range_name]
+    stride = max(1, days_wanted // 6)
+    labels: list = []
+    day_dates: list = []
+    series = []
+    heatmap_providers = {}
+    aggregate_cells: list = []
+    for pid in provider_ids:
+        document = usage_history(pid, range_name, now)
+        days = document["days"]
+        if not day_dates:
+            day_dates = [d["date"] for d in days]
+            labels = [d["date"][5:].replace("-", "/") if i % stride == 0 else ""
+                      for i, d in enumerate(days)]
+        tokens = [d["tokens_in"] + d["tokens_out"] + d["cache_read"] for d in days]
+        day_max = max(tokens) if tokens else 0
+        sessions = [3 + (i % 4) if tokens[i] else 0 for i in range(len(days))]
+        if metric == "tokens":
+            values = tokens
+        elif metric == "cost":
+            values = [d["cost_usd"] for d in days]
+        elif metric == "sessions":
+            values = sessions
+        else:
+            values = None  # percent emits its own series below
+        if metric == "percent":
+            # Remaining-quota days, carried forward like the daemon's:
+            # -1.0 before the provider's first sample so the chart can
+            # break the line, and one series per (provider, instance) —
+            # codex gets a second instance so the mock exercises the
+            # multi-instance decode path the daemon produces for real.
+            instances = ["default", "work"] if pid == "codex" else ["default"]
+            for instance in instances:
+                reading = []
+                carried = None
+                seen = False
+                # Local percent history starts partway through the
+                # range (the daemon's own starts 2026-08-21), so the
+                # leading days stay -1.0 gap sentinels — longer for the
+                # second instance, like a newer sign-in.
+                first_day = 0 if pid == "claude" else (12 if instance == "work" else 6)
+                for i, t in enumerate(tokens):
+                    if i >= first_day and t:
+                        seen = True
+                        carried = round(max(8.0, 97.0 - (t * 55.0 / max(1, day_max))
+                                              - (9.0 if instance == "work" else 0.0)), 1)
+                    reading.append(carried if seen else -1.0)
+                if all(v < 0 for v in reading):
+                    continue
+                label = pid if instance == "default" else f"{pid} · {instance}"
+                series.append({"provider_id": pid, "source_instance_id": instance,
+                               "identity": [pid, instance], "label": label,
+                               "values": reading})
+        elif values is not None and any(v > 0 for v in values):
+            series.append({"provider_id": pid, "values": values})
+        cells = []
+        for i, d in enumerate(days):
+            t = tokens[i]
+            s = sessions[i]
+            intensity = 0 if t == 0 else 1 + int(t * 3 / max(1, day_max))
+            cells.append({"day": d["date"], "tokens": t, "sessions": s,
+                          "intensity": intensity, "color": _HEATMAP_COLORS[intensity],
+                          "accessibility_label": f"{d['date']}: {t:,} tokens, {s} sessions, local activity"})
+        heatmap_providers[pid] = {
+            "provider_id": pid, "cells": cells,
+            "totals": {"tokens": sum(tokens), "sessions": sum(sessions)},
+            "data_status": "available" if any(tokens) else "unavailable",
+        }
+        if not aggregate_cells:
+            aggregate_cells = [dict(c) for c in cells]
+        else:
+            for i, c in enumerate(cells):
+                aggregate_cells[i]["tokens"] += c["tokens"]
+                aggregate_cells[i]["sessions"] += c["sessions"]
+    aggregate_max = max((c["tokens"] for c in aggregate_cells), default=0)
+    for c in aggregate_cells:
+        c["intensity"] = 0 if c["tokens"] == 0 else 1 + int(c["tokens"] * 3 / max(1, aggregate_max))
+        c["color"] = _HEATMAP_COLORS[c["intensity"]]
+        c["accessibility_label"] = f"{c['day']}: {c['tokens']:,} tokens, {c['sessions']} sessions, all providers"
+    scale_max = max((v for s in series for v in s["values"]), default=0)
+    graph = {
+        "days": days_wanted,
+        "period_label": {"7d": "Last 7 days", "30d": "Last 30 days",
+                         "90d": "Last 90 days", "365d": "Last 365 days"}[range_name],
+        "metric": metric,
+        "labels": labels,
+        "series": series,
+        "scale_max": 100.0 if metric == "percent" else max(1.0, scale_max),
+        "heatmap": {
+            "days": day_dates,
+            "providers": heatmap_providers,
+            "aggregate": {"provider_id": "all", "cells": aggregate_cells,
+                          "totals": {"tokens": sum(c["tokens"] for c in aggregate_cells),
+                                     "sessions": sum(c["sessions"] for c in aggregate_cells)},
+                          "data_status": "available"},
+            "timezone": time.tzname[0] if time.tzname else "local",
+        },
+        "providers": list(provider_ids),
+        "partial_provider_ids": [],
+    }
+    if metric == "cost":
+        graph["cost_semantics"] = "api_equivalent_estimate"
+    parts = [f"{pid} {p['totals']['tokens']:,} tokens"
+             for pid, p in heatmap_providers.items() if p["totals"]["tokens"] > 0]
+    summary = f"{graph['period_label']}: " + (" · ".join(parts) or "No recorded tokens")
+    return {"graph": graph, "summary": summary}
+
+
 # The settings document, seeded from `AgentMonitorSettings().to_dict()` in
 # src/jrbar/_settings_legacy.py (captured 2026-09-09) plus the one key the
 # native Settings window needs that the Python dataclass has no field for
@@ -2610,6 +2726,39 @@ class World:
                 # marked partial (the daemon's `stale` answer).
                 result = usage_history(provider, range_name, time.time(), partial=inflight)
             result["state"] = self.usage[provider]["state"]
+        elif name == "usage_graph":
+            # The shared-axis chart the Overview's Usage pane shows —
+            # same document shape as the daemon's scan, built from the
+            # deterministic per-provider day rows. Wrong-typed overrides
+            # are invalid_args like the daemon's, never a silent
+            # substitution.
+            days_raw = args.get("days")
+            if days_raw is None:
+                days_wanted = 30
+            elif isinstance(days_raw, bool) or not isinstance(days_raw, (int, float)):
+                return self._error(cid, "invalid_args", "days is one of 7, 30, 90, 365")
+            else:
+                days_wanted = int(days_raw)
+            if days_wanted not in (7, 30, 90, 365):
+                return self._error(cid, "invalid_args", "days is one of 7, 30, 90, 365")
+            metric = args.get("metric")
+            if metric is not None and not isinstance(metric, str):
+                return self._error(cid, "invalid_args", "metric is tokens, cost, sessions, or percent")
+            metric = "tokens" if metric is None else metric
+            if metric not in ("tokens", "cost", "sessions", "percent"):
+                return self._error(cid, "invalid_args", "metric is tokens, cost, sessions, or percent")
+            range_name = {7: "7d", 30: "30d", 90: "90d", 365: "365d"}[days_wanted]
+            provider_ids = args.get("providers")
+            if provider_ids is None:
+                provider_ids = ["claude", "codex"]
+            elif not isinstance(provider_ids, (list, tuple)):
+                return self._error(cid, "invalid_args", "providers must be a nonempty tuple")
+            if any(not isinstance(p, str) for p in provider_ids):
+                return self._error(cid, "invalid_args", "providers must be a nonempty tuple")
+            provider_ids = [p for p in provider_ids if p]
+            if not provider_ids:
+                return self._error(cid, "invalid_args", "providers must be a nonempty tuple")
+            result = mock_usage_graph(provider_ids, range_name, metric, time.time())
         elif name == "list_effects":
             with self.lock:
                 result = self.effect_catalog()
