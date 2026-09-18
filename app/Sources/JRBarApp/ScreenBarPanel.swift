@@ -19,10 +19,12 @@ final class ScreenBarPanel: NSPanel {
         // Borderless panels draw no title; setting one names the window in
         // the accessibility tree instead of leaving it "window".
         title = "JR-Bar Screen Bar"
-        // Set last: `isFloatingPanel` and friends rewrite the level. One above
-        // NSStatusWindowLevel so the band rides over the Python Screen Bar
-        // while both are alive during the migration.
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        // Set last: `isFloatingPanel` and friends rewrite the level. Two above
+        // NSStatusWindowLevel: one for the Python Screen Bar while both are
+        // alive during the migration, and one so the wings stand over the
+        // concealer's covers (+1) when a hidden item's slot is the wing's —
+        // a covered item is already invisible, the wing is what should show.
+        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
     }
 
     override var canBecomeKey: Bool { false }

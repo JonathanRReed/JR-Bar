@@ -96,6 +96,24 @@ struct UtilitiesStateTests {
         #expect((try? decode(MenuBarSettings.self, #"{"spacerLength": 8000}"#)) != nil)
     }
 
+    @Test("the reveal style defaults to the Item Bar and decodes tolerantly")
+    func revealStyleDecode() throws {
+        // Bartender's model is the default — the row never un-conceals.
+        #expect(MenuBarSettings().revealStyle == .bar)
+        #expect(try decode(MenuBarSettings.self, "{}").revealStyle == .bar)
+        // Ice and Hidden Bar's model round-trips by name.
+        #expect(try decode(MenuBarSettings.self, #"{"revealStyle": "inline"}"#).revealStyle == .inline)
+        #expect(try decode(MenuBarSettings.self, #"{"revealStyle": "bar"}"#).revealStyle == .bar)
+        // A newer build's value — or a mistyped one — falls back rather
+        // than sinking the decode.
+        #expect(try decode(MenuBarSettings.self, #"{"revealStyle": "ribbon"}"#).revealStyle == .bar)
+        #expect(try decode(MenuBarSettings.self, #"{"revealStyle": 4}"#).revealStyle == .bar)
+        var state = MenuBarSettings()
+        state.revealStyle = .inline
+        #expect(try JSONDecoder().decode(MenuBarSettings.self,
+                                         from: JSONEncoder().encode(state)) == state)
+    }
+
     @Test("item spacing decodes with its managed flag; a bare value implies managed")
     func itemSpacingDecode() throws {
         // Nothing on file: untouched, and the writer stays out of it.

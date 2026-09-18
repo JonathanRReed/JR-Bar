@@ -28,6 +28,13 @@ struct GeneralPage: View {
                                 : "Press ⌃⌥J in any app to show or hide the panel.")
             }
             .settingRowStyle()
+            Toggle(isOn: $store.shelfHotkeyEnabled) {
+                SettingLabel(title: "Shelf hotkey",
+                             subtitle: store.shelfHotkeyRegistrationFailed
+                                ? "⌃⌥D is taken by another app."
+                                : "Press ⌃⌥D in any app to open or fold the notch's shelf.")
+            }
+            .settingRowStyle()
         }
 
         SettingGroup("Brightness") {

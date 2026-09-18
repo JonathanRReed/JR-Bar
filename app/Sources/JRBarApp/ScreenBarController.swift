@@ -98,6 +98,7 @@ final class ScreenBarController {
     /// meter is a different one.
     nonisolated static func sameWingSubject(_ a: ScreenBarWingSlot, _ b: ScreenBarWingSlot) -> Bool {
         a.provider == b.provider && a.symbol == b.symbol && a.visualizer == b.visualizer
+            && (a.artworkData != nil) == (b.artworkData != nil)
     }
     /// The device notice holding a side, and when it lets go.
     private var wingNotice: (side: ScreenBarWingSide, slot: ScreenBarWingSlot, until: Date)?

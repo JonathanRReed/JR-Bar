@@ -1,5 +1,6 @@
 import AppKit
 import os
+import Quartz
 import UniformTypeIdentifiers
 
 /// W12's file tray: a bounded strip of file references on the pinned
@@ -118,6 +119,15 @@ final class ShelfTrayModel {
         }
     }
 
+    /// The chip's Quick Look — the system preview panel over every
+    /// entry that still resolves, opened on this one.
+    func quickLook(_ entry: Entry) {
+        revalidate()
+        let live = entries.filter { !$0.missing }
+        guard let index = live.firstIndex(where: { $0.id == entry.id }) else { return }
+        ShelfQuickLook.shared.show(urls: live.map(\.url), at: index)
+    }
+
     private func load() {
         let paths = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
         entries = paths.suffix(Self.maxItems).map { Entry(path: $0, missing: false) }
@@ -134,7 +144,9 @@ final class ShelfTrayModel {
 /// never added — the strip doesn't invent an entry (T49).
 struct ShelfTrayDrop {
     /// URL extraction for `onDrop` providers — resolves promised file
-    /// receivers through their delivered URL, plain file URLs directly.
+    /// receivers through their delivered URL, plain file URLs directly,
+    /// and web links through a `.webloc` the shelf writes itself (a
+    /// link stays a real file, so reveal/share/AirDrop all answer it).
     static func urls(from providers: [NSItemProvider],
                      completion: @escaping @MainActor ([URL]) -> Void) {
         // `loadItem` completions can run on different queues — the
@@ -152,10 +164,106 @@ struct ShelfTrayDrop {
                         urls.withLock { $0.append(url) }
                     }
                 }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                group.enter()
+                provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
+                    defer { group.leave() }
+                    let url = (item as? URL)
+                        ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                    if let url, let loc = webLoc(for: url) {
+                        urls.withLock { $0.append(loc) }
+                    }
+                }
             }
         }
         group.notify(queue: .main) {
             MainActor.assumeIsolated { completion(urls.withLock { $0 }) }
+        }
+    }
+
+    /// Pasteboard-read URLs → tray-ready file URLs: files pass
+    /// through, web links become `.webloc`s (the island's drop path,
+    /// where the pasteboard is already open).
+    static func trayURLs(from urls: [URL]) -> [URL] {
+        urls.compactMap { $0.isFileURL ? $0 : webLoc(for: $0) }
+    }
+
+    /// A dropped web link as a `.webloc` file under the shelf's own
+    /// folder — Yoink's same move. The name is a hash of the link, so
+    /// re-dropping the same page lands on the same file and the tray's
+    /// path dedupe keeps it one entry. nil when the folder can't be
+    /// made or written — the drop then adds nothing (T49's rule).
+    static func webLoc(for url: URL) -> URL? {
+        guard url.scheme?.hasPrefix("http") == true,
+              let base = FileManager.default.urls(
+                for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let dir = base.appendingPathComponent("JR-Bar/Shelf", isDirectory: true)
+        // A stable, filesystem-safe name: the host plus a short hash
+        // of the whole link (two links on one host still differ).
+        var hasher = Hasher()
+        hasher.combine(url.absoluteString)
+        let hash = String(format: "%08x", UInt32(truncatingIfNeeded: hasher.finalize()))
+        let host = (url.host ?? "Link")
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let loc = dir.appendingPathComponent("\(host)-\(hash).webloc")
+        let plist = ["URL": url.absoluteString] as NSDictionary
+        do {
+            try FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true)
+            try plist.write(to: loc)
+            return loc
+        } catch {
+            return nil
+        }
+    }
+}
+
+/// The chip's Quick Look: the system's own preview panel over the
+/// tray's still-resolving entries — Dropover's space-bar preview,
+/// minus the custom window. A shared singleton because the panel is
+/// shared too: `QLPreviewPanel` reads its items through the data
+/// source it is handed, and re-showing retargets the same instance.
+@MainActor
+final class ShelfQuickLook: NSObject {
+    static let shared = ShelfQuickLook()
+
+    /// The data source the panel is given — QLPreviewPanel talks to a
+    /// plain object with no actor home, so it owns the item list and
+    /// this model only writes it.
+    private let source = Source()
+
+    /// Open the panel on `index` of `urls` — missing entries were
+    /// filtered by the caller, so every item previews.
+    func show(urls: [URL], at index: Int) {
+        guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
+        source.items = urls.map { $0 as NSURL }
+        panel.dataSource = source
+        panel.delegate = source
+        panel.currentPreviewItemIndex = min(max(0, index), urls.count - 1)
+        panel.reloadData()
+        if panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// The `QLPreviewPanelDataSource`/`Delegate` face — kept separate
+    /// so the model stays a plain class the tests can drive.
+    private final class Source: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+        var items: [QLPreviewItem] = []
+
+        func numberOfPreviewItems(in panel: QLPreviewPanel) -> Int {
+            items.count
+        }
+
+        func previewPanel(_ panel: QLPreviewPanel,
+                          previewItemAt index: Int) -> QLPreviewItem {
+            // An out-of-range ask can only be the panel's own probe —
+            // answer the first item rather than crash the share.
+            items[safe: index] ?? items.first ?? NSURL()
         }
     }
 }

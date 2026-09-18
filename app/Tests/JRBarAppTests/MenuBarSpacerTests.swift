@@ -502,6 +502,60 @@ struct MenuBarSpacerTests {
         #expect(expanded?.size.height == collapsed?.size.height)
     }
 
+    // MARK: The boundary reconcile — position is membership
+
+    /// Under the concealer the ‹ mark is absolute: whatever stands
+    /// left of it is the hidden run whether a hand put it there or
+    /// macOS did — the ⌘-learn only sees drags, so this pass is what
+    /// parks items the release left behind the mark.
+    @Test("items left of the boundary mark hidden, stale hidden marks right of it clear under ⌘")
+    func boundaryWrites() {
+        let shown: [(id: String, frame: CGRect)] = [
+            ("a.behind", CGRect(x: 880, y: 0, width: 24, height: 24)),
+            ("b.front", CGRect(x: 1100, y: 0, width: 24, height: 24)),
+            ("c.stray", CGRect(x: 1060, y: 0, width: 24, height: 24)),
+        ]
+        let writes = MenuBarUtility.boundaryWrites(
+            shown: shown, boundaryX: 1030, row: row,
+            apps: ["c.stray": .hidden], exempt: [], allowShownWrites: true)
+        #expect(writes == ["a.behind": .hidden, "c.stray": .shown])
+    }
+
+    @Test("a .hidden right-stander stays without the hand — a Hide pick mid-park is not a Show")
+    func boundaryWritesNeedsHand() {
+        let shown: [(id: String, frame: CGRect)] = [
+            ("c.parked", CGRect(x: 1060, y: 0, width: 24, height: 24)),
+        ]
+        let writes = MenuBarUtility.boundaryWrites(
+            shown: shown, boundaryX: 1030, row: row,
+            apps: ["c.parked": .hidden], exempt: [], allowShownWrites: false)
+        #expect(writes.isEmpty)
+    }
+
+    @Test("a Show-released item behind the mark keeps its exemption")
+    func boundaryWritesExempt() {
+        let shown: [(id: String, frame: CGRect)] = [
+            ("a.shown", CGRect(x: 880, y: 0, width: 24, height: 24)),
+            ("b.other", CGRect(x: 900, y: 0, width: 24, height: 24)),
+        ]
+        let writes = MenuBarUtility.boundaryWrites(
+            shown: shown, boundaryX: 1030, row: row,
+            apps: ["a.shown": .shown], exempt: ["a.shown"], allowShownWrites: true)
+        #expect(writes == ["b.other": .hidden])
+    }
+
+    @Test("always-hidden outranks position; off-row frames never write")
+    func boundaryWritesSkips() {
+        let shown: [(id: String, frame: CGRect)] = [
+            ("a.locked", CGRect(x: 880, y: 0, width: 24, height: 24)),
+            ("b.offrow", CGRect(x: 880, y: 60, width: 24, height: 24)),
+        ]
+        let writes = MenuBarUtility.boundaryWrites(
+            shown: shown, boundaryX: 1030, row: row,
+            apps: ["a.locked": .alwaysHidden], exempt: [], allowShownWrites: true)
+        #expect(writes.isEmpty)
+    }
+
     // MARK: The boundary host — JR-Bar's own status item
 
     /// A host that records what the utility asks of it.

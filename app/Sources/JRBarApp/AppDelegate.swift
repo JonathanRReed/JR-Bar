@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import JRBarCore
 import JRBarUI
 import Observation
@@ -35,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var socketWatcher: FileWatcher?
     private var updater: SparkleUpdater?
     private var hotkey: PanelHotkey?
+    /// The shelf's own summon key (⌃⌥D) — a second Carbon registration
+    /// through the same `PanelHotkey` plumbing, its own signature.
+    private var shelfHotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
     /// The one-shot onboarding card, alive only while it is on screen.
     private var firstRunCard: FirstRunCard?
@@ -190,6 +194,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             settingsStore?.panelHotkeyRegistrationFailed = hotkey?.registrationFailed ?? false
         }
         self.hotkey = hotkey
+        // Yoink's drop-target summon: ⌃⌥D toggles the island's shelf
+        // card — open pinned, a second press folds it. The band click's
+        // own expand/collapse pair drives both directions so the card
+        // obeys every existing guard (fold engaged, capsule mid-show).
+        let shelfHotkey = PanelHotkey(signature: OSType(0x6A726273),
+                                      keyCode: UInt32(kVK_ANSI_D),
+                                      hotKeyID: 1)
+        shelfHotkey.onPress = { [weak toysStore] in
+            guard let notch = toysStore?.notch else { return }
+            if notch.islandExpanded { notch.collapseFromBand() } else { notch.expandFromBand() }
+        }
+        shelfHotkey.setEnabled(settingsStore.shelfHotkeyEnabled)
+        settingsStore.shelfHotkeyRegistrationFailed = shelfHotkey.registrationFailed
+        settingsStore.onShelfHotkeyChange = { [weak shelfHotkey, weak settingsStore] on in
+            shelfHotkey?.setEnabled(on)
+            settingsStore?.shelfHotkeyRegistrationFailed = shelfHotkey?.registrationFailed ?? false
+        }
+        self.shelfHotkey = shelfHotkey
         statusItem.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onQuit = { NSApp.terminate(nil) }

@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import OSLog
 
 /// The utility's side of the ACTIONS track — one protocol the
 /// maintainer implements on `MenuBarUtility` (or a small adapter) and
@@ -76,6 +77,7 @@ protocol MenuBarActionsDelegate: AnyObject {
 /// have no arrange action, and that is deliberate.
 @MainActor
 final class MenuBarActions {
+    nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
     /// The arrange run — user-initiated only, see the warning above.
     let arrange = MenuBarArrangeCoordinator()
     /// The palette.
@@ -224,6 +226,39 @@ final class MenuBarActions {
             delegate.menuBarActionsShowAll(self)
         case .reveal(let seconds):
             delegate.menuBarActions(self, revealFor: seconds)
+        case .runScript(let command):
+            Self.runScript(command)
+        }
+    }
+
+    /// The script trigger's side effect: `/bin/sh -c` detached so a
+    /// hanging script never stalls the trigger pump — and output rides
+    /// the menubar log either way it exits.
+    private static func runScript(_ command: String) {
+        Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", command]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            do {
+                try process.run()
+                // Drain to EOF *before* waiting — a script that out-writes
+                // the pipe buffer blocks on write() and never exits if the
+                // reader isn't already reading.
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let out = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if process.terminationStatus != 0 {
+                    MenuBarActions.log.notice("trigger script exited \(process.terminationStatus): \(out, privacy: .public)")
+                } else if !out.isEmpty {
+                    MenuBarActions.log.debug("trigger script: \(out, privacy: .public)")
+                }
+            } catch {
+                MenuBarActions.log.notice("trigger script failed to launch: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }

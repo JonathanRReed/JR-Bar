@@ -211,17 +211,24 @@ final class BluetoothWatcher: NSObject {
     @objc nonisolated fileprivate func deviceConnected(_ note: IOBluetoothUserNotification,
                                                        device: IOBluetoothDevice) {
         let name = device.name ?? device.addressString ?? "Bluetooth device"
-        // BatteryPercent arrives by KVO — value(forKey:) raises
-        // NSUnknownKeyException on devices that never report one (docks,
-        // most speakers), so the responds(to:) guard gates the read.
-        // Best-effort: a number rides the announcement when the device
-        // offers it, nothing is promised when it does not.
+        // BatteryPercent arrived by KVO — but on 27 responds(to:) alone
+        // is no guard: the device forwards the selector while KVO still
+        // finds no key, and value(forKey:)'s NSUnknownKeyException cannot
+        // be caught in Swift — it took the app down on a connect event.
+        // A real method returning an object is the only safe read:
+        // class_getInstanceMethod finds none on a forwarding-only class,
+        // and perform() never raises for the ones it does find.
         let batterySelector = NSSelectorFromString("batteryPercent")
-        let battery = device.responds(to: batterySelector)
-            ? (device.value(forKey: "batteryPercent") as? NSNumber)
-                .map { $0.intValue }
-                .flatMap { (0...100).contains($0) ? $0 : nil }
-            : nil
+        var battery: Int? = nil
+        if let method = class_getInstanceMethod(type(of: device), batterySelector) {
+            let returnType = method_copyReturnType(method)
+            defer { free(returnType) }
+            if String(cString: returnType).hasPrefix("@") {
+                battery = (device.perform(batterySelector)?.takeUnretainedValue() as? NSNumber)
+                    .map { $0.intValue }
+                    .flatMap { (0...100).contains($0) ? $0 : nil }
+            }
+        }
         let at = Date()
         armedLock.lock(); let armed = armedAt; armedLock.unlock()
         guard at >= armed else { return }

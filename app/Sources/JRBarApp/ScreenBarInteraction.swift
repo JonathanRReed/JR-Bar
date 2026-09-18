@@ -411,19 +411,19 @@ final class ScreenBarInteraction {
     /// band under everything else in the hit region.
     enum SwipeRegion: Equatable { case wing(ScreenBarWingSide), band }
 
-    /// What a horizontal gesture becomes — pure: flicking a wing away
-    /// from the notch dismisses it (left for the left ear, right for the
-    /// right), and a horizontal swipe on the band summons dismissed
-    /// wings back. `deltaX` is in screen coordinates — rightward
-    /// positive. Inward flicks and sub-threshold travel are nothing.
+    /// What a horizontal gesture becomes — pure: flicking a wing in
+    /// either direction dismisses it — the Dynamic Island's rule, where
+    /// the pill answers any sideways swipe, not just the outward one —
+    /// and a horizontal swipe on the band summons dismissed wings back.
+    /// `deltaX` is in screen coordinates — rightward positive.
+    /// Sub-threshold travel is nothing.
     enum WingSwipeOutcome: Equatable { case dismiss(ScreenBarWingSide), restore, none }
 
     nonisolated static func wingSwipeOutcome(region: SwipeRegion, deltaX: CGFloat,
                                              threshold: CGFloat = swipeThreshold) -> WingSwipeOutcome {
         guard abs(deltaX) >= threshold else { return .none }
         switch region {
-        case .wing(.left): return deltaX < 0 ? .dismiss(.left) : .none
-        case .wing(.right): return deltaX > 0 ? .dismiss(.right) : .none
+        case .wing(let side): return .dismiss(side)
         case .band: return .restore
         }
     }

@@ -127,3 +127,11 @@ AX press), concealed items leave or go stale in Accessibility, the
 agent reorders the bar on its own — and wrote our own implementation
 (`MenuBarConcealer.swift`): no code was copied from any of them. Our
 probe on this Mac confirmed the concealment and the allowlist rule.
+
+## TinyCast
+
+Flagged by the owner as the golden-example reference for overlapping
+features (<https://github.com/abue-ammar/tinycast>). No snapshot studied
+yet, no ideas adopted, no code copied. Recorded here so the attribution
+trail stays complete; a future entry should cite the commit, license, and
+what was taken or deliberately left.

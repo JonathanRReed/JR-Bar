@@ -537,6 +537,39 @@ final class NotchToy: Toy {
         collapseIsland()
     }
 
+    /// A file or link dragged onto the island — NotchNook's shelf
+    /// summon: the card grows held so the tray strip is there to take
+    /// the drop. `shelfSummoned` remembers it was the drag that grew
+    /// it, so an abandoned drag can fold the card it opened without
+    /// unpinning one the user pinned themselves.
+    private(set) var shelfSummoned = false
+
+    func shelfSummon() {
+        guard !islandExpanded else { return }
+        shelfSummoned = true
+        expandFromBand()
+    }
+
+    /// The drag left without a drop — fold the card only if the
+    /// summon opened it; a card the user pinned stays pinned.
+    func shelfDragAbandoned() {
+        guard shelfSummoned else { return }
+        shelfSummoned = false
+        collapseIsland()
+    }
+
+    /// The drop landed — the card stays up (the tray just took a
+    /// delivery); the flag alone clears.
+    func shelfDragLanded() {
+        shelfSummoned = false
+    }
+
+    /// The drop after the summon — file URLs straight in, web links
+    /// materialised as `.webloc`s first so the entry stays a file.
+    func shelfDrop(_ urls: [URL]) {
+        cardModel.tray.add(ShelfTrayDrop.trayURLs(from: urls))
+    }
+
     /// Grow the island into the card — `held` is the band click's
     /// deliberate pin, surviving pointer-leave; a hover's expand
     /// answers to the leave debounce alone.
@@ -1113,17 +1146,7 @@ final class NotchToy: Toy {
             if islandMedia != nil { mediaPreviousTrack() }
         case .down:
             if islandExpanded {
-                // The swipe folds the grown card — and it is a
-                // dismissal, so a capsule shelved beneath it goes with
-                // it: collapsing alone would only replay the shelf as
-                // a fresh notice where the card just was.
-                if capsuleQueue.current != nil || shelvedCapsule != nil {
-                    capsuleWork?.cancel()
-                    capsuleWork = nil
-                    capsuleQueue.cancel(at: Date())
-                    shelvedCapsule = nil
-                }
-                collapseIsland()
+                foldExpandedCard()
             } else if activeCapsule != nil || capsuleQueue.current != nil {
                 dismissCapsule()
             } else {
@@ -1132,7 +1155,32 @@ final class NotchToy: Toy {
                 // click, not like a hover.
                 expand(held: true)
             }
+        case .up:
+            if islandExpanded {
+                // Fingers up tuck the card back into the notch —
+                // Alcove's dismiss flick, the same fold a down-swipe
+                // earns.
+                foldExpandedCard()
+            } else if activeCapsule != nil || capsuleQueue.current != nil {
+                dismissCapsule()
+            }
+            // On a resting island an up-flick means nothing — the
+            // notch cannot be pushed into the screen.
         }
+    }
+
+    /// The swipe's fold of the grown card — and it is a dismissal, so
+    /// a capsule shelved beneath it goes with it: collapsing alone
+    /// would only replay the shelf as a fresh notice where the card
+    /// just was.
+    private func foldExpandedCard() {
+        if capsuleQueue.current != nil || shelvedCapsule != nil {
+            capsuleWork?.cancel()
+            capsuleWork = nil
+            capsuleQueue.cancel(at: Date())
+            shelvedCapsule = nil
+        }
+        collapseIsland()
     }
 
     /// One observation pass over every input, re-armed on each change —

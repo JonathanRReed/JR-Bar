@@ -6,22 +6,27 @@ import JRBarCore
 /// reproduce the shipping look: `.menu` material, no tint, square ends,
 /// no separator.
 struct MenuBarCoverAppearance: Equatable, Sendable {
-    var material: MenuBarSettings.CoverMaterial = .menu
+    var material: MenuBarSettings.CoverMaterial = .blend
     /// A "#RRGGBB" hex tint; empty = no tint layer.
     var tintHex: String = ""
     var tintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity
     var roundness: Double = 0
     var separator: Bool = false
+    /// The sampled bar color a `.blend` cover fills with — "#RRGGBB",
+    /// empty until the hider probes the real bar next to the run.
+    var blendHex: String = ""
 
-    init(material: MenuBarSettings.CoverMaterial = .menu,
+    init(material: MenuBarSettings.CoverMaterial = .blend,
          tintHex: String = "",
          tintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
-         roundness: Double = 0, separator: Bool = false) {
+         roundness: Double = 0, separator: Bool = false,
+         blendHex: String = "") {
         self.material = material
         self.tintHex = tintHex
         self.tintOpacity = MenuBarSettings.clampedOpacity(tintOpacity)
         self.roundness = MenuBarSettings.clampedRoundness(roundness)
         self.separator = separator
+        self.blendHex = blendHex
     }
 
     init(settings: MenuBarSettings) {
@@ -59,6 +64,7 @@ struct MenuBarCoverAppearance: Equatable, Sendable {
     /// draws.
     var effectMaterial: NSVisualEffectView.Material {
         switch material {
+        case .blend: return .menu
         case .menu: return .menu
         case .hud: return .hudWindow
         case .popover: return .popover
@@ -70,6 +76,13 @@ struct MenuBarCoverAppearance: Equatable, Sendable {
     var tintColor: NSColor? {
         guard let c = Self.tintComponents(tintHex) else { return nil }
         return NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: tintOpacity)
+    }
+
+    /// The opaque fill a `.blend` cover draws — the sampled bar color;
+    /// nil while no probe has landed, when the material look stands in.
+    var blendColor: NSColor? {
+        guard material == .blend, let c = Self.tintComponents(blendHex) else { return nil }
+        return NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: 1)
     }
 }
 
@@ -122,7 +135,15 @@ final class MenuBarCoverView: NSView {
     /// Restyle in place — every reconcile reapplies, so a settings
     /// change lands on the next pass without churning panels.
     func apply(_ appearance: MenuBarCoverAppearance) {
+        // `.blend` trades the material for a flat opaque fill of the
+        // sampled bar color — the covered stretch reads as the bar's
+        // own pixels, not a panel. A failed probe leaves the material.
+        let blend = appearance.blendColor
+        effect.isHidden = blend != nil
+        layer?.backgroundColor = blend?.cgColor ?? NSColor.clear.cgColor
         effect.material = appearance.effectMaterial
+        // A tint the user chose still reads over the blend — a
+        // deliberate cover color outranks blending in.
         tintView.layer?.backgroundColor = appearance.tintColor?.cgColor
         tintView.isHidden = appearance.tintColor == nil
         leadingHairline.isHidden = !appearance.separator
@@ -171,7 +192,10 @@ final class MenuBarShutter {
     func cover(_ ranges: [ClosedRange<CGFloat>], rowHeight: CGFloat,
                appearance: MenuBarCoverAppearance = MenuBarCoverAppearance()) {
         let clean = ranges.filter { $0.upperBound - $0.lowerBound > 4 }
-        coveredRanges = clean
+        if coveredRanges != clean {
+            coveredRanges = clean
+            MenuBarAssessmentBackend.log.notice("cover paint \(clean.map { "\(Int($0.lowerBound))–\(Int($0.upperBound))" }.joined(separator: " "), privacy: .public)")
+        }
         while panels.count < clean.count { panels.append(makePanel()) }
         let displayHeight = CGDisplayBounds(CGMainDisplayID()).height
         for (index, panel) in panels.enumerated() {
@@ -229,5 +253,24 @@ final class MenuBarShutter {
         panel.contentView = MenuBarCoverView()
         panel.title = "JR-Bar Menu Bar Cover"
         return panel
+    }
+}
+
+/// The `.blend` probe's arithmetic: a captured strip of the real menu
+/// bar, averaged down to the one "#RRGGBB" a flat-fill cover needs.
+enum MenuBarBarSampler {
+    /// The image's average color as "#RRGGBB"; nil when it has no
+    /// pixels to read.
+    nonisolated static func averageHex(of image: CGImage) -> String? {
+        let source = CIImage(cgImage: image)
+        guard !source.extent.isEmpty else { return nil }
+        let averaged = source.applyingFilter(
+            "CIAreaAverage",
+            parameters: [kCIInputExtentKey: CIVector(cgRect: source.extent)])
+        var pixel = [UInt8](repeating: 0, count: 4)
+        CIContext().render(averaged, toBitmap: &pixel, rowBytes: 4,
+                           bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return String(format: "#%02X%02X%02X", pixel[0], pixel[1], pixel[2])
     }
 }

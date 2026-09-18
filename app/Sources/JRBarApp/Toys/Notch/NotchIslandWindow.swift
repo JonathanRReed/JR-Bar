@@ -23,7 +23,7 @@ import SwiftUI
 /// top stays pinned.
 /// A two-finger swipe on the island, in finger-travel direction —
 /// `.left` is a swipe toward the left. Read off trackpad scroll events.
-enum NotchIslandSwipe { case left, right, down }
+enum NotchIslandSwipe { case left, right, down, up }
 
 /// The island's hosting view with a click gate, a pull tracker and a
 /// swipe reader: while Fold's overlay is up the island is invisible
@@ -56,6 +56,17 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     /// positive stretch for `.rest`, signed slide for `.card`.
     var onPullChanged: (CGFloat) -> Void = { _ in }
     var onPullEnded: (NotchPullGesture.Verdict) -> Void = { _ in }
+    /// A file or link dragged onto the island — NotchNook's shelf
+    /// summon: the card grows under the pointer so the tray strip is
+    /// there to take the drop.
+    var onShelfDragEntered: () -> Void = {}
+    /// The drag left without dropping — the summoned card lets go
+    /// again instead of sitting pinned forever.
+    var onShelfDragExited: () -> Void = {}
+    /// The drop itself — pasteboard URLs, files and web links alike.
+    var onShelfDrop: ([URL]) -> Void = { _ in }
+    /// The drag ended (drop performed) — the summon flag clears.
+    var onShelfDragEnded: () -> Void = {}
 
     /// Travel this many points before the gesture commits — small
     /// scrolls and scroll-jitter stay scrolls.
@@ -139,6 +150,8 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
                     onSwipe(gestureX < 0 ? .left : .right)
                 } else if gestureY <= -commitY {
                     onSwipe(.down)
+                } else if gestureY >= commitY {
+                    onSwipe(.up)
                 }
             }
             gestureLive = false
@@ -166,7 +179,42 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
         } else if gestureY <= -Self.verticalThreshold, abs(gestureY) > abs(gestureX) {
             gestureFired = true
             onSwipe(.down)
+        } else if gestureY >= Self.verticalThreshold, abs(gestureY) > abs(gestureX) {
+            gestureFired = true
+            // Fingers up = tuck the card back into the notch —
+            // Alcove's dismiss gesture.
+            onSwipe(.up)
         }
+    }
+
+    // MARK: Shelf drop target
+
+    /// The island is a registered drop destination — a file or link
+    /// held to the notch grows the card so the tray strip can take it.
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        onShelfDragEntered()
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        .copy
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        onShelfDragExited()
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let urls = (sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: false]) as? [URL]) ?? []
+        guard !urls.isEmpty else { return false }
+        onShelfDrop(urls)
+        return true
+    }
+
+    override func draggingEnded(_ sender: any NSDraggingInfo) {
+        onShelfDragEnded()
     }
 }
 
@@ -235,6 +283,13 @@ final class NotchIslandWindow: NSPanel {
             self?.pullBase = nil
             toy?.islandPullEnded(verdict)
         }
+        // The shelf summon: file URLs and web links — NotchNook's
+        // drag-to-the-notch gesture.
+        hosting.registerForDraggedTypes([.fileURL, .URL])
+        hosting.onShelfDragEntered = { [weak toy] in toy?.shelfSummon() }
+        hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragAbandoned() }
+        hosting.onShelfDragEnded = { [weak toy] in toy?.shelfDragLanded() }
+        hosting.onShelfDrop = { [weak toy] urls in toy?.shelfDrop(urls) }
     }
 
     /// A morph landing mid-pull owns the frame: the pull's

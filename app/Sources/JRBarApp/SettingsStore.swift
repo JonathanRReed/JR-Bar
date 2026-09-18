@@ -150,6 +150,20 @@ final class SettingsStore {
     /// doing nothing while looking enabled.
     var panelHotkeyRegistrationFailed = false
 
+    /// "Summon the shelf with ⌃⌥D" — Yoink's drop-target summon. Same
+    /// app-local UserDefaults pattern as the panel's key; the delegate
+    /// toggles the island card on the press.
+    static let shelfHotkeyDefaultsKey = "shelfHotkeyEnabled"
+    var shelfHotkeyEnabled: Bool = UserDefaults.standard.bool(forKey: shelfHotkeyDefaultsKey) {
+        didSet {
+            guard shelfHotkeyEnabled != oldValue else { return }
+            UserDefaults.standard.set(shelfHotkeyEnabled, forKey: Self.shelfHotkeyDefaultsKey)
+            onShelfHotkeyChange?(shelfHotkeyEnabled)
+        }
+    }
+    var onShelfHotkeyChange: (@MainActor (Bool) -> Void)?
+    var shelfHotkeyRegistrationFailed = false
+
     /// macOS's answer to the notification permission, asked by the
     /// Notifications page on appear: the banner toggle can read on while
     /// delivery is denied at the system level, and a silent denial is

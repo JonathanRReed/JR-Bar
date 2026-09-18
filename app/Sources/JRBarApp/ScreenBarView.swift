@@ -65,7 +65,7 @@ final class ScreenBarView: NSView {
     static let minimumEarWidth: CGFloat = 12
     /// An ear narrower than this has no room for its mark — the cap
     /// draws but the glyph stays out of a space it would clip.
-    static let markMinWidth: CGFloat = 26
+    static let markMinWidth: CGFloat = 22
     /// The hidden-run handle — the concealed items' ‹ — drawn inside
     /// the island's own surface as the right ear's outer cap while the
     /// menu-bar concealer runs. A status item can park its surface
@@ -78,7 +78,7 @@ final class ScreenBarView: NSView {
     /// the click route answers to.
     private(set) var menuHandleRect: NSRect?
     /// The handle's share of the right ear — a slim cap, not a mark.
-    private static let handleWidth: CGFloat = 22
+    private static let handleWidth: CGFloat = 16
     /// The tray's bottom corner — the notch profile's resolution
     /// (`screen_bar_notch_profile` + `screen_bar_notch_corner`), pushed
     /// by the controller so the wrap's silhouette is the bezel's own.
@@ -358,7 +358,7 @@ final class ScreenBarView: NSView {
         if Self.reduceMotion {
             mutate()
         } else {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.9), mutate)
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75), mutate)
         }
         wingsHosting?.frame = bounds
         wingsHosting?.isHidden = false
@@ -429,9 +429,9 @@ final class ScreenBarView: NSView {
     /// An ear's drawn width — a wing of notch black on the bezel's
     /// flank, wide enough that the mark inside reads as the island's
     /// end cap rather than a floating menu-bar icon. The claim only
-    /// ever caps it. Alcove's closed island wins with width: a 24 pt
-    /// ear read as a vestigial nub.
-    private static let earWidth: CGFloat = 48
+    /// ever caps it. Alcove's closed island stays compact: a 48 pt
+    /// lobe read as a slab where the references keep slim caps.
+    private static let earWidth: CGFloat = 36
 
     /// A dismiss-pull drags the ear off the bezel: outward travel only
     /// (inward pulls meet the notch), eased by `tanh` so it resists as

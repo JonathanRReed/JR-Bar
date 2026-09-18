@@ -27,11 +27,17 @@ struct MenuBarConcealerTests {
         #expect(MenuBarConcealPlan.concealed(apps: apps, revealed: [.hidden, .alwaysHidden]).isEmpty)
     }
 
-    @Test("the allowlist is everything running that is not concealed, sorted")
+    @Test("the allowlist is everything running that is not concealed plus the system-item owners, sorted")
     func allowlist() {
         let running: Set<String> = ["z.app", "a.app", "m.app", "h.app"]
+        let expected = running.union(MenuBarConcealPlan.systemItemOwners)
+            .subtracting(["h.app", "gone.app"]).sorted()
         #expect(MenuBarConcealPlan.allowlist(running: running, concealed: ["h.app", "gone.app"])
-                == ["a.app", "m.app", "z.app"])
+                == expected)
+        // The system family survives conceal-all: Focus and friends
+        // are MenuBarAgent extras, never ours to park.
+        #expect(MenuBarConcealPlan.allowlist(running: running, concealed: running)
+                == MenuBarConcealPlan.systemItemOwners.sorted())
     }
 
     @Test("the seed takes the spacer plan's hidden apps, never ours, the system's, or a bundle-less helper")
@@ -83,7 +89,47 @@ struct MenuBarConcealerTests {
         try? await Task.sleep(nanoseconds: 100_000_000)
         concealer.apply(concealed: [], running: ["h.app"])
         try? await Task.sleep(nanoseconds: 100_000_000)
-        #expect(fake.log == ["activate 1: s.app", "activate 2: t.app", "invalidate 1", "invalidate 2"], "\(fake.log)")
+        // The allowlist carries the system-item owners (Focus, Now
+        // Playing — MenuBarAgent extras that are never running apps)
+        // ahead of every foreign id, sorted.
+        let owners = MenuBarConcealPlan.systemItemOwners.sorted().joined(separator: ",")
+        #expect(fake.log == ["activate 1: \(owners),s.app", "activate 2: \(owners),t.app",
+                             "invalidate 1", "invalidate 2"], "\(fake.log)")
         #expect(!concealer.isConcealing)
+    }
+
+    @MainActor
+    @Test("reassert re-activates the live allowlist before invalidating — no concealment gap")
+    func reassertResweeps() async {
+        final class Fake: MenuBarConcealBackend {
+            var log: [String] = []
+            var n = 0
+            func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+                n += 1
+                log.append("activate \(n): \(allowedBundleIDs.joined(separator: ","))")
+                return MenuBarAssertionToken(NSNumber(value: n))
+            }
+            func invalidate(_ token: MenuBarAssertionToken) {
+                log.append("invalidate \((token.object as! NSNumber).intValue)")
+            }
+        }
+        let fake = Fake()
+        let concealer = MenuBarConcealer(backend: fake)
+        concealer.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        concealer.reassert()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        // Same concealed set, same allowlist — a second activation
+        // lands before the first token dies so concealment never lifts.
+        let owners = MenuBarConcealPlan.systemItemOwners.sorted().joined(separator: ",")
+        #expect(fake.log == ["activate 1: \(owners),s.app",
+                             "activate 2: \(owners),s.app",
+                             "invalidate 1"], "\(fake.log)")
+        #expect(concealer.isConcealing)
+        // No live assertion → reassert is a no-op.
+        let idle = MenuBarConcealer(backend: fake)
+        idle.reassert()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(fake.log.count == 3, "\(fake.log)")
     }
 }

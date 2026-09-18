@@ -24,20 +24,6 @@ struct OverviewView: View {
         .font(.system(size: 13))
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search titles, projects, tools")
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("View", selection: Binding(
-                    get: { store.viewMode },
-                    set: { store.setViewMode($0) }
-                )) {
-                    ForEach(OverviewViewMode.allCases, id: \.self) { mode in
-                        Label(mode.label, systemImage: mode.symbol).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 170)
-                .help("Switch between the roster table and the session graph")
-                .accessibilityLabel("Overview mode")
-            }
             if store.canCompare {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -194,12 +180,7 @@ struct OverviewView: View {
                                    title: store.roster.isEmpty ? "Nothing on record" : "Nothing matches",
                                    text: store.roster.isEmpty
                                        ? "The monitor has no sessions on record yet."
-                                       : "No row fits this view. Try another preset or clear the search.",
-                                   hint: store.viewMode == .graph
-                                       ? "The graph draws itself as soon as a session matches — or flip back to List."
-                                       : nil)
-            } else if store.viewMode == .graph {
-                OverviewGraphPane(store: store)
+                                       : "No row fits this view. Try another preset or clear the search.")
             } else {
                 Table(store.rows, selection: Binding(
                     get: { store.selectedIDs },
@@ -851,8 +832,6 @@ struct OverviewEmptyState: View {
     let symbol: String
     let title: String
     let text: String
-    /// Optional extra line (the graph's "flip back to List" nudge).
-    var hint: String? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -860,10 +839,6 @@ struct OverviewEmptyState: View {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             Text(text).font(.system(size: 11)).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center).frame(maxWidth: 320)
-            if let hint {
-                Text(hint).font(.system(size: 10)).foregroundStyle(.quaternary)
-                    .multilineTextAlignment(.center).frame(maxWidth: 320)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)

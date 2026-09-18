@@ -101,11 +101,11 @@ import JRBarCore
             deltaX: ScreenBarInteraction.swipeThreshold + 1) == .dismiss(.right))
     }
 
-    @Test func anInwardFlickOnAWingIsNothing() {
-        // Pushing the left ear toward the notch does not summon; the
-        // band's own swipe is the summon gesture.
-        #expect(ScreenBarInteraction.wingSwipeOutcome(region: .wing(.left), deltaX: 30) == .none)
-        #expect(ScreenBarInteraction.wingSwipeOutcome(region: .wing(.right), deltaX: -30) == .none)
+    @Test func anInwardFlickDismissesToo() {
+        // The island's rule: any sideways flick on the pill dismisses —
+        // only the band's own swipe is the summon gesture.
+        #expect(ScreenBarInteraction.wingSwipeOutcome(region: .wing(.left), deltaX: 30) == .dismiss(.left))
+        #expect(ScreenBarInteraction.wingSwipeOutcome(region: .wing(.right), deltaX: -30) == .dismiss(.right))
     }
 
     @Test func aHorizontalSwipeOnTheBandSummons() {

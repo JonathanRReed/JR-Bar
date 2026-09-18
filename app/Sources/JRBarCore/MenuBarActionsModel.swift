@@ -28,6 +28,13 @@ public enum MenuBarTrigger: Equatable, Codable, Sendable {
     case chargerConnected
     /// AC → battery.
     case chargerDisconnected
+    /// The internal battery's charge crossed `percent` downward —
+    /// the sample landed at or under it while the previous read was
+    /// above. The first sample is a baseline: a rule never fires for
+    /// a level the machine was already inside.
+    case batteryBelow(percent: Int)
+    /// The same crossing upward — the "charged enough" rule.
+    case batteryAbove(percent: Int)
     /// Joined a Wi-Fi network — empty `ssid` means any change, a name
     /// means that network specifically. Named matching needs Location
     /// Services (CoreWLAN reads no name without it); the unnamed
@@ -59,6 +66,10 @@ public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
     /// Drop the covers for `seconds` — the reveal gesture with an
     /// explicit clock.
     case reveal(seconds: Double)
+    /// Bartender's script trigger: a shell command run detached
+    /// (`/bin/sh -c …`) — "shortcuts run X", an AppleScript file, a
+    /// one-liner. The rule's own text, fired as configured.
+    case runScript(command: String)
 }
 
 /// One rule. `id` is a stable string (UUIDs are fine) — the engine's
@@ -88,6 +99,8 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .timeOfDay(let h, let m): t = String(format: "at %02d:%02d", h, m)
         case .chargerConnected: t = "when the charger connects"
         case .chargerDisconnected: t = "when the charger disconnects"
+        case .batteryBelow(let p): t = "when the battery falls to \(p)%"
+        case .batteryAbove(let p): t = "when the battery rises past \(p)%"
         case .wifiJoined(let ssid): t = ssid.isEmpty ? "when Wi-Fi changes" : "when Wi-Fi joins “\(ssid)”"
         case .wifiLeft: t = "when Wi-Fi drops"
         case .microphoneInUse: t = "when the microphone goes live"
@@ -101,6 +114,7 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .hideAll: a = "hide all items"
         case .showAll: a = "show all items"
         case .reveal(let s): a = "reveal for \(Int(s))s"
+        case .runScript(let command): a = "run “\(command)”"
         }
         return "\(t) → \(a)"
     }

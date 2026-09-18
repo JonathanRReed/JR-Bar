@@ -136,15 +136,15 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
   listing hidden items as tiles. **Built**: owner-icon tiles, `AXPress`
   click-through (reaches covered and system-parked items), ⌘-click pulls a
   tile up a section, a reposted-click fallback when the element cannot be
-  re-resolved. **Planned**: `SCScreenshotManager` live tiles at 2 Hz —
-  never a stream, so no capture indicator.
+  re-resolved, `SCScreenshotManager` live tiles at 2 Hz with icon fallback —
+  never a stream, so no capture indicator (see docs/TOY-PARITY.md).
 - Items that would land under the notch auto-move to hidden ("beat the
-  notch") using `ScreenBarGeometry.slotWidth`. **Planned.**
+  notch") using `ScreenBarGeometry.slotWidth`. **Built** (see docs/TOY-PARITY.md).
 - **Layout editor**: drag-to-arrange within a live snapshot of the bar.
-  **Planned** — and arrange is the *only* place synthetic ⌘-drags may run,
-  inside an explicit mode the person entered deliberately, because a posted
-  drag moves the real cursor. Items that can't be moved (Siri, clock) are
-  marked and skipped.
+  **Built** as the explicit, cancellable arrange mode — and arrange is the
+  *only* place synthetic ⌘-drags may run, inside a mode the person entered
+  deliberately, because a posted drag moves the real cursor. Items that can't
+  be moved (Siri, clock) are marked and skipped (see docs/TOY-PARITY.md).
 - **Item search / Command bar**: ⌘⇧K or click on the JR-Bar item's menu —
   fuzzy search over every menu bar item (shown + hidden), Return triggers it.
 - **Spacing**: per-item padding adjustments via spacer status items where
@@ -212,9 +212,13 @@ quit — the Dock Replace save-and-restore pattern.
 
 The utility that replaces "a dozen terminal tabs you can't see": one card
 summarizing every live agent session `CoreModel.sessions` knows about, plus
-a **Full overview…** button that opens the Overview window (list +
-force-directed graph) — its own independent panel, opened from the app
+a **Full overview…** button that opens the Overview window (sortable roster
+table + inspector) — its own independent panel, opened from the app
 menu, the status-item menu, the notch card, the utility card, or ⌘O.
+The Obsidian-style force-directed session graph was removed: the Aquarium
+and the agent Overview are the ambient surfaces now, not a separate
+constellation map. The After Dark / flying-toaster screensaver lineage is
+likewise gone — same reason.
 
 - **Connections browser**: the Overview's idle inspector is a wiring
   diagram of everything the daemon already pushes — the core link and

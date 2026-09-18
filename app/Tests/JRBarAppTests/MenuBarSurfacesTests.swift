@@ -101,10 +101,10 @@ struct MenuBarSurfacesTests {
 
     // MARK: Appearance — settings → cover look
 
-    @Test("defaults reproduce the shipping cover — menu material, no tint, square, no separator")
+    @Test("defaults reproduce the shipping cover — menubar material, no tint, square, no separator")
     func appearanceDefaults() {
         let a = MenuBarCoverAppearance(settings: MenuBarSettings())
-        #expect(a.material == .menu)
+        #expect(a.material == .blend)
         #expect(a.effectMaterial == .menu)
         #expect(a.tintColor == nil)
         #expect(a.roundness == 0)
@@ -116,6 +116,7 @@ struct MenuBarSurfacesTests {
         func material(_ m: MenuBarSettings.CoverMaterial) -> NSVisualEffectView.Material {
             MenuBarCoverAppearance(settings: MenuBarSettings(coverMaterial: m)).effectMaterial
         }
+        #expect(material(.blend) == .menu)
         #expect(material(.menu) == .menu)
         #expect(material(.hud) == .hudWindow)
         #expect(material(.popover) == .popover)

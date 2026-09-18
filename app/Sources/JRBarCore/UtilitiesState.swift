@@ -80,6 +80,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var revealOnScroll: Bool
     /// Seconds a reveal lasts before the spacers stand back up.
     public var rehideSeconds: Double
+    /// Where a reveal surfaces the hidden run — the Item Bar panel
+    /// (Bartender) or inline on the row (Ice, Hidden Bar).
+    public var revealStyle: RevealStyle
     /// Which hiding model the section map was written under. Files
     /// from before `currentLayoutModel` carried a map that assigned
     /// every item hidden (the cover era); the position model reads
@@ -171,10 +174,21 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// The cover's visual-effect material, persisted as its raw name so
     /// a newer build's materials keep their data.
     public enum CoverMaterial: String, Codable, CaseIterable, Sendable {
+        case blend
         case menu
         case hud
         case popover
         case sheet
+    }
+
+    /// Where a reveal puts the hidden run. `.bar` opens the Item Bar —
+    /// Bartender's model: the menu bar itself never reflows, the
+    /// concealment assertion holds, nothing flaps. `.inline` drops the
+    /// covers so the run reflows onto the row — Ice and Hidden Bar's
+    /// model.
+    public enum RevealStyle: String, Codable, CaseIterable, Sendable {
+        case bar
+        case inline
     }
 
     /// A named preset: the section map plus the cover's appearance and
@@ -192,7 +206,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
         public init(id: String, name: String,
                     sections: [String: MenuBarItemSection] = [:],
-                    coverMaterial: MenuBarSettings.CoverMaterial = .menu,
+                    coverMaterial: MenuBarSettings.CoverMaterial = .blend,
                     coverTint: String = "",
                     coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                     coverRoundness: Double = 0,
@@ -235,7 +249,10 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Model 3: the concealer's first-run seed hid whatever sat left of
     /// the boundary without asking — the map it wrote is cleared once,
     /// and nothing is concealed until the person picks or drags it.
-    public static let currentLayoutModel = 3
+    /// Model 4: the newcomer sweep is gone too — no bundle ever joins
+    /// the map on its own. Cleared again so a seed-era map (and any
+    /// auto-hid newcomers it gathered) resets to the stock bar.
+    public static let currentLayoutModel = 4
     /// The card's cover-roundness dial — past half the row's depth the
     /// run ends are a pill anyway.
     public static let coverRoundnessRange: ClosedRange<Double> = 0...14
@@ -246,8 +263,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 sections: [String: MenuBarItemSection] = [:],
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
+                revealStyle: RevealStyle = .bar,
                 layoutModel: Int = MenuBarSettings.currentLayoutModel,
-                coverMaterial: CoverMaterial = .menu, coverTint: String = "",
+                coverMaterial: CoverMaterial = .blend, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
                 combinedStatusItem: Bool = false,
@@ -274,6 +292,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.revealOnClick = revealOnClick
         self.revealOnScroll = revealOnScroll
         self.rehideSeconds = Self.clampedRehide(rehideSeconds)
+        self.revealStyle = revealStyle
         self.layoutModel = layoutModel
         self.coverMaterial = coverMaterial
         self.coverTint = coverTint
@@ -322,8 +341,18 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         sections[itemID] ?? .shown
     }
 
+    /// One array element that swallows its own decode failure — a rule
+    /// written by a newer build with a case this one doesn't know drops
+    /// itself, not the whole list it rode in with.
+    private struct LossyElement<Element: Decodable>: Decodable {
+        let value: Element?
+        init(from decoder: any Decoder) throws {
+            value = try? Element(from: decoder)
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
+        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, revealStyle, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
         case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
@@ -342,12 +371,13 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         revealOnScroll = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnScroll)) ?? true
         rehideSeconds = Self.clampedRehide(
             (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds)) ?? Self.defaultRehideSeconds)
+        revealStyle = (try? c.decodeIfPresent(RevealStyle.self, forKey: .revealStyle)) ?? .bar
         // Absent with a map present means a file from the cover era —
         // the map is cleared on first apply. Absent with no map has
         // nothing to migrate and reads as current.
         layoutModel = (try? c.decodeIfPresent(Int.self, forKey: .layoutModel))
             ?? (sections.isEmpty ? Self.currentLayoutModel : 0)
-        coverMaterial = (try? c.decodeIfPresent(CoverMaterial.self, forKey: .coverMaterial)) ?? .menu
+        coverMaterial = (try? c.decodeIfPresent(CoverMaterial.self, forKey: .coverMaterial)) ?? .blend
         coverTint = (try? c.decodeIfPresent(String.self, forKey: .coverTint)) ?? ""
         coverTintOpacity = Self.clampedOpacity(
             (try? c.decodeIfPresent(Double.self, forKey: .coverTintOpacity)) ?? Self.defaultCoverTintOpacity)
@@ -359,11 +389,13 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         arrangeOrder = (try? c.decodeIfPresent([String].self, forKey: .arrangeOrder)) ?? []
         hotkeyBindings = (try? c.decodeIfPresent([MenuBarHotkeyBinding].self,
                                                  forKey: .hotkeyBindings)) ?? []
-        triggerRules = (try? c.decodeIfPresent([MenuBarTriggerRule].self,
-                                               forKey: .triggerRules)) ?? []
+        // Per-element lossy decode: a rule written by a build that knows
+        // an action this one doesn't drops *that rule*, not the list.
+        triggerRules = ((try? c.decodeIfPresent([LossyElement<MenuBarTriggerRule>].self,
+                                                forKey: .triggerRules)) ?? [])
+            .compactMap(\.value)
         let rawApps = (try? c.decodeIfPresent([String: String].self, forKey: .concealedApps)) ?? [:]
         concealedApps = rawApps.compactMapValues { MenuBarItemSection(rawValue: $0) }
-            .filter { $0.value != .shown }
         concealSeeded = (try? c.decodeIfPresent(Bool.self, forKey: .concealSeeded)) ?? false
         concealUnnotarized = (try? c.decodeIfPresent(Bool.self, forKey: .concealUnnotarized)) ?? false
         let spacing = (try? c.decodeIfPresent(Int.self, forKey: .itemSpacing)) ?? 0

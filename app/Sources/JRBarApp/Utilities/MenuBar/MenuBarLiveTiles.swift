@@ -141,7 +141,7 @@ final class MenuBarLiveTiles {
 /// Recording) is cached too, so a denied permission is not repolled
 /// every tile.
 @MainActor
-private final class DisplayFilterSource {
+final class DisplayFilterSource {
     /// How long a filter — or a failed fetch — stays valid. Display
     /// changes land within seconds, and the tiles are a 2 Hz preview.
     nonisolated static let ttl: TimeInterval = 5

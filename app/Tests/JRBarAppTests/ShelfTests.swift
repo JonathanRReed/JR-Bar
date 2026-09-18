@@ -68,6 +68,35 @@ import JRBarCore
         #expect(!tray.canAttachCopy(entry))
     }
 
+    @Test func aWebLinkDropMaterialisesAWebLoc() throws {
+        let link = URL(string: "https://example.com/page?q=1")!
+        let loc = try #require(ShelfTrayDrop.webLoc(for: link))
+        defer { try? FileManager.default.removeItem(at: loc) }
+        #expect(loc.pathExtension == "webloc")
+        #expect(loc.lastPathComponent.contains("example.com"))
+        // The file is a real plist carrying the link — Finder's own
+        // webloc shape.
+        let plist = try #require(NSDictionary(contentsOf: loc))
+        #expect(plist["URL"] as? String == link.absoluteString)
+        // Re-dropping the same link lands on the same file — the
+        // tray's path dedupe keeps it one entry.
+        #expect(ShelfTrayDrop.webLoc(for: link) == loc)
+    }
+
+    @Test func trayURLsPassesFilesThroughAndConvertsLinks() {
+        let file = URL(fileURLWithPath: "/tmp/real.txt")
+        let link = URL(string: "https://example.com/x")!
+        let converted = ShelfTrayDrop.trayURLs(from: [file, link])
+        #expect(converted.count == 2)
+        #expect(converted[0] == file)
+        #expect(converted[1].pathExtension == "webloc")
+        defer { try? FileManager.default.removeItem(at: converted[1]) }
+        // Non-http schemes never materialise — a javascript: drop
+        // adds nothing (T49's rule).
+        #expect(ShelfTrayDrop.trayURLs(from: [
+            URL(string: "javascript:alert(1)")!]).isEmpty)
+    }
+
     // MARK: - Timers (T51)
 
     private func tempStore() -> URL {

@@ -20,6 +20,9 @@ final class DockPreviewActions {
     /// The card's fullscreen verb — toggle the window's own
     /// `AXFullScreen`.
     var onFullScreen: (@MainActor (DockPreviewWindow) -> Void)?
+    /// The context menu's tile — snap the window into a half or
+    /// quarter of the screen, DockDoor's snap verbs.
+    var onTile: (@MainActor (DockPreviewWindow, DockTile) -> Void)?
     /// The header's "New" — the app's ⌘N.
     var onNewWindow: (@MainActor () -> Void)?
     /// The header's "Quit".
@@ -28,6 +31,8 @@ final class DockPreviewActions {
     var onHideApp: (@MainActor () -> Void)?
     /// DockDoor's minimise-all — every open window to the Dock.
     var onMinimizeAll: (@MainActor () -> Void)?
+    /// Close-all — every window closes, the app stays running.
+    var onCloseAll: (@MainActor () -> Void)?
     /// A folder pop's click — open the entry, or the header's "Open"
     /// for the folder itself.
     var onOpen: (@MainActor (URL) -> Void)?
@@ -177,14 +182,42 @@ struct DockPreviewView: View {
                     Image(nsImage: icon)
                         .resizable()
                         .frame(width: 26, height: 26)
+                        .overlay(alignment: .topTrailing) {
+                            // The Dock tile's own badge, on the icon the
+                            // way the tile draws it — unread counts,
+                            // alert dots, the works.
+                            if let badge = content.badge {
+                                Text(badge)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(.red, in: Capsule())
+                                    .offset(x: 7, y: -5)
+                            }
+                        }
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(content.appName)
-                        .font(.headline)
+                    HStack(spacing: 5) {
+                        Text(appTitle.base)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if let channel = appTitle.channel {
+                            Text(channel)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: Capsule())
+                        }
+                    }
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                .frame(maxWidth: 240, alignment: .leading)
                 Spacer(minLength: 8)
                 // DockDoor's compact header: traffic-light circles, not
                 // spelled-out buttons — the row reclaims ~110pt of width.
@@ -203,6 +236,12 @@ struct DockPreviewView: View {
                             headerVerb("minus", tint: Color(red: 0.96, green: 0.73, blue: 0.20),
                                        label: "Minimise every \(content.appName) window") {
                                 actions.onMinimizeAll?()
+                            }
+                        }
+                        if content.windows.count > 1 {
+                            headerVerb("xmark", tint: Color(red: 0.93, green: 0.34, blue: 0.32),
+                                       label: "Close every \(content.appName) window (app stays running)") {
+                                actions.onCloseAll?()
                             }
                         }
                         headerVerb("eye.slash", tint: Color(red: 0.96, green: 0.73, blue: 0.20),
@@ -339,7 +378,8 @@ struct DockPreviewView: View {
                             // — "Claude" under a header that already says
                             // Claude — reads as a second label, not a
                             // caption. The Dock's own bubble makes three.
-                            showsTitle: window.title != content.appName,
+                            showsTitle: window.title != content.appName
+                                && window.title != appTitle.base,
                             actions: actions)
         }
     }
@@ -357,7 +397,13 @@ struct DockPreviewView: View {
                 .frame(width: 13, height: 13)
                 .overlay {
                     Image(systemName: symbol)
-                        .font(.system(size: 7, weight: .bold))
+                        // scaledToFit, not a font size: a 7pt symbol
+                        // rides its text baseline and floats off the
+                        // disc's centre; a resizable glyph centres in
+                        // the box it is given.
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 7, height: 7)
                         .foregroundStyle(.white)
                 }
                 .frame(width: 18, height: 18)
@@ -366,6 +412,13 @@ struct DockPreviewView: View {
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+    }
+
+    /// The header's name: the product name with any release-channel tag
+    /// split into its own chip, so "T3 Code (Nightly)" lays out as slim
+    /// as "T3 Code" — the tag still shows, just not on the title line.
+    private var appTitle: (base: String, channel: String?) {
+        AppNameChannel.split(content.appName)
     }
 
     private var subtitle: String {
@@ -426,6 +479,28 @@ struct DockPreviewCard: View {
                 .overlay(SwipeCatcher { flick in
                     actions.onSwipeMinimize?(window, flick == .down)
                 })
+                // Right-click — DockDoor's action menu: the verbs the
+                // hover pills offer plus the tile grid.
+                .contextMenu {
+                    Button("Raise") { actions.onPick?(window) }
+                    Divider()
+                    Button(window.minimized ? "Bring Back" : "Minimize") {
+                        actions.onMinimize?(window)
+                    }
+                    if window.fullScreen != nil {
+                        Button(window.fullScreen == true ? "Leave Full Screen" : "Full Screen") {
+                            actions.onFullScreen?(window)
+                        }
+                    }
+                    Divider()
+                    Menu("Tile To") {
+                        ForEach(DockTile.allCases, id: \.rawValue) { tile in
+                            Button(tile.title) { actions.onTile?(window, tile) }
+                        }
+                    }
+                    Divider()
+                    Button("Close Window") { actions.onClose?(window) }
+                }
                 if hovering {
                     HStack(spacing: 4) {
                         verb("xmark", help: "Close window") { actions.onClose?(window) }

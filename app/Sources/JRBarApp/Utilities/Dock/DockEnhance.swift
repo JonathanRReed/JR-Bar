@@ -156,9 +156,62 @@ struct DockHoverTracker {
 /// coordinates (origin top-left of the primary display, y down);
 /// `NSEvent.mouseLocation`, `NSScreen.frame` and `NSWindow.frame` are
 /// AppKit (origin bottom-left, y up).
+/// A snap target on a screen — DockDoor's tile verbs: halves and
+/// quarters of the visible frame, written through AX.
+enum DockTile: String, CaseIterable {
+    case leftHalf, rightHalf, topHalf, bottomHalf
+    case topLeft, topRight, bottomLeft, bottomRight
+
+    var title: String {
+        switch self {
+        case .leftHalf: return "Left Half"
+        case .rightHalf: return "Right Half"
+        case .topHalf: return "Top Half"
+        case .bottomHalf: return "Bottom Half"
+        case .topLeft: return "Top Left"
+        case .topRight: return "Top Right"
+        case .bottomLeft: return "Bottom Left"
+        case .bottomRight: return "Bottom Right"
+        }
+    }
+}
+
 enum DockEnhanceMath {
     static func axPoint(_ appKitPoint: CGPoint, mainScreenHeight: CGFloat) -> CGPoint {
         CGPoint(x: appKitPoint.x, y: mainScreenHeight - appKitPoint.y)
+    }
+
+    /// The tile's rect inside a Quartz-space visible frame — minY is
+    /// the screen's TOP here, so "top" tiles pin at minY and "bottom"
+    /// at midY.
+    static func tileFrame(_ tile: DockTile, in visible: CGRect) -> CGRect {
+        let halfW = visible.width / 2, halfH = visible.height / 2
+        switch tile {
+        case .leftHalf:
+            return CGRect(x: visible.minX, y: visible.minY,
+                          width: halfW, height: visible.height)
+        case .rightHalf:
+            return CGRect(x: visible.midX, y: visible.minY,
+                          width: halfW, height: visible.height)
+        case .topHalf:
+            return CGRect(x: visible.minX, y: visible.minY,
+                          width: visible.width, height: halfH)
+        case .bottomHalf:
+            return CGRect(x: visible.minX, y: visible.midY,
+                          width: visible.width, height: halfH)
+        case .topLeft:
+            return CGRect(x: visible.minX, y: visible.minY,
+                          width: halfW, height: halfH)
+        case .topRight:
+            return CGRect(x: visible.midX, y: visible.minY,
+                          width: halfW, height: halfH)
+        case .bottomLeft:
+            return CGRect(x: visible.minX, y: visible.midY,
+                          width: halfW, height: halfH)
+        case .bottomRight:
+            return CGRect(x: visible.midX, y: visible.midY,
+                          width: halfW, height: halfH)
+        }
     }
 
     static func appKitRect(_ axRect: CGRect, mainScreenHeight: CGFloat) -> CGRect {
@@ -389,13 +442,18 @@ struct DockAXItem {
     let title: String?
     /// `AXURL` — the file URL the tile points at, when the Dock shares it.
     let url: URL?
+    /// `AXStatusLabel` — the tile's badge string ("3", "•"), nil when
+    /// the app shows none. ActiveDock's unread dot, verbatim.
+    let badge: String?
     let kind: Kind
 
-    init(element: AXUIElement, frame: CGRect, title: String?, url: URL?, kind: Kind = .app) {
+    init(element: AXUIElement, frame: CGRect, title: String?, url: URL?,
+         badge: String? = nil, kind: Kind = .app) {
         self.element = element
         self.frame = frame
         self.title = title
         self.url = url
+        self.badge = badge
         self.kind = kind
     }
     /// Stable hover identity: the URL, else the title, else the slot —
@@ -443,9 +501,11 @@ enum AppleDockReader {
             else if subrole == "AXFolderDockItem" { kind = .folder }
             else { return nil }
             guard let frame = axFrame(child) else { return nil }
+            let badge = axString(child, "AXStatusLabel")
             return DockAXItem(element: child, frame: frame,
                               title: axString(child, kAXTitleAttribute),
-                              url: axURL(child), kind: kind)
+                              url: axURL(child),
+                              badge: badge?.isEmpty == false ? badge : nil, kind: kind)
         }
     }
 
@@ -549,6 +609,24 @@ enum AppleDockReader {
         guard let element = window.element else { return false }
         return AXUIElementSetAttributeValue(element, "AXFullScreen" as CFString,
                                             on as CFTypeRef) == .success
+    }
+
+    /// The tile verbs: `AXSize` then `AXPosition` in Quartz space —
+    /// size first, since the position write clamps against the
+    /// window's current extent and moving first can pin the old size's
+    /// origin instead of the tile's.
+    @discardableResult
+    static func setFrame(_ window: DockPreviewWindow, _ frame: CGRect) -> Bool {
+        guard let element = window.element else { return false }
+        var origin = frame.origin
+        var size = frame.size
+        guard let originValue = AXValueCreate(.cgPoint, &origin),
+              let sizeValue = AXValueCreate(.cgSize, &size) else { return false }
+        let sized = AXUIElementSetAttributeValue(
+            element, kAXSizeAttribute as CFString, sizeValue) == .success
+        let moved = AXUIElementSetAttributeValue(
+            element, kAXPositionAttribute as CFString, originValue) == .success
+        return sized || moved
     }
 
     /// The window's `AXDocument` — the file it shows, when the app
@@ -707,6 +785,9 @@ final class DockPreviewContent {
     var processIdentifier: pid_t?
     var isRunning = false
     var windows: [DockPreviewWindow] = []
+    /// The tile's `AXStatusLabel` — the Dock's own unread badge, drawn
+    /// on the header icon the way the tile draws it.
+    var badge: String?
     /// Non-nil when the hovered tile is a folder: the panel pops the
     /// directory's entries instead of window cards.
     var folderURL: URL?
@@ -855,6 +936,13 @@ final class DockEnhanceController {
         switcher.isCmdAllowed = { [weak self] in
             self?.preferences.read().appSwitcher ?? false
         }
+        switcher.thumbsAllowed = { [weak self] in
+            guard let self, self.screenCaptureGranted else { return false }
+            return self.preferences.read().showThumbnails
+        }
+        switcher.offscreenAllowed = { [weak self] in
+            self?.preferences.read().includeOffscreenWindows ?? false
+        }
     }
 
     isolated deinit {
@@ -867,6 +955,24 @@ final class DockEnhanceController {
         guard !running else { return }
         running = true
         refreshPermissions(force: true)
+        if !accessibilityTrusted {
+            // Register + prompt once: nothing else ever calls the
+            // prompting API, so a stale or missing TCC entry (a
+            // re-signed reinstall loses the grant silently) used to
+            // leave the preview dead with no path back but manual
+            // pane surgery. With an entry already decided this is a
+            // cheap no-op — the system prompts only on an undecided one.
+            _ = AXIsProcessTrustedWithOptions(
+                ["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        }
+        if !screenCaptureGranted && preferences.showThumbnails {
+            // The same registration gap: CGPreflightScreenCaptureAccess
+            // never creates the pane entry, so a missing grant left the
+            // thumbnails on "No preview" with nothing for the user to
+            // toggle. Requesting once registers JR-Bar and prompts only
+            // while the answer is still undecided.
+            screenCaptureGranted = CGRequestScreenCaptureAccess()
+        }
         Self.log.notice("enhance start: accessibility \(self.accessibilityTrusted, privacy: .public), screen recording \(self.screenCaptureGranted, privacy: .public), dock list \(AppleDockReader.dockPID().flatMap { AppleDockReader.dockList(pid: $0) } != nil, privacy: .public)")
         switcher.start()
         switcher.syncSettings()
@@ -1203,10 +1309,12 @@ final class DockEnhanceController {
         panel.actions.onClose = { [weak self] window in self?.close(window) }
         panel.actions.onMinimize = { [weak self] window in self?.toggleMinimized(window) }
         panel.actions.onFullScreen = { [weak self] window in self?.toggleFullScreen(window) }
+        panel.actions.onTile = { [weak self] window, tile in self?.tile(window, tile) }
         panel.actions.onNewWindow = { [weak self] in self?.newWindow() }
         panel.actions.onQuitApp = { [weak self] in self?.quitApp() }
         panel.actions.onHideApp = { [weak self] in self?.hideApp() }
         panel.actions.onMinimizeAll = { [weak self] in self?.minimizeAll() }
+        panel.actions.onCloseAll = { [weak self] in self?.closeAll() }
         panel.actions.onOpen = { [weak self] url in self?.openItem(url) }
         panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
         panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
@@ -1247,6 +1355,7 @@ final class DockEnhanceController {
         content.media = nil
         content.calendarEvent = nil
         content.calendarNeedsAuth = false
+        content.badge = item.badge
         if item.kind == .folder {
             content.folderURL = appURL
             content.appName = appURL?.lastPathComponent ?? item.title ?? "Folder"
@@ -1365,6 +1474,23 @@ final class DockEnhanceController {
         }
     }
 
+    /// The context menu's tile: snap the window into a half or quarter
+    /// of the screen the preview is over — DockDoor's grid, minus the
+    /// drag. A minimized window stands back up first, and the panel
+    /// stays so the rest of the set can still be worked.
+    private func tile(_ window: DockPreviewWindow, _ tile: DockTile) {
+        let screen = (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+                      ?? NSScreen.main ?? NSScreen.screens[0])
+        let visible = screen.visibleFrame
+        // visibleFrame is AppKit — flip it into the Quartz space the
+        // AX writes expect before carving it.
+        let quartz = CGRect(x: visible.minX,
+                            y: Self.mainScreenHeight() - visible.maxY,
+                            width: visible.width, height: visible.height)
+        if window.minimized { _ = AppleDockReader.setMinimized(window, false) }
+        _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: quartz))
+    }
+
     /// The header's "New" — the app's ⌘N. The window list refreshes a
     /// beat later so the card for the new window lands while the panel
     /// is still up.
@@ -1379,6 +1505,18 @@ final class DockEnhanceController {
                   let pid = self.preview.processIdentifier else { return }
             self.preview.windows = AppleDockReader.windows(pid: pid)
             self.reframe()
+            // The refill's rows carry no thumbnails — re-attach so the
+            // cards don't fall back to "No preview" until the next
+            // hover (the 30 s capture cache makes it nearly free).
+            if self.preferences.showThumbnails, !self.preview.compact,
+               self.screenCaptureGranted {
+                let bundleID = self.preview.bundleID
+                let offscreen = self.preferences.includeOffscreenWindows
+                await DockThumbnailer.attach(
+                    to: self.preview, bundleID: bundleID, pid: pid,
+                    includeOffscreen: offscreen,
+                    isStale: { [weak self] in self?.generation != generationAtNew })
+            }
         }
     }
 
@@ -1402,6 +1540,25 @@ final class DockEnhanceController {
             }
         }
         if changed { reframe() }
+    }
+
+    /// Close-all: every window of the previewed app closes in one verb
+    /// — quit's gentler sibling, the app stays running windowless.
+    /// Closed cards drop; the panel stays while windows remain so a
+    /// person can keep working the set.
+    private func closeAll() {
+        var kept: [DockPreviewWindow] = []
+        kept.reserveCapacity(preview.windows.count)
+        for window in preview.windows {
+            if !AppleDockReader.close(window) { kept.append(window) }
+        }
+        preview.windows = kept
+        if preview.windows.isEmpty {
+            tracker.reset()
+            hidePreview()
+        } else {
+            reframe()
+        }
     }
 
     /// Aero shake — minimise the rest of the app's windows, or bring
@@ -1548,6 +1705,10 @@ final class DockEnhanceController {
               let bundleID = Bundle(url: appURL)?.bundleIdentifier,
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
         else { return }
+        // Never let the verb reach our own family — a ⌘-click on our
+        // own tile would self-terminate.
+        guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              !MenuBarUtility.isOwnFamily(bundleID) else { return }
         Self.log.notice("quick quit: \(bundleID, privacy: .public) force=\(force, privacy: .public)")
         if force { app.forceTerminate() } else { app.terminate() }
         tracker.reset()
@@ -1575,7 +1736,10 @@ final class DockEnhanceController {
             panel.setFrame(frame, display: true)
             return
         }
-        let itemFrame = DockEnhanceMath.appKitRect(anchor.item.frame, mainScreenHeight: Self.mainScreenHeight())
+        // The same anchor the show/hover path uses — under magnification
+        // the AX frame is the unmagnified layout and the tile sits at
+        // the pointer, so refitting on it jumped the panel off the icon.
+        let itemFrame = anchorFrame(for: anchor.item, pointer: NSEvent.mouseLocation)
         panel.setFrame(DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: anchor.edge, size: panel.fittingSize(),
             screen: anchor.screen, gap: Self.panelGap), display: true)

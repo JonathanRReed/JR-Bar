@@ -22,7 +22,7 @@ import Testing
     @Test func automaticFrameMatchesTheClassicNumbers() {
         // No overrides: the same frame the pre-settings build computed.
         let frame = Self.frame()
-        #expect(frame == CGRect(x: 649.5, y: 944, width: 213, height: 38))
+        #expect(frame == CGRect(x: 649.5, y: 946, width: 213, height: 36))
     }
 
     @Test func noWrapMeansNoWings() {
@@ -46,10 +46,10 @@ import Testing
     }
 
     @Test func manualWingLengthWins() {
-        #expect(Self.frame(wingLength: 40) == CGRect(x: 623.5, y: 944, width: 265, height: 38))
+        #expect(Self.frame(wingLength: 40) == CGRect(x: 623.5, y: 946, width: 265, height: 36))
         // Even on a screen reporting no menu-bar areas at all.
         #expect(Self.frame(wingLength: 40, auxiliaryLeft: 0, auxiliaryRight: 0)
-            == CGRect(x: 623.5, y: 944, width: 265, height: 38))
+            == CGRect(x: 623.5, y: 946, width: 265, height: 36))
     }
 
     @Test func wingLengthNilOrZeroIsAutomatic() {
@@ -77,13 +77,13 @@ import Testing
     }
 
     @Test func windowHeightFollowsTheNotchDepth() {
-        #expect(ScreenBarGeometry.windowHeight(notchDepth: 32) == 38)
+        #expect(ScreenBarGeometry.windowHeight(notchDepth: 32) == 36)
         #expect(ScreenBarGeometry.windowHeight(notchDepth: 0) == ScreenBarDesign.bandHeight + ScreenBarDesign.glowHeight + 2)
     }
 
     @Test func bandRectIsCentredAndNeverAHairline() {
         let rect = ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 38))
-        #expect(rect == NSRect(x: 8, y: 1, width: 197, height: 6))
+        #expect(rect == NSRect(x: 8, y: 1, width: 197, height: 4))
         let empty = ScreenBarGeometry.bandRect(in: NSSize(width: 0, height: 0))
         #expect(empty.width == 0)
         #expect(empty.height == 1)
@@ -94,12 +94,12 @@ import Testing
         // bezel's bottom edge — the same seat it has at the base height.
         let tall = ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 45),
                                               underBezel: 32)
-        #expect(tall.minY == 8)
+        #expect(tall.minY == 10)
         #expect(tall.maxY == 14)
         // At the base height the anchor agrees with the floor's answer.
-        #expect(ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 38),
+        #expect(ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 36),
                                            underBezel: 32)
-                == ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 38)))
+                == ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 36)))
         // No bezel → the standalone band keeps its bottom seat.
         let notchless = ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 45),
                                                    underBezel: 0)
@@ -191,18 +191,18 @@ import Testing
     }
 
     @Test func coupledStripKissesTheIslandEdges() {
-        // The coupled window: 42 tall (coupledWindowHeight(islandBottom:
+        // The coupled window: 39 tall (coupledWindowHeight(islandBottom:
         // 32)), island 209 wide — slot 185 + 12 pt shoulders — centred.
-        let size = NSSize(width: 213, height: 42)
+        let size = NSSize(width: 213, height: 39)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 209, height: 32, in: size),
                                                      cornerRadius: 8)
-        // The strip rides the island's bottom edge — 32…38 below the
+        // The strip rides the island's bottom edge — 32…36 below the
         // screen's top — and runs the island's full width: end caps
         // kissing its side edges.
-        #expect(coupling.band == CGRect(x: 2, y: 4, width: 209, height: 6))
+        #expect(coupling.band == CGRect(x: 2, y: 3, width: 209, height: 4))
         // The housing swallows the island's bottom corners (its top runs
-        // to 32 - 8 = 24 below the top) and ends 3 pt under the strip.
-        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 17))
+        // to 32 - 8 = 24 below the top) and ends 2 pt under the strip.
+        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 14))
         #expect(coupling.cornerRadius == 8)
     }
 
@@ -213,10 +213,10 @@ import Testing
         let size = NSSize(width: 380, height: 310)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 380, height: 300, in: size),
                                                      cornerRadius: 8)
-        #expect(coupling.band == CGRect(x: 0, y: 4, width: 380, height: 6))
-        // Top at 300 - 8 = 292 below the top; bottom at 309 — the lip
+        #expect(coupling.band == CGRect(x: 0, y: 6, width: 380, height: 4))
+        // Top at 300 - 8 = 292 below the top; bottom at 306 — the lip
         // whose only visible edge is the corner curve under the strip.
-        #expect(coupling.housing == CGRect(x: 0, y: 1, width: 380, height: 17))
+        #expect(coupling.housing == CGRect(x: 0, y: 4, width: 380, height: 14))
     }
 
     @Test func coupledIslandGrowsTheWindowTowardIt() {
@@ -228,8 +228,8 @@ import Testing
                                                   auxiliaryLeft: 300, auxiliaryRight: 300,
                                                   hardwareSlot: 185, wrapMenuBar: true,
                                                   coupledIsland: island)
-        #expect(frame == CGRect(x: 566, y: 982 - 310, width: 380, height: 310))
-        #expect(ScreenBarGeometry.coupledWindowHeight(islandBottom: 300) == 310)
+        #expect(frame == CGRect(x: 566, y: 982 - 307, width: 380, height: 307))
+        #expect(ScreenBarGeometry.coupledWindowHeight(islandBottom: 300) == 307)
     }
 
     @Test func coupledIslandNeverShrinksTheWindow() {
@@ -240,9 +240,9 @@ import Testing
                                                   auxiliaryLeft: 300, auxiliaryRight: 300,
                                                   hardwareSlot: 185, wrapMenuBar: true,
                                                   coupledIsland: island)
-        #expect(frame == CGRect(x: 649.5, y: 982 - 42, width: 213, height: 42))
+        #expect(frame == CGRect(x: 649.5, y: 982 - 39, width: 213, height: 39))
         // And nil is the standalone frame, untouched.
-        #expect(Self.frame().height == 38)
+        #expect(Self.frame().height == 36)
     }
 
     @Test func notchlessSlotsFlankTheBand() {

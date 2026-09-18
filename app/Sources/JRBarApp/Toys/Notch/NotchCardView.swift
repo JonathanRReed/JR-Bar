@@ -183,7 +183,7 @@ struct NotchCardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, verticalPad)
         .frame(width: width)
-        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+        .onDrop(of: [UTType.fileURL, UTType.url], isTargeted: nil) { providers in
             ShelfTrayDrop.urls(from: providers) { urls in
                 model.tray.add(urls)
             }
@@ -586,6 +586,7 @@ private struct ShelfTrayRow: View {
         .foregroundStyle(entry.missing ? style.faintColor : style.subColor)
         .contextMenu {
             if !entry.missing {
+                Button("Quick Look") { tray.quickLook(entry) }
                 Button("Reveal in Finder") { tray.reveal(entry) }
                 Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
                 shareMenu(for: entry)
@@ -594,6 +595,9 @@ private struct ShelfTrayRow: View {
         }
         .onDrag {
             tray.provider(for: entry) ?? NSItemProvider()
+        }
+        .onTapGesture(count: 2) {
+            if !entry.missing { tray.quickLook(entry) }
         }
         .help(entry.missing
               ? "Missing — the file moved or was deleted."

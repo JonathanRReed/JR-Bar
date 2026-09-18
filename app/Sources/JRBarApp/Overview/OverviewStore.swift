@@ -117,8 +117,8 @@ final class OverviewStore {
         return out.sorted()
     }
 
-    /// The outcome words that mean a run is over — one vocabulary shared
-    /// by the strip's live count and the graph's default-mode check.
+    /// The outcome words that mean a run is over — the vocabulary the
+    /// strip's live count uses.
     static let terminalOutcomes: Set<String> = ["succeeded", "failed", "unreported"]
 
     /// The summary strip's counts — computed over the SAME filtered rows
@@ -139,32 +139,6 @@ final class OverviewStore {
     var isLive: Bool { core.isLive }
 
     var selected: CoreRosterEntry? { rows.first { $0.id == selectedID } }
-
-    // MARK: List | Graph
-
-    /// The content pane's mode. An explicit pick persists under
-    /// `overview.viewMode`; with none stored the graph is the default
-    /// only while at least one roster session is live — a window full of
-    /// settled history opens on the table it is actually useful as.
-    var viewModeChoice: OverviewViewMode? = OverviewViewModePreference.load()
-    var viewMode: OverviewViewMode { viewModeChoice ?? (hasLiveSessions ? .graph : .list) }
-
-    func setViewMode(_ mode: OverviewViewMode) {
-        viewModeChoice = mode
-        OverviewViewModePreference.save(mode)
-    }
-
-    /// Any roster session whose outcome is not terminal — the same words
-    /// `stripCounts.live` counts, over the unfiltered roster so changing
-    /// the cut cannot flip the default mode under the user.
-    var hasLiveSessions: Bool {
-        roster.contains { !Self.terminalOutcomes.contains($0.axes?.outcome ?? "") }
-    }
-
-    /// The node graph over the SAME rows the table shows — preset,
-    /// project and search already applied — so the two panes render one
-    /// filtered set and can never disagree (S7.1).
-    var graph: OverviewGraph { OverviewGraph.build(from: rows) }
 
     // MARK: Lifecycle
 

@@ -467,6 +467,37 @@ struct MenuBarActionsTests {
         hotkeys.stop()
     }
 
+    @MainActor
+    @Test("a hotkey press claims only its own (signature, id) — the other chord's press passes through")
+    func hotkeyRouting() {
+        // The dispatcher fans a press out to every installed handler:
+        // 'jrbr' must not claim 'jrbs''s event or one key would toggle
+        // both surfaces — the cross-fire the claim check exists to stop.
+        let panel = PanelHotkey()
+        let shelf = PanelHotkey(signature: OSType(0x6A726273),
+                                keyCode: UInt32(kVK_ANSI_D))
+        let panelID = EventHotKeyID(signature: OSType(0x6A726272), id: 1)
+        let shelfID = EventHotKeyID(signature: OSType(0x6A726273), id: 1)
+        #expect(panel.owns(panelID) && !panel.owns(shelfID))
+        #expect(shelf.owns(shelfID) && !shelf.owns(panelID))
+
+        // A fabricated Carbon event reads back the pair it was stamped
+        // with — the handler's routing depends on this extraction.
+        var event: EventRef?
+        #expect(CreateEvent(nil, OSType(kEventClassKeyboard),
+                            UInt32(kEventHotKeyPressed), 0,
+                            EventAttributes(kEventAttributeNone), &event) == noErr)
+        guard let event else { return }
+        defer { ReleaseEvent(event) }
+        var stamped = shelfID
+        SetEventParameter(event, EventParamName(kEventParamDirectObject),
+                          EventParamType(typeEventHotKeyID),
+                          MemoryLayout<EventHotKeyID>.size, &stamped)
+        let read = PanelHotkey.hotKeyID(from: event)
+        #expect(read.map(shelf.owns) == true)
+        #expect(read.map(panel.owns) == false)
+    }
+
     // MARK: Triggers — the pure engine over faked events
 
     private func rule(_ trigger: MenuBarTrigger,
@@ -584,6 +615,28 @@ struct MenuBarActionsTests {
         #expect(engine.actions(for: .micInUse(true), rules: rules) == [.hideAll])
         #expect(engine.actions(for: .focusOn(true), rules: rules)
                 == [.applyProfile(name: "Deep")])
+    }
+
+    @Test("a script action rides the same pipeline — the engine hands it through verbatim")
+    func triggerScript() {
+        var engine = MenuBarTriggerEngine()
+        let rules = [rule(.screenUnlocked,
+                          .runScript(command: "say 'welcome back'"), id: "s")]
+        #expect(engine.actions(for: .screenUnlocked, rules: rules)
+                == [.runScript(command: "say 'welcome back'")])
+        // The rule's one-line read names the command.
+        #expect(rules[0].summary == "when the screen unlocks → run “say 'welcome back'”")
+    }
+
+    @Test("a script rule survives Codable — the stored command round-trips")
+    func triggerScriptCodable() throws {
+        let rule = MenuBarTriggerRule(id: "s", enabled: true,
+                                      trigger: .chargerConnected,
+                                      action: .runScript(command: "pmset displaysleepnow"))
+        let data = try JSONEncoder().encode(rule)
+        let back = try JSONDecoder().decode(MenuBarTriggerRule.self, from: data)
+        #expect(back == rule)
+        #expect(back.action == .runScript(command: "pmset displaysleepnow"))
     }
 
     // MARK: The facade — the maintainer's wiring contract

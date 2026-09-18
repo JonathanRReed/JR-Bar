@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import JRBarCore
 import OSLog
+import ScreenCaptureKit
 import SwiftUI
 
 // MARK: - The list (pure, tested)
@@ -24,15 +25,21 @@ struct SwitcherItem: Identifiable {
     let element: AXUIElement?
     /// The CGWindow number when on-screen — the thumbnail key.
     let windowID: CGWindowID?
+    /// The Dock tile's `AXStatusLabel` — the unread count the ⌘⇥ card
+    /// draws on the icon like Witch's strip. nil when there is none.
+    var badge: String? = nil
 }
 
-/// One on-screen window out of `CGWindowListCopyWindowInfo`, already
-/// filtered to layer 0 and a real app.
+/// One window out of `CGWindowListCopyWindowInfo`, already filtered to
+/// layer 0 and a real app. `onScreen` splits the on-screen rows the
+/// z-order ranks from the off-screen ones (minimized, other Spaces)
+/// that list without a recency.
 struct SwitcherWindowRow {
     let pid: pid_t
     let windowID: CGWindowID
     let title: String
     let bounds: CGRect
+    var onScreen: Bool = true
 }
 
 enum DockSwitcherList {
@@ -60,16 +67,47 @@ enum DockSwitcherList {
             else { return nil }
             return SwitcherWindowRow(pid: pid, windowID: wid,
                                      title: dict[kCGWindowName as String] as? String ?? "",
-                                     bounds: bounds)
+                                     bounds: bounds, onScreen: true)
+        }
+    }
+
+    /// Minimized windows of regular apps — `.optionOnScreenOnly` hides
+    /// them, so an app whose windows are all in the Dock never made the
+    /// strip at all (AltTab/Witch list it). One extra window-list pass;
+    /// no AX walk needed.
+    static func offScreenRows(
+        running: [pid_t] = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && !$0.isTerminated }
+            .map(\.processIdentifier)
+    ) -> [SwitcherWindowRow] {
+        var owners = Set(running)
+        owners.remove(ProcessInfo.processInfo.processIdentifier)
+        guard let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
+                                                    kCGNullWindowID) as? [[String: Any]]
+        else { return [] }
+        return info.compactMap { dict in
+            guard let pid = dict[kCGWindowOwnerPID as String] as? Int32,
+                  owners.contains(pid),
+                  let wid = dict[kCGWindowNumber as String] as? CGWindowID,
+                  (dict[kCGWindowLayer as String] as? Int) == 0,
+                  (dict[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == false,
+                  let boundsDict = dict[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                  bounds.width >= 40, bounds.height >= 40
+            else { return nil }
+            return SwitcherWindowRow(pid: pid, windowID: wid,
+                                     title: dict[kCGWindowName as String] as? String ?? "",
+                                     bounds: bounds, onScreen: false)
         }
     }
 
     /// Merge the z-ordered CGWindow rows with each app's AX windows.
     /// On-screen windows lead in recency order, matched to their AX
     /// element by frame then title (the thumbnail matcher's rule);
-    /// AX-only windows — minimized, other Spaces — follow grouped by
-    /// their app's best z position.
+    /// off-screen rows (minimized) and AX-only windows — other Spaces —
+    /// follow grouped by their app's best z position.
     static func order(rows: [SwitcherWindowRow],
+                      offRows: [SwitcherWindowRow] = [],
                       windowsForApp: (pid_t) -> [DockPreviewWindow],
                       appName: (pid_t) -> String,
                       icon: (pid_t) -> NSImage?) -> [SwitcherItem] {
@@ -106,10 +144,31 @@ enum DockSwitcherList {
             }
         }
 
+        // Off-screen rows — minimized windows — app by app, matched to
+        // the same unmatched AX pool so a row that finds its element
+        // takes it (and the AX leftover below skips it).
+        var offByPID: [pid_t: [SwitcherWindowRow]] = [:]
+        for row in offRows { offByPID[row.pid, default: []].append(row) }
+
         // Off-screen and minimized windows, app by app in recency.
-        let pids = unmatched.keys.sorted { (appRank[$0] ?? .max) < (appRank[$1] ?? .max) }
+        let pids = Set(unmatched.keys).union(offByPID.keys)
+            .sorted { (appRank[$0] ?? .max) < (appRank[$1] ?? .max) }
         for pid in pids {
-            for window in unmatched[pid] ?? [] {
+            // An app with nothing on-screen never touched the pool —
+            // fetch now or every minimized row lands elementless and
+            // commit can only activate, never restore its window.
+            var leftover = unmatched[pid] ?? axWindows(for: pid)
+            for row in offByPID[pid] ?? [] {
+                let hit = match(row: row, in: leftover)
+                if let hit { leftover.removeAll { $0.id == hit.id } }
+                items.append(SwitcherItem(
+                    id: "w\(row.windowID)", pid: pid,
+                    appName: appName(pid), icon: icon(pid),
+                    title: hit?.title ?? (row.title.isEmpty ? appName(pid) : row.title),
+                    minimized: hit?.minimized ?? true, onScreen: false,
+                    element: hit?.element, windowID: row.windowID))
+            }
+            for window in leftover {
                 items.append(SwitcherItem(
                     id: "a\(pid)-\(window.id)", pid: pid,
                     appName: appName(pid), icon: icon(pid),
@@ -140,7 +199,9 @@ enum DockSwitcherList {
 /// what I was in" — and wraps in both directions.
 struct SwitcherModel {
     /// The unfiltered list — the type-ahead always narrows from this.
-    private var allItems: [SwitcherItem] = []
+    /// The unfiltered set — the strip's thumbnail pass reads it so a
+    /// typed filter can't drop stills already captured.
+    private(set) var allItems: [SwitcherItem] = []
     private(set) var items: [SwitcherItem] = []
     private(set) var selection = 0
     /// The type-ahead buffer: letters narrow the strip to windows and
@@ -152,6 +213,20 @@ struct SwitcherModel {
         self.items = items
         query = ""
         selection = items.count > 1 ? 1 : 0
+    }
+
+    /// A verb's aftermath: the list rebuilds under the strip (a closed
+    /// window leaves, a quit app vanishes) while the selection keeps
+    /// its row when it survives.
+    mutating func refresh(with items: [SwitcherItem]) {
+        let keep = selected
+        allItems = items
+        self.items = query.isEmpty ? items : items.filter { Self.matches($0, query: query) }
+        if let keep, let index = self.items.firstIndex(where: { $0.id == keep.id }) {
+            selection = index
+        } else {
+            selection = min(selection, max(0, self.items.count - 1))
+        }
     }
 
     mutating func advance(by step: Int) {
@@ -188,12 +263,12 @@ struct SwitcherModel {
         }
     }
 
-    /// Case-insensitive substring on the window title or the app —
-    /// "saf" lands Safari, "ter" the Terminal window.
+    /// The fuzzy match on the window title or the app — the command
+    /// bar's subsequence scorer, so "sfr" lands Safari the way Witch's
+    /// type-ahead does and "tm" still finds a Terminal window.
     static func matches(_ item: SwitcherItem, query: String) -> Bool {
-        let needle = query.lowercased()
-        return item.title.range(of: needle, options: .caseInsensitive) != nil
-            || item.appName.range(of: needle, options: .caseInsensitive) != nil
+        MenuBarCommands.score(query, item.title) != nil
+            || MenuBarCommands.score(query, item.appName) != nil
     }
 
     var selected: SwitcherItem? {
@@ -218,11 +293,18 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// delete widens it back.
     var onType: (_ char: String) -> Void = { _ in }
     var onBackspace: () -> Void = {}
+    /// A ⌘-modified verb on the highlighted row: q quits the app,
+    /// w closes the window, m minimizes, h hides, f toggles
+    /// fullscreen — the stock ⌘⇥/AltTab verb row.
+    var onVerb: (_ char: String) -> Void = { _ in }
     /// The ⌘⇥ app switcher — the same tap's second chord, a level per
     /// app and a commit when command lifts. Off by default; eating the
     /// system's own chord is a bigger promise than ⌥⇥.
     var onCmdTab: (_ shifted: Bool) -> Void = { _ in }
     var onCmdCommit: () -> Void = {}
+    /// Witch's drill-down: ↓ on an app card opens that app's windows
+    /// under the same strip — command's release then commits the window.
+    var onDrill: () -> Void = {}
     /// Set from the main actor whenever the panel opens or closes;
     /// read on the tap thread.
     private let lock = NSLock()
@@ -318,14 +400,30 @@ final class SwitcherKeyTap: @unchecked Sendable {
                 switch code {
                 case 123: return swallow { self.onArrow(-1) }   // ←
                 case 124: return swallow { self.onArrow(1) }    // →
+                case 125: return swallow {                    // ↓
+                    // The app strip drills into the pick's windows;
+                    // the window strip is one level already.
+                    if isCmdOpen { self.onDrill() }
+                }
                 case 36, 76:
                     return swallow { self.isCmdOpenNow ? self.onCmdCommit() : self.onCommit() }
                 case 51: return swallow { self.onBackspace() }  // ⌫
                 case 53: return swallow { self.onCancel() }     // esc
                 default:
+                    // ⌘-modified keys are verbs on the highlighted row
+                    // (stock ⌘⇥ semantics) — and they never leak to the
+                    // front app: the tap owns the keyboard while the
+                    // strip is up, so a bare pass-through would fire
+                    // ⌘Q on the app being switched *away from*.
+                    if flags.contains(.maskCommand) {
+                        if let char = Self.charForKeycode[code], Self.verbKeys.contains(char) {
+                            return swallow { self.onVerb(char) }
+                        }
+                        return nil
+                    }
                     // Type-ahead: bare characters filter the strip;
                     // modified keys pass through untouched.
-                    if !flags.contains(.maskCommand), !flags.contains(.maskControl),
+                    if !flags.contains(.maskControl),
                        let char = Self.charForKeycode[code] {
                         return swallow { self.onType(char) }
                     }
@@ -351,6 +449,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return cmdOpen
     }
+
+    /// The ⌘-verb letters — the row of actions stock ⌘⇥ and AltTab
+    /// share. Type-ahead keeps every other key.
+    nonisolated static let verbKeys: Set<String> = ["q", "w", "m", "h", "f"]
 
     /// Keycode → character for the type-ahead — letters, digits and
     /// space. The US layout is the only one the buffer pretends to
@@ -385,12 +487,26 @@ final class DockSwitcherController {
     private(set) var model = SwitcherModel()
     /// Which strip is up — the ⌥⇥ window cards or the ⌘⇥ app row.
     private(set) var appMode = false
+    /// The drill-down's mark: set when ↓ turned the ⌘⇥ app row into
+    /// that app's window strip, so command's release commits a window
+    /// instead of an app.
+    private(set) var drilledApp: pid_t?
     /// Settings read — the card's switch decides per open whether the
     /// chord is live.
     var isAllowed: () -> Bool = { true }
     /// The ⌘⇥ switch — off by default, so the system's own switcher
     /// keeps its chord until the card opts in.
     var isCmdAllowed: () -> Bool = { false }
+    /// Window stills on the strip — the preview's thumbnail switch
+    /// answers for both, since the grant is the same Screen Recording
+    /// one and a user who declined it declines it everywhere.
+    var thumbsAllowed: () -> Bool = { false }
+    /// The preview's off-screen switch: minimized and other-Space
+    /// windows only attempt captures when it's on.
+    var offscreenAllowed: () -> Bool = { false }
+    /// An open can land while the last open's captures still run —
+    /// the generation tells a stale async batch from the live strip.
+    private var thumbGeneration = 0
 
     private(set) var running = false
 
@@ -411,6 +527,7 @@ final class DockSwitcherController {
         tap.onArrow = { [weak self] delta in self?.advance(by: delta) }
         tap.onCmdTab = { [weak self] shifted in self?.cmdTab(shifted: shifted) }
         tap.onCmdCommit = { [weak self] in self?.cmdCommit() }
+        tap.onDrill = { [weak self] in self?.drill() }
         tap.onType = { [weak self] char in
             self?.model.type(char)
             self?.panel?.present(model: self?.model ?? SwitcherModel())
@@ -419,6 +536,7 @@ final class DockSwitcherController {
             self?.model.backspace()
             self?.panel?.present(model: self?.model ?? SwitcherModel())
         }
+        tap.onVerb = { [weak self] char in self?.verb(char) }
         tap.start()
     }
 
@@ -439,11 +557,27 @@ final class DockSwitcherController {
     }
 
     private func open() {
+        let items = buildItems()
+        guard !items.isEmpty else { return }
+        model.open(with: items)
+        appMode = false
+        drilledApp = nil
+        tap.setOpen(true)
+        if panel == nil { panel = DockSwitcherPanel(controller: self) }
+        panel?.present(model: model)
+        loadThumbnails()
+    }
+
+    /// The ⌥⇥ strip's rows: on-screen windows in z-order, then
+    /// minimized and other-Space windows grouped by app — the whole
+    /// set a verb can rebuild under the open panel.
+    private func buildItems() -> [SwitcherItem] {
         let rows = DockSwitcherList.onScreenRows()
         let apps = Dictionary(uniqueKeysWithValues:
             NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) })
-        let items = DockSwitcherList.order(
+        return DockSwitcherList.order(
             rows: rows,
+            offRows: DockSwitcherList.offScreenRows(),
             windowsForApp: { pid in
                 guard apps[pid] != nil, pid != ProcessInfo.processInfo.processIdentifier
                 else { return [] }
@@ -451,12 +585,6 @@ final class DockSwitcherController {
             },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
-        guard !items.isEmpty else { return }
-        model.open(with: items)
-        appMode = false
-        tap.setOpen(true)
-        if panel == nil { panel = DockSwitcherPanel(controller: self) }
-        panel?.present(model: model)
     }
 
     // MARK: ⌘⇥ — the app strip
@@ -474,6 +602,18 @@ final class DockSwitcherController {
     /// every app with a visible window, then the rest of the regular
     /// apps follow — ⌘⇥'s whole list, not just the windowed half.
     private func openApps() {
+        let items = buildAppItems()
+        guard !items.isEmpty else { return }
+        model.open(with: items)
+        appMode = true
+        drilledApp = nil
+        tap.setCmdOpen(true)
+        if panel == nil { panel = DockSwitcherPanel(controller: self) }
+        panel?.present(model: model)
+        loadThumbnails()
+    }
+
+    private func buildAppItems() -> [SwitcherItem] {
         let apps = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && !$0.isTerminated
                 && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
@@ -487,32 +627,66 @@ final class DockSwitcherController {
         for app in apps where seen.insert(app.processIdentifier).inserted {
             ordered.append(app.processIdentifier)
         }
-        let items = ordered.compactMap { pid -> SwitcherItem? in
+        // The unread counts live on the Dock's tiles — one AX walk maps
+        // bundle path → badge, the same walk the previews do per tick.
+        var badges: [String: String] = [:]
+        if let pid = AppleDockReader.dockPID(), let list = AppleDockReader.dockList(pid: pid) {
+            for tile in AppleDockReader.items(list: list)
+            where tile.kind == .app {
+                if let badge = tile.badge, let path = tile.url?.path {
+                    badges[path] = badge
+                }
+            }
+        }
+        return ordered.compactMap { pid -> SwitcherItem? in
             guard let app = byPID[pid] else { return nil }
             return SwitcherItem(id: "app\(pid)", pid: pid,
                                 appName: app.localizedName ?? "App",
                                 icon: app.icon,
                                 title: app.localizedName ?? "App",
                                 minimized: false, onScreen: true,
-                                element: nil, windowID: nil)
+                                element: nil, windowID: nil,
+                                badge: app.bundleURL.flatMap { badges[$0.path] })
         }
+    }
+
+    /// ↓ on an app card: the strip becomes that app's windows —
+    /// Witch's drill-down. The tap keeps the command chord, so its
+    /// release commits the highlighted window through `cmdCommit`.
+    func drill() {
+        guard appMode, let app = model.selected else { return }
+        let items = buildItems().filter { $0.pid == app.pid }
+        // No reachable windows: keep the app row — a blank strip is
+        // worse than the card that was under the finger.
         guard !items.isEmpty else { return }
+        drilledApp = app.pid
+        appMode = false
         model.open(with: items)
-        appMode = true
-        tap.setCmdOpen(true)
-        if panel == nil { panel = DockSwitcherPanel(controller: self) }
+        model.select(index: 0)
         panel?.present(model: model)
+        loadThumbnails()
     }
 
     /// The app strip's commit: activate the pick — the app's own
-    /// front-window behaviour decides which window lands.
+    /// front-window behaviour decides which window lands. A drilled
+    /// strip commits the window instead, like the ⌥⇥ path.
     func cmdCommit() {
         let item = model.selected
+        let drilled = drilledApp != nil
         appMode = false
+        drilledApp = nil
         tap.setCmdOpen(false)
         panel?.dismiss()
         guard let item else { return }
-        NSRunningApplication(processIdentifier: item.pid)?.activate()
+        if drilled, let element = item.element {
+            let window = DockPreviewWindow(id: 0, title: item.title,
+                                         minimized: item.minimized,
+                                         fullScreen: nil, frame: nil,
+                                         thumbnail: nil, element: element)
+            AppleDockReader.raise(window, app: NSRunningApplication(processIdentifier: item.pid))
+        } else {
+            NSRunningApplication(processIdentifier: item.pid)?.activate()
+        }
     }
 
     func advance(by step: Int) {
@@ -529,6 +703,7 @@ final class DockSwitcherController {
     func commit() {
         guard let item = model.selected else { return cancel() }
         appMode = false
+        drilledApp = nil
         tap.setOpen(false)
         panel?.dismiss()
         if let element = item.element {
@@ -545,8 +720,119 @@ final class DockSwitcherController {
 
     func cancel() {
         appMode = false
+        drilledApp = nil
         tap.setOpen(false)
         panel?.dismiss()
+    }
+
+    /// A ⌘-verb on the highlighted row — the stock ⌘⇥/AltTab action
+    /// set: q quits the app, h hides it, w closes the window, m
+    /// minimizes it, f toggles fullscreen. App rows answer q/h; the
+    /// window verbs need the row's element. The strip stays up and
+    /// rebuilds around the pick once the target settles.
+    func verb(_ char: String) {
+        guard let item = model.selected else { return }
+        let app = NSRunningApplication(processIdentifier: item.pid)
+        switch char {
+        case "q": app?.terminate()
+        case "h": app?.hide()
+        case "w", "m", "f":
+            guard let element = item.element else { return }
+            let window = DockPreviewWindow(id: 0, title: item.title,
+                                         minimized: item.minimized,
+                                         fullScreen: nil, frame: nil,
+                                         thumbnail: nil, element: element)
+            switch char {
+            case "w": AppleDockReader.close(window)
+            case "m": AppleDockReader.setMinimized(window, !item.minimized)
+            default:
+                // f toggles, not forces: a fullscreen window comes
+                // back, not a second write of true.
+                let current = AppleDockReader.fullScreenState(of: element) ?? false
+                AppleDockReader.setFullScreen(window, !current)
+            }
+        default: return
+        }
+        // The AX write lands before the window/app state does — a beat
+        // later the strip rebuilds so the closed or quit row is gone.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.rebuild()
+        }
+    }
+
+    /// Re-list the rows under the open panel, keeping the selection —
+    /// the verb path's refresh.
+    private func rebuild() {
+        guard panel?.isVisible == true else { return }
+        if appMode {
+            model.refresh(with: buildAppItems())
+        } else if let drilledApp {
+            let rows = buildItems().filter { $0.pid == drilledApp }
+            if rows.isEmpty {
+                // The drilled app lost its last window under the panel —
+                // pop back to the strip rather than show a blank card.
+                self.drilledApp = nil
+                appMode = true
+                model.refresh(with: buildAppItems())
+            } else {
+                model.refresh(with: rows)
+            }
+        } else {
+            model.refresh(with: buildItems())
+        }
+        panel?.present(model: model)
+        loadThumbnails()
+    }
+
+    /// Fill the strip's cards in behind the icons: every row with a
+    /// CG window id gets the shared preview capture, app rows keep
+    /// their icon. No grant or the toggle off — the strip stays icons,
+    /// exactly like the preview's "No preview" cards.
+    private func loadThumbnails() {
+        thumbGeneration += 1
+        let generation = thumbGeneration
+        guard thumbsAllowed() else { panel?.apply(thumbnails: [:]); return }
+        let offscreen = offscreenAllowed()
+        // The unfiltered list: typing a letter shouldn't lose stills
+        // already on the card.
+        let items = model.allItems
+        Task { [weak self] in
+            let thumbs = await DockSwitcherThumbs.stills(
+                for: items, offscreen: offscreen) { [weak self] in
+                    guard let self else { return true }
+                    return self.thumbGeneration != generation
+                        || self.panel?.isVisible != true
+                }
+            guard let self, self.thumbGeneration == generation else { return }
+            self.panel?.apply(thumbnails: thumbs)
+        }
+    }
+}
+
+/// The switcher's capture pass: one `SCShareableContent` fetch maps
+/// each row's CG window id to its `SCWindow`, then the shared preview
+/// capture (cache + trim + transparency probe) does the still.
+enum DockSwitcherThumbs {
+    /// `item.id` → still. `isStale` mirrors the preview's contract —
+    /// a closed or re-opened strip drops the in-flight batch.
+    @MainActor
+    static func stills(for items: [SwitcherItem], offscreen: Bool,
+                       isStale: @MainActor () -> Bool) async -> [String: NSImage] {
+        guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: !offscreen) else { return [:] }
+        guard !isStale() else { return [:] }
+        let byID = Dictionary(uniqueKeysWithValues:
+            shareable.windows.map { ($0.windowID, $0) })
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        var stills: [String: NSImage] = [:]
+        for item in items {
+            guard !isStale() else { return [:] }
+            guard let windowID = item.windowID, let scWindow = byID[windowID],
+                  let image = await DockThumbnailer.capture(
+                    scWindow: scWindow, pid: item.pid, scale: scale) else { continue }
+            stills[item.id] = image
+        }
+        return stills
     }
 }
 
@@ -584,6 +870,9 @@ final class DockSwitcherPanel: NSPanel {
         isExcludedFromWindowsMenu = true
         isMovable = false
         animationBehavior = .none
+        // The strip keeps itself out of screenshots and other apps'
+        // window lists — the preview panel does the same.
+        sharingType = .none
         collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .ignoresCycle]
         level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 10)
         title = "JR-Bar Window Switcher"
@@ -596,6 +885,32 @@ final class DockSwitcherPanel: NSPanel {
         model.items = source.items
         model.selection = source.selection
         model.query = source.query
+        // A closed or rebuilt window's still is dead weight — the
+        // card falls back to its icon without it.
+        let live = Set(source.allItems.map(\.id))
+        model.thumbnails = model.thumbnails.filter { live.contains($0.key) }
+        refit()
+        if !isVisible {
+            alphaValue = 0
+            orderFrontRegardless()
+            let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = reduced ? 0.03 : 0.14
+                animator().alphaValue = 1
+            }
+        }
+    }
+
+    /// The async capture pass hands its batch over — merge and grow
+    /// the cards around the arriving stills.
+    func apply(thumbnails: [String: NSImage]) {
+        model.thumbnails.merge(thumbnails) { _, new in new }
+        if !thumbnails.isEmpty { refit() }
+    }
+
+    /// Resize around whatever the cards are now — icons or stills —
+    /// keeping the strip centered on the pointer's screen.
+    private func refit() {
         hosting.invalidateIntrinsicContentSize()
         hosting.layoutSubtreeIfNeeded()
         let fit = hosting.intrinsicContentSize
@@ -606,15 +921,6 @@ final class DockSwitcherPanel: NSPanel {
         let origin = NSPoint(x: screen.visibleFrame.midX - width / 2,
                              y: screen.visibleFrame.midY - height / 2)
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        if !isVisible {
-            alphaValue = 0
-            orderFrontRegardless()
-            let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = reduced ? 0.03 : 0.14
-                animator().alphaValue = 1
-            }
-        }
     }
 
     func dismiss() {
@@ -633,6 +939,9 @@ final class DockSwitcherModel {
     /// The live type-ahead buffer — shown so the filter never feels
     /// like the strip dropped rows.
     var query = ""
+    /// Window stills keyed by item id, filled in behind the strip —
+    /// AltTab's card: the window's own pixels over its app icon.
+    var thumbnails: [String: NSImage] = [:]
     var onPick: (Int) -> Void = { _ in }
 }
 
@@ -681,10 +990,41 @@ struct DockSwitcherView: View {
 
     private func card(_ item: SwitcherItem, selected: Bool) -> some View {
         VStack(spacing: 5) {
-            Image(nsImage: item.icon ?? NSImage())
-                .resizable()
-                .frame(width: 44, height: 44)
-            Text(item.title)
+            if let still = model.thumbnails[item.id] {
+                // AltTab's card: the window's own pixels, its app
+                // badged in the corner.
+                Image(nsImage: still)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 128, maxHeight: 76)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(alignment: .bottomLeading) {
+                        Image(nsImage: item.icon ?? NSImage())
+                            .resizable()
+                            .frame(width: 18, height: 18)
+                            .padding(3)
+                    }
+                    .frame(height: 76)
+            } else {
+                Image(nsImage: item.icon ?? NSImage())
+                    .resizable()
+                    .frame(width: 44, height: 44)
+                    .overlay(alignment: .topTrailing) {
+                        // The Dock tile's badge — Witch draws the same
+                        // unread pill on its app cards.
+                        if let badge = item.badge {
+                            Text(badge)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.red, in: Capsule())
+                                .offset(x: 8, y: -6)
+                        }
+                    }
+                    .frame(height: 76, alignment: .center)
+            }
+            Text(AppNameChannel.split(item.title).base)
                 .font(.caption2)
                 .lineLimit(1)
                 .truncationMode(.middle)

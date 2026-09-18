@@ -558,14 +558,22 @@ final class PanelStore {
                     : pick.ask != nil || pick.activity == .waiting ? .attention
                     : .neutral)
         }
-        // The media ear — a live equalizer while the track plays —
-        // fills whichever side is free: the activity slot owns the
-        // left while a session runs, so media takes the left only in
-        // the quiet and otherwise spills to an unmetered right.
-        let mediaViz = media?.playing == true
+        // The media wing — Alcove's grammar: album art on the left
+        // ear, the live equalizer on the right. The activity slot owns
+        // the left while a session runs, so media takes the left only
+        // in the quiet and otherwise spills to an unmetered right.
+        let mediaArt: ScreenBarWingSlot? = media?.playing == true && media?.artworkData != nil
+            ? ScreenBarWingSlot(text: media?.displayLine ?? "Playing",
+                                artworkData: media?.artworkData)
+            : nil
+        let mediaViz: ScreenBarWingSlot? = media?.playing == true
             ? ScreenBarWingSlot(text: media?.displayLine ?? "Playing", visualizer: true)
             : nil
-        if left == nil { left = mediaViz }
+        var mediaTookLeft = false
+        if left == nil, let mediaLeft = mediaArt ?? mediaViz {
+            left = mediaLeft
+            mediaTookLeft = true
+        }
         let right = NotchIsland.meters(core.state?.usage).first
             .map { meter in
                 // The ear's words: the percent, then the reset countdown
@@ -578,7 +586,7 @@ final class PanelStore {
                                          meter: meter.percent.map { min(1, max(0, $0 / 100)) },
                                          reset: meter.resetFraction(now: Date()),
                                          tone: meter.incident ? .attention : .neutral)
-            } ?? (left?.visualizer == true ? nil : mediaViz)
+            } ?? (mediaTookLeft && mediaArt == nil ? nil : mediaViz)
         return ScreenBarWings(left: left, right: right)
     }
 

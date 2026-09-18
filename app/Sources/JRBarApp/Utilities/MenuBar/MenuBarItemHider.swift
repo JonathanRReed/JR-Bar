@@ -184,7 +184,14 @@ final class MenuBarItemHider {
     var setControlLength: @MainActor (MenuBarItemSection, CGFloat) -> Void = { _, _ in }
     /// Test seam: suppress the cover panels entirely — a unit test
     /// must not draw over the real menu bar.
+    /// Under the agent (`startConcealer`) this stands too — the spacer
+    /// stays down — but an `externalPlan` the utility hands over still
+    /// draws its covers (items the agent cannot target, e.g. helpers
+    /// with no bundle identifier).
     var shuttersSuppressed = false
+    /// The utility-owned plan drawn while `shuttersSuppressed` stands.
+    /// nil under the spacer engine.
+    var externalPlan: MenuBarHidePlan?
 
     private let hiddenShutter = MenuBarShutter()
     private let alwaysHiddenShutter = MenuBarShutter()
@@ -450,13 +457,14 @@ final class MenuBarItemHider {
         let changed = plan != lastPlan
         lastPlan = plan
         if let length = plan.hiddenControlLength { request(length) }
-        updateShutters(plan: plan, rowHeight: row.height)
+        updateShutters(plan: plan, row: row)
         onPlan?(plan)
         if changed {
             let describe = { (r: CGRect?) -> String in
                 r.map { String(format: "%.0f–%.0f@%.0f", $0.minX, $0.maxX, $0.minY) } ?? "none"
             }
-            Self.log.notice("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(\.id).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(\.id).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(\.id).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
+            let tag = { (i: MenuBarItem) in "\(i.id)@\(Int(i.bounds.minX))" }
+            Self.log.notice("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(tag).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(tag).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(tag).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
         }
     }
 
@@ -577,18 +585,73 @@ final class MenuBarItemHider {
         scheduleSettle()
     }
 
+    /// The last blend probe's answer and when it ran — re-sampling is
+    /// a screen capture, so it is cached rather than paid every pass.
+    private var blendSample: (hex: String, at: Date)?
+    private var blendProbeInFlight = false
+    /// The probe's pixel source — the same ScreenCaptureKit one-shot
+    /// the tiles use; nil falls back to the shared display filter.
+    var blendCapture: (@MainActor (CGRect) async -> CGImage?)?
+    private let blendFilterSource = DisplayFilterSource()
+
     /// Make the shutters match the plan and the reveal state.
-    private func updateShutters(plan: MenuBarHidePlan, rowHeight: CGFloat) {
-        guard !shuttersSuppressed else {
+    private func updateShutters(plan: MenuBarHidePlan, row: CGRect) {
+        // Under the agent the reconcile's own positional plan draws
+        // nothing — unless the utility handed over an external plan
+        // carrying covers for items the agent cannot target.
+        let effective = externalPlan ?? plan
+        guard !shuttersSuppressed || externalPlan != nil else {
             hiddenShutter.orderOut()
             alwaysHiddenShutter.orderOut()
             return
         }
-        let appearance = MenuBarCoverAppearance(settings: settings())
-        hiddenShutter.cover(revealed.contains(.hidden) ? [] : plan.hiddenCovers,
-                            rowHeight: rowHeight, appearance: appearance)
-        alwaysHiddenShutter.cover(revealed.contains(.alwaysHidden) ? [] : plan.alwaysHiddenCovers,
-                                  rowHeight: rowHeight, appearance: appearance)
+        var appearance = MenuBarCoverAppearance(settings: settings())
+        if appearance.material == .blend {
+            appearance.blendHex = blendHex(plan: effective, row: row)
+        }
+        hiddenShutter.cover(revealed.contains(.hidden) ? [] : effective.hiddenCovers,
+                            rowHeight: row.height, appearance: appearance)
+        alwaysHiddenShutter.cover(revealed.contains(.alwaysHidden) ? [] : effective.alwaysHiddenCovers,
+                                  rowHeight: row.height, appearance: appearance)
+    }
+
+    /// The sampled bar color for `.blend` covers — the cached answer
+    /// while a capture is in flight, "" when nothing has landed yet
+    /// (the material fallback stands in for the sample). The probe is
+    /// a strip of real bar just outside a covered run — never over a
+    /// shown item or another run — captured off the render path.
+    private func blendHex(plan: MenuBarHidePlan, row: CGRect) -> String {
+        if let cached = blendSample, Date().timeIntervalSince(cached.at) < 1.5 {
+            return cached.hex
+        }
+        let runs = plan.hiddenCovers + plan.alwaysHiddenCovers
+        guard let run = runs.first, !blendProbeInFlight else {
+            blendSample = (blendSample?.hex ?? "", Date())
+            return blendSample?.hex ?? ""
+        }
+        let blockers = plan.shown.map(\.bounds)
+        let probes = [
+            CGRect(x: run.lowerBound - 26, y: row.minY, width: 22, height: row.height),
+            CGRect(x: run.upperBound + 4, y: row.minY, width: 22, height: row.height),
+        ]
+        guard let probe = probes.first(where: { p in
+            !blockers.contains { $0.intersects(p) }
+                && !runs.contains { $0.lowerBound < p.maxX && $0.upperBound > p.minX }
+        }) else {
+            blendSample = ("", Date())
+            return ""
+        }
+        blendProbeInFlight = true
+        let capture = blendCapture ?? { [blendFilterSource] rect in
+            await blendFilterSource.capture(rect)
+        }
+        Task { [weak self] in
+            let image = await capture(probe)
+            let hex = image.flatMap { MenuBarBarSampler.averageHex(of: $0) } ?? ""
+            self?.blendSample = (hex, Date())
+            self?.blendProbeInFlight = false
+        }
+        return blendSample?.hex ?? ""
     }
 
     // MARK: Geometry

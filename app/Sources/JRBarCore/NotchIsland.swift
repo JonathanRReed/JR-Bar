@@ -276,7 +276,7 @@ extension NotchIsland {
 /// so a transparent window never swallows a menu-bar click.
 public enum NotchIslandLayout {
     /// Points the idle capsule reaches past each shoulder of the notch.
-    public static let shoulder: CGFloat = 12
+    public static let shoulder: CGFloat = 10
     public static let idleMinWidth: CGFloat = 96
     /// Room the frame leaves at the screen's side edges.
     public static let edgeMargin: CGFloat = 8
@@ -296,12 +296,12 @@ public enum NotchIslandLayout {
 
     /// Points of dead space the island keeps under the notch while the
     /// Screen Bar is live, on the faces that drop below it (the notice
-    /// capsule and the expanded card): the LED band ends ~8 pt below
-    /// the notch (6 pt of band plus the halo bleed) and the island's
-    /// window sits one level under the bar, so content clears the
-    /// strip. The idle face needs none — it tucks into the notch's own
-    /// depth, ending flush with the hardware's bottom edge.
-    public static let ledBandClearance: CGFloat = 12
+    /// capsule and the expanded card): the LED band ends ~7 pt below
+    /// the notch (4 pt of band, its seat, and the halo bleed) and the
+    /// island's window sits one level under the bar, so content clears
+    /// the strip. The idle face needs none — it tucks into the notch's
+    /// own depth, ending flush with the hardware's bottom edge.
+    public static let ledBandClearance: CGFloat = 10
 
     /// Points the expanded card reaches past each side of the notch
     /// slot — modest symmetric wings, so the grown card reads as the
@@ -329,7 +329,7 @@ public enum NotchIslandLayout {
     }
 
     /// Air around a shoulder's content.
-    public static let shoulderPad: CGFloat = 7
+    public static let shoulderPad: CGFloat = 5
 
     /// The collapsed capsule: the notch plus each shoulder's own width
     /// (`NotchIdleLayout.leftShoulder`/`rightShoulder` — zero while

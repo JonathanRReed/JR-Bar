@@ -26,6 +26,9 @@ enum MenuBarTriggerEvent: Equatable, Sendable {
     /// not an event — send the current state whenever it is read; the
     /// engine turns it into connect/disconnect edges.
     case onACPower(Bool)
+    /// A charge-level sample — the same baseline-and-edge contract as
+    /// `onACPower`, on the internal battery's percent.
+    case batteryPercent(Int)
     /// The system's "the network changed" — CoreWLAN's ssid-did-change
     /// note. Fires whether or not the name is readable, so the unnamed
     /// `wifiJoined("")` rule works without Location Services.
@@ -49,6 +52,8 @@ struct MenuBarTriggerEngine: Sendable {
     /// is a baseline: a rule never fires for a state the machine was
     /// already in when the source started.
     private(set) var lastOnAC: Bool?
+    /// The last charge sample — the same baseline rule as AC.
+    private(set) var lastBatteryPercent: Int?
     /// The last readable SSID sample — same baseline rule as AC.
     private(set) var lastSSID: String?
     /// The first sample must not read as a join/leave edge.
@@ -72,6 +77,15 @@ struct MenuBarTriggerEngine: Sendable {
             acEdge = lastOnAC == onAC || lastOnAC == nil ? nil : onAC
             lastOnAC = onAC
         }
+        // The percent edge is (previous, current) — a rule decides
+        // which direction of crossing it answers.
+        var percentEdge: (from: Int, to: Int)?
+        if case .batteryPercent(let percent) = event {
+            if let last = lastBatteryPercent, last != percent {
+                percentEdge = (last, percent)
+            }
+            lastBatteryPercent = percent
+        }
         var ssidEdge: (from: String?, to: String?)?
         if case .wifiSSID(let ssid) = event {
             if ssidSeen, ssid != lastSSID { ssidEdge = (lastSSID, ssid) }
@@ -90,6 +104,7 @@ struct MenuBarTriggerEngine: Sendable {
         }
         for rule in rules where rule.enabled {
             guard matches(rule.trigger, event: event, acEdge: acEdge,
+                          percentEdge: percentEdge,
                           ssidEdge: ssidEdge, micEdge: micEdge, focusEdge: focusEdge,
                           ruleID: rule.id, dayStamp: dayStamp) else { continue }
             fired.append(rule.action)
@@ -100,6 +115,7 @@ struct MenuBarTriggerEngine: Sendable {
     private mutating func matches(_ trigger: MenuBarTrigger,
                                   event: MenuBarTriggerEvent,
                                   acEdge: Bool?,
+                                  percentEdge: (from: Int, to: Int)?,
                                   ssidEdge: (from: String?, to: String?)?,
                                   micEdge: Bool?,
                                   focusEdge: Bool?,
@@ -120,6 +136,14 @@ struct MenuBarTriggerEngine: Sendable {
             return acEdge == true
         case (.chargerDisconnected, .onACPower):
             return acEdge == false
+        case (.batteryBelow(let p), .batteryPercent):
+            // Crossed the threshold downward: last read above it,
+            // this one at or under it.
+            guard let edge = percentEdge else { return false }
+            return edge.from > p && edge.to <= p
+        case (.batteryAbove(let p), .batteryPercent):
+            guard let edge = percentEdge else { return false }
+            return edge.from < p && edge.to >= p
         case (.wifiJoined(let wanted), .wifiChanged):
             // The unnamed flavour — a network changed, name or no name.
             return wanted.isEmpty
@@ -266,6 +290,9 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         let power = AlcovePowerMonitor.read()
         if power.hasBattery {
             onEvent?(.onACPower(power.onAC))
+            if let percent = power.percent {
+                onEvent?(.batteryPercent(percent))
+            }
         }
         onEvent?(.wifiSSID(Self.currentSSID()))
         onEvent?(.micInUse(Self.microphoneInUse()))

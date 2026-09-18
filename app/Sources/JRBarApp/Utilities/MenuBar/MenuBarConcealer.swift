@@ -49,11 +49,22 @@ enum MenuBarConcealPlan {
         return out
     }
 
+    /// Owners whose extras the agent would otherwise conceal: Focus,
+    /// Now Playing and friends are MenuBarAgent items — not entries in
+    /// `MBSystemItemIdentifier` — and their hosts are not regular
+    /// running apps, so they never reach the allowlist on their own.
+    /// The system's items are never ours: the whole family stays.
+    nonisolated static let systemItemOwners: Set<String> = [
+        "com.apple.MenuBarAgent",
+        "com.apple.controlcenter",
+        "com.apple.TextInputMenuAgent",
+    ]
+
     /// The allowlist that conceals exactly `concealed` among `running`:
-    /// everything running that is not concealed. Sorted so two plans
-    /// with the same content compare equal.
+    /// everything running that is not concealed, plus the system-item
+    /// owners. Sorted so two plans with the same content compare equal.
     nonisolated static func allowlist(running: Set<String>, concealed: Set<String>) -> [String] {
-        running.subtracting(concealed).sorted()
+        running.union(systemItemOwners).subtracting(concealed).sorted()
     }
 
     /// The first app map, taken once from the spacer model's plan: the
@@ -283,6 +294,28 @@ final class MenuBarConcealer {
         queue = Task { [weak self] in
             await previous?.value
             self?.dropLive()
+        }
+    }
+
+    /// Re-activate with the live configuration. An item registered
+    /// while an assertion holds is not adopted, so a concealed app
+    /// that re-creates its status item stands on the row until a
+    /// fresh activation sweeps it. New token before the old one is
+    /// invalidated — concealment never lifts mid-sweep.
+    func reassert() {
+        let previous = queue
+        queue = Task { [weak self] in
+            await previous?.value
+            guard let self, let live = self.live else { return }
+            do {
+                let token = try await self.backend.activate(allowedBundleIDs: live.allowlist)
+                let old = self.live
+                self.live = Live(concealed: live.concealed, allowlist: live.allowlist, token: token)
+                if let old { self.backend.invalidate(old.token) }
+                MenuBarAssessmentBackend.log.notice("reassert: reswept \(live.concealed.count, privacy: .public) apps")
+            } catch {
+                self.lastError = String(describing: error)
+            }
         }
     }
 

@@ -110,3 +110,16 @@ public enum OverviewSavedFilters {
         defaults.set(data, forKey: key)
     }
 }
+
+extension CoreSession {
+    /// The one-line "what is it doing" — the roster's Current activity
+    /// column shows this. Kept here (not in a graph file) because the
+    /// table is the only surface that reads it.
+    var activityCaption: String {
+        if let ask { return ask.summary ?? "Waiting on you" }
+        if let message, !message.isEmpty { return message }
+        if let event { return event }
+        if let tool { return tool }
+        return mode?.replacingOccurrences(of: "_", with: " ") ?? "—"
+    }
+}

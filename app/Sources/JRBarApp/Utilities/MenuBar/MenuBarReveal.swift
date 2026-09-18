@@ -68,6 +68,9 @@ final class MenuBarReveal {
     private var screenObserver: NSObjectProtocol?
     /// The poll's last inside-ness — entry is the gesture, not presence.
     private var hoverInside = false
+    /// The dwell deadline a zone entry arms — the reveal answers only
+    /// when the pointer is still inside at the deadline.
+    private var hoverDwellDeadline: Date?
     /// The last time `onReveal` actually fired; back-to-back gestures
     /// inside the throttle just keep the clock warm.
     private var lastRevealAt = Date.distantPast
@@ -86,6 +89,12 @@ final class MenuBarReveal {
     /// A gesture burst this close together is one reveal, not many —
     /// a scroll stream would otherwise reconcile per tick.
     nonisolated static let revealThrottle: TimeInterval = 0.5
+    /// How long a pointer must rest in the zone before a hover counts —
+    /// a graze across the stretch on the way to the clock is not a
+    /// gesture. Two polls at the near cadence; an instance property so
+    /// a test can pin the old fire-on-entry timing.
+    nonisolated static let defaultHoverDwell: TimeInterval = 0.18
+    var hoverDwell: TimeInterval = MenuBarReveal.defaultHoverDwell
 
     /// The row rect the off-actor monitor reads; a lock keeps the
     /// read whole against a screens-changed rewrite.
@@ -138,6 +147,7 @@ final class MenuBarReveal {
         revealed = false
         holdOpen = false
         hoverInside = false
+        hoverDwellDeadline = nil
         lastRevealAt = .distantPast
     }
 
@@ -205,7 +215,19 @@ final class MenuBarReveal {
             || hotFrames().contains(where: { $0.contains(point) })
         let entered = inZone && !hoverInside
         hoverInside = inZone
-        guard entered else { return }
+        guard inZone else {
+            hoverDwellDeadline = nil
+            return
+        }
+        if entered {
+            // A graze on the way to the clock is not a gesture — the
+            // zone must be dwelt in before the reveal answers. The
+            // deadline is read on this and later polls, so no extra
+            // timer; a zero dwell (tests) fires on entry as before.
+            hoverDwellDeadline = Date().addingTimeInterval(hoverDwell)
+        }
+        guard let deadline = hoverDwellDeadline, Date() >= deadline else { return }
+        hoverDwellDeadline = nil
         pointerEnteredRow()
     }
 

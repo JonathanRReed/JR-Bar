@@ -32,6 +32,10 @@ struct ScreenBarWingSlot: Equatable {
     /// drawn only while something is actually playing. `text` still
     /// carries the track line for the peek and VoiceOver.
     var visualizer = false
+    /// The track's album art — a PNG/JPEG payload the mark shows as a
+    /// rounded tile, Alcove's media-wing grammar: art on the left ear,
+    /// the equalizer on the right. nil leaves the other marks to draw.
+    var artworkData: Data?
     var tone: Tone = .neutral
 
     var textColor: Color {
@@ -149,7 +153,7 @@ struct ScreenBarWingsView: View {
                 UnevenRoundedRectangle(
                     topLeadingRadius: 0,
                     bottomLeadingRadius: 0,
-                    bottomTrailingRadius: model.notchCorner,
+                    bottomTrailingRadius: NotchTrayShape.capRadius,
                     topTrailingRadius: 0, style: .continuous)
                     .fill(.white.opacity(0.10))
                     .frame(width: ear.width, height: ear.height)
@@ -179,7 +183,15 @@ struct ScreenBarWingsView: View {
         let swell = side == .left ? model.leftSwell : model.rightSwell
         let reach = swell ? Self.swellReach * (side == .left ? -1 : 1) : 0
         let mark = Group {
-            if slot.visualizer {
+            if let artwork = slot.artworkData, let image = NSImage(data: artwork) {
+                // Album art — Alcove's media ear: a small rounded tile,
+                // the track's own face against the notch black.
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 19, height: 19)
+                    .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+            } else if slot.visualizer {
                 // The media ear: three bars bouncing on their own
                 // phases — the island strip's grammar, not a spectrum.
                 // The slot only exists while the track plays; Reduce
@@ -223,12 +235,12 @@ struct ScreenBarWingsView: View {
                 if swell {
                     // The hover tell's body: a light wash over the ear's
                     // own silhouette — square top, the outer bottom
-                    // corner rounded like the tray's — so the wing
+                    // corner rounded like the tray's cap — so the wing
                     // itself answers the pointer, not just the mark.
                     UnevenRoundedRectangle(
                         topLeadingRadius: 0,
-                        bottomLeadingRadius: side == .left ? model.notchCorner : 0,
-                        bottomTrailingRadius: side == .right ? model.notchCorner : 0,
+                        bottomLeadingRadius: side == .left ? NotchTrayShape.capRadius : 0,
+                        bottomTrailingRadius: side == .right ? NotchTrayShape.capRadius : 0,
                         topTrailingRadius: 0, style: .continuous)
                         .fill(.white.opacity(0.10))
                 }
@@ -312,24 +324,30 @@ private struct NotchTrayShape: Shape {
     /// ear's lobe; a side at the tray's own edge has none.
     var bezelLeft: CGFloat
     var bezelRight: CGFloat
-    /// The notch profile's corner radius — the lobes' outer bottom
-    /// corners and the bezel's arcs alike.
+    /// The notch profile's corner radius — the arcs the punched gaps
+    /// keep under the hardware's corners, so the bezel's own curve
+    /// stays the silhouette where the tray passes beneath it.
     var corner: CGFloat
     /// How far the ear lobes hang below the bezel's bottom edge
     /// (`wingEarDrop`). The middle run under the bezel never drops —
     /// a chin there read as the notch grown downward.
     var drop: CGFloat
 
+    /// The ear's outer bottom corner — rounder than the hardware's
+    /// arc, so each lobe ends in the pill-cap curve Alcove's wings
+    /// carry rather than the bezel's tighter bend.
+    static let capRadius: CGFloat = 12
+
     func path(in rect: CGRect) -> Path {
         // One uniform band: the whole tray runs `drop` below the bezel's
         // bottom edge (0 today — the ears win with width, not depth), so
-        // the ears read as the island's own end caps. Two radii:
-        // `scoop` is the notch profile's own corner — it rounds the
-        // band's outer bottom corners, so each ear's silhouette is the
-        // bezel's mirrored outward, and it is the arc the punched gaps
-        // keep under the hardware's corners.
+        // the ears read as the island's own end caps. Two radii: `cap`
+        // rounds the band's outer bottom corners into each ear's pill
+        // end, while `scoop` is the notch profile's own corner — the arc
+        // the punched gaps keep under the hardware's corners.
         let depth = rect.height - max(0, drop)
         let scoop = max(0, min(corner, depth, rect.width / 2.0))
+        let cap = max(0, min(Self.capRadius, depth, rect.width / 2.0))
         var path = Path()
         guard rect.width > 0, rect.height > 0, depth > 0 else {
             path.addRect(rect)
@@ -337,12 +355,12 @@ private struct NotchTrayShape: Shape {
         }
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        if scoop > 0 {
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - scoop))
-            path.addArc(center: CGPoint(x: rect.maxX - scoop, y: rect.maxY - scoop), radius: scoop,
+        if cap > 0 {
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cap))
+            path.addArc(center: CGPoint(x: rect.maxX - cap, y: rect.maxY - cap), radius: cap,
                         startAngle: .degrees(0), endAngle: .degrees(90), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.minX + scoop, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.minX + scoop, y: rect.maxY - scoop), radius: scoop,
+            path.addLine(to: CGPoint(x: rect.minX + cap, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.minX + cap, y: rect.maxY - cap), radius: cap,
                         startAngle: .degrees(90), endAngle: .degrees(180), clockwise: true)
         } else {
             path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))

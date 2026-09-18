@@ -99,6 +99,26 @@ struct NotchGestureTests {
         #expect(!toy.islandExpanded)
     }
 
+    // MARK: Swipe up
+
+    @Test("a swipe up on the grown card folds it — Alcove's tuck-away")
+    func swipeUpFolds() {
+        let (toy, store) = makeToy()
+        _ = store
+        toy.expandFromBand()
+        #expect(toy.islandExpanded)
+        toy.islandSwipe(.up)
+        #expect(!toy.islandExpanded)
+    }
+
+    @Test("a swipe up on the resting island means nothing — no push into the screen")
+    func swipeUpOnRestIsInert() {
+        let (toy, store) = makeToy()
+        _ = store
+        toy.islandSwipe(.up)
+        #expect(!toy.islandExpanded)
+    }
+
     @Test("the gestures switch turns pull and swipe off; the tap stays")
     func pullGesturesOff() {
         let (toy, store) = makeToy()

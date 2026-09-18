@@ -69,6 +69,25 @@ struct DockSwitcherTests {
         #expect(items[1].onScreen == false)
     }
 
+    @Test("an all-minimized app still fetches its AX pool — leftover windows list and the row takes the element's truth")
+    func offScreenOnlyFetch() {
+        // Nothing on-screen for pid 9: the only row is a minimized one.
+        // The unmatched pool must be fetched here or every row lands
+        // elementless and commit can only activate, never restore.
+        let items = DockSwitcherList.order(
+            rows: [],
+            offRows: [row(pid: 9, wid: 90, title: "Doc")],
+            windowsForApp: { _ in
+                [window(id: 0, title: "Doc"),          // the row's twin — AX says not minimized
+                 window(id: 1, title: "Second")]       // unmatched — must still list
+            },
+            appName: { _ in "Editor" }, icon: { _ in nil })
+        #expect(items.count == 2)
+        // The hit's `minimized` wins over the row's assumed true.
+        #expect(items[0].title == "Doc" && items[0].minimized == false)
+        #expect(items[1].title == "Second" && items[1].onScreen == false)
+    }
+
     @Test("the pick starts on the second window — back to what I was in")
     func initialSelection() {
         var model = SwitcherModel()
@@ -143,5 +162,48 @@ struct DockSwitcherTests {
         // The picked row filtered out — the selection clamps in range.
         model.type("z")
         #expect(model.selected == nil)
+    }
+
+    @Test("type-ahead is a subsequence, not a substring — Witch's fuzzy")
+    func fuzzyTypeAhead() {
+        var model = SwitcherModel()
+        model.open(with: [named("Safari", "Inbox"), named("Terminal", "zsh"),
+                          named("Safari", "Docs"), named("Finder", "Files")])
+        // "sfr" is inside "Safari" in order but never contiguous.
+        model.type("s"); model.type("f"); model.type("r")
+        #expect(model.items.map(\.appName) == ["Safari", "Safari"])
+        // A window title fuzzies the same way — "zsh" answers "zs".
+        var again = SwitcherModel()
+        again.open(with: [named("Safari", "Inbox"), named("Terminal", "zsh")])
+        again.type("z"); again.type("s")
+        #expect(again.items.map(\.title) == ["zsh"])
+    }
+
+    @Test("the unfiltered list survives the query — stills stay attached")
+    func allItemsUnderFilter() {
+        var model = SwitcherModel()
+        model.open(with: [named("Safari", "Inbox"), named("Terminal", "zsh")])
+        model.type("z")
+        #expect(model.items.count == 1)
+        #expect(model.allItems.count == 2)
+    }
+
+    @Test("a verb's refresh keeps the row that survived and clamps when it left")
+    func refreshKeepsSelection() {
+        var model = SwitcherModel()
+        model.open(with: [named("Safari", "Inbox"), named("Terminal", "zsh"),
+                          named("Safari", "Docs")])
+        model.select(index: 2)
+        // The rebuild re-ordered but "Docs" survived — selection follows it.
+        model.refresh(with: [named("Terminal", "zsh"), named("Safari", "Docs")])
+        #expect(model.selected?.title == "Docs")
+        // The picked row closed — the selection clamps in range.
+        model.refresh(with: [named("Terminal", "zsh")])
+        #expect(model.selected?.title == "zsh")
+        // The query still filters a refresh — type-ahead and verbs compose.
+        model.type("z")
+        model.refresh(with: [named("Terminal", "zsh"), named("Safari", "Docs")])
+        #expect(model.items.map(\.appName) == ["Terminal"])
+        #expect(model.allItems.count == 2)
     }
 }

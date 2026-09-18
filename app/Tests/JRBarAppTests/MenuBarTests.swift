@@ -460,6 +460,9 @@ struct MenuBarTests {
             reveal.onHide = { [weak self] in self?.hides += 1 }
             reveal.row = { [weak self] in self?.rowRect }
             reveal.mouseLocation = { [weak self] in self?.point ?? .zero }
+            // The dwell is a wall-clock deadline — zero keeps the
+            // entry-fires-once semantics these tests pin.
+            reveal.hoverDwell = 0
             reveal.scheduleRehide = { [weak self] _, fire in
                 self?.pending = fire
                 return {}
@@ -649,6 +652,57 @@ struct MenuBarTests {
         utility.setSection(.hidden, for: "A")
         #expect(writes == 1)
         #expect(state.sections == ["A": .hidden])
+    }
+
+    @MainActor
+    @Test("the Item Bar style opens the panel and never touches the row")
+    func revealStyleBar() {
+        let utility = MenuBarUtility()
+        let state = MenuBarSettings(enabled: true, sections: ["A": .hidden],
+                                    revealStyle: .bar)
+        utility.settings = { state }
+        utility.hider.listItems = { [self.item("A", x: 100)] }
+        utility.hider.rowRect = { self.row }
+        utility.hider.shuttersSuppressed = true
+        utility.hider.reconcile()   // lastPlan.hidden = [A]
+        utility.reveal.onReveal()
+        #expect(utility.bar.isOpen)
+        #expect(utility.hider.revealed.isEmpty,
+                "Bartender's rule — the row never un-conceals on a reveal")
+        utility.bar.close()
+    }
+
+    @MainActor
+    @Test("the inline style reflows the run onto the row and not the panel")
+    func revealStyleInline() {
+        let utility = MenuBarUtility()
+        let state = MenuBarSettings(enabled: true, sections: ["A": .hidden],
+                                    revealStyle: .inline)
+        utility.settings = { state }
+        utility.hider.listItems = { [self.item("A", x: 100)] }
+        utility.hider.rowRect = { self.row }
+        utility.hider.shuttersSuppressed = true
+        utility.hider.reconcile()
+        utility.reveal.onReveal()
+        #expect(utility.hider.revealed == [.hidden],
+                "Ice and Hidden Bar's rule — the run reflows onto the bar")
+        #expect(!utility.bar.isOpen)
+        utility.hider.hide()
+    }
+
+    @MainActor
+    @Test("a reveal with nothing hidden opens no empty panel")
+    func revealStyleBarEmpty() {
+        let utility = MenuBarUtility()
+        let state = MenuBarSettings(enabled: true, revealStyle: .bar)
+        utility.settings = { state }
+        utility.hider.listItems = { [self.item("A", x: 100)] }
+        utility.hider.rowRect = { self.row }
+        utility.hider.shuttersSuppressed = true
+        utility.hider.reconcile()
+        utility.reveal.onReveal()
+        #expect(!utility.bar.isOpen)
+        #expect(utility.hider.revealed.isEmpty)
     }
 
     @MainActor

@@ -44,11 +44,11 @@ struct NotchRenderProofTests {
 
         // The claim the geometry answers for a 185-pt slot in a
         // 500-pt window: the ears hug the bezel at its own depth —
-        // flush with the hardware's bottom edge, 48 pt of wing.
+        // flush with the hardware's bottom edge, 36 pt of wing.
         let size = NSSize(width: 500, height: 48)
         let depth: CGFloat = 32 + ScreenBarGeometry.wingEarDrop
-        let leftRect = CGRect(x: 157.5 - 48, y: size.height - depth, width: 48, height: depth)
-        let rightRect = CGRect(x: 342.5, y: size.height - depth, width: 48, height: depth)
+        let leftRect = CGRect(x: 157.5 - 36, y: size.height - depth, width: 36, height: depth)
+        let rightRect = CGRect(x: 342.5, y: size.height - depth, width: 36, height: depth)
 
         for (name, left, right, corner) in [
             ("standard-8pt", ScreenBarWingSlot(text: "Working", provider: "claude"),

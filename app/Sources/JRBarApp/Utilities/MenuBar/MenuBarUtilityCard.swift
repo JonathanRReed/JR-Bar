@@ -85,6 +85,18 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Right now")
             }
 
+            HStack(spacing: 8) {
+                Button("Hide all") { utility.hideAllListed() }
+                    .controlSize(.small)
+                    .help("Hide every listed menu bar item at once — same as ⌘-dragging each one left of the separator")
+                    .accessibilityLabel("Hide all menu bar items")
+                Button("Show all") { utility.showAllListed() }
+                    .controlSize(.small)
+                    .help("Bring every hidden item back")
+                    .accessibilityLabel("Show all menu bar items")
+            }
+            .padding(.top, 2)
+
             if !hideable.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(hideable, id: \.id) { item in
@@ -121,6 +133,14 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Tuck away after",
                              subtitle: "How long a reveal lasts once the pointer leaves the bar.")
             }
+            Picker(selection: utility.bind(\.revealStyle)) {
+                Text("Item Bar — Bartender").tag(MenuBarSettings.RevealStyle.bar)
+                Text("On the bar — Ice, Hidden Bar").tag(MenuBarSettings.RevealStyle.inline)
+            } label: {
+                SettingLabel(title: "Reveal style",
+                             subtitle: "The Item Bar panel leaves the row untouched; inline reflows the hidden items onto the menu bar itself.")
+            }
+            .pickerStyle(.menu)
             Toggle(isOn: utility.bind(\.showForUpdates)) {
                 SettingLabel(title: "Show for updates",
                              subtitle: "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen.")
@@ -378,7 +398,8 @@ struct MenuBarUtilityControls: View {
     private var appearanceControls: some View {
         LabeledContent {
             Picker(selection: utility.bind(\.coverMaterial)) {
-                Text("Menu Bar").tag(MenuBarSettings.CoverMaterial.menu)
+                Text("Blend In").tag(MenuBarSettings.CoverMaterial.blend)
+                Text("Menu").tag(MenuBarSettings.CoverMaterial.menu)
                 Text("HUD").tag(MenuBarSettings.CoverMaterial.hud)
                 Text("Popover").tag(MenuBarSettings.CoverMaterial.popover)
                 Text("Sheet").tag(MenuBarSettings.CoverMaterial.sheet)
@@ -515,9 +536,11 @@ private struct MenuBarAutomationControls: View {
     @ViewState private var triggerSSID = ""
     @ViewState private var triggerHour = 9
     @ViewState private var triggerMinute = 0
+    @ViewState private var triggerPercent = 20
     @ViewState private var actionKind = "hideAll"
     @ViewState private var actionProfile = ""
     @ViewState private var actionSeconds = 4.0
+    @ViewState private var actionScript = ""
 
     var body: some View {
         SettingLabel(title: "Automate",
@@ -595,6 +618,8 @@ private struct MenuBarAutomationControls: View {
                 Text("Time of day").tag("time")
                 Text("Charger in").tag("acOn")
                 Text("Charger out").tag("acOff")
+                Text("Battery falls to…").tag("battLow")
+                Text("Battery rises past…").tag("battHigh")
                 Text("Wi-Fi joins").tag("wifiJoin")
                 Text("Wi-Fi changes").tag("wifiAny")
                 Text("Wi-Fi drops").tag("wifiLeft")
@@ -624,6 +649,11 @@ private struct MenuBarAutomationControls: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 34)
             }
+            if triggerKind == "battLow" || triggerKind == "battHigh" {
+                TextField("%", value: $triggerPercent, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 40)
+            }
         }
 
         HStack(spacing: 6) {
@@ -632,6 +662,7 @@ private struct MenuBarAutomationControls: View {
                 Text("Hide all").tag("hideAll")
                 Text("Show all").tag("showAll")
                 Text("Reveal for…").tag("reveal")
+                Text("Run script").tag("script")
             } label: { EmptyView() }
             .labelsHidden()
             .pickerStyle(.menu)
@@ -652,6 +683,11 @@ private struct MenuBarAutomationControls: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 40)
             }
+            if actionKind == "script" {
+                TextField("command", text: $actionScript)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+            }
             Button("Add rule") { addRule() }
                 .controlSize(.small)
                 .disabled(!ruleDraftValid)
@@ -666,6 +702,9 @@ private struct MenuBarAutomationControls: View {
             return false
         }
         if actionKind == "reveal" && actionSeconds < 1 { return false }
+        if actionKind == "script" && actionScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return false
+        }
         return true
     }
 
@@ -680,6 +719,8 @@ private struct MenuBarAutomationControls: View {
             minute: min(59, max(0, triggerMinute)))
         case "acOn": trigger = .chargerConnected
         case "acOff": trigger = .chargerDisconnected
+        case "battLow": trigger = .batteryBelow(percent: min(100, max(1, triggerPercent)))
+        case "battHigh": trigger = .batteryAbove(percent: min(100, max(1, triggerPercent)))
         case "wifiJoin": trigger = .wifiJoined(
             ssid: triggerSSID.trimmingCharacters(in: .whitespaces))
         case "wifiAny": trigger = .wifiJoined(ssid: "")
@@ -695,6 +736,8 @@ private struct MenuBarAutomationControls: View {
         case "profile": action = .applyProfile(name: actionProfile)
         case "showAll": action = .showAll
         case "reveal": action = .reveal(seconds: actionSeconds)
+        case "script": action = .runScript(
+            command: actionScript.trimmingCharacters(in: .whitespacesAndNewlines))
         default: action = .hideAll
         }
         utility.addTriggerRule(trigger: trigger, action: action)

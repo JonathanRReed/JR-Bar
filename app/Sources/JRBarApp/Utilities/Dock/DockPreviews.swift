@@ -189,36 +189,7 @@ enum DockThumbnailer {
             // The row's identity, not its index: a card closed while
             // this capture was in flight would shift the rows under it.
             let rowID = content.windows[index].id
-            let cacheKey = "\(pid):\(scWindow.windowID)"
-            let now = Date()
-            if let cached = captureCache[cacheKey],
-               now.timeIntervalSince(cached.at) < captureLifetime {
-                content.windows[index].thumbnail = cached.image
-                continue
-            }
-            captureCache = captureCache.filter { now.timeIntervalSince($0.value.at) < captureLifetime }
-            let configuration = SCStreamConfiguration()
-            let bounds = scWindow.frame
-            let factor = min(1, Self.pointLimit / max(bounds.width, bounds.height, 1)) * scale
-            configuration.width = max(1, Int(bounds.width * factor))
-            configuration.height = max(1, Int(bounds.height * factor))
-            configuration.scalesToFit = true
-            configuration.showsCursor = false
-            guard let cgImage = try? await SCScreenshotManager.captureImage(
-                contentFilter: SCContentFilter(desktopIndependentWindow: scWindow),
-                configuration: configuration) else { continue }
-            // The window server purges occluded backing stores: the
-            // capture then "succeeds" as a fully transparent image —
-            // worse than no thumbnail, and it would sit in the cache
-            // for the whole lifetime. A genuinely dark window keeps
-            // alpha 255, so the check reads the channel, not colour.
-            guard !Self.fullyTransparent(cgImage) else { continue }
-            let trimmed = Self.trimmed(cgImage)
-            let image = NSImage(
-                cgImage: trimmed,
-                size: NSSize(width: CGFloat(trimmed.width) / scale,
-                             height: CGFloat(trimmed.height) / scale))
-            captureCache[cacheKey] = (image, Date())
+            guard let image = await capture(scWindow: scWindow, pid: pid, scale: scale) else { continue }
             // Re-check the preview still belongs to this app — a
             // same-generation refill (New window) rewrites the rows
             // without tripping `isStale`.
@@ -226,5 +197,37 @@ enum DockThumbnailer {
                   let row = content.windows.firstIndex(where: { $0.id == rowID }) else { continue }
             content.windows[row].thumbnail = image
         }
+    }
+
+    /// One window's still, sized to `pointLimit` at the screen's
+    /// backing scale — the capture the previews and the ⌥⇥ switcher
+    /// share, cached per window for `captureLifetime`. Purged backing
+    /// stores come back as a fully transparent "success" and are
+    /// refused: a dark window keeps alpha 255, so the probe reads the
+    /// channel, not colour.
+    static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat) async -> NSImage? {
+        let cacheKey = "\(pid):\(scWindow.windowID)"
+        let now = Date()
+        if let cached = captureCache[cacheKey],
+           now.timeIntervalSince(cached.at) < captureLifetime { return cached.image }
+        captureCache = captureCache.filter { now.timeIntervalSince($0.value.at) < captureLifetime }
+        let configuration = SCStreamConfiguration()
+        let bounds = scWindow.frame
+        let factor = min(1, Self.pointLimit / max(bounds.width, bounds.height, 1)) * scale
+        configuration.width = max(1, Int(bounds.width * factor))
+        configuration.height = max(1, Int(bounds.height * factor))
+        configuration.scalesToFit = true
+        configuration.showsCursor = false
+        guard let cgImage = try? await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: scWindow),
+            configuration: configuration) else { return nil }
+        guard !Self.fullyTransparent(cgImage) else { return nil }
+        let trimmed = Self.trimmed(cgImage)
+        let image = NSImage(
+            cgImage: trimmed,
+            size: NSSize(width: CGFloat(trimmed.width) / scale,
+                         height: CGFloat(trimmed.height) / scale))
+        captureCache[cacheKey] = (image, Date())
+        return image
     }
 }

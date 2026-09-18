@@ -2,6 +2,99 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.9 (unreleased)
+
+- The right wing is visible again: its ear had collapsed to zero width
+  whenever JR-Bar's own status item stood on the row — the ‹ glyph was
+  deliberately suppressed to avoid duplicating that item's mark, and
+  the suppression took the whole ear with it. The handle now draws on
+  the ear while the concealer runs regardless of where the status item
+  sits, and `wingEarDrop` is back to its shipped six points — a flush
+  black tray on a black bar read as no wing at all, so the ear lobes
+  hang below the bezel line again. The wing panel also rides a level
+  above the cover shutters, ending a same-level z-order race that let
+  covers paint over it.
+- Items the agent cannot hold no longer flash uncovered: a resistant
+  escapee (cmux, ChatGPT, Tailscale and friends re-stand through every
+  re-assert) is now covered from a sticky proof — once an item has
+  stood through one re-assert it keeps its cover through the session's
+  flap cycles instead of re-earning resistance after another 8 s
+  window. Covered or parked items stop blocking the wing's ears too —
+  an already-invisible slot is free for our own furniture. The shutter
+  logs its painted spans (`cover paint`) so cover behaviour is
+  verifiable without screenshots, which cannot see the panels at all.
+- The ‹ boundary is Bartender's invariant again: whatever stands left
+  of it *is* hidden — whether a hand ⌘-dragged it there or macOS
+  re-stood it behind the mark when an assertion released. The ⌘-flip
+  learn only ever saw drags, so items macOS placed behind the caret
+  stood in the hidden zone forever, shown and un-parked — including
+  the stretch where the notch's right wing draws, which collapsed the
+  wing to a sliver behind them. A positional reconcile now maps live
+  on-row frames to sections every pass: left of ‹ hides, right of ‹
+  with a stale mark un-hides under ⌘, `alwaysHidden` outranks position
+  both ways, and a deliberate Show or Show All is exempt until its
+  item actually crosses in front — so the wing's flank clears and the
+  caret means what it shows.
+- Long channel-tagged app names lay out slim: the Dock preview header
+  splits "T3 Code (Nightly)" into "T3 Code" plus a small channel chip
+  (Nightly, Beta, Dev, Canary, Insiders, PTB, Technology Preview,
+  Developer Edition — parenthesised, dashed, or trailing spellings),
+  the title column caps at 240 pt and tail-truncates, and the
+  switcher's caption uses the split base so a long name stops driving
+  the card wide. Tooltips keep the full name.
+- The ⌥⇥ switcher is AltTab's card now: every window row fills in with
+  the real still (the shared ScreenCaptureKit capture the previews use,
+  cache and alpha-trim included) instead of a bare icon, with the app
+  badged in the corner. The same "Window thumbnails" switch and Screen
+  Recording grant answer for both surfaces — no grant, icon cards.
+- Type-ahead is Witch's fuzzy, not a substring: "sfr" lands Safari the
+  way the command bar's subsequence scorer does, on title or app name.
+- ⌘F in the switcher toggles fullscreen for real — it read the
+  window's `AXFullScreen` state and now writes the opposite instead of
+  forcing `true` a second time.
+- Dock preview cards grew DockDoor's right-click menu: Raise,
+  Minimize/Bring Back, Full Screen, a "Tile To" submenu with halves and
+  quarters (real `AXSize`+`AXPosition` writes on the pointer's screen),
+  and Close — on top of the hover pills and middle-click that were
+  already there.
+- Menu-bar rules learned the battery: "Battery falls to…" and "Battery
+  rises past…" join charger, Wi-Fi, mic and Focus as trigger kinds —
+  edges on the internal battery's percent, with the same baseline rule
+  as every other level source.
+- The ⌘⇧K command bar now folds on a click anywhere outside it — the
+  same monitor pair the Item Bar has always used.
+- Drag a file or a link to the notch and the shelf opens to catch it —
+  NotchNook's signature gesture. The island is a registered drop
+  destination; the card grows held, the drop lands in the tray, and a
+  drag abandoned mid-flight folds the card it summoned rather than
+  leaving it pinned.
+- Web links are tray citizens: a dropped URL materialises as a real
+  `.webloc` under the shelf's folder, so Reveal/Share/AirDrop all
+  answer it. `javascript:` and friends never materialise.
+- Tray chips preview — double-click or "Quick Look" in the context
+  menu opens the system's own `QLPreviewPanel` over every entry that
+  still resolves, paged at the chip.
+- A swipe up on the grown island card tucks it back into the notch —
+  Alcove's dismiss flick, sharing the down-flick's fold path and its
+  shelved-capsule dismissal. On a resting island the flick stays inert;
+  the notch can't be pushed into the screen.
+- The ⌘⇥ app strip learned Witch's drill-down: tap ↓ on an app and the
+  card narrows to that app's windows alone — the drill mark survives
+  re-sorts, ⌘-release commits the chosen window, and ⎋ or a tap on
+  another app walks back out to the strip.
+- Unread badges ride the Dock tiles: the preview header's icon and the
+  ⌘⇥ switcher cards wear the tile's own `AXStatusLabel` count — the
+  red pill Mail and Messages already draw on the Dock, read once per
+  build rather than polled.
+- Menu-bar rules run scripts now: "run a script" joins apply-profile,
+  hide/show-all and reveal as a trigger action, dispatching the typed
+  command through `/bin/sh -c` detached so a lock, charge, or Wi-Fi
+  edge can fire anything the shell can.
+- The shelf answers a global key: ⌃⌥D opens the notch's card from any
+  app — Yoink's summon — and folds it again on a second press. It
+  shares the panel hotkey's Carbon plumbing with its own signature and
+  settings row, and says so in Settings if the chord is taken.
+
 ## 0.9.8 (unreleased)
 
 - Provider pickers everywhere a counterpart exists: each utility card

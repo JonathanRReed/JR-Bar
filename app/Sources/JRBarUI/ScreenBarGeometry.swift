@@ -3,9 +3,9 @@ import JRBarCore
 
 /// Constants from `screen_bar_design.py`, the reviewed Screen Bar design.
 public enum ScreenBarDesign {
-    public static let bandHeight: CGFloat = 6.0
-    public static let compactBandHeight: CGFloat = 5.0
-    public static let glowHeight: CGFloat = 14.0
+    public static let bandHeight: CGFloat = 4.0
+    public static let compactBandHeight: CGFloat = 3.5
+    public static let glowHeight: CGFloat = 10.0
     public static let windowWidth: CGFloat = 260.0
     public static let minBandWidth: CGFloat = 180.0
     public static let maxBandWidth: CGFloat = 420.0
@@ -185,12 +185,12 @@ public enum ScreenBarGeometry {
     /// notch" (owner, 2026-09-16) — on a bar whose menu bar is 33 pt to
     /// the notch's 32.
     public static let wingTrayChin: CGFloat = 0
-    /// How far each ear hangs below the bezel's bottom edge. Zero: a
-    /// narrow ear that dips under the menu-bar line reads as a loose
-    /// nub, not a wing — Alcove's closed island is flush with the
-    /// bezel and makes its case with WIDTH, not depth. The ears claim
-    /// `earWidth` of flank at the bezel's own height instead.
-    public static let wingEarDrop: CGFloat = 0
+    /// How far the tray hangs below the bezel's bottom edge. A flush
+    /// band is black-on-black against the menu bar — the wing reads as
+    /// absent. Six points is the wingTrayChin silhouette the design
+    /// shipped with: a shallow lobe under each claimed ear, thin
+    /// enough to stay out of the notch's way.
+    public static let wingEarDrop: CGFloat = 6
 
     /// The screen the Screen Bar belongs on: the first with a safe-area
     /// inset (the notched built-in), else the main screen.
@@ -385,7 +385,7 @@ public enum ScreenBarGeometry {
     public static let coupledLip: CGFloat = 4
     /// Black the housing keeps under the strip — the chin that seats the
     /// light inside the shared silhouette.
-    public static let coupledChin: CGFloat = 3
+    public static let coupledChin: CGFloat = 2
     /// Slack the coupled window keeps under the housing's bottom edge so
     /// the silhouette's corner curve never clips the window's bounds.
     public static let coupledSlack: CGFloat = 1

@@ -88,6 +88,27 @@ import Testing
                                          screen: screen) == .right)
     }
 
+    @Test func tilesCarveTheVisibleFrameInQuartzSpace() {
+        // Quartz: minY is the screen's TOP, so "top" tiles pin at minY.
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        #expect(DockEnhanceMath.tileFrame(.leftHalf, in: visible)
+                == CGRect(x: 0, y: 25, width: 720, height: 875))
+        #expect(DockEnhanceMath.tileFrame(.rightHalf, in: visible)
+                == CGRect(x: 720, y: 25, width: 720, height: 875))
+        #expect(DockEnhanceMath.tileFrame(.topHalf, in: visible)
+                == CGRect(x: 0, y: 25, width: 1440, height: 437.5))
+        #expect(DockEnhanceMath.tileFrame(.bottomHalf, in: visible)
+                == CGRect(x: 0, y: 462.5, width: 1440, height: 437.5))
+        #expect(DockEnhanceMath.tileFrame(.topLeft, in: visible)
+                == CGRect(x: 0, y: 25, width: 720, height: 437.5))
+        #expect(DockEnhanceMath.tileFrame(.bottomRight, in: visible)
+                == CGRect(x: 720, y: 462.5, width: 720, height: 437.5))
+        // A second screen's offset frame tiles inside itself.
+        let side = CGRect(x: -1440, y: 25, width: 1440, height: 875)
+        #expect(DockEnhanceMath.tileFrame(.topRight, in: side)
+                == CGRect(x: -720, y: 25, width: 720, height: 437.5))
+    }
+
     @Test func thePanelOpensOffTheDockTowardTheScreen() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let item = CGRect(x: 700, y: 0, width: 40, height: 40)
@@ -748,4 +769,31 @@ func trimmedCropCheck() throws {
     #expect(trimmed.width < image.width, "the transparent right half is cropped")
     #expect(trimmed.width >= 12, "the kept cells hold the opaque quarter plus the one-cell margin")
     #expect(trimmed.height <= image.height)
+}
+
+// MARK: App-name channels
+
+/// Long channel-tagged names lay out slim: "T3 Code (Nightly)" renders
+/// as "T3 Code" with the tag in its own chip, so the preview header
+/// reads like any other app's.
+@Test("channel tags split off the product name")
+func channelSplits() {
+    #expect(AppNameChannel.split("T3 Code (Nightly)") == ("T3 Code", "Nightly"))
+    #expect(AppNameChannel.split("Visual Studio Code - Insiders") == ("Visual Studio Code", "Insiders"))
+    #expect(AppNameChannel.split("Xcode-beta") == ("Xcode", "beta"))
+    #expect(AppNameChannel.split("Firefox Developer Edition") == ("Firefox", "Developer Edition"))
+    #expect(AppNameChannel.split("Safari Technology Preview") == ("Safari", "Technology Preview"))
+    #expect(AppNameChannel.split("Discord PTB") == ("Discord", "PTB"))
+}
+
+@Test("plain names and lookalikes never split")
+func channelKeeps() {
+    #expect(AppNameChannel.split("Safari") == ("Safari", nil))
+    #expect(AppNameChannel.split("Preview") == ("Preview", nil))
+    #expect(AppNameChannel.split("Code") == ("Code", nil))
+    #expect(AppNameChannel.split("Affinity Designer 2") == ("Affinity Designer 2", nil))
+    // A parenthesised tail that is not a channel word stays whole.
+    #expect(AppNameChannel.split("Notes (Shared)") == ("Notes (Shared)", nil))
+    // A hyphenated product name is not a channel split.
+    #expect(AppNameChannel.split("Day-One") == ("Day-One", nil))
 }

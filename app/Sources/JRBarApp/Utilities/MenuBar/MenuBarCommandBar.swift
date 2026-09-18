@@ -322,9 +322,13 @@ final class MenuBarCommandBar {
     private let model = MenuBarCommandBarModel()
     private var panel: MenuBarCommandPalettePanel?
     private(set) var isOpen = false
-    /// The system uptime at open — kept for parity with the Item Bar's
-    /// dismiss rule if a click-outside monitor is later added.
+    /// The system uptime at open — the click that opened the palette
+    /// must not fold it, same as the Item Bar's rule.
     private var openedAtUptime: TimeInterval = 0
+    /// The click-outside monitors, lifted on close — the Item Bar's
+    /// global + local pair: the panel takes key but never focus, so
+    /// "outside" is a monitor's call, not a resign event.
+    private var dismissMonitors: [Any] = []
 
     func toggle() {
         if isOpen { close() } else { open() }
@@ -362,13 +366,52 @@ final class MenuBarCommandBar {
         self.panel = panel
         isOpen = true
         openedAtUptime = ProcessInfo.processInfo.systemUptime
+        installDismissMonitors()
     }
 
     func close() {
         guard isOpen else { return }
+        for monitor in dismissMonitors { NSEvent.removeMonitor(monitor) }
+        dismissMonitors = []
         panel?.orderOut(nil)
         panel = nil
         isOpen = false
+    }
+
+    isolated deinit {
+        for monitor in dismissMonitors { NSEvent.removeMonitor(monitor) }
+        panel?.orderOut(nil)
+    }
+
+    /// A click anywhere but the palette folds it — the same read the
+    /// Item Bar makes: every event outside the frame, after the click
+    /// that opened it.
+    private func installDismissMonitors() {
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+        if let global = NSEvent.addGlobalMonitorForEvents(
+            matching: mask,
+            handler: { [weak self] event in self?.noteOutsideClick(event) }) {
+            dismissMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(
+            matching: mask,
+            handler: { [weak self] event in
+                self?.noteOutsideClick(event)
+                return event
+            }) {
+            dismissMonitors.append(local)
+        }
+    }
+
+    nonisolated private func noteOutsideClick(_ event: NSEvent) {
+        let point = NSEvent.mouseLocation
+        let timestamp = event.timestamp
+        Task { @MainActor [weak self] in
+            guard let self, let panel = self.panel else { return }
+            guard timestamp > self.openedAtUptime else { return }
+            guard !panel.frame.contains(point) else { return }
+            self.close()
+        }
     }
 
     /// Enter: the selected row's action to the sink, then fold.
@@ -376,9 +419,5 @@ final class MenuBarCommandBar {
         guard let command = model.selected else { close(); return }
         close()
         onAction(command.action)
-    }
-
-    isolated deinit {
-        panel?.orderOut(nil)
     }
 }
