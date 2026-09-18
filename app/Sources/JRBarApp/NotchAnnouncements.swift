@@ -208,8 +208,13 @@ final class BluetoothWatcher: NSObject {
     /// nonisolated: IOBluetooth invokes this off the main thread, and
     /// an actor-isolated selector asserted and took the app down.
     /// Everything crosses to main before touching the announce path.
+    /// `device` must be optional: the framework can fire the
+    /// notification with no peer object, and a nonnull Swift parameter
+    /// dereferences the nil pointer during bridging — before any body
+    /// code can guard it. It took the app down on a connect event.
     @objc nonisolated fileprivate func deviceConnected(_ note: IOBluetoothUserNotification,
-                                                       device: IOBluetoothDevice) {
+                                                       device: IOBluetoothDevice?) {
+        guard let device else { return }
         let name = device.name ?? device.addressString ?? "Bluetooth device"
         // BatteryPercent arrived by KVO — but on 27 responds(to:) alone
         // is no guard: the device forwards the selector while KVO still

@@ -60,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private static let loginItemRegisteredKey = "loginItemRegisteredOnFirstRun"
 
     private var terminationSignal: DispatchSourceSignal?
+    /// The `flock` fd holding `SingleInstanceLock` for this process's
+    /// life — never closed, so the lock outlives every surface.
+    private var instanceLockFD: Int32 = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadAppState()
@@ -90,6 +93,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case "dark", "darkaqua": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: break
         }
+
+        // One live instance per state directory — a second JR-Bar draws
+        // a second Screen Bar, island, and covers over the first's, which
+        // reads as doubled bands and ghost surfaces. This runs after the
+        // env-var early exits so `JRBAR_LOGIN_ITEM` still answers from a
+        // direct exec while the app is up.
+        guard let lock = SingleInstanceLock.acquire() else {
+            print("JR-Bar is already running — this instance yields.")
+            NSApp.terminate(nil)
+            return
+        }
+        instanceLockFD = lock
 
         // `pkill JR-Bar` (or a logout) must still stop the supervised core:
         // turn SIGTERM into an orderly quit so applicationWillTerminate runs.

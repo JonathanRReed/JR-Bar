@@ -404,6 +404,11 @@ fi
     /usr/libexec/PlistBuddy -c "Set :SURequireSignedFeed true" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUVerifyUpdateBeforeExtraction bool true" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :SUVerifyUpdateBeforeExtraction true" "$APP_PATH/Contents/Info.plist"
+# A second copy (the /Applications install beside ~/Applications) must
+# never draw a twin Screen Bar + island over the running one's; the
+# in-app SingleInstanceLock is the guard for every non-bundle path.
+/usr/libexec/PlistBuddy -c "Add :LSMultipleInstancesProhibited bool true" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :LSMultipleInstancesProhibited true" "$APP_PATH/Contents/Info.plist"
 # The app hands this to the daemon as JRBAR_COMMIT (the doctor reply's commit).
 /usr/libexec/PlistBuddy -c "Add :JRBarCommit string $COMMIT" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :JRBarCommit $COMMIT" "$APP_PATH/Contents/Info.plist"

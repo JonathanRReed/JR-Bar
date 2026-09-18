@@ -161,6 +161,24 @@ All notable changes to JR-Bar are documented here.
 - The timer menu takes customs now: a "Custom…" item opens a small
   entry with an optional label and a minute stepper bounded by the
   same 12-hour ceiling the model enforces.
+- A second JR-Bar can no longer run beside the first: a duplicate
+  launch — the `/Applications` copy next to `~/Applications`,
+  `open -n`, or a dev binary sharing the state directory — used to
+  draw a second Screen Bar, island, and set of menu-bar covers over
+  the running one's, which read on screen as doubled LED bands and
+  ghost surfaces whenever the two drifted out of sync. The app now
+  holds an exclusive `flock` on `<state>/app.lock` for its life and
+  any later instance yields instead (`JRBAR_ALLOW_MULTI=1` bypasses
+  for deliberate side-by-side dev runs); the packaged app also
+  carries `LSMultipleInstancesProhibited` so LaunchServices refuses
+  the double even earlier.
+- Bluetooth device connects no longer crash the app: IOBluetooth
+  can deliver a nil `IOBluetoothDevice` through its Objective-C
+  notification bridge, which Swift dereferenced at the function's
+  entry before any guard could run — a hard `SIGSEGV` on every
+  headset/mouse connect. The callback now takes the device
+  optionality honestly, and the battery probe checks the
+  Objective-C method exists instead of trusting KVC.
 
 ## 0.9.8 (unreleased)
 
