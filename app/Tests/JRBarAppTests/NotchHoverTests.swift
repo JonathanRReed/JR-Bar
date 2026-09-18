@@ -56,11 +56,11 @@ struct NotchHoverTests {
 
     /// Poll the expansion and report when it landed — measured time, so
     /// a slow `Task.sleep` cannot blur the floor the test is proving. The
-    /// timeout has slack for a congested main queue: the arm is an
-    /// `asyncAfter` whose deadline can slide under a parallel suite —
-    /// what matters is it did not fire before the bar's floor.
+    /// timeout is a generous upper bound for a congested main queue: the
+    /// arm is an `asyncAfter` whose deadline can slide under a parallel
+    /// suite — what matters is it did not fire before the bar's floor.
     private func expansionTime(_ toy: NotchToy, from start: ContinuousClock.Instant,
-                             timeout: Duration = .seconds(1.5)) async throws -> Duration? {
+                             timeout: Duration = .seconds(4)) async throws -> Duration? {
         while ContinuousClock.now - start < timeout {
             if toy.islandExpanded { return ContinuousClock.now - start }
             try await Task.sleep(for: .milliseconds(10))

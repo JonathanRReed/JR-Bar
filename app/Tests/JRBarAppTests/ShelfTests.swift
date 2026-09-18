@@ -97,6 +97,46 @@ import JRBarCore
             URL(string: "javascript:alert(1)")!]).isEmpty)
     }
 
+    @Test func chipReorderMovesAndPersists() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "jrbar.shelfTray.paths")
+        let tray = ShelfTrayModel()
+        defer { defaults.removeObject(forKey: "jrbar.shelfTray.paths") }
+
+        tray.add([URL(fileURLWithPath: "/tmp/a.txt"),
+                  URL(fileURLWithPath: "/tmp/b.txt"),
+                  URL(fileURLWithPath: "/tmp/c.txt")])
+        let a = tray.entries[0], c = tray.entries[2]
+
+        // Drag C onto A — C lands ahead of A.
+        tray.move(c, before: a)
+        #expect(tray.entries.map(\.name) == ["c.txt", "a.txt", "b.txt"])
+        // The arrangement is the user's — it survives a reload.
+        let reloaded = ShelfTrayModel()
+        #expect(reloaded.entries.map(\.name) == ["c.txt", "a.txt", "b.txt"])
+
+        // Moving onto itself is a no-op.
+        tray.move(tray.entries[0], before: tray.entries[0])
+        #expect(tray.entries.map(\.name) == ["c.txt", "a.txt", "b.txt"])
+    }
+
+    @Test func aTextDropMaterialisesATxt() throws {
+        let text = "remember the milk\nand the eggs"
+        let loc = try #require(ShelfTrayDrop.textLoc(for: text))
+        defer { try? FileManager.default.removeItem(at: loc) }
+        #expect(loc.pathExtension == "txt")
+        // The clip is a real file — every tray verb answers it.
+        #expect(try String(contentsOf: loc, encoding: .utf8) == text)
+        // Re-dropping the same clip lands on the same file — the
+        // hash is stable across calls and launches, so the tray's
+        // path dedupe keeps it one entry.
+        #expect(ShelfTrayDrop.textLoc(for: text) == loc)
+        #expect(ShelfTrayDrop.stableHash(text)
+            == ShelfTrayDrop.stableHash(text))
+        // Whitespace-only clips add nothing (T49's rule).
+        #expect(ShelfTrayDrop.textLoc(for: "  \n  ") == nil)
+    }
+
     // MARK: - Timers (T51)
 
     private func tempStore() -> URL {
@@ -231,9 +271,12 @@ struct SharedCardShelfTests {
         #expect(store.notch.cardModel.timers === presenter.model.timers)
 
         // The 1 s tick sweeps the due entry once through the shared
-        // store — a second model would have delivered it again.
+        // store — a second model would have delivered it again. The
+        // wait is generous: the tick is a main-runloop `Timer` whose
+        // fire can slide under a parallel suite; what is being proven
+        // is that it lands exactly once, not when.
         timers.add(label: "tea", duration: 1)
-        try await Task.sleep(for: .seconds(2.5))
+        try await Task.sleep(for: .seconds(5))
         #expect(delivered == 1)
     }
 }

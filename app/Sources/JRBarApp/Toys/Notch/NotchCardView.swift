@@ -173,6 +173,7 @@ struct NotchCardView: View {
             ShelfCalendarRow(calendar: model.calendar, style: style)
             ShelfRemindersRow(reminders: model.reminders, style: style)
             ShelfMirrorRow(mirror: model.mirror, style: style)
+            ShelfTogglesRow(toggles: model.utility.toggles, style: style)
             if !model.meters.isEmpty {
                 ForEach(model.meters, id: \.id) { meter in
                     meterRow(meter)
@@ -183,7 +184,7 @@ struct NotchCardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, verticalPad)
         .frame(width: width)
-        .onDrop(of: [UTType.fileURL, UTType.url], isTargeted: nil) { providers in
+        .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText], isTargeted: nil) { providers in
             ShelfTrayDrop.urls(from: providers) { urls in
                 model.tray.add(urls)
             }
@@ -437,6 +438,20 @@ private struct ShelfMediaRow: View {
                         }
                     }
                 }
+                if let synced = utility.lyrics.lyrics {
+                    // The synced line rides the same tick as the
+                    // playhead — faint, one line, silent when the
+                    // playhead sits between stamps.
+                    TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
+                        if let line = synced.line(at: utility.elapsedShown(at: context.date)) {
+                            Text(line)
+                                .font(.system(size: 9))
+                                .foregroundStyle(style.faintColor)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                }
             }
             .accessibilityElement(children: .combine)
         }
@@ -457,6 +472,90 @@ private struct ShelfMediaRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The Control Center strip — One Switch's row as card grammar: eight
+/// chips, lit while on, dimmed while off, verbs that never latch.
+/// The state is read back from the system after every apply — a chip
+/// only ever shows what the Mac reports, and a refused write says so
+/// in a caption under the row rather than silently staying lit.
+private struct ShelfTogglesRow: View {
+    let toggles: SystemTogglesStore
+    let style: NotchCardStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
+                    chip(toggle)
+                }
+            }
+            if let error = toggles.lastError {
+                Text(error)
+                    .font(.system(size: 9))
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(2)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func chip(_ toggle: SystemToggle) -> some View {
+        let on = toggles.isOn[toggle] ?? false
+        let busy = toggles.applying.contains(toggle)
+        return Button {
+            toggles.apply(toggle)
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: toggle.symbol)
+                    .font(.system(size: 11, weight: .medium))
+                Text(toggle.title)
+                    .font(.system(size: 7, weight: .medium))
+            }
+            .foregroundStyle(on ? style.titleColor : style.faintColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(on ? AnyShapeStyle(style.chipFill)
+                             : AnyShapeStyle(style.chipFaint)))
+            .opacity(busy ? 0.5 : 1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help(for: toggle, on: on))
+        .accessibilityLabel("\(toggle.title) toggle")
+        .accessibilityValue(toggle.isMomentary ? "action" : (on ? "on" : "off"))
+    }
+
+    /// The chip's tooltip — the verb, the honest restart warning, and
+    /// the current truth for stateful toggles.
+    private func help(for toggle: SystemToggle, on: Bool) -> String {
+        switch toggle {
+        case .keepAwake:
+            return on ? "Keeping the Mac awake — click to allow sleep."
+                        : "Keep the Mac awake (power assertion; releases when off or the app quits)."
+        case .darkMode:
+            return on ? "Dark mode is on — click for light."
+                        : "Switch to dark mode."
+        case .desktopIcons:
+            return on ? "Desktop icons visible — click to hide (restarts Finder)."
+                        : "Show desktop icons (restarts Finder)."
+        case .hiddenFiles:
+            return on ? "Hidden files visible — click to conceal (restarts Finder)."
+                        : "Show hidden files (restarts Finder)."
+        case .mute:
+            return on ? "Output muted — click to unmute."
+                        : "Mute the default output."
+        case .screenSaver:
+            return "Start the screen saver."
+        case .lock:
+            return "Sleep the display — locks on wake wherever a password is required."
+        case .dockAutoHide:
+            return on ? "Dock auto-hides — click to pin it (restarts Dock)."
+                        : "Auto-hide the Dock (restarts Dock)."
+        }
     }
 }
 
@@ -570,8 +669,16 @@ private struct ShelfTrayRow: View {
 
     private func trayChip(_ entry: ShelfTrayModel.Entry) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: entry.missing ? "doc.questionmark" : "doc")
-                .font(.system(size: 9))
+            if entry.missing {
+                Image(systemName: "doc.questionmark")
+                    .font(.system(size: 9))
+            } else {
+                // The file's own Finder face — Yoink's tray grammar,
+                // not a generic glyph.
+                Image(nsImage: tray.icon(for: entry))
+                    .resizable()
+                    .frame(width: 11, height: 11)
+            }
             Text(entry.missing ? "\(entry.name) (moved)" : entry.name)
                 .font(.system(size: 10))
                 .lineLimit(1)
@@ -595,6 +702,28 @@ private struct ShelfTrayRow: View {
         }
         .onDrag {
             tray.provider(for: entry) ?? NSItemProvider()
+        }
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            // No provider carrying a file means nothing to land —
+            // an unconditional yes would animate acceptance anyway.
+            guard providers.contains(where: {
+                $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            }) else { return false }
+            // A tray drag carries the entry's own file URL: landing on
+            // another chip reorders; a foreign file lands where it
+            // dropped — Yoink's move, not the tail.
+            ShelfTrayDrop.urls(from: providers) { urls in
+                var toAdd: [URL] = []
+                for url in urls {
+                    if let moved = tray.entries.first(where: { $0.path == url.path }) {
+                        tray.move(moved, before: entry)
+                    } else {
+                        toAdd.append(url)
+                    }
+                }
+                if !toAdd.isEmpty { tray.add(toAdd, before: entry) }
+            }
+            return true
         }
         .onTapGesture(count: 2) {
             if !entry.missing { tray.quickLook(entry) }

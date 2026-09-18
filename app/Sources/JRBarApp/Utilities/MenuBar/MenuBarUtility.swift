@@ -354,6 +354,10 @@ final class MenuBarUtility: Toy {
         bar.onOpenChange = { [weak self] open in
             guard let self else { return }
             self.reveal.holdOpen = open
+            // The `.bar`-style half of "hide shown while revealing" —
+            // the hider gates on the setting itself, this is only the
+            // "a reveal surface is up" signal.
+            self.hider.setBarCoveringShown(open)
             if !open { self.reveal.noteBarClosed() }
         }
         actions.delegate = self

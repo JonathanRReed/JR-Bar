@@ -206,4 +206,36 @@ struct DockSwitcherTests {
         #expect(model.items.map(\.appName) == ["Terminal"])
         #expect(model.allItems.count == 2)
     }
+
+    @Test("a typed query ranks best-first — a title hit beats an app-only one")
+    func rankedFiltering() {
+        var model = SwitcherModel()
+        // "notes": every app carries it in the name, but only the
+        // second row's *title* spells it — the title hit outranks.
+        model.open(with: [named("Notes", "groceries"), named("Noter", "notes"),
+                          named("Annotate", "scratch")])
+        for ch in ["n", "o", "t", "e"] { model.type(ch) }
+        #expect(model.items.first?.title == "notes",
+                "the exact title beats the fuzzy app names")
+        // Ties keep recency — equal-scored rows never reshuffle.
+        var tied = SwitcherModel()
+        tied.open(with: [named("Safari", "Inbox"), named("Safari", "Docs")])
+        tied.type("s")
+        #expect(tied.items.map(\.title) == ["Inbox", "Docs"])
+    }
+
+    @Test("the ranked order survives a refresh — recency tie-break uses the new list")
+    func rankedRefresh() {
+        var model = SwitcherModel()
+        model.open(with: [named("Alpha", "memo"), named("Beta", "room")])
+        model.type("m")
+        // "m" hits "memo" (title, prefix bonus) and "room" (title at
+        // index 2 — weaker). memo leads.
+        #expect(model.items.first?.title == "memo")
+        // The rebuild puts "room" first in recency — but the rank
+        // still puts memo's stronger match ahead.
+        model.refresh(with: [named("Beta", "room"), named("Alpha", "memo")])
+        #expect(model.items.first?.title == "memo")
+        #expect(model.items.count == 2)
+    }
 }

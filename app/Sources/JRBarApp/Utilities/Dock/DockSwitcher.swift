@@ -221,7 +221,7 @@ struct SwitcherModel {
     mutating func refresh(with items: [SwitcherItem]) {
         let keep = selected
         allItems = items
-        self.items = query.isEmpty ? items : items.filter { Self.matches($0, query: query) }
+        self.items = Self.ranked(items, query: query)
         if let keep, let index = self.items.firstIndex(where: { $0.id == keep.id }) {
             selection = index
         } else {
@@ -255,7 +255,7 @@ struct SwitcherModel {
 
     private mutating func refilter() {
         let keep = selected
-        items = query.isEmpty ? allItems : allItems.filter { Self.matches($0, query: query) }
+        items = Self.ranked(allItems, query: query)
         if let keep, let index = items.firstIndex(where: { $0.id == keep.id }) {
             selection = index
         } else {
@@ -263,12 +263,27 @@ struct SwitcherModel {
         }
     }
 
-    /// The fuzzy match on the window title or the app — the command
-    /// bar's subsequence scorer, so "sfr" lands Safari the way Witch's
-    /// type-ahead does and "tm" still finds a Terminal window.
-    static func matches(_ item: SwitcherItem, query: String) -> Bool {
-        MenuBarCommands.score(query, item.title) != nil
-            || MenuBarCommands.score(query, item.appName) != nil
+    /// The item's rank under `query`: the window title at full score,
+    /// the app name halved like the command bar's detail fallback so
+    /// a real title hit always beats an app-only one. nil = no match.
+    static func score(_ item: SwitcherItem, query: String) -> Int? {
+        let title = MenuBarCommands.score(query, item.title)
+        let app = MenuBarCommands.score(query, item.appName).map { $0 / 2 }
+        return [title, app].compactMap { $0 }.max()
+    }
+
+    /// The filtered set, best score first — Witch's ranked type-ahead
+    /// over the plain subsequence filter. Ties keep the incoming
+    /// order, which is recency: equal matches still read most-recent
+    /// first, so ranking never invents a new shuffle.
+    static func ranked(_ items: [SwitcherItem], query: String) -> [SwitcherItem] {
+        guard !query.isEmpty else { return items }
+        return items.enumerated()
+            .compactMap { index, item in
+                score(item, query: query).map { (item, $0, index) }
+            }
+            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.2 < $1.2 }
+            .map(\.0)
     }
 
     var selected: SwitcherItem? {
@@ -947,16 +962,41 @@ final class DockSwitcherModel {
 
 struct DockSwitcherView: View {
     let model: DockSwitcherModel
+    /// The card the pointer rests on — AltTab's hover zoom reads it.
+    /// A filtered-out or gone card clears the zoom on the next frame.
+    @ViewState private var hoveredID: String?
+
+    /// The card the preview pane reads: the hovered one while the
+    /// pointer rests on the strip, the keyboard's selection otherwise
+    /// — AltTab's layout, where the big look belongs to whichever
+    /// candidate is about to commit.
+    private var zoomed: SwitcherItem? {
+        model.items.first { $0.id == hoveredID } ?? model.items[safe: model.selection]
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
+                // The preview pane — a fixed slot so the panel never
+                // reflows mid-gesture; what it shows follows
+                // hover/selection.
+                if let item = zoomed {
+                    zoom(item)
+                        .frame(maxWidth: 340, minHeight: 216)
+                        .padding(.top, 10)
+                        .id(item.id)
+                        .transition(.opacity)
+                        .animation(.easeOut(duration: 0.12), value: item.id)
+                }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
                             card(item, selected: index == model.selection)
                                 .id(item.id)
                                 .onTapGesture { model.onPick(index) }
+                                .onHover { inside in
+                                    hoveredID = inside ? item.id : (hoveredID == item.id ? nil : hoveredID)
+                                }
                         }
                     }
                     .padding(10)
@@ -984,6 +1024,40 @@ struct DockSwitcherView: View {
             .onChange(of: model.selection) { _, _ in
                 guard let item = model.items[safe: model.selection] else { return }
                 withAnimation(.easeOut(duration: 0.08)) { proxy.scrollTo(item.id) }
+            }
+        }
+    }
+
+    /// The preview pane's contents — the hovered (or selected) card at
+    /// full size: the window still when the thumbnail pass granted
+    /// one, the app icon otherwise, plus the title the strip
+    /// truncates. Offscreen windows say so under the title.
+    @ViewBuilder
+    private func zoom(_ item: SwitcherItem) -> some View {
+        VStack(spacing: 5) {
+            Group {
+                if let still = model.thumbnails[item.id] {
+                    Image(nsImage: still)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .shadow(radius: 6, y: 2)
+                } else {
+                    Image(nsImage: item.icon ?? NSImage())
+                        .resizable()
+                        .frame(width: 84, height: 84)
+                }
+            }
+            .frame(maxWidth: 320, maxHeight: 168)
+            Text("\(item.appName) — \(AppNameChannel.split(item.title).base)")
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 320)
+            if item.minimized || !item.onScreen {
+                Text(item.minimized ? "Minimized" : "Off screen")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
             }
         }
     }

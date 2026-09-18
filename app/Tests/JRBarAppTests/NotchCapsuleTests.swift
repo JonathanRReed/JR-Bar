@@ -30,6 +30,19 @@ struct NotchCapsuleTests {
         return (toy, store)
     }
 
+    /// Poll for a capsule's draw — every hop in its lifecycle rides a
+    /// main-queue `asyncAfter` whose deadline slides under a parallel
+    /// suite, so the tests sample a window, not one slept instant.
+    private func waitForCapsule(_ toy: NotchToy, id: String,
+                              timeout: Duration = .seconds(8)) async -> Bool {
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < timeout {
+            if toy.activeCapsule?.id == id { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
+    }
+
     @Test("a grow mid-gap shelves the capsule; the fold replays it and the queue unwedges")
     func expandDuringGapShelvesAndCollapseRestores() async throws {
         let (toy, store) = makeToy()
@@ -60,11 +73,13 @@ struct NotchCapsuleTests {
         #expect(toy.shelvedCapsule == nil)
 
         // A new offer queues behind the replayed capsule, then draws —
-        // the slot is not wedged.
+        // the slot is not wedged. B's replay ends after its `life`, C
+        // promotes past the gap: every hop is a timer that slides, so
+        // the test waits for the draw itself.
         toy.offer(notice(.completed, key: "completed:c", id: "c"))
         #expect(toy.capsuleQueue.pending?.id == "c")
-        try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.life + 0.4))
-        #expect(toy.activeCapsule?.id == "c")
+        #expect(await waitForCapsule(toy, id: "c"),
+                "the queued capsule draws after the replay")
     }
 
     @Test("the utility switched off owns no surface — the island read and the glass card agree")

@@ -83,6 +83,10 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Where a reveal surfaces the hidden run — the Item Bar panel
     /// (Bartender) or inline on the row (Ice, Hidden Bar).
     public var revealStyle: RevealStyle
+    /// Bartender Golden Gate's swap: while a reveal is out, the
+    /// normally-shown items are covered too — the bar shows only the
+    /// hidden run. Re-hide drops both and the stock split returns.
+    public var hideShownWhileRevealing: Bool
     /// Which hiding model the section map was written under. Files
     /// from before `currentLayoutModel` carried a map that assigned
     /// every item hidden (the cover era); the position model reads
@@ -264,6 +268,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
                 revealStyle: RevealStyle = .bar,
+                hideShownWhileRevealing: Bool = false,
                 layoutModel: Int = MenuBarSettings.currentLayoutModel,
                 coverMaterial: CoverMaterial = .blend, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
@@ -293,6 +298,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.revealOnScroll = revealOnScroll
         self.rehideSeconds = Self.clampedRehide(rehideSeconds)
         self.revealStyle = revealStyle
+        self.hideShownWhileRevealing = hideShownWhileRevealing
         self.layoutModel = layoutModel
         self.coverMaterial = coverMaterial
         self.coverTint = coverTint
@@ -352,7 +358,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, revealStyle, layoutModel
+        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, revealStyle, hideShownWhileRevealing, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
         case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
@@ -372,6 +378,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         rehideSeconds = Self.clampedRehide(
             (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds)) ?? Self.defaultRehideSeconds)
         revealStyle = (try? c.decodeIfPresent(RevealStyle.self, forKey: .revealStyle)) ?? .bar
+        hideShownWhileRevealing = (try? c.decodeIfPresent(Bool.self, forKey: .hideShownWhileRevealing)) ?? false
         // Absent with a map present means a file from the cover era —
         // the map is cleared on first apply. Absent with no map has
         // nothing to migrate and reads as current.

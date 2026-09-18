@@ -468,6 +468,52 @@ struct MenuBarSpacerTests {
         #expect(overflowed.overflowControlFrame == nil)
     }
 
+    // MARK: The Golden Gate swap — cover shown while revealing
+
+    @Test("coverShown paints the shown run; protected, the « and the boundary stay blockers")
+    func shownCovers() {
+        let overflow = item("«", owner: "MenuBarAgent", x: 1180, w: 18, overflow: true)
+        let protected = item("Clock", owner: "Control Center", x: 1205)
+        let items = [item("Deep", x: 906), item("Mid", x: 960),
+                     item("Up", x: 1030), item("Up2", x: 1070),
+                     overflow, protected]
+        let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                         controls: controls, fitEdge: fitEdge,
+                                         coverShown: true)
+        // The swap covers the shown run only — sections stay honest.
+        #expect(plan.hidden.map(\.id) == ["Deep", "Mid"])
+        #expect(plan.shown.map(\.id).contains("Up"))
+        #expect(!plan.shownCovers.isEmpty)
+        // The cover spans the shown run but never the « or Control
+        // Center, and never the boundary's own frame at 1000–1024.
+        for cover in plan.shownCovers {
+            #expect(!cover.contains(1180) && !cover.contains(1205),
+                    "protected and native-overflow frames stay uncovered")
+            #expect(!cover.overlaps(1000...1024),
+                    "the rehide affordance is never covered")
+        }
+        // Up@1030 and Up2@1070 sit under one merged run.
+        #expect(plan.shownCovers.contains { $0.contains(1030) && $0.contains(1070) })
+        // Off, the plan carries no shown coverage at all.
+        let plain = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                          controls: controls, fitEdge: fitEdge)
+        #expect(plain.shownCovers.isEmpty)
+    }
+
+    @Test("a shown-cover plan never paints over a protected owner's slot")
+    func shownCoversRespectProtected() {
+        // Two shown items flanking a protected one: the run breaks at
+        // it rather than paving it.
+        let protected = item("Clock", owner: "Control Center", x: 1070)
+        let items = [item("Up", x: 1030), protected, item("Up2", x: 1110)]
+        let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                         controls: controls, fitEdge: fitEdge,
+                                         coverShown: true)
+        for cover in plan.shownCovers {
+            #expect(!cover.overlaps(1070...1094))
+        }
+    }
+
     // MARK: Migration and the control face
 
     @MainActor

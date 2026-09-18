@@ -44,7 +44,10 @@ Sources: tryalcove.com (v1.7.x release notes), TheBoredTeam/boring.notch
 README roadmap, dockdoor.net, pro.dockdoor.net + gumroad listing, trybendy.app,
 jh3y/lid-plane, macduo.dhananjaytech.app. Full-board research pass 2026-09-17
 (menu bar, dock/switcher, notch/HUD, fold/shelf/meters, agents/LED lanes —
-official sites, READMEs, pricing pages linked per section). Started 2026-09-14.
+official sites, READMEs, pricing pages linked per section). Started 2026-09-14;
+refreshed 2026-09-18 (Hidden Bar 1.11.1, Bartender 7.0 + Golden Gate betas,
+boring.notch v2.7, DockDoor 1.40/Pro 1.4x, Dropover 5.2.5, iStat 7.5,
+NotchNook shutdown, and the Atoll/Notchy/NotchIA/SaneBar/Brow additions).
 Nothing here is copied; DockDoor and Lid Plane are GPL-3, AltTab is GPL-3,
 Ice/MewNotch/boring.notch are GPL-3, everything native is clean-room.
 
@@ -62,23 +65,23 @@ a `?` never blocks JR-Bar's own Done/Won't.
 | Pill shape on notch-less displays | yes (1.7) | yes | Done | `Capsule` face |
 | Simulated notch toggle on notch-less Macs | yes (1.7.1) | sizing options | Done | `ScreenBarGeometry.simulatedNotch` — the island hugs the top as a synthetic housing |
 | Now Playing: artwork, title/artist, transport | yes | yes | Done | perl-hosted MediaRemote helper |
-| Now Playing: waveform/visualizer | yes (iOS-matched) | yes | Partial | Five-bar activity animation — decorative, not an audio-reactive spectrum; iOS-style waveform is a planned step |
-| Now Playing: scrubbing, lyrics | yes / no | scrub yes | Done (scrub) | Interpolated playhead + drag-to-seek through the MediaRemote `seek` verb; lyrics: Won't, needs a lyrics service |
+| Now Playing: waveform/visualizer | yes (iOS-matched) | yes | Partial | Five-bar activity animation — decorative, not an audio-reactive spectrum. Real capture is now feasible, not a Won't: Atoll's mechanism is the macOS 14.2+ CoreAudio process-tap pipeline (`CATapDescription` → `AudioHardwareCreateProcessTap` → private aggregate device → `AudioDeviceCreateIOProcID`) — fully public; clean-room implementable, worth a tranche |
+| Now Playing: scrubbing, lyrics | yes / no | scrub yes + synced lyrics (beta, LRCLIB — v2.7) | Done (both) | Interpolated playhead + drag-to-seek through the MediaRemote `seek` verb; synced lyrics via LRCLIB `/api/get` → `/api/search` fallback (free, keyless — the same source boring.notch/Atoll/Notchy use), LRC-parsed, cached per track, quiet line on the media card |
 | Audio format badge (Lossless/Atmos) | yes | no | Won't | Private API surface, low value |
 | Charging / on battery / full capsule | yes | yes | Done | `AlcovePower` |
 | Battery % in card | yes | yes | Done | |
 | AirPods / Bluetooth connect capsule (with battery) | yes | roadmap | Done (name + battery %) | `IOBluetooth` watcher on a dedicated runloop thread — the CoreBluetooth handshake can never wedge launch again |
-| Volume / brightness / keyboard-backlight HUD replacement | yes | yes | Done (volume, brightness, keyboard backlight) | `NX_SYSDEFINED` decode → CoreAudio / DisplayServices / CoreBrightness reads on a `.listenOnly` tap; Apple's HUD still shows too — hiding it needs the private `OSDUIHelper` kill |
+| Volume / brightness / keyboard-backlight HUD replacement | yes | yes | Done (volume, brightness, keyboard backlight) | `NX_SYSDEFINED` decode → CoreAudio / DisplayServices / CoreBrightness reads on a `.listenOnly` tap; Apple's HUD still shows too. Suppression split verified: swallowing physical key presses is *public* — a `.defaultTap` CGEventTap consuming `NX_SYSDEFINED` media keycodes (boring.notch ships exactly this) — while suppressing Control-Center/Touch-Bar triggers needs `killall -STOP OSDUIHelper` process control (Atoll's approach — unsanctioned, respawn-chasing; we won't) |
 | Caps Lock indicator | yes | no | Done | `flagsChanged` on the global stream and our own windows — fires while a JR-Bar panel is key |
 | Focus mode change capsule | yes | no | Done | `~/Library/DoNotDisturb/DB/Assertions.json` + the daemon's `focus_sync` |
 | Display connect / disconnect capsule | yes | no | Done | `NSApplication.didChangeScreenParameters` |
-| Screen recording indicator capsule | yes | no | Won't | macOS 26 has no public capture signal — `kCGSSessionScreenIsCaptured` is gone, the purple indicator is WindowServer-composited (no window), and `replayd` keeps its state private; verified live against `screencapture`. Alcove reaches it through private API; we won't link private frameworks for a capsule |
+| Screen recording indicator capsule | yes | no | Won't | Mechanism verified private: Atoll binds `CGSIsScreenWatcherPresent` + `CGSRegisterNotifyProc` (CGS events 1502/1503) via `@_silgen_name` — event-driven, no public equivalent (`SCWindow.isActive` is Stage Manager state, not capture). Gray-area fallback: poll `CGSessionCopyCurrentDictionary()["CGSSessionScreenIsCaptured"]` — key-presence semantics confirmed live, but coverage of local SCK streams is unverified; we won't link private CGS for a capsule |
 | Notification banners mirrored into the island | yes | under consideration | Won't | Needs private notification-center hooks; Alcove's own FAQ says these can break any release |
 | Calendar: next event, join link | yes | yes | Done | EventKit, "Show calendar" grant |
 | Reminders | no | yes | Done | EventKit, "Show reminders" grant; check-off writes back |
 | Weather | yes | roadmap | Done | Open-Meteo keyless (no WeatherKit entitlement), off by default |
 | Timers / Pomodoro | via Live Activities | no | Done (timers) | Hide row when empty (step 1) |
-| Shelf / file drop with AirDrop | no (Drop in 1.6) | yes | Done (tray + AirDrop verb) | `NSSharingService` AirDrop on the tray chip's menu |
+| Shelf / file drop with AirDrop | no (Drop in 1.6) | yes | Done (tray + AirDrop verb + QuickLook + ⌃⌥D summon + reorder) | `NSSharingService` AirDrop on the tray chip's menu; Quick Look via `QLPreviewPanel`; URL drops materialize `.webloc`s, text drops materialize `.txt`s; chips carry real file-type icons with Quick Look thumbnail upgrade and drag-to-reorder; drag-to-notch summon + global ⌃⌥D hotkey; swipe-up fold. Gaps kept honest: no stacks, no multi-shelf, no shake-to-summon |
 | Mirror (camera preview) | no | yes | Done | `ShelfMirrorModel` — AVFoundation session on a private queue, consent asked on the toggle, lens closes when the card folds away; off by default |
 | Swipe gestures on the island | yes | yes | Done | |
 | Hover tell while bare | yes (ear swell) | peek | Done | The Screen Bar ear under the pointer swells outward — the wink the bare island could never draw |
@@ -87,9 +90,9 @@ a `?` never blocks JR-Bar's own Done/Won't.
 | Haptic on open | yes | no | Done | `NSHapticFeedbackManager` tick; Notch settings toggle |
 | Ears as lobes of the notch | yes (wings drop below the bezel line) | ears | Done | Claimed ears hang below the menu-bar line as rounded lobes off the shared tray; an unclaimed side grows none, and the tray keeps the bezel's bottom-corner arcs scooped out (even-odd fill) |
 | LED strip seated at the island's edge | — | — | Done | The band rides the island's live bottom edge — compact or grown card — instead of crossing its face at bezel depth |
-| Lock-screen widgets / mode | yes | roadmap | Won't | JR-Bar can't draw over the lock screen without private APIs |
+| Lock-screen widgets / mode | yes | yes (v2.7 — notch on the lock screen; widgets still roadmap) | Won't | Mechanism verified private: both boring.notch and Atoll create a SkyLight space at absolute level 400 (`SLSSpaceCreate`/`SLSSpaceSetAbsoluteLevel` via `Lakr233/SkyLightWindow`) and move windows in on `com.apple.screenIsLocked` — private API end to end, no public space tier reaches the lock screen. The Won't stands |
 | Duo mode (two islands) | yes (1.7) | no | Won't | Nothing in JR-Bar needs a second island |
-| Agent sessions, asks, usage meters in the island | no | no | Done | The reason the toy exists |
+| Agent sessions, asks, usage meters in the island | no | no | Done | No longer unique — Atoll, Notchy and NotchIA all ship Claude/Codex quota tracking in the notch (see New Rivals). The edge is breadth: asks with approve/deny, multi-provider forecast, aquarium, Screen Bar and the LED lanes — the others are meters, not surfaces |
 | Screen Bar LED strip across the island | no | no | Done | |
 | Menu bar icon hidden | Tahoe native | yes | Done | System setting, documented |
 | Sound effects on capsule events | yes | yes | Done | `NotchSounds.tick` on HUD/capsule events; on by default, toggle in Notch settings |
@@ -99,7 +102,7 @@ a `?` never blocks JR-Bar's own Done/Won't.
 
 | Rival | Type | Coverage | Notes |
 | --- | --- | --- | --- |
-| NotchNook (lo.cafe) | Paid ($25 one-time / $3-mo, Setapp) | Covered by rows above | Mature Tray + AirDrop, FaceTime Mirror, calendar widget (no join documented), hover auto-open; sources: lo.cafe/notchnook, macworld review |
+| NotchNook (lo.cafe) | **Dead — decommissioned as a parity target** | Covered by rows above | Vendor collapse 2026-09: lo.cafe down, Stripe suspended, Setapp removal 2026-09-22, vendor telling users not to buy; Tray + AirDrop, FaceTime Mirror, calendar widget were mature; sources: macmagazine.com.br 2026-09-16 |
 | DynamicLake Pro (Avior) | Paid (~$14–17 one-time, Gumroad) | Covered by rows above | Liquid Glass island, FFT waveform, DynaConnect BT, volume/brightness HUD, push notifications + quick reply, DynaClip shelf + DynaDrop actions + AirDrop, timers; sources: dynamiclake.com, gumroad listing |
 | TopNotch (MTW/CleanShot team) | Free | N/A — notch hider only | Blackens menu bar to camouflage notch; no island/HUD/calendar/shelf — not a parity target; source: topnotch.app |
 | MewNotch (monuk7735, GPL-3) | OSS | Covered by HUD + shelf rows | Power + time-remaining, volume/brightness + HUD kill, adjustable hover delay, persistent shelf, mirror + corner radius, lock-screen padlock; sources: github.com/monuk7735/mew-notch |
@@ -140,7 +143,7 @@ with Apple's Dock hidden gets it back.
 
 | Feature | DockDoor Free | JR-Bar Dock | Notes |
 | --- | --- | --- | --- |
-| Hover a Dock icon → live window previews | yes | Done | AX hit-test of the Dock's `AXList`, `SCScreenshotManager` one-shots per window — no stream; each fresh capture pulses the recording indicator once, cached 30 s; captures alpha-trimmed to content so a purged margin can't drift the image off-centre |
+| Hover a Dock icon → live window previews | yes | Done | AX hit-test of the Dock's `AXList`, `SCScreenshotManager` one-shots per window — no stream; each fresh capture pulses the recording indicator once, cached 30 s; captures alpha-trimmed to content so a purged margin can't drift the image off-centre; `AXStatusLabel` unread badges on the header icon and a right-click verb menu (Raise / Minimize / Full Screen / Tile To halves+quarters / Close) |
 | Delegate to an installed counterpart | n/a | Done | "Render with" on the card: JR-Bar, DockDoor (free), ActiveDock (paid) — an external pick parks the watcher, live install/run probe + Open button |
 | Dock stays raised while a preview is up | yes (auto-hide off while hovering) | Done | Private `CoreDockSetAutoHideEnabled` — no `killall Dock`, restored on close/crash; `DockHold` |
 | Fullscreen / New Window verbs on cards | yes | Done | `AXFullScreenButton` press / synthesized ⌘N keystroke (`postToPid` — apps without a ⌘N binding no-op); windowless apps get Open — the old `onOpenApp` dead-ended |
@@ -151,12 +154,12 @@ with Apple's Dock hidden gets it back.
 | Close-all / minimise-all from the app preview | yes | Done (Min all + Close all + Hide / Quit) | Hide / Quit always in the header; "Min all" appears on multi-window previews and writes `AXMinimized` across the set; "Close all" presses each window's `AXCloseButton` and drops closed cards, the app staying running windowless |
 | Compact list view past N windows | yes | Done | Configurable limit; a tile past it renders a row-per-window list |
 | Large preview option | yes | Done | 208×130 cards |
-| Folder Pop: hover a Dock folder → contents, sort, open | yes | Done | `AXFolderDockItem` tiles pop a capped, dirs-first strip; POSIX `readdir` off-main — a TCC consent pend or stuck vnode can't reach the UI; denied folders get a Settings shortcut, not a spinner |
-| Option+Tab window switcher with previews and keyboard control | yes | Partial | `DockSwitcher` — `CGEventTap` on ⌥⇥ (Accessibility), centred strip with minimized + other-Space windows included, type-ahead and ⌘-verbs while the chord is held; cards are icon + title — live thumbnails are the remaining gap vs AltTab |
+| Folder Pop: hover a Dock folder → contents, sort, open, drag out | yes (+ drag items out since 1.40) | Done | `AXFolderDockItem` tiles pop a capped, dirs-first strip; POSIX `readdir` off-main — a TCC consent pend or stuck vnode can't reach the UI; denied folders get a Settings shortcut, not a spinner; chips are drag sources carrying their own file URL — DockDoor 1.40's drag-out |
+| Option+Tab window switcher with previews and keyboard control | yes | Done | `DockSwitcher` — `CGEventTap` on ⌥⇥ (Accessibility), centred strip with minimized + other-Space windows included, fuzzy type-ahead and ⌘-verbs while the chord is held; live thumbnails via the shared `DockThumbnailer` (one-shot stills, 30 s cache, same no-stream trade-off AltTab makes — keeps the purple indicator off), icon cards without the grant, Dock `AXStatusLabel` unread badges on cards |
 | Cmd+Tab replacement overlay | yes | Done | Same tap, app-level mode; off by default, it's aggressive |
 | Trackpad gestures on previews (swipe to minimise/maximise) | yes | Done (swipe to minimise/restore) | `SwipeCatcher` claims vertical flicks only — horizontal scroll still reaches the strip |
 | Media widget on hover over Music/Spotify | yes | Done | `MediaFeed` row on player-bundle tiles — artwork, track, transport |
-| Synced lyrics | yes | Won't | Needs a lyrics service, local-only app |
+| Synced lyrics | yes | Won't for now | LRCLIB is free and keyless — boring.notch, Atoll and Notchy all ship synced lyrics through it, so the "needs a service" wall is lower than first scoped |
 | Calendar widget on hover over Calendar | yes | Done | `ShelfCalendarModel` projection on the Calendar tile — next event + Join link |
 | Quick quit ⌘+right-click, force quit ⌘⌥ | yes | Done | Global `rightMouseDown` monitor — the Dock keeps its menu, ours rides the press |
 | App filters (hide apps from previews) | yes | Done | `excludedBundleIDs` in the Dock settings card — an excluded tile rests without a preview |
@@ -169,7 +172,7 @@ with Apple's Dock hidden gets it back.
 
 | Rival | Type | Coverage | Notes |
 | --- | --- | --- | --- |
-| DockDoor Pro | Paid ($20 one-time, 3 Macs) | Enhance rows above apply; Pro-only replace-dock scope cut | Full native Dock replacement, 20+ in-place actions, Alt-Tab replacement + Glance, folder fan-out + file tray + AirDrop, per-display docks + profiles, Now Playing + synced lyrics, AppleScript; replace bar cut 2026-09-15; sources: pro.dockdoor.net/features |
+| DockDoor Pro | Paid ($20 one-time, 3 Macs) | Enhance rows above apply; Pro-only replace-dock scope cut | Full native Dock replacement, 20+ in-place actions, Alt-Tab replacement + Glance, folder fan-out + file tray + AirDrop, per-display docks + profiles, Now Playing + synced lyrics, AppleScript; 1.4x adds pinned-apps-first switcher ordering, last-focused timestamps, AppSense profile switching, community widget marketplace; replace bar cut 2026-09-15; sources: pro.dockdoor.net/features + CHANGELOG |
 | ActiveDock (MacPlus) | Paid (one-time, 14-day trial) | Covered by Enhance rows; external pick parks watcher | Window Preview panel, groups + folders + Start Menu, multi-monitor; "Render with" offers ActiveDock; source: noteifyapp.com/activedock |
 | DockMate (MacEnhance) | Paid (from $14.99, stale — last release 0.8.7/2021) | Covered by Enhance rows | Hover → mini → full-size previews, Music + Calendar quick-look + Join; no keyboard switcher; source: macenhance.com/dockmate.html |
 | Sidebar (sidebarapp.net) | Paid (lifetime €19.99 / €1.25-mo / €12.50-yr) | Covered by Enhance rows | Vertical Dock replacement + window manager, per-screen sidebars, hover previews, switcher overlay + search, WindowSnap; source: sidebarapp.net |
@@ -180,9 +183,9 @@ with Apple's Dock hidden gets it back.
 
 | Feature | Witch ($14, Many Tricks) | Contexts ($9.99) | AltTab (GPL-3, free + Pro $9.99) | JR-Bar Switcher | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Window switcher with live previews | list/icons/titles (no live thumbnails) | title list (no thumbnails) | yes — live thumbnails + hover full-size | Partial (live ordering + static cards; minimized + other-Space windows included) | `DockSwitcher` — `CGEventTap` on ⌥⇥ (Accessibility), centred strip; `CGWindowList` + AX merge is live incl. off-screen rows, cards draw icon + title (no `DockThumbnailer` in switcher — the remaining gap vs AltTab); sources: manytricks.com/witch, contexts.co, github.com/lwouis/alt-tab-macos |
-| App switcher (⌘⇥) replacement | yes (multiple switchers) | yes (Cmd-Tab windows-listed) | yes (custom shortcuts) | Done (off by default) | Same tap, app-level mode; off by default, it's aggressive |
-| Type-ahead filtering while chord held | fuzzy type-to-filter | fuzzy search + Fast Search | yes (Pro type-to-filter) | Partial (unranked substring, US layout) | Spell "saf" while holding the chord; no scoring/ranking, no sidebar, non-US layouts unmapped — Contexts Fast Search depth and Witch multi-switcher configurability are gaps |
+| Window switcher with live previews | list/icons/titles (no live thumbnails) | title list (no thumbnails) | yes — live thumbnails + full-size preview | Done | `DockSwitcher` — `CGEventTap` on ⌥⇥ (Accessibility), centred strip; `CGWindowList` + AX merge is live incl. off-screen rows; cards draw real window stills through the shared `DockThumbnailer` (one-shot captures, not a stream), icon fallback without the grant; AltTab's layout — a preview pane above the strip follows hover (selection otherwise) — and the type-ahead score-ranks, title hits over app hits, recency on ties; sources: manytricks.com/witch, contexts.co, github.com/lwouis/alt-tab-macos |
+| App switcher (⌘⇥) replacement | yes (multiple switchers) | yes (Cmd-Tab windows-listed) | yes (custom shortcuts) | Done (off by default) | Same tap, app-level mode; ↓ on a card drills into that app's windows — Witch's drill-down — ⌘-release commits the window; Dock `AXStatusLabel` badges on cards; a minimized-only app restores its picked window instead of merely activating; off by default, it's aggressive |
+| Type-ahead filtering while chord held | fuzzy type-to-filter | fuzzy search + Fast Search | yes (Pro type-to-filter) | Done | The command bar's subsequence scorer (consecutive-run, word-start, prefix bonuses) — "sfr" lands Safari the way Witch's fuzzy does; tested as Witch's fuzzy. Caveats: the keycode map is US-layout-only, no sidebar — Contexts Fast Search depth and Witch multi-switcher configurability remain gaps |
 | Close/quit/minimize verbs in switcher | H/M/W/Q/Z/F/P/R/G keys | Close/Quit/Minimize/Hide | close/minimize/fullscreen in switcher | Done (⌘Q/⌘W/⌘M/⌘H/⌘F) | ⌘-verbs on the highlighted row — quit/hide on the app, close/minimize/fullscreen on the window; the strip rebuilds around the pick; ⌘-keys never leak to the front app while the strip is up |
 
 ## Menu Bar (vs Ice, Bartender 7)
@@ -192,7 +195,7 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 
 | Feature | Ice | Bartender 7 | JR-Bar Menu Bar | Notes |
 | --- | --- | --- | --- | --- |
-| Hide menu bar items (separator section) | yes | yes | Done | The boundary is the JR-Bar icon's own item: a 30 pt drop zone with a standing ‹ mark claims the bar's left edge permanently while the utility is on — a separator you can see, not a blank stretch (the only push the OS allows is macOS 26's native overflow — see docs/UTILITIES.md) |
+| Hide menu bar items (separator section) | yes | yes | Done | The boundary is the JR-Bar icon's own item: a 30 pt drop zone with a standing ‹ mark claims the bar's left edge permanently while the utility is on — a separator you can see, not a blank stretch. Position is membership: anything standing left of ‹ plans hidden whether a hand dragged it or macOS re-stood it behind the mark, and items the agent cannot hold keep sticky covers through flap cycles — `cover paint` logs make the painted spans verifiable (the only push the OS allows is macOS 26's native overflow — see docs/UTILITIES.md) |
 | ⌘-drag an item across the separator to hide/show | yes | yes | Done | ⌘-recency gate + largest-mover discriminator — only a real drag writes `concealedApps`; space churn and reveals can't fake one |
 | Delegate to an installed counterpart | n/a | n/a | Done | "Render with" on the card: JR-Bar, Bartender, Ice, Hidden Bar — an external pick parks our engine, live install/run probe + Open button |
 | Always-hidden section | yes | yes | Done | |
@@ -204,12 +207,12 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 | Hide app menus when they overlap items | yes | yes | Done | The front app's menu edge is cached per AX scan; items it overdraws plan hidden |
 | Drag-and-drop arrange | yes | yes | Done (explicit arrange mode) | ⌘-drag `CGEvent`s on the real items, AX-gated, banner + Esc cancel; never in the background |
 | Hidden items in a separate bar (Ice Bar / Bartender Bar) | yes | yes (Liquid Glass) | Done | The "Item Bar" — glass, floats under the menu bar; live `SCScreenshotManager` tiles with icon fallback |
-| Search menu bar items | yes | yes (Command Bar + clipboard history) | Done (⌘⇧K) | Clipboard history: Won't — a second product |
+| Search menu bar items | yes | yes (Command Bar + clipboard history) | Done (⌘⇧K) | Click-outside dismissal ships; clipboard history: Won't — a second product |
 | Item spacing control | yes (beta) | yes (3 presets + custom) | Done (4 presets) | `MenuBarSpacing` writes `NSStatusItemSpacing`/`SelectionPadding` — the same global pref Bartender writes; running items pick it up on relaunch |
 | Spacer / label items in the bar | roadmap | yes | Done | Our own status items as spacers/labels/emoji — click reveals the run |
 | Menu bar tint, gradient, shadow, border, rounded | yes | yes (incl. themed bar) | Done (cover tint/material/rounding + full-bar underlay) | Underlay panel at `statusBar - 1` |
 | Profiles (named bar layouts) | roadmap | yes | Done | Trigger-switchable; per-display override follows the pointer's screen |
-| Triggers (unplug → show battery, VPN on public Wi-Fi, mic in meetings…) | partial (roadmap) | yes | Done (lock/unlock/app/time/charger/Wi-Fi/mic/Focus) | `CWEventType.ssidDidChange`, AVCaptureDevice mic poll, Focus DB watch |
+| Triggers (unplug → show battery, VPN on public Wi-Fi, mic in meetings…) | partial (roadmap) | yes | Done (lock/unlock/app/time/charger/battery-above-below/Wi-Fi/mic/Focus → apply-profile, hide/show, reveal, run-script) | `CWEventType.ssidDidChange`, AVCaptureDevice mic poll, Focus DB watch, internal-battery percent edges; the script action is Bartender parity — `/bin/sh -c` detached, launch + exit logged |
 | Hotkeys for sections / bar / search | yes | yes | Done | Carbon `RegisterEventHotKey`, same as panel hotkey |
 | AppleScript / Shortcuts / Siri control | no | yes | Won't for now | Revisit if asked |
 | Custom menu bar widgets (scripts, data sources) | roadmap | yes | Won't | Third-party code in our process; a whole ecosystem |
@@ -227,9 +230,9 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 | --- | --- | --- | --- |
 | iBar / iBar Pro (Ningbo Shangguan) | Paid (free + $2.99-yr; Pro $9.99 one-time, MAS) | Covered by rows above | Aggregation floating window for notch Macs, 4 gap levels, notch-aware core pitch; requires Screen Recording; sources: MAS ibar-pro-menubar-control-tool, MAS ibar-menubar-icon-control-tool |
 | Barbee (HyperartFlow) | Paid (free + 3-day trial; Lifetime ~$12.99 / Yearly ~$4.99, MAS) | Covered by rows above | Normal + Enhanced second row, Emoji/SF dividers, Spotlight-style search, ~40% denser spacing, tint/rounded, cloud profiles, app-launch/Focus/CPU rules, notch support (VIP); sources: MAS barbee-hide-menu-bar-items, lifehacker review |
-| Hidden Bar (dwarvesf, MIT) | OSS | Covered by rows above | Arrow + `|` separator, option-click second zone, global hotkey, no daemon/network; macOS 27 length-inflation broken (#360); "Render with" offers Hidden Bar; sources: github.com/dwarvesf/hidden, MANUAL.md |
+| Hidden Bar (dwarvesf, MIT) | OSS | Covered by rows above | Arrow + `|` separator, option-click second zone, global hotkey, no daemon/network; v1.11.1 (2026-09-18) fixed macOS 27 hiding via a private framework, per-app not per-icon, and the MAS build still can't hide on 27; "Render with" offers Hidden Bar; sources: github.com/dwarvesf/hidden releases, MANUAL.md |
 | Dozer (Mortennn, MPL-2.0, abandoned) | OSS (abandoned 2022; fork Dozer-X for AS/macOS 14+) | Covered by rows above | 2–3 dot separator groups; no hover/scroll/search; native ⌘-drag only; sources: github.com/Mortennn/Dozer, github.com/callebtc/Dozer-X |
-| Bartender 7 Pro / Top Shelf extras | Paid extras (Pro ~$15-yr; Mega Supporter ~$80 lifetime; Setapp) | Called out where separate | Top Shelf: notch widgets, Files shelf (6 files, AirDrop), Clipboard (100 items, search, persists), Calendar/Music/Live Activities incl. Claude/Codex alerts; v7 zero-mouse-interruption mode; combined system item + agent state are where we beat Bartender; sources: macbartender.com, 9to5mac 2026-05-12 |
+| Bartender 7 Pro / Top Shelf extras | Paid extras (Pro ~$15-yr; Mega Supporter ~$80 lifetime; Setapp) | Called out where separate | 7.0.0 shipped 2026-09-14 — App Intents (Shortcuts/Siri), hotkey "Focus Mode" hides the whole bar, hide system items incl. clock, per-monitor preset sync; Golden Gate betas add disabled-items detection, text/emoji/SF spacers, "hide shown items when revealing hidden" (a mode we lack), expanded AppleScript, a Raycast extension. Top Shelf: notch widgets, Files shelf, Clipboard (100 items), Calendar/Music/Live Activities incl. Claude/Codex alerts; combined system item + agent state are still where we beat Bartender; sources: macbartender.com/Bartender7, /goldengate/releases |
 
 ## HUD capsules (vs MediaMate, BetterTouchTool, MewNotch, boring.notch)
 
@@ -243,7 +246,7 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 
 | Feature | Dropover (free + Pro $6.99 IAP) | Yoink (~$8.99 Mac) | Dropzone 4 (Pro Lifetime ~$35 / Yearly ~$20) | boring.notch shelf (GPL-3) | JR-Bar Tray | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| File drop shelf | yes (shake-to-summon, multi-shelf) | yes (edge shelf + stacks + QuickLook) | yes (Drop Bar stash, detachable) | yes | Done (tray + AirDrop verb) | `NSSharingService` AirDrop on the tray chip's menu; sources: dropoverapp.com, Yoink MAS, aptonic.com |
+| File drop shelf | yes (shake-to-summon, multi-shelf) | yes (edge shelf + stacks + QuickLook + file icons) | yes (Drop Bar stash, detachable) | yes (Shelf 2.0: context menu, multi-select, move-by-default, drag-into-notch) | Done (tray + AirDrop + QuickLook + ⌃⌥D summon) | `NSSharingService` AirDrop on the tray chip's menu; `QLPreviewPanel` on double-click/menu; URL drops → `.webloc`; drag-to-notch summon; top-edge + ⌃⌥D hotkey summon; swipe-up fold. Honest gaps: no stacks, no multi-shelf, no shake-to-summon, no chip reorder/keyboard nav, chips draw a generic `doc` glyph not file-type icons; sources: dropoverapp.com, Yoink MAS, aptonic.com, boring.notch v2.7 notes |
 | Shelf with AirDrop | no (share links) | no (Handoff to iOS) | yes (AirDrop action grid) | yes (shelf + AirDrop) | Done | Same as above — direct Dropzone overlap |
 
 ## Mirror / Calendar / Reminders (vs Dato, Fantastical, NotchNook peek, Itsycal, boring.notch)
@@ -258,14 +261,14 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 
 | Feature | One Switch ($4.99–16.99 lifetime) | BetterTouchTool (~$15/2yr) | OnlySwitch (MIT) | macOS Control Center (built-in) | JR-Bar Control Center | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| One-switch toggles | yes (~dozen: Hide Desktop, Dark Mode, Keep Awake, Saver, AirPods, DND, Night Shift…) | DIY triggers/actions | yes (toggles + Shortcuts gallery + widgets) | yes (Wi-Fi/BT/AirDrop/Focus/Mirror/Display/Sound) | Partial (deck surface ships; no One Switch-class toggle set — `run_system_shortcut` indirection only) | The paradigm it borrows; Control Center today is the Creator Micro deck surface (⌘K rail ships); a native toggle set is Planned, not Done; sources: fireball.studio/oneswitch, github.com/jacklandrin/OnlySwitch, support.apple.com Control Center |
+| One-switch toggles | yes (~dozen: Hide Desktop, Dark Mode, Keep Awake, Saver, AirPods, DND, Night Shift…) | DIY triggers/actions | yes (toggles + Shortcuts gallery + widgets) | yes (Wi-Fi/BT/AirDrop/Focus/Mirror/Display/Sound) | Done (8-chip strip) | `SystemTogglesStore` on the notch card: keep-awake (IOPMAssertion — public, reversible), dark mode (AppleScript appearance prefs — no private `SLSSet` calls), desktop icons + hidden files (`defaults write` + Finder restart, warned), mute (CoreAudio `kAudioDevicePropertyMute`), screen saver (`open -b com.apple.ScreenSaver.Engine`, verified on 27), lock (`pmset displaysleepnow` — CGSession is gone on 27; locks on wake where a password is required), Dock autohide. Every chip reads truth back — a refused write says so, never claims the flip. Gaps kept honest: no DND/Night Shift/AirPods toggles yet |
 | Creator Micro 2 Rail | — | Stream Deck-class DIY | — | — | Ships (pad verified powered off only) | ⌘K; see FEATURE-MATRIX.md |
 
 ## Menu-bar meters (vs iStat Menus, Stats, RunCat)
 
 | Feature | iStat Menus (Single $11.99 / Family $14.99) | Stats (MIT, ~41k stars) | RunCat (free + IAP) | JR-Bar meters | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Meter-in-the-bar (battery/Wi-Fi/sound/Focus) | yes (9 items + Combined stacked) | yes (9 modules: CPU/GPU/RAM/Disk/Sensors/Network/Battery/BT/Clock) | CPU runner only | Done | Combined system item in one popover; see Menu Bar table; sources: bjango.com/mac/istatmenus, mac-stats.com, kyome.io/runcat |
+| Meter-in-the-bar (battery/Wi-Fi/sound/Focus) | yes (9 items + Combined stacked; 7.5 shipped 2026-09-14) | yes (9 modules: CPU/GPU/RAM/Disk/Sensors/Network/Battery/BT/Clock) | CPU runner only | Done | Combined system item in one popover; see Menu Bar table; sources: bjango.com/mac/istatmenus, mac-stats.com, kyome.io/runcat |
 | Usage arc / session dots in bar item | — | — | ambient-pet instinct | Done | Where we beat them; RunCat is the "living menu-bar meter" inspiration, not a counterpart |
 | Provider quota meters w/ forecast + pace | — | — | — | Done | Usage Center + ear ring + panel row share the same most-constrained-window number |
 
@@ -301,6 +304,18 @@ No direct counterpart; measured against the inspiration bar in docs/TOYS.md.
 | Overview force-graph | Obsidian graph view — force-directed constellation | Removed | Not part of the agent Overview utility; table + inspector only |
 | "Why light" panel | Home Assistant automation trace / logbook | Done | Explainability for what fired an effect |
 | Living meter | RunCat — CPU-speed cat | Done | Ambient-meters-as-pets instinct; see Menu-bar meters |
+
+## New rivals found in the 2026-09-18 research pass
+
+| Rival | Type | Why it matters | Notes |
+| --- | --- | --- | --- |
+| Atoll (Ebullioscopic, GPL-3) | OSS notch app | Ships an LLM Usage tab — Claude plan badges, Antigravity token/cost, New API providers, cache-aware pricing — a direct attack on our "no rival" island claim; also LRCLIB+NetEase synced lyrics, lock-screen panel, Screen Recording live activity, per-app volume mixer, clipboard tab, extension marketplace | sources: github.com/Ebullioscopic/Atoll CHANGELOG |
+| Notchy (notchy.dev) | Free (claims ~13k installs) | AI Usage Tracker (Claude Code/Codex/Cursor/Copilot rate-limit windows, cost, alerts), LRCLIB synced lyrics, Face Unlock, claims full stock-HUD suppression on Tahoe, command palette, clipboard history | Vendor marketing page — claims unverified; source: notchy.dev |
+| NotchIA (notchia.app) | Freemium (Pro €2.99/mo / €24.99 lifetime) | Claude Code/Codex tracking in the notch, on-device AI "Digest" summaries, screen-capture detection, 100-item clipboard, HUDs | Vendor page — claims unverified; source: notchia.app |
+| SaneBar (sanebar.com) | OSS (MIT) | Menu-bar hider with second bar, Touch ID lock, 6 triggers, icon groups, profiles, Bartender/Ice migration import, AppleScript/Shortcuts | Direct OSS peer for the Menu Bar rows; source: sanebar.com |
+| Brow (brow-app.com) | Free | Hover-notch command center: screenshots+OCR, focus timer w/ site blocker, live CPU/RAM/battery/fan meters, file staging, GIF recording, meeting joins | Vendor page — claims unverified; source: brow-app.com/notch |
+| DockView (MacPlus) | Paid | HyperDock-class hover previews — 2.2.0 shipped 2026-09-18 with panel animations; covered by the DockDoor Free rows | source: noteifyapp.com |
+| Badgeify (badgeify.app) | Paid | Menu-bar notification badges for any app — adjacent niche | source: badgeify.app |
 
 ## How rows change state
 

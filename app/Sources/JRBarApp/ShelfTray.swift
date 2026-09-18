@@ -1,6 +1,7 @@
 import AppKit
 import os
 import Quartz
+import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
 /// W12's file tray: a bounded strip of file references on the pinned
@@ -37,14 +38,22 @@ final class ShelfTrayModel {
     }
 
     /// Drop-in or explicit add: dedupes, bounds the strip, persists.
-    /// Symlinks resolve at read time — a link whose target moved is
-    /// `missing` on the next pass.
-    func add(_ urls: [URL]) {
-        let paths = urls.map { $0.path }
+    /// `before` aims the landing at a chip — a drop on a chip lands
+    /// where it dropped, Yoink-style, not at the tail. Symlinks
+    /// resolve at read time — a link whose target moved is `missing`
+    /// on the next pass.
+    func add(_ urls: [URL], before target: Entry? = nil) {
         var known = entries
-        for path in paths where !known.contains(where: { $0.path == path }) {
-            known.append(Entry(path: path, missing: false))
+        let fresh = urls.map(\.path).reduce(into: [Entry]()) { out, path in
+            if !known.contains(where: { $0.path == path }),
+               !out.contains(where: { $0.path == path }) {
+                out.append(Entry(path: path, missing: false))
+            }
         }
+        guard !fresh.isEmpty else { return }
+        let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
+            ?? known.count
+        known.insert(contentsOf: fresh, at: at)
         if known.count > Self.maxItems {
             known = Array(known.suffix(Self.maxItems))
         }
@@ -55,6 +64,68 @@ final class ShelfTrayModel {
 
     func remove(_ entry: Entry) {
         entries.removeAll { $0.id == entry.id }
+        icons.removeValue(forKey: entry.path)
+        pendingThumbs.remove(entry.path)
+        persist()
+    }
+
+    /// The chip's face: the file's own icon from the workspace — a
+    /// screenshot in Finder livery, not a generic `doc`. Previewable
+    /// files then upgrade to a real thumbnail when Quick Look answers
+    /// off-actor; the generic face shows until it lands.
+    private var icons: [String: NSImage] = [:]
+    private var pendingThumbs: Set<String> = []
+
+    func icon(for entry: Entry) -> NSImage {
+        if let cached = icons[entry.path] { return cached }
+        // `icon(forFile:)` hands back a shared cached NSImage for
+        // generic types — resize a copy so every other consumer in
+        // the process keeps the size it asked for.
+        let image = (NSWorkspace.shared.icon(forFile: entry.path).copy()
+                     as? NSImage) ?? NSImage()
+        image.size = NSSize(width: 11, height: 11)
+        icons[entry.path] = image
+        if !entry.missing { upgradeThumbnail(for: entry.path) }
+        return image
+    }
+
+    /// The async half of `icon(for:)`: one Quick Look ask per path,
+    /// kept out of the render path. A file that yields no thumbnail
+    /// (folders, binaries) simply keeps its type icon — nothing
+    /// reverts, nothing retries in a loop.
+    private func upgradeThumbnail(for path: String) {
+        guard pendingThumbs.insert(path).inserted else { return }
+        let request = QLThumbnailGenerator.Request(
+            fileAt: URL(fileURLWithPath: path),
+            size: CGSize(width: 22, height: 22),
+            scale: NSScreen.main?.backingScaleFactor ?? 2,
+            representationTypes: .thumbnail)
+        QLThumbnailGenerator.shared.generateBestRepresentation(
+            for: request) { [weak self] rep, _ in
+                // Read the image on the completion queue — the
+                // representation itself isn't Sendable, the image is.
+                guard let image = rep?.nsImage else { return }
+                image.size = NSSize(width: 11, height: 11)
+                Task { @MainActor in
+                    // The entry may have left the tray while the ask
+                    // was out — caching for a removed path is harmless,
+                    // the entry's re-add reads the warm slot.
+                    self?.icons[path] = image
+                }
+        }
+    }
+
+    /// A tray-internal drag: `moved` lands ahead of `target`. The
+    /// strip's order is the user's arrangement — it persists like
+    /// the entries do.
+    func move(_ moved: Entry, before target: Entry) {
+        guard moved.id != target.id,
+              let from = entries.firstIndex(where: { $0.id == moved.id }),
+              var to = entries.firstIndex(where: { $0.id == target.id })
+        else { return }
+        let item = entries.remove(at: from)
+        if from < to { to -= 1 }
+        entries.insert(item, at: to)
         persist()
     }
 
@@ -174,6 +245,18 @@ struct ShelfTrayDrop {
                         urls.withLock { $0.append(loc) }
                     }
                 }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                // A text clipping — Yoink's third drop kind: the string
+                // materializes as a real `.txt` so every verb answers it.
+                group.enter()
+                provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
+                    defer { group.leave() }
+                    let text = (item as? String)
+                        ?? (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
+                    if let text, let loc = textLoc(for: text) {
+                        urls.withLock { $0.append(loc) }
+                    }
+                }
             }
         }
         group.notify(queue: .main) {
@@ -201,9 +284,7 @@ struct ShelfTrayDrop {
         let dir = base.appendingPathComponent("JR-Bar/Shelf", isDirectory: true)
         // A stable, filesystem-safe name: the host plus a short hash
         // of the whole link (two links on one host still differ).
-        var hasher = Hasher()
-        hasher.combine(url.absoluteString)
-        let hash = String(format: "%08x", UInt32(truncatingIfNeeded: hasher.finalize()))
+        let hash = stableHash(url.absoluteString)
         let host = (url.host ?? "Link")
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
@@ -217,6 +298,44 @@ struct ShelfTrayDrop {
         } catch {
             return nil
         }
+    }
+
+    /// A dropped text clipping as a `.txt` under the shelf's own folder —
+    /// the `.webloc` move for plain strings: the clip stays a real file,
+    /// so reveal/share/AirDrop/QuickLook all answer it. The name is the
+    /// first line's head plus a hash of the whole text — re-dropping the
+    /// same clip lands on the same file and dedupes to one entry.
+    static func textLoc(for text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let base = FileManager.default.urls(
+                for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let dir = base.appendingPathComponent("JR-Bar/Shelf", isDirectory: true)
+        let hash = stableHash(text)
+        let head = String(trimmed.components(separatedBy: .newlines).first?.prefix(24) ?? "Clip")
+        let safe = head.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined()
+        let loc = dir.appendingPathComponent("\(safe.isEmpty ? "Clip" : safe)-\(hash).txt")
+        do {
+            try FileManager.default.createDirectory(
+                at: dir, withIntermediateDirectories: true)
+            try text.write(to: loc, atomically: true, encoding: .utf8)
+            return loc
+        } catch {
+            return nil
+        }
+    }
+
+    /// FNV-1a over the string's UTF-8 — deterministic across launches,
+    /// unlike `Hasher` (seeded per-process), so a re-dropped link or
+    /// clip always lands on the same file and dedupes to one entry.
+    static func stableHash(_ string: String) -> String {
+        var hash: UInt32 = 0x811C9DC5
+        for byte in string.utf8 {
+            hash = (hash ^ UInt32(byte)) &* 0x01000193
+        }
+        return String(format: "%08x", hash)
     }
 }
 

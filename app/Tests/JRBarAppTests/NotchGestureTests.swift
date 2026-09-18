@@ -181,7 +181,11 @@ struct NotchGestureTests {
         #expect(toy.activeCapsule == nil)
         try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.minGap + 0.2))
         // The ask draws after its gap; then the refused key is fresh.
+        // Where it lands depends on timing — queued behind the ask
+        // still living its `life`, or straight into `current` if the
+        // sleep slid past that run — either way, it arrived.
         toy.offer(notice(.charging, key: "power", id: "c"))
-        #expect(toy.capsuleQueue.pending?.id == "c")
+        #expect(toy.capsuleQueue.pending?.id == "c"
+                || toy.capsuleQueue.current?.id == "c")
     }
 }

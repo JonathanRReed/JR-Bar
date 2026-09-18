@@ -205,9 +205,16 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        let urls = (sender.draggingPasteboard.readObjects(
+        var urls = (sender.draggingPasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: false]) as? [URL]) ?? []
+        if urls.isEmpty,
+           let text = sender.draggingPasteboard.string(forType: .string),
+           let loc = ShelfTrayDrop.textLoc(for: text) {
+            // A text clipping — no URL on the pasteboard, so the
+            // string materializes as a .txt and joins as a file.
+            urls = [loc]
+        }
         guard !urls.isEmpty else { return false }
         onShelfDrop(urls)
         return true
@@ -285,7 +292,9 @@ final class NotchIslandWindow: NSPanel {
         }
         // The shelf summon: file URLs and web links — NotchNook's
         // drag-to-the-notch gesture.
-        hosting.registerForDraggedTypes([.fileURL, .URL])
+        // .plainText too — a text clipping dragged to the notch
+        // materializes as a .txt the way a web link becomes a .webloc.
+        hosting.registerForDraggedTypes([.fileURL, .URL, .string])
         hosting.onShelfDragEntered = { [weak toy] in toy?.shelfSummon() }
         hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragAbandoned() }
         hosting.onShelfDragEnded = { [weak toy] in toy?.shelfDragLanded() }

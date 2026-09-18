@@ -4,6 +4,51 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+- The shelf finally looks like a shelf: chips carry each file's real
+  Finder icon and upgrade to a Quick Look thumbnail the moment one
+  exists — no more wall of generic `doc` glyphs. Plain-text drops
+  land too: a dragged snippet materialises as a `.txt` on the shelf
+  (a link as a `.webloc`), named by a deterministic hash so the same
+  drop lands on the same file across launches instead of piling up
+  duplicates. Chips drag into a new order and the order persists.
+- The media card sings along: a synced-lyrics line rides under the
+  transport, fetched from LRCLIB (free, keyless) once the track's
+  title and artist are known, parsed from the LRC payload and stepped
+  to the playhead by binary search. Plain-lyrics tracks show their
+  first line, instrumentals and misses stay silent — no empty box.
+- Revealing the hidden run can now hide the shown one: the new
+  "hide shown items while revealing" mode covers the visible stretch
+  while the Item Bar is open, Bartender Golden Gate's swap — so the
+  hidden set reads as *the* bar, not a second one beside it. The
+  covers are computed apart from the hidden shutter's and never paint
+  the protected controls. Off by default; it persists per setting.
+- Folder Pop strips give their files back: a chip drags out of the
+  popover as a real file URL — the same provider the window cards
+  already carried, so dragging a download straight onto a document
+  works like the Dock's own folders do in DockDoor 1.40.
+- The ⌘⇥ strip ranks what you meant: fuzzy matches now sort by score
+  — a hit in the window's title outranks one that only matched the
+  app name, recency breaks ties — instead of whatever order the dock
+  happened to keep. A preview pane sits above the filmstrip and
+  follows hover (the keyboard's selection when the pointer is away),
+  showing the hovered card's thumbnail at full size with its title —
+  AltTab's glance, without a second window.
+- The card carries a Control Center strip of its own: eight one-tap
+  chips — keep awake, dark mode, desktop icons, hidden files, mute,
+  screen saver, lock, Dock auto-hide — each honest about its state.
+  Keep-awake holds a real `IOPMAssertion` until *you* let go (folding
+  the card does not), mute rides CoreAudio, and the rest drive
+  supported `defaults`/AppleScript/`pmset` paths — no private
+  SkyLight calls, and a refused write reports itself instead of
+  flipping the chip. The lock button puts the display to sleep
+  (`pmset displaysleepnow`), which locks on wake wherever a password
+  is required — the old `CGSession` binary is gone on macOS 27.
+- Two timing-sensitive tests got honest bounds: the notch hover
+  deadline test and the shared-timer delivery test both poll real
+  clocks (`asyncAfter` arms, a 1 s runloop `Timer`) that can slide
+  past their old timeouts under a parallel suite. The windows are
+  wider now — what each proves (the deadline is kept; the timer fires
+  exactly once) is unchanged.
 - The right wing is visible again: its ear had collapsed to zero width
   whenever JR-Bar's own status item stood on the row — the ‹ glyph was
   deliberately suppressed to avoid duplicating that item's mark, and

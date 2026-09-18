@@ -660,6 +660,12 @@ private struct DockFolderChip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // DockDoor's Folder Pop drag-out: the chip carries its own
+        // file URL — dropping it on Finder or another app's tile is
+        // the system's copy/move, never ours. The chip snapshot is the
+        // drag preview. The click still opens; a drag only arms once
+        // the press moves.
+        .draggable(entry.url)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(entry.url.path)

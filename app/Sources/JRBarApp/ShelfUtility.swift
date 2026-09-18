@@ -37,6 +37,14 @@ final class ShelfUtilityModel {
     /// The weather row's fetcher — the card toggle and city ride its
     /// `settings` closure, wired by the delegate.
     let weather = NotchWeather()
+    /// Synced lyrics for the playing track — LRCLIB-backed, cached,
+    /// nil when the track has none or the source named too little to
+    /// query. The row reads `lyrics.line(at:)` on its timeline tick.
+    let lyrics = LyricsStore()
+    /// The Control Center strip — One Switch's row: keep-awake, dark
+    /// mode, desktop icons, hidden files, mute, saver, lock, Dock
+    /// autohide. Reads truth on show; verbs fire and never latch.
+    let toggles = SystemTogglesStore()
     private(set) var running = false
 
     /// `feed` is the shared Now Playing source; tests pass their own so
@@ -49,9 +57,13 @@ final class ShelfUtilityModel {
     func start() {
         guard !running else { return }
         running = true
-        feedToken = feed.subscribe { [weak self] media in self?.media = media }
+        feedToken = feed.subscribe { [weak self] media in
+            self?.media = media
+            self?.lyrics.note(media: media)
+        }
         powerMonitor.start()
         weather.start()
+        toggles.refresh()
     }
 
     func stop() {
@@ -61,6 +73,10 @@ final class ShelfUtilityModel {
         feedToken = nil
         powerMonitor.stop()
         weather.stop()
+        lyrics.reset()
+        // Keep-awake deliberately survives the fold: the user's
+        // toggle is an app-level intent, not a card-lifetime lease —
+        // and the assertion dies with the process anyway.
         media = nil
     }
 

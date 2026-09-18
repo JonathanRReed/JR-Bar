@@ -141,6 +141,10 @@ struct MenuBarUtilityControls: View {
                              subtitle: "The Item Bar panel leaves the row untouched; inline reflows the hidden items onto the menu bar itself.")
             }
             .pickerStyle(.menu)
+            Toggle(isOn: utility.bind(\.hideShownWhileRevealing)) {
+                SettingLabel(title: "Hide shown items while revealing",
+                             subtitle: "Bartender's swap: while a reveal is out, the normally-visible items are covered too — the bar shows only the hidden run.")
+            }
             Toggle(isOn: utility.bind(\.showForUpdates)) {
                 SettingLabel(title: "Show for updates",
                              subtitle: "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen.")

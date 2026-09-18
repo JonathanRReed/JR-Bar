@@ -105,6 +105,10 @@ struct MenuBarHidePlan: Equatable, Sendable {
     var hiddenCovers: [ClosedRange<CGFloat>] = []
     /// Same for the deeper section's overrides.
     var alwaysHiddenCovers: [ClosedRange<CGFloat>] = []
+    /// Bartender Golden Gate's swap: while a reveal is out with
+    /// `hideShownWhileRevealing` on, the shown run is covered too —
+    /// the bar reads as hidden-run-only. Empty in every other state.
+    var shownCovers: [ClosedRange<CGFloat>] = []
     /// The length the boundary should claim; nil when it is not on the
     /// row (leave it be).
     var hiddenControlLength: CGFloat?
@@ -200,6 +204,10 @@ final class MenuBarItemHider {
     private var settleTask: Task<Void, Never>?
     /// Sections a reveal gesture has uncovered.
     private(set) var revealed: Set<MenuBarItemSection> = []
+    /// The Item Bar's own reveal signal: under `.bar` style the covers
+    /// never drop, so `revealed` stays empty — the utility reports the
+    /// bar's open state here so `coverShown` fires under both styles.
+    private var barCoveringShown = false
     /// The last plan — the card's "N hidden · M always-hidden" row.
     private(set) var lastPlan = MenuBarHidePlan()
     /// The parked caps learned this geometry.
@@ -367,6 +375,7 @@ final class MenuBarItemHider {
     /// back, reveals forgotten.
     func restoreAll() {
         revealed = []
+        barCoveringShown = false
         hiddenShutter.orderOut()
         alwaysHiddenShutter.orderOut()
         pendingLength = nil
@@ -429,6 +438,16 @@ final class MenuBarItemHider {
         scheduleSettle()
     }
 
+    /// The Item Bar opened or closed — the `.bar`-style half of the
+    /// Golden Gate swap. The flag lives in settings; this is only the
+    /// "a reveal surface is up" bit, so a mid-session toggle of the
+    /// setting takes effect on the next reconcile either way.
+    func setBarCoveringShown(_ covering: Bool) {
+        guard barCoveringShown != covering else { return }
+        barCoveringShown = covering
+        reconcile()
+    }
+
     /// One more reconcile after the bar has had a beat to reflow.
     func scheduleSettle() {
         settleTask?.cancel()
@@ -448,12 +467,15 @@ final class MenuBarItemHider {
         learnOverflow(controls: controls, row: row, items: items)
         let edge = fitEdge
         planningMaxX = controls.hidden.flatMap { $0.intersects(row) ? $0.maxX : nil }
+        let coverShown = settings().hideShownWhileRevealing
+            && (revealed.contains(.hidden) || barCoveringShown)
         let plan = Self.plan(items: items,
                              sections: settings().sections, row: row,
                              controls: controls, fitEdge: edge,
                              revealed: revealed, caps: caps,
                              protectedFrames: protectedFrames(),
-                             obscuredFrames: obscuredFrames())
+                             obscuredFrames: obscuredFrames(),
+                             coverShown: coverShown)
         let changed = plan != lastPlan
         lastPlan = plan
         if let length = plan.hiddenControlLength { request(length) }
@@ -611,8 +633,14 @@ final class MenuBarItemHider {
         }
         hiddenShutter.cover(revealed.contains(.hidden) ? [] : effective.hiddenCovers,
                             rowHeight: row.height, appearance: appearance)
-        alwaysHiddenShutter.cover(revealed.contains(.alwaysHidden) ? [] : effective.alwaysHiddenCovers,
-                                  rowHeight: row.height, appearance: appearance)
+        // The swap's covers ride this shutter: `shownCovers` come from
+        // the fresh plan (never `externalPlan` — the concealer's
+        // handoff carries no shown coverage) and paint while any
+        // reveal surface is up.
+        alwaysHiddenShutter.cover(
+            (revealed.contains(.alwaysHidden) ? [] : effective.alwaysHiddenCovers)
+                + plan.shownCovers,
+            rowHeight: row.height, appearance: appearance)
     }
 
     /// The sampled bar color for `.blend` covers — the cached answer
@@ -701,6 +729,13 @@ final class MenuBarItemHider {
     /// claims `spacerLength` unless the run is revealed, in which case
     /// it collapses to the glyph. Off the row it reports nil — nothing
     /// to do until it is back.
+    ///
+    /// `coverShown` is the Golden Gate swap: the pass runs normally —
+    /// so the section lists stay honest — then the shown run's frames
+    /// additionally become `shownCovers`, painted like any other
+    /// cover. Protected owners, the native overflow control, and the
+    /// utility's own boundary are never covered: the rehide affordance
+    /// and the system's own items must stay reachable.
     nonisolated static func plan(items: [MenuBarItem],
                                  sections: [String: MenuBarItemSection],
                                  row: CGRect,
@@ -709,7 +744,8 @@ final class MenuBarItemHider {
                                  revealed: Set<MenuBarItemSection> = [],
                                  caps: MenuBarSpacerCaps = MenuBarSpacerCaps(),
                                  protectedFrames: [CGRect] = [],
-                                 obscuredFrames: [CGRect] = []) -> MenuBarHidePlan {
+                                 obscuredFrames: [CGRect] = [],
+                                 coverShown: Bool = false) -> MenuBarHidePlan {
         var plan = MenuBarHidePlan()
         // A stable order: two overflowed items macOS stacks on one
         // position would otherwise trade places between listings and
@@ -783,6 +819,22 @@ final class MenuBarItemHider {
         let blockers = plan.shown.map(\.bounds) + protectedFrames
         plan.hiddenCovers = coverRuns(covered: hiddenToCover, blockers: blockers)
         plan.alwaysHiddenCovers = coverRuns(covered: ahToCover, blockers: blockers)
+        // The swap: with a reveal out and the flag on, the shown run is
+        // covered in place. Untouchables — protected owners, the native
+        // «, the boundary itself — stay as blockers so a cover can
+        // never paint over the affordance that ends the reveal.
+        if coverShown {
+            let coverable = plan.shown.filter {
+                !MenuBarItemLister.isProtected($0) && !$0.isNativeOverflowControl
+            }
+            let untouchable = plan.shown.filter {
+                MenuBarItemLister.isProtected($0) || $0.isNativeOverflowControl
+            }.map(\.bounds)
+            plan.shownCovers = coverRuns(
+                covered: coverable,
+                blockers: untouchable + protectedFrames
+                    + [hiddenControl].compactMap { $0 })
+        }
         // macOS's own « sits at the visible run's left end — flush
         // against the boundary's spacer. It draws above any panel of
         // ours (a cover under it hid nothing, verified live), so it
