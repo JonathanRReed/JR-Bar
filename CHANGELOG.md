@@ -179,6 +179,19 @@ All notable changes to JR-Bar are documented here.
   headset/mouse connect. The callback now takes the device
   optionality honestly, and the battery probe checks the
   Objective-C method exists instead of trusting KVC.
+- Hidden menu-bar items no longer earn a black slab over the bar:
+  the agent takes a concealed item's pixels but not its
+  Accessibility node, and the node keeps reporting the frame it
+  froze at — on-row, pressable, undrawn. The escapee watch read
+  those ghosts as items that "stood through a re-assert", so it
+  re-asserted on a loop and then painted covers over empty bar —
+  the dead stretch that made the whole run look hidden. The watch
+  now only counts a concealed item as live when its reported frame
+  actually moves; frozen frames are the ghost and are ignored by
+  the re-assert clock, the cover fallback, the drag-learn and the
+  boundary reconcile. Genuine escapees — an item that re-registers
+  at a fresh slot — still prove live by moving and still earn the
+  re-assert.
 
 ## 0.9.8 (unreleased)
 

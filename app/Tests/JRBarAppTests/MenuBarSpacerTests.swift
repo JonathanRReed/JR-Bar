@@ -602,6 +602,47 @@ struct MenuBarSpacerTests {
         #expect(writes.isEmpty)
     }
 
+    // MARK: Ghost triage — only a moved frame proves a live escapee
+
+    /// A concealed item's Accessibility ghost reports the frame it
+    /// froze at forever — identical bounds, pass after pass, and it
+    /// must never count as an escapee. Only a frame that changed is a
+    /// registration the assertion did not adopt.
+    @Test("a frozen concealed item is the ghost, never an escapee")
+    func provenLiveItemsGhost() {
+        let frame = CGRect(x: 993, y: 4, width: 36, height: 24)
+        let frames = ["cmux": frame]
+        let proven = MenuBarUtility.provenLiveItems(
+            frames: frames, previous: ["cmux": frame], proven: [])
+        #expect(proven.isEmpty)
+        // Pass after pass at the same frame stays the ghost.
+        let still = MenuBarUtility.provenLiveItems(
+            frames: frames, previous: frames, proven: proven)
+        #expect(still.isEmpty)
+    }
+
+    @Test("a moved frame is a live registration; once live it stays live")
+    func provenLiveItemsMoves() {
+        let old = CGRect(x: 993, y: 4, width: 36, height: 24)
+        let new = CGRect(x: 940, y: 4, width: 36, height: 24)
+        let proven = MenuBarUtility.provenLiveItems(
+            frames: ["cmux": new], previous: ["cmux": old], proven: [])
+        #expect(proven == ["cmux"])
+        // Holding still afterwards does not demote it — a live item
+        // standing still is still a live item.
+        let still = MenuBarUtility.provenLiveItems(
+            frames: ["cmux": new], previous: ["cmux": new], proven: proven)
+        #expect(still == ["cmux"])
+    }
+
+    @Test("a first sighting has no baseline — it is not an escape on its own")
+    func provenLiveItemsFirstSeen() {
+        let proven = MenuBarUtility.provenLiveItems(
+            frames: ["late": CGRect(x: 900, y: 4, width: 24, height: 24)],
+            previous: [:], proven: [])
+        #expect(proven.isEmpty)
+    }
+
     // MARK: The boundary host — JR-Bar's own status item
 
     /// A host that records what the utility asks of it.

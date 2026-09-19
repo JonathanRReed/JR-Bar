@@ -1168,6 +1168,17 @@ final class MenuBarUtility: Toy {
     /// will not take them, so the cover fallback paints over them
     /// like the other agent-proof items.
     @ObservationIgnored private var resistantConcealed: Set<String> = []
+    /// The frame each concealed app's item reported on the last pass.
+    /// The agent takes a concealed item's pixels but not its
+    /// Accessibility node — the ghost keeps answering with the frame
+    /// it froze at, on-row and pressable but undrawn, pass after pass.
+    /// The only listing evidence a live registration offers is motion.
+    @ObservationIgnored private var lastConcealedFrames: [String: CGRect] = [:]
+    /// Concealed-bundle item ids that proved live — a frame that
+    /// changed between passes. Everything else those bundles field is
+    /// the ghost and must not drive re-asserts, covers or section
+    /// writes.
+    @ObservationIgnored private var liveConcealedItems: Set<String> = []
 
     /// The assertion only adopts items that exist when it activates —
     /// a concealed app that re-creates its status item afterwards
@@ -1183,6 +1194,8 @@ final class MenuBarUtility: Toy {
             escapeFirstSeen = [:]
             resistantConcealed = []
             concealLiveSince = .distantPast
+            lastConcealedFrames = [:]
+            liveConcealedItems = []
             return
         }
         guard hider.revealed.isEmpty else { return }
@@ -1194,14 +1207,27 @@ final class MenuBarUtility: Toy {
             .filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
             .map(\.bounds)
         let apps = settings().concealedApps
+        let concealedIDs = Set(apps.lazy.filter { $0.value != .shown }.map(\.key))
+        let concealedItems = all.filter { item in
+            item.bundleID.map { concealedIDs.contains($0) } ?? false
+        }
+        // What reads as "standing" is almost always the ghost: the
+        // agent takes the item's pixels but not its Accessibility
+        // node, so the node keeps reporting the frame it froze at —
+        // intersecting the row, pressable, undrawn. A frame that
+        // never changed was never an escapee; only motion proves a
+        // live registration the assertion did not adopt.
+        let frames = Dictionary(concealedItems.map { ($0.id, $0.bounds) },
+                                uniquingKeysWith: { first, _ in first })
+        liveConcealedItems = Self.provenLiveItems(
+            frames: frames, previous: lastConcealedFrames, proven: liveConcealedItems)
+        lastConcealedFrames = frames
         var standing = Set<String>()
-        for item in all {
-            guard let id = item.bundleID,
-                  let section = apps[id], section != .shown,
-                  item.bounds.intersects(row),
-                  !overflowFrames.contains(where: { $0.intersection(item.bounds).width >= 4 })
-            else { continue }
-            standing.insert(id)
+        for item in concealedItems
+            where liveConcealedItems.contains(item.id)
+                && item.bounds.intersects(row)
+                && !overflowFrames.contains(where: { $0.intersection(item.bounds).width >= 4 }) {
+            if let id = item.bundleID { standing.insert(id) }
         }
         let now = Date()
         if concealLiveSince == .distantPast { concealLiveSince = now }
@@ -1238,6 +1264,35 @@ final class MenuBarUtility: Toy {
         lastReassert = now
         MenuBarAssessmentBackend.log.notice("reassert: \(escaped.sorted().joined(separator: ", "), privacy: .public) standing while concealed")
         concealer.reassert()
+    }
+
+    /// One pass of ghost triage over a concealed app's items: an item
+    /// whose reported frame changed since the last pass is a live
+    /// registration the assertion did not adopt; a frozen frame is the
+    /// Accessibility ghost the agent leaves behind — pressable and
+    /// on-row but undrawn. Once live, an item stays live for the
+    /// concealment session: a standing item holding still is still a
+    /// standing item. Pure so the test pins the table.
+    nonisolated static func provenLiveItems(
+        frames: [String: CGRect], previous: [String: CGRect], proven: Set<String>
+    ) -> Set<String> {
+        var proven = proven
+        for (id, frame) in frames where previous[id].map({ $0 != frame }) ?? false {
+            proven.insert(id)
+        }
+        return proven
+    }
+
+    /// Whether a listed item is a concealed app's Accessibility ghost —
+    /// a node still reporting the frame it froze at while the agent
+    /// owns its pixels. Only an item that proved live by moving may
+    /// speak for its bundle; the ghost must not write sections, learn
+    /// drags or earn covers.
+    private func isConcealedGhost(_ item: MenuBarItem) -> Bool {
+        guard let id = item.bundleID,
+              let section = settings().concealedApps[id], section != .shown
+        else { return false }
+        return !liveConcealedItems.contains(item.id)
     }
 
     private func concealedPlan(from listing: MenuBarHidePlan) -> MenuBarHidePlan {
@@ -1366,7 +1421,11 @@ final class MenuBarUtility: Toy {
         var current: [String: (frame: CGRect, left: Bool, parked: Bool)] = [:]
         for item in plan.shown {
             guard let id = item.bundleID, id != own,
-                  !MenuBarItemLister.isProtected(item), !item.isNativeOverflowControl else { continue }
+                  !MenuBarItemLister.isProtected(item), !item.isNativeOverflowControl,
+                  // A concealed item's ghost reports the frame it froze
+                  // at — a boundary sliding past it is not the hand
+                  // dragging anything.
+                  !isConcealedGhost(item) else { continue }
             current[id] = (item.bounds, boundary.map { item.bounds.midX < $0.x } ?? false, false)
         }
         // A parked item is behind the separator by definition — its
@@ -1426,7 +1485,11 @@ final class MenuBarUtility: Toy {
         let own = Bundle.main.bundleIdentifier
         let rows = plan.shown.compactMap { item -> (id: String, frame: CGRect)? in
             guard let id = item.bundleID, id != own,
-                  !MenuBarItemLister.isProtected(item), !item.isNativeOverflowControl
+                  !MenuBarItemLister.isProtected(item), !item.isNativeOverflowControl,
+                  // A concealed item's ghost still reports its frozen
+                  // frame — position writes belong to live items only,
+                  // or a ⌘ window would un-hide the ghost's bundle.
+                  !isConcealedGhost(item)
             else { return nil }
             return (id, item.bounds)
         }
