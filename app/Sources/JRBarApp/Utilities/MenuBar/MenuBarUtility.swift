@@ -1172,12 +1172,17 @@ final class MenuBarUtility: Toy {
     /// The agent takes a concealed item's pixels but not its
     /// Accessibility node — the ghost keeps answering with the frame
     /// it froze at, on-row and pressable but undrawn, pass after pass.
-    /// The only listing evidence a live registration offers is motion.
     @ObservationIgnored private var lastConcealedFrames: [String: CGRect] = [:]
+    /// Every on-row frame an unproven concealed item has reported —
+    /// the ghost's bookkeeping. The agent can relayout its ghosts
+    /// (a MenuBarAgent restart moved the whole concealed run from
+    /// frozen on-row frames to parked ones); a return to a reported
+    /// slot is still the ghost, a novel on-row slot is a live item.
+    @ObservationIgnored private var concealedGhostFrames: [String: Set<CGRect>] = [:]
     /// Concealed-bundle item ids that proved live — a frame that
-    /// changed between passes. Everything else those bundles field is
-    /// the ghost and must not drive re-asserts, covers or section
-    /// writes.
+    /// moved to a slot the ghost never reported. Everything else
+    /// those bundles field is the ghost and must not drive
+    /// re-asserts, covers or section writes.
     @ObservationIgnored private var liveConcealedItems: Set<String> = []
 
     /// The assertion only adopts items that exist when it activates —
@@ -1195,6 +1200,7 @@ final class MenuBarUtility: Toy {
             resistantConcealed = []
             concealLiveSince = .distantPast
             lastConcealedFrames = [:]
+            concealedGhostFrames = [:]
             liveConcealedItems = []
             return
         }
@@ -1213,20 +1219,25 @@ final class MenuBarUtility: Toy {
         }
         // What reads as "standing" is almost always the ghost: the
         // agent takes the item's pixels but not its Accessibility
-        // node, so the node keeps reporting the frame it froze at —
-        // intersecting the row, pressable, undrawn. A frame that
-        // never changed was never an escapee; only motion proves a
-        // live registration the assertion did not adopt.
+        // node, so the node keeps reporting a frame — frozen, or one
+        // it was relayouted to — pressable, undrawn. The only listing
+        // evidence a live registration offers is a move to an on-row
+        // slot the ghost never reported.
         let frames = Dictionary(concealedItems.map { ($0.id, $0.bounds) },
                                 uniquingKeysWith: { first, _ in first })
-        liveConcealedItems = Self.provenLiveItems(
-            frames: frames, previous: lastConcealedFrames, proven: liveConcealedItems)
+        let onRowIDs = Set(concealedItems.filter { item in
+            item.bounds.intersects(row)
+                && !overflowFrames.contains(where: { $0.intersection(item.bounds).width >= 4 })
+        }.map(\.id))
+        let triage = Self.concealedEscapees(
+            onRow: onRowIDs, frames: frames, previous: lastConcealedFrames,
+            ghostHistory: concealedGhostFrames, proven: liveConcealedItems)
+        liveConcealedItems = triage.proven
+        concealedGhostFrames = triage.ghostHistory
         lastConcealedFrames = frames
         var standing = Set<String>()
         for item in concealedItems
-            where liveConcealedItems.contains(item.id)
-                && item.bounds.intersects(row)
-                && !overflowFrames.contains(where: { $0.intersection(item.bounds).width >= 4 }) {
+            where liveConcealedItems.contains(item.id) && onRowIDs.contains(item.id) {
             if let id = item.bundleID { standing.insert(id) }
         }
         let now = Date()
@@ -1266,21 +1277,31 @@ final class MenuBarUtility: Toy {
         concealer.reassert()
     }
 
-    /// One pass of ghost triage over a concealed app's items: an item
-    /// whose reported frame changed since the last pass is a live
-    /// registration the assertion did not adopt; a frozen frame is the
-    /// Accessibility ghost the agent leaves behind — pressable and
-    /// on-row but undrawn. Once live, an item stays live for the
-    /// concealment session: a standing item holding still is still a
-    /// standing item. Pure so the test pins the table.
-    nonisolated static func provenLiveItems(
-        frames: [String: CGRect], previous: [String: CGRect], proven: Set<String>
-    ) -> Set<String> {
+    /// One pass of ghost triage over a concealed app's items. An item
+    /// proves live only by moving to an on-row frame it never reported
+    /// while concealed — a novel slot is a registration the assertion
+    /// did not adopt. A frozen frame, an off-row report, or a return
+    /// to a slot the ghost already showed is still the Accessibility
+    /// ghost the agent leaves behind: pressable, undrawn, harmless.
+    /// Once proven, an item stays live for the concealment session —
+    /// a standing item holding still is still a standing item. Pure
+    /// so the test pins the table.
+    nonisolated static func concealedEscapees(
+        onRow: Set<String>, frames: [String: CGRect], previous: [String: CGRect],
+        ghostHistory: [String: Set<CGRect>], proven: Set<String>
+    ) -> (proven: Set<String>, ghostHistory: [String: Set<CGRect>]) {
         var proven = proven
-        for (id, frame) in frames where previous[id].map({ $0 != frame }) ?? false {
-            proven.insert(id)
+        var history = ghostHistory
+        for id in onRow {
+            guard !proven.contains(id), let frame = frames[id] else { continue }
+            let moved = previous[id].map { $0 != frame } ?? false
+            if moved && !(history[id] ?? []).contains(frame) {
+                proven.insert(id)
+            } else {
+                history[id, default: []].insert(frame)
+            }
         }
-        return proven
+        return (proven, history)
     }
 
     /// Whether a listed item is a concealed app's Accessibility ghost —

@@ -602,45 +602,80 @@ struct MenuBarSpacerTests {
         #expect(writes.isEmpty)
     }
 
-    // MARK: Ghost triage — only a moved frame proves a live escapee
+    // MARK: Ghost triage — only a novel on-row move proves a live escapee
 
     /// A concealed item's Accessibility ghost reports the frame it
     /// froze at forever — identical bounds, pass after pass, and it
-    /// must never count as an escapee. Only a frame that changed is a
-    /// registration the assertion did not adopt.
+    /// must never count as an escapee. Only a move to an on-row slot
+    /// the ghost never showed is a registration the assertion missed.
     @Test("a frozen concealed item is the ghost, never an escapee")
-    func provenLiveItemsGhost() {
+    func concealedEscapeesGhost() {
         let frame = CGRect(x: 993, y: 4, width: 36, height: 24)
-        let frames = ["cmux": frame]
-        let proven = MenuBarUtility.provenLiveItems(
-            frames: frames, previous: ["cmux": frame], proven: [])
-        #expect(proven.isEmpty)
+        let first = MenuBarUtility.concealedEscapees(
+            onRow: ["cmux"], frames: ["cmux": frame],
+            previous: [:], ghostHistory: [:], proven: [])
+        #expect(first.proven.isEmpty)
+        #expect(first.ghostHistory["cmux"] == [frame])
         // Pass after pass at the same frame stays the ghost.
-        let still = MenuBarUtility.provenLiveItems(
-            frames: frames, previous: frames, proven: proven)
-        #expect(still.isEmpty)
+        let still = MenuBarUtility.concealedEscapees(
+            onRow: ["cmux"], frames: ["cmux": frame],
+            previous: ["cmux": frame], ghostHistory: first.ghostHistory,
+            proven: first.proven)
+        #expect(still.proven.isEmpty)
     }
 
-    @Test("a moved frame is a live registration; once live it stays live")
-    func provenLiveItemsMoves() {
+    @Test("a move to a novel on-row slot is a live registration; it stays live")
+    func concealedEscapeesMoves() {
         let old = CGRect(x: 993, y: 4, width: 36, height: 24)
         let new = CGRect(x: 940, y: 4, width: 36, height: 24)
-        let proven = MenuBarUtility.provenLiveItems(
-            frames: ["cmux": new], previous: ["cmux": old], proven: [])
-        #expect(proven == ["cmux"])
+        let proven = MenuBarUtility.concealedEscapees(
+            onRow: ["cmux"], frames: ["cmux": new],
+            previous: ["cmux": old], ghostHistory: ["cmux": [old]], proven: [])
+        #expect(proven.proven == ["cmux"])
         // Holding still afterwards does not demote it — a live item
         // standing still is still a live item.
-        let still = MenuBarUtility.provenLiveItems(
-            frames: ["cmux": new], previous: ["cmux": new], proven: proven)
-        #expect(still == ["cmux"])
+        let still = MenuBarUtility.concealedEscapees(
+            onRow: ["cmux"], frames: ["cmux": new],
+            previous: ["cmux": new], ghostHistory: proven.ghostHistory,
+            proven: proven.proven)
+        #expect(still.proven == ["cmux"])
+    }
+
+    /// A MenuBarAgent restart relayouts the ghosts: the concealed run
+    /// went from frozen on-row frames to parked ones, then reported
+    /// back on-row at the same slots. A move back to a reported slot
+    /// is the ghost's bookkeeping, not an escape.
+    @Test("a ghost returning to a reported slot is still the ghost")
+    func concealedEscapeesGhostReturn() {
+        let slot = CGRect(x: 993, y: 4, width: 36, height: 24)
+        let parked = CGRect(x: -1, y: 986, width: 36, height: 24)
+        // Concealment: ghost reports its frozen slot once.
+        let born = MenuBarUtility.concealedEscapees(
+            onRow: ["cmux"], frames: ["cmux": slot],
+            previous: [:], ghostHistory: [:], proven: [])
+        #expect(born.proven.isEmpty)
+        // The agent's restart parks the ghost off-row — off-row reports
+        // change nothing (the slot stays the only ghost frame known).
+        let off = MenuBarUtility.concealedEscapees(
+            onRow: [], frames: ["cmux": parked],
+            previous: ["cmux": slot], ghostHistory: born.ghostHistory,
+            proven: born.proven)
+        #expect(off.proven.isEmpty)
+        // Back on-row at the same slot: moved, yes, but the slot is in
+        // the ghost's history — still the ghost, never an escapee.
+        let back = MenuBarUtility.concealedEscapees(
+            onRow: ["cmux"], frames: ["cmux": slot],
+            previous: ["cmux": parked], ghostHistory: off.ghostHistory,
+            proven: off.proven)
+        #expect(back.proven.isEmpty)
     }
 
     @Test("a first sighting has no baseline — it is not an escape on its own")
-    func provenLiveItemsFirstSeen() {
-        let proven = MenuBarUtility.provenLiveItems(
-            frames: ["late": CGRect(x: 900, y: 4, width: 24, height: 24)],
-            previous: [:], proven: [])
-        #expect(proven.isEmpty)
+    func concealedEscapeesFirstSeen() {
+        let proven = MenuBarUtility.concealedEscapees(
+            onRow: ["late"], frames: ["late": CGRect(x: 900, y: 4, width: 24, height: 24)],
+            previous: [:], ghostHistory: [:], proven: [])
+        #expect(proven.proven.isEmpty)
     }
 
     // MARK: The boundary host — JR-Bar's own status item
