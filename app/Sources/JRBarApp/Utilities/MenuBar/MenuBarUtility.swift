@@ -349,6 +349,12 @@ final class MenuBarUtility: Toy {
             self?.hider.hide()
         }
         bar.items = { [weak self] in self?.barItems() ?? [] }
+        // A concealed item's ghost reports a frozen on-row frame but
+        // draws nothing — capturing that rect would tile empty bar.
+        // Ghosts take the owner's app icon like parked items do.
+        bar.tiles.isCapturable = { [weak self] item in
+            self.map { !$0.isConcealedGhost(item) } ?? true
+        }
         bar.onTrigger = { [weak self] item in self?.trigger(item) }
         bar.onRevealItem = { [weak self] item in self?.revealItem(item) }
         bar.onOpenChange = { [weak self] open in

@@ -70,6 +70,12 @@ final class MenuBarLiveTiles {
     var itemsProvider: @MainActor () -> [MenuBarItem] = { [] }
     /// The menu bar row in Quartz coordinates.
     var rowRect: @MainActor () -> CGRect = { MenuBarItemLister.menuBarRow() }
+    /// Whether an item has on-screen pixels worth capturing. A
+    /// concealed item's Accessibility ghost reports a frozen on-row
+    /// frame while the agent owns its pixels — capturing that rect
+    /// lands a picture of empty bar, so the utility marks ghosts
+    /// uncapturable and the tile falls back to the owner's icon.
+    var isCapturable: @MainActor (MenuBarItem) -> Bool = { _ in true }
     /// Seam: capture one Quartz rect of the main display → an image,
     /// or nil when capture is impossible. Tests stub it.
     var capture: @MainActor (CGRect) async -> CGImage?
@@ -119,7 +125,8 @@ final class MenuBarLiveTiles {
         images = images.filter { ids.contains($0.key) }
         capturedAt = capturedAt.filter { ids.contains($0.key) }
         for item in items {
-            guard let rect = MenuBarTileMath.captureRect(of: item, row: row),
+            guard isCapturable(item),
+                  let rect = MenuBarTileMath.captureRect(of: item, row: row),
                   MenuBarTileMath.needsRefresh(lastCapturedAt: capturedAt[item.id],
                                                now: Date(),
                                                interval: MenuBarTileMath.refreshInterval)

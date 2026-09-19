@@ -99,6 +99,23 @@ struct MenuBarSurfacesTests {
         tiles.stop()
     }
 
+    @MainActor
+    @Test("an uncapturable ghost keeps the icon fallback — no empty-bar screenshot")
+    func tileRefreshSkipsGhosts() async {
+        let tiles = MenuBarLiveTiles()
+        var captured: [CGRect] = []
+        tiles.capture = { rect in captured.append(rect); return nil }
+        tiles.rowRect = { self.row }
+        // "G" is a concealed item's ghost — on-row frame, no pixels.
+        tiles.isCapturable = { $0.id != "G" }
+        tiles.itemsProvider = { [
+            self.item("A", x: 100), self.item("G", x: 200),
+        ] }
+        await tiles.refreshOnce()
+        #expect(captured.map(\.minX) == [100])
+        tiles.stop()
+    }
+
     // MARK: Appearance — settings → cover look
 
     @Test("defaults reproduce the shipping cover — menubar material, no tint, square, no separator")
