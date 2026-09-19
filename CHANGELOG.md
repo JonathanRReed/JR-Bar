@@ -192,6 +192,11 @@ All notable changes to JR-Bar are documented here.
   boundary reconcile. Genuine escapees — an item that re-registers
   at a fresh slot — still prove live by moving and still earn the
   re-assert.
+- The Item Bar's tiles read as the apps they hide again: the live
+  thumbnail pass was screenshotting each concealed item's ghost
+  frame — a picture of empty bar — so concealed tiles rendered as
+  blank dark squares. Ghosts are now uncapturable and tile the
+  owner app's icon, the same answer parked items always gave.
 
 ## 0.9.8 (unreleased)
 
