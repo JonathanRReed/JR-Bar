@@ -77,14 +77,21 @@ final class MenuBarIconMirror: NSPanel {
     private func place() {
         guard let bandRight = seat?(), let row = rowRect?(),
               let screen = hostScreen?() else { hide(); return }
-        let side = Self.width
+        let image = iconSource?()
+        iconView.image = image
+        // The slot wears the icon's natural aspect — a meters strip
+        // reads at its drawn width, a glyph at a square — like a real
+        // item's variable length, capped so a wide style never eats
+        // the run it opens.
+        let height = Self.height
+        let aspect = image.map { $0.size.height > 0 ? $0.size.width / $0.size.height : 1 } ?? 1
+        let width = min(Self.maxWidth, max(Self.minWidth, height * aspect))
         let quartzX = bandRight + 6
         let quartzY = row.midY - NSStatusBar.system.thickness / 2 + 1
         // Quartz (top-left origin) → AppKit (bottom-left origin).
-        let appY = screen.frame.maxY - quartzY - side + 4
-        setFrame(NSRect(x: quartzX, y: appY, width: side, height: side), display: true)
-        iconView.frame = NSRect(origin: .zero, size: NSSize(width: side, height: side))
-        iconView.image = iconSource?()
+        let appY = screen.frame.maxY - quartzY - height + 2
+        setFrame(NSRect(x: quartzX, y: appY, width: width, height: height), display: true)
+        iconView.frame = NSRect(origin: .zero, size: NSSize(width: width, height: height))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -103,10 +110,12 @@ final class MenuBarIconMirror: NSPanel {
     /// The item's own secondary click pops the menu under the button;
     /// the mirror is that button — same call, same look.
     private func present(_ menu: NSMenu, event: NSEvent) {
-        menu.popUp(positioning: nil, at: NSPoint(x: 2, y: Self.width - 2), in: contentView)
+        menu.popUp(positioning: nil, at: NSPoint(x: 2, y: Self.height - 2), in: contentView)
     }
 
-    /// The slot's footprint — the icon's ~24 pt plus the gap to the
-    /// band's edge it clears.
-    static let width: CGFloat = 30
+    /// The slot's footprint: menu-bar height, and a width between a
+    /// glyph's square and a wide meters strip.
+    static let height: CGFloat = 26
+    static let minWidth: CGFloat = 30
+    static let maxWidth: CGFloat = 72
 }
