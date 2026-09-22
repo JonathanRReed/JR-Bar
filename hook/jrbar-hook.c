@@ -5,9 +5,10 @@
  * It reads the payload from stdin, hands it to the JR-Bar daemon over the
  * hook-ingress socket in the existing wire format
  * (src/jrbar/hook_ingress_protocol.py) and exits 0. When the daemon is not
- * listening the payload is appended to <state>/<provider>.pending.jsonl and
- * the daemon drains that file later. Nothing here can block an agent: the
- * whole run is bounded by HARD_BUDGET_MS and every failure path exits 0.
+ * listening, or the frame did not get through whole, the payload is
+ * appended to <state>/<provider>.pending.jsonl and the daemon drains that
+ * file later. Nothing here can block an agent: the whole run is bounded by
+ * HARD_BUDGET_MS and every failure path exits 0.
  *
  *   jrbar-hook --provider <id> [--log <path>]
  *
@@ -74,9 +75,11 @@ static double parent_start_time(pid_t ppid) {
     return (double)info.pbi_start_tvsec + (double)info.pbi_start_tvusec / 1e6;
 }
 
-/* Send the whole frame and wait for the one-line reply; 0 on success,
- * -1 when the socket was unavailable (fallback file), -2 when the send
- * got through but the reply did not (ambiguous: never re-queue). */
+/* Send the whole frame and wait for the one-line reply. 0 once the whole
+ * frame is sent, reply or not: the daemon may have queued it, so it is
+ * never re-queued. -1 when the socket was unavailable; -2 when the budget
+ * or an error cut the send short. A truncated frame never decodes (the
+ * daemon records refused_invalid), so both failures are spooled. */
 static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_t deadline) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof addr);
@@ -190,7 +193,7 @@ int main(int argc, char **argv) {
     memcpy(frame + prefix + header_len, payload, len);
 
     int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline);
-    if (result == -1) queue_pending(dir, provider, ppid, ppid_start, payload, len);
+    if (result < 0) queue_pending(dir, provider, ppid, ppid_start, payload, len);
     if (cursor) puts("{}");
     return 0;
 }

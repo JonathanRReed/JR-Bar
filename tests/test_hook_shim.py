@@ -183,3 +183,18 @@ def test_shim_never_fails_on_bad_arguments_or_oversize_input__and_1_more(shim: P
     finally:
         ingress.close()
 
+
+def test_shim_spools_a_frame_the_budget_cut_short(shim: Path, sock_dir: Path) -> None:
+    """A listener that never reads fills the socket buffers mid-send; the
+    truncated frame never decodes on the daemon side, so it must be spooled
+    rather than dropped."""
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(sock_dir / "hook-ingress.sock"))
+    server.listen(4)
+    try:
+        payload = json.dumps({"hook_event_name": "PostToolUse", "session_id": "big", "body": "x" * 512 * 1024})
+        assert _run(shim, sock_dir, "claude", payload).returncode == 0
+    finally:
+        server.close()
+    rows = [json.loads(line) for line in (sock_dir / "claude.pending.jsonl").read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]
