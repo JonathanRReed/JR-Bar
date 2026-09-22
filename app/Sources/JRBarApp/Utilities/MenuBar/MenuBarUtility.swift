@@ -1277,17 +1277,33 @@ final class MenuBarUtility: Toy {
         return seat
     }
 
-    /// Where nothing covers the row on the Quartz origin display: the
-    /// notch's right edge, or our band's (or island's) right edge when
-    /// it reaches further — the band window claims its ears' full
-    /// extent. The mirror seats, and the reveal zone starts, right of it.
+    /// Where nothing covers the row on the Quartz origin display. The
+    /// mirror seats, and the reveal zone starts, right of it.
     private func mirrorClearOf() -> CGFloat {
         guard let primary = NSScreen.screens.first else { return 0 }
-        let notch = primary.auxiliaryTopRightArea?.minX ?? 0
-        let covering = ScreenBarGeometry.coveringScreenRect.flatMap { rect in
-            primary.frame.contains(NSPoint(x: rect.midX, y: rect.midY)) ? rect.maxX : nil
-        } ?? 0
-        return max(notch, covering, 0)
+        return Self.mirrorClearOf(
+            notch: primary.auxiliaryTopRightArea?.minX,
+            covering: ScreenBarGeometry.coveringScreenRect.flatMap { rect in
+                primary.frame.contains(NSPoint(x: rect.midX, y: rect.midY)) ? rect.maxX : nil
+            },
+            appMenuEdge: MenuBarItemLister.appMenuEdge,
+            row: Self.primaryRow())
+    }
+
+    /// The furthest right of: the notch's right edge; our band's (or
+    /// island's) right edge — the band window claims its ears' full
+    /// extent; and the front app's last menu title. The menus are not
+    /// in the listing, so without their edge a crowded bar's seat (or a
+    /// notch Mac's menus spilling past the notch) lands the mirror on
+    /// them — a status-bar-level panel taking their clicks — and the
+    /// reveal zone starts on them. The menu edge is the front app's on
+    /// whichever bar it drew; one outside the origin display's `row`
+    /// would push the seat off it, so only an edge inside counts. Pure
+    /// so a test pins it.
+    nonisolated static func mirrorClearOf(notch: CGFloat?, covering: CGFloat?,
+                                          appMenuEdge: CGFloat?, row: CGRect) -> CGFloat {
+        let menus = appMenuEdge.flatMap { $0 > row.minX && $0 < row.maxX ? $0 : nil }
+        return max(notch ?? 0, covering ?? 0, menus ?? 0, 0)
     }
 
     /// A workspace launch or terminate under the concealer: refresh
@@ -2522,11 +2538,13 @@ final class MenuBarUtility: Toy {
         let height = CGDisplayBounds(CGMainDisplayID()).height
         if concealer != nil {
             // Under the concealer the zone is the blank run the hidden
-            // apps leave left of the icon — from where nothing of ours
-            // covers the row (the notch, the band and its ears) to the
-            // mirror's left edge, on the row the mirror stands on. A
-            // notch-less bar keeps its right half: the app menus own the
-            // rest, and a hover over the File menu must never pop the run.
+            // apps leave left of the icon — from where nothing covers the
+            // row (the notch, the band and its ears, the front app's
+            // menus) to the mirror's left edge, on the row the mirror
+            // stands on. A notch-less bar also keeps only its right half:
+            // the menu edge is missing while the front app does not
+            // answer AX, and a hover over the File menu must never pop
+            // the run.
             let row = Self.primaryRow()
             var start = mirrorClearOf()
             if NSScreen.screens.first?.auxiliaryTopRightArea == nil { start = max(start, row.midX) }

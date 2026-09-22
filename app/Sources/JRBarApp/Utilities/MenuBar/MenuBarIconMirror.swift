@@ -185,9 +185,10 @@ final class MenuBarIconMirror: NSPanel {
     /// left of the first drawn item, scanning from the right, whose gap
     /// to the left fits it — `trailingGap` to that item, `leadingGap` to
     /// whatever bounds the gap on the left (another item, or `clearOf`:
-    /// the notch's and our band's edge). Only items reaching right of
-    /// `clearOf` bound a gap, and overlapping frames (a ghost stacked on
-    /// its neighbour) count as one. nil when no gap fits.
+    /// the notch's, our band's or the front app's menus' edge). Only
+    /// items reaching right of `clearOf` bound a gap, and overlapping
+    /// frames (a ghost stacked on its neighbour) count as one. nil when
+    /// no gap fits.
     nonisolated static func seatMinX(drawn: [CGRect], clearOf: CGFloat, width: CGFloat,
                                      trailingGap: CGFloat = itemGap,
                                      leadingGap: CGFloat = itemGap) -> CGFloat? {

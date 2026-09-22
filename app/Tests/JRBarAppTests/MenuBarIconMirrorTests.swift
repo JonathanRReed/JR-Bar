@@ -69,6 +69,32 @@ struct MenuBarIconMirrorTests {
         #expect(MenuBarIconMirror.seatMinX(drawn: drawn, clearOf: 980, width: 120) == nil)
     }
 
+    @Test("the front app's menus bound the seat like the notch and the band; an edge off the origin display never counts")
+    func clearOfTakesTheAppMenus() {
+        let row = CGRect(x: 0, y: 0, width: 1512, height: 37)
+        func clear(notch: CGFloat? = nil, covering: CGFloat? = nil, menus: CGFloat?) -> CGFloat {
+            MenuBarUtility.mirrorClearOf(notch: notch, covering: covering, appMenuEdge: menus, row: row)
+        }
+        #expect(clear(notch: 848.5, covering: 980, menus: 620) == 980, "menus that fit left of the notch")
+        #expect(clear(notch: 848.5, covering: 980, menus: 1010) == 1010, "menus spilling past the band")
+        #expect(clear(notch: 848.5, menus: nil) == 848.5, "a front app that did not answer AX")
+        #expect(clear(menus: 640) == 640, "a notch-less primary with no band: the menus alone")
+        #expect(clear(menus: 1800) == 0, "the front app's menus on a display right of the origin one")
+        #expect(clear(menus: -400) == 0, "…or left of it")
+    }
+
+    @Test("a crowded bar's leftmost gap starts where the front app's menus end, not under them")
+    func seatClearOfTheMenus() throws {
+        // A notch-less primary with no band: items from 700 on, 7 pt apart.
+        let crowded = stride(from: CGFloat(700), to: 1500, by: 37).map { rect($0, 30) }
+        let blind = try #require(MenuBarIconMirror.seatMinX(drawn: crowded, clearOf: 0, width: 70))
+        #expect(blind < 650, "clear of nothing, the icon would stand on menus that end at 650")
+        let seat = try #require(MenuBarIconMirror.seatMinX(drawn: crowded, clearOf: 600, width: 70))
+        #expect(seat == 700 - MenuBarIconMirror.itemGap - 70, "menus to 600 leave it room")
+        #expect(MenuBarIconMirror.seatMinX(drawn: crowded, clearOf: 650, width: 70) == nil,
+                "menus to 650 leave no gap — the utility falls back to just right of them")
+    }
+
     // MARK: The frame
 
     @Test("the panel is one item high, centred on the row, flipped against the origin display")
