@@ -272,11 +272,15 @@ enum MenuBarItemLister {
     private(set) static var appMenuEdge: CGFloat?
 
     /// `AXIsProcessTrusted` is a `TCCAccessRequest` IPC — never call it
-    /// per reconcile pass or per event. The lister keeps its own short
-    /// cache; `MenuBarUtility.probeAccessibility` holds the card's copy.
+    /// per reconcile pass or per event. The lister keeps its own cache;
+    /// `MenuBarUtility.probeAccessibility` holds the card's copy. At 3 s
+    /// the scan loop and the reconcile timer between them re-asked every
+    /// 3.0 s for as long as the utility ran (212 requests in ten minutes,
+    /// 2026-09-22). A grant that changes is rare, and a revoked one
+    /// already shows as an empty scan, so the listing follows within 10 s.
     @MainActor
     private static var trustCache: (at: Date, trusted: Bool)?
-    nonisolated static let trustCacheTTL: TimeInterval = 3
+    nonisolated static let trustCacheTTL: TimeInterval = 10
 
     /// The cached Accessibility answer.
     @MainActor
