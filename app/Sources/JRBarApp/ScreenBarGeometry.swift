@@ -41,4 +41,25 @@ extension ScreenBarGeometry {
         }
         return nil
     }
+
+    /// The Screen Bar panel's live frame — the surface whose housing,
+    /// tray and ear lobes draw black over whatever of the menu-bar row
+    /// it spans. Wider than the island: the wings' claims extend it past
+    /// the notch's edges, so an item clear of the island can still sit
+    /// under the band's face. nil while the band is ordered out.
+    @MainActor static var bandScreenRect: NSRect? {
+        for window in NSApp?.windows ?? [] where window is ScreenBarPanel {
+            guard window.isVisible else { continue }
+            return window.frame
+        }
+        return nil
+    }
+
+    /// The x-span our own bar surfaces paint over — the band window,
+    /// falling back to the island. An item whose centre lands inside it
+    /// composites under black glass: visible to AX, invisible to the
+    /// person. nil while neither surface is on screen.
+    @MainActor static var coveringScreenRect: NSRect? {
+        bandScreenRect ?? islandScreenRect
+    }
 }

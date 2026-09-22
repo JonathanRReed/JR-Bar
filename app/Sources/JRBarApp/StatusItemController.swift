@@ -251,31 +251,32 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     }
 
     /// The seat the icon wants when nothing says otherwise: the first
-    /// slot clear of the island face's right edge — the leftmost
-    /// position of the *visible* extras run. The island window overhangs
-    /// the physical notch by the wings' claim (up to
+    /// slot clear of the band's covering surface — the leftmost
+    /// position of the *visible* extras run. The Screen Bar window
+    /// overhangs the physical notch by the wings' claim (up to
     /// `wingContentMaxExtent`, measured 132 pt live), so the old target
     /// of "just right of the notch" (screenW/2 + 115 → x≈871) seated the
-    /// item under the island's right wing where the face paints black
-    /// over it — the invisible-icon wound of 2026-09-22. The live
-    /// window frame wins once the island is up; before layout the
-    /// notch's right edge plus the wings' maximum claim is the estimate,
-    /// and on a notch-less screen it falls back to the old centre-right
-    /// guess — no island is covering anything there anyway.
+    /// item under the band's right wing where its housing and tray paint
+    /// black over it — the invisible-icon wound of 2026-09-22. The live
+    /// window frame wins once the band is up; before layout the notch's
+    /// right edge plus the wings' maximum claim is the estimate, and on
+    /// a notch-less screen it falls back to the old centre-right guess —
+    /// no surface is covering anything there anyway.
     static func visibleSeatMidX(screenW: CGFloat) -> CGFloat {
-        visibleSeatMidX(islandRight: ScreenBarGeometry.islandScreenRect?.maxX,
+        visibleSeatMidX(coveringRight: ScreenBarGeometry.coveringScreenRect?.maxX,
                         notchEdge: NSScreen.main?.auxiliaryTopRightArea?.minX,
                         screenW: screenW)
     }
 
-    /// The seat's pure math: the island's live right edge wins, the
-    /// notch edge plus the wings' maximum claim is the pre-layout
-    /// estimate, and a notch-less screen keeps the old centre-right
-    /// guess — nothing covers an item there.
-    nonisolated static func visibleSeatMidX(islandRight: CGFloat?,
+    /// The seat's pure math: the covering surface's live right edge wins
+    /// (the band window outreaches the island — its wings' claims carry
+    /// it past the notch), the notch edge plus the wings' maximum claim
+    /// is the pre-layout estimate, and a notch-less screen keeps the old
+    /// centre-right guess — nothing covers an item there.
+    nonisolated static func visibleSeatMidX(coveringRight: CGFloat?,
                                             notchEdge: CGFloat?,
                                             screenW: CGFloat) -> CGFloat {
-        if let islandRight { return islandRight + visibleSeatMargin }
+        if let coveringRight { return coveringRight + visibleSeatMargin }
         if let notchEdge {
             return notchEdge + ScreenBarGeometry.wingContentMaxExtent + visibleSeatMargin
         }

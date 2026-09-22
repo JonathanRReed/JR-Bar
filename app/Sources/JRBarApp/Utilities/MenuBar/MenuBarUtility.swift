@@ -2053,20 +2053,23 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// Whether the island face covers our own item's slot: the anchor
-    /// seated inside the island's span answers AX and reports on-row,
-    /// but the face paints black over it — the icon composites nothing
-    /// the person can see. Only counts when the configured style wants
-    /// a real seat; a `.hidden` anchor belongs under the face.
+    /// Whether our own bar surface covers the item's slot: the anchor
+    /// seated inside the band window's span answers AX and reports
+    /// on-row, but the housing and ear tray paint black over it — the
+    /// icon composites nothing the person can see. The band window
+    /// outreaches the island (the wings' claims carry it past the notch
+    /// edge), so the band's span is the test. Only counts when the
+    /// configured style wants a real seat; a `.hidden` anchor belongs
+    /// under the face.
     private func ownIconCovered() -> Bool {
         guard host?.anchorWantsVisibleSeat ?? false,
-              let island = ScreenBarGeometry.islandScreenRect,
+              let cover = ScreenBarGeometry.coveringScreenRect,
               let own = host?.boundaryFrame else { return false }
         guard MenuBarItemLister.menuBarRows().contains(where: { $0.intersects(own) })
         else { return false }
-        // The island spans the row's height wherever it stands, so the
+        // The band spans the row's height wherever it stands, so the
         // x axis decides: a centre under the face is a covered icon.
-        return own.midX < island.maxX - 2 && own.midX > island.minX + 2
+        return own.midX < cover.maxX - 2 && own.midX > cover.minX + 2
     }
 
     private func scheduleAdoptionCheck(after delay: TimeInterval = 1.5) {

@@ -1187,15 +1187,16 @@ struct MenuBarSpacerTests {
     func visibleSeatClearsIsland() {
         // The live wound: a seed of screenW/2 + 115 landed the item at
         // x≈871 on a 1512 screen — "just right of the notch" — but the
-        // island window reaches 980, so the face painted black over it.
-        // The seat is the island edge plus margin, or the notch edge
-        // plus the wings' maximum claim before the island lays out.
-        #expect(StatusItemController.visibleSeatMidX(islandRight: 980, notchEdge: 848,
+        // band window reaches 980 (the wings' claims carry it past the
+        // island), so the face painted black over it. The seat is the
+        // covering surface's edge plus margin, or the notch edge plus
+        // the wings' maximum claim before the band lays out.
+        #expect(StatusItemController.visibleSeatMidX(coveringRight: 980, notchEdge: 848,
                                                      screenW: 1512) == 1010)
-        #expect(StatusItemController.visibleSeatMidX(islandRight: nil, notchEdge: 848,
+        #expect(StatusItemController.visibleSeatMidX(coveringRight: nil, notchEdge: 848,
                                                      screenW: 1512)
                 == 848 + ScreenBarGeometry.wingContentMaxExtent + 30)
-        #expect(StatusItemController.visibleSeatMidX(islandRight: nil, notchEdge: nil,
+        #expect(StatusItemController.visibleSeatMidX(coveringRight: nil, notchEdge: nil,
                                                      screenW: 1512) == 871,
                 "notch-less screens keep the old guess — nothing covers an item there")
     }
