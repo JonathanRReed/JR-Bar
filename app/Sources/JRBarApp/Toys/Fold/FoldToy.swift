@@ -772,8 +772,19 @@ final class FoldToy: Toy {
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
         rawAngle = sample.angle
+        // The clamshell flag is the one pause input that changes on
+        // this path with no trigger of its own — the angle reconciles
+        // on accepted samples, the display facts through observed
+        // versions — so a flip must reach reconcile whatever the
+        // filter says of the reading it rode in on. A paused machine
+        // is idle, so a rejected sample would otherwise drop the flip
+        // and leave the fold paused under a chip that reads on.
+        let clamshellChanged = sample.clamshell != nil && sample.clamshell != cachedClamshell
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
-        guard let angle = sample.angle, simulatedAngle == nil else { return }
+        guard let angle = sample.angle, simulatedAngle == nil else {
+            if clamshellChanged { reconcile() }
+            return
+        }
         if settings.anchor == .movement {
             // Stillness is the anchor's signal, so it sees every raw
             // sample — jitter-rejected ones included — while the filter
@@ -792,8 +803,9 @@ final class FoldToy: Toy {
             // starve them a third of a second after it stops — before
             // the tracker lands, so the dwell never arms. Only the
             // tracker is spared the wobble. Parked above the band
-            // (idle) the reading stops here.
-            if arming.phase != .idle { reconcile() }
+            // (idle) the reading stops here, unless it carried a
+            // clamshell flip.
+            if arming.phase != .idle || clamshellChanged { reconcile() }
             return
         }
         tracker.feed(angle)
