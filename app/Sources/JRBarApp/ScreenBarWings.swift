@@ -37,7 +37,22 @@ struct ScreenBarWingSlot: Equatable {
     /// own clock toward the loudest escalation stage. nil draws the bare
     /// glyph. Only the asking session's ear carries one.
     var askAge: ScreenBarAskAge?
+    /// The privacy dots — the island's mic and camera LEDs, carried onto
+    /// the right ear while the ears own the notch's shoulders (the island
+    /// rests bare then, so they would otherwise never draw). nil or quiet
+    /// draws none.
+    var sensors: NotchSensorState?
     var tone: Tone = .neutral
+
+    /// Whether the slot draws a mark of its own beside any dots. A slot
+    /// with neither still holds its claim with the lone resting dot.
+    var hasMark: Bool {
+        provider != nil || symbol != nil || meter != nil || visualizer
+            || artworkData != nil || askAge != nil
+    }
+
+    /// Whether the slot carries lit privacy dots.
+    var showsSensors: Bool { sensors?.anyInUse ?? false }
 
     var textColor: Color {
         switch tone {
@@ -59,6 +74,55 @@ struct ScreenBarWings: Equatable {
     subscript(side: ScreenBarWingSide) -> ScreenBarWingSlot? {
         get { side == .left ? left : right }
         set { if side == .left { left = newValue } else { right = newValue } }
+    }
+
+    /// `wings` with the privacy dots on the right ear — the island's own
+    /// shoulder for them — beside whatever mark it holds, or as an ear of
+    /// their own when nothing else claims that side. The dots are a
+    /// privacy fact, not a subject: they never change the ear's identity
+    /// for a dismissal, and a dismissed ear still shows them.
+    static func withSensors(_ sensors: NotchSensorState, on wings: ScreenBarWings) -> ScreenBarWings {
+        guard sensors.anyInUse else { return wings }
+        var dressed = wings
+        let words = sensorWords(sensors)
+        if var right = dressed.right {
+            right.sensors = sensors
+            right.text += " · " + words.lowercased()
+            dressed.right = right
+        } else {
+            dressed.right = ScreenBarWingSlot(text: words, sensors: sensors)
+        }
+        return dressed
+    }
+
+    /// VoiceOver's words for the dots — the island's own phrasing.
+    static func sensorWords(_ sensors: NotchSensorState) -> String {
+        if sensors.cameraInUse, sensors.microphoneInUse { return "Camera and microphone in use" }
+        return sensors.cameraInUse ? "Camera in use" : "Microphone in use"
+    }
+}
+
+/// The privacy dots' measure on an ear: 5 pt dots at the island's 4 pt
+/// rhythm, set in from the bezel's edge by the island's separator width,
+/// so the pair reads as the hardware LED's neighbours, not a stray mark.
+enum ScreenBarSensorDots {
+    static let diameter: CGFloat = 5
+    static let spacing: CGFloat = 4
+    /// From the ear's inner (bezel) edge to the first dot, and from the
+    /// last dot to the mark's own zone.
+    static let inset: CGFloat = NotchIsland.sensorSeparatorWidth
+
+    /// The dots' own width.
+    static func width(_ sensors: NotchSensorState?) -> CGFloat {
+        let dots = sensors.map { $0.anyInUse ? $0.dotCount : 0 } ?? 0
+        return dots > 0 ? CGFloat(dots) * diameter + CGFloat(dots - 1) * spacing : 0
+    }
+
+    /// What the dots add to an ear: the inset before them and their
+    /// width; a dots-only ear closes with the inset on its far side too.
+    static func lead(_ sensors: NotchSensorState?) -> CGFloat {
+        let dots = width(sensors)
+        return dots > 0 ? inset + dots : 0
     }
 }
 
@@ -372,7 +436,7 @@ struct ScreenBarWingsView: View {
                 }
             } else if let provider = slot.provider {
                 glyph(.style(for: provider), size: 13, tint: tint)
-            } else {
+            } else if !slot.showsSensors {
                 // A slot with words but no mark still holds its claim —
                 // the lone dot is the resting grammar.
                 Circle().fill(slot.textColor).frame(width: 5, height: 5)
@@ -380,6 +444,12 @@ struct ScreenBarWingsView: View {
         }
         .scaleEffect(swell ? Self.swellScale : 1)
         .opacity(1 - min(1, abs(pull) / 40))
+        // The privacy dots sit at the ear's inner edge, beside the bezel
+        // — the camera LED's own neighbourhood — and the mark centres in
+        // what is left of the zone.
+        let lead = slot.showsSensors ? ScreenBarSensorDots.lead(slot.sensors) : 0
+        let markZone = CGRect(x: rect.minX + lead, y: rect.minY,
+                              width: max(0, rect.width - lead), height: rect.height)
 
         if model.tray != nil {
             // The wash covers the ear's full span — the mark's zone plus
@@ -401,9 +471,18 @@ struct ScreenBarWingsView: View {
                 }
                 // An ear the flank shrank below a mark's room draws the
                 // cap alone — a glyph that size clips against the edge.
-                if rect.width >= ScreenBarView.markMinWidth {
+                if markZone.width >= ScreenBarView.markMinWidth {
                     mark
-                        .offset(x: rect.midX - wash.midX + pull + reach)
+                        .offset(x: markZone.midX - wash.midX + pull + reach)
+                }
+                // The dots outrank the mark for room: a privacy light
+                // is never the thing a crowded flank squeezes out.
+                if let sensors = slot.sensors, sensors.anyInUse,
+                   rect.width >= ScreenBarSensorDots.lead(sensors) {
+                    sensorDots(sensors)
+                        .offset(x: rect.minX + ScreenBarSensorDots.inset
+                                    + ScreenBarSensorDots.width(sensors) / 2 - wash.midX + pull)
+                        .opacity(1 - min(1, abs(pull) / 40))
                 }
             }
             .frame(width: wash.width, height: wash.height)
@@ -413,7 +492,10 @@ struct ScreenBarWingsView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(slot.text))
         } else {
-            mark
+            HStack(spacing: ScreenBarSensorDots.inset) {
+                if let sensors = slot.sensors, sensors.anyInUse { sensorDots(sensors) }
+                mark
+            }
                 .padding(.vertical, 4)
                 .fixedSize()
                 .background(Capsule(style: .continuous).fill(.black))
@@ -422,6 +504,22 @@ struct ScreenBarWingsView: View {
                 .position(x: rect.midX + pull + reach, y: model.viewHeight - rect.midY)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(slot.text))
+        }
+    }
+
+    /// The privacy dots — macOS's own convention in the island's dot
+    /// language: green while a camera rolls, orange while a mic is live,
+    /// the camera nearest the notch like the hardware LED it mirrors.
+    private func sensorDots(_ sensors: NotchSensorState) -> some View {
+        HStack(spacing: ScreenBarSensorDots.spacing) {
+            if sensors.cameraInUse {
+                Circle().fill(.green)
+                    .frame(width: ScreenBarSensorDots.diameter, height: ScreenBarSensorDots.diameter)
+            }
+            if sensors.microphoneInUse {
+                Circle().fill(.orange)
+                    .frame(width: ScreenBarSensorDots.diameter, height: ScreenBarSensorDots.diameter)
+            }
         }
     }
 

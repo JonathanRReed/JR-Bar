@@ -319,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // never the daemon doc — a dead core must not un-bare the
         // island over the bar's ears.
         toysStore.notch.screenBarShown = { [weak store] in store?.screenBarShown ?? false }
+        observeSensorDots()
         // Wing gestures: an outward flick dismisses a side, a horizontal
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
@@ -1062,6 +1063,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 self?.coreDidChange()
                 self?.observeCore()
             }
+        }
+    }
+
+    /// The island's mic/camera reading, carried onto the ears: with the
+    /// ears drawn the island rests bare, so the dots it would show ride
+    /// the right ear instead. Re-armed after every change, like
+    /// `observeCore`; the island's own switch and poll lifetime decide
+    /// what the reading is.
+    private func observeSensorDots() {
+        guard let notch = toysStore?.notch else { return }
+        screenBar?.sensors = notch.sensorState
+        withObservationTracking {
+            _ = notch.sensorState
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observeSensorDots() }
         }
     }
 

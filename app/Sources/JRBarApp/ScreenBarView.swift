@@ -273,7 +273,8 @@ final class ScreenBarView: NSView {
         // is only the ceiling on the room it may take, never its width.
         // The ear's own bounds are what hit regions answer to, so empty
         // claim space is not a dead-zone magnet.
-        func earRect(_ side: ScreenBarWingSide, hasContent: Bool) -> CGRect? {
+        func earRect(_ side: ScreenBarWingSide, slot: ScreenBarWingSlot?) -> CGRect? {
+            let hasContent = slot != nil
             guard let claim = ScreenBarGeometry.wingSlotRect(side, in: size, geometry: wingGeometry)
             else { return nil }
             // Notch-less: the capsule chip carries itself in the claim.
@@ -285,7 +286,7 @@ final class ScreenBarView: NSView {
             // The right ear carries the menu handle's slice too — a slim
             // outer cap past the mark's span.
             let handleW: CGFloat = (side == .right && menuHandleRevealed != nil) ? Self.handleWidth : 0
-            var width = min(claim.width, (hasContent ? Self.earWidth : 0) + handleW)
+            var width = min(claim.width, Self.contentWidth(slot) + handleW)
             // Each ear yields to the nearest status item or menu title
             // on its flank: a wing that paves one hides it and eats its
             // clicks.
@@ -299,8 +300,8 @@ final class ScreenBarView: NSView {
             let x = side == .left ? claim.maxX - width : claim.minX
             return CGRect(x: x, y: size.height - depth, width: width, height: depth)
         }
-        let leftRect = earRect(.left, hasContent: wings.left != nil)
-        let rightRect = earRect(.right, hasContent: wings.right != nil)
+        let leftRect = earRect(.left, slot: wings.left)
+        let rightRect = earRect(.right, slot: wings.right)
         // The handle's slice: the right ear's outer cap — only while the
         // provider says there is a run for it to toggle. A nil answer
         // draws no glyph and keeps no hit slice; carving it anyway left a
@@ -395,6 +396,17 @@ final class ScreenBarView: NSView {
     /// ever caps it. Alcove's closed island stays compact: a 48 pt
     /// lobe read as a slab where the references keep slim caps.
     private static let earWidth: CGFloat = 36
+
+    /// The room a slot asks of its ear, before the flank and the claim
+    /// cap it: the mark's fixed width, plus the privacy dots' lead when
+    /// they ride along — or, for a dots-only ear, the dots between two
+    /// insets.
+    static func contentWidth(_ slot: ScreenBarWingSlot?) -> CGFloat {
+        guard let slot else { return 0 }
+        guard slot.showsSensors else { return earWidth }
+        let lead = ScreenBarSensorDots.lead(slot.sensors)
+        return slot.hasMark ? lead + earWidth : lead + ScreenBarSensorDots.inset
+    }
 
     /// A dismiss-pull drags the ear off the bezel: outward travel only
     /// (inward pulls meet the notch), eased by `tanh` so it resists as

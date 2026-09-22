@@ -126,3 +126,60 @@ struct ScreenBarEarMarksTests {
         #expect(store.screenBarEarMarks.quiet == nil, "mute leaves the lights alone")
     }
 }
+
+/// The privacy dots on the right ear: with the ears drawn the island
+/// rests bare, so the mic/camera LEDs ride the ear — never hidden by a
+/// crowded flank, a flick, or a notice.
+@Suite("Screen Bar privacy dots")
+@MainActor
+struct ScreenBarSensorDotsTests {
+    private static let camera = NotchSensorState(microphoneInUse: false, cameraInUse: true)
+    private static let both = NotchSensorState(microphoneInUse: true, cameraInUse: true)
+
+    @Test func dotsJoinTheRightEarOrStandAlone() {
+        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
+        let dressed = ScreenBarWings.withSensors(Self.both, on: ScreenBarWings(right: meter))
+        #expect(dressed.right?.sensors == Self.both)
+        #expect(dressed.right?.meter == 0.42, "the mark stays; the dots sit beside it")
+        #expect(dressed.right?.text == "42% · camera and microphone in use")
+        let alone = ScreenBarWings.withSensors(Self.camera, on: .empty)
+        #expect(alone.right?.sensors == Self.camera)
+        #expect(alone.right?.hasMark == false)
+        #expect(alone.right?.text == "Camera in use")
+        #expect(alone.left == nil, "the dots never claim the left ear")
+        // Nothing live, nothing added.
+        #expect(ScreenBarWings.withSensors(NotchSensorState(), on: .empty) == .empty)
+    }
+
+    @Test func dotsNeverChangeTheEarsSubject() {
+        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
+        var dotted = meter
+        dotted.sensors = Self.both
+        #expect(ScreenBarController.sameWingSubject(meter, dotted))
+    }
+
+    @Test func earWidensByTheDotsLead() {
+        #expect(ScreenBarView.contentWidth(nil) == 0)
+        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
+        #expect(ScreenBarView.contentWidth(meter) == 36)
+        var dotted = meter
+        dotted.sensors = Self.both
+        // inset 6 + two 5 pt dots 4 pt apart + the mark's 36.
+        #expect(ScreenBarView.contentWidth(dotted) == CGFloat(6 + 14 + 36))
+        let alone = ScreenBarWingSlot(text: "Camera in use", sensors: Self.camera)
+        #expect(ScreenBarView.contentWidth(alone) == CGFloat(6 + 5 + 6))
+    }
+
+    @Test func aDotsOnlyEarDrawsOnTheNotchedFlank() throws {
+        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
+        view.wingGeometry = ScreenBarWingGeometry(
+            notchWidth: 185, notchDepth: 32, bandSpan: 500,
+            leftExtent: 0, rightExtent: 60)
+        view.wings = ScreenBarWings.withSensors(Self.camera, on: .empty)
+        view.relayout()
+        let ear = try #require(view.rightWingRect)
+        #expect(ear.width == 17)
+        #expect(ear.width >= ScreenBarView.minimumEarWidth)
+        #expect(view.leftWingRect == nil)
+    }
+}

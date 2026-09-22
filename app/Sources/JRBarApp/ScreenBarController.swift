@@ -89,6 +89,18 @@ final class ScreenBarController {
             pushWings()
         }
     }
+    /// The island's mic/camera reading. With the ears drawn the island
+    /// rests bare, so its privacy dots ride the right ear instead —
+    /// after dismissals and notices, because a flick or a charger beat
+    /// must never hide that a microphone is live.
+    var sensors = NotchSensorState() {
+        didSet { if sensors != oldValue { pushWings() } }
+    }
+    /// Whether the ears can draw the privacy dots right now: shown, the
+    /// wings on, no external capsule holding the flanks. The read the
+    /// sensor poll's owner can gate on — a reading nothing can draw is
+    /// a poll worth stopping.
+    var drawsSensorDots: Bool { isShown && notchWingsEnabled && capsule == nil }
     /// The slots as the ears present them: the store's pick, dressed
     /// with the ears' own marks. Dismissal and the draw both read this,
     /// so a flick on the moon dismisses the moon.
@@ -490,7 +502,7 @@ final class ScreenBarController {
         if let notice = wingNotice, notice.until > Date() {
             shown[notice.side] = notice.slot
         }
-        return shown
+        return ScreenBarWings.withSensors(sensors, on: shown)
     }
 
     /// The view keeps the effective slots; `reposition` reads them
