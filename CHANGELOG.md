@@ -243,6 +243,16 @@ All notable changes to JR-Bar are documented here.
   hotkey registration is named on the card instead of silently
   dropped. Setup's permission rows now cover Reminders, Camera,
   System Audio, Bluetooth and Focus Status.
+- The menu-bar icon is visible again: the slim anchor seats on-row
+  beside the notch and, as a protected owner, was publishing itself
+  as the right flank's ear limit — the ear clamped to under a point
+  and died, taking the ‹ handle with it, so the island face painted
+  black over the slot and nothing remained where the icon sits. Items
+  our own process owns never clamp the ear now: the anchor is a
+  surface the island face already owns and the ear's ‹ is its mark.
+- The icon can vanish on purpose: a new "Hidden" icon style draws no
+  glyph while keeping the click slot, tooltip and VoiceOver label —
+  Ice's no-icon mode for a bar that carries only the ‹ affordance.
 
 ## 0.9.8 (unreleased)
 
