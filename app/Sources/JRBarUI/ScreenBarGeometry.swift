@@ -196,9 +196,11 @@ public enum ScreenBarGeometry {
     public static let wingEarDrop: CGFloat = 0
 
     /// The screen the Screen Bar belongs on: the first with a safe-area
-    /// inset (the notched built-in), else the main screen.
+    /// inset (the notched built-in), else the menu-bar screen. Never
+    /// `NSScreen.main`: that is whichever display holds the key window,
+    /// so opening Settings on an external would carry the band there.
     public static func preferredScreen() -> NSScreen? {
-        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens.first
+        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.screens.first
     }
 
     public static func notchDepth(of screen: NSScreen) -> CGFloat {
