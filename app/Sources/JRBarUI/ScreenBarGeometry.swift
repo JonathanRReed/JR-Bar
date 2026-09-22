@@ -53,13 +53,14 @@ public struct ScreenBarWingGeometry: Equatable, Sendable {
 }
 
 /// The band coupled to our notch island: while the island is drawn the
-/// strip stops floating — it runs edge to edge under the island and a
+/// strip stops floating — it runs the island's width under it and a
 /// black housing continues the island's silhouette, so the pair reads as
 /// one continuous shape with the LED strip inset. All rects are in view
 /// coordinates (y grows upward; the window's top is the screen's top).
 public struct ScreenBarCoupling: Equatable, Sendable {
-    /// The LED strip: the island's full width — its end caps kiss the
-    /// island's side edges — at the band's usual seat under the notch.
+    /// The LED strip: the island's full width less the few points its
+    /// end caps need to stay inside the housing's corners — at the
+    /// band's usual seat under the notch.
     public var band: CGRect
     /// The black housing continuing the island's silhouette: square where
     /// its top runs up into the island's face, the notch profile's radius
@@ -178,19 +179,21 @@ public enum ScreenBarGeometry {
     /// …but only draws a capsule this wide, hugging the band's end.
     public static let notchlessSlotMaxWidth: CGFloat = 84
     public static let notchlessSlotHeight: CGFloat = 18
-    /// The tray's chin: how far the wings' shared black shape hangs below
-    /// the bezel's bottom edge BETWEEN the ears. Zero: the wrap ends
-    /// exactly where the hardware ends. A 6 pt chin across the whole
-    /// wrap read as the notch grown downward — "expanding past the
-    /// notch" (owner, 2026-09-16) — on a bar whose menu bar is 33 pt to
-    /// the notch's 32.
-    public static let wingTrayChin: CGFloat = 0
-    /// How far the tray hangs below the bezel's bottom edge. A flush
-    /// band is black-on-black against the menu bar — the wing reads as
-    /// absent. Six points is the wingTrayChin silhouette the design
-    /// shipped with: a shallow lobe under each claimed ear, thin
-    /// enough to stay out of the notch's way.
-    public static let wingEarDrop: CGFloat = 6
+    /// How far the wings' tray hangs below the bezel's bottom edge:
+    /// nothing. The wrap ends exactly where the hardware ends and the
+    /// lit strip seats right under it, so the light, not a black lobe,
+    /// marks how far the wing reaches.
+    ///
+    /// This deliberately reverses 0.9.9's "back to six points" (a flush
+    /// black tray on a black bar read as no wing at all). The six points
+    /// ran under the whole wrap, notch included, and the strip seated
+    /// below them, so the band hung an 11 pt black tab over app content
+    /// (measured 2026-09-22: black 33–37.5 pt, strip 38–42, content
+    /// from 44) — the "notch grown downward" chin the owner had already
+    /// turned down on 2026-09-16. The island's notice line and card
+    /// content start right under the notch because of this zero; a
+    /// drop here would hang the tray over them again.
+    public static let wingEarDrop: CGFloat = 0
 
     /// The screen the Screen Bar belongs on: the first with a safe-area
     /// inset (the notched built-in), else the main screen.
@@ -383,9 +386,10 @@ public enum ScreenBarGeometry {
     /// is already behind it — the lip never shows; it only guarantees the
     /// housing meets the island's own black.
     public static let coupledLip: CGFloat = 4
-    /// Black the housing keeps under the strip — the chin that seats the
-    /// light inside the shared silhouette.
-    public static let coupledChin: CGFloat = 2
+    /// Black the housing keeps under the strip: one point seats the
+    /// light inside the shared silhouette. Every point here is a point
+    /// of app content the wrap covers under the menu bar.
+    public static let coupledChin: CGFloat = 1
     /// Slack the coupled window keeps under the housing's bottom edge so
     /// the silhouette's corner curve never clips the window's bounds.
     public static let coupledSlack: CGFloat = 1
@@ -414,12 +418,15 @@ public enum ScreenBarGeometry {
     /// (`contentWingExtent`, or `notchlessWingClaim` where there is no
     /// safe area to measure); it widens the window without widening the
     /// band. While a capsule is followed the flanks belong to it, so the
-    /// claim is ignored. `chin` is `wingTrayChin` while a wing claims
+    /// claim is ignored. `chin` is `wingEarDrop` while a wing claims
     /// room: the tray hangs that far below the bezel, growing the window
-    /// so the band drops clear of it. `coupledIsland` is our notch
-    /// island's live frame while it is drawn: the window then grows to
-    /// reach the island's side edges (the strip kisses them) and to seat
-    /// the housing under the band — toward the island, never smaller.
+    /// so the band drops clear of it. A claimed wing seats the strip in
+    /// a housing under the tray even with no island up, so the window
+    /// always grows to hold the housing's chin and the halo — at a zero
+    /// drop too. `coupledIsland` is our notch island's live frame while
+    /// it is drawn: the window then grows to reach the island's side
+    /// edges (the housing spans them) and to seat the housing under the
+    /// band — toward the island, never smaller.
     public static func windowFrame(screenFrame frame: CGRect, slotWidth measuredSlot: CGFloat, notchDepth: CGFloat,
                                    auxiliaryLeft leftWidth: CGFloat, auxiliaryRight rightWidth: CGFloat, hardwareSlot: CGFloat,
                                    wrapMenuBar: Bool, gapWidth: CGFloat? = nil, wingLength: CGFloat? = nil,
@@ -435,7 +442,7 @@ public enum ScreenBarGeometry {
                                               notchDepth: notchDepth, capsule: capsule,
                                               windowHeight: { windowHeight(notchDepth: $0) + chin })
         guard let coupledIsland, coupledIsland.width > 0 else {
-            guard notchDepth > 0, chin > 0, capsule == nil else { return base }
+            guard notchDepth > 0, capsule == nil, chin > 0 || contentExtent > 0 else { return base }
             let height = max(base.height, coupledWindowHeight(islandBottom: notchDepth + chin))
             return CGRect(x: base.minX, y: base.maxY - height, width: base.width, height: height)
         }
@@ -499,16 +506,17 @@ public enum ScreenBarGeometry {
 
     /// The coupled band and its housing inside a window of `size`, given
     /// the island's `island` rect in the same view coordinates. The strip
-    /// runs edge to edge UNDER the island — seated at the island's own
+    /// runs across UNDER the island — seated at the island's own
     /// bottom edge, so it is the resting bezel's underlight and the grown
     /// card's footlight alike, never a bar clipped across the island's
-    /// face — and spans the island's full width so its end caps kiss its
-    /// side edges. The housing is the strip's black seat: its top runs up
+    /// face — and spans the island's width, its end caps tucked just
+    /// inside the corners. The housing is the strip's black seat: its top runs up
     /// behind the island's bottom corner (`cornerRadius`), or just
     /// `coupledLip` above the strip when a grown island's face is already
     /// there, and its bottom edge — `coupledChin` under the strip —
     /// carries the profile's radius, so island and band read as one
-    /// continuous black shape with the LED strip inset.
+    /// continuous black shape with the LED strip inset. The strip's ends
+    /// stop where that corner arc would cut them (`stripEndInset`).
     public static func coupledBand(in size: NSSize, island: CGRect,
                                    cornerRadius: CGFloat) -> ScreenBarCoupling {
         let radius = max(0, cornerRadius)
@@ -517,11 +525,33 @@ public enum ScreenBarGeometry {
         let stripBottom = stripTop + ScreenBarDesign.bandHeight
         let housingTop = max(0, min(islandBottom - radius, stripTop - coupledLip))
         let housingBottom = stripBottom + coupledChin
+        let inset = min(stripEndInset(cornerRadius: radius), max(0, island.width) / 2)
         return ScreenBarCoupling(
-            band: CGRect(x: island.minX, y: size.height - stripBottom,
-                         width: max(0, island.width), height: stripBottom - stripTop),
+            band: CGRect(x: island.minX + inset, y: size.height - stripBottom,
+                         width: max(0, island.width - 2 * inset), height: stripBottom - stripTop),
             housing: CGRect(x: island.minX, y: size.height - housingBottom,
                             width: max(0, island.width), height: housingBottom - housingTop),
             cornerRadius: radius)
+    }
+
+    /// How far each end of the coupled strip sits in from the housing's
+    /// side so its rounded end cap stays on black: the least inset that
+    /// keeps the cap inside the housing's bottom corner arc of `radius`.
+    /// A strip run edge to edge poked past the arc — about a point past
+    /// the resting 8 pt corner, ~19 pt past a grown card's 28 — and lit
+    /// bare content beside the notch. Clamping the corner to the lip
+    /// instead would square the grown card's foot into a slab and cap
+    /// the Notch profile corner at 5 pt; seating the strip keeps every
+    /// radius and follows the morph continuously (2.7 pt at rest).
+    public static func stripEndInset(cornerRadius radius: CGFloat) -> CGFloat {
+        // The band layer's corner radius, as Core Animation draws it on
+        // a strip this thin: half its height.
+        let cap = min(ScreenBarDesign.cornerRadius, ScreenBarDesign.bandHeight / 2)
+        // The cap's centre, measured up from the housing's bottom edge.
+        let capCentre = coupledChin + cap
+        guard radius > capCentre else { return 0 }
+        let reach = radius - cap
+        let rise = radius - capCentre
+        return reach - sqrt(reach * reach - rise * rise)
     }
 }

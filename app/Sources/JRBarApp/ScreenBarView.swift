@@ -11,7 +11,7 @@ import SwiftUI
 ///   up: the strip's seat. Square at the top where it runs into the
 ///   island's face, the notch profile's radius on its bottom corners, so
 ///   island and band read as one continuous black shape.
-/// * `bandLayer`  -- the 6 pt rounded status band, one horizontal gradient;
+/// * `bandLayer`  -- the 4 pt rounded status band, one horizontal gradient;
 /// * `haloLayer`  -- the same gradient, a little larger, softened by a
 ///   vertical alpha mask and drawn at `HALO_ALPHA` below the band so the
 ///   strip reads as light, not paint. (A Core Image blur would pull the
@@ -90,13 +90,13 @@ final class ScreenBarView: NSView {
     /// hugging the bezel — not the claim that capped it.
     private(set) var leftWingRect: NSRect?
     private(set) var rightWingRect: NSRect?
-    /// The wings' shared tray — ear to ear under the bezel with a chin
-    /// below it — in view coordinates; nil while no wing is drawn or the
-    /// screen has no notch to wrap.
+    /// The wings' shared tray — ear to ear, flush with the bezel's
+    /// bottom edge — in view coordinates; nil while no wing is drawn or
+    /// the screen has no notch to wrap.
     private(set) var trayRect: NSRect?
     /// The notch island's frame in view coordinates while it is ours and
     /// on screen — pushed by the controller on every reposition. Non-nil
-    /// couples the band: the strip runs edge to edge under the island and
+    /// couples the band: the strip runs the island's width under it and
     /// `housingLayer` continues its silhouette (`ScreenBarCoupling`).
     /// nil is the standalone band: Notch off, the island parked, an
     /// external provider rendering, or a screen with no notch.
@@ -241,10 +241,13 @@ final class ScreenBarView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         bandLayer.frame = rect
-        // The halo is the band, widened and bled a little past both edges:
+        // The halo is the band, widened and bled a little past every edge:
         // the mask fades it out over the extra height the way the Python
-        // bloom layers carry the light past the housing.
-        let haloFrame = rect.insetBy(dx: -3.0, dy: -3.0).offsetBy(dx: 0, dy: -0.5)
+        // bloom layers carry the light past the housing. A point and a
+        // half, no more: under the notch that bleed lands on app content —
+        // 3.5 pt of it smeared a warm fringe below the housing, and 3 pt
+        // past the tucked end caps hazed the housing's corners.
+        let haloFrame = rect.insetBy(dx: -1.5, dy: -1.5)
         haloLayer.frame = haloFrame
         haloMask.frame = CGRect(origin: .zero, size: haloFrame.size)
         let radius = min(ScreenBarDesign.cornerRadius, rect.height / 2.0, rect.width / 2.0)
@@ -272,8 +275,9 @@ final class ScreenBarView: NSView {
             else { return nil }
             // Notch-less: the capsule chip carries itself in the claim.
             guard wingGeometry.notchDepth > 0 else { return hasContent ? claim : nil }
-            // The ear's rect runs the bezel's height plus the lobe's
-            // drop — the drawn lobe IS the ear, hit regions included.
+            // The ear's rect runs the bezel's height (plus the tray's
+            // drop, none today) — the drawn lobe IS the ear, hit regions
+            // included, and its mark centres on the menu bar's glyph line.
             let depth = wingGeometry.notchDepth + ScreenBarGeometry.wingEarDrop
             // The right ear carries the menu handle's slice too — a slim
             // outer cap past the mark's span.
@@ -325,10 +329,10 @@ final class ScreenBarView: NSView {
             wingsHosting = hosting
         }
         // The tray is the one continuous shape: from the left ear's outer
-        // edge, under the bezel, to the right ear's outer edge — dropping
-        // into a lobe below the menu-bar line under each claimed ear. An
-        // unclaimed side ends the tray at its own bezel edge; the bezel
-        // hides the middle.
+        // edge, under the bezel, to the right ear's outer edge, ending
+        // where the bezel ends — the strip seated under it marks the
+        // wing's reach. An unclaimed side ends the tray at its own bezel
+        // edge; the bezel hides the middle.
         var tray: CGRect?
         if wingGeometry.notchDepth > 0 {
             let sideExtent = max(0, (size.width - wingGeometry.notchWidth) / 2.0)

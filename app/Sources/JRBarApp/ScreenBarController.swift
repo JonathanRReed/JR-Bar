@@ -541,7 +541,7 @@ final class ScreenBarController {
         let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect, view.menuHandleRect)
         let depth = ScreenBarGeometry.notchDepth(of: screen)
         // Our notch island, while it is drawn: the band couples to it —
-        // the strip runs edge to edge under the island and the black
+        // the strip runs the island's width under it and the black
         // housing continues its silhouette. Only on the notched screen
         // the band belongs to; a floating island on a notch-less display
         // keeps the standalone band, as does any other provider's.
@@ -557,8 +557,9 @@ final class ScreenBarController {
         let notchWidth = ScreenBarGeometry.resolvedNotchWidth(slotWidth: ScreenBarGeometry.slotWidth(of: screen),
                                                             gapWidth: gapWidth)
         let extents = wingExtents(on: screen, notchWidth: notchWidth, notchDepth: depth)
-        // A claimed wing gets the ears' lobes below the bezel — the
-        // window grows by exactly that much so the lobes have room.
+        // A claimed wing hangs the tray `wingEarDrop` below the bezel
+        // (flush today); `windowFrame` grows the window by that much
+        // plus the strip's housing under it.
         let chin = extents.left > 0 || extents.right > 0 ? ScreenBarGeometry.wingEarDrop : 0
         let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
                                                   gapWidth: gapWidth, wingLength: wingLength, capsule: capsule,

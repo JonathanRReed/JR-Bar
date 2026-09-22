@@ -40,6 +40,12 @@ struct ScreenBarEarTests {
         return view
     }
 
+    /// The strip's end-cap tuck under the resting 8 pt corner.
+    private static let restingInset = ScreenBarGeometry.stripEndInset(cornerRadius: 8)
+    /// …and under a grown card's full corner.
+    private static let grownInset = ScreenBarGeometry.stripEndInset(
+        cornerRadius: NotchSilhouetteGeometry.maximumExpandedRadius)
+
     @Test func lightSitsBelowTheWholeNotchAndWings() throws {
         let view = makeView()
         view.wings = ScreenBarWings(
@@ -49,8 +55,9 @@ struct ScreenBarEarTests {
         let tray = try #require(view.trayRect)
         #expect(view.bandRect.maxY <= tray.minY,
                 "the wings must not cut through the light")
-        #expect(view.bandRect.minX == tray.minX)
-        #expect(view.bandRect.maxX == tray.maxX)
+        // Ear to ear, its caps tucked inside the silhouette's corners.
+        #expect(view.bandRect.minX == tray.minX + Self.restingInset)
+        #expect(abs(view.bandRect.maxX - (tray.maxX - Self.restingInset)) < 1e-9)
     }
 
     @Test func standaloneWingsDoNotCoverTheLight() throws {
@@ -60,8 +67,8 @@ struct ScreenBarEarTests {
         view.relayout()
         let tray = try #require(view.trayRect)
         #expect(view.bandRect.maxY <= tray.minY)
-        #expect(view.bandRect.minX == tray.minX)
-        #expect(view.bandRect.maxX == tray.maxX)
+        #expect(view.bandRect.minX == tray.minX + Self.restingInset)
+        #expect(abs(view.bandRect.maxX - (tray.maxX - Self.restingInset)) < 1e-9)
     }
 
     @Test func aGrownCardKeepsTheLightAtItsFoot() {
@@ -72,7 +79,9 @@ struct ScreenBarEarTests {
         view.islandFrame = CGRect(x: 60, y: 20, width: 380, height: 300)
         view.relayout()
         #expect(view.bandRect.maxY == 20)
-        #expect(view.bandRect.width == 380)
+        // The footlight sits inside the card's round foot, not past it.
+        #expect(view.bandRect.minX == 60 + Self.grownInset)
+        #expect(view.bandRect.width == 380 - 2 * Self.grownInset)
         #expect(view.bandRect.minY >= 0)
     }
 
@@ -88,8 +97,8 @@ struct ScreenBarEarTests {
         view.menuHandleRevealed = false
         view.islandFrame = CGRect(x: 90, y: 20, width: 320, height: 300)
         view.relayout()
-        #expect(view.bandRect.minX == 90)
-        #expect(view.bandRect.width == 320)
+        #expect(view.bandRect.minX == 90 + Self.grownInset)
+        #expect(view.bandRect.width == 320 - 2 * Self.grownInset)
     }
 
     @Test func theEarStandsWhileTheHandleLives() {
@@ -114,6 +123,22 @@ struct ScreenBarEarTests {
         #expect(view.rightWingRect == nil,
                 "no handle and no slot means no ear — the claim is honest")
         #expect(view.menuHandleRect == nil)
+    }
+
+    @Test func theEarEndsAtTheBezelSoItsMarkSitsOnTheGlyphLine() throws {
+        let view = makeView()
+        view.wings = ScreenBarWings(
+            left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.relayout()
+        let ear = try #require(view.rightWingRect)
+        let tray = try #require(view.trayRect)
+        // Exactly the bezel's 32 pt, hung from the window's top: the mark
+        // centres 16 pt down, on the menu bar's own glyph line — the 6 pt
+        // drop had it at 19, a few points under every system icon.
+        #expect(ear.height == 32)
+        #expect(ear.maxY == view.bounds.height)
+        #expect(view.bounds.height - ear.midY == 16)
+        #expect(tray.minY == view.bounds.height - 32, "the tray ends where the hardware ends")
     }
 
     @Test func aContentSlotWidensPastTheHandle() {

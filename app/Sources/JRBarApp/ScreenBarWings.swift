@@ -59,8 +59,8 @@ struct ScreenBarWings: Equatable {
 
 /// What the wings view draws: each side's slot and the rect the
 /// geometry claimed for it, plus the tray — the one continuous shape
-/// that runs from the left claim, under the bezel, to the right claim
-/// and drops a chin below it. All in view coordinates (origin
+/// that runs from the left claim, under the bezel, to the right claim,
+/// ending where the bezel ends. All in view coordinates (origin
 /// bottom-left, as `ScreenBarGeometry.wingSlotRect` returns them — the
 /// view flips y for SwiftUI's top-left space).
 @MainActor
@@ -78,8 +78,8 @@ final class ScreenBarWingsModel {
     /// so it can never park the way a status item does.
     var rightHandle: CGRect?
     var rightHandleRevealed = false
-    /// The shared body — the ears are its visible ends, the chin under
-    /// the bezel is the wrap. nil on notch-less screens, where the chips
+    /// The shared body — the ears are its visible ends, the stretch
+    /// behind the bezel joins them. nil on notch-less screens, where the chips
     /// carry their own capsules beside the band.
     var tray: CGRect?
     /// The tray's bottom corner — the notch profile's radius, so the

@@ -90,8 +90,9 @@ import Testing
     }
 
     @Test func bandRectAnchorsToTheBezelNotTheWindowFloor() {
-        // A window grown 7 pt for the ear lobes keeps the strip at the
-        // bezel's bottom edge — the same seat it has at the base height.
+        // A window grown past the base height (for a housing, say) keeps
+        // the strip at the bezel's bottom edge — the same seat it has at
+        // the base height.
         let tall = ScreenBarGeometry.bandRect(in: NSSize(width: 213, height: 45),
                                               underBezel: 32)
         #expect(tall.minY == 10)
@@ -190,20 +191,65 @@ import Testing
         CGRect(x: (size.width - width) / 2, y: size.height - height, width: width, height: height)
     }
 
-    @Test func coupledStripKissesTheIslandEdges() {
-        // The coupled window: 39 tall (coupledWindowHeight(islandBottom:
+    @Test func coupledStripSeatsInsideTheIslandsFoot() {
+        // The coupled window: 38 tall (coupledWindowHeight(islandBottom:
         // 32)), island 209 wide — slot 185 + 12 pt shoulders — centred.
-        let size = NSSize(width: 213, height: 39)
+        let size = NSSize(width: 213, height: 38)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 209, height: 32, in: size),
                                                      cornerRadius: 8)
         // The strip rides the island's bottom edge — 32…36 below the
-        // screen's top — and runs the island's full width: end caps
-        // kissing its side edges.
-        #expect(coupling.band == CGRect(x: 2, y: 3, width: 209, height: 4))
+        // screen's top — across the island's width, its end caps tucked
+        // 2.7 pt in so the 8 pt corner never cuts them.
+        let inset = ScreenBarGeometry.stripEndInset(cornerRadius: 8)
+        #expect(abs(inset - (6 - sqrt(11))) < 1e-9)
+        #expect(coupling.band == CGRect(x: 2 + inset, y: 2, width: 209 - 2 * inset, height: 4))
         // The housing swallows the island's bottom corners (its top runs
-        // to 32 - 8 = 24 below the top) and ends 2 pt under the strip.
-        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 14))
+        // to 32 - 8 = 24 below the top), spans the island's full width
+        // and ends 1 pt under the strip, on the profile's own corner.
+        #expect(coupling.housing == CGRect(x: 2, y: 1, width: 209, height: 13))
         #expect(coupling.cornerRadius == 8)
+    }
+
+    @Test func theStripsEndCapsStayOnBlackAtEveryCorner() {
+        // Every corner the silhouette takes — the Notch profile's 0…16
+        // slider, the resting 8, the grown card's 28 — keeps the whole
+        // strip, rounded caps included, inside the housing's outline,
+        // with the least inset that does it (the cap touches the arc).
+        let cap = ScreenBarDesign.bandHeight / 2
+        for radius: CGFloat in [0, 2, 3, 5, 8, 12, 16, 28] {
+            let size = NSSize(width: 380, height: 310)
+            let coupling = ScreenBarGeometry.coupledBand(
+                in: size, island: Self.islandRect(width: 380, height: 300, in: size), cornerRadius: radius)
+            let band = coupling.band, housing = coupling.housing
+            let r = coupling.cornerRadius
+            #expect(band.minX >= housing.minX && band.maxX <= housing.maxX)
+            #expect(band.minY >= housing.minY && band.maxY <= housing.maxY)
+            // The left cap's centre against the bottom-left arc's centre.
+            let capCentre = CGPoint(x: band.minX + cap, y: band.minY + cap)
+            let arcCentre = CGPoint(x: housing.minX + r, y: housing.minY + r)
+            guard capCentre.x < arcCentre.x, capCentre.y < arcCentre.y else { continue }
+            let gap = hypot(arcCentre.x - capCentre.x, arcCentre.y - capCentre.y)
+            #expect(gap <= r - cap + 1e-9, "radius \(radius): the cap pokes past the corner")
+            #expect(gap >= r - cap - 1e-9, "radius \(radius): the strip is shorter than it needs to be")
+        }
+        // A corner no deeper than the cap's seat costs the strip nothing.
+        #expect(ScreenBarGeometry.stripEndInset(cornerRadius: 3) == 0)
+        #expect(ScreenBarGeometry.stripEndInset(cornerRadius: 0) == 0)
+    }
+
+    @Test func aGrownCardKeepsItsRoundFootAndTheStripFitsInside() {
+        // The grown card's 28 pt corner stays the silhouette's: clamping
+        // it to the 5 pt lip would square the card's foot into a slab.
+        // The housing still climbs the full corner so it fills the
+        // island's curve, and the strip stops ~19 pt short of each side.
+        let size = NSSize(width: 380, height: 310)
+        let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 380, height: 300, in: size),
+                                                     cornerRadius: 28)
+        #expect(coupling.cornerRadius == 28)
+        #expect(coupling.housing.maxY == size.height - (300 - 28))
+        let inset = ScreenBarGeometry.stripEndInset(cornerRadius: 28)
+        #expect(abs(inset - (26 - sqrt(51))) < 1e-9)
+        #expect(coupling.band.minX == inset && abs(coupling.band.maxX - (380 - inset)) < 1e-9)
     }
 
     @Test func coupledStripRidesTheGrownIslandBottom() {
@@ -213,10 +259,11 @@ import Testing
         let size = NSSize(width: 380, height: 310)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: Self.islandRect(width: 380, height: 300, in: size),
                                                      cornerRadius: 8)
-        #expect(coupling.band == CGRect(x: 0, y: 6, width: 380, height: 4))
-        // Top at 300 - 8 = 292 below the top; bottom at 306 — the lip
+        let inset = ScreenBarGeometry.stripEndInset(cornerRadius: 8)
+        #expect(coupling.band == CGRect(x: inset, y: 6, width: 380 - 2 * inset, height: 4))
+        // Top at 300 - 8 = 292 below the top; bottom at 305 — the lip
         // whose only visible edge is the corner curve under the strip.
-        #expect(coupling.housing == CGRect(x: 0, y: 4, width: 380, height: 14))
+        #expect(coupling.housing == CGRect(x: 0, y: 5, width: 380, height: 13))
     }
 
     @Test func coupledIslandGrowsTheWindowTowardIt() {
@@ -228,8 +275,8 @@ import Testing
                                                   auxiliaryLeft: 300, auxiliaryRight: 300,
                                                   hardwareSlot: 185, wrapMenuBar: true,
                                                   coupledIsland: island)
-        #expect(frame == CGRect(x: 566, y: 982 - 307, width: 380, height: 307))
-        #expect(ScreenBarGeometry.coupledWindowHeight(islandBottom: 300) == 307)
+        #expect(frame == CGRect(x: 566, y: 982 - 306, width: 380, height: 306))
+        #expect(ScreenBarGeometry.coupledWindowHeight(islandBottom: 300) == 306)
     }
 
     @Test func coupledIslandNeverShrinksTheWindow() {
@@ -240,7 +287,7 @@ import Testing
                                                   auxiliaryLeft: 300, auxiliaryRight: 300,
                                                   hardwareSlot: 185, wrapMenuBar: true,
                                                   coupledIsland: island)
-        #expect(frame == CGRect(x: 649.5, y: 982 - 39, width: 213, height: 39))
+        #expect(frame == CGRect(x: 649.5, y: 982 - 38, width: 213, height: 38))
         // And nil is the standalone frame, untouched.
         #expect(Self.frame().height == 36)
     }
@@ -250,16 +297,46 @@ import Testing
         let frame = ScreenBarGeometry.windowFrame(
             screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
             auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
-            wrapMenuBar: true, contentExtent: 60, chin: 6, coupledIsland: island)
-        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 38))
+            wrapMenuBar: true, contentExtent: 60, chin: ScreenBarGeometry.wingEarDrop,
+            coupledIsland: island)
+        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 32))
     }
 
     @Test func standaloneWindowLeavesRoomForTheWingUnderlight() {
+        // Island parked, a wing claimed: the tray still seats the strip
+        // in a housing under the bezel, so the window grows for its chin
+        // and the halo even though the tray itself drops nothing. A
+        // `chin > 0` guard left it at 36 and clipped both.
         let frame = ScreenBarGeometry.windowFrame(
             screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
             auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
+            wrapMenuBar: true, contentExtent: 60, chin: ScreenBarGeometry.wingEarDrop)
+        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 32))
+        #expect(frame.height == 38)
+        #expect(frame.maxY == 982)
+        // No claim, no housing: the plain band keeps the classic height.
+        #expect(Self.wingedFrame(contentExtent: 0).height == 36)
+        // A dropped tray (should one come back) still grows past it.
+        let dropped = ScreenBarGeometry.windowFrame(
+            screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
+            auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
             wrapMenuBar: true, contentExtent: 60, chin: 6)
-        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 38))
+        #expect(dropped.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 38))
+    }
+
+    @Test func theRestingWrapEndsFivePointsUnderTheBezel() {
+        // The whole flush seat in one place: the tray ends at the bezel,
+        // the strip runs 32…36 below the screen's top, the housing's
+        // chin ends at 37 — not the 11 pt black tab the 6 pt drop hung
+        // over app content (black to 37.5, strip 38–42, content at 44).
+        #expect(ScreenBarGeometry.wingEarDrop == 0)
+        let size = NSSize(width: 213, height: ScreenBarGeometry.coupledWindowHeight(islandBottom: 32))
+        let tray = CGRect(x: 0, y: size.height - 32, width: 213, height: 32)
+        let coupling = ScreenBarGeometry.coupledBand(in: size, island: tray, cornerRadius: 8)
+        #expect(size.height - coupling.band.maxY == 32)
+        #expect(size.height - coupling.band.minY == 36)
+        #expect(size.height - coupling.housing.minY == 37)
+        #expect(coupling.housing.minY >= 0, "the window holds the housing")
     }
 
     @Test func notchlessSlotsFlankTheBand() {

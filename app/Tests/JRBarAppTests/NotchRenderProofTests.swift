@@ -368,9 +368,9 @@ struct NotchRenderProofTests {
     }
 
     /// The scene the screenshots crop: a 185-pt bezel at the top of a
-    /// 500-pt window, our tray wrapping it — ear lobes dropping below the
-    /// bezel's line. The bezel is drawn as the test's own black bar —
-    /// what the hardware shows.
+    /// 500-pt window, our tray wrapping it flush with the bezel's bottom
+    /// edge. The bezel is drawn as the test's own black bar — what the
+    /// hardware shows.
     private static func scene(_ model: ScreenBarWingsModel) -> some View {
         ZStack(alignment: .top) {
             Color(white: 0.24)   // the menu bar's field
