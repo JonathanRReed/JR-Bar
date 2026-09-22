@@ -297,32 +297,79 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
     /// liveness probe (EPERM still means alive); SIGTERM ends the hold
     /// exactly like the app's own quit path: stdin EOF, helper exits.
     /// The exit source lives here so the token retaining this object
-    /// keeps the watch armed, and a token's death disarms it.
+    /// keeps the watch armed; the exit itself disarms it (see `exited`).
     final class Spawned: @unchecked Sendable {
         let pid: pid_t
-        var exitSource: DispatchSourceProcess?
+        /// Guards the three below: the exit source's handler runs on a
+        /// dispatch queue, `terminate` on the main actor, and each pipe
+        /// end is taken exactly once — a second `close` of a number the
+        /// kernel already reused would close someone else's descriptor.
+        private let lock = NSLock()
+        private var exitSource: DispatchSourceProcess?
         /// The helper's stdin/stdout — kept on the token's object so the
         /// pipe ends outlive `activate` (closing stdin is the release).
-        var stdin: FileHandle?
-        var stdout: FileHandle?
-        init(pid: pid_t) { self.pid = pid }
+        private var stdin: FileHandle?
+        private var stdout: FileHandle?
+        init(pid: pid_t, stdin: FileHandle, stdout: FileHandle) {
+            self.pid = pid
+            self.stdin = stdin
+            self.stdout = stdout
+        }
         var isRunning: Bool { kill(pid, 0) == 0 || errno == EPERM }
+        func arm(_ source: DispatchSourceProcess) {
+            lock.withLock { exitSource = source }
+        }
+        /// The helper writes exactly one line; once it is read, the read
+        /// end has no further use.
+        func closeStdout() {
+            let handle = lock.withLock { () -> FileHandle? in
+                defer { stdout = nil }
+                return stdout
+            }
+            try? handle?.close()
+        }
+        private func closeStdin() {
+            let handle = lock.withLock { () -> FileHandle? in
+                defer { stdin = nil }
+                return stdin
+            }
+            try? handle?.close()
+        }
+        /// The process is gone and reaped: cancel the exit source — the
+        /// handler holds this object and the source hangs off it, a
+        /// cycle that kept every activation's pipe descriptors open for
+        /// the app's life (soft limit 256) — and close both pipe ends.
+        /// A helper that died on its own never saw `terminate`, so its
+        /// stdin is closed here too.
+        func exited() {
+            let source = lock.withLock { () -> DispatchSourceProcess? in
+                defer { exitSource = nil }
+                return exitSource
+            }
+            source?.cancel()
+            closeStdin()
+            closeStdout()
+        }
         /// stdin EOF is the designed release — the helper exits on its
         /// own. SIGKILL is the hammer: SIGTERM arrives on the parent's
         /// inherited disposition, which this app ignores, and seven
         /// orphaned asserters proved it (measured 2026-09-21).
         func terminate() {
-            try? stdin?.close()
+            closeStdin()
             kill(pid, SIGKILL)
             reapWhenItExits()
         }
         /// Reap a helper that died before `watch` armed — an
-        /// un-`waitpid`ed child lingers as a zombie.
+        /// un-`waitpid`ed child lingers as a zombie. ECHILD means the
+        /// exit source's handler already reaped it: stop there rather
+        /// than poll a dead pid at 20 Hz for ten seconds.
         func reapWhenItExits() {
             let pid = self.pid
             Task.detached {
                 var status = Int32(0)
-                for _ in 0..<200 where waitpid(pid, &status, WNOHANG) != pid {
+                for _ in 0..<200 {
+                    let reaped = waitpid(pid, &status, WNOHANG)
+                    if reaped == pid || (reaped == -1 && errno == ECHILD) { break }
                     try? await Task.sleep(nanoseconds: 50_000_000)
                 }
             }
@@ -368,10 +415,9 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
             throw MenuBarAssessmentBackend.Failure.rejected(
                 "asserter spawn: \(String(cString: strerror(rc)))")
         }
-        let spawned = Spawned(pid: pid)
-        spawned.stdin = FileHandle(fileDescriptor: inFD[1], closeOnDealloc: true)
-        spawned.stdout = FileHandle(fileDescriptor: outFD[0], closeOnDealloc: true)
-        return (spawned, spawned.stdin!, spawned.stdout!)
+        let stdin = FileHandle(fileDescriptor: inFD[1], closeOnDealloc: true)
+        let stdout = FileHandle(fileDescriptor: outFD[0], closeOnDealloc: true)
+        return (Spawned(pid: pid, stdin: stdin, stdout: stdout), stdin, stdout)
     }
 
     nonisolated init(helperURL: URL) { self.helperURL = helperURL }
@@ -381,7 +427,6 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
         guard let payload = try? JSONSerialization.data(withJSONObject: allowedBundleIDs),
               let line = String(data: payload, encoding: .utf8) else {
             spawned.terminate()
-            spawned.reapWhenItExits()
             throw MenuBarAssessmentBackend.Failure.unavailable
         }
         stdin.write((line + "\n").data(using: .utf8)!)
@@ -395,22 +440,27 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
                 guard answer.data.contains(0x0A) else { return }
                 handle.readabilityHandler = nil
                 guard once.claim() else { return }
+                // One line is the whole answer; the read end is spent.
+                spawned.closeStdout()
                 let text = String(decoding: answer.data, as: UTF8.self)
                 if text.hasPrefix("ok") {
                     watch(spawned, token: token)
                     continuation.resume(returning: token)
                 } else {
                     spawned.terminate()
-                    spawned.reapWhenItExits()
                     continuation.resume(throwing: MenuBarAssessmentBackend.Failure.rejected(
                         text.trimmingCharacters(in: .whitespacesAndNewlines)))
                 }
             }
+            // The helper's own 3 s timeout writes its line at about this
+            // moment, so a readability pass may still be in flight: stdout
+            // is not closed under it here. Nothing was armed, so nothing
+            // holds `spawned` past this closure — the handle closes on
+            // dealloc.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 guard once.claim() else { return }
                 stdout.readabilityHandler = nil
                 spawned.terminate()
-                spawned.reapWhenItExits()
                 continuation.resume(throwing: MenuBarAssessmentBackend.Failure.timedOut)
             }
         }
@@ -419,15 +469,17 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
     /// Follow the helper's exit: a loss the concealer did not ask for is
     /// news — the assertion it stood for died with the process. The
     /// dispatch source also reaps the pid so it never lingers as a
-    /// zombie.
+    /// zombie, then disarms itself (`Spawned.exited`).
     nonisolated private func watch(_ spawned: Spawned, token: MenuBarAssertionToken) {
-        let source = DispatchSource.makeProcessSource(identifier: spawned.pid, eventMask: .exit)
+        let pid = spawned.pid
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit)
         source.setEventHandler { [weak self] in
             var status = Int32(0)
-            _ = waitpid(spawned.pid, &status, 0)
+            _ = waitpid(pid, &status, 0)
+            spawned.exited()
             Task { @MainActor in self?.onLoss?(token) }
         }
-        spawned.exitSource = source
+        spawned.arm(source)
         source.resume()
     }
 

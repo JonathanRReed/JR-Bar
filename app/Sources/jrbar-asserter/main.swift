@@ -12,6 +12,8 @@ import Foundation
 /// Wire protocol, one activation per process:
 ///   stdin  line 1: a JSON array of allowed bundle identifiers
 ///   stdout line 1: "ok" once the agent takes the assertion, else "err <why>"
+///     — the only line ever: the host closes its read end once it has it,
+///     so a second write would die of SIGPIPE and drop the assertion
 ///   afterwards: the process parks until stdin closes, then exits — the
 ///   agent releases a dead process's assertion itself, so the host never
 ///   strands a concealment.
