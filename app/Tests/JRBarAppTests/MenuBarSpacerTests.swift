@@ -925,10 +925,9 @@ struct MenuBarSpacerTests {
         var mirroredFaceFrame: NSRect?
         var face = MenuBarIconFace()
         var onFaceChange: (@MainActor () -> Void)?
-        var faceClicks = 0
-        func faceClicked() { faceClicks += 1 }
-        var menuPops = 0
-        func popUpMenu(in view: NSView) { menuPops += 1 }
+        // The mirror's clicks are pinned in MenuBarIconMirrorTests.
+        func faceClicked() {}
+        func popUpMenu(in view: NSView) {}
         var onBoundaryClick: (@MainActor () -> Void)?
         var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
         var hiddenCount = 0
@@ -965,6 +964,7 @@ struct MenuBarSpacerTests {
         #expect(host.hiddenRevealed)
         utility.removeChevron()
         #expect(host.hiddenCount == 0)
+        #expect(host.mirrors.isEmpty, "the spacer engine never hands the face to a mirror — the real item is the icon")
     }
 
     @MainActor

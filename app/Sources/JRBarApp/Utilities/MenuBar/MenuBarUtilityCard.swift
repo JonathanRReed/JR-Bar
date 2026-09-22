@@ -88,7 +88,7 @@ struct MenuBarUtilityControls: View {
             HStack(spacing: 8) {
                 Button("Hide all") { utility.hideAllListed() }
                     .controlSize(.small)
-                    .help("Hide every listed menu bar item at once — same as ⌘-dragging each one left of the separator")
+                    .help("Hide every listed menu bar item at once — same as setting each one's override to Hidden or Cover")
                     .accessibilityLabel("Hide all menu bar items")
                 Button("Show all") { utility.showAllListed() }
                     .controlSize(.small)

@@ -242,9 +242,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
 
     /// Seeds the record before the item registers — best effort, since
     /// macOS offers no placement API. Once, the walk's records go; then,
-    /// only while no record exists, the item seeds just left of Wi-Fi.
-    /// A record that exists is the person's ⌘-drag and is never
-    /// overwritten.
+    /// only while no record exists, a key that sorts just left of
+    /// Wi-Fi's is written. A record that exists is the person's ⌘-drag
+    /// and is never overwritten. The key is a hint, not a seat: with key
+    /// 250 a signed probe landed flush left of Wi-Fi but JR-Bar at the
+    /// leftmost visible slot (x 975, measured 2026-09-22), so nothing
+    /// should rely on where the real item lands.
     ///
     /// The write is synchronised before returning: `UserDefaults.set`
     /// only updates the in-memory cache, and an item registered in the

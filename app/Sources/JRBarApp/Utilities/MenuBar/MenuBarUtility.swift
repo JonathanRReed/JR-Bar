@@ -1796,7 +1796,9 @@ final class MenuBarUtility: Toy {
         // The island (notch plus shoulders — the ears' home), the icon's
         // mirror (its ‹ included) and the standalone chevron are ours: a
         // merged run must break at them or the cover paves a surface it
-        // shares the window level with.
+        // shares the window level with. Their frames are AppKit's beside
+        // the items' Quartz ones — `coverRuns` reads only x, which the
+        // two spaces share.
         if let island = ScreenBarGeometry.islandScreenRect { blockers.append(island) }
         if let mirror = iconMirror, mirror.isVisible { blockers.append(mirror.frame) }
         if let chevron = chevronScreenFrame() { blockers.append(chevron) }

@@ -295,7 +295,7 @@ struct MenuBarIconMirrorTests {
         #expect(length(spacer: 30, strip: 62) == 92)
     }
 
-    @Test("a fresh record seeds just left of Wi-Fi — larger sorts further left")
+    @Test("a fresh record's key sorts just left of Wi-Fi's — larger sorts further left")
     func seedKey() {
         #expect(StatusItemController.rightSideSeedKey(wifi: 300) == 304)
         #expect(StatusItemController.rightSideSeedKey(wifi: nil) == 250)
