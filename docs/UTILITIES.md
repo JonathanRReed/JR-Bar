@@ -44,11 +44,14 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > and parks our engine while the pick stands, with a live
 > installed/running note that flips on workspace launch and quit.
 >
-> **The boundary affordance is standing.** While the utility is on, the
-> JR-Bar item keeps a 30 pt drop zone with a ‹ mark inside it
+> **The boundary affordance stands under the spacer engine.** While the
+> utility is on and the spacer engine runs, the JR-Bar item keeps a
+> 30 pt drop zone with a ‹ mark inside it
 > (`MenuBarUtility.boundaryAffordance` → `StatusItemController`'s
 > folded face) — the separator the person ⌘-drags items across, visible
-> whether or not anything is hidden yet and under both engines.
+> whether or not anything is hidden yet. The concealer claims none: the
+> width pushed the item's slot into the notch dead zone and parked it.
+> There the mirror's ‹ is the mark (below).
 >
 > **How hiding works on macOS 26 — verified live (2026-09-15).** macOS 26
 > packs the status region right-to-left and *parks* whatever no longer
@@ -56,18 +59,39 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > MenuBarAgent draws). A 3 000-point item is parked itself; a 250-point
 > item inserted mid-row stays and pushes everything left of it into that
 > overflow, with no holes. So **JR-Bar's own status item is Bartender's
-> separator**: items left of it are hidden, and hiding is the item's
+> separator**: items left of it are hidden, and hiding is the item's own
+> `length` growing a blank spacer — the spacer engine, below.
+>
 > **macOS 27 (this Mac): the concealer.** The menu bar is one surface
 > `MenuBarAgent` draws, and the utility drives the agent's own
 > assessment mode through the private `MenuBarClientCore` framework
 > (`MenuBarConcealer.swift`, facts in docs/PRIOR-ART.md): an allowlist
-> of running apps stays, the agent conceals the rest — no spacer, no
-> blank stretch, no «. Sections are per app (`concealedApps`), seeded
-> once from the spacer plan; reveal = invalidate, rehide = re-activate,
-> a new assertion goes up before the old comes down; clicks on the
-> agent's own clock/battery/Wi-Fi are held at an event tap, lifted for
-> and replayed. Everything below describes the **spacer engine**, the
-> fallback where the framework does not resolve.
+> of running apps stays, the agent conceals the rest and repacks the
+> row. No spacer; the native « appears only on a bar too crowded for
+> what stays. Sections are per app (`concealedApps`) and explicit: an
+> app is hidden only when the person picks it — in the card's
+> overrides, on an Item Bar tile, in the icon's menu or in the ⌘⇧K
+> palette — and nothing is learned from where an item sits. Apple's own
+> extras and bare helpers have no path through the agent and take a
+> cover where they sit. Reveal = invalidate, rehide = re-activate, a new
+> assertion goes up before the old comes down; clicks on the agent's own
+> clock/battery/Wi-Fi are held at an event tap, lifted for and replayed.
+>
+> Under the concealer macOS never draws JR-Bar's own item: the agent
+> exempts by signing identity, and the helper that holds the assertion
+> shares ours (measured 2026-09-22). The real item goes slim and blank,
+> and `MenuBarIconMirror`, a panel at `statusBar + 1` wearing the face
+> the item would wear, is the icon. It stands flush left of the first
+> drawn item with room for it, clear of the notch, the Screen Bar and
+> the front app's menus: the right end of the empty bar left of what
+> stays drawn, where Bartender keeps its icon. It answers clicks the way
+> the real button does: a left click opens the panel, a right, ⌥ or
+> Control click pops the full menu, and its ‹ toggles the Item Bar. The
+> empty bar left of it is the hover and click reveal zone. When no
+> mirror stands — the Hidden icon style, or a target with nothing
+> running to conceal, where macOS draws the real item again — the ‹
+> moves to the Screen Bar's right ear. Everything below describes the
+> **spacer engine**, the fallback where the framework does not resolve.
 >
 > The spacer engine: JR-Bar's
 > own `length` growing a blank spacer left of its icon
