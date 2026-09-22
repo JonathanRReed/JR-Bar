@@ -6,8 +6,10 @@
 # assembled bundle inside out).
 #
 # The version is the project version from ../pyproject.toml (JRBAR_VERSION
-# overrides it); CFBundleVersion is the same string so Sparkle compares
-# releases by it.
+# overrides it). CFBundleVersion is the build number -- the commit count of
+# this history, the same number packaging/build_macos_pkg.sh stamps
+# (JRBAR_BUILD_NUMBER overrides it) -- because Sparkle orders builds by
+# CFBundleVersion, and two rebuilds of one version must still sort.
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,6 +20,8 @@ BUNDLE="${JRBAR_BUNDLE:-$BUILD_DIR/JR-Bar.app}"
 IDENTITY="${JRBAR_SIGN_IDENTITY:-Nautilus Local Dev}"
 VERSION="${JRBAR_VERSION:-$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$APP_DIR/../pyproject.toml" | head -1)}"
 [[ -n "$VERSION" ]] || { echo "cannot read the project version from pyproject.toml" >&2; exit 1; }
+# A dev bundle built outside a checkout still builds; it just sorts first.
+BUILD_NUMBER="${JRBAR_BUILD_NUMBER:-$(git -C "$APP_DIR/.." rev-list --count HEAD 2>/dev/null || echo 1)}"
 
 # Sparkle: link the pinned framework when it is around. JRBAR_SPARKLE_FRAMEWORK_DIR
 # names the distribution directory (the packaging script's
@@ -102,7 +106,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<key>CFBundleShortVersionString</key>
 	<string>$VERSION</string>
 	<key>CFBundleVersion</key>
-	<string>$VERSION</string>
+	<string>$BUILD_NUMBER</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>

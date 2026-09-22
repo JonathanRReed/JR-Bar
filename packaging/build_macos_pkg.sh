@@ -245,8 +245,28 @@ COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null || true)" ]; then
     COMMIT="$COMMIT-dirty"
 fi
+# Sparkle orders updates by CFBundleVersion, never by the marketing
+# version: two rebuilds stamped "0.9.9" could never replace each other.
+# The build number is the commit count of this history -- monotonic along
+# main -- and JRBAR_BUILD_NUMBER overrides it (a re-cut, a CI counter). A
+# shallow clone counts only what it fetched, and no history counts
+# nothing, so both refuse rather than stamp a number that sorts backwards.
+BUILD_NUMBER="${JRBAR_BUILD_NUMBER:-}"
+if [ -z "$BUILD_NUMBER" ]; then
+    if [ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository 2>/dev/null || true)" = "true" ]; then
+        echo "A shallow clone cannot count its builds; fetch the full history or set JRBAR_BUILD_NUMBER." >&2
+        exit 2
+    fi
+    BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || true)"
+fi
+case "$BUILD_NUMBER" in
+    ""|*[!0-9]*|0*)
+        echo "JR-Bar needs a positive whole build number for CFBundleVersion (got '${BUILD_NUMBER}'); set JRBAR_BUILD_NUMBER." >&2
+        exit 2
+        ;;
+esac
 
-echo "Building JR-Bar $VERSION for $ARCH with $($BUILD_PYTHON -V 2>&1) (commit $COMMIT)"
+echo "Building JR-Bar $VERSION (build $BUILD_NUMBER) for $ARCH with $($BUILD_PYTHON -V 2>&1) (commit $COMMIT)"
 echo "signing: $SIGN_KIND ($SIGN_IDENTITY)"
 if [ "$SIGN_KIND" = "ad-hoc" ]; then
     echo "WARNING: ad-hoc signature. macOS treats an ad-hoc bundle as a DIFFERENT" >&2
@@ -374,8 +394,8 @@ CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MINIMUM_SUPPORTED_MACOS" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CORE_PLIST"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$CORE_PLIST" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$CORE_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$CORE_PLIST" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST"
 
@@ -397,8 +417,9 @@ fi
 
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_PATH/Contents/Info.plist"
+# The build number, not the marketing version: see BUILD_NUMBER above.
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
@@ -583,7 +604,7 @@ else
 fi
 
 echo
-echo "JR-Bar $VERSION ($COMMIT)"
+echo "JR-Bar $VERSION (build $BUILD_NUMBER, $COMMIT)"
 echo "  app:        $APP_PATH"
 for artifact in "$OUTPUT_PKG" "$OUTPUT_ZIP" "$OUTPUT_APPCAST" "$OUTPUT_CHANNEL_METADATA"; do
     if [ -f "$artifact" ]; then

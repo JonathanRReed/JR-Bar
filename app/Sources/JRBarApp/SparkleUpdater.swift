@@ -169,6 +169,45 @@ final class SparkleUpdater: NSObject {
     }
 }
 
+/// What the running build is, in the words the Version row uses:
+/// "0.9.9 (build 1801, 1800c0a)". The marketing version alone cannot
+/// tell two rebuilds apart — Sparkle orders by `CFBundleVersion`, the
+/// monotonic build number the packager stamps — and the commit is the
+/// `JRBarCommit` key it writes beside it, so a bug report names the
+/// exact tree that was running.
+enum AppVersion {
+    /// The row's text from the three Info.plist facts. A build number
+    /// equal to the marketing version (a bundle from before the build
+    /// number, which stamped the version twice) says nothing new and is
+    /// left out; so is an `unknown` or missing commit. A full hash
+    /// shortens to its first seven characters and keeps a `-dirty` tail.
+    nonisolated static func describe(shortVersion: String?, build: String?, commit: String?) -> String {
+        let version = trimmed(shortVersion) ?? "dev"
+        var details: [String] = []
+        if let build = trimmed(build), build != version {
+            details.append("build \(build)")
+        }
+        if let commit = trimmed(commit), commit != "unknown" {
+            let dirty = commit.hasSuffix("-dirty")
+            let hash = dirty ? String(commit.dropLast("-dirty".count)) : commit
+            details.append(String(hash.prefix(7)) + (dirty ? "-dirty" : ""))
+        }
+        return details.isEmpty ? version : "\(version) (\(details.joined(separator: ", ")))"
+    }
+
+    private nonisolated static func trimmed(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        return value
+    }
+
+    /// The running bundle's own answer.
+    static func describe(bundle: Bundle = .main) -> String {
+        describe(shortVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                 build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+                 commit: bundle.object(forInfoDictionaryKey: "JRBarCommit") as? String)
+    }
+}
+
 #if canImport(Sparkle)
 extension SparkleUpdater: SPUUpdaterDelegate {
     nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {

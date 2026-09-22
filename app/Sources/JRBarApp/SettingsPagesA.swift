@@ -69,7 +69,7 @@ struct GeneralPage: View {
     }
 
     private var softwareUpdateSubtitle: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        let version = AppVersion.describe()
         guard store.updaterAvailable else { return "JR-Bar \(version)" }
         guard let checked = store.lastUpdateCheck else { return "JR-Bar \(version) · never checked" }
         return "JR-Bar \(version) · last checked \(checked.formatted(.relative(presentation: .named)))"

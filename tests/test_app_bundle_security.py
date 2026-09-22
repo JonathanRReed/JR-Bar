@@ -998,6 +998,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "PACKAGE_TEST_BUILD_ROOT": str(build_root),
         "PACKAGE_TEST_PYTHON_TEMPLATE": str(python_template),
         "PACKAGE_TEST_PYINSTALLER_TEMPLATE": str(pyinstaller_template),
+        # The isolated project has no history to count, so the build number
+        # comes from the override a re-cut would use.
+        "JRBAR_BUILD_NUMBER": "1801",
     }
     for variable in ("APP_SIGN_IDENTITY", "INSTALLER_SIGN_IDENTITY", "JRBAR_SPARKLE_HISTORY_DIR"):
         environment.pop(variable, None)
@@ -1016,7 +1019,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert info["CFBundleExecutable"] == "JR-Bar"
     assert info["CFBundleDisplayName"] == "JR-Bar"
     assert info["CFBundleShortVersionString"] == "0.5.0"
-    assert info["CFBundleVersion"] == "0.5.0"
+    # Sparkle orders by CFBundleVersion: the monotonic build number, never
+    # the marketing version two rebuilds would share.
+    assert info["CFBundleVersion"] == "1801"
     assert info["LSMinimumSystemVersion"] == "26.0"
     assert info["LSUIElement"] is True
     assert info["SUFeedURL"] == "https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
@@ -1046,6 +1051,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert daemon_info["LSUIElement"] is True
     assert daemon_info["LSMinimumSystemVersion"] == "26.0"
     assert daemon_info["CFBundleShortVersionString"] == "0.5.0"
+    assert daemon_info["CFBundleVersion"] == "1801"
     assert os.access(app / "Contents" / "Helpers" / "jrbar-hook", os.X_OK)
     assert (app / "Contents" / "Frameworks" / "Sparkle.framework" / "Versions" / "B" / "Sparkle").is_file()
     assert (app / "Contents" / "Resources" / "ThirdPartyLicenses" / "Sparkle.txt").read_text() == "fixture license\n"
@@ -1069,3 +1075,23 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert "signing: ad-hoc (-)" in result.stdout
     assert "not notarized" in result.stdout
     assert "appcast not signed: ALLOW_UNSIGNED is local-only." in result.stdout
+    assert "JR-Bar 0.5.0 (build 1801, " in result.stdout
+
+    # No history to count and no override: the builder refuses rather than
+    # stamp a build number that could sort behind a shipped one. A marketing
+    # version or a zero-led number is refused the same way.
+    for override in (None, "0.5.0", "0", "0123"):
+        attempt = dict(environment)
+        if override is None:
+            attempt.pop("JRBAR_BUILD_NUMBER")
+        else:
+            attempt["JRBAR_BUILD_NUMBER"] = override
+        refused = subprocess.run(
+            ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=attempt,
+        )
+        assert refused.returncode == 2, (override, refused.stdout, refused.stderr)
+        assert "positive whole build number" in refused.stderr
