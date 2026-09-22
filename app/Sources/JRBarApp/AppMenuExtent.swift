@@ -74,9 +74,9 @@ final class AppMenuExtent {
     private func read() {
         generation += 1
         let token = generation
-        let workspace = NSWorkspace.shared
-        guard AXIsProcessTrusted(),
-              let app = workspace.menuBarOwningApplication ?? workspace.frontmostApplication else {
+        // The same owner the menu-bar utility reads, so the ears and the
+        // icon's seat can never disagree about whose menus are on screen.
+        guard AXIsProcessTrusted(), let app = MenuBarItemLister.menuBarOwnerApp() else {
             publish([])
             return
         }
