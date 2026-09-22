@@ -154,6 +154,8 @@ final class FoldToy: Toy {
     /// The last diagnostic line logged — the log only speaks when the
     /// machine's state actually changes, so a parked fold stays silent.
     @ObservationIgnored private var lastDiag = ""
+    /// The last line logged at notice — see `noteDiag`.
+    @ObservationIgnored private var lastNoticeDiag = ""
 
     init(core: CoreModel, store: ToysStore) {
         self.core = core
@@ -484,7 +486,13 @@ final class FoldToy: Toy {
     /// The whole decision chain on one line, logged only on change —
     /// `arm` is the capture-lifecycle phase, `raw/render` the angles,
     /// then the delta chain, then frame/texture/overlay. A lid close
-    /// should read armed→gate→delta growing→frame→tex→vis.
+    /// should read armed→gate→delta growing→frame→tex→vis. The tick
+    /// pass speaks at debug: `render` moves every display-link frame
+    /// of a glide, so at notice it was ~30 persisted lines a second
+    /// (2026-09-22: 655 of them in 30 min, gate shut, nothing on
+    /// screen). `log stream --level debug` still shows every frame;
+    /// the notice lines dedup against each other, so a change a tick
+    /// saw first still reaches them on the next reconcile.
     private func noteDiag(stage: String) {
         let raw = gateAngle.map { String(format: "%.0f", $0) } ?? "nil"
         let render = renderAngle.map { String(format: "%.1f", $0) } ?? "nil"
@@ -499,9 +507,16 @@ final class FoldToy: Toy {
             + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
             + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
             + "link=\(tickLink != nil)"
-        guard state != lastDiag else { return }
-        lastDiag = state
-        FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
+        if stage == "tick" {
+            guard state != lastDiag else { return }
+            lastDiag = state
+            FoldLog.log.debug("\(stage, privacy: .public) \(state, privacy: .public)")
+        } else {
+            guard state != lastNoticeDiag else { return }
+            lastDiag = state
+            lastNoticeDiag = state
+            FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
+        }
     }
 
     /// The delta the fold wants right now — 0 when the gate is closed.
