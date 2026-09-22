@@ -168,15 +168,27 @@ final class SensorPump: @unchecked Sendable {
     /// 120 Hz inside it, where an edge's poll timestamp is the tracker's
     /// edge time. A shut lid stays parked however low it reads: at or
     /// under `FoldPause.closedAngle`, or with the clamshell flag set,
-    /// the fold is paused and cannot draw. The band runs all the way
-    /// down to the hinge, so without that floor a lid shut on an awake
+    /// the fold is paused and cannot draw, and a lid shut on an awake
     /// Mac (clamshell with an external display, or the daemon's
-    /// closed-lid keep-awake) would hold 120 Hz user-interactive reads
-    /// for as long as it stayed shut. Nothing is lost on the way back: the 10 Hz
-    /// beat sees a reopen within ~100 ms and steps up on that beat, and
-    /// the clamshell flag clears on the same once-a-second read that
-    /// lifts the toy's pause — both ahead of its half-second resume
-    /// quiet. Static and pure so the rule is testable with no HID.
+    /// closed-lid keep-awake) must not hold 120 Hz user-interactive
+    /// reads for as long as it stays shut.
+    ///
+    /// Two layers keep it there. Under the toy the band itself is
+    /// -infinity for as long as any pause holds, so a shut lid is
+    /// mostly parked by the band alone. This floor covers what the
+    /// band cannot: the park on the way down, which lands on the very
+    /// beat that reads the close rather than a main hop and a pass
+    /// later, and a failed read, which leaves the toy's angle nil (no
+    /// angle to pause on) while `lastRaw` here still reads shut. The
+    /// same band is why a reopen does not step up on the beat that
+    /// sees it: that beat still finds -infinity and stays at 10 Hz.
+    /// The step back up comes from the reconcile that lifts the pause
+    /// (the accepted reading above the floor, or the once-a-second
+    /// read that clears the clamshell flag, whichever lands last): it
+    /// restores the band as the half-second resume quiet starts, and
+    /// `setArmingAngle` re-evaluates the class on the queue. Nothing is
+    /// lost: the band is back before the quiet ends and the fold can
+    /// draw. Static and pure so the rule is testable with no HID.
     static func rateClassFor(rawAngle: Double?, armingAngle: Double, clamshell: Bool?) -> Int {
         if let angle = rawAngle, angle > FoldPause.closedAngle, angle <= armingAngle,
            clamshell != true { return 1 }
