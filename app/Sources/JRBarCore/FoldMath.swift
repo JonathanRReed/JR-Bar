@@ -39,8 +39,12 @@ public enum FoldMath {
 /// `tolerance` degrees from the anchor — the filter opens and streams
 /// every reading until the lid rests again, because re-anchoring on each
 /// accepted sample is what turned a 5° deadband into 5° stair-steps down
-/// the whole close. A tolerance of 0 (or less) accepts everything; the
-/// first reading always passes.
+/// the whole close. Rest is read off the readings, though, and a slow
+/// enough close reads as rest: under about 2° per `restAfter` (≈6.7°/s)
+/// the filter re-arms partway down and the rest of that close advances
+/// in tolerance-sized steps — a known trade, see `restAfter`. A
+/// tolerance of 0 (or less) accepts everything; the first reading always
+/// passes.
 public struct JitterFilter: Sendable {
     public var tolerance: Double
     /// Stillness that re-arms the deadband once motion started: readings
@@ -49,12 +53,25 @@ public struct JitterFilter: Sendable {
     /// between them — the pump publishes every period whether the angle
     /// moved or not, so a gap-timed rest never came, and a lid parked on
     /// a 100↔101 flicker streamed every wobble into the tracker for good.
+    ///
+    /// The cost is the slow close. From the default tolerance up the
+    /// window holds two whole degrees (R and R−1), so a lid closing
+    /// slower than about 2° per restAfter — ≈6.7°/s — sits inside it
+    /// long enough to count as parked: the filter re-arms on R−1, and
+    /// from there only a reading a full tolerance away gets through, so
+    /// the close lands in 2° steps at the default tolerance and 5° steps
+    /// at the widest. Faster closes stream every edge. Lengthening this
+    /// narrows the range (0.6 s moves the line to ≈3.3°/s) but streams
+    /// that much longer after every park and shifts the dwell clock — a
+    /// change to make on the hardware, not here.
     public static let restAfter: TimeInterval = 0.3
     /// The widest wobble rest may hold — the sensor's whole-degree
     /// flicker, with room — or the tolerance when that is tighter.
     /// Capped rather than riding `tolerance` alone: a 5° window would
     /// call a steady 10°/s close parked after three readings and bring
-    /// the stair-steps back.
+    /// the stair-steps back. The cap moves the line rather than removing
+    /// it — two whole degrees still fit, so closes under ≈6.7°/s re-arm
+    /// anyway (see `restAfter`).
     public static let restWindow: Double = 1.5
     private var anchor: Double?
     private var streaming = false

@@ -159,6 +159,52 @@ struct FoldMathTests {
         #expect(next, "a real move still breaks the re-armed deadband")
     }
 
+    /// A close at `degreesPerSecond` as the live pump sees it: the sensor
+    /// drops a whole degree at a time and every 100 ms poll publishes
+    /// whatever it reads, changed or not. Returns each reading and
+    /// whether the filter let it through.
+    private func polledClose(degreesPerSecond: Int, tolerance: Double)
+        -> [(angle: Double, accepted: Bool)] {
+        var filter = JitterFilter(tolerance: tolerance)
+        return (0..<80).map { poll in
+            // Integer maths for the angle so no float floor can shift
+            // an edge by a poll.
+            let angle = Double(91 - poll * degreesPerSecond / 10)
+            return (angle, filter.accept(angle, at: Double(poll) / 10))
+        }
+    }
+
+    @Test("a close slower than ~6.7°/s re-arms partway and steps by the tolerance")
+    func jitterSlowCloseSteps() throws {
+        // The known trade `restAfter` documents: R and R−1 both sit in
+        // the rest window, and at 4°/s the lid reads them for half a
+        // second — past restAfter — so the filter calls it parked
+        // mid-close. What reaches the tracker after that is a
+        // tolerance-sized jump, not the next degree.
+        let tolerance = 5.0
+        let close = polledClose(degreesPerSecond: 4, tolerance: tolerance)
+        let moved = try #require(close.indices.dropFirst().first { close[$0].accepted },
+                                 "the close leaves the deadband")
+        let rejected = try #require(close.indices.first { $0 > moved && !close[$0].accepted },
+                                    "a reading mid-close is dropped: the filter re-armed")
+        // Everything from the deadband exit to here streamed, so the
+        // reading just before the first rejection is the one it re-armed
+        // on — the new anchor.
+        let anchor = close[rejected - 1].angle
+        let next = try #require(close.indices.first { $0 > rejected && close[$0].accepted },
+                                "the re-armed deadband breaks again further down")
+        #expect(anchor - close[next].angle >= tolerance,
+                "the first reading through is a full tolerance on — a stair-step")
+        #expect(close[rejected..<next].allSatisfy { anchor - $0.angle < tolerance })
+
+        // Just over the line the same close streams every edge: the lid
+        // leaves the two-degree window before restAfter runs out.
+        let brisk = polledClose(degreesPerSecond: 7, tolerance: tolerance)
+        let briskMoved = try #require(brisk.indices.dropFirst().first { brisk[$0].accepted })
+        #expect(brisk[briskMoved...].allSatisfy { $0.accepted },
+                "at 7°/s nothing mid-close is mistaken for rest")
+    }
+
     @Test("a zero tolerance accepts every reading")
     func jitterZero() {
         var filter = JitterFilter(tolerance: 0)
