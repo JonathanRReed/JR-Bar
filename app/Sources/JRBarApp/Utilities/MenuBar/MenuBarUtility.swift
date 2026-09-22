@@ -2935,7 +2935,8 @@ final class MenuBarUtility: Toy {
             items: plan.shown + plan.hidden + plan.alwaysHidden,
             island: island, row: MenuBarItemLister.menuBarRow(),
             concealedApps: s.concealedApps, sections: s.sections,
-            revealed: hider.revealed, chevron: chevronScreenFrame())
+            revealed: hider.revealed, chevron: chevronScreenFrame(),
+            ourPID: ProcessInfo.processInfo.processIdentifier)
         if ScreenBarGeometry.earItemLimitLeft != left {
             ScreenBarGeometry.earItemLimitLeft = left
         }
@@ -2952,15 +2953,25 @@ final class MenuBarUtility: Toy {
     /// all, so the wing drew straight over it. A limit inside the
     /// island's span just suppresses the ear, which is the honest answer
     /// when the flank is already taken.
+    ///
+    /// Items our own process owns never earn a limit: the anchor, the
+    /// meters slot, any extras item of ours is a surface the island
+    /// face already owns — the ear's ‹ IS that slot's mark, and letting
+    /// the anchor clamp the ear suppresses the very affordance it
+    /// stands for. That self-clamp is the blank-face bug: the slim
+    /// anchor lands beside the notch's edge, the ear yields to it, and
+    /// nothing visible remains where the icon sits.
     nonisolated static func earLimits(
         items: [MenuBarItem], island: CGRect, row: CGRect,
         concealedApps: [String: MenuBarItemSection],
         sections: [String: MenuBarItemSection],
-        revealed: Set<MenuBarItemSection>, chevron: CGRect?
+        revealed: Set<MenuBarItemSection>, chevron: CGRect?,
+        ourPID: pid_t
     ) -> (left: CGFloat?, right: CGFloat?) {
         var left: CGFloat? = nil
         var right: CGFloat? = nil
         for item in items {
+            if item.ownerPID == ourPID { continue }
             let f = item.bounds
             guard f.intersects(row) else { continue }
             // A parked or covered item is already invisible — the wing

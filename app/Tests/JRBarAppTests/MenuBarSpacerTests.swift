@@ -12,8 +12,8 @@ import Testing
 @Suite("Menu Bar — spacers")
 struct MenuBarSpacerTests {
     private func item(_ id: String, owner: String = "App", x: Double, y: Double = 0,
-                      w: Double = 24, overflow: Bool = false) -> MenuBarItem {
-        MenuBarItem(id: id, ownerPID: 500, ownerName: owner,
+                      w: Double = 24, overflow: Bool = false, pid: pid_t = 500) -> MenuBarItem {
+        MenuBarItem(id: id, ownerPID: pid, ownerName: owner,
                     bounds: CGRect(x: x, y: y, width: w, height: 24),
                     title: nil, windowID: 0, isNativeOverflowControl: overflow)
     }
@@ -1129,29 +1129,57 @@ struct MenuBarSpacerTests {
 
     @Test("an item straddling the island edge still clamps the wing — side is by centre, not edge clearance")
     func earLimitStraddler() {
-        // The island spans 795–857; our boundary icon's slot at 824–893
+        // The island spans 795–857; a foreign item's slot at 824–893
         // crosses its right edge. The old fully-clear test skipped it and
-        // the wing drew straight over the icon.
+        // the wing drew straight over the item.
         let island = CGRect(x: 795, y: 0, width: 62, height: 30)
-        let straddler = item("Ours", x: 824, w: 69)
+        let straddler = item("Foreign", x: 824, w: 69)
         let further = item("Right", x: 1130)
         let (left, right) = MenuBarUtility.earLimits(
             items: [straddler, further], island: island, row: row,
-            concealedApps: [:], sections: [:], revealed: [], chevron: nil)
+            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            ourPID: 999)
         #expect(right == 824, "the straddler's left edge is the right ear's limit")
         #expect(left == nil)
         // An item whose centre is left of the island's clamps the left ear.
         let leftItem = item("Left", x: 700, w: 24)
         let (l2, _) = MenuBarUtility.earLimits(
             items: [leftItem], island: island, row: row,
-            concealedApps: [:], sections: [:], revealed: [], chevron: nil)
+            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            ourPID: 999)
         #expect(l2 == 724)
         // A concealed item not revealed earns no limit — it is invisible.
         let hidden = item("Hidden", x: 900, w: 24)
         let (_, r3) = MenuBarUtility.earLimits(
             items: [hidden], island: island, row: row,
-            concealedApps: [:], sections: ["Hidden": .hidden], revealed: [], chevron: nil)
+            concealedApps: [:], sections: ["Hidden": .hidden], revealed: [],
+            chevron: nil, ourPID: 999)
         #expect(r3 == nil, "a covered item paves nothing — the wing may stand on it")
+    }
+
+    @Test("our own items never clamp the ear — the anchor is the island's slot, the ‹ is its mark")
+    func earLimitOwnItem() {
+        // The live wound: the slim 28pt anchor seats on-row beside the
+        // notch's right edge (824–852 under an island spanning 795–857),
+        // lands in plan.shown as a protected owner, and clamps the right
+        // ear to under a point — the ‹ handle vanishes and the island
+        // face goes blank where the icon sits.
+        let island = CGRect(x: 795, y: 0, width: 62, height: 30)
+        let anchor = item("JR-Bar", x: 824, w: 28, pid: 500)
+        let foreign = item("Foreign", x: 1130, pid: 700)
+        let (left, right) = MenuBarUtility.earLimits(
+            items: [anchor, foreign], island: island, row: row,
+            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            ourPID: 500)
+        #expect(right == 1130, "our anchor is exempt — the foreign item still limits")
+        #expect(left == nil)
+        // Another app's item at the same slot still clamps — only ours is exempt.
+        let foreignAnchor = item("ForeignAnchor", x: 824, w: 28, pid: 700)
+        let (_, r2) = MenuBarUtility.earLimits(
+            items: [foreignAnchor], island: island, row: row,
+            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            ourPID: 500)
+        #expect(r2 == 824)
     }
 
     @Test("the pixel verdict: a slot with no lit pixels is parked — frames and flags all lie")
