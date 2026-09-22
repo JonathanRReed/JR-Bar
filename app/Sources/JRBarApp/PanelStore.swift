@@ -35,6 +35,10 @@ struct SessionRow: Identifiable, Equatable {
     /// Where the session was launched from (`origin.label`: "VS Code",
     /// "cloud ingest"), shown as the subtitle's quiet "via …" tail.
     let originLabel: String?
+    /// The run's model, tokens, cost and context from its own transcript
+    /// (`session_usage`), once read; nil until then and for providers
+    /// whose transcripts are not read.
+    var usage: SessionUsage?
 
     init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil) {
         id = session.id
@@ -113,6 +117,11 @@ struct SessionRow: Identifiable, Equatable {
         if let originLabel {
             parts.append("via \(originLabel)")
         }
+        if let usage, usage.tokens.total > 0 {
+            // The cost on hover: the row itself only has room for the
+            // model name and the context hairline.
+            parts.append(usage.summary)
+        }
         if activity == .ended {
             parts.append("Went away without confirming it finished — the agent may have been closed or killed")
         }
@@ -150,6 +159,13 @@ struct SessionRow: Identifiable, Equatable {
     var isDismissible: Bool {
         guard ask == nil, !isRemote else { return false }
         return stale || activity == .idle || activity == .working || activity == .ended
+    }
+
+    /// How full a still-running session's context window is. A finished,
+    /// ended, failed or stale run's context is history, not a warning.
+    var liveContextFraction: Double? {
+        guard !activity.isClearable, activity != .failed, !stale else { return nil }
+        return usage?.contextFraction
     }
 
     /// The family mailbox's snooze still covers this session.
@@ -218,6 +234,9 @@ final class PanelStore {
     }
 
     let core: CoreModel
+    /// Per-session model, tokens, cost and context — shared with the
+    /// Overview and the Usage Center, which the app delegate hands it to.
+    let sessionUsage: SessionUsageStore
 
     // Fallback (file feeds) and app-owned state.
     var fallbackState: AgentAggregateState = .idle
@@ -287,6 +306,7 @@ final class PanelStore {
     init(core: CoreModel, draftsDefaults: UserDefaults = .standard,
          mediaFeed: MediaFeed = .shared, screenBarShown: Bool = true) {
         self.core = core
+        self.sessionUsage = SessionUsageStore(core: core)
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -336,11 +356,23 @@ final class PanelStore {
         now = Date()
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.now = Date() }
+            Task { @MainActor [weak self] in
+                self?.now = Date()
+                // Throttled per id inside the store: each row is asked
+                // about at most every `SessionUsageStore.freshFor`.
+                self?.refreshSessionUsage()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
         refreshSparklines()
+        refreshSessionUsage()
+    }
+
+    /// Reads model/tokens/cost/context for the local rows on screen.
+    func refreshSessionUsage(force: Bool = false) {
+        guard core.isLive else { return }
+        sessionUsage.refresh(ids: core.sessions.filter { !$0.isRemote }.map(\.id), force: force)
     }
 
     func panelDidClose() {
@@ -500,7 +532,12 @@ final class PanelStore {
         // answer: it is counted in the header and it is what the light is
         // about, so it gets a row of its own rather than disappearing.
         let orphans = (core.state?.orphanAsks ?? []).map { SessionRow(orphanAsk: $0, document: document) }
-        let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id], document: document) } + orphans
+        let usage = sessionUsage.usage
+        let rows = core.sessions.map { session in
+            var row = SessionRow(session: session, pinnedAsk: pinned[session.id], document: document)
+            row.usage = usage[session.id]
+            return row
+        } + orphans
         func rank(_ row: SessionRow) -> Int {
             row.ask != nil ? 0 : row.activity.sortRank
         }

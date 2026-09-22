@@ -623,7 +623,11 @@ struct SessionRowView: View {
                         }
                     }
                     HStack(spacing: 4) {
-                        Text(row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        // The model the run is on ("Opus 4.5") once its
+                        // transcript was read — the tile already names the
+                        // provider, so the model is the better use of the
+                        // words.
+                        Text(row.usage?.modelName ?? row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                         if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
@@ -647,6 +651,15 @@ struct SessionRowView: View {
                         }
                     }
                     .font(.system(size: 11))
+                }
+                .overlay(alignment: .bottomLeading) {
+                    // How full the run's context window is: a hairline under
+                    // the words, below the text so nothing moves when it
+                    // arrives. Only a live run's context is worth a mark.
+                    if let fraction = row.liveContextFraction {
+                        ContextHairline(fraction: fraction, accent: row.style.accent)
+                            .offset(y: 5)
+                    }
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
@@ -1234,6 +1247,44 @@ struct QuotaBar: View {
         if used >= 95 { return .red }
         if used >= 80 { return .orange }
         return accent
+    }
+}
+
+/// A session's context fill as one continuous hairline: the provider's
+/// accent at rest, amber past 80 %, red past 95 % — the same thresholds
+/// the quota bars use, so "nearly full" reads the same everywhere.
+struct ContextHairline: View {
+    let fraction: Double
+    let accent: Color
+
+    static let height: CGFloat = 1.5
+
+    nonisolated static func level(_ fraction: Double) -> ContextLevel {
+        if fraction >= 0.95 { return .critical }
+        if fraction >= 0.80 { return .warning }
+        return .calm
+    }
+
+    enum ContextLevel { case calm, warning, critical }
+
+    private var fill: Color {
+        switch Self.level(fraction) {
+        case .critical: return .red
+        case .warning: return .orange
+        case .calm: return accent.opacity(0.55)
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.06))
+                Capsule().fill(fill)
+                    .frame(width: max(2, proxy.size.width * CGFloat(min(1, max(0, fraction)))))
+            }
+        }
+        .frame(height: Self.height)
+        .accessibilityLabel("Context \(Int((fraction * 100).rounded())) percent full")
     }
 }
 
