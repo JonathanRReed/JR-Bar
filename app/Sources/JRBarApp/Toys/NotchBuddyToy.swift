@@ -122,12 +122,39 @@ final class NotchBuddyToy: Toy {
     }
 
     /// Whether the slot's face is the bare status dot rather than the
-    /// character. Mini always is. Docked, a published `screen_bar`
-    /// program also claims the slot — the dot is the strip's extra LED
-    /// at the centre seam, so the pet steps aside for the light show and
-    /// comes back when it ends. A floating character never swaps.
-    func showsDot(docked: Bool, stripLinked: Bool) -> Bool {
-        miniMode || (docked && stripLinked)
+    /// character: only the card's Mini presentation. A published
+    /// `screen_bar` program used to claim the docked slot too, lighting
+    /// the dot as an extra LED at the band's centre seam — a second
+    /// light beside the one unsegmented Screen Bar. The docked character
+    /// now stays and wears the band's colour instead (`seamTint`).
+    var showsDot: Bool { miniMode }
+
+    /// Whether the docked buddy wears the Screen Bar's colour while a
+    /// program is published. On by default; the card can turn it off.
+    var wearsStripColor: Bool { store?.state.notchBuddy.wearsStripColor ?? true }
+    var wearsStripColorBinding: Binding<Bool> {
+        Binding(get: { self.wearsStripColor },
+                set: { self.store?.state.notchBuddy.wearsStripColor = $0 })
+    }
+
+    /// The colour the docked buddy wears: the band's centre seam at its
+    /// brightest instant, normalized to full strength — a steady hue
+    /// that follows the published program, never its pulse. Worn, not
+    /// lit: the buddy is a creature dressed in the band's colour, not a
+    /// lamp keeping time with it. nil while nothing is published, the
+    /// program is dark at the seam, or the card turned it off.
+    func seamTint(at epoch: TimeInterval = Date().timeIntervalSince1970) -> RGB? {
+        guard wearsStripColor, let peak = stripDot(at: epoch, still: true) else { return nil }
+        return Self.wornHue(peak)
+    }
+
+    /// A sampled seam colour as a hue to wear: scaled so its brightest
+    /// channel is full, or nil when the seam is too dark to name a
+    /// colour at all.
+    static func wornHue(_ sample: RGB) -> RGB? {
+        let level = sample.maxChannel
+        guard level > 0.05 else { return nil }
+        return RGB(r: sample.r / level, g: sample.g / level, b: sample.b / level)
     }
 
     /// The card's name field writes straight into the settings blob;
@@ -578,23 +605,22 @@ final class NotchBuddyToy: Toy {
 
     // MARK: Strip link
 
-    /// The docked dot's link to the pulse strip. While the daemon
-    /// publishes a `screen_bar` program the dot is the strip's extra
-    /// LED at the notch seam — the same program text the band compiles
-    /// and the hardware plays, sampled on the daemon's anchor. There is
-    /// no second clock to drift: the anchor is the event's own tick, so
-    /// the dot swells exactly when the pulse crosses the middle, and a
-    /// phase that cannot run ahead can never read inverted either.
-    /// nil means nothing is published to extend and the dot keeps its
-    /// resting look. The cache is keyed on the program text, so a
-    /// republished program pays for one parse, not one per frame.
+    /// The band's centre seam, sampled from the published `screen_bar`
+    /// program — the same program text the band compiles and the
+    /// hardware plays, on the daemon's anchor, so a sample can never run
+    /// ahead of the band or read inverted. The docked buddy wears its
+    /// still frame (`seamTint`); the live sample stays for anything
+    /// that needs the seam's phase. nil means nothing is published. The
+    /// cache is keyed on the program text, so a republished program pays
+    /// for one parse, not one per frame.
     @ObservationIgnored private var stripCache:
         (key: String, sampler: LEDSSampler, firstSeen: TimeInterval, peak: RGB)?
 
     /// The seam colour at `epoch` — wall-clock seconds, the anchor's own
     /// domain, so no media-time conversion sits between the two. `still`
-    /// freezes the link at the program's brightest seam instant: Reduce
-    /// Motion's version of the pulse, the same still frame the band holds.
+    /// returns the program's brightest seam instant instead — the same
+    /// still frame the band holds under Reduce Motion, and the colour
+    /// the docked buddy wears.
     func stripDot(at epoch: TimeInterval, still: Bool = false) -> RGB? {
         guard let surface = core.lights?.screenBar else { return nil }
         let text = surface.program
@@ -629,9 +655,9 @@ final class NotchBuddyToy: Toy {
     }
 
     /// The brighter of the LEDs straddling the strip's middle — the seam
-    /// the docked dot hangs under. Brightest, not averaged: the Dot
-    /// role's own band rule, so a pulse reaches the dot at full strength
-    /// and a chase blips it as the wave crosses the notch.
+    /// the docked buddy sits under. Brightest, not averaged: the Dot
+    /// role's own band rule, so a pulse's colour is read at full
+    /// strength and a chase is caught as the wave crosses the notch.
     static func centreColor(sampler: LEDSSampler, at seconds: Double, ledCount: Int) -> RGB {
         let colors = sampler.colors(at: seconds)
         let mid = ledCount / 2
@@ -784,6 +810,12 @@ private struct BuddyControlsView: View {
 
             Toggle(isOn: toy.presentationBinding) {
                 SettingLabel(title: "Mini", subtitle: "Just the status dot — docked or floating, no body.")
+            }
+            .toggleStyle(.checkbox)
+
+            Toggle(isOn: toy.wearsStripColorBinding) {
+                SettingLabel(title: "Wear the Screen Bar's colour",
+                             subtitle: "Docked under a lit band, it takes the band's colour instead of its own.")
             }
             .toggleStyle(.checkbox)
 

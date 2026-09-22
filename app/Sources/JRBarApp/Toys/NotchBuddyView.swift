@@ -26,10 +26,10 @@ struct NotchBuddyView: View {
     /// Living in the docked slot under the notch. The slot draws the
     /// picked character at its native 18pt — the same `BuddyFigure` the
     /// floating pet wears, tricks, hearts and crumbs included — and only
-    /// two cases still call for the bare status dot: `miniMode` (the
-    /// card's Mini presentation), and a published `screen_bar` program,
-    /// where the slot is the strip's extra LED at the seam and the dot
-    /// is the right body for it.
+    /// the card's Mini presentation swaps it for the bare status dot.
+    /// While a `screen_bar` program is published the docked buddy wears
+    /// the band's colour (`NotchBuddyToy.seamTint`): a creature dressed
+    /// in the band's colour, never a second light keeping its time.
     var docked = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// False while the panel is fully covered (a fullscreen Space, a
@@ -52,25 +52,14 @@ struct NotchBuddyView: View {
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
             let dress = dragDress(at: context.date)
-            // The strip link only exists where the dot can show: the
-            // docked slot and the Mini presentation. A floating
-            // character never pays for the sample.
-            let strip = (docked || toy.miniMode)
-                ? toy.stripDot(at: context.date.timeIntervalSince1970,
-                               still: reduceMotion)
-                : nil
-            if toy.showsDot(docked: docked, stripLinked: strip != nil) {
-                // The status dot extends the pulse strip: while the
-                // daemon publishes a screen_bar program the dot is its
-                // centre seam's extra LED, sampled on the anchor's own
-                // clock — a free-running breath could only ever sit at
-                // some arbitrary phase, which is why the unlinked dot
-                // read as inverted and late. No program published: the
-                // dot keeps its standalone breath.
+            // The band's colour is worn only in the docked slot, right
+            // under the band — a floating buddy never pays for it.
+            let seam = docked ? toy.seamTint(at: context.date.timeIntervalSince1970) : nil
+            let tint = tint(for: summary, seam: seam)
+            if toy.showsDot {
                 MiniFigure(
                     mood: summary.mood,
-                    tint: tint(for: summary),
-                    strip: strip,
+                    tint: tint,
                     waiting: summary.waiting,
                     working: summary.working,
                     still: reduceMotion,
@@ -81,7 +70,7 @@ struct NotchBuddyView: View {
             BuddyFigure(
                 character: toy.buddyCharacter,
                 mood: summary.mood,
-                tint: tint(for: summary),
+                tint: tint,
                 phase: context.date.timeIntervalSince1970,
                 hopProgress: hopProgress(at: context.date),
                 waveAge: waveAge(at: context.date, mood: summary.mood),
@@ -209,7 +198,20 @@ struct NotchBuddyView: View {
         date.map { now.timeIntervalSince($0) }
     }
 
-    private func tint(for summary: NotchBuddyToy.BuddySummary) -> Color {
+    /// The mood's colour. Under a published program the resting moods —
+    /// asleep, pacing, gathering — wear the band's seam hue instead (a
+    /// sleeper dimmer, so a quiet band reads as a quiet buddy); an ask,
+    /// a slump and a hop keep their own amber, red and green, because
+    /// those are the buddy telling you something.
+    private func tint(for summary: NotchBuddyToy.BuddySummary, seam: RGB?) -> Color {
+        if let seam {
+            let hue = Color(red: seam.r, green: seam.g, blue: seam.b)
+            switch summary.mood {
+            case .asleep: return hue.opacity(0.55)
+            case .pacing, .gathering: return hue
+            case .waving, .slumped, .celebrating: break
+            }
+        }
         switch summary.mood {
         case .asleep: return Color(nsColor: .tertiaryLabelColor)
         case .pacing, .gathering:
@@ -226,64 +228,29 @@ struct NotchBuddyView: View {
 }
 
 /// The status-dot presentation: no character body, just a dot tinted by
-/// the mood — dim when idle, provider-coloured while one session works,
-/// and a number beside it once the work is plural. The "!" still wears
-/// the open-ask count; tap, drag and menu behave exactly like the full
-/// figure. Two places wear it: the card's Mini presentation (docked or
-/// floating), and the docked slot while a `screen_bar` program is
-/// published — there the dot is the strip's own extra LED.
-///
-/// While the daemon publishes a Screen Bar program the dot is also the
-/// strip's extension: `strip` carries the seam's sampled colour and its
-/// `maxChannel` is the pulse's level, so the dot's glow rides the same
-/// clock the band and the hardware run — bright when the strip is
-/// bright, dark when it is dark — instead of a private sin() that sat
-/// at an arbitrary phase against the band.
+/// the mood — dim when idle, provider-coloured while one session works
+/// (or the band's colour, docked under a published program), and a
+/// number beside it once the work is plural. The "!" still wears the
+/// open-ask count; tap, drag and menu behave exactly like the full
+/// figure. The card's Mini presentation wears it, docked or floating.
+/// Its breath is its own — it is the buddy's mark, not a pixel of the
+/// Screen Bar, so it never keeps the band's time.
 private struct MiniFigure: View {
     let mood: NotchBuddyToy.Mood
     let tint: Color
-    /// The strip link: the centre seam's colour right now, or nil when
-    /// no program is published to extend.
-    let strip: RGB?
     let waiting: Int
     let working: Int
     let still: Bool
     let phase: TimeInterval
 
-    /// The sampled colour normalized to full strength, so the pulse's
-    /// ramp lives in the overlay's opacity rather than greying the hue.
-    /// nil when the sample is dark — the resting dot owns the trough.
-    private var stripHue: Color? {
-        guard let strip else { return nil }
-        let level = strip.maxChannel
-        guard level > 0.004 else { return nil }
-        return Color(red: strip.r / level, green: strip.g / level, blue: strip.b / level)
-    }
-
     var body: some View {
         HStack(alignment: .center, spacing: 3) {
-            ZStack {
-                Circle()
-                    // Linked, the resting tint dims and brightens with
-                    // the strip — the extension's own duty cycle, so the
-                    // pulse's trough is visible on the dot too.
-                    .fill(tint.opacity(mood == .asleep ? 0.35
-                                       : strip != nil ? 0.45 + 0.5 * (strip?.maxChannel ?? 0)
-                                       : 0.95))
-                if let hue = stripHue {
-                    Circle()
-                        .fill(hue)
-                        .opacity(strip?.maxChannel ?? 0)
-                }
-            }
-            // The swell rides the strip's level while linked — a phase
-            // that is the strip's own cannot run inverted or late —
-            // and keeps the slow standalone breath when it is not.
-            // Asleep and Reduce Motion hold still either way.
-            .scaleEffect(still || mood == .asleep ? 1.0
-                         : strip != nil ? 1.0 + 0.15 * (strip?.maxChannel ?? 0)
-                         : 1.0 + 0.1 * sin(phase * 2.2))
-            .frame(width: 7, height: 7)
+            Circle()
+                .fill(tint.opacity(mood == .asleep ? 0.35 : 0.95))
+                // A slow breath while awake; asleep and Reduce Motion
+                // hold still.
+                .scaleEffect(still || mood == .asleep ? 1.0 : 1.0 + 0.1 * sin(phase * 2.2))
+                .frame(width: 7, height: 7)
             if working > 1 {
                 Text("\(working)")
                     .font(.system(size: 8.5, weight: .bold, design: .rounded))

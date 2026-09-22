@@ -315,6 +315,9 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// `scaleRange` so a hand edit can't grow a screen-filling (or
     /// invisible) buddy.
     public var scale: Double
+    /// Docked, the buddy wears the Screen Bar's colour while a program
+    /// is published, instead of its own resting tint. On by default.
+    public var wearsStripColor: Bool = true
 
     /// The size slider's reach — 1× is the docked size, 3× is desk-pet.
     public static let scaleRange: ClosedRange<Double> = 1.0...3.0
@@ -362,6 +365,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
+        case wearsStripColor
     }
 
     public init(from decoder: any Decoder) throws {
@@ -378,6 +382,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         showCaption = (try? c.decodeIfPresent(Bool.self, forKey: .showCaption)) ?? true
         // Missing or mistyped is 1×; a number outside the dial clamps.
         scale = Self.clampedScale((try? c.decodeIfPresent(Double.self, forKey: .scale)) ?? 1.0)
+        wearsStripColor = (try? c.decodeIfPresent(Bool.self, forKey: .wearsStripColor)) ?? true
     }
 }
 
