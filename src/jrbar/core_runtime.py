@@ -5468,11 +5468,16 @@ def build_headless_controller_class() -> type:
                 )
             return tuple(facts)
 
-        def _core_brightness_percent(self, device) -> int | None:
+        def _core_brightness_code(self, device) -> int | None:
+            """The 0-255 ``brightness N`` the device's own policy drives it at."""
             try:
-                return int(round(self.effective_brightness_for_device(device) / 255.0 * 100.0))
+                return int(round(self.effective_brightness_for_device(device)))
             except Exception:
-                return int(round(float(device.brightness) / 255.0 * 100.0)) if device.brightness is not None else None
+                return int(round(float(device.brightness))) if device.brightness is not None else None
+
+        def _core_brightness_percent(self, device) -> int | None:
+            code = self._core_brightness_code(device)
+            return None if code is None else int(round(code / 255.0 * 100.0))
 
         def _core_acknowledged_keys(self):
             """The Clear Agents receipts that keep cleared rows off the list."""
@@ -5765,7 +5770,7 @@ def build_headless_controller_class() -> type:
         def _core_build_lights(self) -> dict[str, Any]:
             from ._led_status_legacy import delivered_brightness, led_count_for_target
             from .colors import lift_program_luminance
-            from .dot_role import normalize_dot_role, upsample_program
+            from .dot_role import apply_brightness_line, normalize_dot_role, upsample_program
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)
@@ -5944,11 +5949,22 @@ def build_headless_controller_class() -> type:
                 (d for d in devices if d.device_id == legacy.VIRTUAL_DEVICE_ID),
                 None,
             )
-            bar_brightness = (
-                (self._core_brightness_percent(virtual_device) or 0) / 100.0
-                if virtual_device is not None
-                else (self.settings.brightness_for_device(legacy.VIRTUAL_DEVICE_ID) / 255.0)
-            )
+            # A linked bar plays the mirrored program at the bar's OWN
+            # ``brightness N`` (``bar_code``), never the strip's. The strip's
+            # N starts from the display backlight (auto brightness) and the
+            # display then dims the bar by that backlight again: dimmed
+            # twice, the band measured Y~0.058, brown beside full-bright UI
+            # (2026-09-22). The bar's policy keeps every user-intent dim
+            # (idle, sleep, DND, night) and its ``screen_bar_min_glow``
+            # floor; its device has auto brightness off, so the backlight
+            # term drops out. N scales the whole program: timing, phase and
+            # ``off`` beats are untouched, so a dark beat stays dark.
+            if virtual_device is not None:
+                bar_code = self._core_brightness_code(virtual_device) or 0
+                bar_brightness = int(round(bar_code / 255.0 * 100.0)) / 100.0
+            else:
+                bar_code = self.settings.brightness_for_device(legacy.VIRTUAL_DEVICE_ID)
+                bar_brightness = bar_code / 255.0
             preview = self._core_previews.get("screen_bar")
             bar_facts = self._core_light_facts(
                 virtual_device, preview=preview is not None, display_kind=display_kinds.get(legacy.VIRTUAL_DEVICE_ID)
@@ -5981,20 +5997,16 @@ def build_headless_controller_class() -> type:
                     # carried two programs that read as "blink different".
                     # The lift is legibility only: codes the device can show
                     # as faint light read as "off" on a display.
-                    mirrored = lift_program_luminance(
-                        mirror_program or mirror.program
+                    mirrored = apply_brightness_line(
+                        lift_program_luminance(mirror_program or mirror.program),
+                        bar_code,
                     )
                     surfaces["screen_bar"] = SurfaceFacts(
                         program=mirrored,
                         led_count=legacy.LED_COUNT,
                         anchor=anchor,
-                        # What the mirrored program drives the bar at -- its
-                        # own ``brightness N``, which is the strip's. The
-                        # bar's ambient plan (carrying the
-                        # ``screen_bar_min_glow`` floor) stays the policy for
-                        # the bar's OWN render; a mirror reports what it
-                        # plays, so a dark beat never gains a resting glow
-                        # the strip does not have.
+                        # What the mirrored program drives the bar at: the
+                        # bar's own ``brightness N`` (see ``bar_code``).
                         brightness=delivered_brightness(mirrored),
                         brightness_policy=bar_brightness,
                         why=mirror.why,
@@ -6016,8 +6028,9 @@ def build_headless_controller_class() -> type:
             elif linked and mirror is not None:
                 # The bar only mirrors the device while the two are linked;
                 # unlinked and idle, it has no program of its own to claim.
-                mirrored = lift_program_luminance(
-                    mirror_program or mirror.program
+                mirrored = apply_brightness_line(
+                    lift_program_luminance(mirror_program or mirror.program),
+                    bar_code,
                 )
                 surfaces["screen_bar"] = SurfaceFacts(
                     program=mirrored,
@@ -6027,10 +6040,8 @@ def build_headless_controller_class() -> type:
                         if mirror_anchor is not None
                         else None
                     ),
-                    # Same rule as the live-call branch above: the program's
-                    # own ``brightness N`` (the device's) is what the bar is
-                    # driven at; the bar's ambient plan -- floored by
-                    # ``screen_bar_min_glow`` -- is reported as policy only.
+                    # Same rule as the live-call branch above: the bar's own
+                    # ``brightness N``, not the mirrored device's.
                     brightness=delivered_brightness(mirrored),
                     brightness_policy=bar_brightness,
                     why=mirror.why,

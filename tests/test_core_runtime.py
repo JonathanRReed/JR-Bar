@@ -1637,6 +1637,7 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
         lift_program_luminance,
         relative_luminance,
     )
+    from jrbar.dot_role import apply_brightness_line
     from jrbar.status_bar_legacy import StatusBarDevice
 
     controller = headless
@@ -1645,9 +1646,10 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
 
     # The bar's own ambient plan is dim AND floored by the
-    # ``screen_bar_min_glow`` dial (0.25 -> a ~25% floor while on). Neither
-    # may reach the mirrored program: a dark beat the strip means is a dark
-    # beat on the bar too.
+    # ``screen_bar_min_glow`` dial (0.25 -> a ~25% floor while on). That
+    # plan, not the strip's backlight-scaled ``brightness 200``, is the
+    # scalar the mirrored program plays at -- a scalar on the whole program,
+    # so a dark beat the strip means is still a dark beat on the bar.
     virtual_entry = StatusBarDevice(
         status_bar.VIRTUAL_DEVICE_ID, "Screen Bar", Path("/virtual"),
         Path("/virtual/LEDS.LED"), True, "agent", brightness=30,
@@ -1656,7 +1658,9 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     controller.status_bar_devices = lambda *, remember=True: [*devices, virtual_entry]
     controller.settings = controller.settings.with_screen_bar_min_glow(0.25)
     bar_plan = controller._core_brightness_percent(virtual_entry) / 100.0
+    bar_code = controller._core_brightness_code(virtual_entry)
     assert 0.0 < bar_plan < delivered_brightness("brightness 200")
+    assert bar_code == pytest.approx(255 * 0.25, abs=1)
 
     nominal = (
         "brightness 200\n"
@@ -1684,12 +1688,14 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     bar = lights["surfaces"]["screen_bar"]
     assert strip["program"] == pro_controller.last_program
 
-    # Same program: the directives and every non-colour byte are identical
-    # to the strip's; only the colour literals moved, and only upward.
-    assert bar["program"] == lift_program_luminance(nominal)
+    # Same program: the timing, the directives and every non-colour byte
+    # are the strip's; the colour literals moved, only upward, and the one
+    # ``brightness N`` is the bar's own.
+    assert bar["program"] == apply_brightness_line(lift_program_luminance(nominal), bar_code)
     assert bar["program"] != virtual_program
+    assert bar["program"].splitlines()[0] == f"brightness {bar_code}"
     hex_re = r"#[0-9A-Fa-f]{6}"
-    assert re.sub(hex_re, "@", bar["program"]) == re.sub(hex_re, "@", nominal)
+    assert re.sub(hex_re, "@", bar["program"]).splitlines()[1:] == re.sub(hex_re, "@", nominal).splitlines()[1:]
     sources = re.findall(hex_re, nominal)
     outputs = re.findall(hex_re, bar["program"])
     assert len(sources) == len(outputs)
@@ -1726,9 +1732,11 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     assert "#000000" in bar["program"]
 
     # Brightness is what the mirrored program drives the bar at -- the
-    # strip's own ``brightness N`` -- while the bar's floored ambient plan
-    # is reported as policy only.
-    assert bar["brightness"] == pytest.approx(delivered_brightness(nominal))
+    # bar's own floored plan, not the strip's ``brightness 200`` -- and it
+    # agrees with the policy it reports.
+    assert bar["brightness"] == pytest.approx(delivered_brightness(bar["program"]))
+    assert bar["brightness"] == pytest.approx(bar_code / 255.0)
+    assert bar["brightness"] == pytest.approx(bar_plan, abs=0.005)
     assert bar["brightness_policy"] == pytest.approx(bar_plan)
 
     # The strip's clock and the strip's explanation, not the bar's own.
@@ -1747,9 +1755,19 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     controller.virtual_status_device._live_program_call = None
     lights = controller._core_build_lights()
     fallback_bar = lights["surfaces"]["screen_bar"]
-    assert fallback_bar["program"] == lift_program_luminance(nominal)
-    assert fallback_bar["brightness"] == pytest.approx(delivered_brightness(nominal))
+    assert fallback_bar["program"] == apply_brightness_line(lift_program_luminance(nominal), bar_code)
+    assert fallback_bar["brightness"] == pytest.approx(bar_code / 255.0)
     assert fallback_bar["brightness_policy"] == pytest.approx(bar_plan)
+    assert fallback_bar["anchor"] == 1000.0
+
+    # Minimum glow is a real control while linked: raising the floor raises
+    # the scalar the mirrored program plays at, and nothing else moves.
+    controller.settings = controller.settings.with_screen_bar_min_glow(0.6)
+    raised = controller._core_build_lights()["surfaces"]["screen_bar"]
+    assert raised["brightness"] == pytest.approx(0.6, abs=0.005)
+    assert raised["program"].splitlines()[1:] == fallback_bar["program"].splitlines()[1:]
+    assert raised["anchor"] == fallback_bar["anchor"]
+    controller.settings = controller.settings.with_screen_bar_min_glow(0.25)
 
     # A screen_bar preview still outranks everything.
     preview_program = "#00FF00 1s\nrepeat"

@@ -440,11 +440,14 @@ end) and with every refresh.
   boundary's die gains and light-domain brightness decode — with each
   `#rrggbb` token below the display legibility knee lifted on a
   continuous power curve (`colors.lift_program_luminance`,
-  `floor * (Y / floor) ** 0.5`): hue, saturation, timing and
-  `brightness N` bytes pass through untouched, near-black stays
-  near-black, and `#000000` stays black — a dark beat never gains a
-  resting glow the strip does not have. The strip's drive bytes
-  are never replayed on a display that has no die to calibrate.
+  `floor * (Y / floor) ** 0.5`): hue, saturation and timing pass
+  through untouched, near-black stays near-black, and `#000000` stays
+  black — a dark beat never gains a resting glow the strip does not
+  have. Its one `brightness N` is the Screen Bar device's own policy
+  (`screen_bar_min_glow` floor included), not the strip's, whose N
+  starts from the display backlight the bar is already dimmed by. The
+  strip's drive bytes are never replayed on a display that has no die
+  to calibrate.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when
   `linked` (the `link_screen_bar_to_hardware` setting) and a strip is
