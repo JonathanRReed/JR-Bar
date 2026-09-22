@@ -1217,20 +1217,31 @@ final class MenuBarUtility: Toy {
     /// window moves only when its frame does.
     private func updateIconMirror() {
         guard let concealer else { return }
+        // A target of apps that are not running conceals nothing — the
+        // engine drops the assertion and macOS draws the real item.
         let mirrored = Self.mirrorsIcon(engineUp: true,
                                         styleDrawsIcon: host?.anchorWantsVisibleSeat ?? false,
                                         concealing: concealer.isConcealing,
                                         suspended: concealer.isSuspended,
-                                        targetEmpty: concealTarget().isEmpty)
+                                        targetEmpty: concealTarget().isDisjoint(with: runningApps.snapshot()))
         iconMirrored = mirrored
         host?.setFaceMirrored(mirrored)
         guard mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first else {
             iconMirror?.hide()
             return
         }
-        mirror.show(row: MenuBarItemLister.menuBarRow(), primaryMaxY: primary.frame.maxY) { width in
+        mirror.show(row: Self.primaryRow(), primaryMaxY: primary.frame.maxY) { width in
             mirrorSeat(width: width)
         }
+    }
+
+    /// The menu bar's row on the Quartz origin display — the one the
+    /// mirror stands on. `menuBarRow()` takes its depth from
+    /// `NSScreen.main`, the key window's screen: with an external
+    /// display in front the notch's 37-pt row reads as 24, which would
+    /// seat the mirror 6.5 pt high.
+    private static func primaryRow() -> CGRect {
+        MenuBarItemLister.menuBarRows().first ?? MenuBarItemLister.menuBarRow()
     }
 
     /// The host redrew its face — style, tint, tooltip, highlight,
@@ -1251,7 +1262,7 @@ final class MenuBarUtility: Toy {
     /// bridged click's lift, the start grace) the target counts as
     /// concealed, so a 0.45 s reflow never walks the icon.
     private func mirrorSeat(width: CGFloat) -> CGFloat {
-        let row = MenuBarItemLister.menuBarRow()
+        let row = Self.primaryRow()
         let clear = mirrorClearOf()
         let concealed = (concealer?.isConcealing ?? false)
             ? (concealer?.concealedApps ?? []) : concealTarget()
@@ -2512,15 +2523,15 @@ final class MenuBarUtility: Toy {
     /// region's edge to the boundary glyph's right edge, in AppKit
     /// screen coordinates. nil while no boundary stands.
     private func revealZone() -> NSRect? {
-        let row = MenuBarItemLister.menuBarRow()
         let height = CGDisplayBounds(CGMainDisplayID()).height
         if concealer != nil {
             // Under the concealer the zone is the blank run the hidden
             // apps leave left of the icon — from where nothing of ours
             // covers the row (the notch, the band and its ears) to the
-            // mirror's left edge. A notch-less bar keeps its right half:
-            // the app menus own the rest, and a hover over the File menu
-            // must never pop the run.
+            // mirror's left edge, on the row the mirror stands on. A
+            // notch-less bar keeps its right half: the app menus own the
+            // rest, and a hover over the File menu must never pop the run.
+            let row = Self.primaryRow()
             var start = mirrorClearOf()
             if NSScreen.screens.first?.auxiliaryTopRightArea == nil { start = max(start, row.midX) }
             let mirrorMinX = iconMirrored
@@ -2538,6 +2549,7 @@ final class MenuBarUtility: Toy {
             return NSRect(x: span.lowerBound, y: height - row.maxY,
                           width: span.upperBound - span.lowerBound, height: row.height)
         }
+        let row = MenuBarItemLister.menuBarRow()
         let frames = controlFrames()
         guard let boundary = frames.hidden, boundary.intersects(row) else { return nil }
         // The blank stretch starts where the spacer may land, less the

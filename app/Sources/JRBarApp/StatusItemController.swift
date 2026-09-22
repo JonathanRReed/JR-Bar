@@ -71,6 +71,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// Whether the panel is open — the button's highlight, and the
     /// mirror's.
     private var panelOpen = false
+    /// Whether the mirror's menu is up: a status item highlights while
+    /// its menu is open, and the button does that for itself.
+    private var mirrorMenuOpen = false
     /// Points of blank bar the item claims left of its icon — the Menu
     /// Bar utility's spacer. 0 is the plain icon.
     private(set) var boundarySpacer: CGFloat = 0
@@ -381,7 +384,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             title: currentLabel.map(Self.labelTitle),
             length: currentWidth > 0 ? currentWidth
                 : (currentLabel == nil ? NSStatusBar.system.thickness : 0),
-            highlighted: panelOpen,
+            highlighted: panelOpen || mirrorMenuOpen,
             pulsing: pulseDrawsOnLayer,
             toolTip: button?.toolTip,
             accessibilityLabel: button?.accessibilityLabel(),
@@ -404,7 +407,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         prepareHiddenItemsRow()
         let face = window.convertToScreen(view.convert(view.bounds, to: nil))
         let barBottom = (window.screen ?? NSScreen.screens.first)?.visibleFrame.maxY ?? face.minY
+        // `popUp` tracks the menu until it closes — the face highlights
+        // for exactly that long.
+        mirrorMenuOpen = true
+        onFaceChange?()
         menu.popUp(positioning: nil, at: NSPoint(x: face.minX, y: min(face.minY, barBottom)), in: nil)
+        mirrorMenuOpen = false
+        onFaceChange?()
     }
 
     /// The one place the button's pixels are written — image and label
