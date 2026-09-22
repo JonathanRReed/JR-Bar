@@ -295,35 +295,113 @@ struct MenuBarActionsTests {
         }
     }
 
-    // MARK: Commands — build + fuzzy match
+    // MARK: Commands — one row per app, bar-wide rows, fuzzy match
 
-    @Test("each item earns Open plus the section toggle its assignment implies")
+    private func appItem(_ id: String, owner: String, bundle: String? = nil,
+                         title: String? = nil, x: Double) -> MenuBarItem {
+        MenuBarItem(id: id, ownerPID: 500, ownerName: owner,
+                    bounds: CGRect(x: x, y: 0, width: 24, height: 24),
+                    title: title, windowID: 0, bundleID: bundle)
+    }
+
+    @Test("each app is one row whose verbs follow its section")
     func commandBuild() {
         let items = [item("Free", owner: "Free", x: 600),
                      item("Hid", owner: "Hid", x: 700),
                      item("Deep", owner: "Deep", x: 800)]
         let commands = MenuBarCommands.build(
             items: items,
-            sections: ["Hid": .hidden, "Deep": .alwaysHidden])
+            sections: ["Hid": .hidden, "Deep": .alwaysHidden], ownBundleID: nil)
+        let apps = commands.filter { $0.kind == .app }
+        #expect(apps.map(\.title) == ["Free", "Hid", "Deep"], "bar order, one row each")
+        #expect(apps.map { $0.verbs.map(\.title) } == [
+            ["Open", "Hide", "Always Hide"],
+            ["Open", "Show", "Always Hide"],
+            ["Open", "Show", "Move to Hidden"],
+        ])
+        #expect(apps[0].verbs[1].action == .setAppSection(itemIDs: ["Free"], .hidden))
+        #expect(apps[1].verbs[1].action == .setAppSection(itemIDs: ["Hid"], .shown))
+        #expect(apps[0].verbs[0].action == .openItem(itemID: "Free"))
+        #expect(apps[0].verbs[2].shortcut == .commandShift("h"))
+        // Nothing describes the retired per-item covers any more.
+        #expect(!commands.contains { ($0.subtitle ?? "").localizedCaseInsensitiveContains("cover") })
         let titles = commands.map(\.title)
-        #expect(titles.contains("Open Free"))
-        #expect(titles.contains("Hide Free"))      // shown → offer hide
-        #expect(titles.contains("Always hide Free"))
-        #expect(titles.contains("Show Hid"))       // hidden → offer show
-        #expect(!titles.contains("Hide Hid"))
-        #expect(titles.contains("Always hide Deep") == false)
-        #expect(titles.contains("Reveal hidden items"))
-        #expect(titles.contains("Arrange menu bar items…"))
-        #expect(titles.contains("Hide all items"))
-        #expect(titles.contains("Show all items"))
+        for title in ["Reveal Hidden Items", "Reveal Always-Hidden Items", "Toggle Hidden Items",
+                      "Hide All Apps", "Show All Apps", "Arrange Menu Bar Items…"] {
+            #expect(titles.contains(title), "\(title)")
+        }
     }
 
-    @Test("protected items get no commands — the palette cannot hide the clock")
+    @Test("an app with several items is one row that can open each by name")
+    func commandBuildGroupsItems() {
+        let items = [appItem("wifi", owner: "Helper", bundle: "com.example.helper", title: "VPN", x: 600),
+                     appItem("status", owner: "Helper", bundle: "com.example.helper", title: "Status", x: 640),
+                     appItem("other", owner: "Other", bundle: "com.example.other", x: 700)]
+        let apps = MenuBarCommands.build(items: items, sections: [:], ownBundleID: nil)
+            .filter { $0.kind == .app }
+        #expect(apps.count == 2)
+        let helper = apps[0]
+        #expect(helper.id == "menubar.app.com.example.helper")
+        #expect(helper.subtitle == "VPN · Status")
+        #expect(helper.verbs.first?.title == "Open VPN")
+        #expect(helper.verbs.contains { $0.title == "Open Status" && $0.action == .openItem(itemID: "status") })
+        #expect(helper.verbs[1].action == .setAppSection(itemIDs: ["wifi", "status"], .hidden))
+    }
+
+    @Test("items of one app in different sections split into one row per section")
+    func commandBuildSplitsSections() {
+        let items = [appItem("a1", owner: "App", bundle: "com.example.app", x: 600),
+                     appItem("a2", owner: "App", bundle: "com.example.app", x: 640)]
+        let apps = MenuBarCommands.build(items: items, sections: ["a2": .hidden], ownBundleID: nil)
+            .filter { $0.kind == .app }
+        #expect(apps.count == 2)
+        #expect(apps.map(\.section) == [.shown, .hidden])
+        #expect(Set(apps.map(\.id)).count == 2, "split rows keep distinct ids")
+        #expect(apps[1].verbs[1].action == .setAppSection(itemIDs: ["a2"], .shown))
+    }
+
+    @Test("Arrange is offered only on the spacer engine — under the concealer macOS orders the bar")
+    func commandBuildArrangeGate() {
+        let concealed = MenuBarCommands.build(items: [], sections: [:], concealing: true)
+        #expect(!concealed.contains { $0.id == "menubar.arrange" })
+        let spacer = MenuBarCommands.build(items: [], sections: [:], concealing: false)
+        #expect(spacer.contains { $0.id == "menubar.arrange" })
+    }
+
+    @Test("protected items and our own app get no rows — the palette cannot hide the clock")
     func commandBuildProtected() {
-        let items = [item("Sys", owner: "Control Center", x: 1400)]
-        let commands = MenuBarCommands.build(items: items, sections: [:])
-        #expect(commands.allSatisfy { $0.action != .openItem(itemID: "Sys") })
-        #expect(!commands.map(\.title).contains { $0.contains("Sys") })
+        let items = [item("Sys", owner: "Control Center", x: 1400),
+                     appItem("Own", owner: "JR-Bar", bundle: "devin.jrbar.app", x: 1300)]
+        let commands = MenuBarCommands.build(items: items, sections: [:], ownBundleID: "devin.jrbar.app")
+        #expect(!commands.contains { $0.kind == .app })
+        #expect(!commands.flatMap(\.verbs).contains { $0.action == .openItem(itemID: "Sys") })
+    }
+
+    @Test("profiles list the built-in None first, and say what they hide")
+    func commandBuildProfiles() {
+        let work = MenuBarSettings.Profile(id: "p1", name: "Work",
+                                           sections: ["Mail": .hidden],
+                                           concealedApps: ["com.a": .hidden, "com.b": .alwaysHidden,
+                                                           "com.c": .shown])
+        let rows = MenuBarCommands.build(items: [], sections: [:], profiles: [work])
+            .filter { $0.kind == .profile }
+        #expect(rows.map(\.title) == [MenuBarProfiles.noneName, "Work"])
+        #expect(rows[1].subtitle == "Hides 3 apps")
+        #expect(rows[1].verbs.first?.action == .applyProfile(id: "p1"))
+        #expect(rows[0].verbs.first?.action == .applyProfile(id: MenuBarProfiles.noneID))
+    }
+
+    @Test("a rule reads as its sentence: Return runs it, ⌘Return switches it")
+    func commandBuildRules() {
+        let on = MenuBarTriggerRule(id: "r1", enabled: true, trigger: .screenLocked, action: .hideAll)
+        let off = MenuBarTriggerRule(id: "r2", enabled: false, trigger: .chargerConnected, action: .showAll)
+        let rows = MenuBarCommands.build(items: [], sections: [:], rules: [on, off])
+            .filter { $0.kind == .rule }
+        #expect(rows[0].title == "When the screen locks → hide all items")
+        #expect(rows[0].verbs.map(\.action) == [.runRule(id: "r1"), .setRuleEnabled(id: "r1", false)])
+        #expect(rows[0].note == nil)
+        #expect(rows[1].verbs.map(\.action) == [.runRule(id: "r2"), .setRuleEnabled(id: "r2", true)])
+        #expect(rows[1].note == "Off")
     }
 
     @Test("the fuzzy matcher is a subsequence with word-start and streak bonuses")
@@ -335,13 +413,51 @@ struct MenuBarActionsTests {
         let short = MenuBarCommands.score("always", "Always hide Mail")!
         let long = MenuBarCommands.score("always", "Always arrange all your apps")!
         #expect(short > long)
-        // Filter orders by score and drops non-matches.
-        let commands = MenuBarCommands.build(
-            items: [item("Mail", owner: "Mail", x: 600),
-                    item("Cal", owner: "Cal", x: 700)], sections: [:])
-        let hits = MenuBarCommands.filter(commands, query: "hide mail")
-        #expect(hits.first?.title == "Hide Mail")
-        #expect(!hits.contains { $0.title == "Open Cal" })
+    }
+
+    /// Collects the menu-bar verbs a palette row fires.
+    @MainActor
+    private final class ActionRecorder {
+        var actions: [MenuBarCommandAction] = []
+    }
+
+    @MainActor
+    @Test("typing a verb and an app runs that verb: “hide mail” hides Mail on Return")
+    func commandVerbSearch() {
+        let fired = ActionRecorder()
+        let items = MenuBarCommands.build(
+            items: [item("Mail", owner: "Mail", x: 600), item("Cal", owner: "Cal", x: 700)],
+            sections: [:], ownBundleID: nil)
+            .map { $0.paletteItem { fired.actions.append($0) } }
+        let hits = PaletteRanking.rank(items, query: "hide mail", usage: PaletteUsage())
+        #expect(hits.first?.title == "Mail")
+        #expect(hits.first?.primary?.title == "Hide")
+        #expect(hits.first?.secondary?.title == "Open", "the old first verb moves to ⌘Return")
+        #expect(!hits.contains { $0.title == "Cal" })
+        _ = hits.first?.primary?.run()
+        #expect(fired.actions == [.setAppSection(itemIDs: ["Mail"], .hidden)])
+        // A bare title still opens.
+        let plain = PaletteRanking.rank(items, query: "mail", usage: PaletteUsage())
+        #expect(plain.first?.primary?.title == "Open")
+    }
+
+    @MainActor
+    @Test("menu-bar rows land in the palette's sections with their state tags")
+    func commandPaletteItems() {
+        let rows = MenuBarCommands.build(
+            items: [item("Hid", owner: "Hid", x: 600)], sections: ["Hid": .hidden],
+            profiles: [], rules: [MenuBarTriggerRule(id: "r", enabled: false,
+                                                     trigger: .screenLocked, action: .hideAll)],
+            ownBundleID: nil)
+            .map { $0.paletteItem { _ in } }
+        let app = rows.first { $0.title == "Hid" }
+        #expect(app?.section == .menuBar)
+        #expect(app?.tags == [PaletteTag(text: "Hidden")])
+        #expect(app?.kind == "Menu Bar App")
+        #expect(rows.first { $0.id == "menubar.rule.r" }?.section == .automation)
+        #expect(rows.first { $0.id == "menubar.rule.r" }?.tags == [PaletteTag(text: "Off")])
+        // A verb's confirmation is the HUD's line.
+        #expect(app?.actions.first { $0.id == "show" }?.run() == "Hid shown")
     }
 
     @Test("hideAll assigns every listed unprotected item and spares the rest")
@@ -350,24 +466,6 @@ struct MenuBarActionsTests {
                      item("Sys", owner: "MenuBarAgent", x: 1400)]
         let map = MenuBarCommands.hideAllSections(items: items)
         #expect(map == ["A": .hidden])
-    }
-
-    @MainActor
-    @Test("the palette model refilters and clamps the selection")
-    func paletteModel() {
-        let model = MenuBarCommandBarModel()
-        model.load(items: [item("Mail", owner: "Mail", x: 600),
-                           item("Cal", owner: "Cal", x: 700)], sections: [:])
-        #expect(model.filtered.count == model.all.count)
-        model.query = "mail"
-        #expect(!model.filtered.isEmpty)
-        // The title matches outrank the detail-only matches, and every
-        // Mail row is in.
-        #expect(model.filtered.first?.title.hasSuffix("Mail") == true)
-        #expect(model.filtered.contains { $0.title == "Hide Mail" })
-        #expect(model.filtered.contains { $0.title == "Open Mail" })
-        model.move(-1)
-        #expect(model.selection == model.filtered.count - 1, "arrows wrap")
     }
 
     // MARK: Hotkeys — model, conflicts, registration seam
@@ -648,7 +746,10 @@ struct MenuBarActionsTests {
         var calls: [String] = []
         func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem] { [] }
         func menuBarSections(for actions: MenuBarActions) -> [String: MenuBarItemSection] { sections }
-        func menuBarArrangeOrder(for actions: MenuBarActions) -> [String] { [] }
+        func menuBarArrangeOrder(for actions: MenuBarActions) -> [String] {
+            arrangeOrderReads += 1
+            return []
+        }
         func menuBarArrangeBoundary(for actions: MenuBarActions) -> CGFloat { 1512 }
         func menuBarActions(_ actions: MenuBarActions,
                             setSection section: MenuBarItemSection, for itemID: String) {
@@ -673,6 +774,170 @@ struct MenuBarActionsTests {
         func menuBarActions(_ actions: MenuBarActions, cycleProfile direction: Int) {
             calls.append("cycle:\(direction)")
         }
+        var concealing = false
+        var profiles: [MenuBarSettings.Profile] = []
+        var arrangeOrderReads = 0
+        func menuBarConcealing(for actions: MenuBarActions) -> Bool { concealing }
+        func menuBarProfiles(for actions: MenuBarActions) -> [MenuBarSettings.Profile] { profiles }
+        func menuBarActions(_ actions: MenuBarActions, applyProfileID id: String) {
+            calls.append("profileID:\(id)")
+        }
+        func menuBarActions(_ actions: MenuBarActions, setRule id: String, enabled: Bool) {
+            calls.append("rule:\(id):\(enabled)")
+        }
+    }
+
+    /// A delegate that answers only the original requirements — the
+    /// palette's newer calls fall back to the protocol's defaults.
+    @MainActor
+    private final class MinimalDelegate: MenuBarActionsDelegate {
+        func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem] { [] }
+        func menuBarSections(for actions: MenuBarActions) -> [String: MenuBarItemSection] { [:] }
+        func menuBarArrangeOrder(for actions: MenuBarActions) -> [String] { [] }
+        func menuBarArrangeBoundary(for actions: MenuBarActions) -> CGFloat { 1512 }
+        func menuBarActions(_ actions: MenuBarActions,
+                            setSection section: MenuBarItemSection, for itemID: String) {}
+        func menuBarActions(_ actions: MenuBarActions, openItem itemID: String) {}
+        func menuBarActionsRevealHidden(_ actions: MenuBarActions) {}
+        func menuBarActionsToggleReveal(_ actions: MenuBarActions) {}
+        func menuBarActionsRevealAlwaysHidden(_ actions: MenuBarActions) {}
+        func menuBarActions(_ actions: MenuBarActions, revealFor seconds: Double) {}
+        func menuBarActionsHideAll(_ actions: MenuBarActions) {}
+        func menuBarActionsShowAll(_ actions: MenuBarActions) {}
+        func menuBarActions(_ actions: MenuBarActions, applyProfile name: String) {}
+        func menuBarActions(_ actions: MenuBarActions, cycleProfile direction: Int) {}
+    }
+
+    @MainActor
+    @Test("the palette's verbs route to the delegate; a rule runs its own action")
+    func paletteRouting() {
+        let actions = MenuBarActions(bindings: [])
+        let delegate = FakeDelegate()
+        actions.delegate = delegate
+        actions.rules = {
+            [MenuBarTriggerRule(id: "r", enabled: false, trigger: .screenLocked,
+                                action: .reveal(seconds: 3))]
+        }
+        actions.commandBar.onAction(.setAppSection(itemIDs: ["A", "B"], .alwaysHidden))
+        actions.commandBar.onAction(.revealAlwaysHidden)
+        actions.commandBar.onAction(.toggleHidden)
+        actions.commandBar.onAction(.applyProfile(id: "p1"))
+        actions.commandBar.onAction(.runRule(id: "r"))
+        actions.commandBar.onAction(.runRule(id: "missing"))
+        actions.commandBar.onAction(.setRuleEnabled(id: "r", true))
+        #expect(delegate.calls == [
+            "setSection:A:alwaysHidden", "setSection:B:alwaysHidden", "revealAlwaysHidden",
+            "toggleReveal", "profileID:p1", "reveal:3.0", "rule:r:true",
+        ])
+        // The palette's inputs read the delegate's truth at the keystroke.
+        delegate.concealing = true
+        delegate.profiles = [MenuBarSettings.Profile(id: "p", name: "Desk", sections: [:])]
+        #expect(actions.commandBar.concealing())
+        #expect(actions.commandBar.profiles().map(\.id) == ["p"])
+        #expect(actions.commandBar.rules().map(\.id) == ["r"])
+        #expect(!actions.commandBar.menuBarItems().contains { $0.id == "menubar.arrange" })
+        #expect(actions.commandBar.menuBarItems().contains { $0.id == "menubar.profile.p" })
+    }
+
+    @MainActor
+    @Test("a delegate without the palette's calls still compiles and answers safely")
+    func paletteRoutingDefaults() {
+        let actions = MenuBarActions(bindings: [])
+        let delegate = MinimalDelegate()
+        actions.delegate = delegate
+        #expect(!actions.commandBar.concealing())
+        #expect(actions.commandBar.profiles().isEmpty)
+        // No-ops, not crashes.
+        actions.commandBar.onAction(.applyProfile(id: "p"))
+        actions.commandBar.onAction(.setRuleEnabled(id: "r", false))
+    }
+
+    /// The utility's settings, boxed so a closure can write them.
+    @MainActor
+    private final class SettingsBox {
+        var settings = MenuBarSettings(enabled: false)
+        var writes = 0
+    }
+
+    @MainActor
+    @Test("the utility switches a rule and applies a profile by id through its own settings write")
+    func utilityPaletteWitnesses() {
+        let utility = MenuBarUtility()
+        let box = SettingsBox()
+        box.settings.triggerRules = [MenuBarTriggerRule(id: "r", enabled: true,
+                                                        trigger: .screenLocked, action: .hideAll)]
+        box.settings.profiles = [MenuBarSettings.Profile(id: "p", name: "Desk",
+                                                         sections: [:],
+                                                         concealedApps: ["com.example.a": .hidden])]
+        utility.settings = { box.settings }
+        utility.onSettingsChange = { box.settings = $0; box.writes += 1 }
+        utility.actions.commandBar.onAction(.setRuleEnabled(id: "r", false))
+        #expect(box.settings.triggerRules.first?.enabled == false)
+        // The same state again writes nothing.
+        utility.actions.commandBar.onAction(.setRuleEnabled(id: "r", false))
+        #expect(box.writes == 1)
+        utility.actions.commandBar.onAction(.applyProfile(id: "p"))
+        #expect(box.settings.concealedApps == ["com.example.a": .hidden])
+        // An unknown id is a no-op, never a clear.
+        utility.actions.commandBar.onAction(.applyProfile(id: "gone"))
+        #expect(box.settings.concealedApps == ["com.example.a": .hidden])
+        #expect(!utility.actions.commandBar.concealing(), "a parked utility runs no concealer")
+        #expect(utility.actions.commandBar.profiles().map(\.id) == ["p"])
+    }
+
+    @MainActor
+    @Test("a stale Arrange row is refused while the concealer runs — no pointer drags")
+    func paletteArrangeGate() async {
+        let actions = MenuBarActions(bindings: [])
+        let delegate = FakeDelegate()
+        delegate.concealing = true
+        actions.delegate = delegate
+        actions.commandBar.onAction(.arrange)
+        for _ in 0..<50 { await Task.yield() }
+        #expect(delegate.arrangeOrderReads == 0)
+        delegate.concealing = false
+        actions.commandBar.onAction(.arrange)
+        for _ in 0..<500 where delegate.arrangeOrderReads == 0 { await Task.yield() }
+        #expect(delegate.arrangeOrderReads == 1, "the spacer engine still runs it")
+    }
+
+    /// The parked key's binding, boxed so the test can flip it.
+    @MainActor
+    private final class BindingBox {
+        var binding = MenuBarHotkeyBinding(action: .commandBar, keyCode: 40,
+                                           modifiers: UInt32(cmdKey | shiftKey), enabled: true)
+    }
+
+    @MainActor
+    @Test("⌘⇧K stays registered while the utility is parked and hands over when it starts")
+    func parkedPaletteKey() {
+        let box = BindingBox()
+        let actions = MenuBarActions(bindings: [box.binding])
+        let full = FakeRegistrar()
+        let parked = FakeRegistrar()
+        actions.hotkeys.registrar = full
+        actions.parkedPaletteKey.registrar = parked
+        func live(_ registrar: FakeRegistrar) -> Int { registrar.registered.count - registrar.unregistered }
+
+        actions.paletteBinding = { box.binding }
+        #expect(live(parked) == 1, "parked: the palette's key alone")
+        #expect(parked.registered.last?.key == 40)
+        actions.start()
+        #expect(live(parked) == 0, "the full set takes the key over")
+        #expect(live(full) == 1)
+        actions.stop()
+        #expect(live(full) == 0)
+        #expect(live(parked) == 1, "parked again")
+        box.binding.enabled = false
+        actions.syncParkedPaletteKey()
+        #expect(live(parked) == 0, "a binding switched off in the card stays off")
+        box.binding.enabled = true
+        actions.syncParkedPaletteKey()
+        #expect(live(parked) == 1)
+        actions.shutDownPalette()
+        #expect(live(parked) == 0)
+        actions.syncParkedPaletteKey()
+        #expect(live(parked) == 0, "nothing re-registers on the way out")
     }
 
     @MainActor
