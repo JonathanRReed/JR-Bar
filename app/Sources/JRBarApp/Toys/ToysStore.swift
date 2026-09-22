@@ -46,6 +46,9 @@ final class ToysStore {
     /// init, so it can't sit in a stored property.
     var fold: FoldToy? { toys.lazy.compactMap { $0 as? FoldToy }.first }
 
+    /// The event coordinator feeds it quota resets (the submarine).
+    var aquarium: AquariumToy? { toys.lazy.compactMap { $0 as? AquariumToy }.first }
+
     /// Drops `state` into the delegate's `AppState` and writes the file.
     var onPersist: (@MainActor (ToysState) -> Void)?
 
@@ -60,7 +63,7 @@ final class ToysStore {
     /// on the shared timer/tray stores so the glass card and the island
     /// card can never disagree about a timer or a tray file.
     init(core: CoreModel, settings: SettingsStore, state: ToysState,
-         cardModel: NotchCardModel) {
+         cardModel: NotchCardModel, notchRuntimeEnabled: Bool = true) {
         self.core = core
         self.settings = settings
         self.state = state
@@ -78,12 +81,18 @@ final class ToysStore {
         cards.append(notchBuddy)
         confetti.store = self
         cards.append(confetti)
-        let notch = NotchToy(core: core, store: self, cardModel: cardModel)
+        let notch = NotchToy(core: core, store: self, cardModel: cardModel,
+                             runtimeEnabled: notchRuntimeEnabled)
         self.notch = notch
         // The Notch card renders on the Utilities page — it manages a
         // real macOS surface, so it is a utility, not a toy; `toys`
         // keeps only the page's cards.
         self.toys = cards
+    }
+
+    isolated deinit {
+        saveWork?.cancel()
+        notch?.shutdown()
     }
 
     // MARK: Persistence

@@ -10,6 +10,7 @@ def test_controller_routes_a_hardware_press_to_the_existing_usage_center__and_2_
     # --- scenario: controller_routes_a_hardware_press_to_the_existing_usage_center
     queued, opened = [], []
     target = SimpleNamespace(
+        _deck_deliver_inline=True,
         performSelectorOnMainThread_withObject_waitUntilDone_=lambda selector, batch, wait: queued.append(batch),
         openProviderUsageCenter_=lambda sender: opened.append("usage"),
     )

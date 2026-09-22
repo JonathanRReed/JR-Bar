@@ -29,6 +29,9 @@ PENDING_DRAIN_INTERVAL_SECONDS: Final = 30.0
 MAX_PENDING_FILE_BYTES: Final = 64 * 1024 * 1024
 MAX_PENDING_LINES_PER_DRAIN: Final = 5000
 DRAINING_INFIX: Final = ".draining-"
+REJECTED_SUFFIX: Final = ".rejected.jsonl"
+OVERFLOW_SUFFIX: Final = ".overflow.jsonl"
+MAX_REJECTED_FILE_BYTES: Final = 16 * 1024 * 1024
 
 
 def pending_hook_files(state_dir: Path | None = None) -> list[Path]:
@@ -137,13 +140,52 @@ def request_from_pending_line(
         return None
 
 
+def _pending_name(draining_name: str) -> str:
+    """The ``<provider>.pending.jsonl`` a draining file was renamed from."""
+    marker = f"{PENDING_SUFFIX}{DRAINING_INFIX}"
+    if marker in draining_name:
+        return draining_name.split(marker, 1)[0] + PENDING_SUFFIX
+    return draining_name
+
+
+def _sibling(path: Path, suffix: str) -> Path:
+    """``claude.pending.jsonl`` -> ``claude<suffix>``."""
+    pending = _pending_name(path.name)
+    base = pending[: -len(PENDING_SUFFIX)] if pending.endswith(PENDING_SUFFIX) else pending
+    return path.with_name(base + suffix)
+
+
+def _append_lines(path: Path, lines: list[str]) -> bool:
+    """Append whole lines to ``path``; append-mode keeps pace with a shim
+    writing the same file at the same moment."""
+    if not lines:
+        return True
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("".join(line if line.endswith("\n") else f"{line}\n" for line in lines))
+        return True
+    except OSError:
+        return False
+
+
 def drain_pending_hooks(
     submit: Callable[[HookIngressRequest], object],
     *,
     state_dir: Path | None = None,
     log_path_for: Callable[[str], str] = _default_log_path,
+    log: Callable[[str], None] | None = None,
 ) -> int:
-    """Submit every queued payload in file order. Returns the number submitted."""
+    """Submit every queued payload in file order. Returns the number submitted.
+
+    Nothing the drain cannot deliver is silently dropped: lines past
+    ``MAX_PENDING_LINES_PER_DRAIN`` and lines whose submit raised are
+    appended back to the pending file for the next pass; malformed lines
+    are written to ``<provider>.rejected.jsonl`` so a corrupt record is
+    accounted for rather than unlinked; a file over
+    ``MAX_PENDING_FILE_BYTES`` is renamed aside to ``.overflow.jsonl``
+    (one generation kept) instead of deleted.
+    """
+    log = log or (lambda _line: None)
     submitted = 0
     # A drain file left behind by a process that died mid-read is adopted
     # before the fresh pending files, so its records keep their order.
@@ -156,24 +198,50 @@ def drain_pending_hooks(
         )
         try:
             if path.stat().st_size > MAX_PENDING_FILE_BYTES:
-                path.unlink()
+                overflow = _sibling(path, OVERFLOW_SUFFIX)
+                path.rename(overflow)
+                log(f"hook_pending oversized file quarantined: {overflow.name}")
                 continue
             if not adopted:
                 path.rename(draining)
             text = draining.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for line in text.splitlines()[:MAX_PENDING_LINES_PER_DRAIN]:
+        lines = text.splitlines()
+        retry: list[str] = []
+        rejected: list[str] = []
+        for line in lines[:MAX_PENDING_LINES_PER_DRAIN]:
             if not line.strip():
                 continue
             request = request_from_pending_line(line, log_path_for=log_path_for)
             if request is None:
+                rejected.append(line)
                 continue
             try:
                 submit(request)
             except Exception:
+                retry.append(line)
                 continue
             submitted += 1
+        retry.extend(lines[MAX_PENDING_LINES_PER_DRAIN:])
+        if rejected:
+            rejected_path = _sibling(draining, REJECTED_SUFFIX)
+            # One rotation, bounded: an earlier rejected file this size has
+            # already said what it had to say.
+            try:
+                if rejected_path.stat().st_size > MAX_REJECTED_FILE_BYTES:
+                    rejected_path.unlink()
+            except OSError:
+                pass
+            if not _append_lines(rejected_path, rejected):
+                log(f"hook_pending could not retain {len(rejected)} rejected lines for {rejected_path.name}")
+        if retry:
+            pending_path = draining.with_name(_pending_name(draining.name))
+            if not _append_lines(pending_path, retry):
+                # The write failed -- keep the draining file so the records
+                # survive as an orphan for the next drain to adopt.
+                log(f"hook_pending could not requeue {len(retry)} lines; keeping {draining.name}")
+                continue
         try:
             draining.unlink()
         except OSError:
@@ -214,7 +282,7 @@ class PendingHookDrainer:
         self._thread = None
 
     def drain_now(self) -> int:
-        count = drain_pending_hooks(self._submit, state_dir=self._state_dir)
+        count = drain_pending_hooks(self._submit, state_dir=self._state_dir, log=self._log)
         if count:
             self._log(f"hook_pending drained={count}")
         return count

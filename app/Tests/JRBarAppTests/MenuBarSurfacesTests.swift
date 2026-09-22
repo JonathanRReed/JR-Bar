@@ -80,7 +80,7 @@ struct MenuBarSurfacesTests {
                          shouldInterpolate: false, intent: .defaultIntent)!
         var captured: [CGRect] = []
         tiles.capture = { rect in captured.append(rect); return cg }
-        tiles.rowRect = { self.row }
+        tiles.rowRects = { [self.row] }
         tiles.itemsProvider = { [
             self.item("A", x: 100), self.item("B", x: 200),
             self.item("P", x: 7, y: 970),   // parked — never captured
@@ -105,7 +105,7 @@ struct MenuBarSurfacesTests {
         let tiles = MenuBarLiveTiles()
         var captured: [CGRect] = []
         tiles.capture = { rect in captured.append(rect); return nil }
-        tiles.rowRect = { self.row }
+        tiles.rowRects = { [self.row] }
         // "G" is a concealed item's ghost — on-row frame, no pixels.
         tiles.isCapturable = { $0.id != "G" }
         tiles.itemsProvider = { [

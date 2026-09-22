@@ -103,7 +103,7 @@ enum DockSwitcherList {
 
     /// Merge the z-ordered CGWindow rows with each app's AX windows.
     /// On-screen windows lead in recency order, matched to their AX
-    /// element by frame then title (the thumbnail matcher's rule);
+    /// element by native ID, with unique frame/title fallbacks;
     /// off-screen rows (minimized) and AX-only windows — other Spaces —
     /// follow grouped by their app's best z position.
     static func order(rows: [SwitcherWindowRow],
@@ -112,8 +112,8 @@ enum DockSwitcherList {
                       appName: (pid_t) -> String,
                       icon: (pid_t) -> NSImage?) -> [SwitcherItem] {
         var items: [SwitcherItem] = []
-        /// pid → AX windows still unmatched, so a second window with
-        /// the same frame takes a different element.
+        /// pid → AX windows still unmatched. Ambiguous metadata stays
+        /// in this pool so each real AX window can appear without a guessed image.
         var unmatched: [pid_t: [DockPreviewWindow]] = [:]
         var appRank: [pid_t: Int] = [:]
 
@@ -124,17 +124,19 @@ enum DockSwitcherList {
             return list
         }
 
-        for row in rows {
-            if appRank[row.pid] == nil { appRank[row.pid] = items.count }
+        for (rank, row) in rows.enumerated() {
+            if appRank[row.pid] == nil { appRank[row.pid] = rank }
             let candidates = axWindows(for: row.pid)
-            if let hit = match(row: row, in: candidates) {
+            let resolution = matchResult(row: row, in: candidates)
+            if case .matched(let index) = resolution {
+                let hit = candidates[index]
                 unmatched[row.pid]?.removeAll { $0.id == hit.id }
                 items.append(SwitcherItem(
                     id: "w\(row.windowID)", pid: row.pid,
                     appName: appName(row.pid), icon: icon(row.pid),
                     title: hit.title, minimized: false, onScreen: true,
                     element: hit.element, windowID: row.windowID))
-            } else {
+            } else if resolution != .ambiguous {
                 items.append(SwitcherItem(
                     id: "w\(row.windowID)", pid: row.pid,
                     appName: appName(row.pid), icon: icon(row.pid),
@@ -159,7 +161,10 @@ enum DockSwitcherList {
             // commit can only activate, never restore its window.
             var leftover = unmatched[pid] ?? axWindows(for: pid)
             for row in offByPID[pid] ?? [] {
-                let hit = match(row: row, in: leftover)
+                let resolution = matchResult(row: row, in: leftover)
+                if resolution == .ambiguous { continue }
+                let hit: DockPreviewWindow?
+                if case .matched(let index) = resolution { hit = leftover[index] } else { hit = nil }
                 if let hit { leftover.removeAll { $0.id == hit.id } }
                 items.append(SwitcherItem(
                     id: "w\(row.windowID)", pid: pid,
@@ -173,23 +178,26 @@ enum DockSwitcherList {
                     id: "a\(pid)-\(window.id)", pid: pid,
                     appName: appName(pid), icon: icon(pid),
                     title: window.title, minimized: window.minimized,
-                    onScreen: false, element: window.element, windowID: nil))
+                    onScreen: false, element: window.element, windowID: window.windowID))
             }
         }
         return items
     }
 
-    /// Frame first — it is the honest key — then title, the same rule
-    /// the thumbnail matcher follows.
+    private static func matchResult(row: SwitcherWindowRow,
+                                    in windows: [DockPreviewWindow]) -> DockEnhanceMath.WindowMatch {
+        DockEnhanceMath.matchResult(
+            scFrame: row.bounds, scTitle: row.title,
+            rows: windows.map { (frame: $0.frame, title: $0.title) },
+            scWindowID: row.windowID, rowWindowIDs: windows.map(\.windowID))
+    }
+
     static func match(row: SwitcherWindowRow,
                       in windows: [DockPreviewWindow]) -> DockPreviewWindow? {
-        if let byFrame = windows.first(where: {
-            guard let f = $0.frame else { return false }
-            return abs(f.minX - row.bounds.minX) < 2 && abs(f.minY - row.bounds.minY) < 2
-                && abs(f.width - row.bounds.width) < 2 && abs(f.height - row.bounds.height) < 2
-        }) { return byFrame }
-        return windows.first { $0.title == row.title }
+        guard case .matched(let index) = matchResult(row: row, in: windows) else { return nil }
+        return windows[index]
     }
+
 }
 
 // MARK: - The model (pure, tested)
@@ -320,6 +328,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// Witch's drill-down: ↓ on an app card opens that app's windows
     /// under the same strip — command's release then commits the window.
     var onDrill: () -> Void = {}
+    /// The preview panel's keys — Esc/arrows/Return — while its flag is
+    /// set. The events are eaten either way: the panel can't take key
+    /// status, so a pass-through would land them in the front app too.
+    var onPreviewKey: (_ code: Int64) -> Void = { _ in }
     /// Set from the main actor whenever the panel opens or closes;
     /// read on the tap thread.
     private let lock = NSLock()
@@ -333,6 +345,20 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// The ⌘⇥ switch, mirrored the same way; off means command-Tab
     /// reaches the system untouched.
     nonisolated(unsafe) private var cmdEnabled = false
+    /// The dock preview's flag — while its panel is up the tap eats
+    /// the keys the panel reads.
+    nonisolated(unsafe) private var previewOpen = false
+    /// The commit arm for each chord: an eaten Tab arms it and the
+    /// watched modifier's 1→0 edge fires it. Tracked here, not via
+    /// `open`, because `open` lands through an async hop and a quick
+    /// tap's release can pass through before it — the unarmed edge is
+    /// the lost commit that once left the strip eating keystrokes.
+    nonisolated(unsafe) private var pendingOptionCommit = false
+    nonisolated(unsafe) private var pendingCmdCommit = false
+    /// The modifier state at the last event — edges are computed here
+    /// so a release that races the async open still resolves.
+    nonisolated(unsafe) private var prevOption = false
+    nonisolated(unsafe) private var prevCmd = false
 
     func setEnabled(_ value: Bool) {
         lock.lock(); enabled = value; lock.unlock()
@@ -348,12 +374,23 @@ final class SwitcherKeyTap: @unchecked Sendable {
     static let log = Logger(subsystem: "devin.jrbar", category: "switcher")
 
     func setOpen(_ value: Bool) {
-        lock.lock(); open = value; if !value { cmdOpen = false }; lock.unlock()
+        lock.lock()
+        open = value
+        if !value { cmdOpen = false; pendingOptionCommit = false; pendingCmdCommit = false }
+        lock.unlock()
     }
 
     /// The ⌘⇥ panel's flag — `open` too, plus which chord to watch.
     func setCmdOpen(_ value: Bool) {
-        lock.lock(); open = value; cmdOpen = value; lock.unlock()
+        lock.lock()
+        open = value; cmdOpen = value
+        if !value { pendingOptionCommit = false; pendingCmdCommit = false }
+        lock.unlock()
+    }
+
+    /// The preview panel's flag — its keys are the tap's while it's up.
+    func setPreviewOpen(_ value: Bool) {
+        lock.lock(); previewOpen = value; lock.unlock()
     }
 
     func start() {
@@ -1055,7 +1092,7 @@ struct DockSwitcherView: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: 320)
             if item.minimized || !item.onScreen {
-                Text(item.minimized ? "Minimized" : "Off screen")
+                Text(item.minimized ? "Minimized" : (item.windowID == nil ? "Preview unavailable" : "Off screen"))
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
             }

@@ -21,6 +21,21 @@ from jrbar import usage_graph_worker
 from jrbar.t3_compat import project_t3_read_only_policy
 
 
+@pytest.fixture(autouse=True)
+def _isolate_doc_cache(tmp_path, monkeypatch):
+    """Every test gets a private persisted doc cache.
+
+    The session-wide sandbox state dir would otherwise leak a document
+    stored by one test (e.g. a refresh with a stubbed ``_build_payload``)
+    into a later test whose meta key and fingerprint happen to match.
+    """
+    monkeypatch.setattr(
+        usage_graph_worker,
+        "_usage_doc_cache_path",
+        lambda: tmp_path / "usage-graph-doc-cache.json",
+    )
+
+
 class FakeView:
     def __init__(self):
         self.models = []
@@ -1172,3 +1187,154 @@ def test_usage_graph_document_keeps_partial_and_cost_disclosures(monkeypatch):
     assert graph["partial_provider_ids"] == ["t3code"]
     assert graph["cost_semantics"] == "api_equivalent_estimate"
     assert "Partial local history" in document["summary"]
+
+
+# --- usage_graph_document: the persisted answer cache --------------------
+#
+# A cached reply must be the same document a fresh scan would produce --
+# the fingerprint covers every input file set, the meta key covers the
+# resolved request, the day, and the timezone. Any change to any of them
+# pays the scan again.
+
+
+def _fresh_cache(monkeypatch, tmp_path):
+    """Point the doc cache at a per-test file under the sandbox."""
+    monkeypatch.setattr(
+        usage_graph_worker,
+        "_usage_doc_cache_path",
+        lambda: tmp_path / "usage-graph-doc-cache.json",
+    )
+
+
+def test_usage_graph_document_serves_an_unchanged_corpus_from_cache(
+    monkeypatch, tmp_path
+):
+    _fresh_cache(monkeypatch, tmp_path)
+    calls = []
+
+    def payload(settings, t3_policy=None):
+        calls.append(1)
+        return _document_payload(settings)
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", payload)
+    settings = make_target().settings
+
+    first = usage_graph_worker.usage_graph_document(settings)
+    second = usage_graph_worker.usage_graph_document(settings)
+
+    assert calls == [1]
+    assert second == first
+    # The stored document is what the socket would have sent: the same
+    # JSON projection, not the pre-projection model with dataclasses in.
+    json.loads(json.dumps(second))
+
+
+def test_usage_graph_document_rescans_when_the_corpus_changes(
+    monkeypatch, tmp_path
+):
+    _fresh_cache(monkeypatch, tmp_path)
+    calls = []
+    fingerprints = [{"claude": {"files": 1}}, {"claude": {"files": 2}}]
+
+    def payload(settings, t3_policy=None):
+        calls.append(1)
+        return _document_payload(settings)
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", payload)
+    monkeypatch.setattr(
+        usage_graph_worker,
+        "_corpus_fingerprint",
+        lambda *args, **kwargs: fingerprints.pop(0),
+    )
+    settings = make_target().settings
+
+    usage_graph_worker.usage_graph_document(settings)
+    second = usage_graph_worker.usage_graph_document(settings)
+
+    assert len(calls) == 2
+    assert second["graph"]["metric"] == "tokens"
+
+
+def test_usage_graph_document_rescans_when_the_request_changes(
+    monkeypatch, tmp_path
+):
+    _fresh_cache(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        usage_graph_worker,
+        "_build_payload",
+        lambda settings, t3_policy=None: (calls.append(1) or _document_payload(settings)),
+    )
+    settings = make_target().settings
+
+    usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings, days=30)
+
+    assert len(calls) == 2
+
+
+def test_usage_graph_document_survives_a_corrupt_cache(monkeypatch, tmp_path):
+    cache_file = tmp_path / "usage-graph-doc-cache.json"
+    cache_file.write_text("{not json")
+    _fresh_cache(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        usage_graph_worker,
+        "_build_payload",
+        lambda settings, t3_policy=None: (calls.append(1) or _document_payload(settings)),
+    )
+
+    document = usage_graph_worker.usage_graph_document(make_target().settings)
+
+    assert calls == [1]
+    assert document["graph"]["days"] == 7
+    # The corrupt file was replaced by a readable one.
+    json.loads(cache_file.read_text())
+
+
+def test_tree_fingerprint_tracks_append_delete_and_replacement(tmp_path):
+    root = tmp_path / "projects"
+    root.mkdir()
+    transcript = root / "a.jsonl"
+    transcript.write_text('{"one":1}\n')
+
+    first = usage_graph_worker._tree_fingerprint(root)
+    assert first["files"] == 1
+
+    transcript.write_text('{"one":1}\n{"two":2}\n')
+    grown = usage_graph_worker._tree_fingerprint(root)
+    assert grown != first
+    assert grown["bytes"] > first["bytes"]
+
+    transcript.unlink()
+    gone = usage_graph_worker._tree_fingerprint(root)
+    assert gone["files"] == 0
+    assert gone != grown
+
+    assert usage_graph_worker._tree_fingerprint(tmp_path / "absent")["missing"]
+    assert usage_graph_worker._file_fingerprint(tmp_path / "absent.jsonl")["missing"]
+
+
+def test_refresh_warms_the_document_cache_for_identical_settings(
+    synchronous_worker, monkeypatch
+):
+    """A settings-pane scan doubles as the first Overview warm: after
+    ``refresh_usage_graph`` builds, a ``usage_graph_document`` request
+    with the same resolved settings must not pay the scan again."""
+    calls = []
+    monkeypatch.setattr(
+        usage_graph_worker,
+        "_build_payload",
+        lambda settings, t3_policy=None: (
+            calls.append(1) or _document_payload(settings)),
+    )
+    target = make_target()
+
+    usage_graph_worker.refresh_usage_graph(target)
+    document = usage_graph_worker.usage_graph_document(target.settings)
+
+    assert calls == [1]
+    assert document["graph"]["series"] == [
+        {"provider_id": "claude", "values": [100, 0]}
+    ]
+    assert document["summary"] == "Last 7 days: Claude 100 · 2 sessions"

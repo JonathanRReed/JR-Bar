@@ -667,4 +667,161 @@ enum CartoonFish {
             break
         }
     }
+
+    // MARK: Accessories
+
+    /// A purchased accessory drawn in the second wearable slot (docs/
+    /// TOYS.md): eyewear anchors on the `Art`'s eye, headwear on its
+    /// `hatAnchor` (the view skips a hat while headwear wins the
+    /// slot), the bow tie sits under the chin and the scarf wraps the
+    /// neck. Same unit space as `drawHat` — the body's flip, pitch and
+    /// squash carry it.
+    static func drawAccessory(_ item: ShopItem, into f: inout GraphicsContext,
+                              art: Art, trail: Double = 0) {
+        switch item {
+        case .sunglasses:
+            // Two dark lenses over the eye with a bridge; the far lens
+            // hides behind the head's roundness.
+            let lens = Path(roundedRect: CGRect(x: art.eye.x - art.eyeR * 1.5,
+                                                y: art.eye.y - art.eyeR * 1.3,
+                                                width: art.eyeR * 3.0,
+                                                height: art.eyeR * 2.4),
+                            cornerRadius: art.eyeR * 0.7)
+            f.fill(lens, with: .color(Color(red: 0.06, green: 0.07, blue: 0.10)
+                                     .opacity(0.92)))
+            f.stroke(lens, with: .color(.black.opacity(0.6)), lineWidth: 0.018)
+            var temple = Path()
+            temple.move(to: CGPoint(x: art.eye.x - art.eyeR * 1.5,
+                                    y: art.eye.y - art.eyeR * 0.4))
+            temple.addLine(to: CGPoint(x: art.eye.x - 0.20,
+                                       y: art.eye.y - art.eyeR * 0.9))
+            f.stroke(temple, with: .color(.black.opacity(0.6)), lineWidth: 0.02)
+            // A glint off the lens.
+            f.fill(Path(ellipseIn: CGRect(x: art.eye.x - art.eyeR * 0.9,
+                                          y: art.eye.y - art.eyeR * 1.0,
+                                          width: art.eyeR * 0.8,
+                                          height: art.eyeR * 0.35)),
+                   with: .color(.white.opacity(0.35)))
+        case .monocle:
+            // A gold ring on the eye, a chain dropping to a pocket.
+            let ring = Path(ellipseIn: CGRect(x: art.eye.x - art.eyeR * 1.7,
+                                              y: art.eye.y - art.eyeR * 1.7,
+                                              width: art.eyeR * 3.4,
+                                              height: art.eyeR * 3.4))
+            f.fill(ring, with: .color(.white.opacity(0.14)))
+            f.stroke(ring, with: .color(Color(red: 0.85, green: 0.70, blue: 0.30)),
+                     lineWidth: 0.028)
+            var chain = Path()
+            chain.move(to: CGPoint(x: art.eye.x + art.eyeR * 1.2,
+                                   y: art.eye.y + art.eyeR * 1.5))
+            chain.addQuadCurve(
+                to: CGPoint(x: art.eye.x - 0.02, y: art.eye.y + 0.30),
+                control: CGPoint(x: art.eye.x + 0.10, y: art.eye.y + 0.26))
+            f.stroke(chain, with: .color(Color(red: 0.75, green: 0.60, blue: 0.26)),
+                     lineWidth: 0.015)
+        case .topHat:
+            let a = art.hatAnchor
+            // Brim, tall crown, band.
+            let brim = Path(roundedRect: CGRect(x: a.x - 0.17, y: a.y - 0.045,
+                                                width: 0.34, height: 0.06),
+                            cornerRadius: 0.03)
+            f.fill(brim, with: .color(Color(red: 0.10, green: 0.10, blue: 0.14)))
+            let crown = Path(roundedRect: CGRect(x: a.x - 0.11, y: a.y - 0.32,
+                                                 width: 0.22, height: 0.30),
+                             cornerRadius: 0.02)
+            f.fill(crown, with: .color(Color(red: 0.12, green: 0.12, blue: 0.17)))
+            f.stroke(crown, with: .color(.black.opacity(0.55)), lineWidth: 0.02)
+            f.fill(Path(CGRect(x: a.x - 0.11, y: a.y - 0.10, width: 0.22, height: 0.05)),
+                   with: .color(Color(red: 0.62, green: 0.16, blue: 0.22)))
+            // The crown's soft sheen.
+            f.fill(Path(CGRect(x: a.x - 0.075, y: a.y - 0.30, width: 0.035, height: 0.26)),
+                   with: .color(.white.opacity(0.10)))
+        case .headphones:
+            let a = art.hatAnchor
+            // A band arcing over the head with a cup on the near ear.
+            var band = Path()
+            band.move(to: CGPoint(x: a.x + 0.10, y: a.y + 0.05))
+            band.addQuadCurve(to: CGPoint(x: a.x - 0.12, y: a.y + 0.02),
+                              control: CGPoint(x: a.x - 0.02, y: a.y - 0.24))
+            f.stroke(band, with: .color(Color(red: 0.16, green: 0.17, blue: 0.22)),
+                     style: StrokeStyle(lineWidth: 0.045, lineCap: .round))
+            f.stroke(band, with: .color(Color(red: 0.30, green: 0.32, blue: 0.40)),
+                     style: StrokeStyle(lineWidth: 0.02, lineCap: .round))
+            let cup = Path(roundedRect: CGRect(x: a.x - 0.16, y: a.y - 0.02,
+                                               width: 0.09, height: 0.16),
+                           cornerRadius: 0.04)
+            f.fill(cup, with: .color(Color(red: 0.14, green: 0.15, blue: 0.20)))
+            f.stroke(cup, with: .color(Color(red: 0.36, green: 0.55, blue: 0.85)),
+                     lineWidth: 0.018)
+        case .bowTie:
+            // Under the chin: two triangles knot-to-cheek.
+            let knot = CGPoint(x: art.mouth.x - 0.10, y: art.mouth.y + 0.10)
+            var bow = Path()
+            bow.move(to: knot)
+            bow.addLine(to: CGPoint(x: knot.x - 0.10, y: knot.y - 0.07))
+            bow.addLine(to: CGPoint(x: knot.x - 0.10, y: knot.y + 0.07))
+            bow.closeSubpath()
+            bow.move(to: knot)
+            bow.addLine(to: CGPoint(x: knot.x + 0.10, y: knot.y - 0.07))
+            bow.addLine(to: CGPoint(x: knot.x + 0.10, y: knot.y + 0.07))
+            bow.closeSubpath()
+            f.fill(bow, with: .color(Color(red: 0.72, green: 0.18, blue: 0.24)))
+            f.stroke(bow, with: .color(Color(red: 0.40, green: 0.08, blue: 0.12)),
+                     lineWidth: 0.018)
+            f.fill(Path(roundedRect: CGRect(x: knot.x - 0.028, y: knot.y - 0.035,
+                                            width: 0.056, height: 0.07),
+                            cornerRadius: 0.02),
+                   with: .color(Color(red: 0.55, green: 0.12, blue: 0.18)))
+        case .scarf:
+            // A wrap around the neck with a tail trailing behind.
+            let neck = CGPoint(x: 0.16, y: 0.02)
+            var wrap = Path()
+            wrap.move(to: CGPoint(x: neck.x - 0.05, y: neck.y - 0.22))
+            wrap.addQuadCurve(to: CGPoint(x: neck.x - 0.02, y: neck.y + 0.24),
+                              control: CGPoint(x: neck.x - 0.13, y: neck.y + 0.02))
+            f.stroke(wrap, with: .color(Color(red: 0.80, green: 0.30, blue: 0.14)),
+                     style: StrokeStyle(lineWidth: 0.10, lineCap: .round))
+            // The trailing end, lifted by the swim.
+            var tail = Path()
+            tail.move(to: CGPoint(x: neck.x - 0.04, y: neck.y + 0.12))
+            tail.addQuadCurve(
+                to: CGPoint(x: neck.x - 0.34, y: neck.y + 0.16 - trail * 0.10),
+                control: CGPoint(x: neck.x - 0.18, y: neck.y + 0.20 - trail * 0.06))
+            f.stroke(tail, with: .color(Color(red: 0.80, green: 0.30, blue: 0.14)),
+                     style: StrokeStyle(lineWidth: 0.08, lineCap: .round))
+            // Fringe.
+            for k in 0..<3 {
+                var fr = Path()
+                let fx = neck.x - 0.34
+                let fy = neck.y + 0.16 - trail * 0.10
+                fr.move(to: CGPoint(x: fx, y: fy))
+                fr.addLine(to: CGPoint(x: fx - 0.05, y: fy + Double(k - 1) * 0.035))
+                f.stroke(fr, with: .color(Color(red: 0.55, green: 0.16, blue: 0.08)),
+                         lineWidth: 0.015)
+            }
+        case .tinyLaptop:
+            // A clamshell under the pectoral fin, its screen glowing.
+            var lap = f
+            lap.translateBy(x: 0.16, y: 0.16)
+            lap.rotate(by: .radians(-0.25))
+            let base = Path(roundedRect: CGRect(x: -0.09, y: 0, width: 0.20, height: 0.05),
+                            cornerRadius: 0.015)
+            lap.fill(base, with: .color(Color(red: 0.55, green: 0.57, blue: 0.62)))
+            var screen = lap
+            screen.blendMode = .plusLighter
+            screen.fill(Path(roundedRect: CGRect(x: -0.09, y: -0.13, width: 0.17, height: 0.13),
+                             cornerRadius: 0.015),
+                        with: .linearGradient(
+                            Gradient(colors: [Color(red: 0.55, green: 0.85, blue: 0.95),
+                                              Color(red: 0.30, green: 0.55, blue: 0.80)]),
+                            startPoint: CGPoint(x: 0, y: -0.13),
+                            endPoint: CGPoint(x: 0, y: 0)))
+            lap.stroke(Path(roundedRect: CGRect(x: -0.09, y: -0.13, width: 0.17, height: 0.13),
+                            cornerRadius: 0.015),
+                       with: .color(Color(red: 0.35, green: 0.37, blue: 0.42)),
+                       lineWidth: 0.015)
+        default:
+            break
+        }
+    }
 }

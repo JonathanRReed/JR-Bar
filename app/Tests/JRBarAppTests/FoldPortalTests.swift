@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import JRBarCore
 import Testing
 @testable import JRBarApp
 
@@ -106,12 +107,14 @@ struct FoldPortalTests {
         shown = chase.tick(target: 0.9, dt: 1.0 / 60)
         #expect(shown == 0.9)
         #expect(chase.atRest)
-        // Even mid-unwind, a re-close snaps to the target at once.
+        // Even mid-unwind, a re-close snaps to the target at once —
+        // the slew unwind sits higher than the old damped one did at
+        // this point, so the re-close target is chosen above it.
         _ = chase.tick(target: 0, dt: 1.0 / 60)
         _ = chase.tick(target: 0, dt: 0.2)
         #expect(chase.value < 0.9 && !chase.atRest, "mid-unwind now")
-        shown = chase.tick(target: 0.5, dt: 1.0 / 60)
-        #expect(shown == 0.5)
+        shown = chase.tick(target: 0.8, dt: 1.0 / 60)
+        #expect(shown == 0.8)
         #expect(chase.atRest)
     }
 
@@ -193,6 +196,68 @@ struct FoldPortalTests {
         #expect(chase.atRest && chase.value == 0.4, "a parked chase holds its plant")
     }
 
+    // MARK: MoveAnchor
+
+    @Test("the first sample seats the anchor; moving is the deviation off it")
+    func anchorPrime() {
+        var anchor = MoveAnchor()
+        #expect(anchor.anchor == nil)
+        #expect(!anchor.moving(90), "unanchored is not a move")
+        anchor.feed(110, at: 0)
+        #expect(anchor.anchor == 110)
+        #expect(!anchor.moving(110.5), "inside the deadband is still")
+        #expect(anchor.moving(108), "closing past it is the first move")
+        #expect(anchor.moving(113), "opening counts too — the gate stays armed")
+    }
+
+    @Test("still in the flat zone for the settle window re-seats the anchor")
+    func anchorSettles() {
+        var anchor = MoveAnchor()
+        anchor.feed(110, at: 0)
+        // The lid opens past the anchor and rests at 130: inside the
+        // settle window the anchor holds, past it the rest spot wins.
+        anchor.feed(130, at: 0.1)
+        #expect(anchor.anchor == 110, "moving — the anchor holds")
+        anchor.feed(130, at: 0.45)
+        #expect(anchor.anchor == 110, "0.35 s of stillness is not yet settled")
+        anchor.feed(130, at: 0.55)
+        #expect(anchor.anchor == 130, "0.4 s parked is the new rest")
+        // Sensor wobble inside the tolerance doesn't reset the clock.
+        anchor.feed(130.8, at: 0.6)
+        anchor.feed(130.4, at: 0.7)
+        #expect(anchor.anchor == 130 || anchor.anchor == 130.8
+                || anchor.anchor == 130.4,
+                "wobble stays in the flat zone: \(String(describing: anchor.anchor))")
+    }
+
+    @Test("a live fold freezes the anchor — parked mid-fold never re-seats")
+    func anchorFrozenInFlight() {
+        var anchor = MoveAnchor()
+        anchor.feed(110, at: 0)
+        // Close 20° and hold for seconds: the anchor stays at 110 —
+        // re-anchoring here would collapse a held fold.
+        for i in 1...20 {
+            anchor.feed(90, at: Double(i) * 0.1)
+            #expect(anchor.anchor == 110, "parked mid-fold at t=\(Double(i) * 0.1)")
+        }
+        #expect(anchor.moving(90), "a held fold counts as moving — the streams stay")
+        // Open back through the anchor and rest at 120: after the
+        // settle window the new rest spot becomes the reference.
+        anchor.feed(120, at: 2.1)
+        anchor.feed(120, at: 2.6)
+        #expect(anchor.anchor == 120, "the opened rest spot re-seats")
+    }
+
+    @Test("the dwell pause re-seats the anchor at the parked angle")
+    func anchorReseat() {
+        var anchor = MoveAnchor()
+        anchor.feed(110, at: 0)
+        anchor.feed(80, at: 0.1)
+        anchor.reseat(80, at: 2.0)
+        #expect(anchor.anchor == 80)
+        #expect(!anchor.moving(80.5), "the parked angle is the new rest")
+    }
+
     // MARK: FoldArming
 
     @Test("streams exist only inside the arming band and its cooldown")
@@ -242,6 +307,105 @@ struct FoldPortalTests {
         #expect(out.foldGate, "still inside hysteresis")
         out = arming.update(angle: 83.2, activation: 82, closed: false, now: 0.3)
         #expect(!out.foldGate, "past activation + 1° the gate shuts")
+    }
+
+    @Test("movement mode: still → armed on move → disarmed after cooldown → re-arm")
+    func armingMovement() {
+        var arming = FoldArming()
+        // Parked at the anchor: nothing runs — the idle-power floor.
+        var out = arming.updateMovement(moving: false, closed: false, now: 0)
+        #expect(!out.capture && !out.foldGate && arming.phase == .idle)
+        // The first move off the anchor arms both streams and opens
+        // the gate in the same pass — the capture warm-up starts here.
+        out = arming.updateMovement(moving: true, closed: false, now: 0.1)
+        #expect(out.capture && out.foldGate && arming.phase == .armed)
+        // A held fold keeps reporting "moving" (the deviation from the
+        // anchor persists), so parking mid-fold never cools the streams.
+        out = arming.updateMovement(moving: true, closed: false, now: 1.0)
+        #expect(out.capture && arming.phase == .armed)
+        // Back at rest (unfolded home, anchor re-seated): the cooldown
+        // starts, the gate stays open through it.
+        out = arming.updateMovement(moving: false, closed: false, now: 1.1)
+        #expect(out.capture && arming.phase == .cooling(until: 1.1 + arming.cooldown))
+        #expect(out.cooldownEndsAt == 1.1 + arming.cooldown)
+        #expect(out.foldGate, "a cooling fold stays drawable")
+        // A move during cooldown re-arms without a restart.
+        out = arming.updateMovement(moving: true, closed: false, now: 1.4)
+        #expect(out.capture && arming.phase == .armed)
+        // Still past the cooldown's end: the streams die — both
+        // SCStreams stop and the poll idles at 10 Hz.
+        _ = arming.updateMovement(moving: false, closed: false, now: 1.5)
+        out = arming.updateMovement(moving: false, closed: false, now: 4.0)
+        #expect(!out.capture && !out.foldGate && arming.phase == .idle)
+        // The next move re-arms from scratch.
+        out = arming.updateMovement(moving: true, closed: false, now: 4.1)
+        #expect(out.capture && arming.phase == .armed)
+        // And a full close kills it at once, mid-move or not.
+        out = arming.updateMovement(moving: true, closed: true, now: 4.2)
+        #expect(!out.capture && !out.foldGate && arming.phase == .idle)
+    }
+
+    @Test("the same angle draws the same image — opening retraces closing exactly")
+    func retracePalindrome() {
+        // The toy's own chain: sensor angle → tracker glide → delta →
+        // chase → the shader's image params (opacity and dissolve ride
+        // the displayed delta). Feed the symmetric 110 → 60 → 110 path
+        // and let each held angle settle; the image at each angle must
+        // be a palindrome — the same angle, the same picture.
+        var tracker = SlewTracker()
+        var chase = DeltaChase()
+        let dt = 1.0 / 120
+        tracker.feed(110)
+        func image(at angle: Double) -> (Double, Double, Double) {
+            tracker.feed(angle)
+            var shown = 0.0
+            for _ in 0..<600 {
+                tracker.tick(dt: dt)
+                let target = FoldMath.deltaRadians(
+                    angle: tracker.angle, reference: 110)
+                shown = chase.tick(target: target, dt: dt)
+                if tracker.atRest && chase.atRest { break }
+            }
+            return (shown, FoldPortalModel.opacity(delta: shown),
+                    FoldPortalModel.dissolve(delta: shown))
+        }
+        var series: [(Double, Double, Double)] = []
+        for a in stride(from: 110.0, through: 60, by: -10) {
+            series.append(image(at: a))
+        }
+        for a in stride(from: 70.0, through: 110, by: 10) {
+            series.append(image(at: a))
+        }
+        for i in 0..<series.count {
+            let j = series.count - 1 - i
+            #expect(abs(series[i].0 - series[j].0) < 1e-3,
+                    "delta at index \(i) vs \(j): \(series[i].0) vs \(series[j].0)")
+            #expect(abs(series[i].1 - series[j].1) < 1e-3,
+                    "opacity differs at the mirrored angle")
+            #expect(abs(series[i].2 - series[j].2) < 1e-3,
+                    "dissolve differs at the mirrored angle")
+        }
+        // The transient the old damped unwind lost: during a real
+        // opening the displayed delta sits on the target every frame —
+        // the slew outruns the fastest lid the tracker can draw, so
+        // mid-flight angles draw the same image too.
+        var tracker2 = SlewTracker()
+        var chase2 = DeltaChase()
+        tracker2.feed(110)
+        tracker2.feed(60)
+        for _ in 0..<300 { tracker2.tick(dt: dt) }
+        _ = chase2.tick(target: FoldMath.deltaRadians(
+            angle: tracker2.angle, reference: 110), dt: dt)
+        tracker2.feed(110)
+        for _ in 0..<600 {
+            tracker2.tick(dt: dt)
+            let target = FoldMath.deltaRadians(
+                angle: tracker2.angle, reference: 110)
+            _ = chase2.tick(target: target, dt: dt)
+            #expect(abs(chase2.value - target) < 1e-3,
+                    "the opening path must retrace the closing one")
+            if tracker2.atRest && chase2.atRest { break }
+        }
     }
 
     // MARK: PortalDepth

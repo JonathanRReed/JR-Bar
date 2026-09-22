@@ -49,7 +49,8 @@ def test_days_and_hours_cover_the_range_and_dedupe_records__and_2_more() -> None
         "output_per_mtok": 50.0,
         "cache_read_per_mtok": 1.0,
         "as_of": usage_stats.PRICING_TABLE_AS_OF,
-        "approximate": True,
+        "table_version": usage_stats.PRICING_TABLE_VERSION,
+        "approximate": False,
         "currency": "USD",
         "model": "fable",
         "source": "table",
@@ -72,8 +73,8 @@ def test_days_and_hours_cover_the_range_and_dedupe_records__and_2_more() -> None
         [_record("claude", "mystery-9", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="u")],
         provider="claude", range_name="90d", now=NOW.timestamp(),
     )
-    # Sonnet's rate stands in: 100k * $3 + 10k * $15 per MTok.
-    assert document["days"][-1]["cost_usd"] == pytest.approx((100_000 * 3.0 + 10_000 * 15.0) / 1e6, abs=1e-4)
+    # Sonnet's rate stands in: 100k * $2 + 10k * $10 per MTok.
+    assert document["days"][-1]["cost_usd"] == pytest.approx((100_000 * 2.0 + 10_000 * 10.0) / 1e6, abs=1e-4)
     assert document["pricing"]["model"] == "sonnet"
     assert document["pricing"]["source"] == "reference" and document["pricing"]["estimated"] is True
     assert document["estimated"] is True and document["estimated_records"] == 1
@@ -123,9 +124,20 @@ def test_codex_records_are_priced_at_the_configured_default_model(tmp_path) -> N
     assert known["pricing"]["model"] == "gpt-5.6-luna" and known["pricing"]["source"] == "codex_default"
     assert known["pricing"]["estimated"] is False and known["estimated"] is False
 
-    unknown = history.usage_history_document(
+    # A default the table now knows prices from its own row: gpt-6-astra
+    # joined the table in rates-v3, so this is a codex_default quote, not
+    # the reference stand-in it was under rates-v2.
+    known_default = history.usage_history_document(
         [_record("codex", "codex", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="k")],
         provider="codex", range_name="7d", now=NOW.timestamp(), codex_default_model="gpt-6-astra",
+    )
+    assert known_default["days"][-1]["cost_usd"] == pytest.approx((100_000 * 10.0 + 10_000 * 50.0) / 1e6, abs=1e-4)
+    assert known_default["pricing"]["model"] == "gpt-6-astra" and known_default["pricing"]["source"] == "codex_default"
+    assert known_default["pricing"]["estimated"] is False and known_default["estimated"] is False
+
+    unknown = history.usage_history_document(
+        [_record("codex", "codex", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="k")],
+        provider="codex", range_name="7d", now=NOW.timestamp(), codex_default_model="gpt-7-zeta",
     )
     assert unknown["days"][-1]["cost_usd"] == pytest.approx((100_000 * 4.0 + 10_000 * 20.0) / 1e6, abs=1e-4)
     assert unknown["pricing"] == {

@@ -84,11 +84,11 @@ enum MenuBarItemLister {
     }
 
     /// One raw window-info dict → an item, or nil when it is not one of
-    /// the menu bar's. `row` is the menu bar strip in Quartz
-    /// coordinates; an item only needs to overlap the row's band —
+    /// the menu bar's. `rows` are the displays' bar strips in Quartz
+    /// coordinates; an item only needs to overlap a row's band —
     /// items pushed off the screen edge horizontally still report in,
     /// which is how a hidden run keeps its identity.
-    nonisolated static func item(from info: [String: Any], ownPID: pid_t, row: CGRect) -> MenuBarItem? {
+    nonisolated static func item(from info: [String: Any], ownPID: pid_t, rows: [CGRect]) -> MenuBarItem? {
         guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == statusWindowLayer else { return nil }
         guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
               pid != ownPID else { return nil }
@@ -97,7 +97,8 @@ enum MenuBarItemLister {
         guard let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
               let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
               !bounds.isEmpty, bounds.width >= minItemWidth else { return nil }
-        guard bounds.minY < row.maxY, bounds.maxY > row.minY else { return nil }
+        guard rows.contains(where: { bounds.minY < $0.maxY && bounds.maxY > $0.minY })
+        else { return nil }
         let title = (info[kCGWindowName as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let windowID = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
         return MenuBarItem(id: "", ownerPID: pid, ownerName: ownerName,
@@ -107,8 +108,8 @@ enum MenuBarItemLister {
     /// Window-info dicts → the items, sorted left to right, identities
     /// assigned: `ownerName`, `ownerName·title` when the window has one,
     /// and a `#n` ordinal only when the same base fields more than one.
-    nonisolated static func items(from infos: [[String: Any]], ownPID: pid_t, row: CGRect) -> [MenuBarItem] {
-        var items = infos.compactMap { item(from: $0, ownPID: ownPID, row: row) }
+    nonisolated static func items(from infos: [[String: Any]], ownPID: pid_t, rows: [CGRect]) -> [MenuBarItem] {
+        var items = infos.compactMap { item(from: $0, ownPID: ownPID, rows: rows) }
         items.sort {
             $0.bounds.minX == $1.bounds.minX ? $0.windowID < $1.windowID
                                              : $0.bounds.minX < $1.bounds.minX
@@ -140,6 +141,25 @@ enum MenuBarItemLister {
         return item.ownerName
     }
 
+    /// The window layer pop-up menus draw on — a status item's open
+    /// menu is one of these, owned by the item's app.
+    nonisolated static var menuWindowLayer: Int {
+        Int(CGWindowLevelForKey(.popUpMenuWindow))
+    }
+
+    /// Whether any of `pids` owns a menu-layer window — a status item's
+    /// menu currently open. A reveal must not fold the run out from
+    /// under a menu the person is reading.
+    nonisolated static func menuOpen(ownerPIDs: Set<pid_t>,
+                                     infos: [[String: Any]]) -> Bool {
+        infos.contains { info in
+            guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == menuWindowLayer,
+                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+            else { return false }
+            return ownerPIDs.contains(pid)
+        }
+    }
+
     /// Every layer-25 window's frame in the row, minus our own. The
     /// empty-space click's hit test asks this, not `items`: a click on
     /// the clock is a click on an item. Our own windows are excluded
@@ -148,7 +168,7 @@ enum MenuBarItemLister {
     /// on our chevron is an own-app event the global monitor never
     /// sees anyway.
     nonisolated static func rowItemBounds(from infos: [[String: Any]], ownPID: pid_t,
-                                          row: CGRect) -> [CGRect] {
+                                          rows: [CGRect]) -> [CGRect] {
         infos.compactMap { info in
             guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == statusWindowLayer,
                   let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
@@ -156,7 +176,8 @@ enum MenuBarItemLister {
                   let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
                   let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
                   !bounds.isEmpty, bounds.width >= minItemWidth,
-                  bounds.minY < row.maxY, bounds.maxY > row.minY else { return nil }
+                  rows.contains(where: { bounds.minY < $0.maxY && bounds.maxY > $0.minY })
+            else { return nil }
             return bounds
         }
     }
@@ -170,6 +191,33 @@ enum MenuBarItemLister {
         let depth = max(NSStatusBar.system.thickness,
                         NSScreen.main.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0)
         return CGRect(x: main.minX, y: main.minY, width: main.width, height: max(depth, 1))
+    }
+
+    /// Every display's menu bar row — each screen carries its own strip
+    /// in Quartz space, and an extras item reports the frame on the bar
+    /// it actually stands on. A single main-display row misclassifies a
+    /// secondary-bar item as parked, which is how it would read to a
+    /// conceal sweep. Not a union rect: the dead space between two
+    /// displays' bars must not count as on-row.
+    @MainActor
+    static func menuBarRows() -> [CGRect] {
+        var rows: [CGRect] = []
+        for screen in NSScreen.screens {
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                    as? NSNumber else { continue }
+            let bounds = CGDisplayBounds(CGDirectDisplayID(number.uint32Value))
+            let depth = max(NSStatusBar.system.thickness,
+                            ScreenBarGeometry.notchDepth(of: screen))
+            rows.append(CGRect(x: bounds.minX, y: bounds.minY,
+                               width: bounds.width, height: max(depth, 1)))
+        }
+        return rows.isEmpty ? [menuBarRow()] : rows
+    }
+
+    /// Does `bounds` stand on any display's menu bar row.
+    @MainActor
+    static func onAnyMenuBarRow(_ bounds: CGRect) -> Bool {
+        menuBarRows().contains { $0.intersects(bounds) }
     }
 
     /// One window-list snapshot shared by `list` and `rowItemFrames`.
@@ -258,7 +306,7 @@ enum MenuBarItemLister {
         if axScanInFlight { return axItems }
         axScanInFlight = true
         defer { axScanInFlight = false }
-        let row = menuBarRow()
+        let rows = menuBarRows()
         let now = Date()
         let walkAll = full || axOwnerPIDs.isEmpty
             || now.timeIntervalSince(lastFullScanAt) >= fullScanInterval
@@ -273,7 +321,7 @@ enum MenuBarItemLister {
         }
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let scanned = await Task.detached {
-            (MenuBarAX.items(targets: targets, row: row),
+            (MenuBarAX.items(targets: targets, rows: rows),
              frontPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) })
         }.value
         axItems = scanned.0
@@ -293,7 +341,7 @@ enum MenuBarItemLister {
     static func list() -> [MenuBarItem] {
         if axTrusted() { return axItems }
         return items(from: windowInfos(), ownPID: ProcessInfo.processInfo.processIdentifier,
-                     row: menuBarRow())
+                     rows: menuBarRows())
     }
 
 }

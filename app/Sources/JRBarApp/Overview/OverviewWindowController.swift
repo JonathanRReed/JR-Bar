@@ -53,14 +53,73 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.window else { return event }
-            // Typing in the search field keeps its arrows and Return.
+            // Typing in the search field keeps its arrows, Return and
+            // Escape — the map below only fires off the field.
             if event.window?.firstResponder is NSTextView { return event }
+            // A focused table (roster Table or sidebar List) owns its
+            // arrows natively — scroll-to-selection and Shift-extend come
+            // from AppKit, not this monitor. Only non-arrow keys fall
+            // through to the roster shortcuts.
+            let tableOwnsKeys = event.window?.firstResponder is NSTableView
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // ⌘-shortcuts first: preset picks, refresh, export, compare,
+            // first/last row.
+            if flags.contains(.command) {
+                if flags.contains(.shift), event.keyCode == 8 {          // ⇧⌘C
+                    self.store.compareSelected()
+                    return nil
+                }
+                switch event.keyCode {
+                case 18, 19, 20, 21, 23, 22:                            // ⌘1…⌘6
+                    let presets = OverviewPreset.sidebarPresets
+                    let index = [18, 19, 20, 21, 23, 22].firstIndex(of: Int(event.keyCode)) ?? 0
+                    if index < presets.count {
+                        self.store.pane = .roster
+                        self.store.workerFilter = nil
+                        self.store.filter = OverviewFilter(preset: presets[index])
+                        self.store.activeSavedFilter = nil
+                    }
+                    return nil
+                case 15:                                                // ⌘R
+                    if self.store.pane == .usage {
+                        Task { await self.store.loadGraph() }
+                    } else {
+                        Task { await self.store.load(userInitiated: true) }
+                    }
+                    return nil
+                case 14:                                                // ⌘E
+                    Task { await self.store.prepareExport() }
+                    return nil
+                case 126:                                               // ⌘↑ first row
+                    self.store.selectEdge(first: true)
+                    return nil
+                case 125:                                               // ⌘↓ last row
+                    self.store.selectEdge(first: false)
+                    return nil
+                default: return event
+                }
+            }
+            // Roster-only keys: on the usage pane there is no visible
+            // selection to move, and Return must not fire openSelected
+            // against a roster row the user cannot see.
+            if tableOwnsKeys || self.store.pane != .roster { return event }
             switch event.keyCode {
             case 125: self.store.moveSelection(by: 1); return nil   // Down
             case 126: self.store.moveSelection(by: -1); return nil  // Up
             case 36, 76:                                            // Return / keypad Enter
-                guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
+                guard flags.isEmpty else { return event }
                 self.store.openSelected()
+                return nil
+            case 53:                                                // Escape
+                // First press drops the selection; a second clears the
+                // search — the field itself keeps its own Esc.
+                if !self.store.selectedIDs.isEmpty {
+                    self.store.selectionChanged(to: [])
+                } else if !self.store.search.isEmpty {
+                    self.store.search = ""
+                } else {
+                    return event
+                }
                 return nil
             default: return event
             }

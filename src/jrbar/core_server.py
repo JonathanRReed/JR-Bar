@@ -383,6 +383,15 @@ class CoreServer:
             # Journal and wire share one critical section, so the journal
             # IS the wire's order: a cursor's suffix replays exactly what
             # the socket fanned out, nothing dropped in between.
+            if self._stream_id is None:
+                # No stream yet -- a ``None:`` cursor would enter the
+                # journal and be served under the future stream's id,
+                # poisoning a resuming client's position. Pre-start
+                # events are ephemeral: fan out (no clients yet) but do
+                # not journal.
+                self._enqueue_locked(body)
+                self._flush_condition.notify_all()
+                return body
             body["cursor"] = f"{self._stream_id}:{body['id']}"
             self._journal.append(body)
             while len(self._journal) > MAX_JOURNAL_EVENTS:
@@ -561,7 +570,8 @@ class CoreServer:
                     return
             try:
                 connection = _accept_one(server, wakeup)
-            except OSError:
+            except OSError as exc:
+                self._log(f"core accept loop exited: {exc}")
                 return
             if connection is None:
                 continue
@@ -591,13 +601,24 @@ class CoreServer:
                 self._client_counter += 1
                 client = _Client(connection, self._client_counter)
                 self._clients.append(client)
-            threading.Thread(
-                target=self._serve_client,
-                args=(client,),
-                name=f"JRBarCoreClient{client.index}",
-                daemon=True,
-            ).start()
-            self._notify_client_change()
+            try:
+                threading.Thread(
+                    target=self._serve_client,
+                    args=(client,),
+                    name=f"JRBarCoreClient{client.index}",
+                    daemon=True,
+                ).start()
+            except Exception as exc:  # pragma: no cover - resource exhaustion
+                # A failed spawn must not kill the accept loop: the loop
+                # dying while the listener stays bound wedges every future
+                # connect in the kernel backlog with no error to the peer.
+                self._log(f"core could not spawn client thread: {exc}")
+                self._drop_clients([client])
+                continue
+            try:
+                self._notify_client_change()
+            except Exception as exc:  # pragma: no cover - defensive
+                self._log(f"core client-change hook failed: {exc}")
 
     def _serve_client(self, client: _Client) -> None:
         try:

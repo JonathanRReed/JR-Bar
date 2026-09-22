@@ -58,10 +58,22 @@ final class NotchHUD {
         mediaKeys.onLevel = { [weak self] key, value, muted in
             self?.showMeter(for: key, value: value, muted: muted)
         }
-        mediaKeys.start()
+        // The tap's license is the capsule's — installed only while the
+        // notch wants capsules, so a disabled notch leaves no event tap
+        // sitting on the session's system-defined stream.
+        syncMediaTap()
         announcements.isAllowed = { [weak self] in self?.alertsAllowed() ?? true }
         announcements.announce = { [weak self] text, symbol in self?.show(text, symbol: symbol) }
         announcements.start()
+    }
+
+    /// The tap exists only while the notch can draw capsules —
+    /// `mediaHUDAllowed` is the union gate (the consuming tap's
+    /// `replaceHUDWanted` implies it). Called at init, once more after
+    /// the delegate wires the real gate, and on every notch-settings
+    /// reconcile so a flip takes without waiting for the next press.
+    func syncMediaTap() {
+        if mediaHUDAllowed() { mediaKeys.start() } else { mediaKeys.stop() }
     }
 
     private func tick() {
@@ -413,7 +425,7 @@ struct NotchHUDView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .fixedSize()
-        } else if let buddy = model.buddy, buddy.isOn {
+        } else if let buddy = model.buddy, buddy.isOn, !buddy.isFree {
             // The docked slot is the status dot — compact beside the
             // notch. Its name tag exists only under the pointer; the
             // space stays reserved so the dot never jumps.

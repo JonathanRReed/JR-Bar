@@ -6,7 +6,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,7 +19,9 @@ from .alcove_observation import (
     latest_alcove_status,
     project_alcove_confidence,
 )
-from .app_bundle import APP_EXECUTABLE_NAME, running_inside_bundle
+from .app_bundle import containing_app_bundle, running_inside_bundle
+from .device_identity import DeviceKind
+from .device_inventory import mounted_device_kind
 from .device_writer import discover_devices
 from .private_export import (
     PUBLIC_EXPORT_ERROR_MESSAGE,
@@ -41,11 +42,14 @@ from .trusted_tools import trusted_system_tool
 
 DOCTOR_DOCUMENT: Final = "jrbar-doctor"
 # 2: adds alcove_follow_state; 3: adds event_intake_freshness; 4: expands
-# Alcove following to its seven semantic confidence states. The
-# document gains rows, so anything holding an older export is reading a
-# different shape -- version it rather than let a consumer silently miss
-# a check that is now reported.
-DOCTOR_VERSION: Final = 4
+# Alcove following to its seven semantic confidence states; 5: adds
+# not_applicable to launch_agent_state for the bundled embedded daemon,
+# where the app supervises the core and a missing LaunchAgent plist is
+# the design rather than a fault. The document gains rows and codes, so
+# anything holding an older export is reading a different shape --
+# version it rather than let a consumer silently miss a check that is
+# now reported.
+DOCTOR_VERSION: Final = 5
 MAX_DOCTOR_EXPORT_BYTES: Final = 64 * 1024
 PUBLIC_COLLECTION_ERROR_MESSAGE: Final = "Diagnostics could not be collected."
 
@@ -171,6 +175,7 @@ DIAGNOSTIC_MANIFEST: Final = DiagnosticManifest(
             (
                 DiagnosticCode.INSTALLED,
                 DiagnosticCode.MISSING,
+                DiagnosticCode.NOT_APPLICABLE,
                 DiagnosticCode.UNSAFE,
                 DiagnosticCode.UNAVAILABLE,
             ),
@@ -363,22 +368,14 @@ def _package_import_root_probe() -> DiagnosticFinding:
 
 
 def _signature_state_probe() -> DiagnosticFinding:
-    if not running_inside_bundle():
+    bundle = containing_app_bundle()
+    if bundle is None:
         return _finding(
             DiagnosticCheck.SIGNATURE_STATE,
             DiagnosticCode.NOT_APPLICABLE,
             0,
             1,
         )
-    executable = Path(sys.executable or "")
-    if executable.name != APP_EXECUTABLE_NAME or len(executable.parents) < 3:
-        return _finding(
-            DiagnosticCheck.SIGNATURE_STATE,
-            DiagnosticCode.UNVERIFIED,
-            0,
-            1,
-        )
-    bundle = executable.parents[2]
     completed = subprocess.run(
         [str(trusted_system_tool("codesign")), "--verify", "--strict", str(bundle)],
         stdout=subprocess.DEVNULL,
@@ -400,6 +397,16 @@ def _launch_agent_state_probe() -> DiagnosticFinding:
     try:
         info = path.lstat()
     except FileNotFoundError:
+        if running_inside_bundle():
+            # The bundled core is spawned and supervised by the app
+            # itself; a LaunchAgent plist is only expected when the
+            # daemon runs standalone under launchd.
+            return _finding(
+                DiagnosticCheck.LAUNCH_AGENT_STATE,
+                DiagnosticCode.NOT_APPLICABLE,
+                1,
+                1,
+            )
         return _finding(
             DiagnosticCheck.LAUNCH_AGENT_STATE,
             DiagnosticCode.MISSING,
@@ -545,7 +552,17 @@ def _mounted_device_health_probe() -> DiagnosticFinding:
     elif len(devices) == 1:
         code = DiagnosticCode.CONNECTED
     else:
-        code = DiagnosticCode.AMBIGUOUS
+        # Multiple mounts are only ambiguous when two of them claim the
+        # same role -- a Pro strip beside a Dot is the supported
+        # multi-device layout, not a conflict. The firmware serial in
+        # STATUS.TXT settles the role where the shared "SidePulse" volume
+        # label cannot.
+        kinds = [mounted_device_kind(device.root) for device in devices[:maximum]]
+        code = (
+            DiagnosticCode.AMBIGUOUS
+            if len(kinds) != len(set(kinds)) or DeviceKind.UNKNOWN in kinds
+            else DiagnosticCode.CONNECTED
+        )
     return _finding(
         DiagnosticCheck.MOUNTED_DEVICE_HEALTH,
         code,

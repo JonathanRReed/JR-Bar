@@ -13,6 +13,10 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     private var window: AquariumWindow?
     private var escMonitor: Any?
     private var occlusionObserver: NSObjectProtocol?
+    /// While filled, resigning active restores the window — a
+    /// screenSaver-level tank would otherwise keep covering the display
+    /// after a Cmd-Tab, with its Esc only listening locally.
+    private var resignObserver: NSObjectProtocol?
 
     /// What Fill screen suspended, to put back on Esc.
     private var savedFrame: NSRect?
@@ -69,9 +73,10 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
 
     // MARK: Fill screen
 
-    /// Borderless across the main screen; Esc puts it back.
+    /// Borderless across the window's own screen (the main screen only
+    /// when the window hasn't landed on one yet); Esc puts it back.
     func fillScreen() {
-        guard let window, !filled, let screen = NSScreen.main ?? window.screen else { return }
+        guard let window, !filled, let screen = window.screen ?? NSScreen.main else { return }
         savedFrame = window.frame
         savedLevel = window.level
         savedMask = window.styleMask
@@ -82,6 +87,14 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         installEscMonitor()
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                // The fill only lives while the app is active: a switch
+                // away puts the tank back rather than trapping the
+                // display under a window that can't take keys elsewhere.
+                MainActor.assumeIsolated { self?.restoreScreen() }
+            }
         noteOcclusion()
     }
 
@@ -89,6 +102,10 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
         guard let window, filled else { return }
         filled = false
         removeEscMonitor()
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
         window.styleMask = savedMask
         window.level = savedLevel
         if let savedFrame {
@@ -122,6 +139,10 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         removeEscMonitor()
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
         if let occlusionObserver {
             NotificationCenter.default.removeObserver(occlusionObserver)
             self.occlusionObserver = nil

@@ -7,6 +7,7 @@ import pytest
 from jrbar.animation import read_program
 from jrbar.core_projection import _GLANCE_WHY
 from jrbar.dot_role import (
+    BLACK,
     DEFAULT_DOT_ROLE,
     DOT_LED_COUNT,
     DOT_ROLE_CHOICES,
@@ -20,6 +21,8 @@ from jrbar.dot_role import (
     normalize_dot_role,
     plan_dot_surface,
     shift_program_phase,
+    upsample_program,
+    upsample_segment,
 )
 from jrbar.presentation_compiler import compile_presentation_program
 
@@ -125,7 +128,12 @@ def test_extend_leaves_a_whole_bar_program_alone__and_2_more() -> None:
         f"{index}:#FF9F0A 420ms pulse {index * 180}ms" for index in range(8)
     )
     narrowed = downsample_program(program, source_leds=8)
-    assert narrowed == "0:#FF9F0A 420ms pulse 0ms; 1:#FF9F0A 420ms pulse 720ms"
+    # The merge shortens the line to 1140 ms of the source's 1680; the hold
+    # line after it restores the period so the Dot keeps the strip's clock.
+    assert narrowed == (
+        "0:#FF9F0A 420ms pulse 0ms; 1:#FF9F0A 420ms pulse 720ms\n"
+        "0:#FF9F0A 1:#FF9F0A 540ms none"
+    )
 
 
 
@@ -624,16 +632,17 @@ def _shape(program: str, led_count: int):
 
 
 def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count__and_2_more() -> None:
-    # --- scenario: narrowing_keeps_the_strips_brightness_repeat_and_line_count
+    # --- scenario: narrowing_keeps_the_strips_brightness_repeat_and_loop_span
     for name, program, source_leds in CORPUS:
         """Whatever the strip's clock is, the Dot runs the same one.
 
-        Line for line: the same brightness, the same repeat markers, the same
-        number of paint lines, and no line ever made LONGER. A line may get
-        shorter, and exactly one thing shortens it -- a wave staggered across
-        four source LEDs collapsing into one pulse in one band, which is
-        ``downsample_step``'s documented behaviour and is what the wave looks
-        like on two LEDs.
+        The same brightness, the same repeat markers, and the same total
+        paint-line span: a line may get shorter, and exactly one thing
+        shortens it -- a wave staggered across four source LEDs collapsing
+        into one pulse in one band, which is ``downsample_step``'s documented
+        behaviour and is what the wave looks like on two LEDs. What it
+        shortens is then paid back as a hold line, so a shortened line adds
+        at most one line and the loop's period is the source's, unchanged.
         """
         from jrbar.animation import errors_only, read_program
 
@@ -647,14 +656,18 @@ def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count__and_2_more
         narrow_brightness, narrow_repeats, narrow_lines = _shape(narrowed, DOT_LED_COUNT)
         assert narrow_brightness == source_brightness
         assert narrow_repeats == source_repeats
-        assert len(narrow_lines) == len(source_lines)
-        assert all(
-            narrow <= source for narrow, source in zip(narrow_lines, source_lines)
-        ), f"{name}: {narrow_lines} vs {source_lines}"
+        assert len(source_lines) <= len(narrow_lines) <= 2 * len(source_lines)
+        assert sum(narrow_lines) == sum(source_lines), (
+            f"{name}: loop span {sum(narrow_lines)} != {sum(source_lines)}"
+        )
+        assert max(narrow_lines) <= max(source_lines)
 
     # --- scenario: narrowing_uses_only_easings_the_source_used
     for name, program, source_leds in CORPUS:
         """Easing is how a step FEELS. Narrowing may not invent a feeling.
+
+        The single exception is the hold line's ``none`` -- a snap to the
+        colour the band already shows, which invents no motion at all.
 
         (Durations are checked numerically above -- ``1.6s`` and ``1600ms`` are
         the same instruction spelled two ways, and the renderer picks the cheaper
@@ -666,7 +679,9 @@ def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count__and_2_more
         if narrowed is None:
             return
         pattern = r"\b(?:none|linear|pulse|cosine|ease)\b"
-        assert set(re.findall(pattern, narrowed)) <= set(re.findall(pattern, program))
+        assert set(re.findall(pattern, narrowed)) - {"none"} <= set(
+            re.findall(pattern, program)
+        )
 
     # --- scenario: a_reassert_of_a_narrowed_program_still_addresses_every_led
     """The 240s reassert drops the program's first paint line on purpose.
@@ -683,4 +698,157 @@ def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count__and_2_more
         assert max(unaddressed_leds(variant).values()) == 0
     # And the old shape is exactly what that rule punishes.
     assert max(unaddressed_leds(_steady_state_variant(LIVE_DOT_STRANDED)).values()) > 0
+
+
+# --- the Dot keeps the strip's clock ----------------------------------------
+
+
+def _loop_span_ms(program: str, led_count: int) -> int:
+    """The span of the section that repeats, or of the whole one-shot."""
+    from jrbar.animation import (
+        animation_duration_ms,
+        loop_duration_ms,
+        read_program,
+    )
+
+    animation, _problems = read_program(program, led_count=led_count)
+    loop = loop_duration_ms(animation)
+    return loop if loop is not None else animation_duration_ms(animation)
+
+
+def test_downsample_preserves_line_span_of_a_chase__and_3_more() -> None:
+    # --- scenario: the_live_chases_loop_is_the_strips_1600ms_not_800
+    """The program the Pro was playing when the drift was measured: eight
+    staggered 200 ms pulses, one per LED, so the line spans 1600 ms. The
+    merge alone emitted an 800 ms Dot line and the pair drifted the first
+    lap; the hold line pays the missing span back."""
+    chase = (
+        "brightness 39\n"
+        "#000000 40ms cosine\n"
+        "1:#1B3B6F 200ms pulse 0ms; 2:#1B3B6F 200ms pulse 200ms; "
+        "3:#1B3B6F 200ms pulse 400ms; 4:#1B3B6F 200ms pulse 600ms; "
+        "5:#1B3B6F 200ms pulse 800ms; 6:#1B3B6F 200ms pulse 1000ms; "
+        "7:#1B3B6F 200ms pulse 1200ms; 0:#1B3B6F 200ms pulse 1400ms\n"
+        "repeat"
+    )
+    narrowed = downsample_program(chase, source_leds=8)
+    assert _loop_span_ms(narrowed, DOT_LED_COUNT) == _loop_span_ms(chase, 8) == 1640
+
+    # --- scenario: the_hold_line_paints_every_band_with_a_snap
+    """The hold is a pause, not a motion: both bands named in one segment
+    with ``none`` -- the easing that jumps to its target and holds."""
+    from jrbar.animation import IndexedPaint, PaintStep, read_program
+
+    animation, _problems = read_program(narrowed, led_count=DOT_LED_COUNT)
+    hold = [step for step in animation.steps if type(step) is PaintStep][-1]
+    assert len(hold.segments) == 1
+    segment = hold.segments[0]
+    assert type(segment) is IndexedPaint
+    assert {index for index, _color in segment.assignments} == {0, 1}
+    assert segment.timing.duration_ms == 800
+    assert segment.timing.easing == "none"
+
+    # --- scenario: every_corpus_program_keeps_its_loop_span
+    for name, program, source_leds in CORPUS:
+        narrowed = downsample_program(program, source_leds=source_leds)
+        if narrowed is None:
+            return  # refused outright, which is the other safe answer
+        assert _loop_span_ms(narrowed, DOT_LED_COUNT) == _loop_span_ms(
+            program, source_leds
+        ), name
+
+    # --- scenario: a_shifted_narrowed_program_still_keeps_the_loop_span
+    """Re-anchoring for the measured write skew must not stretch the loop
+    either: the rotated program is the same cycle from another start."""
+    shifted = shift_program_phase(downsample_program(chase, source_leds=8), 12)
+    assert shifted is not None
+    assert _loop_span_ms(shifted, DOT_LED_COUNT) == _loop_span_ms(chase, 8)
+
+
+# --- the other direction: the Screen Bar mirroring a lone Dot ---------------
+
+
+def test_upsample_widens_a_dot_program_for_the_screen_bar__and_3_more() -> None:
+    # --- scenario: a_two_colour_list_becomes_two_bands_of_four
+    """Bar LED j takes dot LED j // 4: the bar compiles at eight, so the
+    Dot's two colours land as two bands of four with the timing intact."""
+    assert upsample_program(
+        "#FF0000 #00FF00 500ms cosine\nrepeat", source_leds=2, led_count=8
+    ) == (
+        "#FF0000 #FF0000 #FF0000 #FF0000 #00FF00 #00FF00 #00FF00 #00FF00 "
+        "500ms cosine\nrepeat"
+    )
+
+    # --- scenario: a_list_short_of_the_source_pads_with_black
+    """The firmware's "past the list goes dark" rule, kept: a one-colour
+    list on the source cannot name the second band, so it pads with black."""
+    from jrbar.animation import ColorList, Timing
+
+    segment = upsample_segment(
+        ColorList(colors=("#FF0000",), timing=Timing(duration_ms=500)),
+        source_leds=2,
+        led_count=8,
+    )
+    assert segment.colors == ("#FF0000",) * 4 + (BLACK,) * 4
+
+    # --- scenario: an_indexed_paint_expands_each_source_led_to_its_band
+    assert upsample_program("0:#FF0000 400ms", source_leds=2, led_count=8) == (
+        "0:#FF0000 1:#FF0000 2:#FF0000 3:#FF0000 400ms"
+    )
+
+    # --- scenario: indices_past_the_source_are_dropped
+    assert upsample_program(
+        "0:#FF0000 1:#00FF00 5:#0000FF 400ms", source_leds=2, led_count=8
+    ) == (
+        "0:#FF0000 1:#FF0000 2:#FF0000 3:#FF0000 "
+        "4:#00FF00 5:#00FF00 6:#00FF00 7:#00FF00 400ms"
+    )
+    # A line naming only out-of-range LEDs takes no time on either device;
+    # with nothing left to play there is nothing to honestly widen.
+    assert upsample_program("5:#0000FF 400ms", source_leds=2, led_count=8) is None
+
+
+
+def test_upsample_passes_directives_through_and_refuses_garbage__and_2_more() -> None:
+    # --- scenario: brightness_roll_repeat_and_comments_pass_through
+    widened = upsample_program(
+        "brightness 128\n// keep me\nroll-left 2s\n#FF0000 #00FF00 500ms\nrepeat 3",
+        source_leds=2,
+        led_count=8,
+    )
+    lines = widened.splitlines()
+    assert lines[0] == "brightness 128"
+    assert lines[1] == "// keep me"
+    assert lines[2] == "roll-left 2s"
+    assert lines[-1] == "repeat 3"
+
+    # --- scenario: a_whole_bar_needs_no_widening
+    program = "#12E3B0 600ms pulse\noff 600ms cosine\nrepeat"
+    assert upsample_program(program, source_leds=2, led_count=8) == program
+
+    # --- scenario: upsample_refuses_a_program_it_cannot_parse
+    assert upsample_program("roll sideways forever", source_leds=2, led_count=8) is None
+    assert upsample_program("", source_leds=2, led_count=8) is None
+    assert upsample_program(None, source_leds=2, led_count=8) is None
+
+
+
+def test_upsample_round_trips_through_downsample() -> None:
+    """Widening then narrowing is lossless: the Dot's band is one source
+    LED, so down-upsample returns exactly what a straight 2->2 pass gives."""
+    saw_dot_program = False
+    for name, program, source_leds in CORPUS:
+        if source_leds != DOT_LED_COUNT:
+            continue
+        saw_dot_program = True
+        widened = upsample_program(program, source_leds=2, led_count=8)
+        assert widened is not None, name
+        # Widening preserves the loop's span too: the bar runs the Dot's
+        # clock, not a stretched or compressed copy of it.
+        assert _loop_span_ms(widened, 8) == _loop_span_ms(program, source_leds), name
+        assert (
+            downsample_program(widened, source_leds=8, led_count=2)
+            == downsample_program(program, source_leds=2, led_count=2)
+        ), name
+    assert saw_dot_program
 

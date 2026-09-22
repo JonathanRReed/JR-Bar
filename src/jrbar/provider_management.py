@@ -51,6 +51,13 @@ CREDENTIAL_ACCOUNTS: dict[str, tuple[str, ...]] = {
 _IMPORT_LEDGER_NAME = "browser-imports.json"
 _IMPORT_ACCOUNT = "token"
 
+#: Preference-option keys safe to publish to the app. Display identifiers
+#: only -- ``csrf_token`` and anything a future provider adds stay inside
+#: the settings store. ``endpoint`` is loopback-validated at write time.
+_PUBLISHABLE_OPTION_KEYS = frozenset(
+    {"organization", "organization_id", "project_id", "endpoint"}
+)
+
 
 class ProviderManagementError(ValueError):
     """A refused provider-management operation; ``code`` goes on the wire."""
@@ -279,10 +286,14 @@ def provider_rows(
                 "supports_local_tokens": descriptor.supports_local_tokens,
                 "supports_quota": descriptor.supports_quota,
                 "source_order": list(descriptor.source_order),
+                # Whitelist, not substring filter: an option named
+                # ``api_password`` or ``session_cookie`` would sail
+                # through the old key/token/secret check. Only known
+                # display-safe fields are published.
                 "options": {
                     key: value
                     for key, value in preference.options
-                    if "key" not in key and "token" not in key and "secret" not in key
+                    if key in _PUBLISHABLE_OPTION_KEYS
                 },
                 "consents": [
                     _consent_row(consent)

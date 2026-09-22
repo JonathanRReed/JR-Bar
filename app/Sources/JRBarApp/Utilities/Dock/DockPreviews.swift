@@ -184,7 +184,8 @@ enum DockThumbnailer {
             guard !isStale() else { return }
             let rows = content.windows.map { (frame: $0.frame, title: $0.title) }
             guard let index = DockEnhanceMath.matchRow(
-                scFrame: scWindow.frame, scTitle: scWindow.title, rows: rows),
+                scFrame: scWindow.frame, scTitle: scWindow.title, rows: rows,
+                scWindowID: scWindow.windowID, rowWindowIDs: content.windows.map(\.windowID)),
                   content.windows[index].thumbnail == nil else { continue }
             // The row's identity, not its index: a card closed while
             // this capture was in flight would shift the rows under it.

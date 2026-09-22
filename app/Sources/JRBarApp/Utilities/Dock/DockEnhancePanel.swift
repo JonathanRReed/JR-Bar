@@ -11,6 +11,37 @@ import UniformTypeIdentifiers
 @MainActor
 @Observable
 final class DockPreviewActions {
+    @ObservationIgnored private weak var content: DockPreviewContent?
+    @ObservationIgnored var isActive: @MainActor () -> Bool = { true }
+
+    init(content: DockPreviewContent) {
+        self.content = content
+    }
+
+    /// Gestures and context menus can outlive the row they captured.
+    /// Resolve its stamped ID before calling any window action, and use
+    /// the current row's state rather than the old rendering snapshot.
+    private func currentWindow(_ snapshot: DockPreviewWindow) -> DockPreviewWindow? {
+        guard isActive() else { return nil }
+        return content?.windows.first { $0.id == snapshot.id }
+    }
+
+    func performWindowAction(
+        _ snapshot: DockPreviewWindow,
+        _ action: (@MainActor (DockPreviewWindow) -> Void)?
+    ) {
+        guard let current = currentWindow(snapshot) else { return }
+        action?(current)
+    }
+
+    func performWindowAction<Value>(
+        _ snapshot: DockPreviewWindow, value: Value,
+        _ action: (@MainActor (DockPreviewWindow, Value) -> Void)?
+    ) {
+        guard let current = currentWindow(snapshot) else { return }
+        action?(current, value)
+    }
+
     /// A window card's click — the controller raises it.
     var onPick: (@MainActor (DockPreviewWindow) -> Void)?
     /// The card's × — close that window.
@@ -61,12 +92,13 @@ final class DockPreviewActions {
 /// without a re-present.
 @MainActor
 final class DockPreviewPanel: NSPanel {
-    let actions = DockPreviewActions()
+    let actions: DockPreviewActions
     static let cornerRadius: CGFloat = 16
 
     private let hosting: NSHostingView<DockPreviewView>
 
     init(content: DockPreviewContent) {
+        actions = DockPreviewActions(content: content)
         hosting = NSHostingView(rootView: DockPreviewView(content: content, actions: actions))
         // The panel is sized from the content's intrinsic size and the
         // hosting view fills the glass — a hosting view left at its
@@ -82,6 +114,7 @@ final class DockPreviewPanel: NSPanel {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 96),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         contentView = glass
+        actions.isActive = { [weak self] in self?.isVisible == true }
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -462,7 +495,7 @@ struct DockPreviewCard: View {
     var body: some View {
         VStack(spacing: 4) {
             ZStack(alignment: .topLeading) {
-                Button { actions.onPick?(window) } label: {
+                Button { actions.performWindowAction(window, actions.onPick) } label: {
                     face
                 }
                 .buttonStyle(.plain)
@@ -472,47 +505,47 @@ struct DockPreviewCard: View {
                 .draggableIfPresent(window.documentURL)
                 // Middle-click the card closes the window — the
                 // DockDoor verb a trackpad can't gesture.
-                .overlay(MiddleClickCatcher { actions.onClose?(window) })
+                .overlay(MiddleClickCatcher { actions.performWindowAction(window, actions.onClose) })
                 // A trackpad flick down on the card minimises it; up
                 // restores — the strip's own horizontal scroll falls
                 // through, the catcher only claims vertical flicks.
                 .overlay(SwipeCatcher { flick in
-                    actions.onSwipeMinimize?(window, flick == .down)
+                    actions.performWindowAction(window, value: flick == .down, actions.onSwipeMinimize)
                 })
                 // Right-click — DockDoor's action menu: the verbs the
                 // hover pills offer plus the tile grid.
                 .contextMenu {
-                    Button("Raise") { actions.onPick?(window) }
+                    Button("Raise") { actions.performWindowAction(window, actions.onPick) }
                     Divider()
                     Button(window.minimized ? "Bring Back" : "Minimize") {
-                        actions.onMinimize?(window)
+                        actions.performWindowAction(window, actions.onMinimize)
                     }
                     if window.fullScreen != nil {
                         Button(window.fullScreen == true ? "Leave Full Screen" : "Full Screen") {
-                            actions.onFullScreen?(window)
+                            actions.performWindowAction(window, actions.onFullScreen)
                         }
                     }
                     Divider()
                     Menu("Tile To") {
                         ForEach(DockTile.allCases, id: \.rawValue) { tile in
-                            Button(tile.title) { actions.onTile?(window, tile) }
+                            Button(tile.title) { actions.performWindowAction(window, value: tile, actions.onTile) }
                         }
                     }
                     Divider()
-                    Button("Close Window") { actions.onClose?(window) }
+                    Button("Close Window") { actions.performWindowAction(window, actions.onClose) }
                 }
                 if hovering {
                     HStack(spacing: 4) {
-                        verb("xmark", help: "Close window") { actions.onClose?(window) }
+                        verb("xmark", help: "Close window") { actions.performWindowAction(window, actions.onClose) }
                         verb(window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
                              help: window.minimized ? "Bring back" : "Minimize") {
-                            actions.onMinimize?(window)
+                            actions.performWindowAction(window, actions.onMinimize)
                         }
                         if let fullScreen = window.fullScreen {
                             verb(fullScreen ? "arrow.down.left.and.arrow.up.right"
                                             : "arrow.up.right.and.arrow.down.left",
                                  help: fullScreen ? "Leave full screen" : "Full screen") {
-                                actions.onFullScreen?(window)
+                                actions.performWindowAction(window, actions.onFullScreen)
                             }
                         }
                     }
@@ -552,7 +585,7 @@ struct DockPreviewCard: View {
             switch phase {
             case .active(let point):
                 if shake.note(x: point.x, now: CACurrentMediaTime()) {
-                    actions.onShake?(window)
+                    actions.performWindowAction(window, actions.onShake)
                 }
             case .ended:
                 shake.reset()
@@ -769,7 +802,7 @@ private struct DockPreviewCompactRow: View {
     @ViewState private var hovering = false
 
     var body: some View {
-        Button { actions.onPick?(window) } label: {
+        Button { actions.performWindowAction(window, actions.onPick) } label: {
             HStack(spacing: 6) {
                 if window.minimized {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
@@ -788,16 +821,16 @@ private struct DockPreviewCompactRow: View {
                 Spacer(minLength: 8)
                 if hovering {
                     HStack(spacing: 4) {
-                        verb("xmark", help: "Close window") { actions.onClose?(window) }
+                        verb("xmark", help: "Close window") { actions.performWindowAction(window, actions.onClose) }
                         verb(window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
                              help: window.minimized ? "Bring back" : "Minimize") {
-                            actions.onMinimize?(window)
+                            actions.performWindowAction(window, actions.onMinimize)
                         }
                         if let fullScreen = window.fullScreen {
                             verb(fullScreen ? "arrow.down.left.and.arrow.up.right"
                                             : "arrow.up.right.and.arrow.down.left",
                                  help: fullScreen ? "Leave full screen" : "Full screen") {
-                                actions.onFullScreen?(window)
+                                actions.performWindowAction(window, actions.onFullScreen)
                             }
                         }
                     }
@@ -813,7 +846,7 @@ private struct DockPreviewCompactRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(MiddleClickCatcher { actions.onClose?(window) })
+        .overlay(MiddleClickCatcher { actions.performWindowAction(window, actions.onClose) })
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(window.title)

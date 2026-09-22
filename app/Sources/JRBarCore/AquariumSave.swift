@@ -62,7 +62,14 @@ public struct AquariumSaveFile: Sendable {
     /// launch — the tank just starts over.
     public func load() -> AquariumSave {
         guard let data = try? Data(contentsOf: url) else { return AquariumSave() }
-        return (try? JSONDecoder().decode(AquariumSave.self, from: data)) ?? AquariumSave()
+        var save = (try? JSONDecoder().decode(AquariumSave.self, from: data)) ?? AquariumSave()
+        // The marathon clock measures a live stretch of work and nothing
+        // ticks while the app is off, so a bank saved at quit would only
+        // pay the whale for time nobody worked. A load starts it fresh.
+        // (Done here, not in the decoder: the round-trip normalization in
+        // `save` must still see the field's stored value.)
+        save.game.continuousWorkSeconds = 0
+        return save
     }
 
     /// Writes the save, creating the directory when needed.
@@ -72,6 +79,48 @@ public struct AquariumSaveFile: Sendable {
         let data = try encoder.encode(save)
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: url.path) {
+            let previous = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            let decoded = try? decoder.decode(AquariumSave.self, from: previous)
+            let normalized = try decoded.map { try encoder.encode($0) }
+            let previousJSON = try? decoder.decode(JSONValue.self, from: previous)
+            let normalizedJSON = try normalized.map { try decoder.decode(JSONValue.self, from: $0) }
+            let preserved: Bool
+            if let previousJSON, let normalizedJSON {
+                preserved = Self.preserves(previousJSON, in: normalizedJSON)
+            } else {
+                preserved = false
+            }
+            if !preserved {
+                let recovery = directory.appending(
+                    path: "aquarium-save.recovery-\(UUID().uuidString).json")
+                // Preserve the exact bytes before replacing a damaged or
+                // partly unreadable save. If backup or permission hardening
+                // fails, the original remains the authoritative file.
+                try previous.write(to: recovery, options: [.withoutOverwriting])
+                try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                      ofItemAtPath: recovery.path)
+            }
+        }
         try data.write(to: url, options: [.atomic])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                              ofItemAtPath: url.path)
+    }
+
+    /// Defaults may fill absent fields, but every value and field present in
+    /// the original must survive normalization or the original needs backup.
+    private static func preserves(_ original: JSONValue, in normalized: JSONValue) -> Bool {
+        switch (original, normalized) {
+        case let (.object(before), .object(after)):
+            return before.allSatisfy { key, value in
+                after[key].map { preserves(value, in: $0) } ?? false
+            }
+        case let (.array(before), .array(after)):
+            return before.count == after.count
+                && zip(before, after).allSatisfy { preserves($0.0, in: $0.1) }
+        default:
+            return original == normalized
+        }
     }
 }

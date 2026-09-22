@@ -18,10 +18,52 @@ struct AquariumView: View {
         var showLabels = true
         var density: Double = 1
         var paused = false
+        /// A synthetic game — the proof shots dress the tank with it.
+        var game: AquariumGame?
+        /// A pinned night factor (0…1) so proof shots don't depend on
+        /// the hour they're rendered; nil follows the settings.
+        var night: Double?
+        /// A pinned parade position (0…1) so a proof shot catches a
+        /// visitor mid-water instead of at the claim edge.
+        var visitorProgress: Double?
     }
 
     private let toy: AquariumToy?
     private let fixture: Fixture?
+
+    /// The game either side reads — the toy's live document, or the
+    /// fixture's synthetic one.
+    private var game: AquariumGame? { toy?.game ?? fixture?.game }
+
+    /// The water column's theme key — "classic" when there's no game.
+    private var themeKey: String { game?.themeID ?? "classic" }
+    /// The floor's substrate key.
+    private var substrateKey: String { game?.substrateID ?? "classic" }
+    /// The back wall's backdrop key.
+    private var backdropKey: String { game?.backdropID ?? "classic" }
+    /// Themes dark enough that the warm sun glow cools to moonlight.
+    private var isDarkTheme: Bool { themeKey == "midnight" || themeKey == "abyss" }
+    /// The column's floor colour — what deep water attenuates toward.
+    private var floorColor: Color {
+        waterStops.last?.color ?? Color(red: 0.015, green: 0.06, blue: 0.22)
+    }
+    private var floorNS: NSColor { NSColor(floorColor) }
+
+    /// The day/night wash's depth (0 bright … 1 deepest). `cycle`
+    /// keeps the original four-minute breathe; `realTime` follows the
+    /// clock — night from 21:00 to 06:00, dawn & dusk blending the
+    /// edges. Reduce Motion holds a soft dusk; a fixture can pin it.
+    private func nightFactor(t: Double) -> Double {
+        if let pinned = fixture?.night { return pinned }
+        if reduceMotion { return 0.4 }
+        switch toy?.store?.state.aquarium.dayNight ?? .cycle {
+        case .cycle:
+            return AquariumBehavior.night(at: t)
+        case .realTime:
+            return AquariumBehavior.realTimeNight(
+                at: Date(timeIntervalSince1970: t), calendar: .current)
+        }
+    }
 
     init(toy: AquariumToy) {
         self.toy = toy
@@ -59,16 +101,28 @@ struct AquariumView: View {
                 Canvas { canvas, size in
                     drawWater(canvas: &canvas, size: size,
                               t: context.date.timeIntervalSince1970)
+                    drawBackdrop(canvas: &canvas, size: size)
                     drawSand(canvas: &canvas, size: size)
                     let empty = fish.isEmpty
                         || fish.allSatisfy { $0.isRetired(at: context.date) }
                     let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
                     drawStaticDecor(canvas: &canvas, size: size, density: density,
                                     keepClear: caption?.rect)
+                    // Owned back-row pieces root on the far dune —
+                    // still, so they bake into the bed.
+                    drawOwnedBackDecor(canvas: &canvas, size: size,
+                                       t: context.date.timeIntervalSince1970)
                 }
             }
             .drawingGroup(opaque: false, colorMode: .nonLinear)
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { context in
+            // The live timeline: 30 fps normally, a 1 fps heartbeat under
+            // Reduce Motion — every draw inside already stills itself, so
+            // the slow tick only keeps the sim honest (pellets still
+            // sink to mouths, completions still serve their meals, a
+            // visitor's still portrait still comes and goes) without
+            // paying a display-rate redraw for a scene that doesn't move.
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 30.0,
+                                    paused: paused)) { context in
                 let t = context.date.timeIntervalSince1970
                 // Memoized on the fish array: the timeline ticks 30×/s
                 // but the roster only moves with the sessions, so an
@@ -104,6 +158,19 @@ struct AquariumView: View {
                         drawPlankton(canvas: &canvas, size: size, t: t,
                                      density: density, front: false)
                         drawBubbles(canvas: &canvas, size: size, t: t, density: density)
+                        // The passers-by and the sand/mid-water pets
+                        // live behind the fish lane.
+                        drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
+                        drawManta(canvas: &canvas, size: size, t: t)
+                        if owns(.seaTurtle) {
+                            drawSeaTurtle(canvas: &canvas, size: size, t: t)
+                        }
+                        if owns(.octopus) {
+                            drawOctopus(canvas: &canvas, size: size, t: t)
+                        }
+                        if owns(.axolotl) {
+                            drawAxolotl(canvas: &canvas, size: size, t: t)
+                        }
                         // A batch of finishes pops the chest: a fast
                         // plume off its lid while the milestone window
                         // is still open.
@@ -166,8 +233,25 @@ struct AquariumView: View {
                         drawMeals(canvas: &canvas, meals: meals, now: context.date)
                         drawFeed(canvas: &canvas, size: size, now: context.date)
                         drawShopDecor(canvas: &canvas, size: size, t: t)
+                        // Owned front-row decor stands over the lane
+                        // like the shop's first four; the buried
+                        // treasure waits on the sand for its taps.
+                        drawOwnedFrontDecor(canvas: &canvas, size: size, t: t)
+                        drawTreasure(canvas: &canvas, size: size, t: t,
+                                     now: context.date)
+                        if owns(.tetraSchool) {
+                            drawTetraSchool(canvas: &canvas, size: size, t: t)
+                        }
+                        if owns(.cleanerShrimp) {
+                            drawCleanerShrimp(canvas: &canvas, size: size, t: t,
+                                              layouts: layouts, roster: order.ordered,
+                                              now: context.date)
+                        }
                         drawDrops(canvas: &canvas, size: size, t: t,
                                   layouts: layouts)
+                        drawGoldBursts(canvas: &canvas, size: size, now: context.date)
+                        drawTrickRings(canvas: &canvas, size: size,
+                                       layouts: layouts, now: context.date)
                         // The juice: tap/eat/collect rings and pearls
                         // arcing home to the counter.
                         drawPuffs(canvas: &canvas, size: size, now: context.date)
@@ -280,6 +364,42 @@ struct AquariumView: View {
                         awayBanner(away)
                             .padding(.top, 6)
                     }
+                    if let n = toy?.notice {
+                        // The reward card — kin to the away-summary
+                        // banner: material capsule, gold accent, title
+                        // + payout. Slides in from the top edge and
+                        // fades out as `notice` clears.
+                        HStack(spacing: 7) {
+                            Image(systemName: n.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color(red: 1.0, green: 0.80,
+                                                       blue: 0.30))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(n.title)
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.95))
+                                if let reward = n.reward {
+                                    Text(reward)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(.white.opacity(0.6))
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.trailing, 10)
+                        .padding(.top, 4)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .task(id: n.id) {
+                            try? await Task.sleep(for: .seconds(4))
+                            guard !Task.isCancelled else { return }
+                            toy?.dismissNotice(id: n.id)
+                        }
+                        .allowsHitTesting(false)
+                    }
                     Spacer()
                     if let toast = toy?.toast {
                         Text(toast.text)
@@ -292,6 +412,7 @@ struct AquariumView: View {
                             .onTapGesture { toy?.dismissToast() }
                     }
                 }
+                .animation(.easeInOut(duration: 0.35), value: toy?.notice?.id)
             }
         }
         .onContinuousHover(coordinateSpace: .local) { phase in
@@ -305,8 +426,23 @@ struct AquariumView: View {
         // water clears. The flash path still covers a tap that hits
         // nothing selectable.
         .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
-            // A pearl drop on the sand collects first; then a fish
-            // selects; a tap on open water drops a pinch of food.
+            // The buried treasure takes the tap first — it's the
+            // rarest thing on the sand; then a pearl drop collects; a
+            // fish selects; open water drops a pinch of food.
+            if let box = motion.treasureBox, box.rect.contains(value.location) {
+                toy?.digTreasure(box.id)
+                let unitX = box.rect.midX / max(1, motion.size.width)
+                let unitY = box.rect.midY / max(1, motion.size.height)
+                motion.puffs.append((x: unitX, y: unitY, bornAt: Date()))
+                // The third dig collected: the lid pops in a gold
+                // burst where it sat.
+                if toy?.game.treasure == nil {
+                    motion.goldBursts.append((x: CGPoint(x: box.rect.midX,
+                                                         y: box.rect.midY),
+                                              bornAt: Date()))
+                }
+                return
+            }
             if let hit = motion.dropBoxes.last(where: { $0.rect.contains(value.location) }) {
                 toy?.collectDrop(hit.id)
                 // The pick-up juice: a bloop where it sat, and the
@@ -328,6 +464,21 @@ struct AquariumView: View {
                                                from: value.location)
                     if let b = motion.bodies[hit.id] {
                         motion.puffs.append((x: b.x, y: b.y, bornAt: Date()))
+                    }
+                }
+                // One tap in three earns a trick — a barrel roll or a
+                // bubble ring — seeded off the tap count so replays
+                // agree. Reduce Motion fish keep their dignity.
+                if !reduceMotion {
+                    motion.trickSeq += 1
+                    let roll = AquariumBehavior.scramble(
+                        AquariumModel.stableHash("trick-\(hit.id)")
+                            &+ UInt64(motion.trickSeq))
+                    if roll % 3 == 0 {
+                        motion.tricks[hit.id] = (
+                            kind: roll & 0x100 == 0 ? .roll : .ring,
+                            until: Date().addingTimeInterval(
+                                AquariumBehavior.trickDuration))
                     }
                 }
             } else {
@@ -407,6 +558,25 @@ struct AquariumView: View {
         var size: CGSize = .zero
         /// This frame's pearl-drop hitboxes, in draw order.
         var dropBoxes: [(id: String, rect: CGRect)] = []
+        /// The buried treasure's hitbox this frame, if it's up.
+        var treasureBox: (id: String, rect: CGRect)?
+        /// Gold bursts where a treasure opened — view points.
+        var goldBursts: [(x: CGPoint, bornAt: Date)] = []
+        /// A fish mid-trick after a tap: barrel roll or bubble ring.
+        var tricks: [String: (kind: TrickKind, until: Date)] = [:]
+        /// Tap count feeding the seeded 1-in-3 trick roll.
+        var trickSeq = 0
+        /// The visitor currently parading across the back layer, and
+        /// when it started — `visitorShown` was answered at the start.
+        var activeVisitor: (kind: AquariumVisitor, startedAt: Date)?
+        /// A beat between parades so queued visitors don't conga.
+        var visitorCooldownUntil = Date.distantPast
+    }
+
+    /// What a tapped fish shows off (docs/TOYS.md: fish tricks).
+    enum TrickKind {
+        case roll
+        case ring
     }
 
     @ViewState private var motion = TankMotion()
@@ -450,7 +620,10 @@ struct AquariumView: View {
     private func stepSwim(_ roster: [Fish], in size: CGSize, t: Double, now: Date) {
         let m = motion
         m.size = size
-        let dt = min(0.12, max(0, t - m.lastT))
+        // Reduce Motion ticks once a second: let the sim absorb real
+        // elapsed time so sinking food and darting fish still arrive —
+        // the motion reads as a stepped drift, not a frozen tank.
+        let dt = min(reduceMotion ? 1.2 : 0.12, max(0, t - m.lastT))
         m.lastT = t
 
         let liveIDs = Set(roster.map(\.id))
@@ -464,6 +637,8 @@ struct AquariumView: View {
         m.startles = m.startles.filter { now < $0.value.until }
         m.puffs.removeAll { now.timeIntervalSince($0.bornAt) > 0.8 }
         m.flights.removeAll { now.timeIntervalSince($0.bornAt) > 0.85 }
+        m.goldBursts.removeAll { now.timeIntervalSince($0.bornAt) > 1.2 }
+        m.tricks = m.tricks.filter { now < $0.value.until && liveIDs.contains($0.key) }
         if m.puffs.count > 12 { m.puffs.removeFirst(m.puffs.count - 12) }
         if m.flights.count > 8 { m.flights.removeFirst(m.flights.count - 8) }
 
@@ -962,7 +1137,7 @@ struct AquariumView: View {
     /// the shop's theme items recolour the tank — a stop list per
     /// theme id, "classic" the default the game starts with.
     private var waterStops: [Gradient.Stop] {
-        switch toy?.game.themeID ?? "classic" {
+        switch themeKey {
         case "reef":
             return [
                 .init(color: Color(red: 0.36, green: 0.72, blue: 0.78), location: 0),
@@ -1003,6 +1178,56 @@ struct AquariumView: View {
                 .init(color: Color(red: 0.015, green: 0.03, blue: 0.12), location: 0.88),
                 .init(color: Color(red: 0.01, green: 0.02, blue: 0.09), location: 1),
             ]
+        case "dawn":
+            return [
+                .init(color: Color(red: 0.86, green: 0.62, blue: 0.66), location: 0),
+                .init(color: Color(red: 0.68, green: 0.55, blue: 0.68), location: 0.12),
+                .init(color: Color(red: 0.42, green: 0.48, blue: 0.66), location: 0.30),
+                .init(color: Color(red: 0.22, green: 0.36, blue: 0.58), location: 0.52),
+                .init(color: Color(red: 0.11, green: 0.24, blue: 0.47), location: 0.72),
+                .init(color: Color(red: 0.05, green: 0.14, blue: 0.36), location: 0.88),
+                .init(color: Color(red: 0.03, green: 0.08, blue: 0.26), location: 1),
+            ]
+        case "kelp":
+            return [
+                .init(color: Color(red: 0.52, green: 0.74, blue: 0.42), location: 0),
+                .init(color: Color(red: 0.34, green: 0.62, blue: 0.40), location: 0.12),
+                .init(color: Color(red: 0.19, green: 0.48, blue: 0.38), location: 0.30),
+                .init(color: Color(red: 0.10, green: 0.34, blue: 0.34), location: 0.52),
+                .init(color: Color(red: 0.05, green: 0.22, blue: 0.28), location: 0.72),
+                .init(color: Color(red: 0.03, green: 0.13, blue: 0.21), location: 0.88),
+                .init(color: Color(red: 0.02, green: 0.08, blue: 0.15), location: 1),
+            ]
+        case "abyss":
+            return [
+                .init(color: Color(red: 0.05, green: 0.08, blue: 0.17), location: 0),
+                .init(color: Color(red: 0.035, green: 0.06, blue: 0.14), location: 0.12),
+                .init(color: Color(red: 0.025, green: 0.045, blue: 0.11), location: 0.30),
+                .init(color: Color(red: 0.018, green: 0.03, blue: 0.08), location: 0.52),
+                .init(color: Color(red: 0.012, green: 0.02, blue: 0.06), location: 0.72),
+                .init(color: Color(red: 0.008, green: 0.015, blue: 0.045), location: 0.88),
+                .init(color: Color(red: 0.005, green: 0.01, blue: 0.03), location: 1),
+            ]
+        case "sunset":
+            return [
+                .init(color: Color(red: 0.92, green: 0.55, blue: 0.30), location: 0),
+                .init(color: Color(red: 0.80, green: 0.42, blue: 0.38), location: 0.12),
+                .init(color: Color(red: 0.55, green: 0.30, blue: 0.48), location: 0.30),
+                .init(color: Color(red: 0.32, green: 0.20, blue: 0.50), location: 0.52),
+                .init(color: Color(red: 0.18, green: 0.12, blue: 0.44), location: 0.72),
+                .init(color: Color(red: 0.09, green: 0.07, blue: 0.34), location: 0.88),
+                .init(color: Color(red: 0.05, green: 0.04, blue: 0.25), location: 1),
+            ]
+        case "blackwater":
+            return [
+                .init(color: Color(red: 0.52, green: 0.42, blue: 0.26), location: 0),
+                .init(color: Color(red: 0.42, green: 0.33, blue: 0.20), location: 0.12),
+                .init(color: Color(red: 0.32, green: 0.24, blue: 0.15), location: 0.30),
+                .init(color: Color(red: 0.22, green: 0.16, blue: 0.10), location: 0.52),
+                .init(color: Color(red: 0.14, green: 0.10, blue: 0.07), location: 0.72),
+                .init(color: Color(red: 0.09, green: 0.06, blue: 0.05), location: 0.88),
+                .init(color: Color(red: 0.05, green: 0.04, blue: 0.03), location: 1),
+            ]
         default:
             return [
                 .init(color: Color(red: 0.46, green: 0.79, blue: 0.72), location: 0),
@@ -1023,32 +1248,32 @@ struct AquariumView: View {
                 Gradient(stops: waterStops),
                 startPoint: CGPoint(x: size.width / 2, y: 0),
                 endPoint: CGPoint(x: size.width / 2, y: size.height)))
-        // Midnight's moonlight: the same warm glow dimmed & cooled,
-        // and a deeper night wash below.
-        let midnight = toy?.game.themeID == "midnight"
+        // The dark themes' moonlight: the same warm glow dimmed &
+        // cooled, and a deeper night wash below.
+        let dark = isDarkTheme
         var glow = canvas
         glow.blendMode = .plusLighter
         glow.fill(Path(CGRect(origin: .zero, size: size)),
                   with: .radialGradient(
-                      Gradient(colors: [(midnight
+                      Gradient(colors: [(dark
                                          ? Color(red: 0.72, green: 0.80, blue: 0.98)
                                          : Color(red: 0.95, green: 0.88, blue: 0.66))
-                                        .opacity(midnight ? 0.13 : 0.22), .clear]),
+                                        .opacity(dark ? 0.13 : 0.22), .clear]),
                       center: CGPoint(x: size.width * 0.36, y: -size.height * 0.10),
                       startRadius: 0, endRadius: size.width * 0.62))
         glow.fill(Path(CGRect(origin: .zero, size: size)),
                   with: .radialGradient(
                       Gradient(colors: [Color(red: 0.20, green: 0.50, blue: 0.62)
-                                        .opacity(midnight ? 0.06 : 0.10), .clear]),
+                                        .opacity(dark ? 0.06 : 0.10), .clear]),
                       center: CGPoint(x: size.width * 0.88, y: size.height * 0.55),
                       startRadius: 0, endRadius: size.width * 0.5))
-        // A slow day/night wash: over ~4 minutes the column breathes a
-        // few percent deeper & cooler, then warms back — a mood, not a
-        // clock. Reduce Motion holds it at a soft dusk.
-        let night = reduceMotion ? 0.4 : 0.5 + 0.5 * sin(t * .pi * 2 / 240)
+        // The day/night wash (docs/TOYS.md): the clock the settings
+        // picked — the four-minute breathe or the real one. Reduce
+        // Motion holds it at a soft dusk.
+        let night = nightFactor(t: t)
         canvas.fill(Path(CGRect(origin: .zero, size: size)),
                     with: .color(Color(red: 0.02, green: 0.05, blue: 0.22)
-                                 .opacity(midnight ? 0.10 + 0.06 * night : 0.10 * night)))
+                                 .opacity(dark ? 0.10 + 0.06 * night : 0.10 * night)))
         canvas.fill(Path(CGRect(origin: .zero, size: size)),
                     with: .linearGradient(
                         Gradient(stops: [
@@ -1067,8 +1292,13 @@ struct AquariumView: View {
     /// Motion holds them still. This draws in the additive pass, so a
     /// ray that reaches the floor lights the sand it lands on.
     private func drawGodRays(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        // The abyss has no sun; blackwater's tannin murk swallows all
+        // but a few shafts; night dims whatever the theme allows.
+        guard themeKey != "abyss" else { return }
+        let count = themeKey == "blackwater" ? 2 : 5
+        let daylight = 1 - nightFactor(t: t) * 0.55
         let rayColor = Color(red: 0.86, green: 0.97, blue: 0.93)
-        for i in 0..<5 {
+        for i in 0..<count {
             let h = AquariumModel.stableHash("ray-\(i)")
             let jitter = Double(h & 0xFF) / 0xFF
             let phase = Double((h >> 8) & 0xFF) / 0xFF * .pi * 2
@@ -1077,7 +1307,8 @@ struct AquariumView: View {
             let halfW = 18 + Double((h >> 24) & 0xFF) / 0xFF * 34
             let lean = 0.20 + jitter * 0.18
             let sway = reduceMotion ? 0 : sin(t * speed + phase) * 0.030
-            let breathe = reduceMotion ? 0.45 : 0.36 + 0.32 * sin(t * 0.06 + phase * 1.7)
+            let breathe = (reduceMotion ? 0.45 : 0.36 + 0.32 * sin(t * 0.06 + phase * 1.7))
+                * daylight
             // Off-centre bright core so the beam isn't a flat band.
             let core = 0.4 + Double((h >> 32) & 0xFF) / 0xFF * 0.2
 
@@ -1118,6 +1349,10 @@ struct AquariumView: View {
     /// seeded through the same murmur-style scramble the speckles use
     /// so FNV-1a's low bits can't park them in a row.
     private func drawSandCaustics(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        // White aragonite bounces the light back — its pools burn
+        // brighter; dark gravel drinks it.
+        let boost = substrateKey == "white" ? 1.7
+            : substrateKey == "black" ? 0.6 : 1.0
         for i in 0..<4 {
             var h = AquariumModel.stableHash("caustic-\(i)")
             h ^= h >> 33
@@ -1141,7 +1376,7 @@ struct AquariumView: View {
             s.fill(Path(ellipseIn: CGRect(x: -1, y: -1, width: 2, height: 2)),
                    with: .radialGradient(
                        Gradient(colors: [
-                           Color(red: 1.0, green: 0.94, blue: 0.74).opacity(0.10 * breathe),
+                           Color(red: 1.0, green: 0.94, blue: 0.74).opacity(0.10 * breathe * boost),
                            .clear]),
                        center: .zero, startRadius: 0, endRadius: 1))
         }
@@ -1270,10 +1505,55 @@ struct AquariumView: View {
                      light: (h >> 48) & 1 == 0)
     }
 
+    /// The floor's palette per substrate (docs/TOYS.md shop): classic
+    /// tan, white's bright aragonite, black's basalt gravel — the
+    /// grains, crest and ripples all follow.
+    private var sandTones: (backA: Color, backB: Color, frontA: Color,
+                            frontB: Color, frontC: Color, crest: Color,
+                            rim: Color, ripple: Color,
+                            speckLight: Color, speckDark: Color) {
+        switch substrateKey {
+        case "white":
+            return (Color(red: 0.46, green: 0.45, blue: 0.42),
+                    Color(red: 0.18, green: 0.19, blue: 0.22),
+                    Color(red: 0.97, green: 0.95, blue: 0.88),
+                    Color(red: 0.82, green: 0.79, blue: 0.68),
+                    Color(red: 0.48, green: 0.44, blue: 0.34),
+                    Color(red: 1.0, green: 1.0, blue: 0.94),
+                    Color(red: 1.0, green: 0.98, blue: 0.86),
+                    Color(red: 0.50, green: 0.45, blue: 0.34),
+                    Color(red: 1.0, green: 0.99, blue: 0.94),
+                    Color(red: 0.42, green: 0.38, blue: 0.30))
+        case "black":
+            return (Color(red: 0.10, green: 0.11, blue: 0.14),
+                    Color(red: 0.02, green: 0.02, blue: 0.04),
+                    Color(red: 0.22, green: 0.23, blue: 0.28),
+                    Color(red: 0.12, green: 0.13, blue: 0.16),
+                    Color(red: 0.04, green: 0.04, blue: 0.05),
+                    Color(red: 0.62, green: 0.65, blue: 0.72),
+                    Color(red: 0.52, green: 0.55, blue: 0.62),
+                    Color(red: 0.03, green: 0.03, blue: 0.04),
+                    Color(red: 0.60, green: 0.63, blue: 0.70),
+                    Color(red: 0.01, green: 0.01, blue: 0.02))
+        default:
+            return (Color(red: 0.23, green: 0.22, blue: 0.18),
+                    Color(red: 0.06, green: 0.07, blue: 0.11),
+                    Color(red: 0.72, green: 0.62, blue: 0.42),
+                    Color(red: 0.46, green: 0.37, blue: 0.23),
+                    Color(red: 0.15, green: 0.12, blue: 0.08),
+                    Color(red: 0.98, green: 0.88, blue: 0.60),
+                    Color(red: 0.88, green: 0.78, blue: 0.56),
+                    Color(red: 0.20, green: 0.15, blue: 0.09),
+                    Color(red: 0.82, green: 0.72, blue: 0.50),
+                    Color(red: 0.10, green: 0.08, blue: 0.05))
+        }
+    }
+
     /// The floor: a darker back dune (the far end of the bed) with a
     /// shadowed seam above it, the lit front dune, and a scatter of
     /// seeded grains.
     private func drawSand(canvas: inout GraphicsContext, size: CGSize) {
+        let sand = sandTones
         var back = Path()
         back.move(to: CGPoint(x: 0, y: backDuneTop(atX: 0, in: size)))
         var x = 0.0
@@ -1285,8 +1565,7 @@ struct AquariumView: View {
         back.addLine(to: CGPoint(x: 0, y: size.height))
         back.closeSubpath()
         canvas.fill(back, with: .linearGradient(
-            Gradient(colors: [Color(red: 0.23, green: 0.22, blue: 0.18),
-                              Color(red: 0.06, green: 0.07, blue: 0.11)]),
+            Gradient(colors: [sand.backA, sand.backB]),
             startPoint: CGPoint(x: 0, y: backDuneTop(atX: size.width / 2, in: size)),
             endPoint: CGPoint(x: 0, y: size.height)))
 
@@ -1325,9 +1604,9 @@ struct AquariumView: View {
         front.closeSubpath()
         canvas.fill(front, with: .linearGradient(
             Gradient(stops: [
-                .init(color: Color(red: 0.72, green: 0.62, blue: 0.42), location: 0),
-                .init(color: Color(red: 0.46, green: 0.37, blue: 0.23), location: 0.5),
-                .init(color: Color(red: 0.15, green: 0.12, blue: 0.08), location: 1),
+                .init(color: sand.frontA, location: 0),
+                .init(color: sand.frontB, location: 0.5),
+                .init(color: sand.frontC, location: 1),
             ]),
             startPoint: CGPoint(x: 0, y: sandTop(atX: size.width / 2, in: size)),
             endPoint: CGPoint(x: 0, y: size.height)))
@@ -1336,9 +1615,9 @@ struct AquariumView: View {
         var crestGlow = canvas
         crestGlow.blendMode = .plusLighter
         crestGlow.stroke(rim,
-                         with: .color(Color(red: 0.98, green: 0.88, blue: 0.60).opacity(0.14)),
+                         with: .color(sand.crest.opacity(0.14)),
                          style: StrokeStyle(lineWidth: 9, lineCap: .round))
-        canvas.stroke(rim, with: .color(Color(red: 0.88, green: 0.78, blue: 0.56).opacity(0.45)),
+        canvas.stroke(rim, with: .color(sand.rim.opacity(0.45)),
                       lineWidth: 1.2)
         // Wind-ripple contours: faint strokes paralleling the crest a
         // little way down the face — what makes a bar of colour read
@@ -1357,20 +1636,27 @@ struct AquariumView: View {
                 rx += 8
             }
             canvas.stroke(ripple,
-                          with: .color(Color(red: 0.20, green: 0.15, blue: 0.09)
+                          with: .color(sand.ripple
                                         .opacity(0.10 - Double(i) * 0.03)),
                           style: StrokeStyle(lineWidth: 1.6 - Double(i) * 0.4, lineCap: .round))
         }
 
+        // Grain scale & contrast per substrate: basalt gravel is
+        // chunky and high-contrast, aragonite fine and bright, the
+        // classic tan somewhere between.
+        let grainScale = substrateKey == "black" ? 2.1
+            : substrateKey == "white" ? 0.9 : 1.0
+        let grainAlpha = substrateKey == "black" ? 1.6 : 1.0
         for speck in Self.sandSpeckles {
             let sx = speck.x * size.width
             let top = sandTop(atX: sx, in: size)
             let sy = top + 2 + speck.y * max(0, size.height - top - 3)
-            canvas.fill(Path(ellipseIn: CGRect(x: sx - speck.r, y: sy - speck.r * 0.7,
-                                               width: speck.r * 2, height: speck.r * 1.4)),
+            let r = speck.r * grainScale
+            canvas.fill(Path(ellipseIn: CGRect(x: sx - r, y: sy - r * 0.7,
+                                               width: r * 2, height: r * 1.4)),
                         with: .color(speck.light
-                                     ? Color(red: 0.82, green: 0.72, blue: 0.50).opacity(0.20)
-                                     : Color(red: 0.10, green: 0.08, blue: 0.05).opacity(0.25)))
+                                     ? sand.speckLight.opacity(min(1, 0.20 * grainAlpha))
+                                     : sand.speckDark.opacity(min(1, 0.25 * grainAlpha))))
         }
     }
 
@@ -1449,10 +1735,44 @@ struct AquariumView: View {
             let twinkle = reduceMotion ? 0.8 : 0.55 + 0.45 * sin(t * 0.6 + phase)
             let alpha = (front ? 0.16 : 0.07)
                 + Double((h >> 48) & 0xFF) / 0xFF * (front ? 0.20 : 0.11)
+            // The dark themes' motes are bioluminescent — cyan/teal
+            // pulses instead of dust catching light.
+            let moteColor = isDarkTheme
+                ? (((h >> 50) & 1) == 0
+                   ? Color(red: 0.30, green: 0.95, blue: 0.85)
+                   : Color(red: 0.25, green: 0.70, blue: 0.95))
+                : .white
             canvas.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
                         with: .radialGradient(
-                            Gradient(colors: [.white.opacity(alpha * twinkle), .clear]),
+                            Gradient(colors: [moteColor.opacity(alpha * twinkle
+                                                                * (isDarkTheme ? 1.6 : 1)),
+                                              .clear]),
                             center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r))
+        }
+        // Deeper still in the dark themes: the lantern-fish glimmers —
+        // a handful of distant dots blinking on their own slow clocks.
+        if isDarkTheme && !front {
+            for i in 0..<9 {
+                var h = AquariumModel.stableHash("lantern-\(i)")
+                h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+                let lx = Double(h & 0xFFFF) / 0xFFFF * size.width
+                let ly = (0.35 + Double((h >> 16) & 0xFFFF) / 0xFFFF * 0.5) * size.height
+                // Each blinks on a seeded ~2–6 s window.
+                let period = 2 + Double((h >> 32) & 0xFF) / 0xFF * 4
+                let on = frac(t / period + Double((h >> 40) & 0xFF) / 0xFF) < 0.18
+                guard on else { continue }
+                let lr = 1.2 + Double((h >> 48) & 0x3) * 0.6
+                var g = canvas
+                g.blendMode = .plusLighter
+                g.fill(Path(ellipseIn: CGRect(x: lx - lr, y: ly - lr,
+                                              width: lr * 2, height: lr * 2)),
+                       with: .radialGradient(
+                           Gradient(colors: [Color(red: 0.60, green: 0.95,
+                                                   blue: 0.90)
+                                               .opacity(0.55), .clear]),
+                           center: CGPoint(x: lx, y: ly), startRadius: 0,
+                           endRadius: lr * 3))
+            }
         }
     }
 
@@ -1567,10 +1887,31 @@ struct AquariumView: View {
                                density: Double, front: Bool, keepClear: CGRect? = nil) {
         let shown = Int((Double(Self.decor.count) * min(1, density)).rounded(.up))
         let clearZone = keepClear?.insetBy(dx: -10, dy: -34)
+        // The kelp forest theme thickens the stand — three extra
+        // seeded strands behind the lane on top of the usual set.
+        if themeKey == "kelp" && !front {
+            for i in 0..<3 {
+                var h = AquariumModel.stableHash("kelpx-\(i)")
+                h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+                let extra = TankDecor(
+                    id: 900 + i, kind: .kelp,
+                    x: 0.10 + 0.80 * Double(h & 0xFFFF) / 0xFFFF,
+                    depth: 0.30 + Double((h >> 16) & 0xFF) / 0xFF * 0.25,
+                    scale: 0.85 + Double((h >> 24) & 0xFF) / 0xFF * 0.45,
+                    bits: h)
+                drawKelp(canvas: &canvas, size: size, t: t, piece: extra)
+            }
+        }
         for piece in Self.decor where (piece.depth > 0.6) == front {
             guard decorVisible(piece, shown: shown,
                                clearZone: clearZone, in: size) else { continue }
             switch piece.kind {
+            case .kelp where front:
+                // The near-glass fronds sit a hair out of focus — the
+                // foreground falls off like a camera's would.
+                var g = canvas
+                g.addFilter(.blur(radius: 1.6))
+                drawKelp(canvas: &g, size: size, t: t, piece: piece)
             case .kelp: drawKelp(canvas: &canvas, size: size, t: t, piece: piece)
             case .grass: drawGrass(canvas: &canvas, size: size, t: t, piece: piece)
             case .chest where !front:
@@ -2311,7 +2652,7 @@ struct AquariumView: View {
     /// smaller second treasure box, the castle a tiny spired keep.
     /// Nothing here touches session state; it's pure dressing.
     private func drawShopDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        guard let game = toy?.game else { return }
+        guard let game else { return }
         if game.owns(.plant) {
             let x = size.width * 0.115
             let baseY = sandTop(atX: x, in: size)
@@ -2393,6 +2734,9 @@ struct AquariumView: View {
             let baseY = sandTop(atX: x, in: size)
             var c = canvas
             c.translateBy(x: x, y: baseY)
+            // Sized off the tank like the rest of the owned set —
+            // ~110 px tall at 700, the keep a landmark, not a trinket.
+            c.scaleBy(x: size.height / 242, y: size.height / 242)
             let stone = Color(red: 0.62, green: 0.60, blue: 0.66)
             let dark = Color(red: 0.40, green: 0.38, blue: 0.44)
             // Keep: a round tower with crenellations and a door.
@@ -2443,6 +2787,712 @@ struct AquariumView: View {
         }
     }
 
+    // MARK: Backdrop
+
+    /// The back wall an owned backdrop item papers over the tank
+    /// (docs/TOYS.md shop): "classic" leaves the open water, reefwall
+    /// hangs a dim rock face with coral nubs behind the dunes, rocky
+    /// stacks boulders along the back. Drawn on the still bed, dimmed
+    /// into the water so it reads as metres away.
+    private func drawBackdrop(canvas: inout GraphicsContext, size: CGSize) {
+        // Rock & sponge tones pulled toward the water's floor colour
+        // so the wall recedes with the theme instead of floating on it.
+        func tinted(_ r: Double, _ g: Double, _ b: Double,
+                    _ toward: Double, _ alpha: Double) -> Color {
+            let base = NSColor(Color(red: r, green: g, blue: b))
+            return Color(nsColor: base.blended(withFraction: toward,
+                                               of: floorNS) ?? base)
+                .opacity(alpha)
+        }
+        // The wall's rumpled crest, ~40% up the tank — above the
+        // seeded kelp line so the wall reads behind everything.
+        func wallTop(atX x: Double) -> Double {
+            let u = x / max(1, size.width)
+            return size.height * 0.58
+                + size.height * 0.035 * sin(u * .pi * 5.2 + Self.dunePhase2)
+                + size.height * 0.014 * sin(u * .pi * 13.7 + Self.dunePhase1)
+        }
+        switch backdropKey {
+        case "reefwall":
+            var wall = Path()
+            wall.move(to: CGPoint(x: 0, y: wallTop(atX: 0)))
+            var x = 0.0
+            while x <= size.width {
+                wall.addLine(to: CGPoint(x: x, y: wallTop(atX: x)))
+                x += 10
+            }
+            wall.addLine(to: CGPoint(x: size.width, y: size.height))
+            wall.addLine(to: CGPoint(x: 0, y: size.height))
+            wall.closeSubpath()
+            canvas.fill(wall, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: tinted(0.30, 0.36, 0.40, 0.35, 0.9), location: 0),
+                    .init(color: tinted(0.18, 0.23, 0.27, 0.45, 1), location: 0.45),
+                    .init(color: tinted(0.06, 0.08, 0.11, 0.6, 1), location: 1),
+                ]),
+                startPoint: CGPoint(x: 0, y: size.height * 0.56),
+                endPoint: CGPoint(x: 0, y: size.height)))
+            // The crest's fade into the water above it.
+            canvas.stroke(wall, with: .color(tinted(0.45, 0.52, 0.55, 0.3, 0.25)),
+                          lineWidth: 1.2)
+            // Rock plates: seeded courses of uneven slabs, darker
+            // joints between them — a wall, not a hill.
+            for row in 0..<3 {
+                var px = -20.0
+                var i = 0
+                let rowTop = size.height * (0.60 + Double(row) * 0.13)
+                while px < size.width + 20 {
+                    var h = AquariumModel.stableHash("plate-\(row)-\(i)")
+                    h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+                    let pw = size.height * (0.10 + Double(h & 0xFF) / 0xFF * 0.09)
+                    let ph = size.height * (0.10 + Double((h >> 8) & 0xFF) / 0xFF * 0.05)
+                    let py = rowTop + Double((h >> 16) & 0x3F) / 0x3F * size.height * 0.05
+                    let tone = 0.20 + Double((h >> 24) & 0xFF) / 0xFF * 0.10
+                    canvas.fill(Path(roundedRect: CGRect(x: px, y: py,
+                                                         width: pw, height: ph),
+                                     cornerRadius: ph * 0.30),
+                                with: .color(tinted(tone + 0.10, tone + 0.15,
+                                                    tone + 0.18, 0.4, 0.9)))
+                    canvas.stroke(Path(roundedRect: CGRect(x: px, y: py,
+                                                           width: pw, height: ph),
+                                       cornerRadius: ph * 0.30),
+                                  with: .color(tinted(0.02, 0.03, 0.05, 0.5, 0.55)),
+                                  lineWidth: 1.4)
+                    px += pw * (0.82 + Double((h >> 20) & 0xF) / 0xF * 0.25)
+                    i += 1
+                }
+            }
+            // Dressing: coral nubs on some plates, a few sponge
+            // blobs rising off the face.
+            for i in 0..<14 {
+                var h = AquariumModel.stableHash("reefdress-\(i)")
+                h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+                let rx = size.width * Double(h & 0xFFFF) / 0xFFFF
+                let ry = wallTop(atX: rx) + size.height * 0.04
+                    + Double((h >> 16) & 0xFFFF) / 0xFFFF * size.height * 0.30
+                if (h >> 32) & 3 == 0 {
+                    // A sponge: a small stalked blob, teal or purple.
+                    let sh = size.height * 0.018
+                    let spongeColor = (h >> 36) & 1 == 0
+                        ? tinted(0.30, 0.55, 0.50, 0.3, 0.85)
+                        : tinted(0.45, 0.35, 0.60, 0.3, 0.85)
+                    canvas.fill(Path(ellipseIn: CGRect(x: rx - sh * 0.5,
+                                                       y: ry - sh * 1.8,
+                                                       width: sh, height: sh * 1.8)),
+                                with: .color(spongeColor))
+                    canvas.fill(Path(ellipseIn: CGRect(x: rx - sh * 0.18,
+                                                       y: ry - sh * 1.9,
+                                                       width: sh * 0.36,
+                                                       height: sh * 0.36)),
+                                with: .color(tinted(0.05, 0.07, 0.09, 0.5, 0.7)))
+                } else if (h >> 32) & 3 == 1 {
+                    // A coral nub: a warm dot cluster.
+                    let nr = size.height * 0.010
+                    canvas.fill(Path(ellipseIn: CGRect(x: rx - nr, y: ry - nr,
+                                                       width: nr * 2, height: nr * 2)),
+                                with: .color(tinted(0.78, 0.45, 0.48, 0.25, 0.8)))
+                    canvas.fill(Path(ellipseIn: CGRect(x: rx + nr * 0.6,
+                                                       y: ry - nr * 0.4,
+                                                       width: nr * 1.2,
+                                                       height: nr * 1.2)),
+                                with: .color(tinted(0.70, 0.38, 0.42, 0.3, 0.7)))
+                }
+            }
+        case "rocky":
+            // Stacked boulders: a tall back course under the crest,
+            // a nearer course overlapping its feet — dark joints
+            // between stones, dimming with depth like the wall.
+            for row in 0..<2 {
+                var bx = -30.0
+                var i = 0
+                let baseY = size.height * (row == 0 ? 0.92 : 0.99)
+                while bx < size.width + 30 {
+                    var h = AquariumModel.stableHash("boulder-\(row)-\(i)")
+                    h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+                    let bw = size.height * (0.16 + Double(h & 0xFF) / 0xFF * 0.12)
+                    let bh = bw * (0.55 + Double((h >> 8) & 0xFF) / 0xFF * 0.28)
+                    let by = baseY + Double((h >> 16) & 0x3F) / 0x3F * size.height * 0.03
+                    let tone = row == 0 ? 0.30 : 0.22
+                    var boulder = Path()
+                    boulder.move(to: CGPoint(x: bx, y: by))
+                    boulder.addCurve(to: CGPoint(x: bx + bw, y: by),
+                                     control1: CGPoint(x: bx, y: by - bh * 1.5),
+                                     control2: CGPoint(x: bx + bw, y: by - bh * 1.5))
+                    boulder.closeSubpath()
+                    canvas.fill(boulder, with: .linearGradient(
+                        Gradient(colors: [tinted(tone + 0.12, tone + 0.13,
+                                                 tone + 0.16, 0.4, 0.95),
+                                          tinted(tone * 0.3, tone * 0.3,
+                                                 tone * 0.35, 0.5, 1)]),
+                        startPoint: CGPoint(x: bx + bw / 2, y: by - bh),
+                        endPoint: CGPoint(x: bx + bw / 2, y: by)))
+                    canvas.stroke(boulder,
+                                  with: .color(tinted(0.02, 0.03, 0.04, 0.5, 0.5)),
+                                  lineWidth: 1.2)
+                    bx += bw * (0.80 + Double((h >> 20) & 0xF) / 0xF * 0.3)
+                    i += 1
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: Owned decor — back row
+
+    /// Where an owned back-row piece roots: its slot's x on the far
+    /// dune, dimmed for depth like the seeded deep pieces.
+    private func ownedBaseY(_ slot: AquariumModel.DecorSlot, in size: CGSize) -> Double {
+        let x = slot.x * size.width
+        return slot.back ? backDuneTop(atX: x, in: size) + 2
+            : sandTop(atX: x, in: size) + 2
+    }
+
+    /// A bought piece's draw scale: its unit-space width grows into
+    /// `slot.w` of the tank's height (the declared footprint), so the
+    /// decor sizes follow the window like the kelp does.
+    private func ownedScaleW(_ slot: AquariumModel.DecorSlot,
+                             unitWidth: Double, in size: CGSize) -> Double {
+        slot.w * size.height / unitWidth
+    }
+
+    /// Same, landing the piece's unit-space height on `slot.h` — for
+    /// the tall-thin pieces (statue, columns, lamp).
+    private func ownedScaleH(_ slot: AquariumModel.DecorSlot,
+                             unitHeight: Double, in size: CGSize) -> Double {
+        slot.h * size.height / unitHeight
+    }
+
+    /// The bought decor rooted on the far dune (docs/TOYS.md shop):
+    /// shipwreck, amphora, statue, columns, volcano — still pieces
+    /// behind the fish lane, baked into the bed. Each sits under a
+    /// pooled shadow, dimmed for depth.
+    private func drawOwnedBackDecor(canvas: inout GraphicsContext, size: CGSize,
+                                    t: Double) {
+        guard let game else { return }
+        func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
+            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+        }
+        if let s = slot(.shipwreck) { drawShipwreck(canvas: &canvas, size: size, slot: s) }
+        if let s = slot(.amphora) { drawAmphora(canvas: &canvas, size: size, slot: s) }
+        if let s = slot(.sunkenStatue) { drawStatue(canvas: &canvas, size: size, slot: s) }
+        if let s = slot(.ruinedColumns) { drawColumns(canvas: &canvas, size: size, slot: s) }
+        if let s = slot(.volcano) {
+            drawVolcano(canvas: &canvas, size: size, slot: s,
+                        lit: nightFactor(t: t) > 0.45 || isDarkTheme)
+        }
+    }
+
+    /// A sunken hull: broken keel listing on the dune, a snapped mast
+    /// leaning off it, all dim browns behind the swimmers.
+    private func drawShipwreck(canvas: inout GraphicsContext, size: CGSize,
+                               slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 90, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 46 * s, alpha: 0.20)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        c.opacity = 0.80
+        let wood = Color(red: 0.30, green: 0.22, blue: 0.14)
+        let woodDark = Color(red: 0.18, green: 0.13, blue: 0.08)
+        // The hull: a wallowing bowl with a jagged break amidships.
+        var hull = Path()
+        hull.move(to: CGPoint(x: -44, y: -26))
+        hull.addQuadCurve(to: CGPoint(x: -10, y: 0), control: CGPoint(x: -40, y: -4))
+        hull.addLine(to: CGPoint(x: -4, y: -8))
+        hull.addLine(to: CGPoint(x: 4, y: -2))
+        hull.addLine(to: CGPoint(x: 12, y: -10))
+        hull.addQuadCurve(to: CGPoint(x: 44, y: -20), control: CGPoint(x: 30, y: -6))
+        hull.addQuadCurve(to: CGPoint(x: 36, y: 0), control: CGPoint(x: 44, y: -8))
+        hull.closeSubpath()
+        c.fill(hull, with: .color(wood))
+        c.stroke(hull, with: .color(woodDark), lineWidth: 1.2)
+        // Plank seams.
+        for k in 0..<3 {
+            var seam = Path()
+            let y = -6.0 - Double(k) * 7
+            seam.move(to: CGPoint(x: -40, y: y))
+            seam.addQuadCurve(to: CGPoint(x: 40, y: y - 4),
+                              control: CGPoint(x: 0, y: y + 4))
+            c.stroke(seam, with: .color(woodDark.opacity(0.5)), lineWidth: 0.8)
+        }
+        // The snapped mast leaning forward, tattered yard still on.
+        var mast = Path()
+        mast.move(to: CGPoint(x: -6, y: -10))
+        mast.addLine(to: CGPoint(x: 6, y: -62))
+        c.stroke(mast, with: .color(wood), lineWidth: 3.5)
+        var yard = Path()
+        yard.move(to: CGPoint(x: -8, y: -46))
+        yard.addLine(to: CGPoint(x: 22, y: -52))
+        c.stroke(yard, with: .color(woodDark), lineWidth: 2)
+        var sail = Path()
+        sail.move(to: CGPoint(x: -6, y: -46))
+        sail.addLine(to: CGPoint(x: 18, y: -51))
+        sail.addLine(to: CGPoint(x: 10, y: -30))
+        sail.addLine(to: CGPoint(x: 2, y: -36))
+        sail.closeSubpath()
+        c.fill(sail, with: .color(Color(red: 0.45, green: 0.42, blue: 0.36)
+                                  .opacity(0.55)))
+    }
+
+    /// The tipped storage jar — the octopus's home when it has one.
+    private func drawAmphora(canvas: inout GraphicsContext, size: CGSize,
+                             slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 34, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 22 * s, alpha: 0.22)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        c.rotate(by: .radians(-1.15))
+        let clay = Color(red: 0.52, green: 0.36, blue: 0.24)
+        let clayDark = Color(red: 0.34, green: 0.22, blue: 0.14)
+        var jar = Path()
+        jar.move(to: CGPoint(x: -8, y: -34))
+        jar.addCurve(to: CGPoint(x: -14, y: -6),
+                     control1: CGPoint(x: -16, y: -28),
+                     control2: CGPoint(x: -16, y: -14))
+        jar.addQuadCurve(to: CGPoint(x: 14, y: -6),
+                         control: CGPoint(x: 0, y: 4))
+        jar.addCurve(to: CGPoint(x: 8, y: -34),
+                     control1: CGPoint(x: 16, y: -14),
+                     control2: CGPoint(x: 16, y: -28))
+        jar.closeSubpath()
+        c.fill(jar, with: .color(clay))
+        c.stroke(jar, with: .color(clayDark), lineWidth: 1)
+        // Rim & the dark mouth the octopus watches from.
+        c.fill(Path(ellipseIn: CGRect(x: -9, y: -37, width: 18, height: 7)),
+               with: .color(clayDark))
+        c.fill(Path(ellipseIn: CGRect(x: -6.5, y: -36, width: 13, height: 5)),
+               with: .color(.black.opacity(0.85)))
+        // A band & a handle stub.
+        c.stroke(Path(ellipseIn: CGRect(x: -13, y: -20, width: 26, height: 10)),
+                 with: .color(clayDark.opacity(0.6)), lineWidth: 1)
+    }
+
+    /// A bust on a plinth — someone important, once.
+    private func drawStatue(canvas: inout GraphicsContext, size: CGSize,
+                            slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleH(slot, unitHeight: 45, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 20 * s, alpha: 0.22)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        c.opacity = 0.85
+        let stone = Color(red: 0.52, green: 0.55, blue: 0.58)
+        let stoneDark = Color(red: 0.34, green: 0.36, blue: 0.40)
+        // Plinth.
+        c.fill(Path(CGRect(x: -12, y: -16, width: 24, height: 16)),
+               with: .color(stoneDark))
+        c.stroke(Path(CGRect(x: -12, y: -16, width: 24, height: 16)),
+                 with: .color(stone.opacity(0.5)), lineWidth: 0.8)
+        // Shoulders & head.
+        var bust = Path()
+        bust.move(to: CGPoint(x: -11, y: -16))
+        bust.addQuadCurve(to: CGPoint(x: -5, y: -30), control: CGPoint(x: -11, y: -26))
+        bust.addQuadCurve(to: CGPoint(x: 5, y: -30), control: CGPoint(x: 0, y: -33))
+        bust.addQuadCurve(to: CGPoint(x: 11, y: -16), control: CGPoint(x: 11, y: -26))
+        bust.closeSubpath()
+        c.fill(bust, with: .color(stone))
+        c.fill(Path(ellipseIn: CGRect(x: -6, y: -44, width: 12, height: 15)),
+               with: .color(stone))
+        // Nose & brow shadow — a face, barely.
+        c.stroke(Path(ellipseIn: CGRect(x: -6, y: -44, width: 12, height: 15)),
+                 with: .color(stoneDark), lineWidth: 0.8)
+        var nose = Path()
+        nose.move(to: CGPoint(x: 1, y: -38))
+        nose.addLine(to: CGPoint(x: 3, y: -34))
+        c.stroke(nose, with: .color(stoneDark), lineWidth: 1)
+    }
+
+    /// Three fluted columns, one fallen — the ruin's rhythm.
+    private func drawColumns(canvas: inout GraphicsContext, size: CGSize,
+                             slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleH(slot, unitHeight: 72, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 44 * s, alpha: 0.20)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        c.opacity = 0.82
+        let marble = Color(red: 0.56, green: 0.58, blue: 0.62)
+        let marbleDark = Color(red: 0.38, green: 0.40, blue: 0.44)
+        // Two standing, heights varied, flutes stroked down.
+        let heights: [(x: Double, h: Double)] = [(-28, 54), (-4, 67)]
+        for col in heights {
+            c.fill(Path(CGRect(x: col.x - 7, y: -col.h, width: 14, height: col.h)),
+                   with: .color(marble))
+            c.stroke(Path(CGRect(x: col.x - 7, y: -col.h, width: 14, height: col.h)),
+                     with: .color(marbleDark), lineWidth: 1)
+            for k in -1...1 {
+                var flute = Path()
+                flute.move(to: CGPoint(x: col.x + Double(k) * 4, y: -col.h + 3))
+                flute.addLine(to: CGPoint(x: col.x + Double(k) * 4, y: -4))
+                c.stroke(flute, with: .color(marbleDark.opacity(0.45)), lineWidth: 0.9)
+            }
+            // Capital.
+            c.fill(Path(CGRect(x: col.x - 9, y: -col.h - 5, width: 18, height: 5)),
+                   with: .color(marbleDark))
+        }
+        // The fallen one on its side out front.
+        var fallen = canvas
+        fallen.translateBy(x: x + 36 * s, y: baseY - 6 * s)
+        fallen.scaleBy(x: s, y: s)
+        fallen.rotate(by: .radians(0.22))
+        fallen.opacity = 0.82
+        fallen.fill(Path(roundedRect: CGRect(x: -22, y: -7, width: 44, height: 14),
+                         cornerRadius: 5),
+                    with: .color(marble))
+        fallen.stroke(Path(roundedRect: CGRect(x: -22, y: -7, width: 44, height: 14),
+                           cornerRadius: 5),
+                      with: .color(marbleDark), lineWidth: 1)
+    }
+
+    /// The cone: a broad shield with a rimmed crater bowl. Its throat
+    /// always smoulders a little — a warm inner glow at any hour that
+    /// goes molten at night (or in the dark themes), when the live
+    /// pass's `drawVolcanoGlow` adds the halo and the ember climb.
+    private func drawVolcano(canvas: inout GraphicsContext, size: CGSize,
+                             slot: AquariumModel.DecorSlot, lit: Bool) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 84, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 40 * s, alpha: 0.24)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        c.opacity = 0.90
+        // The cone silhouette: a broad base sweeping to a flat rim,
+        // with a shoulder kink each side so it reads as rock, not a
+        // sand hump.
+        var cone = Path()
+        cone.move(to: CGPoint(x: -42, y: 0))
+        cone.addQuadCurve(to: CGPoint(x: -30, y: -26), control: CGPoint(x: -40, y: -18))
+        cone.addQuadCurve(to: CGPoint(x: -13, y: -44), control: CGPoint(x: -24, y: -40))
+        cone.addLine(to: CGPoint(x: 13, y: -44))
+        cone.addQuadCurve(to: CGPoint(x: 30, y: -26), control: CGPoint(x: 24, y: -40))
+        cone.addQuadCurve(to: CGPoint(x: 42, y: 0), control: CGPoint(x: 40, y: -18))
+        cone.closeSubpath()
+        c.fill(cone, with: .linearGradient(
+            Gradient(colors: [Color(red: 0.30, green: 0.26, blue: 0.24),
+                              Color(red: 0.14, green: 0.11, blue: 0.11)]),
+            startPoint: CGPoint(x: 0, y: -44), endPoint: CGPoint(x: 0, y: 0)))
+        c.stroke(cone, with: .color(.black.opacity(0.35)), lineWidth: 1.2)
+        // Flank shading: darker seams running down from the rim so the
+        // cone has faces.
+        for k in [-1.0, 1.0] {
+            var seam = Path()
+            seam.move(to: CGPoint(x: k * 12, y: -42))
+            seam.addQuadCurve(to: CGPoint(x: k * 32, y: -4),
+                              control: CGPoint(x: k * 20, y: -24))
+            c.stroke(seam, with: .color(.black.opacity(0.22)), lineWidth: 1.4)
+        }
+        // The crater bowl: a dark ellipse set into the rim, its near
+        // lip catching whatever heat is inside.
+        let bowl = Path(ellipseIn: CGRect(x: -14, y: -50, width: 28, height: 11))
+        c.fill(bowl, with: .color(lit
+                                  ? Color(red: 0.55, green: 0.14, blue: 0.05)
+                                  : Color(red: 0.10, green: 0.08, blue: 0.08)))
+        c.stroke(bowl, with: .color(.black.opacity(0.4)), lineWidth: 0.8)
+        // The smoulder: a warm breath in the throat at every hour,
+        // molten once lit — plus a thin hot rim on the crater's lip.
+        var g = c
+        g.blendMode = .plusLighter
+        g.fill(bowl, with: .radialGradient(
+            Gradient(colors: [Color(red: 1.0, green: 0.5, blue: 0.12)
+                                .opacity(lit ? 0.95 : 0.30), .clear]),
+            center: CGPoint(x: 0, y: -45), startRadius: 0, endRadius: 18))
+        // A dull orange seam down the cone's face — the lava's old path.
+        var lava = Path()
+        lava.move(to: CGPoint(x: 4, y: -42))
+        lava.addQuadCurve(to: CGPoint(x: 12, y: -12), control: CGPoint(x: 8, y: -26))
+        c.stroke(lava, with: .color(Color(red: 0.75, green: 0.25, blue: 0.08)
+                                    .opacity(lit ? 0.85 : 0.18)),
+                 style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+    }
+
+    /// The live side of the owned decor: the volcano's ember drift
+    /// (only when the crater's lit — night or a dark theme).
+    private func drawVolcanoGlow(canvas: inout GraphicsContext, size: CGSize,
+                                 t: Double, slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let s = ownedScaleW(slot, unitWidth: 84, in: size)
+        let craterY = ownedBaseY(slot, in: size) - 45 * s
+        var g = canvas
+        g.blendMode = .plusLighter
+        g.fill(Path(ellipseIn: CGRect(x: x - 40 * s, y: craterY - 40 * s,
+                                      width: 80 * s, height: 80 * s)),
+               with: .radialGradient(
+                   Gradient(colors: [Color(red: 1.0, green: 0.42, blue: 0.12)
+                                       .opacity(0.30), .clear]),
+                   center: CGPoint(x: x, y: craterY), startRadius: 0,
+                   endRadius: 40 * s))
+        for i in 0..<5 {
+            var h = AquariumModel.stableHash("ember-\(i)")
+            h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+            let period = 4 + Double(h & 0xF) * 0.4
+            let p = frac(t / period + Double((h >> 8) & 0xFF) / 0xFF)
+            let ex = x + (Double((h >> 16) & 0xFF) / 0xFF - 0.5) * 18 * s
+                + sin(p * 5 + Double(i)) * 5 * s
+            let ey = craterY - p * 55 * s
+            let er = (1.2 + Double((h >> 24) & 0x3) * 0.5) * s
+            var e = canvas
+            e.blendMode = .plusLighter
+            e.opacity = (1 - p) * 0.9
+            e.fill(Path(ellipseIn: CGRect(x: ex - er, y: ey - er,
+                                          width: er * 2, height: er * 2)),
+                   with: .color(Color(red: 1.0, green: 0.45, blue: 0.12)))
+        }
+    }
+
+    // MARK: Owned decor — front row
+
+    /// The bought decor on the near crest (docs/TOYS.md shop):
+    /// driftwood, the anemone's swaying bed, the jelly lamp's pulsing
+    /// dome, the coral garden, the bubble wall's curtain — drawn over
+    /// the fish lane like the shop's original four.
+    private func drawOwnedFrontDecor(canvas: inout GraphicsContext, size: CGSize,
+                                     t: Double) {
+        guard let game else { return }
+        func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
+            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+        }
+        if let s = slot(.driftwood) { drawDriftwood(canvas: &canvas, size: size, slot: s) }
+        if let s = slot(.anemoneBed) { drawAnemone(canvas: &canvas, size: size, t: t, slot: s) }
+        if let s = slot(.moonJellyLamp) { drawJellyLamp(canvas: &canvas, size: size, t: t, slot: s) }
+        if let s = slot(.coralGarden) { drawCoralGarden(canvas: &canvas, size: size, slot: s) }
+        if let s = slot(.bubbleWall) { drawBubbleWall(canvas: &canvas, size: size, t: t, slot: s) }
+        // The volcano's live half rides along when the crater's lit.
+        if let s = game.owns(.volcano) ? AquariumModel.decorSlot(for: .volcano) : nil,
+           nightFactor(t: t) > 0.45 || isDarkTheme {
+            drawVolcanoGlow(canvas: &canvas, size: size, t: t, slot: s)
+        }
+    }
+
+    /// A smoothed water-logged branch, half settled into the sand.
+    private func drawDriftwood(canvas: inout GraphicsContext, size: CGSize,
+                               slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 60, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 30 * s, alpha: 0.24)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        let wood = Color(red: 0.48, green: 0.40, blue: 0.32)
+        let woodDark = Color(red: 0.30, green: 0.24, blue: 0.18)
+        var log = Path()
+        log.move(to: CGPoint(x: -30, y: -4))
+        log.addQuadCurve(to: CGPoint(x: 26, y: -14), control: CGPoint(x: -6, y: -16))
+        log.addQuadCurve(to: CGPoint(x: 30, y: -6), control: CGPoint(x: 28, y: -11))
+        log.addQuadCurve(to: CGPoint(x: -26, y: 0), control: CGPoint(x: 2, y: -3))
+        log.closeSubpath()
+        c.fill(log, with: .color(wood))
+        c.stroke(log, with: .color(woodDark), lineWidth: 1)
+        // A forked stub and grain lines.
+        var stub = Path()
+        stub.move(to: CGPoint(x: -8, y: -10))
+        stub.addQuadCurve(to: CGPoint(x: -16, y: -24), control: CGPoint(x: -10, y: -18))
+        c.stroke(stub, with: .color(wood), lineWidth: 4)
+        for k in 0..<2 {
+            var grain = Path()
+            let y = -6.0 - Double(k) * 4
+            grain.move(to: CGPoint(x: -26, y: y))
+            grain.addQuadCurve(to: CGPoint(x: 24, y: y - 6),
+                               control: CGPoint(x: -2, y: y - 2))
+            c.stroke(grain, with: .color(woodDark.opacity(0.4)), lineWidth: 0.8)
+        }
+    }
+
+    /// A bed of anemone tentacles, swaying in a slow wave — the live
+    /// pass keeps them breathing; Reduce Motion holds a soft lean.
+    private func drawAnemone(canvas: inout GraphicsContext, size: CGSize,
+                             t: Double, slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 44, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 26 * s, alpha: 0.22)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        for i in 0..<14 {
+            let h = scatter(AquariumModel.stableHash("anemone"), i)
+            let rootX = (Double(h & 0xFF) / 0xFF - 0.5) * 40
+            let reach = 14 + Double((h >> 8) & 0xFF) / 0xFF * 14
+            let lean = (Double((h >> 16) & 0xFF) / 0xFF - 0.5) * 10
+            let sway = reduceMotion ? 2.0
+                : sin(t * 1.3 + Double(h >> 24 & 0xFF) * 0.1) * 4
+            var tent = Path()
+            tent.move(to: CGPoint(x: rootX, y: 0))
+            tent.addQuadCurve(
+                to: CGPoint(x: rootX + lean + sway, y: -reach),
+                control: CGPoint(x: rootX + lean * 0.3, y: -reach * 0.5))
+            let hue = Double((h >> 32) & 0xFF) / 0xFF
+            c.stroke(tent, with: .color(
+                Color(red: 0.75 + hue * 0.15, green: 0.35 + hue * 0.25,
+                      blue: 0.50 + hue * 0.20).opacity(0.85)),
+                     style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
+            // The pale tip.
+            c.fill(Path(ellipseIn: CGRect(x: rootX + lean + sway - 1.8,
+                                          y: -reach - 1.8,
+                                          width: 3.6, height: 3.6)),
+                   with: .color(Color(red: 0.95, green: 0.80, blue: 0.85)
+                                .opacity(0.9)))
+        }
+    }
+
+    /// A glass dome on a brass base with a moon jelly inside; its
+    /// glow breathes on a six-second pulse, additive.
+    private func drawJellyLamp(canvas: inout GraphicsContext, size: CGSize,
+                               t: Double, slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleH(slot, unitHeight: 52, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 16 * s, alpha: 0.22)
+        let pulse = reduceMotion ? 0.6 : 0.55 + 0.45 * sin(t * .pi * 2 / 6)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        // The glow first — under the glass it reads as coming through.
+        var g = c
+        g.blendMode = .plusLighter
+        g.fill(Path(ellipseIn: CGRect(x: -22, y: -52, width: 44, height: 52)),
+               with: .radialGradient(
+                   Gradient(colors: [Color(red: 0.55, green: 0.85, blue: 0.95)
+                                       .opacity(0.35 * pulse + 0.08), .clear]),
+                   center: CGPoint(x: 0, y: -28), startRadius: 0, endRadius: 26))
+        // Base & dome.
+        c.fill(Path(roundedRect: CGRect(x: -9, y: -6, width: 18, height: 6),
+                    cornerRadius: 2),
+               with: .color(Color(red: 0.55, green: 0.45, blue: 0.25)))
+        var dome = Path()
+        dome.move(to: CGPoint(x: -11, y: -6))
+        dome.addQuadCurve(to: CGPoint(x: 11, y: -6), control: CGPoint(x: 0, y: -46))
+        dome.closeSubpath()
+        c.fill(dome, with: .color(Color(red: 0.65, green: 0.85, blue: 0.95)
+                                  .opacity(0.18)))
+        c.stroke(dome, with: .color(Color(red: 0.80, green: 0.92, blue: 1.0)
+                                    .opacity(0.45)),
+                 lineWidth: 1)
+        // The jelly: a bell & two trailing arms, brighter on the pulse.
+        c.fill(Path(ellipseIn: CGRect(x: -6, y: -30, width: 12, height: 8)),
+               with: .color(Color(red: 0.80, green: 0.92, blue: 1.0)
+                            .opacity(0.5 + 0.3 * pulse)))
+        for k in -1...1 {
+            var arm = Path()
+            arm.move(to: CGPoint(x: Double(k) * 3, y: -22))
+            arm.addQuadCurve(to: CGPoint(x: Double(k) * 3 + sin(t + Double(k)) * 2,
+                                         y: -12),
+                             control: CGPoint(x: Double(k) * 3 - 2, y: -17))
+            c.stroke(arm, with: .color(Color(red: 0.80, green: 0.92, blue: 1.0)
+                                       .opacity(0.35 + 0.25 * pulse)),
+                     lineWidth: 1)
+        }
+    }
+
+    /// A cluster of varied corals — a couple of fans, a brain, a
+    /// branching sprig — sharing one footprint.
+    private func drawCoralGarden(canvas: inout GraphicsContext, size: CGSize,
+                                 slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 64, in: size)
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 34 * s, alpha: 0.24)
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        c.scaleBy(x: s, y: s)
+        // A fan coral each side — reuse the seeded piece's geometry in
+        // miniature.
+        for side in [-1.0, 1.0] {
+            var fan = Path()
+            let bx = side * 16
+            fan.move(to: CGPoint(x: bx, y: 0))
+            fan.addQuadCurve(to: CGPoint(x: bx + side * 14, y: -26),
+                             control: CGPoint(x: bx + side * 2, y: -20))
+            fan.addQuadCurve(to: CGPoint(x: bx + side * 6, y: -10),
+                             control: CGPoint(x: bx + side * 12, y: -12))
+            fan.closeSubpath()
+            c.fill(fan, with: .color(Color(red: 0.82, green: 0.42, blue: 0.50)
+                                     .opacity(0.85)))
+            c.stroke(fan, with: .color(Color(red: 0.55, green: 0.22, blue: 0.32)),
+                     lineWidth: 0.8)
+        }
+        // The brain mound with its grooves.
+        c.fill(Path(ellipseIn: CGRect(x: -10, y: -14, width: 20, height: 14)),
+               with: .color(Color(red: 0.85, green: 0.68, blue: 0.42)))
+        for k in 0..<3 {
+            var groove = Path()
+            let gy = -12 + Double(k) * 4
+            groove.move(to: CGPoint(x: -8, y: gy))
+            groove.addQuadCurve(to: CGPoint(x: 8, y: gy),
+                                control: CGPoint(x: 0, y: gy - 4))
+            c.stroke(groove, with: .color(Color(red: 0.55, green: 0.40, blue: 0.22)),
+                     lineWidth: 0.8)
+        }
+        // Branching sprig centre-back.
+        var sprig = Path()
+        sprig.move(to: CGPoint(x: 2, y: -2))
+        sprig.addLine(to: CGPoint(x: 2, y: -22))
+        sprig.move(to: CGPoint(x: 2, y: -14))
+        sprig.addLine(to: CGPoint(x: -4, y: -20))
+        sprig.move(to: CGPoint(x: 2, y: -16))
+        sprig.addLine(to: CGPoint(x: 9, y: -24))
+        c.stroke(sprig, with: .color(Color(red: 0.70, green: 0.45, blue: 0.70)),
+                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+    }
+
+    /// A curtain of bubbles off an air stone — the column of fizz
+    /// runs on the live pass; the stone itself is a dark pebble bar.
+    private func drawBubbleWall(canvas: inout GraphicsContext, size: CGSize,
+                                t: Double, slot: AquariumModel.DecorSlot) {
+        let x = slot.x * size.width
+        let baseY = ownedBaseY(slot, in: size)
+        let s = ownedScaleW(slot, unitWidth: 40, in: size)
+        // The air stone.
+        canvas.fill(Path(roundedRect: CGRect(x: x - 18 * s,
+                                             y: baseY - 5,
+                                             width: 36 * s, height: 6),
+                         cornerRadius: 3),
+                    with: .color(Color(red: 0.18, green: 0.16, blue: 0.14)))
+        groundShadow(canvas: &canvas, x: x, y: baseY + 1,
+                     halfW: 20 * s, alpha: 0.18)
+        // The curtain: several parallel bubble streams, each a seeded
+        // column rising & wobbling to the surface.
+        for i in 0..<5 {
+            let h = scatter(AquariumModel.stableHash("bubwall"), i)
+            let bx = x + (Double(i) - 2) * 6 * s
+            let speed = 30 + Double(h & 0xFF) / 0xFF * 22
+            for k in 0..<6 {
+                let ph = frac(t * speed / 400 + Double(k) / 6
+                              + Double((h >> 8) & 0xFF) / 0xFF)
+                let by = baseY - 8 - ph * (baseY - 18)
+                guard by > 14 else { continue }
+                let wx = bx + sin(t * 2.2 + Double(k) * 1.7 + Double(i)) * 3
+                let br = (1.0 + Double((h >> 16) & 0x3) * 0.5 + ph * 1.2) * s * 0.7
+                var b = canvas
+                b.opacity = 0.5 * (1 - ph * 0.4)
+                b.stroke(Path(ellipseIn: CGRect(x: wx - br, y: by - br,
+                                                width: br * 2, height: br * 2)),
+                         with: .color(.white), lineWidth: 0.7)
+            }
+        }
+    }
+
     /// The idle game's collectables (docs/TOYS.md): a full-grown fish
     /// sheds a pearl now and then; it rests on the sand under where
     /// the fish was, softly pulsing until tapped or the snail reaches
@@ -2451,7 +3501,7 @@ struct AquariumView: View {
     /// mutation; the drawing itself is inert.
     private func drawDrops(canvas: inout GraphicsContext, size: CGSize, t: Double,
                            layouts: [String: Layout]) {
-        guard let game = toy?.game else { return }
+        guard let game else { return }
         let m = motion
         m.dropBoxes.removeAll(keepingCapacity: true)
         for drop in game.drops {
@@ -2653,6 +3703,647 @@ struct AquariumView: View {
         }
     }
 
+    // MARK: Shop pets
+
+    /// The sea turtle: a slow glide across midwater on a long lazy
+    /// sweep, rising for a breath every minute or so — a patient
+    /// silhouette behind the fish lane.
+    private func drawSeaTurtle(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let period = 90.0
+        let phase = frac(t / period)
+        // The glide: across the tank one way, back the next.
+        let leg = frac(phase * 2)
+        let dir = phase < 0.5 ? 1.0 : -1.0
+        let x = size.width * (phase < 0.5 ? leg : 1 - leg)
+        // Mostly mid-depth; the last stretch of each leg climbs to
+        // sip the surface and sinks back.
+        let breathe = smooth(clamp01((leg - 0.72) / 0.10))
+            * smooth(clamp01((0.98 - leg) / 0.10))
+        let baseY = size.height * 0.42
+        let y = reduceMotion ? baseY
+            : baseY + sin(t * 0.4) * 14 - breathe * (baseY - 46)
+        let flap = reduceMotion ? 0 : sin(t * 2.4) * 0.35
+        var c = canvas
+        c.translateBy(x: x, y: y)
+        c.scaleBy(x: dir, y: 1)
+        c.opacity = 0.85
+        let shell = Color(red: 0.30, green: 0.38, blue: 0.26)
+        let skin = Color(red: 0.45, green: 0.52, blue: 0.38)
+        // Flippers behind the shell so the dome sits on top.
+        var front = Path()
+        front.move(to: CGPoint(x: 8, y: 4))
+        front.addQuadCurve(to: CGPoint(x: 24, y: 12 + flap * 8),
+                           control: CGPoint(x: 18, y: 2))
+        front.addQuadCurve(to: CGPoint(x: 10, y: 10),
+                           control: CGPoint(x: 16, y: 10))
+        front.closeSubpath()
+        c.fill(front, with: .color(skin.opacity(0.9)))
+        var rear = Path()
+        rear.move(to: CGPoint(x: -12, y: 4))
+        rear.addQuadCurve(to: CGPoint(x: -24, y: 10 - flap * 6),
+                          control: CGPoint(x: -18, y: 3))
+        rear.addQuadCurve(to: CGPoint(x: -12, y: 9),
+                          control: CGPoint(x: -16, y: 9))
+        rear.closeSubpath()
+        c.fill(rear, with: .color(skin.opacity(0.85)))
+        // Head poking ahead.
+        c.fill(Path(ellipseIn: CGRect(x: 16, y: -5, width: 10, height: 8)),
+               with: .color(skin))
+        c.fill(Path(ellipseIn: CGRect(x: 22, y: -3, width: 2, height: 2)),
+               with: .color(.black.opacity(0.7)))
+        // The dome with its plate seams.
+        let dome = Path(ellipseIn: CGRect(x: -18, y: -12, width: 38, height: 22))
+        c.fill(dome, with: .color(shell))
+        c.stroke(dome, with: .color(Color(red: 0.18, green: 0.24, blue: 0.16)),
+                 lineWidth: 1.2)
+        for k in -1...1 {
+            var seam = Path()
+            seam.move(to: CGPoint(x: Double(k) * 9, y: -11))
+            seam.addQuadCurve(to: CGPoint(x: Double(k) * 9 + 3, y: 9),
+                              control: CGPoint(x: Double(k) * 9 - 2, y: -1))
+            c.stroke(seam, with: .color(Color(red: 0.18, green: 0.24, blue: 0.16)
+                                        .opacity(0.5)),
+                     lineWidth: 0.8)
+        }
+        // The breath: two bubbles off the nose on the way down.
+        if breathe > 0.5 && !reduceMotion {
+            for k in 0..<2 {
+                let bp = frac(t * 0.9 + Double(k) * 0.5)
+                var b = canvas
+                b.opacity = (1 - bp) * 0.5
+                b.stroke(Path(ellipseIn: CGRect(x: x + dir * 20 - 2 - bp * 4,
+                                                y: y - 8 - bp * 30,
+                                                width: 3 + bp * 3, height: 3 + bp * 3)),
+                         with: .color(.white), lineWidth: 0.7)
+            }
+        }
+    }
+
+    /// The octopus: it keeps house in the amphora when the tank has
+    /// one, else behind the first seeded rock. Every ~minute two eyes
+    /// peek over the rim; every few it pours out, crawls a short arc
+    /// across the sand, and pours back. It shades toward the
+    /// substrate like the real thing.
+    private func drawOctopus(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        // Home: the amphora's slot, else the first rock's lee.
+        let homeX: Double
+        let homeY: Double
+        if game?.owns(.amphora) == true,
+           let s = AquariumModel.decorSlot(for: .amphora) {
+            homeX = s.x * size.width
+            homeY = backDuneTop(atX: s.x * size.width, in: size) - 4
+        } else if let rock = Self.decor.first(where: { $0.kind == .rock }) {
+            homeX = rock.x * size.width - 18
+            homeY = decorBaseY(rock, in: size) - 2
+        } else {
+            homeX = size.width * 0.33
+            homeY = sandTop(atX: homeX, in: size)
+        }
+        // Substrate camouflage: paler on white, darker on black.
+        let mantle = substrateKey == "white"
+            ? Color(red: 0.72, green: 0.55, blue: 0.48)
+            : substrateKey == "black"
+                ? Color(red: 0.32, green: 0.20, blue: 0.20)
+                : Color(red: 0.58, green: 0.36, blue: 0.32)
+        let dark = Color(red: 0.34, green: 0.20, blue: 0.18)
+
+        // The wander: a seeded ~4-minute cycle — long home, a crawl
+        // out, a pause in the open, a crawl home.
+        let cycle = 240.0
+        let p = frac(t / cycle + 0.31)
+        // Out: p .60–.68 crawls out, .68–.82 sits out, .82–.90 crawls home.
+        let outX = homeX + (homeX < size.width * 0.5 ? 1 : -1) * size.width * 0.09
+        let outY = sandTop(atX: outX, in: size) - 6
+        var pos = CGPoint(x: homeX, y: homeY)
+        var crawl = 0.0
+        if p >= 0.60, p < 0.68 {
+            let k = smooth(clamp01((p - 0.60) / 0.08))
+            pos = CGPoint(x: homeX + (outX - homeX) * k,
+                          y: homeY + (outY - homeY) * k)
+            crawl = reduceMotion ? 0 : sin(k * .pi * 6) * 0.5
+        } else if p >= 0.68, p < 0.82 {
+            pos = CGPoint(x: outX, y: outY)
+        } else if p >= 0.82, p < 0.90 {
+            let k = smooth(clamp01((p - 0.82) / 0.08))
+            pos = CGPoint(x: outX + (homeX - outX) * k,
+                          y: outY + (homeY - outY) * k)
+            crawl = reduceMotion ? 0 : sin(k * .pi * 6) * 0.5
+        }
+        let out = pos.x != homeX
+        // The peek: while home, eyes ride over the rim for a stretch
+        // of each ~70 s sub-cycle.
+        let peek = !out && frac(t / 68) < 0.5
+        var c = canvas
+        c.translateBy(x: pos.x, y: pos.y)
+        c.opacity = out ? 0.95 : 0.9
+        if out {
+            // Crawling: the mantle low over eight working arms.
+            for i in 0..<8 {
+                let ph = Double(i) / 8 * .pi * 2 + crawl * 2
+                var arm = Path()
+                arm.move(to: .zero)
+                arm.addQuadCurve(
+                    to: CGPoint(x: cos(ph) * 12, y: 4 + sin(ph) * 4),
+                    control: CGPoint(x: cos(ph) * 7, y: 2))
+                c.stroke(arm, with: .color(mantle.opacity(0.9)),
+                         style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+            }
+            c.fill(Path(ellipseIn: CGRect(x: -7, y: -14, width: 14, height: 13)),
+                   with: .color(mantle))
+            c.fill(Path(ellipseIn: CGRect(x: -4, y: -10, width: 3, height: 3)),
+                   with: .color(dark))
+            c.fill(Path(ellipseIn: CGRect(x: 2, y: -10, width: 3, height: 3)),
+                   with: .color(dark))
+        } else {
+            // Home: the mantle slumped in/behind the pot, eyes up on a
+            // peek, sunk below otherwise.
+            let eyeLift = peek ? -10.0 : -3.0
+            c.fill(Path(ellipseIn: CGRect(x: -8, y: -10, width: 16, height: 11)),
+                   with: .color(mantle.opacity(peek ? 1 : 0.55)))
+            for k in [-1.0, 1.0] {
+                c.fill(Path(ellipseIn: CGRect(x: k * 4 - 1.8, y: eyeLift - 2,
+                                              width: 3.6, height: 4.6)),
+                       with: .color(.white.opacity(peek ? 0.9 : 0.3)))
+                c.fill(Path(ellipseIn: CGRect(x: k * 4 - 0.8, y: eyeLift - 0.6,
+                                              width: 1.6, height: 2.4)),
+                       with: .color(dark.opacity(peek ? 1 : 0.4)))
+            }
+        }
+    }
+
+    /// The axolotl: a wide pink smile on legs, three gill fronds a
+    /// cheek waving as it ambles the sand on a long seeded patrol;
+    /// every so often it kicks up and settles a body-width over.
+    private func drawAxolotl(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let period = 160.0
+        let p = frac(t / period)
+        // Amble mostly in place; a kick-hop at p .5 moves the yard.
+        let home = size.width * 0.30
+        let kick = smooth(clamp01((p - 0.48) / 0.03))
+            * smooth(clamp01((0.56 - p) / 0.03))
+        let x = home + 30 * smooth(clamp01(p / 0.5)) * 2 - 15
+        let baseY = sandTop(atX: x, in: size) - 7
+        let y = reduceMotion ? baseY : baseY - kick * 26
+        var c = canvas
+        c.translateBy(x: x, y: y)
+        c.opacity = 0.92
+        let pink = Color(red: 0.92, green: 0.60, blue: 0.62)
+        let frill = Color(red: 0.95, green: 0.45, blue: 0.50)
+        // Tail sweeping behind.
+        var tail = Path()
+        tail.move(to: CGPoint(x: -12, y: -2))
+        tail.addQuadCurve(to: CGPoint(x: -26, y: -8),
+                          control: CGPoint(x: -20, y: -2))
+        c.stroke(tail, with: .color(pink.opacity(0.8)),
+                 style: StrokeStyle(lineWidth: 5, lineCap: .round))
+        // Little legs, stepping while it walks.
+        for k in 0..<2 {
+            let step = reduceMotion ? 0 : sin(t * 3 + Double(k) * .pi) * 1.5
+            c.stroke(Path(CGRect(x: -4 + Double(k) * 12, y: 2,
+                                 width: 5, height: 4)),
+                     with: .color(pink), lineWidth: 3)
+            _ = step
+        }
+        // Body & wide head.
+        c.fill(Path(ellipseIn: CGRect(x: -12, y: -9, width: 30, height: 13)),
+               with: .color(pink))
+        c.fill(Path(ellipseIn: CGRect(x: 4, y: -13, width: 20, height: 15)),
+               with: .color(pink))
+        // Gill fronds, waving on their own phase.
+        for side in [-1.0, 1.0] {
+            for k in 0..<3 {
+                let wave = reduceMotion ? 0
+                    : sin(t * 2.6 + Double(k) * 1.2 + side) * 2
+                var fr = Path()
+                let gy = -12 + Double(k) * 4
+                fr.move(to: CGPoint(x: 12 + side * 3, y: gy))
+                fr.addQuadCurve(
+                    to: CGPoint(x: 12 + side * (12 + Double(k) * 2), y: gy - 4 + wave),
+                    control: CGPoint(x: 12 + side * 8, y: gy - 2))
+                c.stroke(fr, with: .color(frill),
+                         style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+            }
+        }
+        // The famous smile & bead eyes.
+        c.fill(Path(ellipseIn: CGRect(x: 14, y: -9, width: 3, height: 3)),
+               with: .color(.black.opacity(0.75)))
+        c.fill(Path(ellipseIn: CGRect(x: 20, y: -9, width: 3, height: 3)),
+               with: .color(.black.opacity(0.75)))
+        var smile = Path()
+        smile.move(to: CGPoint(x: 15, y: -4))
+        smile.addQuadCurve(to: CGPoint(x: 23, y: -4), control: CGPoint(x: 19, y: -1))
+        c.stroke(smile, with: .color(Color(red: 0.60, green: 0.30, blue: 0.32)),
+                 lineWidth: 1)
+        // The kicked-up sand puff as it lands.
+        if kick > 0.5 && !reduceMotion {
+            for k in 0..<4 {
+                let a = Double(k) * .pi * 0.5 + 0.3
+                var s = canvas
+                s.opacity = (kick - 0.5) * 0.6
+                s.fill(Path(ellipseIn: CGRect(x: x + cos(a) * 14 - 2,
+                                              y: baseY + 2 - sin(a) * 6,
+                                              width: 4, height: 4)),
+                       with: .color(sandTones.speckDark))
+            }
+        }
+    }
+
+    /// The tetra school: seven little neons sharing one wander
+    /// target, each orbiting the pack on its own phase — cohesion as
+    /// a swarm, not a queue.
+    private func drawTetraSchool(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        // The pack's shared target sweeps the midwater slowly.
+        let cx = size.width * (0.5 + 0.28 * sin(t * 0.09))
+        let cy = size.height * (0.42 + 0.10 * sin(t * 0.13 + 1.7))
+        let heading = cos(t * 0.09) >= 0 ? 1.0 : -1.0
+        for i in 0..<7 {
+            let h = scatter(AquariumModel.stableHash("tetra"), i)
+            let orbit = 12 + Double(h & 0xFF) / 0xFF * 26
+            let phase = Double((h >> 8) & 0xFF) / 0xFF * .pi * 2
+            let speed = 1.2 + Double((h >> 16) & 0xFF) / 0xFF * 1.4
+            let wobble = reduceMotion ? 0.0 : t * speed
+            let fx = cx + cos(wobble + phase) * orbit
+            let fy = cy + sin(wobble * 1.3 + phase) * orbit * 0.45
+            let len = 13.0
+            let face = heading
+            var c = canvas
+            c.translateBy(x: fx, y: fy)
+            c.scaleBy(x: face, y: 1)
+            c.opacity = 0.9
+            // The neon line — a glow band over the silver body.
+            c.fill(Path(ellipseIn: CGRect(x: -len / 2, y: -len * 0.22,
+                                          width: len, height: len * 0.44)),
+                   with: .color(Color(red: 0.80, green: 0.86, blue: 0.90)))
+            var glow = c
+            glow.blendMode = .plusLighter
+            glow.fill(Path(roundedRect: CGRect(x: -len * 0.40, y: -len * 0.10,
+                                               width: len * 0.80, height: len * 0.12),
+                           cornerRadius: len * 0.06),
+                      with: .color(Color(red: 0.20, green: 0.85, blue: 0.95)
+                                   .opacity(0.9)))
+            // The red tail half.
+            c.fill(Path(ellipseIn: CGRect(x: -len / 2, y: -len * 0.16,
+                                          width: len * 0.45, height: len * 0.32)),
+                   with: .color(Color(red: 0.90, green: 0.30, blue: 0.25)
+                                .opacity(0.85)))
+            c.fill(Path(ellipseIn: CGRect(x: len * 0.28, y: -len * 0.12,
+                                          width: 1.6, height: 1.6)),
+                   with: .color(.black.opacity(0.8)))
+        }
+    }
+
+    /// The cleaner shrimp: it keeps station on a decor piece, then
+    /// every ~40 s hops to the nearest idle fish, rides it a few
+    /// seconds picking, and springs home.
+    private func drawCleanerShrimp(canvas: inout GraphicsContext, size: CGSize,
+                                   t: Double, layouts: [String: Layout],
+                                   roster: [Fish], now: Date) {
+        // Station: the first seeded coral or rock's top.
+        let station: CGPoint
+        if let perch = Self.decor.first(where: { $0.kind == .coral || $0.kind == .rock }) {
+            station = CGPoint(x: perch.x * size.width,
+                              y: decorBaseY(perch, in: size) - 14 * perch.scale)
+        } else {
+            station = CGPoint(x: size.width * 0.2,
+                              y: sandTop(atX: size.width * 0.2, in: size) - 10)
+        }
+        // The client: the shallowest idling fish.
+        let client = roster.first(where: { $0.state == .idling && !$0.isFry })
+        let clientPt = client.flatMap { layouts[$0.id] }
+            .map { CGPoint(x: $0.x, y: $0.y - 10) }
+        // The 40 s round: out on the first ~15%, riding till ~55%,
+        // home by ~70%.
+        let p = frac(t / 40)
+        var pos = station
+        var riding = false
+        if let clientPt {
+            if p < 0.15 {
+                let k = smooth(clamp01(p / 0.15))
+                pos = CGPoint(x: station.x + (clientPt.x - station.x) * k,
+                              y: station.y + (clientPt.y - station.y) * k
+                                  - sin(k * .pi) * 30)
+            } else if p < 0.55 {
+                pos = clientPt
+                riding = true
+            } else if p < 0.70 {
+                let k = smooth(clamp01((p - 0.55) / 0.15))
+                pos = CGPoint(x: clientPt.x + (station.x - clientPt.x) * k,
+                              y: clientPt.y + (station.y - clientPt.y) * k
+                                  - sin(k * .pi) * 30)
+            }
+        }
+        var c = canvas
+        c.translateBy(x: pos.x, y: pos.y)
+        c.opacity = 0.9
+        let body = Color(red: 0.92, green: 0.75, blue: 0.70)
+        let red = Color(red: 0.80, green: 0.25, blue: 0.25)
+        // A slim arched body with a red saddle.
+        c.fill(Path(ellipseIn: CGRect(x: -6, y: -3, width: 12, height: 6)),
+               with: .color(body))
+        c.fill(Path(ellipseIn: CGRect(x: -2, y: -3, width: 5, height: 6)),
+               with: .color(red.opacity(0.8)))
+        // Long antennae whisking ahead, busier while it works.
+        let whisk = riding && !reduceMotion ? sin(t * 9) * 2 : 0
+        for k in [-1.0, 1.0] {
+            var ant = Path()
+            ant.move(to: CGPoint(x: 5, y: -1))
+            ant.addQuadCurve(to: CGPoint(x: 15, y: -6 + k * 3 + whisk),
+                             control: CGPoint(x: 10, y: -3 + k))
+            c.stroke(ant, with: .color(body.opacity(0.8)), lineWidth: 0.8)
+        }
+        c.fill(Path(ellipseIn: CGRect(x: 4, y: -2.5, width: 1.6, height: 1.6)),
+               with: .color(.black.opacity(0.8)))
+    }
+
+    /// The manta: a rare wide shadow crossing the back layer every
+    /// few minutes — big, dim, unhurried. Reduce Motion skips the
+    /// flight entirely.
+    private func drawManta(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        guard !reduceMotion else { return }
+        // ~6 minutes between passes, a 20 s glide across.
+        let period = 360.0
+        let p = frac(t / period + 0.62)
+        guard p < 0.06 else { return }
+        let k = p / 0.06
+        let x = -80 + (size.width + 160) * k
+        let y = size.height * 0.30 + sin(k * .pi * 2) * 20
+        let flap = sin(t * 1.6) * 0.18
+        var c = canvas
+        c.translateBy(x: x, y: y)
+        c.opacity = 0.35 * sin(min(1, k * .pi) * .pi)
+        // The diamond: two swept wings meeting at a point, a whip
+        // tail behind.
+        var wing = Path()
+        wing.move(to: CGPoint(x: 42, y: 0))
+        wing.addQuadCurve(to: CGPoint(x: -20, y: -30 - flap * 20),
+                          control: CGPoint(x: 10, y: -26 - flap * 12))
+        wing.addQuadCurve(to: CGPoint(x: -34, y: 0),
+                          control: CGPoint(x: -28, y: -8))
+        wing.addQuadCurve(to: CGPoint(x: -20, y: 30 + flap * 20),
+                          control: CGPoint(x: -28, y: 8))
+        wing.addQuadCurve(to: CGPoint(x: 42, y: 0),
+                          control: CGPoint(x: 10, y: 26 + flap * 12))
+        wing.closeSubpath()
+        c.fill(wing, with: .color(Color(red: 0.05, green: 0.09, blue: 0.14)))
+        var tailP = Path()
+        tailP.move(to: CGPoint(x: -34, y: 0))
+        tailP.addQuadCurve(to: CGPoint(x: -72, y: 6),
+                           control: CGPoint(x: -52, y: -3))
+        c.stroke(tailP, with: .color(Color(red: 0.05, green: 0.09, blue: 0.14)),
+                 lineWidth: 1.6)
+    }
+
+    // MARK: Events
+
+    /// The buried treasure (docs/TOYS.md shop): a chest lid half out
+    /// of the sand at its seeded spot, a glint climbing off it every
+    /// few seconds. Its hitbox feeds `motion.treasureBox`; the tap
+    /// digs, three digs open it.
+    private func drawTreasure(canvas: inout GraphicsContext, size: CGSize,
+                              t: Double, now: Date) {
+        guard let treasure = game?.treasure else {
+            motion.treasureBox = nil
+            return
+        }
+        let x = treasure.x * size.width
+        let baseY = sandTop(atX: x, in: size) + 2
+        var c = canvas
+        c.translateBy(x: x, y: baseY)
+        // The lid's arc peeking out of the dune, brass band catching.
+        var lid = Path()
+        lid.move(to: CGPoint(x: -12, y: 0))
+        lid.addQuadCurve(to: CGPoint(x: 12, y: 0), control: CGPoint(x: 0, y: -16))
+        lid.closeSubpath()
+        c.fill(lid, with: .color(Color(red: 0.42, green: 0.27, blue: 0.13)))
+        c.stroke(lid, with: .color(.black.opacity(0.3)), lineWidth: 0.8)
+        c.fill(Path(CGRect(x: -2, y: -10, width: 4, height: 7)),
+               with: .color(Color(red: 0.85, green: 0.70, blue: 0.30)))
+        // Sand drifted over the foot.
+        c.fill(Path(ellipseIn: CGRect(x: -14, y: -2, width: 28, height: 5)),
+               with: .color(sandTones.frontB.opacity(0.9)))
+        // The glint: a four-point star rising every ~3.5 s — seeded off
+        // the treasure's own id so two treasures never sync.
+        let sparklePhase = frac(t / 3.5 + Double(AquariumModel.stableHash(treasure.id) & 0xFF) / 0xFF)
+        if sparklePhase < 0.4 && !reduceMotion {
+            let k = sparklePhase / 0.4
+            var s = canvas
+            s.blendMode = .plusLighter
+            s.opacity = sin(k * .pi) * 0.9
+            s.translateBy(x: x + sin(k * 5) * 3, y: baseY - 10 - k * 26)
+            let r = 3 + k * 4
+            s.scaleBy(x: r, y: r)
+            s.fill(Self.starPath, with: .color(Color(red: 1.0, green: 0.9,
+                                                     blue: 0.5)))
+        }
+        motion.treasureBox = (treasure.id,
+                              CGRect(x: x - 20, y: baseY - 22, width: 40, height: 28))
+    }
+
+    /// The third dig's payoff: a pop of gold where the lid opened,
+    /// pearls & sparks thrown on seeded arcs.
+    private func drawGoldBursts(canvas: inout GraphicsContext, size: CGSize,
+                                now: Date) {
+        for burst in motion.goldBursts {
+            let p = clamp01(now.timeIntervalSince(burst.bornAt) / 1.1)
+            guard p < 1 else { continue }
+            for i in 0..<10 {
+                var h = AquariumModel.stableHash("gold-\(i)")
+                h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
+                let a = Double(h & 0xFF) / 0xFF * .pi - .pi * 0.95
+                let dist = (18 + Double((h >> 8) & 0xFF) / 0xFF * 44) * p
+                let gx = burst.x.x + cos(a) * dist
+                let gy = burst.x.y + sin(a) * dist + p * p * 30
+                var s = canvas
+                s.blendMode = .plusLighter
+                s.opacity = (1 - p) * 0.9
+                let r = 2 + Double((h >> 16) & 0x3)
+                s.fill(Path(ellipseIn: CGRect(x: gx - r, y: gy - r,
+                                              width: r * 2, height: r * 2)),
+                       with: .color(Color(red: 1.0, green: 0.85, blue: 0.40)))
+            }
+        }
+    }
+
+    /// The bubble-ring trick: a tapped fish blows a ring that swells
+    /// and climbs — the puff's bigger cousin.
+    private func drawTrickRings(canvas: inout GraphicsContext, size: CGSize,
+                                layouts: [String: Layout], now: Date) {
+        for (id, trick) in motion.tricks where trick.kind == .ring {
+            guard now < trick.until, let l = layouts[id] else { continue }
+            let p = clamp01(1 - trick.until.timeIntervalSince(now)
+                            / AquariumBehavior.trickDuration)
+            let r = 4 + p * 20
+            var c = canvas
+            c.opacity = (1 - p) * 0.8
+            c.stroke(Path(ellipseIn: CGRect(x: l.x - r, y: l.y - 14 - p * 30 - r,
+                                            width: r * 2, height: r * 2)),
+                     with: .color(.white), lineWidth: 1.6)
+        }
+    }
+
+    /// The visitor parade (docs/TOYS.md shop): a queued passer-by
+    /// crosses the back layer once — a whale's great dim silhouette
+    /// spouting if it nears the surface, a diver's torch sweeping, a
+    /// submarine's portholes glowing. `visitorShown` answers when the
+    /// parade starts so a relaunch can't replay it; Reduce Motion
+    /// holds the portrait still mid-tank for the same span instead of
+    /// crossing, so the visit is a thing on screen, not only a toast.
+    private func drawVisitor(canvas: inout GraphicsContext, size: CGSize,
+                             t: Double, now: Date) {
+        // Claim the queue's head when the lane is free.
+        if motion.activeVisitor == nil, now >= motion.visitorCooldownUntil,
+           let next = game?.pendingVisitors.first {
+            motion.activeVisitor = (next, now)
+            toy?.visitorShown(next)
+        }
+        guard let visitor = motion.activeVisitor else { return }
+        let duration: Double = visitor.kind == .whale ? 17 : 14
+        let elapsed = now.timeIntervalSince(visitor.startedAt)
+        guard elapsed < duration else {
+            motion.activeVisitor = nil
+            motion.visitorCooldownUntil = now.addingTimeInterval(6)
+            toy?.visitorDeparted(visitor.kind)
+            return
+        }
+        let p = fixture?.visitorProgress ?? (reduceMotion ? 0.5 : elapsed / duration)
+        let x = size.width * (1.15 - 1.3 * p)
+        switch visitor.kind {
+        case .whale:
+            let y = size.height * 0.24 + sin(p * .pi * 3) * 8
+            var c = canvas
+            c.opacity = 0.38 * sin(p * .pi)
+            // A huge slate silhouette: long back, fluke, a fin.
+            var body = Path()
+            body.move(to: CGPoint(x: -110, y: 0))
+            body.addQuadCurve(to: CGPoint(x: 40, y: -30),
+                              control: CGPoint(x: -50, y: -34))
+            body.addQuadCurve(to: CGPoint(x: 96, y: -4),
+                              control: CGPoint(x: 78, y: -24))
+            body.addQuadCurve(to: CGPoint(x: 40, y: 22),
+                              control: CGPoint(x: 80, y: 12))
+            body.addQuadCurve(to: CGPoint(x: -110, y: 0),
+                              control: CGPoint(x: -40, y: 30))
+            body.closeSubpath()
+            c.translateBy(x: x, y: y)
+            c.fill(body, with: .color(Color(red: 0.05, green: 0.10, blue: 0.18)))
+            // The fluke.
+            var fluke = Path()
+            fluke.move(to: CGPoint(x: -108, y: 0))
+            fluke.addQuadCurve(to: CGPoint(x: -136, y: -14),
+                               control: CGPoint(x: -120, y: -8))
+            fluke.addQuadCurve(to: CGPoint(x: -136, y: 12),
+                               control: CGPoint(x: -126, y: 4))
+            fluke.closeSubpath()
+            c.fill(fluke, with: .color(Color(red: 0.05, green: 0.10, blue: 0.18)))
+            // A pectoral fin.
+            var fin = Path()
+            fin.move(to: CGPoint(x: 20, y: 14))
+            fin.addQuadCurve(to: CGPoint(x: 44, y: 30),
+                             control: CGPoint(x: 30, y: 24))
+            fin.addQuadCurve(to: CGPoint(x: 16, y: 20),
+                             control: CGPoint(x: 24, y: 20))
+            fin.closeSubpath()
+            c.fill(fin, with: .color(Color(red: 0.04, green: 0.08, blue: 0.15)))
+            // The spout: a white puff off the back while it's high.
+            if y < size.height * 0.20 && !reduceMotion {
+                for k in 0..<3 {
+                    let sp = frac(t * 1.2 + Double(k) / 3)
+                    var b = canvas
+                    b.opacity = (1 - sp) * 0.35 * sin(p * .pi)
+                    b.stroke(Path(ellipseIn: CGRect(x: x + 52 - 3 - sp * 4,
+                                                    y: y - 34 - sp * 22,
+                                                    width: 4 + sp * 8,
+                                                    height: 4 + sp * 8)),
+                             with: .color(.white), lineWidth: 0.8)
+                }
+            }
+        case .diver:
+            let y = size.height * 0.34 + sin(p * .pi * 4) * 10
+            var c = canvas
+            c.translateBy(x: x, y: y)
+            c.opacity = 0.75 * sin(p * .pi)
+            // Kick fins trailing, a tank on the back, a round head.
+            c.fill(Path(ellipseIn: CGRect(x: -12, y: -5, width: 24, height: 10)),
+                   with: .color(Color(red: 0.85, green: 0.80, blue: 0.20)))
+            c.fill(Path(ellipseIn: CGRect(x: -16, y: -8, width: 8, height: 8)),
+                   with: .color(Color(red: 0.80, green: 0.60, blue: 0.45)))
+            c.fill(Path(CGRect(x: -4, y: -9, width: 9, height: 4)),
+                   with: .color(Color(red: 0.60, green: 0.62, blue: 0.65)))
+            let kick = reduceMotion ? 0 : sin(t * 6) * 4
+            for k in [-1.0, 1.0] {
+                var fin = Path()
+                fin.move(to: CGPoint(x: 12, y: k * 2))
+                fin.addLine(to: CGPoint(x: 22, y: k * 4 + kick))
+                c.stroke(fin, with: .color(Color(red: 0.15, green: 0.15, blue: 0.18)),
+                         lineWidth: 2)
+            }
+            // The torch: a cone of light sweeping ahead.
+            var torch = c
+            torch.blendMode = .plusLighter
+            let sweep = reduceMotion ? 0 : sin(t * 0.9) * 0.35
+            torch.rotate(by: .radians(-0.25 + sweep))
+            torch.fill(Path(ellipseIn: CGRect(x: -70, y: -14, width: 80, height: 26)),
+                       with: .radialGradient(
+                           Gradient(colors: [Color(red: 0.95, green: 0.95,
+                                                   blue: 0.75)
+                                               .opacity(0.30), .clear]),
+                           center: CGPoint(x: -16, y: 0), startRadius: 0,
+                           endRadius: 60))
+            // Bubbles off the reg.
+            for k in 0..<3 {
+                let bp = frac(t * 0.8 + Double(k) / 3)
+                var b = canvas
+                b.opacity = (1 - bp) * 0.5 * sin(p * .pi)
+                b.stroke(Path(ellipseIn: CGRect(x: x - 14 - bp * 6,
+                                                y: y - 12 - bp * 40,
+                                                width: 2 + bp * 3, height: 2 + bp * 3)),
+                         with: .color(.white), lineWidth: 0.7)
+            }
+        case .submarine:
+            let y = size.height * 0.30
+            var c = canvas
+            c.translateBy(x: x, y: y)
+            c.opacity = 0.65 * sin(p * .pi)
+            // The hull: a cigar with a conning tower and tail fins.
+            c.fill(Path(ellipseIn: CGRect(x: -46, y: -12, width: 92, height: 24)),
+                   with: .color(Color(red: 0.72, green: 0.60, blue: 0.20)))
+            c.fill(Path(roundedRect: CGRect(x: -10, y: -22, width: 20, height: 12),
+                        cornerRadius: 4),
+                   with: .color(Color(red: 0.66, green: 0.54, blue: 0.18)))
+            // Periscope.
+            c.stroke(Path(CGRect(x: -1, y: -30, width: 2, height: 9)),
+                     with: .color(Color(red: 0.40, green: 0.34, blue: 0.14)),
+                     lineWidth: 2)
+            c.fill(Path(CGRect(x: -1, y: -31, width: 7, height: 3)),
+                   with: .color(Color(red: 0.40, green: 0.34, blue: 0.14)))
+            // Tail cross.
+            for k in [-1.0, 1.0] {
+                var fin = Path()
+                fin.move(to: CGPoint(x: -44, y: 0))
+                fin.addLine(to: CGPoint(x: -56, y: k * 12))
+                c.stroke(fin, with: .color(Color(red: 0.60, green: 0.50, blue: 0.16)),
+                         lineWidth: 3)
+            }
+            // Portholes glowing warm.
+            var g = c
+            g.blendMode = .plusLighter
+            for k in 0..<4 {
+                g.fill(Path(ellipseIn: CGRect(x: -28 + Double(k) * 16, y: -4,
+                                              width: 7, height: 7)),
+                       with: .color(Color(red: 1.0, green: 0.85, blue: 0.45)
+                                    .opacity(0.9)))
+            }
+            // Prop wash: a faint churn behind.
+            var churn = c
+            churn.blendMode = .plusLighter
+            churn.fill(Path(ellipseIn: CGRect(x: -80, y: -10, width: 30, height: 20)),
+                       with: .radialGradient(
+                           Gradient(colors: [.white.opacity(0.14), .clear]),
+                           center: CGPoint(x: -58, y: 0), startRadius: 0,
+                           endRadius: 20))
+        }
+    }
+
     // MARK: Fish
 
     /// Where a fish is right now: position, which way it faces, how far
@@ -2799,7 +4490,7 @@ struct AquariumView: View {
                     // a touch — `drawFish` breathes out the "z"s. A
                     // curious pointer is worth waking up for.
                     let doze = reduceMotion || fish.id == motion.curiousID
-                        ? 0 : AquariumBehavior.doze(seed: h, at: t)
+                        ? 0 : AquariumBehavior.doze(seed: h, night: nightFactor(t: t))
                     let sipPeriod = 26 + Double((h >> 60) & 0xF)
                     let sip = frac(t / sipPeriod + phase / (.pi * 2))
                     let sipping = (reduceMotion ? 0
@@ -2831,7 +4522,8 @@ struct AquariumView: View {
                 let dPitch = smooth(d.turn) * (turnUp ? -0.9 : 0.9)
                 let dArc = d.turn * (turnUp ? -6.0 : 6.0)
                 // The fixture path dozes too — same night, same rule.
-                let doze = reduceMotion ? 0 : AquariumBehavior.doze(seed: h, at: t)
+                let doze = reduceMotion ? 0
+                    : AquariumBehavior.doze(seed: h, night: nightFactor(t: t))
                 let sipPeriod = 26 + Double((h >> 60) & 0xF)
                 let sip = frac(t / sipPeriod + phase / (.pi * 2))
                 let sipping = (reduceMotion ? 0
@@ -3062,7 +4754,7 @@ struct AquariumView: View {
         let lane = fish.isFry ? (parent?.fish.lane ?? fish.lane) * 0.85 : fish.lane
         // The idle game's growth stages (docs/TOYS.md): small, grown,
         // full — a fish with no care record yet swims at stage 0.
-        let care = toy?.game.pets[fish.id]
+        let care = game?.pets[fish.id]
         let stageScale = [0.74, 0.92, 1.12][min(2, max(0, care?.stage ?? 0))]
         // The cartoon kit carries each species' proportions itself, so
         // the species aspect is softened — a shark stays long, a puffer
@@ -3083,7 +4775,11 @@ struct AquariumView: View {
             ? .secondaryLabelColor
             : (golden ? NSColor(srgbRed: 0.98, green: 0.76, blue: 0.22, alpha: 1)
                       : ProviderStyle.style(for: fish.providerID).nsAccent)
-        let washed = base.blended(withFraction: lane * 0.42, of: Self.waterNS) ?? base
+        // Depth attenuates toward the column's floor colour — hue as
+        // well as brightness — with a touch of desaturation on top, so
+        // a deep fish reads watery, not just dim.
+        let washed = (base.blended(withFraction: lane * 0.30, of: .gray) ?? base)
+            .blended(withFraction: lane * 0.45, of: floorNS) ?? base
         let bodyColor = Color(nsColor: washed)
         let lightColor = Color(nsColor: washed.blended(withFraction: 0.55, of: .white) ?? washed)
         let darkColor = Color(nsColor: washed.blended(withFraction: 0.38, of: .black) ?? washed)
@@ -3112,27 +4808,43 @@ struct AquariumView: View {
         }
 
         // A fish pools a soft shadow on the sand under it; the pool
-        // fades out as it climbs. The window is wide enough that
-        // mid-depth lanes still ground the tank a little — cheap
+        // fades as it climbs but stays readable at mid-height — cheap
         // depth, one gradient fill.
         if fish.state != .leaving {
             let floorY = sandTop(atX: l.x, in: size) + 3
             let clearance = floorY - (l.y + height * 0.5)
-            if clearance < 140 {
+            let range = size.height * 0.38
+            if clearance < range {
+                let fade = clamp01(1 - max(0, clearance) / range)
                 groundShadow(canvas: &canvas, x: l.x, y: floorY,
-                             halfW: length * 0.48, halfH: 4.5,
-                             alpha: 0.30 * clamp01(1 - max(0, clearance) / 140) * l.opacity)
+                             halfW: length * 0.60, halfH: 7,
+                             alpha: 0.44 * fade * l.opacity)
             }
+        }
+
+        // A trick in progress: the barrel roll is a full 360° about
+        // the swim axis — the vertical squash goes through belly-up
+        // and back; the bubble ring draws separately below.
+        var rollY = 1.0
+        if let trick = motion.tricks[fish.id], trick.kind == .roll, now < trick.until {
+            let p = clamp01(1 - trick.until.timeIntervalSince(now) / AquariumBehavior.trickDuration)
+            rollY = cos(p * .pi * 2)
+        } else if let trick = motion.tricks[fish.id], now >= trick.until {
+            motion.tricks.removeValue(forKey: fish.id)
         }
 
         var f = canvas
         f.opacity = l.opacity * (1 - lane * 0.28)
-        f.translateBy(x: l.x, y: l.y)
+        // Surface refraction: anything within ~8% of the waterline
+        // wobbles a touch sideways — the meniscus's parallax.
+        let wobble = !reduceMotion && l.y < size.height * 0.085
+            ? sin(t * 2.3 + phase) * 1.6 : 0
+        f.translateBy(x: l.x + wobble, y: l.y)
         // Rotate before the body scale so the pitch is rigid (no shear)
         // and `pitch * facing` keeps "nose down" the same for both
         // facings.
         if l.pitch + sway != 0 { f.rotate(by: .radians((l.pitch + sway) * l.facing)) }
-        f.scaleBy(x: l.facing * l.thin * length * squashX, y: height * squashY)
+        f.scaleBy(x: l.facing * l.thin * length * squashX, y: height * squashY * rollY)
 
         // The mouth says the game: a smile just after a meal, a small
         // "o" while the fish is starving, a soft curve cruising. A
@@ -3159,14 +4871,29 @@ struct AquariumView: View {
         // pitch, flip and squash all apply to it. Failing a bought
         // hat, a full-grown fish on a streak tank goes royal: three
         // days of completions and the grown-ups wear the crown.
+        // Accessories get their own slot; when the accessory is itself
+        // headwear (top hat, headphones) it wins the head and the hat
+        // stays in the pocket.
         if !fish.isFry {
-            if let hat = toy?.game.hat(for: fish.id) {
-                CartoonFish.drawHat(hat, into: &f,
-                                    at: CartoonFish.art(for: fish.species).hatAnchor)
-            } else if AquariumBehavior.wearsCrown(streakDays: toy?.game.streakDays ?? 0,
-                                                  stage: care?.stage ?? 0) {
-                CartoonFish.drawHat(.hatCrown, into: &f,
-                                    at: CartoonFish.art(for: fish.species).hatAnchor)
+            let art = CartoonFish.art(for: fish.species)
+            let accessory = game?.accessory(for: fish.id)
+            let headAccessory = accessory == .topHat || accessory == .headphones
+            if !headAccessory {
+                if let hat = game?.hat(for: fish.id) {
+                    CartoonFish.drawHat(hat, into: &f, at: art.hatAnchor)
+                } else if AquariumBehavior.wearsCrown(streakDays: game?.streakDays ?? 0,
+                                                      stage: care?.stage ?? 0) {
+                    CartoonFish.drawHat(.hatCrown, into: &f, at: art.hatAnchor)
+                }
+            }
+            if let accessory {
+                // The laptop only comes out while its fish is on the
+                // clock; residents left theirs in the office.
+                if accessory != .tinyLaptop
+                    || (fish.state == .swimming && !fish.isResident) {
+                    CartoonFish.drawAccessory(accessory, into: &f, art: art,
+                                              trail: reduceMotion ? 0 : sin(t * 2.1 + phase))
+                }
             }
         }
 
@@ -3423,9 +5150,9 @@ struct AquariumView: View {
     // MARK: Game chrome
 
     /// Whether the tank owns a shop item — the fixture path owns
-    /// nothing.
+    /// whatever its synthetic game says.
     private func owns(_ item: ShopItem) -> Bool {
-        toy?.game.owns(item) ?? false
+        game?.owns(item) ?? false
     }
 
     /// A small translucent HUD chip.
@@ -3473,9 +5200,9 @@ struct AquariumView: View {
     }
 
     /// The shop: every `ShopItem` grouped by category, one row each —
-    /// price button when buyable, a state control once owned. The
-    /// game's reducer is the only money handler; the rows just send
-    /// events.
+    /// price button when buyable, a lock while the tank level is short,
+    /// a state control once owned. The game's reducer is the only money
+    /// handler; the rows just send events.
     private func shopPanel(fish: [Fish]) -> some View {
         let game = toy?.game ?? AquariumGame()
         let adults = fish.filter { !$0.isFry && $0.state != .leaving }
@@ -3488,6 +5215,7 @@ struct AquariumView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
+                shopHeader(game)
                 ForEach(ShopItem.Category.allCases, id: \.self) { category in
                     Text(category.displayName)
                         .font(.system(size: 10, weight: .semibold))
@@ -3497,71 +5225,201 @@ struct AquariumView: View {
                         shopRow(item, game: game, adults: adults)
                     }
                 }
+                achievementsSection(game)
             }
             .padding(14)
         }
         .frame(width: 330, height: 420)
     }
 
+    /// The economy's vitals over the shelves: ladder rung and progress,
+    /// the streak, and today's chore with its counter.
+    private func shopHeader(_ game: AquariumGame) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Label("Tank level \(game.tankLevel)", systemImage: "chart.bar.fill")
+                    .font(.system(size: 10, weight: .medium))
+                if let next = AquariumProgression.nextLevelAt(
+                    lifetimePearls: game.lifetimePearls) {
+                    Text("· \(game.lifetimePearls.formatted()) / \(next.formatted()) pearls")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if game.streakDays > 1 {
+                    Label("\(game.streakDays)d", systemImage: "flame.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+            }
+            if let goal = game.dailyGoal {
+                HStack(spacing: 6) {
+                    Image(systemName: goal.claimed
+                          ? "checkmark.circle.fill" : "target")
+                        .font(.system(size: 10))
+                        .foregroundStyle(goal.claimed ? .green : .secondary)
+                    Text(goal.kind.displayName)
+                        .font(.system(size: 10))
+                    Spacer(minLength: 4)
+                    Text(goal.claimed ? "Done"
+                         : "\(min(goal.progress, goal.target))/\(goal.target)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     /// One shop row: name + detail + the action the item's state asks
-    /// for — buy, apply theme, wear hat, or just "owned".
+    /// for — buy, apply a surface, seat a wearable, or just "owned".
+    /// An item on a shelf above the tank's level sits dimmed behind
+    /// a lock instead.
     private func shopRow(_ item: ShopItem, game: AquariumGame,
                          adults: [Fish]) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        let unlocked = item.isUnlocked(atLevel: game.tankLevel)
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.displayName)
                     .font(.system(size: 11, weight: .medium))
-                Text(item.detail)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                if unlocked {
+                    Text(item.detail)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                } else {
+                    Label("Unlocks at tank level \(AquariumProgression.tierUnlockLevel(tier: item.tier))",
+                          systemImage: "lock.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 4)
-            if game.owns(item) {
-                switch item.category {
-                case .themes:
-                    if game.themeID == item.themeID {
-                        Text("In use").font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button("Use") { toy?.selectTheme(item) }
-                            .controlSize(.small)
-                    }
-                case .hats:
-                    Menu {
-                        ForEach(adults) { fish in
-                            Button(fish.label) { toy?.equipHat(item, to: fish.id) }
-                        }
-                        if game.hats.contains(where: { $0.value == item.rawValue }) {
-                            Divider()
-                            Button("Take it off") { toy?.equipHat(item, to: nil) }
-                        }
-                    } label: {
-                        Text(game.hats.contains(where: { $0.value == item.rawValue })
-                             ? "Re-seat" : "Wear")
-                            .font(.system(size: 10))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                default:
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .help("Owned")
-                }
+            if !unlocked {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            } else if game.owns(item) {
+                ownedControl(item, game: game, adults: adults)
             } else {
-                Button("◉ \(item.price)") {
-                    toy?.purchase(item)
-                    // The purchase bloop: three little rings mid-tank.
-                    // A denied tap can't get here — the row is disabled.
-                    for k in 0..<3 {
-                        motion.puffs.append((x: 0.44 + Double(k) * 0.06,
-                                             y: 0.30 + Double(k) * 0.05,
-                                             bornAt: Date()))
+                buyButton(item, game: game)
+            }
+        }
+        .opacity(unlocked ? 1 : 0.55)
+    }
+
+    /// What an owned item offers: a surface's Use, a wearable's fish
+    /// picker, or just the check that says it's in the tank.
+    @ViewBuilder
+    private func ownedControl(_ item: ShopItem, game: AquariumGame,
+                              adults: [Fish]) -> some View {
+        switch item.category {
+        case .themes:
+            if game.themeID == item.themeID {
+                Text("In use").font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Use") { toy?.selectTheme(item) }
+                    .controlSize(.small)
+            }
+        case .substrates:
+            if game.substrateID == item.substrateID
+                || game.backdropID == item.backdropID {
+                Text("In use").font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Use") {
+                    if item.substrateID != nil {
+                        toy?.selectSubstrate(item)
+                    } else if item.backdropID != nil {
+                        toy?.selectBackdrop(item)
                     }
                 }
                 .controlSize(.small)
-                .disabled(game.pearls < item.price)
             }
+        case .hats, .accessories:
+            let worn = item.category == .hats ? game.hats : game.accessories
+            Menu {
+                ForEach(adults) { fish in
+                    Button(fish.label) {
+                        if item.category == .hats {
+                            toy?.equipHat(item, to: fish.id)
+                        } else {
+                            toy?.equipAccessory(item, to: fish.id)
+                        }
+                    }
+                }
+                if worn.contains(where: { $0.value == item.rawValue }) {
+                    Divider()
+                    Button("Take it off") {
+                        if item.category == .hats {
+                            toy?.equipHat(item, to: nil)
+                        } else {
+                            toy?.equipAccessory(item, to: nil)
+                        }
+                    }
+                }
+            } label: {
+                Text(worn.contains(where: { $0.value == item.rawValue })
+                     ? "Re-seat" : "Wear")
+                    .font(.system(size: 10))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        default:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .help("Owned")
+        }
+    }
+
+    /// The price button — disabled when the bank is short; a denied
+    /// tap can't get past the disabled state anyway.
+    private func buyButton(_ item: ShopItem, game: AquariumGame) -> some View {
+        Button("◉ \(item.price)") {
+            toy?.purchase(item)
+            // The purchase bloop: three little rings mid-tank.
+            for k in 0..<3 {
+                motion.puffs.append((x: 0.44 + Double(k) * 0.06,
+                                     y: 0.30 + Double(k) * 0.05,
+                                     bornAt: Date()))
+            }
+        }
+        .controlSize(.small)
+        .disabled(game.pearls < item.price)
+    }
+
+    /// The milestones, folded shut until asked: unlocked ones carry
+    /// their date, locked ones sit dimmed with what they take.
+    private func achievementsSection(_ game: AquariumGame) -> some View {
+        DisclosureGroup {
+            ForEach(AquariumAchievement.allCases, id: \.rawValue) { achievement in
+                let at = game.unlocked[achievement.rawValue]
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: at != nil ? "checkmark.seal.fill" : "seal")
+                        .font(.system(size: 10))
+                        .foregroundStyle(at != nil ? .yellow : .secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(achievement.title)
+                            .font(.system(size: 11, weight: .medium))
+                        Text(achievement.detail)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 4)
+                    if let at {
+                        Text(Date(timeIntervalSince1970: at),
+                             format: .dateTime.month(.abbreviated).day())
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .opacity(at == nil ? 0.55 : 1)
+            }
+        } label: {
+            Text("Achievements")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
         }
     }
 

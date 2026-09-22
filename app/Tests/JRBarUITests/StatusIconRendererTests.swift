@@ -79,13 +79,16 @@ struct StatusIconRendererTests {
         #expect(StatusIconStyle(setting: "meters") == .meters, "an explicit choice is kept")
         #expect(StatusIconStyle(setting: "meters_percent") == .metersPercent)
         #expect(StatusIconStyle(setting: "percent") == .metersPercent)
+        #expect(StatusIconStyle(setting: "compact_percent") == .compactPercent)
+        #expect(StatusIconStyle(setting: "compact") == .compactPercent)
+        #expect(StatusIconStyle(setting: "percent_left") == .compactPercent)
         #expect(StatusIconStyle(setting: "orbit") == .orbit)
         #expect(StatusIconStyle(setting: "fold") == .orbit, "the fold-style name resolves too")
         #expect(StatusIconStyle(setting: nil) == .agents, "no setting means the agent-first one")
         #expect(StatusIconStyle(setting: "banana") == .agents)
         #expect(StatusIconStyle.meters.isMeters && StatusIconStyle.metersPercent.isMeters)
         #expect(!StatusIconStyle.glyph.isMeters && !StatusIconStyle.agents.isMeters)
-        #expect(!StatusIconStyle.orbit.isMeters)
+        #expect(!StatusIconStyle.orbit.isMeters && !StatusIconStyle.compactPercent.isMeters)
     }
 }
 
@@ -544,5 +547,95 @@ struct StatusMetersTests {
         #expect(Double(third) > Double(sliver) * 1.10, "36 % is visibly more than 1 %")
         #expect(full > third, "100 % is visibly more than 36 %")
         #expect(Self.pixels(strip(0.01)) != Self.pixels(strip(0.36)))
+    }
+}
+
+@Suite("Compact percent menu bar icon")
+struct StatusCompactPercentTests {
+    static func meter(_ id: String, _ fraction: Double?, resetsAt: Double? = nil,
+                      verdict: StatusMeter.PaceVerdict = .unknown, accent: String? = nil) -> StatusMeter {
+        StatusMeter(id: id, name: id.capitalized, glyph: .symbol("circle"), fraction: fraction,
+                    accentHex: accent, resetsAt: resetsAt, paceVerdict: verdict)
+    }
+
+    static func pixels(_ image: NSImage) -> [UInt8] {
+        StatusMetersTests.pixels(image)
+    }
+
+    @Test("the percent is what is left, not what is used")
+    func remainingSemantics() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.38), now: now) == "62")
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 1.0), now: now) == "0")
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.0), now: now) == "100")
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", nil), now: now) == "--")
+        // The compact style spells it with the % sign, the way CodexBar does.
+        #expect(StatusIconRenderer.compactText(Self.meter("claude", 0.38), now: now) == "62%")
+        #expect(StatusIconRenderer.compactText(nil, now: now) == "--")
+        #expect(StatusIconRenderer.compactText(Self.meter("claude", nil), now: now) == "--")
+    }
+
+    @Test("the countdown wins the slot under 10 % left or 15 minutes out")
+    func countdownRule() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // Nearly spent: the countdown shows even with hours to go.
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 + 7200), now: now) == "2h")
+        // Imminent reset on a comfortable window: same swap.
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.4, resetsAt: now.timeIntervalSince1970 + 12 * 60), now: now) == "12m")
+        // Neither holds: the percent stands.
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.4, resetsAt: now.timeIntervalSince1970 + 3600), now: now) == "60")
+        // A stale (past) stamp is not a countdown.
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 - 60), now: now) == "6")
+        // No stamp, no countdown — but the near-spent percent still warns.
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94), now: now) == "6")
+        // Days out on a spent window reads in days.
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 + 3 * 86400), now: now) == "3d")
+    }
+
+    @Test("the tightest window wins the readout")
+    func tightestWins() {
+        let spec = StatusIconSpec(style: .compactPercent, meters: [
+            Self.meter("claude", 0.16), Self.meter("codex", 0.83), Self.meter("gemini", nil),
+        ])
+        #expect(StatusIconRenderer.tightestMeter(spec)?.id == "codex")
+        let unread = StatusIconSpec(style: .compactPercent, meters: [Self.meter("gemini", nil)])
+        #expect(StatusIconRenderer.tightestMeter(unread)?.id == "gemini", "all-unread still picks one to dash")
+        #expect(StatusIconRenderer.tightestMeter(StatusIconSpec(style: .compactPercent)) == nil)
+    }
+
+    @Test("the strip draws glyph plus figure, tinted by the pace verdict")
+    func drawing() {
+        let renderer = StatusIconRenderer()
+        let calm = renderer.image(for: StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.4)]))
+        let runningOut = renderer.image(for: StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.4, verdict: .runsOut)]))
+        let spent = renderer.image(for: StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.4, verdict: .exhausted)]))
+        #expect(calm.isTemplate, "a quiet verdict leaves the menu bar's own colour")
+        #expect(!runningOut.isTemplate && !spent.isTemplate)
+        #expect(Self.pixels(calm) != Self.pixels(runningOut))
+        #expect(Self.pixels(runningOut) != Self.pixels(spent))
+        // An accent tints the calm readout without a verdict.
+        let accented = renderer.image(for: StatusIconSpec(style: .compactPercent,
+                                                        meters: [Self.meter("claude", 0.4, verdict: .comfortable, accent: "#D97757")]))
+        #expect(!accented.isTemplate)
+        // It is a strip, not the square glyph, and narrower than the columns.
+        let size = StatusIconRenderer.size(for: StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.4)]))
+        #expect(size.height == StatusIconRenderer.barHeight)
+        #expect(size.width > StatusIconRenderer.size.width)
+        let columns = StatusIconRenderer.size(for: StatusIconSpec(style: .metersPercent, meters: [Self.meter("claude", 0.4)]))
+        #expect(size.width < columns.width)
+    }
+
+    @Test("VoiceOver and the tooltip read remaining percent, or the reset")
+    func readout() {
+        let spec = StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.38)])
+        #expect(StatusIconRenderer.accessibilityLabel(spec) == "JR-Bar · Claude 62% left")
+        let countdown = StatusIconSpec(style: .compactPercent, meters: [
+            Self.meter("claude", 0.4, resetsAt: Date().timeIntervalSince1970 + 8 * 60),
+        ])
+        #expect(StatusIconRenderer.accessibilityLabel(countdown).contains("resets in"))
+        #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .compactPercent)) == "JR-Bar")
+        let tooltip = StatusIconRenderer.tooltip(spec, headline: "JR-Bar · Idle")
+        #expect(tooltip.contains("Claude 38%"), "the tooltip keeps the used figure every other surface shows")
+        #expect(StatusIconRenderer.tooltip(StatusIconSpec(style: .compactPercent), headline: "JR-Bar · Idle") == "JR-Bar · Idle")
     }
 }

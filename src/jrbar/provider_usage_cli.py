@@ -53,6 +53,35 @@ def _on_off(value: str) -> bool:
     raise argparse.ArgumentTypeError("expected on or off")
 
 
+def _notify_daemon_usage_refresh(provider: str) -> None:
+    """Best-effort nudge: a running daemon re-reads the settings this CLI
+    just wrote instead of waiting out its next scheduled refresh. The CLI
+    must work with no daemon at all, so every failure mode is silent."""
+    import socket as _socket
+
+    try:
+        from .core_server import default_core_socket_path, encode_frame
+
+        connection = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        connection.settimeout(0.5)
+        try:
+            connection.connect(str(default_core_socket_path()))
+            connection.sendall(
+                encode_frame(
+                    {
+                        "t": "command",
+                        "id": "cli-refresh",
+                        "name": "refresh_usage",
+                        "args": {"providers": [provider]},
+                    }
+                )
+            )
+        finally:
+            connection.close()
+    except Exception:
+        pass
+
+
 def _option(value: str) -> tuple[str, str]:
     key, separator, raw = value.partition("=")
     if not separator or not key or len(key) > 64 or len(raw) > 4096:
@@ -309,6 +338,7 @@ def main(
             f"{provider_descriptor(args.provider).label} "
             f"{'enabled' if args.command == 'enable' else 'disabled'}.\n"
         )
+        _notify_daemon_usage_refresh(args.provider)
         return 0
 
     if args.command == "configure":
@@ -329,6 +359,7 @@ def main(
             updated = updated.with_option(args.provider, key, value)
         save_provider_usage_settings(updated, settings_target, loaded=loaded_settings)
         output.write(f"{provider_descriptor(args.provider).label} settings updated.\n")
+        _notify_daemon_usage_refresh(args.provider)
         return 0
 
     if args.command == "credential":

@@ -37,6 +37,10 @@ final class MenuBarReveal {
     /// The Item Bar panel's frame while it is up — a surface a reveal
     /// stays alive for.
     var barFrame: @MainActor () -> NSRect? = { nil }
+    /// Whether a listed item's owner has a menu-layer window open —
+    /// the reveal must not fold the run out from under a menu the
+    /// person is reading.
+    var itemMenuOpen: @MainActor () -> Bool = { false }
     /// A gesture landed: drop the covers.
     var onReveal: @MainActor () -> Void = {}
     /// The rehide timer's landing: the covers go back.
@@ -188,7 +192,15 @@ final class MenuBarReveal {
         gate.lock.lock()
         let inside = gate.row.contains(point)
         gate.lock.unlock()
-        guard inside else { return }
+        guard inside else {
+            // Off the row is outside the gesture entirely — except a
+            // click, which while a reveal is out is the dismiss, the
+            // same rule the Item Bar's own panel follows.
+            if event.type == .leftMouseDown {
+                Task { @MainActor [weak self] in self?.outsideDown(at: point) }
+            }
+            return
+        }
         switch event.type {
         case .leftMouseDown:
             Task { @MainActor [weak self] in self?.pointerDown(at: point) }
@@ -255,6 +267,20 @@ final class MenuBarReveal {
         triggerReveal()
     }
 
+    /// A click anywhere off the row while a reveal is out folds it —
+    /// the inline reveal's click-outside dismiss. A click on the open
+    /// Item Bar is the bar's own business (its monitors fold it), and
+    /// a listed item's open menu holds the run out: folding under a
+    /// menu the person is reading strands the click's answer.
+    private func outsideDown(at point: NSPoint) {
+        guard revealed else { return }
+        if let frame = barFrame(), frame.insetBy(dx: -2, dy: -2).contains(point) { return }
+        guard !itemMenuOpen() else { return }
+        Self.log.notice("reveal: click off the row")
+        cancelReveal()
+        onHide()
+    }
+
     /// Any gesture: reveal once, then keep the timer fresh. A burst
     /// inside `revealThrottle` re-arms without re-firing `onReveal` —
     /// reveal and hide are transitions, and a scroll stream must not
@@ -307,17 +333,26 @@ final class MenuBarReveal {
         cancelPendingRehide = scheduleRehide(seconds) { [weak self] in self?.rehideTimerFired() }
     }
 
+    /// Whether the pointer is still on a surface the reveal serves —
+    /// the row or the open bar — or the bar holds the reveal open.
+    /// The rehide clock's rule, shared with the update reveal's
+    /// landing and the click-outside dismiss.
+    func pointerOnRevealSurface() -> Bool {
+        let point = mouseLocation()
+        return (row()?.contains(point) ?? false)
+            || (barFrame()?.insetBy(dx: -2, dy: -2).contains(point) ?? false)
+            || holdOpen
+    }
+
     /// The timer's landing: if the pointer is still on a surface the
-    /// reveal serves — the row or the open bar — it re-arms briefly
-    /// instead of folding the items out from under it.
+    /// reveal serves — the row or the open bar — or a listed item's
+    /// menu is open, it re-arms briefly instead of folding the items
+    /// out from under it.
     func rehideTimerFired() {
         cancelPendingRehide = nil
         // A cancelled reveal owes no hide — the covers already stand.
         guard revealed else { return }
-        let point = mouseLocation()
-        let onRow = row()?.contains(point) ?? false
-        let onBar = barFrame()?.insetBy(dx: -2, dy: -2).contains(point) ?? false
-        if onRow || onBar || holdOpen {
+        if pointerOnRevealSurface() || itemMenuOpen() {
             armRehide(0.5)
             return
         }

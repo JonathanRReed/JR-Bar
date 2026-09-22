@@ -235,6 +235,8 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     ):
         setattr(controller, name, MagicMock(name=name))
     controller.refresh_ = MagicMock(name="refresh_")
+    # No real threads exist in this harness — deliver deck input inline.
+    controller._deck_deliver_inline = True
     return controller
 
 
@@ -429,6 +431,41 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert controller.settings.alert_burst == status_bar.AgentMonitorSettings().alert_burst
 
 
+def test_set_setting_serves_and_validates_screen_bar_notch_shape(headless) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    published = [
+        payload
+        for kind, payload in controller._core.published
+        if kind == "settings"
+    ][-1]["document"]
+
+    assert published["screen_bar_notch_profile"] == "auto"
+    assert published["screen_bar_notch_corner"] == 8.0
+
+    profile = controller._core_dispatch(
+        "set_setting",
+        {"path": "screen_bar_notch_profile", "value": "macbook_air_15"},
+    )
+    corner = controller._core_dispatch(
+        "set_setting",
+        {"path": "screen_bar_notch_corner", "value": 12.5},
+    )
+
+    assert profile["value"] == "macbook_air_15"
+    assert corner["value"] == 12.5
+    assert controller.settings.screen_bar_notch_profile == "macbook_air_15"
+    assert controller.settings.screen_bar_notch_corner == 12.5
+    assert controller._core_dispatch(
+        "set_setting",
+        {"path": "screen_bar_notch_profile", "value": "not-a-profile"},
+    )["value"] == "auto"
+    assert controller._core_dispatch(
+        "set_setting",
+        {"path": "screen_bar_notch_corner", "value": 99},
+    )["value"] == 16.0
+
+
 def test_reset_settings_reaches_per_device_leaves__and_1_more(headless) -> None:
     # --- scenario: reset_settings_reaches_per_device_leaves
     """The defaults document has no device rows, so a devices.N.<field>
@@ -463,6 +500,9 @@ def test_reset_settings_reaches_per_device_leaves__and_1_more(headless) -> None:
 
     reply = controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "glyph_ring"})
     assert reply["value"] == "glyph_ring" and controller.settings.menu_bar_icon_style == "glyph_ring"
+    # The compact readout is a first-class style too.
+    reply = controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "compact_percent"})
+    assert reply["value"] == "compact_percent" and controller.settings.menu_bar_icon_style == "compact_percent"
     # An unknown style falls back to the glyph rather than failing.
     assert controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "neon"})["value"] == "glyph"
     reply = controller._core_dispatch("set_setting", {"path": "quota_alert_thresholds", "value": [95, 80.5, 95]})
@@ -1716,6 +1756,86 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     assert lights["surfaces"]["screen_bar"]["program"] == preview_program
     assert lights["surfaces"]["screen_bar"]["why"] == "preview"
     controller._core_previews.pop("screen_bar", None)
+
+
+
+def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
+    """``link_screen_bar_to_hardware`` with only a Dot mounted: the bar
+    mirrors the Dot's program, widened 2 -> 8. The mirror used to key on
+    ``surfaces["hardware"]`` alone, so a lone Dot left the bar on its own
+    render -- the Screen Bar "in sync" did nothing without a strip."""
+    import time as _time
+
+    from jrbar.colors import lift_program_luminance
+    from jrbar.dot_role import upsample_program
+
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller.status_bar_devices = lambda *, remember=True: [dot]
+    controller.agent_led_controllers_by_device.pop(pro.device_id)
+    nominal = "#FF0000 #00FF00 500ms pulse\nrepeat"
+    dot_controller = controller.agent_led_controllers_by_device[dot.device_id]
+    # The surface reports the written (drive) text; the mirror replays the
+    # nominal program the Dot was asked to run.
+    dot_controller.last_nominal_program = nominal
+    dot_controller.last_program = "0:#FF0000 1:#00FF00 500ms pulse\nrepeat"
+    controller._core_hardware_anchor[dot.device_id] = 1000.0
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+    controller.settings = controller.settings.with_dot_role("status")
+
+    widened = upsample_program(nominal, source_leds=2, led_count=8)
+    assert widened is not None
+
+    # a. The bar mirrors the Dot: widened program, the Dot's anchor, the
+    #    Dot's why -- and always at the bar's own LED count.
+    lights = controller._core_build_lights()
+    bar = lights["surfaces"]["screen_bar"]
+    assert bar["program"] == lift_program_luminance(widened)
+    assert bar["led_count"] == 8
+    assert bar["anchor"] == 1000.0
+    assert bar["why"] == lights["surfaces"]["dot"]["why"]
+
+    # b. The phase offset lands on the Dot's anchor exactly as on a strip's.
+    controller.settings = controller.settings.with_screen_bar_phase_offset_ms(250)
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["anchor"] == pytest.approx(1000.25)
+
+    # c. A live Screen Bar call does not displace the mirror.
+    controller.virtual_status_device._live_program_call = (
+        "#FF3A00 1.6s pulse\nrepeat",
+        {"started_at": _time.monotonic(), "motion": None},
+    )
+    lights = controller._core_build_lights()
+    bar = lights["surfaces"]["screen_bar"]
+    assert bar["program"] == lift_program_luminance(widened)
+    assert bar["anchor"] == pytest.approx(1000.25)
+
+    # d. ``asks`` is a beacon: deliberately dark until needed, and the bar
+    #    must not mirror that darkness -- its own render stands.
+    controller.settings = controller.settings.with_dot_role("asks")
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["program"] == "#FF3A00 1.6s pulse\nrepeat"
+    controller.virtual_status_device._live_program_call = None
+    controller.settings = controller.settings.with_dot_role("status")
+    controller.settings = controller.settings.with_screen_bar_phase_offset_ms(0)
+
+    # e. A mounted strip still wins: the Dot is only the fallback.
+    controller.status_bar_devices = lambda *, remember=True: [pro, dot]
+    controller.agent_led_controllers_by_device[pro.device_id] = SimpleNamespace(
+        last_program="#112233 500ms pulse\nrepeat", brightness=255,
+    )
+    controller._core_hardware_anchor[pro.device_id] = 2000.0
+    lights = controller._core_build_lights()
+    bar = lights["surfaces"]["screen_bar"]
+    assert bar["anchor"] == 2000.0
+    assert bar["program"] == lift_program_luminance("#112233 500ms pulse\nrepeat")
+
+    # f. Unlinked, the bar has no program of its own to claim.
+    controller.status_bar_devices = lambda *, remember=True: [dot]
+    controller.agent_led_controllers_by_device.pop(pro.device_id, None)
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(False)
+    lights = controller._core_build_lights()
+    assert "screen_bar" not in lights["surfaces"]
 
 
 def test_lift_program_luminance_lifts_only_colour_literals__and_1_more() -> None:

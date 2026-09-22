@@ -16,12 +16,13 @@ struct UtilitiesStateTests {
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
-    @Test("defaults: the page on, the Menu Bar utility off and quiet")
+    @Test("defaults: the page on, the Menu Bar utility on and quiet")
     func defaults() {
         let state = UtilitiesState()
         #expect(state.enabled == true)
+        #expect(state.dataHoarderEnabled == false)
         #expect(state.menuBar == MenuBarSettings())
-        #expect(state.menuBar.enabled == false)
+        #expect(state.menuBar.enabled == true)
         #expect(state.menuBar.sections.isEmpty)
         #expect(state.menuBar.revealOnHover == true)
         #expect(state.menuBar.revealOnClick == true)
@@ -33,6 +34,7 @@ struct UtilitiesStateTests {
     @Test("encode then decode returns the same state")
     func roundTrip() throws {
         var state = UtilitiesState()
+        state.dataHoarderEnabled = true
         state.menuBar = MenuBarSettings(enabled: true,
                                       sections: ["1Password": .hidden, "Ice": .alwaysHidden],
                                       revealOnHover: false, revealOnClick: true, revealOnScroll: false,

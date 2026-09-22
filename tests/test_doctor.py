@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+import jrbar.doctor as doctor
 from jrbar.cli import jrbar_main
 from jrbar.doctor import (
     DIAGNOSTIC_MANIFEST,
@@ -64,7 +65,7 @@ def test_manifest_and_result_are_frozen_exact_and_bounded__and_2_more() -> None:
     assert isinstance(DIAGNOSTIC_MANIFEST, DiagnosticManifest)
     # Adding a check changes the exported document's shape, so the version
     # moves with it -- a v1 reader must not silently miss a whole row.
-    assert DIAGNOSTIC_MANIFEST.version == DOCTOR_VERSION == 4
+    assert DIAGNOSTIC_MANIFEST.version == DOCTOR_VERSION == 5
     assert tuple(field.check for field in DIAGNOSTIC_MANIFEST.fields) == tuple(DiagnosticCheck)
     assert tuple(field.name for field in fields(DiagnosticResult)) == (
         "manifest_version",
@@ -210,6 +211,15 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
     assert result.last_failure_class is SanitizedFailureClass.NONE
     run.assert_not_called()
 
+    # --- scenario: bundled core reports the launch agent not applicable
+    with (
+        patch("jrbar.doctor.running_inside_bundle", return_value=True),
+        patch("jrbar.doctor.launch_agent_path", return_value=launch_agent),
+    ):
+        finding = doctor._launch_agent_state_probe()
+    assert finding.code is DiagnosticCode.NOT_APPLICABLE
+    assert (finding.count, finding.limit) == (1, 1)
+
     # --- scenario: private_export_writes_one_exact_0600_json_leaf
     parent = tmp_path / "selected"
     parent.mkdir(mode=0o755)
@@ -236,6 +246,52 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
     assert raw not in raised.value.public_message
     assert raised.value.__cause__ is None
 
+
+@pytest.mark.parametrize(
+    ("returncode", "expected"),
+    [(0, DiagnosticCode.VERIFIED), (1, DiagnosticCode.UNVERIFIED)],
+)
+def test_nested_helper_reports_packaged_and_verifies_outer_app(
+    tmp_path: Path,
+    returncode: int,
+    expected: DiagnosticCode,
+) -> None:
+    app = tmp_path / "JR-Bar.app"
+    helper = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    helper.parent.mkdir(parents=True)
+
+    with (
+        patch("jrbar.app_bundle.sys.executable", str(helper)),
+        patch("jrbar.doctor.trusted_system_tool", return_value=Path("/usr/bin/codesign")),
+        patch("jrbar.doctor.subprocess.run") as run,
+    ):
+        run.return_value.returncode = returncode
+        package = doctor._package_import_root_probe()
+        signature = doctor._signature_state_probe()
+
+    assert package.code is DiagnosticCode.PACKAGED_BUNDLE
+    assert signature.code is expected
+    run.assert_called_once_with(
+        ["/usr/bin/codesign", "--verify", "--strict", str(app)],
+        stdout=doctor.subprocess.DEVNULL,
+        stderr=doctor.subprocess.DEVNULL,
+        check=False,
+        timeout=30,
+    )
+
+
+def test_signature_probe_does_not_run_outside_outer_app_bundle(tmp_path: Path) -> None:
+    helper = tmp_path / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    helper.parent.mkdir(parents=True)
+
+    with (
+        patch("jrbar.app_bundle.sys.executable", str(helper)),
+        patch("jrbar.doctor.subprocess.run") as run,
+    ):
+        signature = doctor._signature_state_probe()
+
+    assert signature.code is DiagnosticCode.NOT_APPLICABLE
+    run.assert_not_called()
 
 
 def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths__and_2_more(tmp_path: Path,
@@ -267,6 +323,7 @@ def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths__and_2_m
     assert captured.err.strip() == f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
     assert raw not in captured.err
 
+
     # --- scenario: sidepulse_doctor_cli_sanitizes_encoding_failures
     capsys.readouterr()
     raw = f"encoding failed for /Users/private-user at {tmp_path}"
@@ -281,4 +338,3 @@ def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths__and_2_m
     assert captured.out == ""
     assert captured.err.strip() == f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
     assert raw not in captured.err
-

@@ -63,6 +63,7 @@ final class EventCoordinator {
                 guard let self else { return }
                 if let state = self.core.state {
                     self.toys?.confetti.noteState(state)
+                    self.toys?.notchBuddy.noteState(state)
                     // The daemon's focus_sync reading — a Focus toggle
                     // announces in the notch pill.
                     self.hud.announcements.noteDaemonFocus(mode: state.focus?.mode,
@@ -120,6 +121,9 @@ final class EventCoordinator {
         // itself; the toy decides whether it is on and picks the
         // provider's colour from the same table the rest of the app uses.
         toys?.confetti.noteEvent(event)
+        toys?.notchBuddy.noteEvent(event)
+        // A quota reset brings the aquarium's submarine by.
+        toys?.aquarium?.noteEvent(event)
         // The island turns the events that matter into its transient
         // capsules — its own policy and cooldown decide whether this one
         // shows.

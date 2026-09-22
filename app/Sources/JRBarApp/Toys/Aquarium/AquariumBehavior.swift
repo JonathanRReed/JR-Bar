@@ -45,6 +45,12 @@ enum AquariumBehavior {
         scramble(seed ^ 0x3B84D5A5_9E3779B9) & 1 == 0 ? 1 : -1
     }
 
+    // MARK: Tricks
+
+    /// The tap-trick's length in seconds — a barrel roll or a bubble
+    /// ring, over quick enough to read as a flourish.
+    static let trickDuration: Double = 0.9
+
     // MARK: Doze
 
     /// The tank's night factor — the same slow breath `drawWater`
@@ -53,16 +59,40 @@ enum AquariumBehavior {
         0.5 + 0.5 * sin(t * .pi * 2 / 240)
     }
 
+    /// The real-clock night factor (0 bright … 1 deepest): full dark
+    /// from 21:00 to 06:00, dawn blending down 06–08 and dusk blending
+    /// up 19–21 — smoothsteps, so the wash never snaps.
+    static func realTimeNight(at date: Date, calendar: Calendar = .current) -> Double {
+        let hour = Double(calendar.component(.hour, from: date))
+            + Double(calendar.component(.minute, from: date)) / 60
+        switch hour {
+        case ..<6, 21...: return 1
+        case 6..<8:
+            let p = (hour - 6) / 2
+            return 1 - p * p * (3 - 2 * p)
+        case 19..<21:
+            let p = (hour - 19) / 2
+            return p * p * (3 - 2 * p)
+        default: return 0
+        }
+    }
+
     /// How asleep an idling fish is, 0…1. Each fish has its own
     /// nod-off threshold (~62–82 % night) so the tank falls asleep one
     /// fish at a time; about a third never doze — there's always a
     /// night owl. Smooth at the edges so nobody snaps awake.
-    static func doze(seed: UInt64, at t: Double) -> Double {
+    static func doze(seed: UInt64, night: Double) -> Double {
         let h = scramble(seed ^ 0xD1B54A32D192ED03)
         guard (h >> 32) & 0xFF < 0xB4 else { return 0 }
         let threshold = 0.62 + Double((h >> 16) & 0xFF) / 0xFF * 0.20
-        let d = min(1, max(0, (night(at: t) - threshold) / 0.16))
+        let d = min(1, max(0, (night - threshold) / 0.16))
         return d * d * (3 - 2 * d)
+    }
+
+    /// The cycle-clock doze — kept for callers (and tests) that speak
+    /// in frame time rather than a resolved night factor.
+    static func doze(seed: UInt64, at t: Double) -> Double {
+        doze(seed: seed, night: night(at: t))
     }
 
     // MARK: Golden

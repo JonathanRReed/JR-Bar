@@ -19,17 +19,25 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
     /// The Agent Overview utility — the organizer half of the agent
     /// roster's management seat (docs/UTILITIES.md).
     public var agents: AgentOrganizerSettings
+    public var dataHoarderEnabled: Bool
+    /// The hoarder's capture dials — which sources stream in, whether full
+    /// content is consented to, and the pause switch.
+    public var dataHoarder: DataHoarderSettings
 
     public init(enabled: Bool = true, menuBar: MenuBarSettings = MenuBarSettings(),
                 dock: DockSettings = DockSettings(),
-                agents: AgentOrganizerSettings = AgentOrganizerSettings()) {
+                agents: AgentOrganizerSettings = AgentOrganizerSettings(),
+                dataHoarderEnabled: Bool = false,
+                dataHoarder: DataHoarderSettings = DataHoarderSettings()) {
         self.enabled = enabled
         self.menuBar = menuBar
         self.dock = dock
         self.agents = agents
+        self.dataHoarderEnabled = dataHoarderEnabled
+        self.dataHoarder = dataHoarder
     }
 
-    private enum CodingKeys: String, CodingKey { case enabled, menuBar, dock, agents }
+    private enum CodingKeys: String, CodingKey { case enabled, menuBar, dock, agents, dataHoarderEnabled, dataHoarder }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -37,6 +45,45 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
         menuBar = (try? c.decodeIfPresent(MenuBarSettings.self, forKey: .menuBar)) ?? MenuBarSettings()
         dock = (try? c.decodeIfPresent(DockSettings.self, forKey: .dock)) ?? DockSettings()
         agents = (try? c.decodeIfPresent(AgentOrganizerSettings.self, forKey: .agents)) ?? AgentOrganizerSettings()
+        dataHoarderEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .dataHoarderEnabled)) ?? false
+        dataHoarder = (try? c.decodeIfPresent(DataHoarderSettings.self, forKey: .dataHoarder)) ?? DataHoarderSettings()
+    }
+}
+
+/// The Data Hoarder's capture settings. `captureSources` maps source id →
+/// "Capture new activity" — only listed ids run watchers, and nothing runs
+/// while the utility is off or `paused` is set. `fullContent` is the
+/// explicit prompt/response consent: off stores each segment's structural
+/// redacted form instead.
+public struct DataHoarderSettings: Codable, Equatable, Sendable {
+    public var captureSources: [String: Bool]
+    public var fullContent: Bool
+    public var paused: Bool
+    /// Days a trashed record is kept before the archive purges it. nil keeps
+    /// trash forever — retention only ever deletes what the user deleted.
+    public var trashRetentionDays: Int?
+
+    public init(captureSources: [String: Bool] = [:], fullContent: Bool = false,
+                paused: Bool = false, trashRetentionDays: Int? = nil) {
+        self.captureSources = captureSources
+        self.fullContent = fullContent
+        self.paused = paused
+        self.trashRetentionDays = trashRetentionDays
+    }
+
+    public var enabledSources: [String] {
+        captureSources.filter(\.value).map(\.key).sorted()
+    }
+
+    private enum CodingKeys: String, CodingKey { case captureSources, fullContent, paused, trashRetentionDays }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        captureSources = (try? c.decodeIfPresent([String: Bool].self, forKey: .captureSources)) ?? [:]
+        fullContent = (try? c.decodeIfPresent(Bool.self, forKey: .fullContent)) ?? false
+        paused = (try? c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
+        let days = (try? c.decodeIfPresent(Int.self, forKey: .trashRetentionDays)) ?? nil
+        trashRetentionDays = (days ?? 0) > 0 ? days : nil
     }
 }
 
@@ -195,12 +242,18 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         case inline
     }
 
-    /// A named preset: the section map plus the cover's appearance and
-    /// the control layout, captured at save time.
+    /// A named preset: the section map — and under the concealer the
+    /// per-app concealment map — plus the cover's appearance and the
+    /// control layout, captured at save time.
     public struct Profile: Codable, Equatable, Sendable, Identifiable {
         public var id: String
         public var name: String
         public var sections: [String: MenuBarItemSection]
+        /// The concealer's map: bundle identifier → section. Profiles
+        /// saved before the field existed decode to an empty map —
+        /// applying one then leaves the concealed set alone no more
+        /// than any other field it never carried.
+        public var concealedApps: [String: MenuBarItemSection]
         public var coverMaterial: CoverMaterial
         public var coverTint: String
         public var coverTintOpacity: Double
@@ -210,6 +263,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
         public init(id: String, name: String,
                     sections: [String: MenuBarItemSection] = [:],
+                    concealedApps: [String: MenuBarItemSection] = [:],
                     coverMaterial: MenuBarSettings.CoverMaterial = .blend,
                     coverTint: String = "",
                     coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
@@ -219,12 +273,44 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             self.id = id
             self.name = name
             self.sections = sections
+            self.concealedApps = concealedApps
             self.coverMaterial = coverMaterial
             self.coverTint = coverTint
             self.coverTintOpacity = MenuBarSettings.clampedOpacity(coverTintOpacity)
             self.coverRoundness = MenuBarSettings.clampedRoundness(coverRoundness)
             self.showCoverSeparator = showCoverSeparator
             self.combinedStatusItem = combinedStatusItem
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, sections, concealedApps, coverMaterial, coverTint
+            case coverTintOpacity, coverRoundness, showCoverSeparator, combinedStatusItem
+        }
+
+        /// Tolerant like the settings themselves: a key a build never
+        /// wrote reads as its default rather than dropping the profile.
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+            name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
+            let rawSections = (try? c.decodeIfPresent([String: String].self,
+                                                      forKey: .sections)) ?? [:]
+            sections = rawSections.compactMapValues { MenuBarItemSection(rawValue: $0) }
+            let rawApps = (try? c.decodeIfPresent([String: String].self,
+                                                  forKey: .concealedApps)) ?? [:]
+            concealedApps = rawApps.compactMapValues { MenuBarItemSection(rawValue: $0) }
+            coverMaterial = (try? c.decodeIfPresent(CoverMaterial.self,
+                                                    forKey: .coverMaterial)) ?? .blend
+            coverTint = (try? c.decodeIfPresent(String.self, forKey: .coverTint)) ?? ""
+            coverTintOpacity = MenuBarSettings.clampedOpacity(
+                (try? c.decodeIfPresent(Double.self, forKey: .coverTintOpacity))
+                    ?? MenuBarSettings.defaultCoverTintOpacity)
+            coverRoundness = MenuBarSettings.clampedRoundness(
+                (try? c.decodeIfPresent(Double.self, forKey: .coverRoundness)) ?? 0)
+            showCoverSeparator = (try? c.decodeIfPresent(Bool.self,
+                                                         forKey: .showCoverSeparator)) ?? false
+            combinedStatusItem = (try? c.decodeIfPresent(Bool.self,
+                                                         forKey: .combinedStatusItem)) ?? false
         }
     }
 
@@ -263,7 +349,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// The tint's default strength.
     public static let defaultCoverTintOpacity: Double = 0.35
 
-    public init(enabled: Bool = false, provider: MenuBarProvider = .jrbar,
+    public init(enabled: Bool = true, provider: MenuBarProvider = .jrbar,
                 sections: [String: MenuBarItemSection] = [:],
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
@@ -368,7 +454,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        // The utility is on by default — the icon is the boundary from
+        // the first launch; an explicit `false` is still honoured.
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
         provider = (try? c.decodeIfPresent(MenuBarProvider.self, forKey: .provider)) ?? .jrbar
         let raw = (try? c.decodeIfPresent([String: String].self, forKey: .sections)) ?? [:]
         sections = raw.compactMapValues { MenuBarItemSection(rawValue: $0) }

@@ -44,6 +44,86 @@ struct MediaKeyPress: Equatable, Sendable {
     }
 }
 
+/// What a decoded level-key press should do — the pure half of the
+/// replace-the-HUD decision, so tests can drive it without a CGEvent.
+enum SystemHUDAction: Equatable {
+    /// A volume key-down we set ourselves — a 1/16 step.
+    case adjustVolume
+    /// The mute key — a toggle of the mute element.
+    case toggleMute
+    /// A brightness key-down we set ourselves — a 1/16 step, only
+    /// while DisplayServices answers.
+    case adjustBrightness
+    /// Everything else goes back to the event stream untouched.
+    case passThrough
+}
+
+/// The key→action table for the replace-the-overlay mode. The rules
+/// are deliberately conservative: a press we cannot fully honour is
+/// a press macOS keeps.
+enum SystemHUDKeys {
+    /// One HUD quantum — the 1/16 step the keys repeat in.
+    static let step: Float = 1.0 / 16.0
+
+    /// The action a key press earns under the consuming tap.
+    ///
+    /// * Option and Shift variants always pass through: fine-step
+    ///   volume and the "open Sound/Displays prefs" shortcuts are
+    ///   macOS's own meanings, not ours to rewrite.
+    /// * Illumination keys always pass through: the keyboard
+    ///   backlight has a private *read* (CoreBrightness's client) but
+    ///   no reliable public setter — a swallowed key we cannot apply
+    ///   is a lost key.
+    /// * Brightness keys only count when DisplayServices' get AND set
+    ///   both resolved — a read with no write is the same lost key.
+    /// * Anything not a level key passes through by construction.
+    static func action(for press: MediaKeyPress,
+                       flags: NSEvent.ModifierFlags,
+                       brightnessWritable: Bool) -> SystemHUDAction {
+        guard !flags.contains(.option), !flags.contains(.shift) else {
+            return .passThrough
+        }
+        switch press.key {
+        case .volumeUp, .volumeDown: return .adjustVolume
+        case .mute: return .toggleMute
+        case .brightnessUp, .brightnessDown:
+            return brightnessWritable ? .adjustBrightness : .passThrough
+        case .illuminationUp, .illuminationDown, .illuminationToggle:
+            return .passThrough
+        }
+    }
+
+    /// The next level after a step — clamped, so a press at the rail
+    /// still has a defined answer.
+    static func stepped(_ value: Float, up: Bool) -> Float {
+        min(1, max(0, value + (up ? step : -step)))
+    }
+}
+
+/// The level backend the consuming tap drives — the app's copy reads
+/// and writes through `SystemLevelReader`; tests hand a fake and
+/// prove the step math and the swallow rules against it.
+protocol SystemHUDBackend {
+    var brightnessWritable: Bool { get }
+    func volume() -> Float?
+    func muted() -> Bool?
+    func setVolume(_ value: Float) -> Bool
+    func setMuted(_ muted: Bool) -> Bool
+    func brightness() -> Float?
+    func setBrightness(_ value: Float) -> Bool
+}
+
+/// The live backend — `SystemLevelReader`'s hardware path.
+struct LiveSystemHUDBackend: SystemHUDBackend {
+    var brightnessWritable: Bool { SystemLevelReader.displayBrightnessWritable }
+    func volume() -> Float? { SystemLevelReader.outputVolume() }
+    func muted() -> Bool? { SystemLevelReader.outputMuted() }
+    func setVolume(_ value: Float) -> Bool { SystemLevelReader.setOutputVolume(value) }
+    func setMuted(_ muted: Bool) -> Bool { SystemLevelReader.setOutputMuted(muted) }
+    func brightness() -> Float? { SystemLevelReader.displayBrightness() }
+    func setBrightness(_ value: Float) -> Bool { SystemLevelReader.setDisplayBrightness(value) }
+}
+
 /// The level a key press leaves behind: volume/mute off the default
 /// output (AudioHardwareService — virtual-master so HDMI, AirPods and
 /// aggregates all read honestly), brightness off DisplayServices
@@ -99,6 +179,30 @@ enum SystemLevelReader {
                     AudioObjectSetPropertyData(device, &address, 0, nil,
                                                UInt32(MemoryLayout<UInt32>.size), &muted)
                 }
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Set the default output's mute element — the MUTE key's own
+    /// write in replace-the-overlay mode. Same element walk as the
+    /// volume writes; false where no settable mute exists.
+    @discardableResult
+    static func setOutputMuted(_ muted: Bool) -> Bool {
+        guard let device = defaultOutputDevice() else { return false }
+        for element in [kAudioObjectPropertyElementMain, 1] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyMute,
+                mScope: kAudioObjectPropertyScopeOutput,
+                mElement: element)
+            var settable = DarwinBoolean(false)
+            guard AudioObjectHasProperty(device, &address),
+                  AudioObjectIsPropertySettable(device, &address, &settable) == noErr,
+                  settable.boolValue else { continue }
+            var value: UInt32 = muted ? 1 : 0
+            if AudioObjectSetPropertyData(device, &address, 0, nil,
+                                          UInt32(MemoryLayout<UInt32>.size), &value) == noErr {
                 return true
             }
         }
@@ -166,6 +270,33 @@ enum SystemLevelReader {
         return unsafeBitCast(symbol, to: (@convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32).self)
     }()
 
+    /// `DisplayServicesSetBrightness(display, value)` → status — the
+    /// write half of the private seam, resolved the same way. Both
+    /// symbols must answer before the consuming tap may swallow a
+    /// brightness key; a missing set means the press passes through
+    /// to Apple's stack untouched.
+    private static let displayServicesSet: (@convention(c) (CGDirectDisplayID, Float) -> Int32)? = {
+        guard let handle = dlopen(
+            "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY),
+              let symbol = dlsym(handle, "DisplayServicesSetBrightness") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (CGDirectDisplayID, Float) -> Int32).self)
+    }()
+
+    /// Whether the DisplayServices pair fully resolved — the
+    /// brightness key's swallow license.
+    static var displayBrightnessWritable: Bool {
+        displayServicesGet != nil && displayServicesSet != nil
+    }
+
+    /// The brightness key's write in replace-the-overlay mode — nil-safe
+    /// like the read: a moved framework answers false and the key
+    /// press passes through instead of dying here.
+    @discardableResult
+    static func setDisplayBrightness(_ value: Float) -> Bool {
+        guard let set = displayServicesSet else { return false }
+        return set(CGMainDisplayID(), min(1, max(0, value))) == 0
+    }
+
     /// The keyboard backlight's level, 0…1 — CoreBrightness's private
     /// `KeyboardBrightnessClient`, looked up at runtime the way
     /// boring.notch reads it. nil where the class moved or the machine
@@ -196,11 +327,19 @@ enum SystemLevelReader {
 }
 
 /// Watches the session event stream for aux-button key-downs and
-/// reports the level the press left behind. The tap listens, never
-/// swallows — the press still changes the volume; we only draw it.
-/// A read lands ~90 ms after the press so the OS has applied the
-/// change, and repeated presses coalesce to one read of the settled
-/// value.
+/// reports the level the press left behind. Two modes, one tap:
+///
+/// * **Listen** (default): the press still changes the volume; we
+///   only draw it. A read lands ~90 ms after the press so the OS has
+///   applied the change, and repeated presses coalesce to one read of
+///   the settled value.
+/// * **Replace** (`replaceHUDWanted()` and Accessibility granted):
+///   the tap consumes the volume/brightness key-downs it can fully
+///   honour, performs the 1/16 step itself, and shows the capsule
+///   with the value it set. Modifier variants, illumination keys,
+///   brightness without DisplayServices, and every set that fails go
+///   back to the stream — a press JR-Bar cannot own is a press macOS
+///   keeps.
 @MainActor
 final class HUDKeyMonitor {
     /// The level read for one key kind — the HUD draws it.
@@ -210,26 +349,129 @@ final class HUDKeyMonitor {
     /// per press so toggling takes effect without touching the tap.
     var isAllowed: () -> Bool = { true }
 
+    /// The notch's "replace the overlay" vote — consulted per press;
+    /// a flip mid-flight rebuilds the tap at the next key event so a
+    /// disabled setting can never leave a swallowing tap behind.
+    var replaceHUDWanted: () -> Bool = { false }
+
+    /// The level backend — the live hardware path in the app, a fake
+    /// in tests.
+    var backend: SystemHUDBackend = LiveSystemHUDBackend()
+
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private var pendingRead: DispatchWorkItem?
+    /// One delayed read per key kind — a volume nudge then a
+    /// brightness nudge are two capsules; a single shared slot let
+    /// the second key cancel the first's read entirely.
+    private var pendingReads: [MediaKeyPress.Key: DispatchWorkItem] = [:]
+    /// The Accessibility grant read — a closure like the other votes
+    /// so tests can drive the deny/latch/retry cycle without a TCC
+    /// state of their own.
+    var isTrusted: () -> Bool = { AXIsProcessTrusted() }
+    /// When a `.defaultTap` create was refused. Latched so
+    /// `consumingWanted` stops asking — an untrusted create retries
+    /// per key press otherwise, an error-log spam every nudge.
+    /// Internal so tests can age the latch past the backoff.
+    var consumingDeniedAt: Date?
+    /// How long a refused consuming tap stays refused before one
+    /// retry — the grant appearing sooner lifts the latch directly.
+    static let consumingRetryBackoff: TimeInterval = 30
+    /// The mode the running tap was built in — a listen tap cannot
+    /// swallow, so flipping this is a rebuild, not a flag. Internal so
+    /// tests can pin a mode without standing up a real event tap.
+    var consuming = false
 
     /// `NX_SYSDEFINED` — the CGEventType the public enum never names.
     static let systemDefined: CGEventMask = 1 << 14
 
+    /// The press's outcome under the current mode — pure for tests:
+    /// `true` means the tap swallows the event.
+    func handle(_ press: MediaKeyPress, flags: NSEvent.ModifierFlags) -> Bool {
+        guard isAllowed() else { return false }
+        guard consuming else {
+            note(press)
+            return false
+        }
+        let action = SystemHUDKeys.action(
+            for: press, flags: flags,
+            brightnessWritable: backend.brightnessWritable)
+        switch action {
+        case .passThrough:
+            // Still ours to draw — the OS applies the change and the
+            // delayed read lands the capsule on the settled value.
+            note(press)
+            return false
+        case .adjustVolume:
+            guard let current = backend.volume() else { return false }
+            let next = SystemHUDKeys.stepped(
+                current, up: press.key == .volumeUp)
+            guard backend.setVolume(next) else { return false }
+            onLevel?(press.key, next, backend.muted())
+            return true
+        case .toggleMute:
+            guard let muted = backend.muted(),
+                  backend.setMuted(!muted) else { return false }
+            onLevel?(press.key, backend.volume(), !muted)
+            return true
+        case .adjustBrightness:
+            guard let current = backend.brightness() else { return false }
+            let next = SystemHUDKeys.stepped(
+                current, up: press.key == .brightnessUp)
+            guard backend.setBrightness(next) else { return false }
+            onLevel?(press.key, next, nil)
+            return true
+        }
+    }
+
+    /// Whether the tap should be consuming right now — the setting
+    /// AND the Accessibility grant, since a `.defaultTap` without it
+    /// never comes up. A refused create is latched: while the latch
+    /// stands the answer is no until the grant state moves (a fresh
+    /// grant earns an immediate retry) or the backoff has passed —
+    /// never a rebuild attempt per key press. Internal so tests can
+    /// drive the latch without a real event tap.
+    func consumingWanted() -> Bool {
+        guard replaceHUDWanted() else { return false }
+        let trusted = isTrusted()
+        guard let deniedAt = consumingDeniedAt else { return trusted }
+        guard !trusted
+            || Date().timeIntervalSince(deniedAt) >= Self.consumingRetryBackoff
+        else { return false }
+        consumingDeniedAt = nil
+        return trusted
+    }
+
+    /// Re-check the wanted mode — called from the event stream on
+    /// every key event, so a settings flip or a fresh grant takes at
+    /// the next press without a poll. A mismatch rebuilds the tap
+    /// after this event has been answered.
+    private func syncConsuming() {
+        let wanted = consumingWanted()
+        guard wanted != consuming else { return }
+        consuming = wanted
+        rebuild()
+    }
+
+    private func rebuild() {
+        stop()
+        start()
+    }
+
     func start() {
         guard tap == nil else { return }
+        consuming = consumingWanted()
         let mask = Self.systemDefined
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+            tap: .cgSessionEventTap, place: .headInsertEventTap,
+            options: consuming ? .defaultTap : .listenOnly,
             eventsOfInterest: mask,
             callback: { _, type, event, info in
                 guard let info else { return Unmanaged.passUnretained(event) }
                 let monitor = Unmanaged<HUDKeyMonitor>.fromOpaque(info).takeUnretainedValue()
-                // The tap's source lives on the main run loop. The
-                // decode stays in the callback (CGEvent is not
-                // Sendable); only the press hops actors.
+                // The tap's source lives on the main run loop, so the
+                // main-actor hop is a no-op — but the decision must be
+                // synchronous: swallowing is a return value, not a task.
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     MainActor.assumeIsolated { monitor.reenable() }
                     return Unmanaged.passUnretained(event)
@@ -238,10 +480,24 @@ final class HUDKeyMonitor {
                       let press = MediaKeyPress.down(in: ns) else {
                     return Unmanaged.passUnretained(event)
                 }
-                MainActor.assumeIsolated { monitor.note(press) }
-                return Unmanaged.passUnretained(event)
+                let swallow = MainActor.assumeIsolated {
+                    monitor.syncConsuming()
+                    return monitor.handle(press, flags: ns.modifierFlags)
+                }
+                return swallow ? nil : Unmanaged.passUnretained(event)
             },
             userInfo: pointer) else {
+            if consuming {
+                // No Accessibility grant — the session refused the
+                // consuming tap. Listen instead: the keys still pass
+                // to macOS and the capsule still draws. The refusal
+                // latches so the next key press doesn't try again.
+                NotchHUD.log.error("media keys: no consuming tap — listening instead")
+                consuming = false
+                consumingDeniedAt = Date()
+                start()
+                return
+            }
             NotchHUD.log.error("media keys: no event tap — the capsules stay off")
             return
         }
@@ -258,8 +514,8 @@ final class HUDKeyMonitor {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         self.tap = nil
         source = nil
-        pendingRead?.cancel()
-        pendingRead = nil
+        for (_, work) in pendingReads { work.cancel() }
+        pendingReads = [:]
     }
 
     /// A tap the window server timed out comes back disabled — wake it.
@@ -274,7 +530,9 @@ final class HUDKeyMonitor {
         let key = press.key
         // The OS applies the change off the event stream — read once,
         // a beat later, so a burst of presses settles to one meter.
-        pendingRead?.cancel()
+        // The slot is per key kind: a brightness press must not eat
+        // the volume capsule's pending read.
+        pendingReads[key]?.cancel()
         let read = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -289,7 +547,7 @@ final class HUDKeyMonitor {
                 }
             }
         }
-        pendingRead = read
+        pendingReads[key] = read
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: read)
     }
 }

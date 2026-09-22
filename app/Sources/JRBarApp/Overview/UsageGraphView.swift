@@ -33,6 +33,25 @@ struct UsageGraphView: View {
             } else if let error = store.graphError, graph == nil {
                 errorState(error)
             } else if let graph {
+                // A failed refresh keeps the last document but says so —
+                // otherwise the header's new picks sit over the old chart
+                // with nothing admitting the desync.
+                if let error = store.graphError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                        Text("Refresh failed — showing the previous chart. \(error)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer()
+                        Button("Retry") { Task { await store.loadGraph() } }
+                            .controlSize(.small)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.yellow.opacity(0.08))
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         chart(graph)
@@ -95,6 +114,19 @@ struct UsageGraphView: View {
             .pickerStyle(.segmented)
             .frame(width: 190)
             .labelsHidden()
+            if let loaded = store.graphLoadedAt {
+                Text("Updated \(loaded.formatted(date: .omitted, time: .shortened))")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            Button {
+                Task { await store.loadGraph() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .disabled(store.graphLoading)
+            .help("Rescan the transcripts and redraw")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -340,20 +372,21 @@ struct UsageGraphView: View {
 
     /// Per-series chips — colour, name, the range total on the chart's
     /// own metric, and the partial-coverage badge when the daemon says
-    /// the local history is incomplete.
+    /// the local history is incomplete. Percent mode can emit several
+    /// series for one provider (one per account instance): collapsing
+    /// them into the provider's first row would draw an account the
+    /// legend never names, so each series earns its own chip.
     @ViewBuilder
     private func legend(_ graph: CoreUsageGraph) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 6)], spacing: 6) {
-            ForEach(graph.providers, id: \.self) { id in
-                let style = ProviderStyle.style(for: id)
+            ForEach(Self.legendRows(graph), id: \.key) { row in
+                let style = ProviderStyle.style(for: row.id)
                 HStack(spacing: 6) {
                     Circle().fill(style.accent).frame(width: 7, height: 7)
-                    Text(style.name).font(.system(size: 10, weight: .medium))
+                    Text(row.label).font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
                     Spacer(minLength: 2)
-                    // The daemon orders a provider's "default" instance
-                    // first, so `first` is the representative row when
-                    // percent mode splits accounts apart.
-                    if let series = graph.series.first(where: { $0.providerId == id }) {
+                    if let series = row.series {
                         Text(valueLabel(Self.legendFigure(series, metric: graph.metric),
                                         metric: graph.metric))
                             .font(.system(size: 10)).monospacedDigit()
@@ -363,7 +396,7 @@ struct UsageGraphView: View {
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
                     }
-                    if graph.partialProviderIds.contains(id) {
+                    if graph.partialProviderIds.contains(row.id) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 8))
                             .foregroundStyle(.orange)
@@ -374,6 +407,26 @@ struct UsageGraphView: View {
                 .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
             }
         }
+    }
+
+    /// One legend row per charted series — a provider with several
+    /// instance rows (percent mode) expands into one chip each so the
+    /// legend names every line the chart draws.
+    static func legendRows(_ graph: CoreUsageGraph)
+        -> [(key: String, id: String, label: String, series: CoreUsageGraph.Series?)] {
+        var rows: [(key: String, id: String, label: String, series: CoreUsageGraph.Series?)] = []
+        for id in graph.providers {
+            let providerSeries = graph.series.filter { $0.providerId == id }
+            if providerSeries.count <= 1 {
+                rows.append((id, id, ProviderStyle.style(for: id).name, providerSeries.first))
+            } else {
+                for series in providerSeries {
+                    rows.append((series.seriesKey, id,
+                                 series.label ?? ProviderStyle.style(for: id).name, series))
+                }
+            }
+        }
+        return rows
     }
 
     @ViewBuilder
@@ -492,7 +545,10 @@ struct UsageHeatmapGrid: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Daily activity")
+            // Cells are painted from token counts regardless of the
+            // chart's metric — name the unit or a Cost/Quota pick reads
+            // as if the grid switched units with it.
+            Text("Daily activity · token intensity")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -509,6 +565,12 @@ struct UsageHeatmapGrid: View {
                                     .fill(Self.color(cell.color))
                                     .frame(width: 9, height: 9)
                                     .help(cell.accessibilityLabel)
+                                    // Each cell is its own AX element
+                                    // with the daemon's own day+value
+                                    // label — the grid is data, not
+                                    // decoration.
+                                    .accessibilityElement()
+                                    .accessibilityLabel("\(row.label): \(cell.accessibilityLabel)")
                             }
                         }
                     }

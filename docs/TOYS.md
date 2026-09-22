@@ -43,12 +43,15 @@ public struct ToysState {
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
 }
-public struct FoldSettings { enabled: Bool = false; activationAngle: Double = 65;
+public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .angle;
+                             activationAngle: Double = 65;
                              perspective: Double = 0.6; blur: Double = 0.5; shade: Double = 0.7;
-                             jitterTolerance: Double = 0; provider: FoldProvider = .jrbar }
+                             jitterTolerance: Double = 0; provider: FoldProvider = .jrbar;
+                             holdPicture: Bool = true }
 // (the Tilt/Dusk/Fog style picker is retired — `style` is decoded only to
 //  recognize old default sets for migration; nothing reads it)
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
+public enum FoldAnchor: String { case angle, movement }  // fixed angle, or wherever the lid rests
 public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0 }
 public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
                                    buddyName: String = ""; care: BuddyCare;
@@ -138,6 +141,11 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   to the target so it can truly rest, and a `maxDt` clamp means a slept
   display is a stall, never a teleport. The tracker IS the motion — no
   second spring, no velocity smear; opening is the exact reverse.
+  `DeltaChase` carries the retrace guarantee: instant while the target
+  grows, a slew-limited unwind (3 rad/s — just over the tracker's own
+  cap) when it drops, so a real opening is followed exactly and only a
+  gate snap ever sees the easing. The same angle always draws the same
+  image.
 - **Gesture** `FoldMath.deltaRadians`: the fold is the real lid travel —
   `(activationAngle − angle)` in radians, clamped at 1.25 rad (~72°),
   the arc the projection is stable over. It is not a normalized
@@ -146,6 +154,17 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   shader is the identity — activating is invisible. The activation gate
   reads the raw angle so an extrapolated lead can never open the overlay
   early, and a jitter-suppressed sample can never hold it open.
+  `FoldAnchor` picks what the travel measures from: `angle` is the
+  fixed `activationAngle`; `movement` is `MoveAnchor` — wherever the
+  lid has rested ≥ 400 ms while flat becomes the reference, so the fold
+  starts from wherever it was parked (delta is positive only; opening
+  back through the anchor is 0). Parked mid-fold never re-seats — that
+  would collapse a held fold — but the dwell pause re-seats it at the
+  parked angle when it hands the desktop back. Movement mode arms the
+  streams on the first move off the anchor and holds the delta at 0
+  until the first complete frame — the warm-up keeps the room from
+  opening black; the sensor idles at its own 10 Hz throughout since
+  nothing consumes edge timestamps any more.
 - **Capture** `FoldCapture`: TWO ScreenCaptureKit streams on the
   built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA sRGB, no audio,
   no cursor, complete frames only, capped at 2560 px: a near stream
@@ -156,10 +175,12 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   the arming band only) gives each window card its on-screen rect; cards
   crop their pixels out of the near frame and sort by front-to-back
   window order (`PortalDepth`). `FoldArming` owns the lifecycle: armed
-  inside `activation + 12°` (`FoldArming.margin`), disarmed 1° above
-  the activation edge (`hysteresis`), a 2 s linger on disarm so
+  inside `activation + 12°` (`FoldArming.margin`) — or, in movement
+  mode, from the first deviation off the `MoveAnchor` — disarmed 1°
+  above the activation edge (`hysteresis`), a 2 s linger on disarm so
   lingering at the edge doesn't flap the purple indicator — outside the
-  band everything is stopped and nothing is captured. Permission via
+  band everything is stopped and nothing is captured. Both SCStreams
+  are stopped and released when the machine idles. Permission via
   `CGPreflightScreenCaptureAccess()`; request with
   `CGRequestScreenCaptureAccess()`; deep link
   `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
@@ -173,7 +194,12 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   the wallpaper is the far wall, each window a card floating in front of
   it at a depth from its stacking order — nearer cards translate more
   with the tilt (`PortalDepth.parallax`), so the contents really do
-  parallax as the lid moves. With the fold the space scales toward the
+  parallax as the lid moves. **Hold picture in place** (default on)
+  counter-rotates the content plane by `delta · Perspective` — a fixed
+  eye sees the desktop stay put while the physical glass tilts over it
+  (the room's own fog/shade/dissolve still read the real delta); off
+  keeps the picture glued to the lid. With the fold the space scales
+  toward the
   hinge, the matte fog swallows the far end and the near end dissolves —
   `fade` per card, depth-driven `dissolve` on the wall — which is what
   makes it read as continuing into the display rather than a warped
@@ -227,15 +253,37 @@ session label on a small floating tag tethered under it.
 
 It's also a small idle game (`JRBarCore/AquariumGame.swift`, the
 `GameStore` on `AquariumStore`): while sessions work, the tank earns
-**pearls**; a completion drops a bonus. Pearls spend in the Shop sheet
-on decor (kelp, coral, pebbles, shells, chests, jellyfish, snail),
-pets and hats for your fish. A day with a finished session keeps the
-**streak**; open the tank after a while and a "while you were away"
-card pays out what accrued (capped). Everything the game owns lives in
+**pearls**; a completion drops a bonus. Lifetime pearls raise the
+**tank level** (`AquariumProgression`), and the Shop's pricier shelves
+unlock by tier as it climbs — the sheet shows the level, progress to
+the next, and what each locked row wants. Pearls spend in the Shop
+sheet on decor (kelp, coral, pebbles, shells, chests, jellyfish,
+snail — plus a shipwreck, ruins, a volcano, driftwood, an anemone
+bed, a bubble wall, a moon-jelly lamp, a statue, an amphora and a
+coral garden), **pets** (a sea turtle, an octopus, a cleaner shrimp,
+a tetra school, an axolotl, the occasional manta), hats and a second
+wearables slot of **accessories** (sunglasses, a monocle, a top hat,
+headphones, a bow tie, a scarf, and a tiny laptop that only shows
+while its fish's session is working), alternate **substrates**
+(white sand, black gravel), a **backdrop** wall or two, and five
+more **themes** — dawn, kelp forest, abyss, sunset and blackwater —
+alongside the original five. A day with a finished session keeps the
+**streak**; a daily **goal** (three completions, ten feedings, ninety
+work minutes or five collected pearls — a different chore each day)
+pays fifteen pearls when met; sixteen **achievements** pay out once
+each, from first pearl to tank level 9; and every ninety minutes or
+so a **treasure chest** surfaces half-buried in the sand — three taps
+dig it up for a payout. Patient work occasionally draws a **visitor**
+across the back layer: two unbroken hours brings the whale, ten
+completions in a day brings the diver, and a quota reset brings the
+submarine. Big moments land as a small card top-right rather than the
+quiet toast. Everything the game owns lives in
 a separate `aquarium-save.json` (`AquariumSave`) — resetting settings
 never wipes your tank — while the tank's own toggles stay in
 `app-state.json` like every toy. Feeding is the active toy: tap to
-drop pellets and the nearest fish dart over. Nothing in the game ever
+drop pellets and the nearest fish dart over — and now and then a
+tapped fish answers with a trick, a barrel roll or a blown bubble
+ring. Nothing in the game ever
 touches your agents.
 
 Sessions stay fish. A fish you have raised to stage 1 or beyond keeps
@@ -267,7 +315,25 @@ front for parallax, sea-grass tufts, shaded pebble piles, a coral
 branch or a
 grooved brain coral, scattered shells, a starfish, sometimes a sunken
 bottle, and a treasure chest with brass bands that burps the
-occasional bubble — so the layout is the same every launch. Every
+occasional bubble — so the layout is the same every launch. Owned
+shop decor joins it at seeded `DecorSlot` positions spread across two
+depth rows so nothing overlaps: the shipwreck, statue, columns,
+amphora and volcano sit back behind the fish lane (the volcano's lava
+glows and breathes embers after dark), while driftwood, the coral
+garden, an anemone bed whose tentacles sway, a bubble wall's rising
+curtain and a moon-jelly lamp pulsing every six seconds hold the
+front row — each pooled under its own shadow on the dune line like
+the originals. Bought pets swim their own errands on the mover pass:
+the turtle glides midwater and climbs to sip the surface, the octopus
+keeps house in the amphora (or a rock's lee) and crawls out every few
+minutes, the cleaner shrimp hops aboard an idle fish every half a
+minute or so, the tetra school orbits as one shared target, the pink
+axolotl ambles the sand with waving gill frills, and the manta
+crosses the back every few minutes as a wide dim shadow. Alternate
+substrates recolour the whole bed — white sand brightens and
+strengthens the caustics, black gravel darkens it and deepens the
+fish shadows — and a bought backdrop (a coral-nubbed reef wall,
+stacked boulders) draws behind everything. Every
 piece sits on the dune line under a soft pooled shadow. A jellyfish
 pulses through the mid-water every ~40 s (and stays on as the
 resident drifter while the tank is empty, under a small quiet caption
@@ -299,7 +365,9 @@ gold star glints at the spot. Three or more finishes inside five
 seconds pop the treasure chest in a fast bubble plume off its lid.
 Hovering or tapping a fish floats a name tag above it — fry included,
 which is how a worker's name shows. A slow day/night wash deepens the
-water on a four-minute cycle. The tank is a resizable window
+water — following the local clock by default (dark from nine to six,
+dawn and dusk blending the edges, which is also when the volcano glows)
+or breathing on the old four-minute cycle if you pick it. The tank is a resizable window
 (`AquariumWindowController`) drawn in three passes: the still bed
 (water, sand, every decor piece that doesn't sway) renders on a slow
 tick into a `.drawingGroup` bitmap, an additive `Canvas` carries the
@@ -307,11 +375,14 @@ rays, caustic pools & sheen, and a `TimelineView(.animation)` capped
 at 30 fps + `Canvas` draws only what moves — fish labels resolve once
 and are cached. It reads `core.state.sessions` (mains AND workers) and
 stops its timelines while occluded. Controls: On/Off (opens/closes the
-window), Show labels, Density (how much plankton/bubbles/decor), "Fill
+window), Show labels, Density (how much plankton/bubbles/decor), Day &
+night (follow the clock or the four-minute cycle), "Fill
 screen" button (borderless full-screen, Esc leaves). Reduce Motion:
 rays, shimmer & kelp hold still, tails don't wag, the jellyfish &
-snail freeze, and the sips, spirals, rings & bursts hold at a still
-pose — poses stay.
+snail freeze, the manta and the visitors skip their pass (a queued
+visitor is still marked seen and its caption tells the story), tapped
+fish do no tricks, and the sips, spirals, rings & bursts hold at a
+still pose — poses stay.
 
 ## Notch Buddy (native)
 

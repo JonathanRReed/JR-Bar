@@ -23,7 +23,8 @@ struct NotchGestureTests {
                                     islandEnabled: true)
         let core = CoreModel()
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
-                              state: state, cardModel: makeTestCardModel())
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
         toy.islandVisible = true
         return (toy, store)
@@ -34,7 +35,7 @@ struct NotchGestureTests {
     @Test("a tap grows the card; the next tap folds it")
     func tapToggles() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.islandTapped()
         #expect(toy.islandExpanded)
         toy.islandTapped()
@@ -44,7 +45,7 @@ struct NotchGestureTests {
     @Test("a tap on a capsule puts it away — it never re-opens it")
     func tapDismissesCapsule() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
         #expect(toy.activeCapsule?.id == "a")
         toy.islandTapped()
@@ -58,7 +59,7 @@ struct NotchGestureTests {
     @Test("a pull's commit on the resting island is the pull-open")
     func pullCommitOpens() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.islandPullBegan()
         #expect(toy.pullActive)
         toy.islandPullEnded(.commit)
@@ -69,7 +70,7 @@ struct NotchGestureTests {
     @Test("a pull's commit on the grown card folds it")
     func pullCommitFolds() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.expandFromBand()
         #expect(toy.islandExpanded)
         toy.islandPullBegan()
@@ -80,7 +81,7 @@ struct NotchGestureTests {
     @Test("a pull's commit on a capsule dismisses it")
     func pullCommitDismissesCapsule() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
         #expect(toy.activeCapsule?.id == "a")
         toy.islandPullBegan()
@@ -92,7 +93,7 @@ struct NotchGestureTests {
     @Test("a retreat lets go where the face wants it — nothing expands")
     func pullRetreatIsHarmless() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.islandPullBegan()
         toy.islandPullEnded(.retreat)
         #expect(!toy.pullActive)
@@ -104,7 +105,7 @@ struct NotchGestureTests {
     @Test("a swipe up on the grown card folds it — Alcove's tuck-away")
     func swipeUpFolds() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.expandFromBand()
         #expect(toy.islandExpanded)
         toy.islandSwipe(.up)
@@ -114,7 +115,7 @@ struct NotchGestureTests {
     @Test("a swipe up on the resting island means nothing — no push into the screen")
     func swipeUpOnRestIsInert() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.islandSwipe(.up)
         #expect(!toy.islandExpanded)
     }
@@ -138,7 +139,7 @@ struct NotchGestureTests {
     @Test("a waiting ask is never displaced by an ambient offer")
     func pendingAskSurvivesAmbient() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.offer(notice(.completed, key: "completed:a", id: "a"))
         #expect(toy.activeCapsule?.id == "a")
         toy.offer(notice(.ask, key: "ask:b", id: "b"))
@@ -153,7 +154,7 @@ struct NotchGestureTests {
     @Test("a waiting ambient capsule still yields to a newer ask")
     func pendingAmbientYieldsToAsk() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.offer(notice(.completed, key: "completed:a", id: "a"))
         toy.offer(notice(.charging, key: "power", id: "c"))
         #expect(toy.capsuleQueue.pending?.id == "c")
@@ -170,7 +171,7 @@ struct NotchGestureTests {
     @Test("a refused offer spends nothing — its key can still arrive later")
     func refusedOfferKeepsItsKey() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.offer(notice(.completed, key: "completed:a", id: "a"))
         toy.offer(notice(.ask, key: "ask:b", id: "b"))
         // Refused at the door — never queued, never cooled down.

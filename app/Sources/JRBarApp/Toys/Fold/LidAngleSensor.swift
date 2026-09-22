@@ -198,7 +198,12 @@ final class SensorPump: @unchecked Sendable {
             pushAvailability(false)
             return
         }
-        devices = (set as NSSet).allObjects.map { $0 as! IOHIDDevice }
+        // The manager only vends devices it matched, but the set is
+        // bridged — check the CFTypeID rather than force the cast.
+        devices = (set as NSSet).allObjects.compactMap { object in
+            CFGetTypeID(object as CFTypeRef) == IOHIDDeviceGetTypeID()
+                ? (object as! IOHIDDevice) : nil
+        }
         // The manager opens matched devices itself; the explicit open is
         // a fallback for that not holding, and "already open" is a fine
         // answer. Done once here rather than on every poll.

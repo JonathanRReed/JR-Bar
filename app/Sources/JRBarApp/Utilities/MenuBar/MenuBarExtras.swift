@@ -243,7 +243,8 @@ final class MenuBarCombinedItem {
                                       focused: Bool) -> NSImage? {
         var parts: [(symbol: String, text: String?)] = []
         if power.hasBattery {
-            parts.append((power.charging ? "battery.100.bolt" : "battery.75percent",
+            parts.append((power.charging ? "battery.100.bolt"
+                                        : batterySymbol(percent: power.percent),
                           power.percent.map { "\($0)" }))
         }
         if wifi { parts.append(("wifi", nil)) }
@@ -287,6 +288,18 @@ final class MenuBarCombinedItem {
         image.isTemplate = true
         return image
     }
+
+    /// The battery gauge symbol for a charge level — the face used to
+    /// claim 75% at any charge.
+    nonisolated static func batterySymbol(percent: Int?) -> String {
+        switch percent ?? 50 {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
+    }
 }
 
 /// The combined item's popover model — a snapshot so the view reads
@@ -296,6 +309,7 @@ final class MenuBarCombinedItem {
 final class MenuBarSystemModel {
     var batteryText = "—"
     var batteryDetail = ""
+    var batteryPercent: Int?
     var wifiName = "No network"
     var focused = false
     var focusKnown = false
@@ -305,6 +319,7 @@ final class MenuBarSystemModel {
 
     func refresh() {
         let power = AlcovePowerMonitor.read()
+        batteryPercent = power.hasBattery ? power.percent : nil
         if power.hasBattery {
             batteryText = power.percent.map { "\($0)%" } ?? "Battery"
             batteryDetail = power.charging ? "Charging"
@@ -338,7 +353,9 @@ struct MenuBarSystemPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            row(symbol: model.batteryDetail == "Charging" ? "battery.100.bolt" : "battery.75percent",
+            row(symbol: model.batteryDetail == "Charging"
+                    ? "battery.100.bolt"
+                    : MenuBarCombinedItem.batterySymbol(percent: model.batteryPercent),
                 title: model.batteryText, detail: model.batteryDetail)
             row(symbol: "wifi", title: model.wifiName, detail: "Wi-Fi")
             if model.focusKnown {

@@ -33,6 +33,12 @@ final class UtilitiesStore {
             if state.menuBar != oldValue.menuBar { menuBar.applySettings() }
             if state.dock != oldValue.dock { applyDock() }
             if state.agents != oldValue.agents { agents.applySettings() }
+            if state.dataHoarderEnabled != oldValue.dataHoarderEnabled {
+                dataHoarder.model.enabled = state.dataHoarderEnabled
+            }
+            if state.dataHoarder != oldValue.dataHoarder {
+                dataHoarder.model.applyCaptureSettings(state.dataHoarder)
+            }
         }
     }
 
@@ -46,6 +52,7 @@ final class UtilitiesStore {
     /// (`open_session`, `answer_ask`, `dismiss_session`,
     /// `clear_completed`, `snooze`) the panel already owns.
     let agents: AgentUtility
+    let dataHoarder = DataHoarderUtility()
 
     /// Drops `state` into the delegate's `AppState` and writes the file.
     var onPersist: (@MainActor (UtilitiesState) -> Void)?
@@ -62,6 +69,29 @@ final class UtilitiesStore {
         self.dock = dock
         let agents = AgentUtility(core: core)
         self.agents = agents
+        dataHoarder.model.enabled = state.dataHoarderEnabled
+        dataHoarder.onEnabledChange = { [weak self] enabled in
+            self?.state.dataHoarderEnabled = enabled
+        }
+        dataHoarder.model.applyCaptureSettings(state.dataHoarder)
+        dataHoarder.model.onCaptureSettingsChange = { [weak self] updated in
+            guard let self, self.state.dataHoarder != updated else { return }
+            self.state.dataHoarder = updated
+        }
+        // The roster's `agent_id` is `provider:session:<uuid>`; a captured
+        // record whose probed session uuid still ends a live row can be
+        // opened — anything else leaves the button disabled.
+        dataHoarder.model.sessionResolver = { [weak self] record in
+            guard let self, let sessionID = record.sessionID, !sessionID.isEmpty,
+                  let provider = record.provider else { return nil }
+            return self.core.state?.sessions.first {
+                !$0.remote && $0.provider == provider && $0.id.hasSuffix(sessionID)
+            }?.id
+        }
+        dataHoarder.model.sessionOpener = { [weak self] id in
+            self?.core.openSession(id)
+        }
+        dataHoarder.model.applyCapture()
         // The utility reads and writes the persisted blob through these;
         // the store stays the single owner of `state`.
         menuBar.settings = { [weak self] in self?.state.menuBar ?? MenuBarSettings() }
@@ -102,6 +132,7 @@ final class UtilitiesStore {
         menuBar.stop()
         dock.stop()
         dock.appleDock.restore()
+        dataHoarder.model.stopCapture()
     }
 
     // MARK: Persistence

@@ -471,6 +471,7 @@ final class MenuBarItemHider {
             && (revealed.contains(.hidden) || barCoveringShown)
         let plan = Self.plan(items: items,
                              sections: settings().sections, row: row,
+                             otherRows: MenuBarItemLister.menuBarRows().filter { $0 != row },
                              controls: controls, fitEdge: edge,
                              revealed: revealed, caps: caps,
                              protectedFrames: protectedFrames(),
@@ -479,8 +480,12 @@ final class MenuBarItemHider {
         let changed = plan != lastPlan
         lastPlan = plan
         if let length = plan.hiddenControlLength { request(length) }
-        updateShutters(plan: plan, row: row)
+        // The plan lands with the utility before the shutters update:
+        // under the concealer the callback hands back `externalPlan`,
+        // and reading it here keeps the cover pass on this listing
+        // instead of lagging one behind.
         onPlan?(plan)
+        updateShutters(plan: plan, row: row)
         if changed {
             let describe = { (r: CGRect?) -> String in
                 r.map { String(format: "%.0f–%.0f@%.0f", $0.minX, $0.maxX, $0.minY) } ?? "none"
@@ -538,8 +543,14 @@ final class MenuBarItemHider {
             return
         }
         // Overflowed because the whole bar moved under the same length:
-        // the edge is where it was; the shift will pass.
-        if let restMaxX, abs(hidden.maxX - restMaxX) > 2 { return }
+        // the edge is where it was; the shift will pass. A drift
+        // counts as a clean listing — the streak restarts so the next
+        // real overflow still needs two fresh listings in a row.
+        if let restMaxX, abs(hidden.maxX - restMaxX) > 2 {
+            overflowStreak = 0
+            overflowSeenAtGeneration = -1
+            return
+        }
         guard generation != overflowSeenAtGeneration else { return }
         overflowSeenAtGeneration = generation
         overflowStreak += 1
@@ -649,12 +660,12 @@ final class MenuBarItemHider {
     /// a strip of real bar just outside a covered run — never over a
     /// shown item or another run — captured off the render path.
     private func blendHex(plan: MenuBarHidePlan, row: CGRect) -> String {
-        if let cached = blendSample, Date().timeIntervalSince(cached.at) < 1.5 {
+        if let cached = blendSample, now().timeIntervalSince(cached.at) < 1.5 {
             return cached.hex
         }
         let runs = plan.hiddenCovers + plan.alwaysHiddenCovers
         guard let run = runs.first, !blendProbeInFlight else {
-            blendSample = (blendSample?.hex ?? "", Date())
+            blendSample = (blendSample?.hex ?? "", now())
             return blendSample?.hex ?? ""
         }
         let blockers = plan.shown.map(\.bounds)
@@ -666,7 +677,7 @@ final class MenuBarItemHider {
             !blockers.contains { $0.intersects(p) }
                 && !runs.contains { $0.lowerBound < p.maxX && $0.upperBound > p.minX }
         }) else {
-            blendSample = ("", Date())
+            blendSample = ("", now())
             return ""
         }
         blendProbeInFlight = true
@@ -676,7 +687,7 @@ final class MenuBarItemHider {
         Task { [weak self] in
             let image = await capture(probe)
             let hex = image.flatMap { MenuBarBarSampler.averageHex(of: $0) } ?? ""
-            self?.blendSample = (hex, Date())
+            self?.blendSample = (hex, self?.now() ?? Date())
             self?.blendProbeInFlight = false
         }
         return blendSample?.hex ?? ""
@@ -739,6 +750,11 @@ final class MenuBarItemHider {
     nonisolated static func plan(items: [MenuBarItem],
                                  sections: [String: MenuBarItemSection],
                                  row: CGRect,
+                                 /// Every OTHER display's bar strip —
+                                 /// an item standing on one is shown,
+                                 /// never parked, but the boundary and
+                                 /// covers are the managed row's alone.
+                                 otherRows: [CGRect] = [],
                                  controls: MenuBarControlFrames = MenuBarControlFrames(),
                                  fitEdge: CGFloat? = nil,
                                  revealed: Set<MenuBarItemSection> = [],
@@ -759,23 +775,34 @@ final class MenuBarItemHider {
         let hiddenBoundary = hiddenControl.map { $0.maxX - controls.hiddenGlyph }
         let overflowFrames = sorted.filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
             .map(\.bounds)
+        let onForeignRow: (CGRect) -> Bool = { bounds in
+            otherRows.contains { $0.intersects(bounds) }
+        }
 
         var hiddenToCover: [MenuBarItem] = []
         var ahToCover: [MenuBarItem] = []
         var parked: [MenuBarItem] = []
         for item in sorted {
             if MenuBarItemLister.isProtected(item) {
-                if item.bounds.intersects(row) { plan.shown.append(item) }
+                if item.bounds.intersects(row) || onForeignRow(item.bounds) {
+                    plan.shown.append(item)
+                }
                 continue
             }
-            let onRow = item.bounds.intersects(row)
+            // Standing means on a row — any row. The boundary compare
+            // only means something on the managed strip, so a foreign-
+            // display item skips it and lands shown outright.
+            let managed = item.bounds.intersects(row)
+            let onRow = (managed || onForeignRow(item.bounds))
                 && !overflowFrames.contains { $0.intersection(item.bounds).width >= 4 }
             guard onRow else {
                 parked.append(item)
                 continue
             }
             let positional: MenuBarItemSection
-            if let hiddenBoundary, item.bounds.minX < hiddenBoundary {
+            if !managed {
+                positional = .shown
+            } else if let hiddenBoundary, item.bounds.minX < hiddenBoundary {
                 positional = .hidden
             } else {
                 positional = .shown
@@ -797,10 +824,12 @@ final class MenuBarItemHider {
                 plan.shown.append(item)
             case .hidden:
                 plan.hidden.append(item)
-                if positional == .shown { hiddenToCover.append(item) }
+                // Covers are painted on the managed row — a foreign-
+                // display item must never feed a run's X-range.
+                if managed, positional == .shown { hiddenToCover.append(item) }
             case .alwaysHidden:
                 plan.alwaysHidden.append(item)
-                if positional == .shown { ahToCover.append(item) }
+                if managed, positional == .shown { ahToCover.append(item) }
             }
         }
         // Parked items report after the on-row ones — their stashed
@@ -859,14 +888,16 @@ final class MenuBarItemHider {
         return plan
     }
 
-    /// The plan with the utility parked: everything on the row is
-    /// shown, everything off it is already the system's hidden — and
-    /// no covers are computed, because a parked utility draws none.
-    nonisolated static func unzonedPlan(items: [MenuBarItem], row: CGRect) -> MenuBarHidePlan {
+    /// The plan with the utility parked: everything on a bar's row is
+    /// shown, everything off all of them is already the system's
+    /// hidden — and no covers are computed, because a parked utility
+    /// draws none. `rows` carries every display's strip so a
+    /// secondary-screen item isn't misread as hidden.
+    nonisolated static func unzonedPlan(items: [MenuBarItem], rows: [CGRect]) -> MenuBarHidePlan {
         var plan = MenuBarHidePlan()
-        plan.shown = items.filter { $0.bounds.intersects(row) }
+        plan.shown = items.filter { item in rows.contains { $0.intersects(item.bounds) } }
             .sorted { $0.bounds.minX < $1.bounds.minX }
-        plan.alwaysHidden = items.filter { !$0.bounds.intersects(row) }
+        plan.alwaysHidden = items.filter { item in !rows.contains { $0.intersects(item.bounds) } }
         return plan
     }
 
@@ -908,13 +939,21 @@ final class MenuBarItemHider {
         return out
     }
 
-    /// "Show for updates": a hidden item whose title changed between
-    /// scans updated itself — a clock's minute, a VPN's "Connected", a
-    /// download's percent. Bartender reveals the run for it; so do we.
-    /// The bounds are not the signal (our own reveal moves them); the
-    /// title the app writes is. `sections` empty means nothing new —
-    /// `signatures` is the fresh map either way, so a change that lands
-    /// while a reveal is open seeds quietly instead of firing late.
+    /// What "changed" means for show-for-updates: the title the app
+    /// writes plus the identity-level churn an icon-only rewrite
+    /// carries — the `AXIdentifier`, the extras index, the window. The
+    /// bounds are deliberately absent: our own reveal moves them.
+    nonisolated static func updateSignature(of item: MenuBarItem) -> String {
+        "\(item.title ?? "")\u{1f}\(item.identifier ?? "")\u{1f}\(item.extrasIndex)\u{1f}\(item.windowID)"
+    }
+
+    /// "Show for updates": a hidden item whose signature changed
+    /// between scans updated itself — a clock's minute, a VPN's
+    /// "Connected", a download's percent, an icon swap. Bartender
+    /// reveals the run for it; so do we. `sections` empty means
+    /// nothing new — `signatures` is the fresh map either way, so a
+    /// change that lands while a reveal is open seeds quietly instead
+    /// of firing late.
     nonisolated static func updatedHidden(
         previous: [String: String],
         hidden: [MenuBarItem],
@@ -923,13 +962,13 @@ final class MenuBarItemHider {
         var sections = Set<MenuBarItemSection>()
         var signatures: [String: String] = [:]
         for item in hidden {
-            signatures[item.id] = item.title ?? ""
+            signatures[item.id] = updateSignature(of: item)
             if let old = previous[item.id], old != signatures[item.id] {
                 sections.insert(.hidden)
             }
         }
         for item in alwaysHidden {
-            signatures[item.id] = item.title ?? ""
+            signatures[item.id] = updateSignature(of: item)
             if let old = previous[item.id], old != signatures[item.id] {
                 sections.insert(.alwaysHidden)
             }

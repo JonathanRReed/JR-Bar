@@ -29,6 +29,10 @@ final class ShelfRemindersModel {
     private(set) var state: State = .needsPermission
     private var store: EKEventStore?
     private var refreshTimer: Timer?
+    /// Bumps on `stop` — async hops (the permission answer, the fetch)
+    /// can land after unpin, and landing must not restart the refresh
+    /// timer the stop just killed.
+    private var epoch = 0
 
     /// How many rows the card shows before the "+N more" tail.
     nonisolated static let rowLimit = 3
@@ -38,6 +42,7 @@ final class ShelfRemindersModel {
     func authorizeAndLoad() {
         let store = self.store ?? EKEventStore()
         self.store = store
+        let epoch = self.epoch
         switch EKEventStore.authorizationStatus(for: .reminder) {
         case .fullAccess:
             load(from: store)
@@ -46,7 +51,8 @@ final class ShelfRemindersModel {
         case .notDetermined, .writeOnly:
             store.requestFullAccessToReminders { [weak self] granted, _ in
                 Task { @MainActor [weak self] in
-                    guard let self, let store = self.store else { return }
+                    guard let self, let store = self.store,
+                          self.epoch == epoch else { return }
                     if granted {
                         self.load(from: store)
                     } else {
@@ -60,8 +66,18 @@ final class ShelfRemindersModel {
     }
 
     func stop() {
+        epoch += 1
         refreshTimer?.invalidate()
         refreshTimer = nil
+    }
+
+    /// Pin-side entry — restarts the cadence `stop` killed on unpin.
+    /// Only reloads when access was granted earlier; asking stays the
+    /// button's job.
+    func resume() {
+        guard let store,
+              EKEventStore.authorizationStatus(for: .reminder) == .fullAccess else { return }
+        load(from: store)
     }
 
     /// Incomplete reminders due by the end of tomorrow — overdue ones
@@ -72,9 +88,10 @@ final class ShelfRemindersModel {
             byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: Date()))
         let predicate = store.predicateForIncompleteReminders(
             withDueDateStarting: nil, ending: horizon, calendars: nil)
+        let epoch = self.epoch
         store.fetchReminders(matching: predicate) { [weak self] reminders in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.epoch == epoch else { return }
                 let items = (reminders ?? [])
                     .map { Entry(id: $0.calendarItemIdentifier,
                                  title: $0.title?.isEmpty == false ? $0.title! : "Reminder",

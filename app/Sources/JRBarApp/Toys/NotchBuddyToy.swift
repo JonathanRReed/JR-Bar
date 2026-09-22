@@ -14,7 +14,8 @@ import SwiftUI
 /// It is also a small pet: the pill is clickable (the panel only
 /// ignores the mouse while a toast holds it), a tap counts as a pet and
 /// cycles a trick — hop, spin, wave, blush — and while an ask is open
-/// the tap does something useful too: it opens the session asking. The
+/// a tap on the "!" badge does something useful too: it opens the
+/// session asking. The
 /// card can name it and feed it, completed sessions land as crumbs it
 /// "eats", and a day without a pat leaves it drooping.
 ///
@@ -44,15 +45,18 @@ final class NotchBuddyToy: Toy {
     private(set) var hopUntil: Date?
     /// When the current wave began — the ask entrance and the "!" pop
     /// once from here. `summary(at:)` maintains it because the view is
-    /// the only clock that ticks the mood.
-    private(set) var wavingSince: Date?
+    /// the only clock that ticks the mood. Observation-ignored: the
+    /// writes happen inside `summary`, which runs inside the view's
+    /// animation timeline — tracking them would mutate observable
+    /// state mid-render, and the timeline re-renders each frame anyway.
+    @ObservationIgnored private(set) var wavingSince: Date?
     /// When the current slump began — the tumble-in rolls once from
     /// here. Same deal as `wavingSince`: `summary(at:)` maintains it.
-    private(set) var slumpedSince: Date?
+    @ObservationIgnored private(set) var slumpedSince: Date?
     /// How many asks have opened. They alternate deterministically: odd
     /// asks wave with the "!" overhead, even asks just lean in and hold
-    /// your eye.
-    private(set) var waveOrdinal = 0
+    /// your eye. Untracked for the same reason as `wavingSince`.
+    @ObservationIgnored private(set) var waveOrdinal = 0
     /// How many taps have landed — the tricks cycle through the
     /// repertoire so repeated pats never repeat the same one twice.
     private(set) var trickOrdinal = 0
@@ -64,14 +68,10 @@ final class NotchBuddyToy: Toy {
     private(set) var treatBurstAt: Date?
     /// When it last ate a completion crumb — the "+1" plays from here.
     private(set) var crumbAt: Date?
-    /// -1 until the first sessions document lands: that one is the
-    /// baseline — sessions already done when the app launches are
-    /// history, not a feast.
-    @ObservationIgnored private var lastDoneCount = -1
+    @ObservationIgnored private var wakeSnapshot: [String: SessionActivity]?
 
     init(core: CoreModel) {
         self.core = core
-        observeSessions()
     }
 
     let id = "notch-buddy"
@@ -182,8 +182,11 @@ final class NotchBuddyToy: Toy {
     }
 
     /// "Tuck away": hidden until the next thing happening or a card
-    /// re-enable. The roster stays — it is a nap, not a farewell.
+    /// re-enable. The roster stays — it is a nap, not a farewell. The
+    /// snapshot counts workers too: a tucked buddy should wake on
+    /// sub-agent churn, not only on mains.
     func tuckAway() {
+        wakeSnapshot = Self.sessionSnapshot(core.state?.sessions ?? [])
         store?.state.notchBuddy.tucked = true
         onVisibilityChange?()
     }
@@ -258,18 +261,30 @@ final class NotchBuddyToy: Toy {
         return true
     }
 
+    /// The "!" badge hangs over the figure's crown: in the pill's
+    /// unscaled layout (36×30 — the 18pt figure plus its padding) it
+    /// lives in the top-centre band. A tap that lands there is the ask's
+    /// shortcut; anywhere else is just a pat.
+    static func askBadgeZone(scale: Double) -> CGRect {
+        CGRect(x: 10 * scale, y: 0, width: 16 * scale, height: 15 * scale)
+    }
+
     /// A tap on the buddy. Always a pet; unless Reduce Motion is on it
-    /// also cycles a trick. And it is not just a trick machine: while an
-    /// ask is open the tap opens the session doing the asking — that is
-    /// where the answer lives.
-    func tapped(at now: Date = Date()) {
+    /// also cycles a trick. While an ask is open a tap that lands on the
+    /// "!" badge opens the session doing the asking — any other tap is
+    /// only a pat, so petting can't hijack the front app mid-ask. (The
+    /// held-press menu's "Open" row still opens it too.)
+    func tapped(at now: Date = Date(), point: CGPoint? = nil, scale: Double = 1) {
         store?.state.notchBuddy.care.pet(at: now)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             trickKind = BuddyTrick.Kind.allCases[trickOrdinal % BuddyTrick.Kind.allCases.count]
             trickOrdinal += 1
             trickStartedAt = now
         }
-        openAskingSession()
+        if let point, askingSession != nil,
+           Self.askBadgeZone(scale: scale).contains(point) {
+            openAskingSession()
+        }
     }
 
     /// The card's "Give treat": fed for a while, hearts off the crown,
@@ -564,43 +579,46 @@ final class NotchBuddyToy: Toy {
         }
     }
 
-    private static func doneCount(in sessions: [CoreSession]) -> Int {
-        sessions.filter { SessionActivity.reduce($0) == .done }.count
+    private static func sessionSnapshot(_ sessions: [CoreSession]) -> [String: SessionActivity] {
+        Dictionary(sessions.map { ($0.id, SessionActivity.reduce($0)) },
+                   uniquingKeysWith: { _, latest in latest })
     }
 
-    /// Watches the session list like `AppDelegate.observeCore`: one
-    /// observation per change, coalesced into a main-queue turn. A rising
-    /// done count is a completion, so the buddy hops once — and eats the
-    /// completion as a crumb, which is as close to hunger as a menu-bar
-    /// pet gets.
-    private func observeSessions() {
-        withObservationTracking {
-            _ = core.sessions
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let now = Date()
-                let done = Self.doneCount(in: self.core.sessions)
-                if self.lastDoneCount >= 0 {
-                    // The first document is the baseline — history, not
-                    // an event. Anything after it is something happening,
-                    // and something happening is what a tucked-away buddy
-                    // waits for.
-                    if self.store?.state.notchBuddy.tucked == true {
-                        self.store?.state.notchBuddy.tucked = false
-                        self.onVisibilityChange?()
-                    }
-                    if done > self.lastDoneCount {
-                        self.hopUntil = now.addingTimeInterval(1.1)
-                        self.crumbAt = now
-                        self.store?.state.notchBuddy.care.eat(at: now, count: done - self.lastDoneCount)
-                    }
-                }
-                self.lastDoneCount = done
-                self.observeSessions()
-            }
+    /// The shared coordinator already observes state. Buddy only inspects
+    /// it while tucked, to distinguish real activity changes from heartbeats.
+    /// Historical state documents never earn completion crumbs.
+    func noteState(_ state: CoreState) {
+        guard store?.state.notchBuddy.enabled == true,
+              store?.state.notchBuddy.tucked == true else {
+            wakeSnapshot = nil
+            return
         }
+        // Workers included: sub-agent churn is activity too — a tucked
+        // buddy that only watched mains would sleep through it.
+        let snapshot = Self.sessionSnapshot(state.sessions)
+        guard let previous = wakeSnapshot else { wakeSnapshot = snapshot; return }
+        if previous != snapshot { wakeForActivity() }
     }
+
+    /// CoreModel delivers each live event once. Disabled Buddy owns no
+    /// session observer and neither animates nor changes its saved care.
+    func noteEvent(_ event: CoreEvent, at now: Date = Date()) {
+        guard store?.state.notchBuddy.enabled == true else { return }
+        guard event.kind == "completed" || event.session != nil else { return }
+        wakeForActivity()
+        guard event.kind == "completed" else { return }
+        hopUntil = now.addingTimeInterval(1.1)
+        crumbAt = now
+        store?.state.notchBuddy.care.eat(at: now, count: 1)
+    }
+
+    private func wakeForActivity() {
+        guard store?.state.notchBuddy.tucked == true else { return }
+        store?.state.notchBuddy.tucked = false
+        wakeSnapshot = nil
+        onVisibilityChange?()
+    }
+
 }
 
 /// The card's disclosure body: the roster picker (a menu, like the Fold

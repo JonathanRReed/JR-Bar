@@ -115,12 +115,41 @@ import Testing
         let size = CGSize(width: 200, height: 100)
         let bottom = DockEnhanceMath.panelFrame(anchor: item, edge: .bottom,
                                                 size: size, screen: screen, gap: 10)
-        #expect(bottom == CGRect(x: 620, y: 50, width: 200, height: 100),
+        #expect(bottom == CGRect(x: 620, y: 84, width: 200, height: 100),
                 "centred on the tile (mid 720), floating off the dock")
         let right = DockEnhanceMath.panelFrame(
             anchor: CGRect(x: 1400, y: 400, width: 40, height: 40), edge: .right,
             size: size, screen: screen, gap: 10)
-        #expect(right.origin.x == 1190, "a right-edge dock opens left of it")
+        #expect(right.origin.x == 1156, "a right-edge dock opens left of it")
+    }
+
+    @Test func thePanelLeavesRoomForTheNativeDockLabel() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 200, height: 100)
+        let gap: CGFloat = 10
+        let bottomItem = CGRect(x: 700, y: 0, width: 40, height: 40)
+        let bottom = DockEnhanceMath.panelFrame(
+            anchor: bottomItem, edge: .bottom, size: size, screen: screen, gap: gap)
+        #expect(bottom.minY - bottomItem.maxY >= gap + DockEnhanceMath.nativeLabelHeight,
+                "the native app-name bubble fits between a bottom Dock icon and the preview")
+
+        let sideClearance = DockEnhanceMath.nativeLabelClearance(
+            title: "T3 Code (Nightly)", edge: .left)
+        #expect(sideClearance > DockEnhanceMath.nativeLabelHeight)
+        #expect(sideClearance <= DockEnhanceMath.nativeSideLabelLimit)
+        let leftItem = CGRect(x: 0, y: 400, width: 40, height: 40)
+        let left = DockEnhanceMath.panelFrame(
+            anchor: leftItem, edge: .left, size: size, screen: screen, gap: gap,
+            labelClearance: sideClearance)
+        #expect(left.minX - leftItem.maxX >= gap + sideClearance,
+                "the native app-name bubble fits beside a left Dock icon")
+
+        let rightItem = CGRect(x: 1400, y: 400, width: 40, height: 40)
+        let right = DockEnhanceMath.panelFrame(
+            anchor: rightItem, edge: .right, size: size, screen: screen, gap: gap,
+            labelClearance: sideClearance)
+        #expect(rightItem.minX - right.maxX >= gap + sideClearance,
+                "the native app-name bubble fits beside a right Dock icon")
     }
 
     @Test func thePanelCentresOnTheTileClampedToTheScreen() {
@@ -476,9 +505,9 @@ import Testing
             (CGRect(x: 100, y: 100, width: 800, height: 600), "Untitled window"),
             (nil, "Notes — Groceries"),
         ]
-        // An exact frame wins the first matching row.
+        // Indistinguishable rows cannot safely claim a captured image.
         #expect(DockEnhanceMath.matchRow(
-            scFrame: CGRect(x: 101, y: 99, width: 800, height: 601), scTitle: nil, rows: rows) == 0)
+            scFrame: CGRect(x: 101, y: 99, width: 800, height: 601), scTitle: nil, rows: rows) == nil)
         // No frame match → title.
         #expect(DockEnhanceMath.matchRow(
             scFrame: CGRect(x: 0, y: 0, width: 300, height: 300),

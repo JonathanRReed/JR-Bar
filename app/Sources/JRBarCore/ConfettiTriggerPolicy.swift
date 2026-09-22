@@ -44,9 +44,12 @@ public enum ConfettiTriggerPolicy {
 
     /// Does this event earn a burst under these triggers? nil for a kind
     /// the user did not switch on, a `quota_reset` with no lane, and an
-    /// event id the dedup ring already holds.
+    /// event id the dedup ring already holds. The key prefers the frame's
+    /// `cursor` (`<stream>:<id>`) over the bare id: the daemon numbers
+    /// events per run, so after a restart a new `ev-N` would collide with
+    /// a cached key and a real reset would be swallowed.
     public static func eventFire(_ event: CoreEvent, settings: ConfettiSettings) -> ConfettiFire? {
-        let key = "event:\(event.id)"
+        let key = "event:\(event.cursor ?? event.id)"
         guard !settings.firedKeys.contains(key) else { return nil }
         switch event.kind {
         case "quota_reset":

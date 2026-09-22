@@ -149,6 +149,8 @@ def trim_oversized_logs(state_dir: Path) -> int:
         return 0
     for path in candidates:
         try:
+            if _is_hook_queue_or_quarantine(path.name):
+                continue
             info = path.lstat()
             if not stat.S_ISREG(info.st_mode):
                 continue
@@ -157,6 +159,18 @@ def trim_oversized_logs(state_dir: Path) -> int:
         except OSError:
             continue
     return trimmed
+
+
+# Hook-queue families are not audit logs. ``*.pending.jsonl`` holds
+# undelivered hook payloads -- compacting it silently destroys queued
+# events. ``*.rejected.jsonl`` / ``*.overflow.jsonl`` are the drainer's
+# quarantine evidence; a mid-flight ``*.draining-<pid>-<ms>`` rename and
+# its ``*.dedupe.json`` ledger belong to the same pipeline.
+def _is_hook_queue_or_quarantine(name: str) -> bool:
+    return (
+        name.endswith((".pending.jsonl", ".rejected.jsonl", ".overflow.jsonl", ".dedupe.json"))
+        or ".draining-" in name
+    )
 
 
 def compact_jsonl_file(path: Path) -> bool:

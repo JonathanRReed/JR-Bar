@@ -87,9 +87,38 @@ struct AppStateTests {
         try Data("{not json".utf8).write(to: file.url)
         #expect(file.exists)
         #expect(file.load() == AppState())
-        // And it can be written over.
+        // Recovery may write defaults, but must retain the damaged file.
         try file.save(AppState(loginItemRegistered: true))
         #expect(file.load().loginItemRegistered)
+        let backups = try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix("app-state.recovery-") }
+        #expect(backups.count == 1)
+        if let backup = backups.first {
+            #expect(try Data(contentsOf: backup) == Data("{not json".utf8))
+        }
+        try file.save(AppState(loginItemRegistered: true, showScreenBar: false))
+        let after = try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix("app-state.recovery-") }
+        #expect(after.count == 1, "healthy saves must not keep creating recovery files")
+    }
+
+    @Test(arguments: [
+        #"{"toys":"damaged"}"#,
+        #"{"utilities":{"menuBar":{"enabled":"damaged"}}}"#,
+        #"{"future_setting":{"important":"value"}}"#,
+    ])
+    func tolerantReadsPreserveDataTheyCannotRoundTrip(_ json: String) throws {
+        let file = temporaryFile()
+        let directory = file.url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let original = Data(json.utf8)
+        try original.write(to: file.url)
+        try file.save(file.load())
+        let backups = try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix("app-state.recovery-") }
+        #expect(backups.count == 1)
+        if let backup = backups.first { #expect(try Data(contentsOf: backup) == original) }
     }
 
     @Test("the default path follows the daemon's state directory")

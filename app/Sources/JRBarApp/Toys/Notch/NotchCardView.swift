@@ -14,10 +14,13 @@ final class NotchCardModel {
     /// band click's deliberate focus, or the island's hover.
     var pinned = false {
         didSet {
+            guard runtimeEnabled else { return }
             if pinned {
                 utility.start()
                 tray.revalidate()
                 mirror.sync(enabled: mirrorEnabled())
+                calendar.resume()
+                reminders.resume()
                 wingHint = Self.wingHintDue()
             } else {
                 utility.stop()
@@ -75,14 +78,26 @@ final class NotchCardModel {
     /// The toys state's mirror vote — the presenter hands it through so
     /// a flip lands on the next pin without rebuilding the model.
     var mirrorEnabled: () -> Bool = { false }
+    /// The island's content-follow gate: the expand starts with the
+    /// rows hidden, and the frame spring reveals them once the frame
+    /// has carried most of the way (`NotchMotion.contentRevealThreshold`)
+    /// — frame leads, content follows. True at rest and under Reduce
+    /// Motion, where the whole card is a single crossfade.
+    var contentRevealed = true
     var onOpenSession: (() -> Void)?
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
     var onOpenOverview: (() -> Void)?
 
-    init(timers: ShelfTimerModel, tray: ShelfTrayModel) {
+    /// Headless state tests still exercise pin transitions, but must not
+    /// start media, power, camera, calendar, or reminder readers.
+    private let runtimeEnabled: Bool
+
+    init(timers: ShelfTimerModel, tray: ShelfTrayModel,
+         runtimeEnabled: Bool = true) {
         self.timers = timers
         self.tray = tray
+        self.runtimeEnabled = runtimeEnabled
     }
 }
 
@@ -139,6 +154,9 @@ struct NotchCardView: View {
 
     /// The island's card hugs the notch — a touch tighter than glass.
     private var verticalPad: CGFloat { style == .island ? 6 : 8 }
+    /// The Screen Bar window sits above the island and backs its 28 pt
+    /// bottom corners. Keep the footer two points above that black layer.
+    static let islandBottomContentInset = NotchSilhouetteGeometry.maximumExpandedRadius + 2
 
     var body: some View {
         if model.pinned {
@@ -153,41 +171,55 @@ struct NotchCardView: View {
         }
     }
 
+    /// One row's content-follow fade: hidden until the frame has
+    /// carried the expand, then in on its own stagger — frame leads,
+    /// content follows (`NotchMotion.rowStagger`/`rowFade`).
+    private func revealRow<V: View>(_ index: Int, _ content: V) -> some View {
+        content
+            .opacity(model.contentRevealed ? 1 : 0)
+            .animation(.easeOut(duration: NotchMotion.rowFade)
+                .delay(Double(index) * NotchMotion.rowStagger),
+                       value: model.contentRevealed)
+    }
+
     private var card: some View {
         VStack(alignment: .leading, spacing: 6) {
-            focusHeader(pinned: true)
-            if model.wingHint { wingHintRow }
+            revealRow(0, focusHeader(pinned: true))
+            if model.wingHint { revealRow(1, wingHintRow) }
             if !model.rows.isEmpty {
-                ForEach(model.rows.prefix(NotchIsland.rowLimit), id: \.id) { row in
-                    sessionRow(row)
+                ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
+                        id: \.element.id) { index, row in
+                    revealRow(2 + index, sessionRow(row))
                 }
                 if model.rows.count > NotchIsland.rowLimit {
-                    Text("+\(model.rows.count - NotchIsland.rowLimit) more")
+                    revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
                         .font(.system(size: 10))
                         .foregroundStyle(style.faintColor)
-                        .padding(.leading, 24)
+                        .padding(.leading, 24))
                 }
             }
-            ShelfMediaRow(utility: model.utility, style: style)
-            ShelfBatteryRow(power: model.utility.power, style: style)
-            ShelfWeatherRow(weather: model.utility.weather, style: style)
-            ShelfTrayRow(tray: model.tray, style: style)
+            revealRow(9, ShelfMediaRow(utility: model.utility, style: style))
+            revealRow(10, ShelfBatteryRow(power: model.utility.power, style: style))
+            revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
+            revealRow(12, ShelfTrayRow(tray: model.tray, style: style))
             if !model.timers.entries.isEmpty {
-                ShelfTimersRow(timers: model.timers, style: style)
+                revealRow(13, ShelfTimersRow(timers: model.timers, style: style))
             }
-            ShelfCalendarRow(calendar: model.calendar, style: style)
-            ShelfRemindersRow(reminders: model.reminders, style: style)
-            ShelfMirrorRow(mirror: model.mirror, style: style)
-            ShelfTogglesRow(toggles: model.utility.toggles, style: style)
+            revealRow(14, ShelfCalendarRow(calendar: model.calendar, style: style))
+            revealRow(15, ShelfRemindersRow(reminders: model.reminders, style: style))
+            revealRow(16, ShelfMirrorRow(mirror: model.mirror, style: style))
+            revealRow(17, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
             if !model.meters.isEmpty {
-                ForEach(model.meters, id: \.id) { meter in
-                    meterRow(meter)
+                ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
+                    revealRow(18 + index, meterRow(meter))
                 }
             }
-            overviewButton
+            revealRow(22, overviewButton)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, verticalPad)
+        .padding(.bottom, style == .island
+            ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText], isTargeted: nil) { providers in
             ShelfTrayDrop.urls(from: providers) { urls in
@@ -441,7 +473,12 @@ private struct ShelfMediaRow: View {
                             .lineLimit(1)
                     }
                     if media.playing {
-                        ShelfEqualizer(color: style.faintColor)
+                        if utility.audioTapLive {
+                            LiveEqualizer(levels: utility.audioLevels,
+                                          color: style.faintColor)
+                        } else {
+                            ShelfEqualizer(color: style.faintColor)
+                        }
                     }
                     Spacer(minLength: 4)
                     transportButton("backward.fill") { utility.send(.previousTrack) }
@@ -598,8 +635,9 @@ private struct ShelfTogglesRow: View {
 }
 
 /// The playing tell: five bars breathing on staggered phases — the
-/// honest version of the notch apps' visualizer (no audio tap, so it
-/// marks "something is playing", not a real spectrum).
+/// honest version of the notch apps' visualizer when no audio tap is
+/// running (the setting off, consent not granted, the pipeline down):
+/// it marks "something is playing", not a real spectrum.
 private struct ShelfEqualizer: View {
     let color: Color
     private let phases: [Double] = [0.0, 0.35, 0.7, 0.25, 0.55]
@@ -617,6 +655,38 @@ private struct ShelfEqualizer: View {
             }
             .frame(height: 10, alignment: .bottom)
         }
+        .accessibilityHidden(true)
+    }
+}
+
+/// The real visualizer: six bars driven by the tap's band levels.
+/// The model publishes at ~30 Hz so plain reads animate themselves;
+/// under Reduce Motion the bars stand still and re-read at 2 Hz.
+private struct LiveEqualizer: View {
+    let levels: [Float]
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                bars
+            }
+        } else {
+            bars
+        }
+    }
+
+    private var bars: some View {
+        HStack(alignment: .bottom, spacing: 1.5) {
+            ForEach(levels.indices, id: \.self) { i in
+                let level = CGFloat(min(1, max(0, levels[i])))
+                RoundedRectangle(cornerRadius: 0.8, style: .continuous)
+                    .fill(color)
+                    .frame(width: 2.2, height: 2.5 + 7.5 * level)
+            }
+        }
+        .frame(height: 10, alignment: .bottom)
         .accessibilityHidden(true)
     }
 }
@@ -721,36 +791,34 @@ private struct ShelfTrayRow: View {
         }
     }
 
-    private func trayChip(_ entry: ShelfTrayModel.Entry) -> some View {
-        HStack(spacing: 3) {
-            if entry.missing {
-                Image(systemName: "doc.questionmark")
-                    .font(.system(size: 9))
-            } else {
-                // The file's own Finder face — Yoink's tray grammar,
-                // not a generic glyph.
-                Image(nsImage: tray.icon(for: entry))
-                    .resizable()
-                    .frame(width: 11, height: 11)
+    private func trayChip(_ entry: ShelfTrayModel.ShelfEntry) -> some View {
+        Group {
+            switch entry {
+            case .item(let item):
+                itemFace(item, entry: entry)
+            case .stack(let stack):
+                ShelfStackChip(tray: tray, stack: stack, style: style) {
+                    tray.dissolve(entry)
+                }
             }
-            Text(entry.missing ? "\(entry.name) (moved)" : entry.name)
-                .font(.system(size: 10))
-                .lineLimit(1)
-                .truncationMode(.middle)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(entry.missing
-                    ? AnyShapeStyle(style.chipFaint)
-                    : AnyShapeStyle(style.chipFill),
-                    in: Capsule())
-        .foregroundStyle(entry.missing ? style.faintColor : style.subColor)
         .contextMenu {
             if !entry.missing {
                 Button("Quick Look") { tray.quickLook(entry) }
                 Button("Reveal in Finder") { tray.reveal(entry) }
                 Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
                 shareMenu(for: entry)
+            }
+            switch entry {
+            case .item:
+                if tray.entries.firstIndex(where: { $0.id == entry.id })
+                    .map({ $0 + 1 < tray.entries.count }) == true {
+                    Button("Merge with Next") {
+                        tray.mergeWithNext(entry)
+                    }
+                }
+            case .stack:
+                Button("Split into Items") { tray.dissolve(entry) }
             }
             Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
         }
@@ -763,40 +831,184 @@ private struct ShelfTrayRow: View {
             guard providers.contains(where: {
                 $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
             }) else { return false }
-            // A tray drag carries the entry's own file URL: landing on
+            // A tray drag carries the entry's own file URLs: landing on
             // another chip reorders; a foreign file lands where it
-            // dropped — Yoink's move, not the tail.
+            // dropped — onto a stack it joins the stack, anywhere else
+            // it lands ahead of the chip (Yoink's move, not the tail).
             ShelfTrayDrop.urls(from: providers) { urls in
                 var toAdd: [URL] = []
                 for url in urls {
-                    if let moved = tray.entries.first(where: { $0.path == url.path }) {
+                    if let moved = tray.entries.first(where: {
+                        $0.items.contains(where: { $0.path == url.path })
+                    }) {
                         tray.move(moved, before: entry)
                     } else {
                         toAdd.append(url)
                     }
                 }
-                if !toAdd.isEmpty { tray.add(toAdd, before: entry) }
+                if !toAdd.isEmpty {
+                    if case .stack = entry {
+                        tray.add(toAdd, onto: entry)
+                    } else {
+                        tray.add(toAdd, before: entry)
+                    }
+                }
             }
             return true
         }
-        .onTapGesture(count: 2) {
-            if !entry.missing { tray.quickLook(entry) }
-        }
         .help(entry.missing
               ? "Missing — the file moved or was deleted."
-              : entry.path)
+              : entry.items.first?.path ?? entry.displayName)
     }
 
-    /// Native share targets for the file; a canceled sheet delivers
-    /// nothing and claims nothing.
-    private func shareMenu(for entry: ShelfTrayModel.Entry) -> some View {
+    /// A loose file's chip face — the Finder icon and the name;
+    /// double-click previews. Tap handling lives on the chip's own
+    /// gestures so a stack can answer a plain click with its grid.
+    private func itemFace(_ item: ShelfTrayModel.Entry,
+                          entry: ShelfTrayModel.ShelfEntry) -> some View {
+        HStack(spacing: 3) {
+            if item.missing {
+                Image(systemName: "doc.questionmark")
+                    .font(.system(size: 9))
+            } else {
+                // The file's own Finder face — Yoink's tray grammar,
+                // not a generic glyph.
+                Image(nsImage: tray.icon(for: item))
+                    .resizable()
+                    .frame(width: 11, height: 11)
+            }
+            Text(item.missing ? "\(item.name) (moved)" : item.name)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(item.missing
+                    ? AnyShapeStyle(style.chipFaint)
+                    : AnyShapeStyle(style.chipFill),
+                    in: Capsule())
+        .foregroundStyle(item.missing ? style.faintColor : style.subColor)
+        .onTapGesture(count: 2) {
+            if !item.missing { tray.quickLook(entry) }
+        }
+    }
+
+    /// Native share targets for the entry's files; a canceled sheet
+    /// delivers nothing and claims nothing.
+    private func shareMenu(for entry: ShelfTrayModel.ShelfEntry) -> some View {
         Menu("Share…") {
             ForEach(tray.sharingServices(for: entry), id: \.title) { service in
                 Button(service.title) {
-                    service.perform(withItems: [entry.url])
+                    service.perform(withItems: entry.items
+                        .filter { !$0.missing }.map(\.url))
                 }
             }
         }
+    }
+}
+
+/// A stack's chip: a fan of its first three icons, the name and the
+/// count. A plain click opens the grid popover; ⌘-click dissolves
+/// the stack where it stands.
+private struct ShelfStackChip: View {
+    let tray: ShelfTrayModel
+    let stack: ShelfTrayModel.ShelfEntry.Stack
+    let style: NotchCardStyle
+    let dissolve: () -> Void
+
+    @ViewState private var open = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ZStack {
+                ForEach(Array(stack.items.prefix(3).enumerated()),
+                        id: \.element.id) { index, item in
+                    Image(nsImage: tray.icon(for: item))
+                        .resizable()
+                        .frame(width: 10, height: 10)
+                        .rotationEffect(.degrees(Double(index - 1) * 9))
+                        .offset(x: CGFloat(index - 1) * 3.5)
+                }
+            }
+            .frame(width: 20, height: 13)
+            Text("\(stack.name) · \(stack.items.count)")
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(stack.items.allSatisfy(\.missing)
+                    ? AnyShapeStyle(style.chipFaint)
+                    : AnyShapeStyle(style.chipFill),
+                    in: Capsule())
+        .foregroundStyle(stack.items.allSatisfy(\.missing)
+                         ? style.faintColor : style.subColor)
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.command) {
+                dissolve()
+            } else {
+                open = true
+            }
+        }
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            grid
+        }
+    }
+
+    /// The opened stack: every member as a tile, each one its own
+    /// drag source with member verbs — pull one out and the stack
+    /// thins; the last one out leaves a loose chip.
+    private var grid: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(stack.name)
+                .font(.system(size: 11, weight: .medium))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 56),
+                                         spacing: 6)],
+                      spacing: 6) {
+                ForEach(stack.items) { item in
+                    VStack(spacing: 3) {
+                        Image(nsImage: tray.icon(for: item))
+                            .resizable()
+                            .frame(width: 24, height: 24)
+                        Text(item.name)
+                            .font(.system(size: 8))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(4)
+                    .background(style.chipFill,
+                                in: RoundedRectangle(cornerRadius: 6,
+                                                     style: .continuous))
+                    .opacity(item.missing ? 0.38 : 1)
+                    .onDrag {
+                        NSItemProvider(object: item.url as NSURL)
+                    }
+                    .onTapGesture(count: 2) {
+                        if !item.missing {
+                            tray.quickLook(.item(item))
+                        }
+                    }
+                    .contextMenu {
+                        if !item.missing {
+                            Button("Quick Look") {
+                                tray.quickLook(.item(item))
+                            }
+                            Button("Reveal in Finder") {
+                                tray.reveal(.item(item))
+                            }
+                        }
+                        Button("Remove from Stack", role: .destructive) {
+                            tray.removeItem(item, from: stack.id)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 280)
     }
 }
 
@@ -817,27 +1029,34 @@ private struct ShelfTimersRow: View {
         }
     }
 
+    /// The chip reads `deadline.timeIntervalSinceNow` — nothing in the
+    /// model mutates per second, so without a TimelineView the count
+    /// only re-renders when the card redraws for other reasons. The
+    /// periodic schedule ticks the text every second while mounted and
+    /// costs nothing once the row unmounts.
     private func timerChip(_ entry: ShelfTimerModel.Entry) -> some View {
-        let overdue = entry.overdue
-        return HStack(spacing: 3) {
-            Image(systemName: overdue ? "checkmark" : "timer")
-                .font(.system(size: 9))
-            Text(overdue ? "Done" : remainingText(entry))
-                .font(.system(size: 10, design: .monospaced))
-                .lineLimit(1)
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let overdue = entry.overdue
+            HStack(spacing: 3) {
+                Image(systemName: overdue ? "checkmark" : "timer")
+                    .font(.system(size: 9))
+                Text(overdue ? "Done" : remainingText(entry))
+                    .font(.system(size: 10, design: .monospaced))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(style.chipFill, in: Capsule())
+            .foregroundStyle(overdue
+                ? AnyShapeStyle(style.subColor)
+                : AnyShapeStyle(style == .island
+                                ? Color.white.opacity(0.8)
+                                : Color.primary.opacity(0.75)))
+            .contextMenu {
+                Button("Remove", role: .destructive) { timers.remove(entry) }
+            }
+            .help(overdue ? "\(entry.label) — done." : "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened))")
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(style.chipFill, in: Capsule())
-        .foregroundStyle(overdue
-            ? AnyShapeStyle(style.subColor)
-            : AnyShapeStyle(style == .island
-                            ? Color.white.opacity(0.8)
-                            : Color.primary.opacity(0.75)))
-        .contextMenu {
-            Button("Remove", role: .destructive) { timers.remove(entry) }
-        }
-        .help(overdue ? "\(entry.label) — done." : "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened))")
     }
 
     /// `m:ss` or `h:mm:ss` remaining — the chip counts down from the

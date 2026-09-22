@@ -851,13 +851,13 @@ def test_unknown_models_count_activity_but_have_no_estimated_price(tmp_path: Pat
     totals = scan_usage(root)
 
     assert totals.input_tokens == 3_000_000
-    assert totals.estimated_cost_usd == pytest.approx(3.0)
+    assert totals.estimated_cost_usd == pytest.approx(2.0)
     assert totals.pricing_coverage.priced_records == 1
     assert totals.pricing_coverage.total_records == 2
     assert totals.pricing_coverage.priced_token_count == 1_000_000
     assert totals.pricing_coverage.total_token_count == 3_000_000
     assert totals.pricing_coverage.table_version
-    assert totals.pricing_coverage.table_as_of == "2026-08-26"
+    assert totals.pricing_coverage.table_as_of == "2026-09-20"
     summary = usage_stats.usage_summary_line(totals, "cost")
     assert summary is not None
     assert "estimated" in summary.lower()

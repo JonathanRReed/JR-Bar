@@ -92,9 +92,12 @@ struct NotchBuddyView: View {
         .padding(.vertical, 6 * scale)
         .fixedSize()
         .contentShape(Rectangle())
-        .onTapGesture { toy.tapped() }
+        // The tap's own point rides along: while an ask is open, only a
+        // tap on the "!" badge overhead opens the session asking — a pat
+        // anywhere else stays a pat.
+        .onTapGesture { point in toy.tapped(point: point, scale: scale) }
         .accessibilityLabel("Notch Buddy, \(toy.buddyName)")
-        .accessibilityHint("Tap for a trick, drag to park it anywhere, right-click for the menu. While an ask is open, a tap opens the session asking.")
+        .accessibilityHint("Tap for a trick, drag to park it anywhere, right-click for the menu. While an ask is open, a tap on the \"!\" opens the session asking.")
         .accessibilityAddTraits(.isButton)
     }
 

@@ -515,17 +515,24 @@ struct ProviderUsageCard: View {
         }
     }
 
+    /// The `≈` a dollar figure earns while any of it is priced at a
+    /// stand-in rate — dropped when every counted record priced from
+    /// its own table row.
+    private func approxPrefix(_ history: UsageHistory) -> String {
+        history.costsApproximate ? "≈ " : ""
+    }
+
     private func totalsLine(_ history: UsageHistory) -> String {
         let tokens = UsageFormat.tokens(history.totalTokens)
         let cost = UsageFormat.cost(history.totalCost, currency: history.pricing?.currency ?? "USD")
-        return "\(tokens) tokens · ≈ \(cost)"
+        return "\(tokens) tokens · \(approxPrefix(history))\(cost)"
     }
 
     private func costRow(_ history: UsageHistory) -> some View {
         let currency = history.pricing?.currency ?? "USD"
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("≈ \(UsageFormat.cost(history.totalCost, currency: currency))")
+                Text("\(approxPrefix(history))\(UsageFormat.cost(history.totalCost, currency: currency))")
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .monospacedDigit()
                 Text("over \(store.range.days) days")
@@ -535,32 +542,43 @@ struct ProviderUsageCard: View {
                 if let savings = history.cacheSavings, savings > 0, let share = history.cacheShare {
                     HStack(spacing: 5) {
                         Image(systemName: "leaf.fill").foregroundStyle(.green)
-                        Text("Cache saved ≈ \(UsageFormat.cost(savings, currency: currency)) · \(Int((share * 100).rounded()))% of input from cache")
+                        Text("Cache saved \(approxPrefix(history))\(UsageFormat.cost(savings, currency: currency)) · \(Int((share * 100).rounded()))% of input from cache")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .help("What the cache reads would have cost at the input price, minus what they cost at the cache price")
                 }
             }
-            Text(pricingDisclosure(history))
+            Text(Self.pricingDisclosure(history))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
     }
 
-    private func pricingDisclosure(_ history: UsageHistory) -> String {
+    static func pricingDisclosure(_ history: UsageHistory) -> String {
         guard let pricing = history.pricing else { return "Approximate: the monitor reported no price table for this provider." }
-        var text = "Approximate: list prices"
-        if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
-            text += String(format: " (%@%.2f in / %@%.2f out per M tokens", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
-            if let cache = pricing.cacheReadPerMillion { text += String(format: ", %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
-            text += ")"
-        }
-        if let model = pricing.model { text += " for \(model)" }
-        if let asOf = pricing.asOf { text += ", as of \(asOf)" }
-        text += "."
+        var text: String
         if pricing.estimated {
+            text = "Approximate: list prices"
+            if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
+                text += String(format: " (%@%.2f in / %@%.2f out per M tokens", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
+                if let cache = pricing.cacheReadPerMillion { text += String(format: ", %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
+                text += ")"
+            }
+            if let model = pricing.model { text += " for \(model)" }
+            if let asOf = pricing.asOf { text += ", as of \(asOf)" }
+            text += "."
             text += " This model has no table row — priced at the provider's reference rate."
+        } else {
+            text = "List price"
+            if let model = pricing.model { text += " for \(model)" }
+            if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
+                text += String(format: ": %@%.2f in / %@%.2f out", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
+                if let cache = pricing.cacheReadPerMillion { text += String(format: " / %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
+                text += " per M tokens"
+            }
+            if let asOf = pricing.asOf { text += ", as of \(asOf)" }
+            text += "."
         }
         if history.unpricedRecords > 0 {
             let models = history.unpricedModels.isEmpty ? "" : " (\(history.unpricedModels.joined(separator: ", ")))"

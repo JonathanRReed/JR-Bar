@@ -123,6 +123,12 @@ class HidApiTransport(DeviceTransport):
                 import hid  # type: ignore[import-not-found]
             except ImportError as exc:
                 raise OSError("hidapi is not installed") from exc
+            # Whatever thread called first must NOT be the thread the
+            # global IOHIDManager binds to -- bind it to the immortal
+            # affinity worker before any hid call can init it here.
+            from .hid_affinity import ensure_hid_binding
+
+            ensure_hid_binding()
             self._hid = hid
         return self._hid
 

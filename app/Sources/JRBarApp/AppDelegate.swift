@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The one-shot onboarding card, alive only while it is on screen.
     private var firstRunCard: FirstRunCard?
     private var wasLive = false
-    private var lastFileProgram: (text: String, source: LEDFeed.Source)?
+    private var lastFileProgram: (text: String, source: LEDFeed.Source, anchor: Double?)?
     private var lastLightsSource: String?
     /// When the last `completed` event arrived: the menu bar's state dot
     /// holds green for `completionDotWindow` after it.
@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let feed = LEDFeed()
         let monitor = AgentStateMonitor()
         let core = CoreModel()
-        let store = PanelStore(core: core)
+        let store = PanelStore(core: core, screenBarShown: appState.showScreenBar)
         let panel = PanelController(store: store)
         let settingsStore = SettingsStore(core: core)
         let settingsWindow = SettingsWindowController(store: settingsStore)
@@ -373,6 +373,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // Overview window (⌘O): the scoped roster workspace.
         let overviewStore = OverviewStore(core: core)
+        // Data Hoarder honesty for the inspector's Source line: the
+        // archive's own capture table answers "is this transcript
+        // kept", and a missing transcript seeds an archive search by
+        // session id.
+        overviewStore.archiveProbe = { [weak utilitiesStore] path in
+            guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
+            return try? await archive.captureState(path: path)
+        }
+        overviewStore.onOpenArchive = { [weak utilitiesStore] term in
+            guard let hoarder = utilitiesStore?.dataHoarder else { return }
+            hoarder.model.query = term
+            hoarder.openArchive()
+        }
         let overviewWindow = OverviewWindowController(store: overviewStore)
         self.overviewWindow = overviewWindow
         store.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
@@ -447,6 +460,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let notch = toysStore?.state.notch ?? NotchSettings()
             return notch.enabled && notch.provider == .jrbar && notch.mediaHUD
         }
+        // The consuming tap's license: same notch gate as the capsules
+        // plus its own opt-in — a disabled notch or a flipped setting
+        // drops the tap back to listen-only at the next key event.
+        events.hud.mediaKeys.replaceHUDWanted = { [weak toysStore] in
+            let notch = toysStore?.state.notch ?? NotchSettings()
+            return notch.enabled && notch.provider == .jrbar
+                && notch.mediaHUD && notch.replaceSystemHUD
+        }
         events.hud.alertsAllowed = { [weak toysStore] in
             let notch = toysStore?.state.notch ?? NotchSettings()
             return notch.enabled && notch.provider == .jrbar && notch.alerts
@@ -454,6 +475,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         events.hud.soundEffectsAllowed = { [weak toysStore] in
             let notch = toysStore?.state.notch ?? NotchSettings()
             return notch.enabled && notch.provider == .jrbar && notch.soundEffects
+        }
+        // The tap reads the gates live — one sync now that the real
+        // closures are in, then on every notch reconcile.
+        events.hud.syncMediaTap()
+        toysStore.notch.onMediaGateChanged = { [weak events] in
+            events?.hud.syncMediaTap()
         }
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
         // Approve/Deny on a banner are awaited, so a refused answer is
@@ -470,9 +497,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         // File feeds: the fallback until the daemon is connected.
-        feed.onProgram = { [weak self] text, source in
+        feed.onProgram = { [weak self] text, source, anchor in
             guard let self else { return }
-            self.lastFileProgram = (text, source)
+            self.lastFileProgram = (text, source, anchor)
             self.store?.feedDescription = source.description
             if self.core?.isLive != true { self.applyFileProgram() }
         }
@@ -650,6 +677,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Finish debounced edits before the main run loop stops.
+        toysStore?.save()
+        utilitiesStore?.save()
         hotkey?.unregister()
         panel?.close()
         interaction?.stop()
@@ -1149,10 +1179,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let cap = StatusIconRenderer.maxMeters
         statusItem.meters = shown.prefix(cap).map { provider in
             let window = UsageCenterStore.primaryWindow(of: provider)
+            // The percent styles need the window's reset stamp (the
+            // countdown swap) and its pace verdict (the compact tint).
+            // Same daemon-forecast pick the Usage Center card applies:
+            // the provider-level forecast only speaks for the
+            // conventional 5h lane.
+            let conventional = window?.id == UsageCenterStore.conventionalWindow(of: provider)?.id
+            let daemon = window?.forecast ?? (conventional ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
+            let verdict = window.map { w in
+                UsageForecaster.forecast(window: w, daemon: daemon,
+                                         samples: core?.usageSamples.samples(provider: provider.identity, window: w.name) ?? [],
+                                         now: Date().timeIntervalSince1970).verdict
+            }
             return StatusItemController.meter(for: provider.id,
                                               fraction: window.flatMap { $0.usedPct }.map { $0 / 100 },
                                               approximate: provider.isDerived,
-                                              document: document)
+                                              document: document,
+                                              resetsAt: window?.resetsAt,
+                                              verdict: verdict)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
         statusItem.dotState = dotState()
@@ -1282,7 +1326,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// daemon went away).
     private func applyFileProgram() {
         guard let screenBar, let last = lastFileProgram else { return }
-        screenBar.apply(programText: last.text)
+        // The anchor is the file's write instant — the firmware restarts
+        // on every LEDS.LED write, so the bar phase-locks to that, not
+        // to whenever this read landed.
+        screenBar.apply(programText: last.text, anchorEpoch: last.anchor)
         let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
         if description != lastLightsSource {
             lastLightsSource = description

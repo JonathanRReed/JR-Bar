@@ -101,16 +101,20 @@ enum MenuBarAX {
     /// assigned — that happens in `items(from:)`, which sees all
     /// owners at once).
     private nonisolated static func rawItems(of target: Target,
-                                             row: CGRect) -> [MenuBarItem] {
+                                             rows: [CGRect]) -> [MenuBarItem] {
         extrasItems(of: target.pid).enumerated().compactMap { index, element in
             let position = point(element, kAXPositionAttribute)
             let size = size(element, kAXSizeAttribute)
             guard size.width >= MenuBarItemLister.minItemWidth,
                   size.height > 0 else { return nil }
             let bounds = CGRect(origin: position, size: size)
-            // An item reports either on the row or parked below it;
+            // An item reports either on a row or parked below it;
             // anything else is a transient non-item (mid-teardown).
-            guard bounds.minY < row.maxY + 2 || bounds.minY > row.maxY + 100 else { return nil }
+            // Multi-display: the check holds against every bar's strip —
+            // an item on a secondary row must not read as torn down.
+            guard rows.contains(where: {
+                bounds.minY < $0.maxY + 2 || bounds.minY > $0.maxY + 100
+            }) else { return nil }
             return MenuBarItem(id: "", ownerPID: target.pid, ownerName: target.name,
                                bounds: bounds, title: string(element, kAXTitleAttribute),
                                windowID: 0,
@@ -124,7 +128,7 @@ enum MenuBarAX {
     /// right (parked items sort last — their offscreen positions are
     /// not bar order). Runs a bounded query per app concurrently so a
     /// hung app costs `messagingTimeout`, not the whole scan.
-    nonisolated static func items(targets: [Target], row: CGRect) -> [MenuBarItem] {
+    nonisolated static func items(targets: [Target], rows: [CGRect]) -> [MenuBarItem] {
         /// Lock-guarded accumulation for the concurrent per-app queries.
         final class Box: @unchecked Sendable {
             let lock = NSLock()
@@ -132,16 +136,16 @@ enum MenuBarAX {
         }
         let box = Box()
         DispatchQueue.concurrentPerform(iterations: targets.count) { i in
-            let items = rawItems(of: targets[i], row: row)
+            let items = rawItems(of: targets[i], rows: rows)
             guard !items.isEmpty else { return }
             box.lock.lock()
             box.items.append(contentsOf: items)
             box.lock.unlock()
         }
         let collected = box.items
-        let onRow = collected.filter { $0.bounds.intersects(row) }
+        let onRow = collected.filter { item in rows.contains { $0.intersects(item.bounds) } }
             .sorted { $0.bounds.minX < $1.bounds.minX }
-        let parked = collected.filter { !$0.bounds.intersects(row) }
+        let parked = collected.filter { item in !rows.contains { $0.intersects(item.bounds) } }
             .sorted { $0.ownerName.localizedCompare($1.ownerName) == .orderedAscending }
         let ordered = onRow + parked
         var totals: [String: Int] = [:]

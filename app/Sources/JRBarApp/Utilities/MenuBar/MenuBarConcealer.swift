@@ -30,6 +30,12 @@ import OSLog
 // MARK: - Pure planning
 
 enum MenuBarConcealPlan {
+    /// Apple extras use per-item covers, matching the visibility picker.
+    /// Do not also put them in the app-level assessment map.
+    nonisolated static func canConcealApp(_ bundleID: String) -> Bool {
+        !bundleID.hasPrefix("com.apple.")
+    }
+
     /// The applications an assertion must conceal for a reveal state:
     /// the hidden apps unless the hidden run is revealed, the
     /// always-hidden apps unless that run is revealed too.
@@ -115,8 +121,9 @@ enum MenuBarConcealPlan {
 // MARK: - The private API
 
 /// One live assertion — the handle the agent hands back. Process-bound:
-/// the agent restores the bar itself when the process dies.
-final class MenuBarAssertionToken {
+/// the agent restores the bar itself when the process dies. Immutable;
+/// the helper backend hands it across a pipe-readability closure.
+final class MenuBarAssertionToken: @unchecked Sendable {
     let object: AnyObject
     init(_ object: AnyObject) { self.object = object }
 }
@@ -127,6 +134,14 @@ final class MenuBarAssertionToken {
 protocol MenuBarConcealBackend: AnyObject {
     func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken
     func invalidate(_ token: MenuBarAssertionToken)
+    /// A dead token no longer conceals — the in-process assertion lives
+    /// as long as the concealer, so the default says alive; the helper
+    /// backend's token is a process that can die on its own.
+    func isAlive(_ token: MenuBarAssertionToken) -> Bool
+}
+
+extension MenuBarConcealBackend {
+    func isAlive(_ token: MenuBarAssertionToken) -> Bool { true }
 }
 
 @MainActor
@@ -192,7 +207,7 @@ final class MenuBarAssessmentBackend: MenuBarConcealBackend {
 
     nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
 
-    private final class OnceFlag: @unchecked Sendable {
+    final class OnceFlag: @unchecked Sendable {
         private let lock = NSLock()
         private var fired = false
         func claim() -> Bool { lock.withLock { defer { fired = true }; return !fired } }
@@ -240,6 +255,203 @@ final class MenuBarAssessmentBackend: MenuBarConcealBackend {
     }
 }
 
+// MARK: - The helper-process backend
+
+/// The assessment backend that holds the assertion in `jrbar-asserter`.
+/// The agent never exempts items that share the asserting process's
+/// responsible identity — measured 2026-09-21: the app's own assertion
+/// hid its icon no matter the allowlist, and so did a helper we
+/// `Process`-spawned (a child answers "who asserts?" with its
+/// responsible process — us). A foreign holder allowlisting us kept the
+/// icon drawn. The helper is therefore spawned with
+/// `responsibility_spawnattrs_setdisclaim`: it answers for itself, and
+/// its own bundle (`jrbar-asserter.app`,
+/// `com.jonathanreed.jrbar.asserter`) carries the foreign identity.
+///
+/// One process per activation: the token wraps the pid. Killing it
+/// releases the assertion (the agent restores a dead holder's bar), and
+/// the helper parks on stdin — the app dying mid-assertion closes that
+/// pipe, the helper exits, and nothing stays concealed.
+@MainActor
+final class MenuBarAsserterBackend: MenuBarConcealBackend {
+    /// The helper binary inside the app bundle, or `JRBAR_ASSERTER_BIN`
+    /// for a build run outside it. nil when neither exists — unsigned
+    /// debug runs then fall back to the in-process backend.
+    nonisolated static func resolveHelperURL() -> URL? {
+        if let override = ProcessInfo.processInfo.environment["JRBAR_ASSERTER_BIN"],
+           FileManager.default.isExecutableFile(atPath: override) {
+            return URL(fileURLWithPath: override)
+        }
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/jrbar-asserter.app/Contents/MacOS/jrbar-asserter")
+        return FileManager.default.isExecutableFile(atPath: bundled.path) ? bundled : nil
+    }
+
+    /// The helper died on its own — the concealer re-arms through this.
+    /// nil while a deliberate invalidate lands.
+    var onLoss: (@MainActor (MenuBarAssertionToken) -> Void)?
+
+    private let helperURL: URL
+
+    /// A spawned helper — the pid is the whole handle. `kill(0)` is the
+    /// liveness probe (EPERM still means alive); SIGTERM ends the hold
+    /// exactly like the app's own quit path: stdin EOF, helper exits.
+    /// The exit source lives here so the token retaining this object
+    /// keeps the watch armed, and a token's death disarms it.
+    final class Spawned: @unchecked Sendable {
+        let pid: pid_t
+        var exitSource: DispatchSourceProcess?
+        /// The helper's stdin/stdout — kept on the token's object so the
+        /// pipe ends outlive `activate` (closing stdin is the release).
+        var stdin: FileHandle?
+        var stdout: FileHandle?
+        init(pid: pid_t) { self.pid = pid }
+        var isRunning: Bool { kill(pid, 0) == 0 || errno == EPERM }
+        /// stdin EOF is the designed release — the helper exits on its
+        /// own. SIGKILL is the hammer: SIGTERM arrives on the parent's
+        /// inherited disposition, which this app ignores, and seven
+        /// orphaned asserters proved it (measured 2026-09-21).
+        func terminate() {
+            try? stdin?.close()
+            kill(pid, SIGKILL)
+            reapWhenItExits()
+        }
+        /// Reap a helper that died before `watch` armed — an
+        /// un-`waitpid`ed child lingers as a zombie.
+        func reapWhenItExits() {
+            let pid = self.pid
+            Task.detached {
+                var status = Int32(0)
+                for _ in 0..<200 where waitpid(pid, &status, WNOHANG) != pid {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+            }
+        }
+    }
+
+    /// The read buffer for the one-line answer — the pipe's
+    /// readability handler is Sendable, so the accumulation lives in a
+    /// lock-free-enough box: one producer, one consumer, first newline.
+    private final class Answer: @unchecked Sendable { var data = Data() }
+
+    /// `Process` gives no way to disclaim responsibility, so the spawn
+    /// is done by hand: two pipes wired onto the helper's stdin/stdout,
+    /// every other descriptor closed (CLOEXEC_DEFAULT), the disclaim
+    /// attribute making the child its own responsible process.
+    private func spawn() throws -> (Spawned, FileHandle, FileHandle) {
+        var inFD: [Int32] = [0, 0]
+        var outFD: [Int32] = [0, 0]
+        guard pipe(&inFD) == 0, pipe(&outFD) == 0 else {
+            throw MenuBarAssessmentBackend.Failure.unavailable
+        }
+        let attr = UnsafeMutablePointer<posix_spawnattr_t?>.allocate(capacity: 1)
+        posix_spawnattr_init(attr)
+        defer { posix_spawnattr_destroy(attr); attr.deallocate() }
+        _ = disclaimResponsibility(attr, 1)
+        _ = posix_spawnattr_setflags(attr, CShort(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        let actions = UnsafeMutablePointer<posix_spawn_file_actions_t?>.allocate(capacity: 1)
+        posix_spawn_file_actions_init(actions)
+        defer { posix_spawn_file_actions_destroy(actions); actions.deallocate() }
+        posix_spawn_file_actions_adddup2(actions, inFD[0], STDIN_FILENO)
+        posix_spawn_file_actions_adddup2(actions, outFD[1], STDOUT_FILENO)
+        let path = helperURL.path
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), nil]
+        defer { free(argv[0]) }
+        var pid = pid_t()
+        let envp = _nsGetEnviron()?.pointee
+        let rc = posix_spawn(&pid, path, UnsafePointer(actions), UnsafePointer(attr), argv, envp)
+        close(inFD[0])
+        close(outFD[1])
+        guard rc == 0 else {
+            close(inFD[1])
+            close(outFD[0])
+            throw MenuBarAssessmentBackend.Failure.rejected(
+                "asserter spawn: \(String(cString: strerror(rc)))")
+        }
+        let spawned = Spawned(pid: pid)
+        spawned.stdin = FileHandle(fileDescriptor: inFD[1], closeOnDealloc: true)
+        spawned.stdout = FileHandle(fileDescriptor: outFD[0], closeOnDealloc: true)
+        return (spawned, spawned.stdin!, spawned.stdout!)
+    }
+
+    nonisolated init(helperURL: URL) { self.helperURL = helperURL }
+
+    func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+        let (spawned, stdin, stdout) = try spawn()
+        guard let payload = try? JSONSerialization.data(withJSONObject: allowedBundleIDs),
+              let line = String(data: payload, encoding: .utf8) else {
+            spawned.terminate()
+            spawned.reapWhenItExits()
+            throw MenuBarAssessmentBackend.Failure.unavailable
+        }
+        stdin.write((line + "\n").data(using: .utf8)!)
+
+        let token = MenuBarAssertionToken(spawned)
+        return try await withCheckedThrowingContinuation { continuation in
+            let once = MenuBarAssessmentBackend.OnceFlag()
+            let answer = Answer()
+            stdout.readabilityHandler = { [self] handle in
+                answer.data.append(handle.availableData)
+                guard answer.data.contains(0x0A) else { return }
+                handle.readabilityHandler = nil
+                guard once.claim() else { return }
+                let text = String(decoding: answer.data, as: UTF8.self)
+                if text.hasPrefix("ok") {
+                    watch(spawned, token: token)
+                    continuation.resume(returning: token)
+                } else {
+                    spawned.terminate()
+                    spawned.reapWhenItExits()
+                    continuation.resume(throwing: MenuBarAssessmentBackend.Failure.rejected(
+                        text.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard once.claim() else { return }
+                stdout.readabilityHandler = nil
+                spawned.terminate()
+                spawned.reapWhenItExits()
+                continuation.resume(throwing: MenuBarAssessmentBackend.Failure.timedOut)
+            }
+        }
+    }
+
+    /// Follow the helper's exit: a loss the concealer did not ask for is
+    /// news — the assertion it stood for died with the process. The
+    /// dispatch source also reaps the pid so it never lingers as a
+    /// zombie.
+    nonisolated private func watch(_ spawned: Spawned, token: MenuBarAssertionToken) {
+        let source = DispatchSource.makeProcessSource(identifier: spawned.pid, eventMask: .exit)
+        source.setEventHandler { [weak self] in
+            var status = Int32(0)
+            _ = waitpid(spawned.pid, &status, 0)
+            Task { @MainActor in self?.onLoss?(token) }
+        }
+        spawned.exitSource = source
+        source.resume()
+    }
+
+    func invalidate(_ token: MenuBarAssertionToken) {
+        (token.object as? Spawned)?.terminate()
+    }
+
+    func isAlive(_ token: MenuBarAssertionToken) -> Bool {
+        (token.object as? Spawned)?.isRunning ?? false
+    }
+}
+
+/// "Be your own responsible process" — the spawn attribute that keeps
+/// the assertion the helper holds from answering with the app's bundle
+/// identity. libSystem export; no header ships it.
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+private func disclaimResponsibility(_ attr: UnsafeMutablePointer<posix_spawnattr_t?>?,
+                                    _ disclaim: CInt) -> CInt
+
+/// The inherited environment for `posix_spawn` — no public Swift name.
+@_silgen_name("_NSGetEnviron")
+private func _nsGetEnviron()
+    -> UnsafeMutablePointer<UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?>?
+
 // MARK: - The controller
 
 /// Keeps one live assertion in step with a target concealed set.
@@ -256,9 +468,29 @@ final class MenuBarConcealer {
     private let backend: any MenuBarConcealBackend
     private var live: Live?
     private var queue: Task<Void, Never>?
+    /// The live suspend's restore — an apply that lands inside the
+    /// window waits it out rather than converging mid-lift. Cleared
+    /// when the window closes, so `isSuspended` is a real state and
+    /// an old window never outlives its restore.
+    private var suspendWindow: Task<Void, Never>?
+    /// Which window the clear below belongs to — a second suspend
+    /// overwriting `suspendWindow` must not let the first's watcher
+    /// end the new window early.
+    private var suspendGeneration = 0
     /// The last set asked for — what a suspend restores.
     private(set) var target: Set<String> = []
     private(set) var running: Set<String> = []
+    /// Every bundle ID observed running this session — the allowlist's
+    /// universe. Monotonic: a snapshot that drops a shown app for one
+    /// pass never shrinks it, so a bad listing can't conceal a shown
+    /// app for a cycle; a terminated app has no items to protect, so
+    /// its entry costs nothing and never forces a re-assert.
+    private var seenRunning: Set<String> = []
+    /// Arrival order for `seenRunning` — the cap sheds the oldest
+    /// entries no longer seen first.
+    private var seenOrder: [String] = []
+    /// Beyond this many remembered bundle IDs, prune.
+    nonisolated static let seenRunningCap = 512
     /// The last failure, for the card. nil while the agent answers.
     private(set) var lastError: String?
     var onChange: (@MainActor () -> Void)?
@@ -267,11 +499,38 @@ final class MenuBarConcealer {
     /// adopted by the agent.
     nonisolated static let adoptionBeat: TimeInterval = 0.35
 
-    init(backend: any MenuBarConcealBackend = MenuBarAssessmentBackend()) {
+    /// The shipped backend: the helper process when its binary rides in
+    /// the bundle, the in-process assertion otherwise (dev runs conceal
+    /// fine either way — the helper is what keeps the icon drawn).
+    nonisolated static func defaultBackend() -> any MenuBarConcealBackend {
+        if let helper = MenuBarAsserterBackend.resolveHelperURL() {
+            return MenuBarAsserterBackend(helperURL: helper)
+        }
+        return MenuBarAssessmentBackend()
+    }
+
+    init(backend: any MenuBarConcealBackend = MenuBarConcealer.defaultBackend()) {
         self.backend = backend
+        if let helper = backend as? MenuBarAsserterBackend {
+            helper.onLoss = { [weak self] token in
+                self?.asserterLost(token)
+            }
+        }
+        // The universe starts with the system-item owners and our own
+        // bundle: both belong on every allowlist this session issues.
+        seenOrder = MenuBarConcealPlan.systemItemOwners.sorted()
+        seenRunning = MenuBarConcealPlan.systemItemOwners
+        if let own = Bundle.main.bundleIdentifier {
+            seenOrder.append(own)
+            seenRunning.insert(own)
+        }
     }
 
     var isConcealing: Bool { live != nil }
+    /// True while a suspend window is open — concealment is lifted but
+    /// coming back. A lift is not a teardown: readers that wipe state
+    /// when `isConcealing` drops must keep it through this.
+    var isSuspended: Bool { suspendWindow != nil }
     var concealedApps: Set<String> { live?.concealed ?? [] }
 
     /// Conceal exactly `concealed` among `running`. An empty set
@@ -280,20 +539,51 @@ final class MenuBarConcealer {
     func apply(concealed: Set<String>, running: Set<String>) {
         target = concealed
         self.running = running
+        // The allowlist's universe only grows: anything the workspace
+        // has ever shown us stays allowlisted until the cap, so the
+        // agent always has the ID it needs to keep a shown app on the
+        // row — and a re-assert happens only for real growth.
+        for id in running where !seenRunning.contains(id) { seenOrder.append(id) }
+        seenRunning.formUnion(running)
+        if seenRunning.count > Self.seenRunningCap {
+            let own = Bundle.main.bundleIdentifier
+            let droppable = seenOrder.filter {
+                !running.contains($0) && !MenuBarConcealPlan.systemItemOwners.contains($0)
+                    && $0 != own
+            }
+            for id in droppable.prefix(seenRunning.count - Self.seenRunningCap) {
+                seenRunning.remove(id)
+            }
+            seenOrder = seenOrder.filter { seenRunning.contains($0) }
+        }
+        // The window is captured at call time: a suspend that starts
+        // after this apply already queues its drop behind it, so only
+        // a window open *now* must be waited out — and awaiting it
+        // inside the task can never close a cycle.
+        let window = suspendWindow
         let previous = queue
         queue = Task { [weak self] in
             await previous?.value
+            await window?.value
             await self?.converge()
         }
     }
 
     /// Everything back — the deliberate release (a disable, a quit).
-    func releaseAll() {
+    /// The live assertion drops immediately so a quit never leaves the
+    /// bar concealed for the drain, then queued work gets a short
+    /// grace to unwind: an activation in flight sees the empty target
+    /// and stands down instead of re-concealing behind us.
+    func releaseAll() async {
         target = []
-        let previous = queue
-        queue = Task { [weak self] in
-            await previous?.value
-            self?.dropLive()
+        dropLive()
+        if let pending = queue {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await pending.value }
+                group.addTask { try? await Task.sleep(nanoseconds: 1_500_000_000) }
+                _ = await group.next()
+                group.cancelAll()
+            }
         }
     }
 
@@ -309,9 +599,15 @@ final class MenuBarConcealer {
             guard let self, let live = self.live else { return }
             do {
                 let token = try await self.backend.activate(allowedBundleIDs: live.allowlist)
-                let old = self.live
+                // The token this sweep was meant to replace may have
+                // been released — or re-converged — while the agent
+                // answered; never resurrect what is already gone.
+                guard self.live?.token === live.token else {
+                    self.backend.invalidate(token)
+                    return
+                }
                 self.live = Live(concealed: live.concealed, allowlist: live.allowlist, token: token)
-                if let old { self.backend.invalidate(old.token) }
+                self.backend.invalidate(live.token)
                 MenuBarAssessmentBackend.log.notice("reassert: reswept \(live.concealed.count, privacy: .public) apps")
             } catch {
                 self.lastError = String(describing: error)
@@ -320,33 +616,57 @@ final class MenuBarConcealer {
     }
 
     /// Lift concealment for `interval` and put it back: the click
-    /// bridge's window. Returns once the lift has landed.
+    /// bridge's window. Returns once the lift has landed. The window
+    /// is recorded before the drop is even queued, so an apply that
+    /// lands anywhere inside it — before, during or after the lift —
+    /// waits the restore out rather than converging mid-window.
     func suspend(for interval: TimeInterval) async {
         let previous = queue
-        let task = Task { [weak self] in
+        let drop = Task { [weak self] in
             await previous?.value
             self?.dropLive()
         }
-        queue = task
-        await task.value
         let restore = Task { [weak self] in
+            await drop.value
             try? await Task.sleep(nanoseconds: UInt64(interval * 1e9))
             await self?.converge()
         }
-        let before = queue
-        queue = Task { await before?.value; await restore.value }
+        suspendWindow = restore
+        queue = restore
+        suspendGeneration += 1
+        let generation = suspendGeneration
+        Task { [weak self] in
+            await restore.value
+            guard let self, self.suspendGeneration == generation else { return }
+            self.suspendWindow = nil
+        }
+        await drop.value
     }
 
     private func converge() async {
-        let concealed = target.intersection(running)
+        let concealed = target.intersection(seenRunning)
         if concealed.isEmpty {
             dropLive()
             return
         }
-        let allowlist = MenuBarConcealPlan.allowlist(running: running, concealed: concealed)
-        if let live, live.concealed == concealed, live.allowlist == allowlist { return }
+        let allowlist = MenuBarConcealPlan.allowlist(running: seenRunning, concealed: concealed)
+        // Re-assert only for real news: a first-seen app joining the
+        // allowlist, or a changed concealed set. A quit, a snapshot
+        // blip, a re-read of the same universe — the live assertion
+        // already covers all of those, so it stays.
+        if let live, live.concealed == concealed,
+           Set(allowlist).isSubset(of: Set(live.allowlist)),
+           backend.isAlive(live.token) { return }
         do {
             let token = try await backend.activate(allowedBundleIDs: allowlist)
+            // A release or retarget that landed mid-activation wins:
+            // the plan this token was built for no longer stands, so
+            // it goes straight back rather than resurrecting a
+            // concealment the caller already dropped.
+            guard target.intersection(seenRunning) == concealed else {
+                backend.invalidate(token)
+                return
+            }
             let old = live
             live = Live(concealed: concealed, allowlist: allowlist, token: token)
             if let old { backend.invalidate(old.token) }
@@ -357,6 +677,21 @@ final class MenuBarConcealer {
             MenuBarAssessmentBackend.log.error("conceal: \(String(describing: error), privacy: .public)")
         }
         onChange?()
+    }
+
+    /// The helper holding the live assertion exited on its own. A
+    /// deliberate invalidate clears `live` before the process's
+    /// termination handler runs, so a token that still matches `live`
+    /// is a real loss — the bar is unconcealed and must re-arm.
+    private func asserterLost(_ token: MenuBarAssertionToken) {
+        guard let live, live.token === token else { return }
+        self.live = nil
+        MenuBarAssessmentBackend.log.error("conceal: asserter died — rearming")
+        let previous = queue
+        queue = Task { [weak self] in
+            await previous?.value
+            await self?.converge()
+        }
     }
 
     private func dropLive() {

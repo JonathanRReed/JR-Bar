@@ -39,10 +39,24 @@ final class ShelfMirrorModel {
     }
     private let box = SessionBox()
 
+    /// The pin × setting vote as last seen — the async paths (TCC
+    /// answer, queued session build) consult it before touching state
+    /// or the lens. Without it an unpin landing while the consent
+    /// prompt is up would still let the grant turn the camera on with
+    /// no preview on screen.
+    private var enabled = false
+    /// Bumps on every sync transition. Queued start blocks stamp the
+    /// generation they were issued under; a state hop that finds the
+    /// model has moved on shuts the lamp instead of resurrecting it.
+    private var generation = 0
+
     /// The card pins: the setting's vote decides whether the lens
     /// opens or closes. Unpinning always closes it — an open lens with
     /// no visible preview would be the camera-indicator trap.
     func sync(enabled: Bool) {
+        guard enabled != self.enabled else { return }
+        self.enabled = enabled
+        generation += 1
         if enabled {
             start()
         } else {
@@ -64,6 +78,10 @@ final class ShelfMirrorModel {
             authAsked = true
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
+                    // The answer can land minutes later — unpin or a
+                    // toggle-off in the meantime means the lens stays
+                    // shut even though the person said yes.
+                    guard self.enabled else { return }
                     if granted { self.run() } else { self.state = .denied }
                 }
             }
@@ -74,6 +92,7 @@ final class ShelfMirrorModel {
 
     private func run() {
         let box = box
+        let gen = generation
         queue.async { [weak self] in
             if box.session == nil {
                 let candidate = AVCaptureSession()
@@ -82,7 +101,10 @@ final class ShelfMirrorModel {
                       let input = try? AVCaptureDeviceInput(device: device),
                       candidate.canAddInput(input)
                 else {
-                    Task { @MainActor in self?.state = .unavailable }
+                    Task { @MainActor in
+                        guard let self, self.enabled, self.generation == gen else { return }
+                        self.state = .unavailable
+                    }
                     return
                 }
                 candidate.addInput(input)
@@ -90,7 +112,17 @@ final class ShelfMirrorModel {
                 Task { @MainActor in self?.preview.attach(candidate) }
             }
             box.session?.startRunning()
-            Task { @MainActor in self?.state = .live }
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.enabled, self.generation == gen else {
+                    // Stopped (or re-synced) while the session spun up —
+                    // the lamp is on with nobody watching. Kill it and
+                    // leave `state` where `stop()` put it.
+                    self.queue.async { box.session?.stopRunning() }
+                    return
+                }
+                self.state = .live
+            }
         }
     }
 

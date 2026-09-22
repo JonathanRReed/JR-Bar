@@ -9,6 +9,17 @@ import Testing
 @MainActor
 @Suite("Media feed")
 struct MediaFeedTests {
+    @Test func panelStoreReleasesItsMediaReader() {
+        let monitor = FakeMonitor()
+        let feed = MediaFeed(monitor: monitor)
+        var store: PanelStore? = PanelStore(core: CoreModel(), mediaFeed: feed)
+        #expect(store?.screenBarShown == true)
+        #expect(feed.readerCount == 1)
+        store = nil
+        #expect(feed.readerCount == 0)
+        #expect(monitor.stops == 1)
+    }
+
     /// A monitor that never spawns the helper — start/stop only flip
     /// the flag and `onChange` is driven by hand.
     private final class FakeMonitor: AlcoveMediaMonitor {

@@ -142,8 +142,6 @@ def test_timer_intents_reject_invalid_or_ambiguous_schedules__and_2_more() -> No
     for invalid in (math.nan, math.inf, -math.inf):
         with pytest.raises(ValueError, match="fire_at"):
             _intent(RuntimeFeature.CAPACITY_DEADLINE, fire_at=invalid)
-    with pytest.raises(ValueError, match="future"):
-        registry.reconcile((_intent(RuntimeFeature.CAPACITY_DEADLINE, fire_at=100.0),), target=target)
     for interval in (0.0, -1.0, math.nan, math.inf):
         with pytest.raises(ValueError, match="interval"):
             _intent(RuntimeFeature.LID_OBSERVATION, interval=interval, tolerance=0.1)
@@ -218,6 +216,38 @@ def test_timer_intents_reject_invalid_or_ambiguous_schedules__and_2_more() -> No
     assert factory.created[0].invalidations == 1
     assert factory.created[1].invalidations == 0
     assert registry.snapshot().active_features == (second,)
+
+
+def test_due_timer_intents_schedule_immediately_and_keep_repeating_interval() -> None:
+    clock = _Clock()
+    factory = _FakeAppKitFactory()
+    one_shot = RuntimeFeature.CAPACITY_DEADLINE
+    repeating = RuntimeFeature.DISPLAY_ENVIRONMENT
+    registry = AppKitTimerRegistry(
+        handlers={one_shot: lambda: None, repeating: lambda: None},
+        timer_factory=factory,
+        monotonic=clock,
+    )
+    target = object()
+
+    registry.reconcile(
+        (
+            _intent(one_shot, fire_at=clock() - 1.0),
+            _intent(
+                repeating,
+                fire_at=clock(),
+                interval=3.0,
+                tolerance=0.25,
+            ),
+        ),
+        target=target,
+    )
+
+    created_by_feature = {timer.userInfo(): timer for timer in factory.created}
+    assert created_by_feature[one_shot].delay == 0.0
+    assert created_by_feature[one_shot].interval is None
+    assert created_by_feature[repeating].delay == 0.0
+    assert created_by_feature[repeating].interval == 3.0
 
 
 

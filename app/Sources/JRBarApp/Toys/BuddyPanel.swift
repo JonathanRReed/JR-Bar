@@ -317,7 +317,7 @@ struct BuddyPanelView: View {
         // re-reads the summary only often enough to keep the caption's
         // relative time honest — a display-rate reduce of every session,
         // just for a one-line caption, was pure churn.
-        if let toy = model.toy, toy.isOn {
+        if let toy = model.toy, toy.isOn, toy.isFree {
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let summary = toy.summary(at: context.date)
                 let scale = toy.buddyScale

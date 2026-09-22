@@ -266,11 +266,6 @@ class AppKitTimerRegistry:
             desired[intent.feature] = intent
         now = self._now()
         target_identity = id(target)
-        for feature, intent in desired.items():
-            current = self._entries.get(feature)
-            unchanged = current is not None and current.intent == intent and current.target_identity == target_identity
-            if intent.fire_at <= now and not unchanged:
-                raise ValueError("runtime timer fire_at must be in the future")
 
         for feature in tuple(self._entries):
             if feature not in desired:
@@ -357,7 +352,10 @@ class AppKitTimerRegistry:
         target: object,
         now: float,
     ) -> None:
-        delay = intent.fire_at - now
+        # An intent can become due between the caller's clock sample and this
+        # reconciliation. Schedule it immediately instead of rejecting the
+        # whole timer set and leaving runtime state partially reconciled.
+        delay = max(0.0, intent.fire_at - now)
         timer = self._factory.create_timer(
             delay=delay,
             interval=intent.interval,

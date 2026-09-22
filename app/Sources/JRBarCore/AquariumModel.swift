@@ -553,6 +553,58 @@ public enum AquariumModel {
         return out
     }
 
+    /// Where a bought decor piece lives on the sand (docs/TOYS.md):
+    /// a fixed slot per item so the tank's collection can never pile
+    /// up — pieces spread across the width on two depth rows, `back`
+    /// rooted on the far dune behind the fish lane, `front` on the
+    /// near crest like the shop's first four pieces. The footprint is
+    /// declared in fractions of the tank's *height* so the pieces grow
+    /// with the window the way the kelp does, and the layout can be
+    /// overlap-checked straight off the table.
+    public struct DecorSlot: Equatable, Sendable {
+        /// 0…1 across the tank.
+        public var x: Double
+        /// Back row roots on the far dune (behind the fish); front row
+        /// roots on the near crest (over the fish, like the shop set).
+        public var back: Bool
+        /// Declared footprint: drawn width & height as a fraction of
+        /// the tank's height.
+        public var w: Double
+        public var h: Double
+
+        public init(x: Double, back: Bool, w: Double, h: Double) {
+            self.x = x
+            self.back = back
+            self.w = w
+            self.h = h
+        }
+    }
+
+    /// The owned-decor layout: every decor `ShopItem` gets one slot,
+    /// interleaved with the seeded bed and the shop's original four
+    /// (plant .115, rock .315, chest .68, castle .885 on the front
+    /// crest) so nothing overlaps whatever the tank owns. Sizes are
+    /// fractions of the tank height — at 1200×700 the shipwreck reads
+    /// ~240 px wide, the volcano ~170, the coral garden ~160.
+    public static func decorSlot(for item: ShopItem) -> DecorSlot? {
+        switch item {
+        // Back row — behind the fish lane, on the far dune. Tall
+        // pieces may rise to ~45% of the tank's height.
+        case .shipwreck: return DecorSlot(x: 0.13, back: true, w: 0.34, h: 0.27)
+        case .amphora: return DecorSlot(x: 0.31, back: true, w: 0.09, h: 0.075)
+        case .sunkenStatue: return DecorSlot(x: 0.44, back: true, w: 0.14, h: 0.16)
+        case .ruinedColumns: return DecorSlot(x: 0.62, back: true, w: 0.25, h: 0.19)
+        case .volcano: return DecorSlot(x: 0.82, back: true, w: 0.24, h: 0.16)
+        // Front row — over the fish lane like the original shop set.
+        case .bubbleWall: return DecorSlot(x: 0.08, back: false, w: 0.10, h: 0.28)
+        case .driftwood: return DecorSlot(x: 0.22, back: false, w: 0.21, h: 0.07)
+        case .anemoneBed: return DecorSlot(x: 0.40, back: false, w: 0.14, h: 0.09)
+        case .moonJellyLamp: return DecorSlot(x: 0.55, back: false, w: 0.11, h: 0.14)
+        case .coralGarden: return DecorSlot(x: 0.74, back: false, w: 0.23, h: 0.11)
+        default: return nil
+        }
+    }
+
     /// A finished fish drops a meal: two or three pellet seeds, scrambled
     /// off the fish's own seed so the same completion always scatters
     /// the same food and a replayed frame draws it identically.

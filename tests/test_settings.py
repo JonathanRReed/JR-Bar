@@ -78,6 +78,38 @@ def test_sleep_dim_defaults_on_but_never_normalizes_to_off() -> None:
     assert settings.idle_auto_off_enabled is False
 
 
+def test_screen_bar_notch_shape_defaults_validate_and_round_trip(tmp_path: Path) -> None:
+    target = tmp_path / "settings.json"
+    defaults = AgentMonitorSettings()
+
+    assert defaults.screen_bar_notch_profile == "auto"
+    assert defaults.screen_bar_notch_corner == 8.0
+    assert defaults.to_dict()["screen_bar_notch_profile"] == "auto"
+    assert defaults.to_dict()["screen_bar_notch_corner"] == 8.0
+    profiles = (
+        "auto",
+        "macbook_air_13",
+        "macbook_air_15",
+        "macbook_pro_14",
+        "macbook_pro_16",
+        "custom",
+    )
+    for profile in profiles:
+        assert defaults.with_screen_bar_notch_profile(profile).screen_bar_notch_profile == profile
+
+    configured = defaults.with_screen_bar_notch_profile(
+        "macbook_pro_14"
+    ).with_screen_bar_notch_corner(12.5)
+    save_settings(configured, target)
+    restored = load_settings(target)
+
+    assert restored.screen_bar_notch_profile == "macbook_pro_14"
+    assert restored.screen_bar_notch_corner == 12.5
+    assert AgentMonitorSettings().with_screen_bar_notch_profile("unknown").screen_bar_notch_profile == "auto"
+    assert AgentMonitorSettings().with_screen_bar_notch_corner(2).screen_bar_notch_corner == 4.0
+    assert AgentMonitorSettings().with_screen_bar_notch_corner(20).screen_bar_notch_corner == 16.0
+
+
 def test_capacity_history_settings_round_trip_only_supported_retention(tmp_path: Path) -> None:
     """The persisted retention policy may only select 7, 30, or 90 days."""
     target = tmp_path / "settings.json"

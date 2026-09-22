@@ -131,6 +131,13 @@ class AlcoveMediaMonitor {
     /// A `playerInfo` payload speaks for this long; a Music that quit
     /// mid-song stops claiming the strip once it ages out.
     private static let musicPayloadLife: TimeInterval = 10
+    /// The bridge path's own cadence while it is the only reader. On
+    /// 15.4+ the distributed notes never arrive, so nothing else
+    /// re-arms a refresh: without this poll a dead adapter means
+    /// Spotify, browsers — everything but Music's own note — stay
+    /// dark until a transport press. Cheap: one is-playing + info
+    /// read on `answerQueue`. A `var` so tests poll on their own clock.
+    var pollInterval: TimeInterval = 3
     /// The bridge path only runs reads while the adapter is dead —
     /// otherwise a gated empty read would overwrite the helper's truth.
     private var adapterLive = false
@@ -175,8 +182,9 @@ class AlcoveMediaMonitor {
 
     /// Spawn the entitled reader; a dead path (no perl, no dylib, an
     /// early exit) flips `adapterLive` off and leaves the bridge's
-    /// refresh cycle in charge.
-    private func startAdapter() {
+    /// refresh cycle in charge. Internal so a test double can stand
+    /// the adapter down without spawning perl.
+    func startAdapter() {
         let adapter = AlcoveMediaAdapter()
         adapter.onChange = { [weak self] media in self?.noteMedia(media) }
         adapter.onFailure = { [weak self] in
@@ -273,6 +281,13 @@ class AlcoveMediaMonitor {
     /// answers empty, and empty would erase the helper's real track.
     private func refresh() {
         guard running, !adapterLive else { return }
+        // While the bridge is the reader it is also the only clock —
+        // re-arm the next read here so the strip keeps tracking a
+        // player that never posts a note we can hear. A distributed
+        // note or a transport's faster `scheduleRefresh` simply
+        // replaces this deadline; the moment the adapter reports live
+        // the guard stops the chain.
+        scheduleRefresh(after: pollInterval)
         guard let bridge else {
             noteMedia(musicMedia.flatMap { Date().timeIntervalSince($0.at) < Self.musicPayloadLife ? $0.media : nil })
             return

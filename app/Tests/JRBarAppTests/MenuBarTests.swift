@@ -54,7 +54,7 @@ struct MenuBarTests {
     func itemBasics() {
         let item = MenuBarItemLister.item(from: info(pid: 500, owner: "Wi-Fi",
                                                    x: 900, title: "status", windowID: 7),
-                                          ownPID: ownPID, row: row)
+                                          ownPID: ownPID, rows: [row])
         #expect(item?.ownerPID == 500)
         #expect(item?.ownerName == "Wi-Fi")
         #expect(item?.title == "status")
@@ -64,14 +64,14 @@ struct MenuBarTests {
 
     @Test("only the status window layer counts")
     func wrongLayer() {
-        #expect(MenuBarItemLister.item(from: info(layer: 24), ownPID: ownPID, row: row) == nil)
-        #expect(MenuBarItemLister.item(from: info(layer: 0), ownPID: ownPID, row: row) == nil)
-        #expect(MenuBarItemLister.item(from: info(layer: 26), ownPID: ownPID, row: row) == nil)
+        #expect(MenuBarItemLister.item(from: info(layer: 24), ownPID: ownPID, rows: [row]) == nil)
+        #expect(MenuBarItemLister.item(from: info(layer: 0), ownPID: ownPID, rows: [row]) == nil)
+        #expect(MenuBarItemLister.item(from: info(layer: 26), ownPID: ownPID, rows: [row]) == nil)
     }
 
     @Test("our own process is never listed — the spacers must not hide themselves")
     func ownProcess() {
-        #expect(MenuBarItemLister.item(from: info(pid: ownPID), ownPID: ownPID, row: row) == nil)
+        #expect(MenuBarItemLister.item(from: info(pid: ownPID), ownPID: ownPID, rows: [row]) == nil)
     }
 
     @Test("Control Center's items are protected — a spacer can never move the clock")
@@ -79,32 +79,32 @@ struct MenuBarTests {
         #expect(MenuBarItemLister.isProtected(ownerName: "Control Center"))
         #expect(MenuBarItemLister.isProtected(ownerName: "ControlCenter"))
         #expect(!MenuBarItemLister.isProtected(ownerName: "SomeApp"))
-        #expect(MenuBarItemLister.item(from: info(owner: "Control Center"), ownPID: ownPID, row: row) == nil)
+        #expect(MenuBarItemLister.item(from: info(owner: "Control Center"), ownPID: ownPID, rows: [row]) == nil)
     }
 
     @Test("a sliver under the minimum width is a stray, not an item")
     func tooNarrow() {
         #expect(MenuBarItemLister.item(from: info(w: MenuBarItemLister.minItemWidth - 0.5),
-                                       ownPID: ownPID, row: row) == nil)
+                                       ownPID: ownPID, rows: [row]) == nil)
         #expect(MenuBarItemLister.item(from: info(w: MenuBarItemLister.minItemWidth),
-                                       ownPID: ownPID, row: row) != nil)
-        #expect(MenuBarItemLister.item(from: info(w: 0), ownPID: ownPID, row: row) == nil)
+                                       ownPID: ownPID, rows: [row]) != nil)
+        #expect(MenuBarItemLister.item(from: info(w: 0), ownPID: ownPID, rows: [row]) == nil)
     }
 
     @Test("a window outside the row's band is not an item")
     func outsideRow() {
         // Entirely below the row.
-        #expect(MenuBarItemLister.item(from: info(y: 40, h: 24), ownPID: ownPID, row: row) == nil)
+        #expect(MenuBarItemLister.item(from: info(y: 40, h: 24), ownPID: ownPID, rows: [row]) == nil)
         // Overlapping by a hair still counts — and horizontally off the
         // screen edge still reports in (that is how a hidden run keeps
         // its identity).
-        #expect(MenuBarItemLister.item(from: info(y: 23, h: 24), ownPID: ownPID, row: row) != nil)
-        #expect(MenuBarItemLister.item(from: info(x: 2400), ownPID: ownPID, row: row) != nil)
+        #expect(MenuBarItemLister.item(from: info(y: 23, h: 24), ownPID: ownPID, rows: [row]) != nil)
+        #expect(MenuBarItemLister.item(from: info(x: 2400), ownPID: ownPID, rows: [row]) != nil)
     }
 
     @Test("an empty window name is no title")
     func emptyTitle() {
-        let item = MenuBarItemLister.item(from: info(title: ""), ownPID: ownPID, row: row)
+        let item = MenuBarItemLister.item(from: info(title: ""), ownPID: ownPID, rows: [row])
         #expect(item?.title == nil)
     }
 
@@ -117,7 +117,7 @@ struct MenuBarTests {
             info(pid: 1, owner: "Left", x: 100, windowID: 1),
             info(pid: 2, owner: "Middle", x: 200, windowID: 2),
         ]
-        let items = MenuBarItemLister.items(from: infos, ownPID: ownPID, row: row)
+        let items = MenuBarItemLister.items(from: infos, ownPID: ownPID, rows: [row])
         #expect(items.map(\.id) == ["Left", "Middle", "Right"])
     }
 
@@ -125,7 +125,7 @@ struct MenuBarTests {
     func titledIdentity() {
         let items = MenuBarItemLister.items(
             from: [info(owner: "Stats", x: 100, title: "CPU", windowID: 9)],
-            ownPID: ownPID, row: row)
+            ownPID: ownPID, rows: [row])
         #expect(items.map(\.id) == ["Stats·CPU"])
     }
 
@@ -136,7 +136,7 @@ struct MenuBarTests {
             info(pid: 7, owner: "Multi", x: 100, windowID: 1),
             info(pid: 9, owner: "Solo", x: 300, windowID: 3),
         ]
-        let items = MenuBarItemLister.items(from: infos, ownPID: ownPID, row: row)
+        let items = MenuBarItemLister.items(from: infos, ownPID: ownPID, rows: [row])
         #expect(items.map(\.id) == ["Multi#0", "Multi#1", "Solo"])
     }
 
@@ -148,7 +148,7 @@ struct MenuBarTests {
             info(pid: 9, owner: "SomeApp", x: 900, windowID: 3),
             info(layer: 0, pid: 9, owner: "SomeApp", x: 400, windowID: 4),
         ]
-        let bounds = MenuBarItemLister.rowItemBounds(from: infos, ownPID: ownPID, row: row)
+        let bounds = MenuBarItemLister.rowItemBounds(from: infos, ownPID: ownPID, rows: [row])
         // The JR-Bar window (x: 50) is ours — excluded. The protected
         // clock still counts: a click on an item is not empty space.
         #expect(bounds == [CGRect(x: 1450, y: 0, width: 24, height: 24),
@@ -161,7 +161,7 @@ struct MenuBarTests {
             info(pid: ownPID, owner: "JR-Bar", x: -8000, w: 10_000, windowID: 1),
             info(pid: 9, owner: "SomeApp", x: 900, windowID: 2),
         ]
-        let bounds = MenuBarItemLister.rowItemBounds(from: infos, ownPID: ownPID, row: row)
+        let bounds = MenuBarItemLister.rowItemBounds(from: infos, ownPID: ownPID, rows: [row])
         #expect(bounds == [CGRect(x: 900, y: 0, width: 24, height: 24)])
     }
 
@@ -365,16 +365,18 @@ struct MenuBarTests {
         #expect(frame.size == size)
     }
 
-    @Test("an empty run still gets one slot — the empty state is a tile wide")
+    @Test("an empty run has room for its explanatory text")
     func barEmpty() {
-        #expect(MenuBarBarLayout.contentSize(itemCount: 0)
-                == MenuBarBarLayout.contentSize(itemCount: 1))
+        #expect(MenuBarBarLayout.contentSize(itemCount: 0).width == 128)
+        #expect(MenuBarBarLayout.contentSize(itemCount: 0).height == 46)
     }
 
-    @Test("a packed bar caps at maxTiles rather than running off screen")
+    @Test("a packed bar caps its viewport while content remains scrollable")
     func barCap() {
-        #expect(MenuBarBarLayout.contentSize(itemCount: 500)
-                == MenuBarBarLayout.contentSize(itemCount: MenuBarBarLayout.maxTiles))
+        let crowded = MenuBarBarLayout.contentSize(itemCount: 500)
+        let full = MenuBarBarLayout.contentSize(itemCount: MenuBarBarLayout.maxTiles)
+        #expect(crowded.width == full.width)
+        #expect(crowded.height == full.height + MenuBarBarLayout.scrollIndicatorHeight)
     }
 
     // MARK: Hider — the reconcile seam
@@ -753,7 +755,9 @@ struct MenuBarTests {
         var result = MenuBarItemHider.updatedHidden(
             previous: [:], hidden: [titled("clock", "10:40")], alwaysHidden: [])
         #expect(result.sections.isEmpty)
-        #expect(result.signatures["clock"] == "10:40")
+        // The signature carries the title plus the identity fields an
+        // icon-only swap moves — the title leads it.
+        #expect(result.signatures["clock"]?.hasPrefix("10:40") == true)
         // The minute turns — the hidden run reveals.
         result = MenuBarItemHider.updatedHidden(
             previous: result.signatures,
@@ -778,6 +782,6 @@ struct MenuBarTests {
             previous: ah.signatures,
             hidden: [titled("fresh", "just appeared")], alwaysHidden: [])
         #expect(result.sections.isEmpty)
-        #expect(result.signatures["fresh"] == "just appeared")
+        #expect(result.signatures["fresh"]?.hasPrefix("just appeared") == true)
     }
 }

@@ -34,5 +34,20 @@ def default_app_bundle_path(home: Path | None = None) -> Path:
     return base / "Applications" / APP_BUNDLE_NAME
 
 
+def containing_app_bundle(executable: str | Path | None = None) -> Path | None:
+    """Return the outer JR-Bar bundle containing an executable, if any."""
+    path = Path(executable if executable is not None else (sys.executable or ""))
+    for candidate in path.parents:
+        if candidate.name != APP_BUNDLE_NAME:
+            continue
+        try:
+            relative = path.relative_to(candidate)
+        except ValueError:
+            continue
+        if relative.parts[:1] == ("Contents",) and (candidate / "Contents").is_dir():
+            return candidate
+    return None
+
+
 def running_inside_bundle() -> bool:
-    return f"{APP_BUNDLE_NAME}/Contents/MacOS/" in (sys.executable or "")
+    return containing_app_bundle() is not None

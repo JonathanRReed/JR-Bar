@@ -765,9 +765,9 @@ def effect_cadence(effect: dict, values: dict | None = None) -> dict | None:
 # -- usage history ------------------------------------------------------------
 
 USAGE_PRICING = {
-    "claude": {"input_per_mtok": 3.0, "output_per_mtok": 15.0, "cache_read_per_mtok": 0.30, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
-    "codex": {"input_per_mtok": 2.0, "output_per_mtok": 8.0, "cache_read_per_mtok": 0.50, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
-    "gemini": {"input_per_mtok": 1.25, "output_per_mtok": 10.0, "cache_read_per_mtok": 0.31, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
+    "claude": {"input_per_mtok": 3.0, "output_per_mtok": 15.0, "cache_read_per_mtok": 0.30, "as_of": "2026-09-20", "approximate": True, "estimated": True, "table_version": "jrbar-rates-v3", "currency": "USD"},
+    "codex": {"input_per_mtok": 2.0, "output_per_mtok": 8.0, "cache_read_per_mtok": 0.50, "as_of": "2026-09-20", "approximate": True, "estimated": True, "table_version": "jrbar-rates-v3", "currency": "USD"},
+    "gemini": {"input_per_mtok": 1.25, "output_per_mtok": 10.0, "cache_read_per_mtok": 0.31, "as_of": "2026-09-20", "approximate": True, "estimated": True, "table_version": "jrbar-rates-v3", "currency": "USD"},
 }
 USAGE_ACCOUNTS = {
     "devin": {"plan": "Team", "label": None, "fidelity": "official"},

@@ -295,10 +295,16 @@ final class NotchIslandWindow: NSPanel {
         // .plainText too — a text clipping dragged to the notch
         // materializes as a .txt the way a web link becomes a .webloc.
         hosting.registerForDraggedTypes([.fileURL, .URL, .string])
-        hosting.onShelfDragEntered = { [weak toy] in toy?.shelfSummon() }
+        hosting.onShelfDragEntered = { [weak toy] in toy?.shelfDragAtIsland() }
         hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragAbandoned() }
         hosting.onShelfDragEnded = { [weak toy] in toy?.shelfDragLanded() }
         hosting.onShelfDrop = { [weak toy] urls in toy?.shelfDrop(urls) }
+        // The grown card's content follows its frame: each spring tick
+        // reports how far the height has carried toward the target,
+        // and the toy opens the rows once most of the way there.
+        onSpringProgress = { [weak toy] progress in
+            toy?.noteFrameProgress(progress)
+        }
     }
 
     /// A morph landing mid-pull owns the frame: the pull's
@@ -322,6 +328,10 @@ final class NotchIslandWindow: NSPanel {
     private var spring: NotchFrameSpring?
     private var springLink: CADisplayLink?
     private var springTickAt: CFTimeInterval = 0
+    /// Each spring tick's height progress toward the target — the
+    /// expanded card's content-follow gate reads it (≈0 leaving,
+    /// 1.0 landed).
+    var onSpringProgress: ((CGFloat) -> Void)?
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -396,12 +406,14 @@ final class NotchIslandWindow: NSPanel {
         if spring.integrate(dt: dt) {
             self.spring = spring
             setFrame(spring.frame, display: true)
+            onSpringProgress?(spring.frame.height / max(1, spring.target.height))
         } else {
             // Land exactly: never rest a fraction of a point off the
             // frame the face actually asked for.
             let target = spring.target
             cancelSpring()
             setFrame(target, display: true)
+            onSpringProgress?(1)
         }
     }
 }

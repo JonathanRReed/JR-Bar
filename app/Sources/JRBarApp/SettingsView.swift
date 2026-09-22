@@ -255,14 +255,19 @@ struct SettingSlider: View {
 
     var body: some View {
         Provided(store, path) {
-            LabeledContent {
+            HStack(spacing: 12) {
+                SettingLabel(title: title, subtitle: subtitle)
+                Spacer(minLength: 8)
                 HStack(spacing: 10) {
                     Slider(value: binding, in: range)
+                        .labelsHidden()
                         .frame(width: 180)
+                        .accessibilityLabel(title)
+                        .accessibilityValue(format(store.document.double(SettingsPath(path)) ?? fallback))
+                        .accessibilityIdentifier(path)
                     ValueText(text: format(store.document.double(SettingsPath(path)) ?? fallback))
+                        .accessibilityHidden(true)
                 }
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
             }
         }
     }
@@ -495,5 +500,5 @@ extension SettingsStore {
     static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }
     static let seconds: (Double) -> String = { $0 == $0.rounded() ? "\(Int($0)) s" : String(format: "%.1f s", $0) }
     static let minutes: (Double) -> String = { "\(Int($0.rounded())) min" }
-    static let points: (Double) -> String = { "\(Int($0.rounded())) pt" }
+    static let points: (Double) -> String = { String(format: "%g pt", $0) }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import JRBarLEDS
 import QuartzCore
 import SwiftUI
@@ -40,24 +41,24 @@ final class ScreenBarView: NSView {
     /// The slots' content, pushed by the controller on each core change;
     /// nil slots collapse — they claim no room and draw nothing.
     var wings: ScreenBarWings = .empty {
-        didSet { if wings != oldValue { updateWingChips() } }
+        didSet { if wings != oldValue { relayout() } }
     }
     /// The claim `windowFrame` was built with — the ceiling on each
     /// side's ear. `updateWingChips` resolves it to the ears' drawn
     /// bounds, which are what hit regions and wing gestures answer to.
     var wingGeometry = ScreenBarWingGeometry() {
-        didSet { if wingGeometry != oldValue { updateWingChips() } }
+        didSet { if wingGeometry != oldValue { relayout() } }
     }
     /// The x (view coordinates) the right ear may not reach past —
     /// the nearest status item's edge on the notch's right flank.
     /// nil is no limit.
     var rightEarLimit: CGFloat? {
-        didSet { if rightEarLimit != oldValue { updateWingChips() } }
+        didSet { if rightEarLimit != oldValue { relayout() } }
     }
     /// The x (view coordinates) the left ear may not reach past — the
     /// nearest status item's edge on the left flank. nil is no limit.
     var leftEarLimit: CGFloat? {
-        didSet { if leftEarLimit != oldValue { updateWingChips() } }
+        didSet { if leftEarLimit != oldValue { relayout() } }
     }
     /// The narrowest ear still worth drawing — a bare cap continues the
     /// band toward whatever item claimed the flank, so a thin ear is a
@@ -72,7 +73,7 @@ final class ScreenBarView: NSView {
     /// under the island and never re-composite; the island's own glyph
     /// cannot. nil hides it.
     var menuHandleRevealed: Bool? {
-        didSet { if menuHandleRevealed != oldValue { updateWingChips() } }
+        didSet { if menuHandleRevealed != oldValue { relayout() } }
     }
     /// The handle's slice of the right ear in view coordinates — what
     /// the click route answers to.
@@ -83,7 +84,7 @@ final class ScreenBarView: NSView {
     /// (`screen_bar_notch_profile` + `screen_bar_notch_corner`), pushed
     /// by the controller so the wrap's silhouette is the bezel's own.
     var notchCornerRadius: CGFloat = NotchProfile.standardCornerRadius {
-        didSet { if notchCornerRadius != oldValue { updateWingChips() } }
+        didSet { if notchCornerRadius != oldValue { relayout() } }
     }
     /// The ear's drawn bounds in view coordinates — content-sized,
     /// hugging the bezel — not the claim that capped it.
@@ -178,9 +179,6 @@ final class ScreenBarView: NSView {
         // The island's own material: plain black, no stroke — the same
         // `.fill(.black)` the island's background wears.
         housingLayer.fillColor = CGColor(gray: 0, alpha: 1)
-        // Even-odd: the corner-gap subpaths `housingPath` adds under the
-        // island's bottom corners punch back out of the silhouette.
-        housingLayer.fillRule = .evenOdd
         housingLayer.isHidden = true
         housingLayer.actions = ["path": NSNull(), "position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
 
@@ -210,19 +208,28 @@ final class ScreenBarView: NSView {
 
     func relayout() {
         let size = bounds.size
-        // Coupled to our island when it is drawn over a real notch: the
-        // strip spans the island edge to edge and the black housing
-        // continues its silhouette. Anything else — Notch off, an
-        // external provider, a notch-less screen — is the standalone band.
+        // Resolve the wings before seating the light. Their lower edge
+        // belongs to the same silhouette as the island.
+        updateWingChips()
+        // The wings own a silhouette even when the Notch utility is off.
+        // Seat the light below whichever of those bodies is visible.
+        var silhouette = trayRect
+        if let islandFrame, islandFrame.intersects(CGRect(origin: .zero, size: size)) {
+            silhouette = trayRect.map { tray in
+                // A grown card owns its footlight width. Resting wings
+                // only extend the compact island's outline.
+                islandFrame.minY < tray.minY ? islandFrame : islandFrame.union(tray)
+            } ?? islandFrame
+        }
         let rect: NSRect
-        if let islandFrame, wingGeometry.notchDepth > 0,
-           islandFrame.intersects(CGRect(origin: .zero, size: size)) {
-            let coupling = ScreenBarGeometry.coupledBand(in: size, island: islandFrame,
-                                                         cornerRadius: notchCornerRadius)
+        if wingGeometry.notchDepth > 0, let silhouette {
+            let coupling = ScreenBarGeometry.coupledBand(in: size, island: silhouette,
+                cornerRadius: NotchSilhouetteGeometry.radius(
+                    size: silhouette.size, notchDepth: wingGeometry.notchDepth,
+                    restingRadius: notchCornerRadius))
             rect = coupling.band
             housingRect = coupling.housing
-            housingLayer.path = Self.housingPath(coupling.housing, radius: coupling.cornerRadius,
-                                                 islandMinY: islandFrame.minY)
+            housingLayer.path = Self.housingPath(coupling.housing, radius: coupling.cornerRadius)
             housingLayer.isHidden = false
         } else {
             rect = ScreenBarGeometry.bandRect(in: size, preferredSpan: bandSpan > 0 ? bandSpan : nil,
@@ -248,10 +255,6 @@ final class ScreenBarView: NSView {
             lastBandWidth = rect.width
             lastStops = []
         }
-        // The claims are the ceiling on ear width; `updateWingChips`
-        // turns them into the ears' drawn bounds, which are what hit
-        // regions and wing gestures answer to.
-        updateWingChips()
     }
 
     /// Positions the slot chips: a side draws only where the geometry
@@ -342,12 +345,6 @@ final class ScreenBarView: NSView {
         let mutate = {
             self.wingsModel.tray = tray
             self.wingsModel.notchCorner = self.notchCornerRadius
-            // The bezel's side edges in tray-local x: the shape scoops
-            // its bottom-corner arcs back out of the wrap's fill.
-            let sideExtent = max(0, (size.width - self.wingGeometry.notchWidth) / 2.0)
-            self.wingsModel.bezelLeft = tray.map { sideExtent - $0.minX } ?? 0
-            self.wingsModel.bezelRight = tray.map { sideExtent + self.wingGeometry.notchWidth - $0.minX } ?? 0
-            self.wingsModel.earDrop = tray == nil ? 0 : ScreenBarGeometry.wingEarDrop
             self.wingsModel.viewHeight = size.height
             self.wingsModel.left = left
             self.wingsModel.right = right
@@ -364,16 +361,8 @@ final class ScreenBarView: NSView {
         wingsHosting?.isHidden = false
     }
 
-    /// Square at the top, rounded at the bottom — the housing's
-    /// silhouette in the view's unflipped coordinates: the straight top
-    /// edge disappears into the island's face while the bottom corners
-    /// carry the notch profile's radius. `islandMinY` is the island's
-    /// bottom edge in the same coordinates: where the housing passes
-    /// under the island's rounded bottom corners it must keep their arcs
-    /// — a square top would fill the corner gaps and pave the curve —
-    /// so each corner square gets the below-arc part punched out by the
-    /// layer's even-odd fill.
-    private static func housingPath(_ rect: CGRect, radius: CGFloat, islandMinY: CGFloat? = nil) -> CGPath {
+    /// Continue the combined island and wings down to the light strip.
+    private static func housingPath(_ rect: CGRect, radius: CGFloat) -> CGPath {
         let r = max(0, min(radius, rect.height, rect.width / 2.0))
         let path = CGMutablePath()
         guard r > 0 else {
@@ -388,40 +377,6 @@ final class ScreenBarView: NSView {
         path.addLine(to: CGPoint(x: rect.minX + r, y: rect.minY))
         path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r),
                     radius: r, startAngle: -.pi / 2, endAngle: .pi, clockwise: true)
-        path.closeSubpath()
-        // The corner gaps: the part of each bottom-corner square that is
-        // outside the island's silhouette. Only while the island's bottom
-        // edge lands inside the housing — a grown card whose face already
-        // covers the whole housing needs no punch. The square must sit
-        // fully inside the housing's height or its spill would paint.
-        if let islandMinY, islandMinY > rect.minY + 0.5, islandMinY + r <= rect.maxY + 0.5 {
-            path.addPath(cornerGapPath(square: CGRect(x: rect.minX, y: islandMinY, width: r, height: r),
-                                       leading: true))
-            path.addPath(cornerGapPath(square: CGRect(x: rect.maxX - r, y: islandMinY, width: r, height: r),
-                                       leading: false))
-        }
-        return path
-    }
-
-    /// The below-arc region of a bottom-corner square — the sliver the
-    /// island's silhouette leaves open and the housing must keep open
-    /// too. `leading` picks the island's left corner; the arcs follow
-    /// the bezel's own curve (view coordinates, y up).
-    private static func cornerGapPath(square: CGRect, leading: Bool) -> CGPath {
-        let path = CGMutablePath()
-        if leading {
-            path.move(to: CGPoint(x: square.minX, y: square.maxY))
-            path.addLine(to: CGPoint(x: square.minX, y: square.minY))
-            path.addLine(to: CGPoint(x: square.maxX, y: square.minY))
-            path.addArc(center: CGPoint(x: square.maxX, y: square.maxY), radius: square.width,
-                        startAngle: -.pi / 2, endAngle: .pi, clockwise: true)
-        } else {
-            path.move(to: CGPoint(x: square.maxX, y: square.maxY))
-            path.addLine(to: CGPoint(x: square.maxX, y: square.minY))
-            path.addLine(to: CGPoint(x: square.minX, y: square.minY))
-            path.addArc(center: CGPoint(x: square.minX, y: square.maxY), radius: square.width,
-                        startAngle: -.pi / 2, endAngle: 0, clockwise: false)
-        }
         path.closeSubpath()
         return path
     }

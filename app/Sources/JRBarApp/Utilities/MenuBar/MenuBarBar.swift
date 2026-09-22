@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import JRBarCore
 import QuartzCore
 import SwiftUI
@@ -19,16 +20,25 @@ enum MenuBarBarLayout {
     static let barGap: CGFloat = 6
     /// Right-edge margin from the screen's edge.
     static let edgeMargin: CGFloat = 6
-    /// A packed bar clips past this many tiles rather than run off the
-    /// screen — the tail end is a later phase's overflow row.
+    /// The viewport shows at most this many tiles; the rest remain scrollable.
     static let maxTiles = 24
 
-    /// The panel's content size for `count` tiles (one empty-state slot
-    /// when the run is empty).
-    static func contentSize(itemCount: Int) -> NSSize {
-        let tiles = CGFloat(min(max(itemCount, 1), maxTiles))
-        return NSSize(width: tiles * tileSize + max(0, tiles - 1) * tileGap + padding * 2,
-                      height: tileSize + padding * 2)
+    static let scrollIndicatorHeight: CGFloat = 16
+
+    static func rowWidth(itemCount: Int) -> CGFloat {
+        let count = CGFloat(max(0, itemCount))
+        return count * tileSize + max(0, count - 1) * tileGap
+    }
+
+    /// Limit the viewport, never the items. Reserve scrollbar room only
+    /// when content overflows, including on screens narrower than 24 tiles.
+    static func contentSize(itemCount: Int, availableWidth: CGFloat = .greatestFiniteMagnitude) -> NSSize {
+        let fullWidth = itemCount > 0 ? rowWidth(itemCount: itemCount) + 2 * padding : 128
+        let width = min(fullWidth, rowWidth(itemCount: maxTiles) + 2 * padding,
+                        max(0, availableWidth))
+        let overflow = itemCount > 0 && fullWidth > width
+        return NSSize(width: width,
+                      height: tileSize + 2 * padding + (overflow ? scrollIndicatorHeight : 0))
     }
 
     /// The panel's frame: `barGap` under the menu bar's band, right
@@ -36,11 +46,24 @@ enum MenuBarBarLayout {
     /// row's thickness — the status bar's, or the notch's where it
     /// reaches deeper.
     static func frame(itemCount: Int, menuBarDepth: CGFloat, on screenFrame: NSRect) -> NSRect {
-        let size = contentSize(itemCount: itemCount)
+        let size = contentSize(itemCount: itemCount,
+                               availableWidth: screenFrame.width - 2 * edgeMargin)
         return NSRect(x: screenFrame.maxX - size.width - edgeMargin,
                       y: screenFrame.maxY - menuBarDepth - barGap - size.height,
                       width: size.width, height: size.height)
     }
+}
+
+/// The bar's live contents — an `@Observable` model rather than a
+/// `let` snapshot so the open panel follows the reconcile: items that
+/// come and go under the pointer re-tile instead of listing ghosts.
+@MainActor
+@Observable
+final class MenuBarBarModel {
+    var items: [MenuBarItem] = []
+    /// Items macOS parked off the row — no pixels to capture, so their
+    /// tiles carry the state glyph instead of pretending otherwise.
+    var parkedIDs: Set<String> = []
 }
 
 /// The floating panel itself: borderless, nonactivating, glass-backed,
@@ -54,13 +77,12 @@ final class MenuBarBarPanel: NSPanel {
 
     private let hosting: NSHostingView<MenuBarBarView>
 
-    init(items: [MenuBarItem],
+    init(model: MenuBarBarModel,
          tiles: MenuBarLiveTiles,
-         parkedIDs: Set<String>,
          onTrigger: @escaping @MainActor (MenuBarItem) -> Void,
          onRevealItem: @escaping @MainActor (MenuBarItem) -> Void) {
         let hosting = NSHostingView(rootView: MenuBarBarView(
-            items: items, tiles: tiles, parkedIDs: parkedIDs,
+            model: model, tiles: tiles,
             onTrigger: onTrigger, onRevealItem: onRevealItem))
         self.hosting = hosting
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
@@ -102,38 +124,54 @@ final class MenuBarBarPanel: NSPanel {
 /// while the bar is up, falling back to the owner app's icon when
 /// capture has nothing honest to show (no Screen Recording, a parked
 /// item). Click triggers the item, ⌘-click reveals it.
-private struct MenuBarBarView: View {
-    let items: [MenuBarItem]
+struct MenuBarBarView: View {
+    let model: MenuBarBarModel
     let tiles: MenuBarLiveTiles
-    /// Items macOS parked off the row — no pixels to capture, so their
-    /// tiles carry the state glyph instead of pretending otherwise.
-    let parkedIDs: Set<String>
     let onTrigger: @MainActor (MenuBarItem) -> Void
     let onRevealItem: @MainActor (MenuBarItem) -> Void
 
+    private var items: [MenuBarItem] { model.items }
+
     var body: some View {
-        HStack(spacing: MenuBarBarLayout.tileGap) {
+        Group {
             if items.isEmpty {
                 Text("No hidden items")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
                     .frame(height: MenuBarBarLayout.tileSize)
-            }
-            ForEach(items.prefix(MenuBarBarLayout.maxTiles), id: \.id) { item in
-                Button {
-                    if NSEvent.modifierFlags.contains(.command) {
-                        onRevealItem(item)
-                    } else {
-                        onTrigger(item)
+            } else {
+                GeometryReader { geometry in
+                    let overflow = MenuBarBarLayout.rowWidth(itemCount: items.count) > geometry.size.width
+                    ScrollView(.horizontal) {
+                        HStack(spacing: MenuBarBarLayout.tileGap) {
+                            ForEach(items, id: \.id) { item in
+                                Button {
+                                    if NSEvent.modifierFlags.contains(.command) {
+                                        onRevealItem(item)
+                                    } else {
+                                        onTrigger(item)
+                                    }
+                                } label: {
+                                    tileLabel(for: item)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(itemLabel(for: item))
+                                .help(tooltip(for: item))
+                            }
+                        }
                     }
-                } label: {
-                    tileLabel(for: item)
+                    .scrollIndicators(overflow ? .visible : .hidden)
+                    .accessibilityLabel("Hidden menu bar items")
                 }
-                .buttonStyle(.plain)
-                .help(tooltip(for: item))
             }
         }
         .padding(MenuBarBarLayout.padding)
+    }
+
+    private func itemLabel(for item: MenuBarItem) -> String {
+        guard let title = item.title, !title.isEmpty else { return item.ownerName }
+        return "\(item.ownerName) · \(title)"
     }
 
     /// The tile face: the live capture when one exists, else the owner
@@ -153,7 +191,7 @@ private struct MenuBarBarView: View {
             .frame(width: MenuBarBarLayout.tileSize, height: MenuBarBarLayout.tileSize)
             .contentShape(Rectangle())
             .overlay(alignment: .bottomTrailing) {
-                if parkedIDs.contains(item.id) {
+                if model.parkedIDs.contains(item.id) {
                     Image(systemName: "arrow.down.forward.and.arrow.up.backward")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.secondary)
@@ -189,6 +227,9 @@ final class MenuBarBar {
     /// The live thumbnails — the capture loop exists only while the
     /// bar is up, so a hidden menu bar pays nothing.
     let tiles = MenuBarLiveTiles()
+    /// What the open panel lists — refreshed on every reconcile while
+    /// the bar is up, so the tiles are never a frozen snapshot.
+    private let model = MenuBarBarModel()
 
     private(set) var isOpen = false
     private var panel: MenuBarBarPanel?
@@ -204,17 +245,30 @@ final class MenuBarBar {
         if isOpen { close() } else { open() }
     }
 
+    /// The screen the bar hangs from — the pointer's, so a multi-
+    /// display setup opens it where the hand is, falling back to the
+    /// display carrying the menu bar.
+    private var pointerScreen: NSScreen? {
+        NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+    }
+
     /// Opens the bar under the menu bar's right end — or refreshes it
-    /// when it is already up (the tiles are a snapshot of the moment).
+    /// when it is already up. The tiles track the provider through
+    /// `model` for as long as the bar stands.
     func open() {
         if isOpen { close() }
-        guard let screen = NSScreen.main else { return }
+        guard let screen = pointerScreen else { return }
         let listed = items()
-        let row = MenuBarItemLister.menuBarRow()
+        let rows = MenuBarItemLister.menuBarRows()
+        model.items = listed
+        // Parked means off every display's bar — a secondary-row item
+        // is standing, not parked.
+        model.parkedIDs = Set(listed.filter { item in
+            !rows.contains { $0.intersects(item.bounds) }
+        }.map(\.id))
         let panel = MenuBarBarPanel(
-            items: listed,
+            model: model,
             tiles: tiles,
-            parkedIDs: Set(listed.filter { !$0.bounds.intersects(row) }.map(\.id)),
             onTrigger: { [weak self] item in self?.onTrigger(item) },
             onRevealItem: { [weak self] item in self?.onRevealItem(item) })
         let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
@@ -232,8 +286,30 @@ final class MenuBarBar {
         // from the same provider the tiles were built from, and close()
         // stops it outright.
         tiles.itemsProvider = items
-        tiles.rowRect = { MenuBarItemLister.menuBarRow() }
+        tiles.rowRects = { MenuBarItemLister.menuBarRows() }
         tiles.start()
+    }
+
+    /// Push the provider's current list into the open bar — called on
+    /// every reconcile so the panel follows items coming and going
+    /// under the pointer. A changed count re-frames the panel against
+    /// its own screen.
+    func syncItems() {
+        guard isOpen, let panel else { return }
+        let listed = items()
+        let rows = MenuBarItemLister.menuBarRows()
+        let parked = Set(listed.filter { item in
+            !rows.contains { $0.intersects(item.bounds) }
+        }.map(\.id))
+        guard listed != model.items || parked != model.parkedIDs else { return }
+        model.items = listed
+        model.parkedIDs = parked
+        guard let screen = panel.screen ?? pointerScreen else { return }
+        let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
+        panel.setFrame(MenuBarBarLayout.frame(itemCount: listed.count,
+                                              menuBarDepth: depth,
+                                              on: screen.frame),
+                       display: true)
     }
 
     func close() {
@@ -254,6 +330,8 @@ final class MenuBarBar {
 
     /// A click anywhere but the bar folds it — the panel never takes
     /// focus, so "outside" is a monitor's call, not a resign event.
+    /// Escape folds it too: the panel never becomes key, so the key
+    /// arrives through the same monitors, whichever app is frontmost.
     private func installDismissMonitors() {
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
         if let global = NSEvent.addGlobalMonitorForEvents(
@@ -268,6 +346,23 @@ final class MenuBarBar {
                 return event
             }) {
             dismissMonitors.append(local)
+        }
+        if let keys = NSEvent.addGlobalMonitorForEvents(
+            matching: .keyDown,
+            handler: { [weak self] event in
+                guard event.keyCode == UInt16(kVK_Escape) else { return }
+                Task { @MainActor [weak self] in self?.close() }
+            }) {
+            dismissMonitors.append(keys)
+        }
+        if let localKeys = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown,
+            handler: { [weak self] event in
+                guard event.keyCode == UInt16(kVK_Escape) else { return event }
+                self?.close()
+                return nil
+            }) {
+            dismissMonitors.append(localKeys)
         }
     }
 

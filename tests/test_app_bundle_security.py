@@ -28,6 +28,7 @@ SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 # Helpers with its own libpython, and the compiled hook shim beside it.
 CORE_HELPER = Path("Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
 HOOK_SHIM = Path("Contents/Helpers/jrbar-hook")
+ASSERTER = Path("Contents/Helpers/jrbar-asserter.app/Contents/MacOS/jrbar-asserter")
 RUNTIME = Path("Contents/Helpers/jrbar-core.app/Contents/Frameworks/libpython3.12.dylib")
 
 
@@ -54,7 +55,11 @@ def make_bundle(
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"main-mach-o")
     executable.chmod(0o755)
-    for helper, payload in ((CORE_HELPER, b"core-mach-o"), (HOOK_SHIM, b"shim-mach-o")):
+    for helper, payload in (
+        (CORE_HELPER, b"core-mach-o"),
+        (HOOK_SHIM, b"shim-mach-o"),
+        (ASSERTER, b"asserter-mach-o"),
+    ):
         path = bundle / helper
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
@@ -87,6 +92,7 @@ def verifier_runner(
     runtime = bundle / RUNTIME
     core = bundle / CORE_HELPER
     shim = bundle / HOOK_SHIM
+    asserter = bundle / ASSERTER
     dependency_map = dependencies or {
         str(executable): (
             "@rpath/Sparkle.framework/Versions/B/Sparkle",
@@ -95,13 +101,14 @@ def verifier_runner(
         ),
         str(core): ("@rpath/libpython3.12.dylib", "/usr/lib/libSystem.B.dylib"),
         str(shim): ("/usr/lib/libSystem.B.dylib",),
+        str(asserter): ("/usr/lib/libSystem.B.dylib",),
         str(runtime): ("/usr/lib/libSystem.B.dylib",),
     }
     rpath_map = rpaths or {
         str(executable): ("@executable_path/../Frameworks",),
         str(core): ("@executable_path/../Frameworks",),
     }
-    always_macho = {str(core), str(shim)}
+    always_macho = {str(core), str(shim), str(asserter)}
 
     def run(command: Sequence[str | os.PathLike[str]], **_kwargs):
         arguments = [str(part) for part in command]
@@ -903,6 +910,11 @@ echo "build-app.sh $JRBAR_VERSION" >> "$PACKAGE_TEST_EVENT_LOG"
 printf '%s' '{plist_head}' > "$JRBAR_BUNDLE/Contents/Info.plist"
 printf '<key>CFBundleIdentifier</key><string>com.jonathanreed.jrbar</string>' >> "$JRBAR_BUNDLE/Contents/Info.plist"
 printf '<key>CFBundleExecutable</key><string>JR-Bar</string><key>LSUIElement</key><true/></dict></plist>' >> "$JRBAR_BUNDLE/Contents/Info.plist"
+# The asserter helper ships inside the app bundle, exactly as the real
+# build-app.sh arranges it — the packaging script asserts its presence.
+asserter="$JRBAR_BUNDLE/Contents/Helpers/jrbar-asserter.app/Contents/MacOS"
+/bin/mkdir -p "$asserter"
+/bin/cp /usr/bin/true "$asserter/jrbar-asserter"
 """,
     )
     _write_executable(

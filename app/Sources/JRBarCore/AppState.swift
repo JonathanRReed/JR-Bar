@@ -98,6 +98,63 @@ public struct AppStateFile: Sendable {
         let data = try encoder.encode(state)
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: url.path) {
+            let previous = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            let decoded = try? decoder.decode(AppState.self, from: previous)
+            let normalized = try decoded.map { try encoder.encode($0) }
+            let previousJSON = try? decoder.decode(JSONValue.self, from: previous)
+            let normalizedJSON = try normalized.map { try decoder.decode(JSONValue.self, from: $0) }
+            let preserved: Bool
+            if let previousJSON, let normalizedJSON {
+                preserved = Self.preserves(previousJSON, in: normalizedJSON)
+            } else {
+                preserved = false
+            }
+            if !preserved {
+                let recovery = directory.appending(path: "app-state.recovery-\(UUID().uuidString).json")
+                // Preserve the original bytes before replacing a damaged
+                // file. A failed backup leaves the original untouched.
+                try previous.write(to: recovery, options: [.withoutOverwriting])
+                try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                      ofItemAtPath: recovery.path)
+                try? Self.pruneRecoveryCopies(in: directory)
+            }
+        }
         try data.write(to: url, options: [.atomic])
+    }
+
+    /// Recovery copies exist to rescue a damaged file — beyond the newest
+    /// few they are identical backups that would accumulate on every save.
+    private static func pruneRecoveryCopies(in directory: URL, keep: Int = 5) throws {
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("app-state.recovery-") && $0.hasSuffix(".json") }
+        guard names.count > keep else { return }
+        // UUID names carry no order — age comes from the file's mtime.
+        let aged = names.compactMap { name -> (String, Date)? in
+            let path = directory.appending(path: name)
+            guard let modified = try? FileManager.default
+                .attributesOfItem(atPath: path.path)[.modificationDate] as? Date else { return nil }
+            return (name, modified)
+        }.sorted { $0.1 > $1.1 }
+        for (name, _) in aged.dropFirst(keep) {
+            try? FileManager.default.removeItem(at: directory.appending(path: name))
+        }
+    }
+
+    /// Missing fields may gain defaults. Values and fields present in the
+    /// original must survive, including unknown fields from a newer app.
+    private static func preserves(_ original: JSONValue, in normalized: JSONValue) -> Bool {
+        switch (original, normalized) {
+        case let (.object(before), .object(after)):
+            return before.allSatisfy { key, value in
+                after[key].map { preserves(value, in: $0) } ?? false
+            }
+        case let (.array(before), .array(after)):
+            return before.count == after.count
+                && zip(before, after).allSatisfy { preserves($0.0, in: $0.1) }
+        default:
+            return original == normalized
+        }
     }
 }

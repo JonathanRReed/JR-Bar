@@ -6,6 +6,7 @@ import JRBarCore
 /// must describe what to select so it still means something next week.
 public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
     case needsMe
+    case failed
     case working
     case unreviewed
     case thisProject
@@ -15,12 +16,20 @@ public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
     public var label: String {
         switch self {
         case .needsMe: return "Needs me"
+        case .failed: return "Failed"
         case .working: return "Working"
         case .unreviewed: return "Unreviewed"
         case .thisProject: return "This project"
         case .thisMac: return "This Mac"
         case .all: return "All connected"
         }
+    }
+
+    /// The cuts the sidebar's Views section offers — `thisProject` is
+    /// excluded: without a `project` it matches nothing, and the real
+    /// entry points are the per-project rows in the Projects section.
+    public static var sidebarPresets: [OverviewPreset] {
+        allCases.filter { $0 != .thisProject }
     }
 
     /// Whether the preset alone decides the row — `thisProject` also
@@ -33,6 +42,9 @@ public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
         case .needsMe:
             // Pinned (a live ask) or any ask the projection still carries.
             return entry.pinned || session.ask != nil
+        case .failed:
+            // The daemon's outcome axis, not a guessed lifecycle word.
+            return entry.axes?.outcome == "failed"
         case .working:
             return SessionActivity.reduce(session) == .working
         case .unreviewed:

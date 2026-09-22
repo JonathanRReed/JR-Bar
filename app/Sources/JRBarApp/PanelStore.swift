@@ -232,6 +232,7 @@ final class PanelStore {
     /// hiding the bar lets the feed's monitor stand down.
     private(set) var media: AlcoveMedia?
     @ObservationIgnored private var mediaReader: UUID?
+    @ObservationIgnored private let mediaFeed: MediaFeed
 
     // UI state.
     var isOpen = false
@@ -283,9 +284,12 @@ final class PanelStore {
     @ObservationIgnored private var brightnessSentAt = Date.distantPast
     @ObservationIgnored private var toastClear: DispatchWorkItem?
 
-    init(core: CoreModel, draftsDefaults: UserDefaults = .standard) {
+    init(core: CoreModel, draftsDefaults: UserDefaults = .standard,
+         mediaFeed: MediaFeed = .shared, screenBarShown: Bool = true) {
         self.core = core
         self.draftsDefaults = draftsDefaults
+        self.mediaFeed = mediaFeed
+        self.screenBarShown = screenBarShown
         self.replyDrafts = loadReplyDrafts()
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
@@ -297,18 +301,25 @@ final class PanelStore {
         syncMediaReader()
     }
 
+    isolated deinit {
+        if let mediaReader { mediaFeed.unsubscribe(mediaReader) }
+        clock?.invalidate()
+        brightnessFlush?.cancel()
+        toastClear?.cancel()
+    }
+
     /// The media ear rides the shared feed — one monitor for every
     /// reader (the island, the card, the dock's media rows), so this
     /// adds a reader, never a second helper. Subscribed while the bar
     /// shows, released when it hides.
     private func syncMediaReader() {
         if screenBarShown, mediaReader == nil {
-            mediaReader = MediaFeed.shared.subscribe { [weak self] media in
+            mediaReader = mediaFeed.subscribe { [weak self] media in
                 self?.media = media
             }
-            media = MediaFeed.shared.media
+            media = mediaFeed.media
         } else if !screenBarShown, let mediaReader {
-            MediaFeed.shared.unsubscribe(mediaReader)
+            mediaFeed.unsubscribe(mediaReader)
             self.mediaReader = nil
             media = nil
         }
@@ -584,7 +595,6 @@ final class PanelStore {
                 if meter.incident { text += " · incident" }
                 return ScreenBarWingSlot(text: text, provider: meter.provider,
                                          meter: meter.percent.map { min(1, max(0, $0 / 100)) },
-                                         reset: meter.resetFraction(now: Date()),
                                          tone: meter.incident ? .attention : .neutral)
             } ?? (mediaTookLeft && mediaArt == nil ? nil : mediaViz)
         return ScreenBarWings(left: left, right: right)

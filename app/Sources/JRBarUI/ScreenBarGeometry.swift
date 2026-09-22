@@ -434,10 +434,15 @@ public enum ScreenBarGeometry {
         let base = AlcoveGeometry.windowFrame(screenFrame: frame, notchWidth: notchWidth, wing: side,
                                               notchDepth: notchDepth, capsule: capsule,
                                               windowHeight: { windowHeight(notchDepth: $0) + chin })
-        guard let coupledIsland, coupledIsland.width > 0 else { return base }
+        guard let coupledIsland, coupledIsland.width > 0 else {
+            guard notchDepth > 0, chin > 0, capsule == nil else { return base }
+            let height = max(base.height, coupledWindowHeight(islandBottom: notchDepth + chin))
+            return CGRect(x: base.minX, y: base.maxY - height, width: base.width, height: height)
+        }
         let width = min(frame.width, max(base.width, coupledIsland.width))
         let centerX = min(frame.maxX - width / 2.0, max(frame.minX + width / 2.0, coupledIsland.midX))
-        let height = max(base.height, coupledWindowHeight(islandBottom: frame.maxY - coupledIsland.minY))
+        let silhouetteBottom = max(frame.maxY - coupledIsland.minY, notchDepth + chin)
+        let height = max(base.height, coupledWindowHeight(islandBottom: silhouetteBottom))
         return CGRect(x: centerX - width / 2.0, y: frame.maxY - height, width: width, height: height)
     }
 

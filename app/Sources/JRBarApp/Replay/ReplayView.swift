@@ -29,7 +29,11 @@ struct ReplayView: View {
         }
         .frame(minWidth: 480, minHeight: 320)
         .font(.system(size: 13))
-        .task { await store.load() }
+        // No `.task` load: `ReplayWindowController.show()` owns the open
+        // read — a second one here double-fetched the journal on every
+        // open. While the window is up, live frames re-load it
+        // (throttled) through `ReplayStore`, so the list can't go stale
+        // behind the daemon's own stream.
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

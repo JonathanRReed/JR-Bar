@@ -60,7 +60,11 @@ from .core_projection import (
 )
 from .core_server import CommandError, CoreServer, default_core_socket_path
 from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
-from .hook_pending import PendingHookDrainer, pending_hook_files
+from .hook_pending import (
+    PendingHookDrainer,
+    orphaned_drain_files,
+    pending_hook_files,
+)
 from .state_paths import default_state_dir
 
 CORE_VERSION: Final = __version__
@@ -413,6 +417,23 @@ class CoreCommandBox:
         self.error: CommandError | None = None
 
 
+class CoreCallableBox:
+    """A callable crossing to the main thread -- ``runCoreCallable:``.
+
+    For commands that run off the main thread (``main_thread=False``) but
+    still need a short critical section there: touching AppKit, the
+    command journal (not thread-safe), or controller state other threads
+    read.
+    """
+
+    __slots__ = ("callable", "error", "result")
+
+    def __init__(self, callable_: Callable[[], Any]) -> None:
+        self.callable = callable_
+        self.result: Any = None
+        self.error: BaseException | None = None
+
+
 @dataclass(slots=True)
 class _Preview:
     program: str
@@ -567,7 +588,7 @@ def _cmd_open_session(self, args):
     }
 
 
-@command("answer_ask")
+@command("answer_ask", main_thread=False)
 def _cmd_answer_ask(self, args):
     """Answer one live ask in the session's own terminal.
 
@@ -580,7 +601,24 @@ def _cmd_answer_ask(self, args):
     ``only_if_frontmost`` (default true) does not gate the safety checks --
     nothing does. False means "raise the session's terminal first"; the same
     chain then runs against whatever is genuinely in front.
+
+    Runs on the socket thread, not the main run loop: the surface verdict
+    wait is up to ``ANSWER_REPLY_BUDGET_SECONDS`` and holding it on the main
+    thread stalls every refresh, timer and other command behind it. The
+    pieces that are main-thread state -- the journal (not thread-safe), the
+    answer controller's in-flight bookkeeping, the refresh -- hop over
+    through ``_core_on_main``.
     """
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    lock = getattr(self, "_core_answer_ask_lock", None)
+    if lock is None:
+        # A controller built before the socket server (or a test stub)
+        # still gets mutual exclusion once the attribute lands.
+        lock = threading.Lock()
+        try:
+            self._core_answer_ask_lock = lock
+        except Exception:
+            pass
     from .announcer_stack import announcer_alert_identity
     from .answer_controller import AnswerBrowserCommand
     from .answer_in_place import MAX_ANSWER_REPLY_LENGTH, AnswerActionKind
@@ -632,16 +670,20 @@ def _cmd_answer_ask(self, args):
     if surface is None:
         raise CommandError("unsupported", "no local answer surface is registered")
     from .command_journal import STATUS_ACCEPTED, STATUS_COMPLETED
-    journal = _command_journal(self)
+    # The journal is lazily created and not thread-safe: the getter hops
+    # to main so two socket threads cannot race the one-time load.
+    journal = on_main(lambda: _command_journal(self))
     command_id = args.get("command_id")
     if type(command_id) is not str or not command_id:
         command_id = None
-    record = journal.begin(
-        "answer_ask",
-        {"session": status.agent_id,
-         "decision": "reply" if reply_text is not None else decision,
-         "request": expected_request},
-        command_id=command_id,
+    record = on_main(
+        lambda: journal.begin(
+            "answer_ask",
+            {"session": status.agent_id,
+             "decision": "reply" if reply_text is not None else decision,
+             "request": expected_request},
+            command_id=command_id,
+        )
     )
     if record.status != STATUS_ACCEPTED:
         # A retry of a settled command replays its first receipt — the
@@ -652,60 +694,69 @@ def _cmd_answer_ask(self, args):
             (record.error or {}).get("code", "send_failed"),
             (record.error or {}).get("message", "that command already failed"),
         )
-    if not bool(args.get("only_if_frontmost", True)):
-        # Explicitly asked to answer a terminal that is not in front: raise it,
-        # then let the unchanged check chain decide. Never a bypass.
-        host = session_host(
-            getattr(status, "provider", None),
-            getattr(status, "session_id", None),
-            getattr(status, "origin", None),
+    # One in-flight answer at a time: the surface's completed event is
+    # shared, so a second command must not arm it while the first waits.
+    with lock:
+        if not bool(args.get("only_if_frontmost", True)):
+            # Explicitly asked to answer a terminal that is not in front: raise it,
+            # then let the unchanged check chain decide. Never a bypass.
+            host = session_host(
+                getattr(status, "provider", None),
+                getattr(status, "session_id", None),
+                getattr(status, "origin", None),
+            )
+            for bundle_id in sorted(host.bundle_ids):
+                if raise_application(bundle_id):
+                    break
+        command_payload = AnswerBrowserCommand(
+            work_key=work_key,
+            generation=state.generation,
+            request_identity=announcer_alert_identity(request.key),
+            action=(
+                AnswerActionKind.REPLY
+                if reply_text is not None
+                else AnswerActionKind.APPROVE
+                if decision == "approve"
+                else AnswerActionKind.DENY
+            ),
+            reply_text=reply_text,
         )
-        for bundle_id in sorted(host.bundle_ids):
-            if raise_application(bundle_id):
-                break
-    command_payload = AnswerBrowserCommand(
-        work_key=work_key,
-        generation=state.generation,
-        request_identity=announcer_alert_identity(request.key),
-        action=(
-            AnswerActionKind.REPLY
-            if reply_text is not None
-            else AnswerActionKind.APPROVE
-            if decision == "approve"
-            else AnswerActionKind.DENY
-        ),
-        reply_text=reply_text,
-    )
-    snapshot = self.last_snapshot
-    surface.arm()
-    try:
-        accepted = self.answer_controller.perform_browser_answer(
-            command_payload, state, tuple(snapshot.statuses)
-        )
-        if not accepted:
-            raise CommandError("unsupported", "this ask cannot be answered from here")
-        if not surface.completed.wait(ANSWER_REPLY_BUDGET_SECONDS):
-            raise CommandError("busy", "answering did not finish in time")
-        outcome = surface.last_outcome
-        if outcome is None:
-            raise CommandError("send_failed", "the answer surface reported nothing")
-        if not outcome.delivered:
-            raise CommandError(outcome.code, outcome.message)
-    except CommandError as error:
-        # The journal settles as the same refusal the caller sees — a
-        # retry of this command id replays that verdict, never re-runs.
-        journal.settle(
-            record.command_id,
-            error={"code": error.code, "message": str(error)})
-        raise
-    self.refresh_(None)
+        snapshot = self.last_snapshot
+        surface.arm()
+        try:
+            accepted = on_main(
+                lambda: self.answer_controller.perform_browser_answer(
+                    command_payload, state, tuple(snapshot.statuses)
+                )
+            )
+            if not accepted:
+                raise CommandError("unsupported", "this ask cannot be answered from here")
+            # The long pole: wait on the socket thread so the main run
+            # loop keeps driving timers, refreshes and other commands.
+            if not surface.completed.wait(ANSWER_REPLY_BUDGET_SECONDS):
+                raise CommandError("busy", "answering did not finish in time")
+            outcome = surface.last_outcome
+            if outcome is None:
+                raise CommandError("send_failed", "the answer surface reported nothing")
+            if not outcome.delivered:
+                raise CommandError(outcome.code, outcome.message)
+        except CommandError as error:
+            # The journal settles as the same refusal the caller sees — a
+            # retry of this command id replays that verdict, never re-runs.
+            on_main(
+                lambda error=error: journal.settle(
+                    record.command_id,
+                    error={"code": error.code, "message": str(error)})
+            )
+            raise
+    on_main(lambda: self.refresh_(None))
     result = {
         "session": status.agent_id,
         "decision": "reply" if reply_text is not None else decision,
         "answered": True,
         **outcome.document(),
     }
-    journal.settle(record.command_id, receipt=result)
+    on_main(lambda: journal.settle(record.command_id, receipt=result))
     return result
 
 
@@ -2320,14 +2371,17 @@ def _cmd_quiet(self, args):
     return {"until": until if until is not None else time.time() + max(60.0, seconds), "mode": mode.value}
 
 
-@command("list_history")
+@command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
     try:
         limit = int(args.get("limit") or 500)
     except (TypeError, ValueError):
         limit = 500
-    ledger = self.ensure_activity_ledger()
+    # The ledger lives on the main thread (lazy restore mutates controller
+    # state), so it is fetched there; the frozen object then reads off-main.
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    ledger = on_main(lambda: self.ensure_activity_ledger())
     rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
     return {"rows": rows, "total": len(ledger.entries), "last_seen": ledger.last_seen_epoch}
 
@@ -2565,9 +2619,14 @@ def _cmd_audit_export(self, args):
     return payload
 
 
-@command("session_timeline")
+@command("session_timeline", main_thread=False)
 def _cmd_session_timeline(self, args):
     """A session's transcript as bounded, paginated timeline items.
+
+    Off the main run loop: transcript discovery and parsing are file I/O
+    that used to stall every timer and refresh behind a page turn. The
+    snapshot/ledger reads below are immutable swaps; the transcript side
+    is cached in session_timeline.py.
 
     ``id`` is a roster row id — the status's provider/session_id/cwd
     resolve the transcript. An ended session whose status has aged out
@@ -2597,10 +2656,15 @@ def _cmd_session_timeline(self, args):
             None,
         )
         if status is None:
-            raise CommandError("not_found", f"unknown session id: {agent_id}")
-        provider = provider or getattr(status, "provider", None)
-        session_id = session_id or getattr(status, "session_id", None)
-        cwd = cwd or getattr(status, "cwd", None)
+            # A row that aged out between roster load and click still
+            # resolves when the caller carried its provider/session/cwd —
+            # only a bare unknown id is a real not_found.
+            if not (isinstance(provider, str) and provider and session_id):
+                raise CommandError("not_found", f"unknown session id: {agent_id}")
+        else:
+            provider = provider or getattr(status, "provider", None)
+            session_id = session_id or getattr(status, "session_id", None)
+            cwd = cwd or getattr(status, "cwd", None)
     if not isinstance(provider, str) or not provider:
         raise CommandError("invalid_value", "provider is required")
     try:
@@ -2620,7 +2684,7 @@ def _cmd_session_timeline(self, args):
     return document
 
 
-@command("compare_sessions")
+@command("compare_sessions", main_thread=False)
 def _cmd_compare_sessions(self, args):
     """Two runs side by side on retained facts only (S7.4).
 
@@ -2629,6 +2693,10 @@ def _cmd_compare_sessions(self, args):
     ledger's interruption counts for that agent id. ``warnings`` always
     names ``not_a_controlled_benchmark``; ``gaps`` names what is not
     tracked (artifacts, model). Refuses ``not_found`` for an unknown id.
+
+    Runs on the socket thread like ``session_timeline``: the roster and
+    ledger are mutable controller state, so they hop to main for one
+    snapshot; the transcript walk and parse (``compare_runs``) stay off.
     """
     from .agent_roster import ROSTER_MAX_LIMIT
     from .run_compare import compare_runs
@@ -2651,21 +2719,26 @@ def _cmd_compare_sessions(self, args):
     if status_b is None:
         raise CommandError("not_found", f"unknown session id: {id_b}")
 
-    roster = _roster_document(
-        self, scope="all", provider=None, parent=None,
-        since=None, limit=ROSTER_MAX_LIMIT,
-    )
-    rows = {row.get("id"): row for row in roster.get("sessions", ())}
-    ledger = self.ensure_activity_ledger()
+    def _gather():
+        roster = _roster_document(
+            self, scope="all", provider=None, parent=None,
+            since=None, limit=ROSTER_MAX_LIMIT,
+        )
+        rows = {row.get("id"): row for row in roster.get("sessions", ())}
+        ledger = self.ensure_activity_ledger()
+        return rows.get(id_a), rows.get(id_b), getattr(ledger, "entries", ())
+
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    row_a, row_b, ledger_entries = on_main(_gather)
     return compare_runs(
-        row_a=rows.get(id_a), row_b=rows.get(id_b),
+        row_a=row_a, row_b=row_b,
         status_a=status_a, status_b=status_b,
-        ledger_entries=getattr(ledger, "entries", ()),
+        ledger_entries=ledger_entries,
         id_a=id_a, id_b=id_b,
     )
 
 
-@command("import_radar_report")
+@command("import_radar_report", main_thread=False)
 def _cmd_import_radar_report(self, args):
     """Store a bounded, version-checked Radar report (S7.5/T38).
 
@@ -2686,7 +2759,7 @@ def _cmd_import_radar_report(self, args):
     return {"imported": summary}
 
 
-@command("list_radar_reports")
+@command("list_radar_reports", main_thread=False)
 def _cmd_list_radar_reports(self, args):
     """The stored report summaries (analyzer, scan, repo, counts)."""
     from .radar_import import list_radar_reports
@@ -2694,7 +2767,7 @@ def _cmd_list_radar_reports(self, args):
     return {"reports": list_radar_reports()}
 
 
-@command("radar_report")
+@command("radar_report", main_thread=False)
 def _cmd_radar_report(self, args):
     """One stored report's normalized graph for the inspector lens."""
     from .radar_import import load_radar_report
@@ -2763,8 +2836,10 @@ def _cmd_serve_token(self, args):
     }
 
 
-@command("doctor")
+@command("doctor", main_thread=False)
 def _cmd_doctor(self, args):
+    # Diagnostics shell out (codesign, probes) and scan pending-hook
+    # state -- none of it belongs on the run loop that drives the daemon.
     return self._core_doctor_document()
 
 
@@ -2885,7 +2960,7 @@ def _deck_plan(preview, profile: int, layer: int, include_auxiliary: bool,
         raise CommandError("invalid_plan", str(error)) from error
 
 
-@command("deck_press")
+@command("deck_press", main_thread=False)
 def _cmd_deck_press(self, args):
     index = _deck_index(args)
     if getattr(self, "_deck_input_check_active", False):
@@ -3245,6 +3320,10 @@ def build_headless_controller_class() -> type:
             self._core = None
             self._core_socket_path = None
             self._core_lock = threading.RLock()
+            # Serializes answer_ask's arm -> dispatch -> wait window now that
+            # the command runs on the socket thread: two in-flight answers
+            # must not share the answer surface's single completion event.
+            self._core_answer_ask_lock = threading.Lock()
             self._core_documents: dict[str, dict[str, Any]] = {}
             self._core_state_generation = 0
             self._core_lights_generation = 0
@@ -4412,17 +4491,11 @@ def build_headless_controller_class() -> type:
         def applyDeckInput_(self, batch) -> None:
             """A physical input batch (main thread): the same executor as the
             menu-bar app, with the 0.8 session-key rule (answer a live ask
-            when its terminal is in front, else reveal)."""
-            from .deck_input_dispatch import DeckInputBatch
+            when its terminal is in front, else reveal). Delivery leaves the
+            main thread inside ``apply_deck_input``."""
+            from .deck_controller import apply_deck_input
 
-            if type(batch) is not DeckInputBatch or getattr(self, "_runtime_termination_started", False):
-                return
-            receipts = batch.owner.deliver(batch, self._core_deck_executor())
-            if not receipts:
-                return
-            self._deck_action_receipt = receipts[-1]
-            legacy.log_status_bar(f"deck: {receipts[-1].code}")
-            self._core_publish_state()
+            apply_deck_input(self, batch)
 
         def _core_deck_executor(self):
             from .deck_control_center import deck_executor
@@ -4461,21 +4534,29 @@ def build_headless_controller_class() -> type:
                 return None
 
         def _core_deck_reveal_or_answer(self, identity: str, revision: int | None):
+            """Answer-first reveal. Runs on whichever thread called it: the
+            status read and the AppKit reveal hop to main, while the answer
+            attempt's reply wait stays on the caller — the hardware input
+            path posts ``deliver`` to a worker for exactly this reason."""
             from .deck_actions_macos import DeckActionReceipt
             from .deck_control_center import reveal_deck_session
 
-            status = self._core_deck_status_for_identity(identity)
+            on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+            status = on_main(lambda: self._core_deck_status_for_identity(identity))
             if status is not None and self._core_deck_try_answer(status) is not None:
                 return DeckActionReceipt("ask_answered", True)
-            return reveal_deck_session(self, identity, revision)
+            return on_main(lambda: reveal_deck_session(self, identity, revision))
 
         def _core_deck_press(self, index: int) -> dict[str, Any]:
+            """Runs on the socket thread: every board/settings/AppKit touch
+            hops to main, so the answer attempt's ≤6s reply wait never
+            parks the run loop behind a key press."""
             from .deck_control_center import reveal_deck_session
             from .deck_session_board import SLOTS_PER_BANK
 
-            settings = getattr(self, "_deck_control_settings", None)
-            action = settings.action_for(index) if settings is not None else None
-            if action is not None:
+            on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+
+            def _action_result(action):
                 receipt = self._core_deck_executor().execute(action)
                 self._deck_action_receipt = receipt
                 result: dict[str, Any] = {
@@ -4495,36 +4576,49 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"deck: {core_deck.control_label(index)} runs {action.kind}: {receipt.code}")
                 self._core_publish_state()
                 return result
-            if index >= SLOTS_PER_BANK:
-                raise CommandError("not_found", core_deck.AUXILIARY_MESSAGE)
-            board = self._core_deck_board()
-            revision, identity = board.resolve_slot(index)
-            if identity is None:
-                raise CommandError("not_found", core_deck.NO_SESSION_MESSAGE)
-            status = self._core_deck_status_for_identity(identity)
-            if status is None:
-                raise CommandError("not_found", core_deck.RESERVED_MESSAGE)
+
+            def _resolve_slot():
+                if index >= SLOTS_PER_BANK:
+                    raise CommandError("not_found", core_deck.AUXILIARY_MESSAGE)
+                board = self._core_deck_board()
+                revision, identity = board.resolve_slot(index)
+                if identity is None:
+                    raise CommandError("not_found", core_deck.NO_SESSION_MESSAGE)
+                status = self._core_deck_status_for_identity(identity)
+                if status is None:
+                    raise CommandError("not_found", core_deck.RESERVED_MESSAGE)
+                return revision, identity, status
+
+            settings = on_main(lambda: getattr(self, "_deck_control_settings", None))
+            action = settings.action_for(index) if settings is not None else None
+            if action is not None:
+                return on_main(lambda: _action_result(action))
+            revision, identity, status = on_main(_resolve_slot)
             result = {"index": index, "identity": identity, "session": status.agent_id}
             answered = self._core_deck_try_answer(status)
             if answered is not None:
                 legacy.log_status_bar(f"deck: key {index + 1} answers {status.agent_id}")
                 result.update({"action": "answer_ask", "decision": answered.get("decision"), "answered": True})
                 return result
-            receipt = reveal_deck_session(self, identity, revision)
-            self._deck_action_receipt = receipt
-            if not receipt.success:
-                raise CommandError("refused", core_deck.receipt_message(receipt.code, source="action"))
-            extras = self._core_extras_for(status)
-            result.update(
-                {
-                    "action": "reveal_session",
-                    "receipt": receipt.code,
-                    "activated": (extras.terminal or {}).get("app") if extras is not None else None,
-                }
-            )
-            legacy.log_status_bar(f"deck: key {index + 1} reveals {self._core_label(status)}")
-            self._core_publish_state()
-            return result
+
+            def _reveal():
+                receipt = reveal_deck_session(self, identity, revision)
+                self._deck_action_receipt = receipt
+                if not receipt.success:
+                    raise CommandError("refused", core_deck.receipt_message(receipt.code, source="action"))
+                extras = self._core_extras_for(status)
+                result.update(
+                    {
+                        "action": "reveal_session",
+                        "receipt": receipt.code,
+                        "activated": (extras.terminal or {}).get("app") if extras is not None else None,
+                    }
+                )
+                legacy.log_status_bar(f"deck: key {index + 1} reveals {self._core_label(status)}")
+                self._core_publish_state()
+                return result
+
+            return on_main(_reveal)
 
         def _core_deck_set_input_check(self, enabled: bool) -> None:
             self._deck_input_check_active = bool(enabled)
@@ -4608,6 +4702,10 @@ def build_headless_controller_class() -> type:
                 self._core_deck_devices = rows
                 self._core_deck_probe_error = error
                 self._core_deck_probe_pending = False
+                # Inside the lock: a ``wait`` caller that queues the next
+                # probe can never clear ``done`` for the one that just
+                # finished, so its wait always lands on its own answer.
+                self._core_deck_probe_done.set()
             if changed and getattr(self, "_core", None) is not None:
                 legacy.log_status_bar(f"deck: probe {len(rows)} pad(s)" + (f" ({error})" if error else ""))
                 self._core_publish_state_soon()
@@ -4617,23 +4715,31 @@ def build_headless_controller_class() -> type:
                 self._core_deck_probe_wake.wait()
                 self._core_deck_probe_wake.clear()
                 self._core_deck_probe_once()
-                self._core_deck_probe_done.set()
 
         def _core_deck_probe_now(self, *, wait: bool = False) -> None:
             """Ask the probe thread to look for the pad over HID; a changed
-            answer republishes ``state``."""
+            answer republishes ``state``. With ``wait``, an in-flight probe
+            counts: the caller blocks on its completion instead of reading
+            the previous (possibly stale ``no_device``) answer."""
             with self._core_deck_lock:
                 if self._core_deck_probe_pending:
-                    return
-                self._core_deck_probe_pending = True
-                if self._core_deck_probe_worker is None:
-                    self._core_deck_probe_worker = threading.Thread(
-                        target=self._core_deck_probe_loop, name="JRBarDeckProbe", daemon=True
-                    )
-                    self._core_deck_probe_worker.start()
-            self._core_deck_probe_at = time.monotonic()
-            self._core_deck_probe_done.clear()
-            self._core_deck_probe_wake.set()
+                    if wait:
+                        # The requester that queued this probe already
+                        # cleared ``done``; waiting on it lands on the
+                        # in-flight probe's completion.
+                        pass
+                    else:
+                        return
+                else:
+                    self._core_deck_probe_pending = True
+                    if self._core_deck_probe_worker is None:
+                        self._core_deck_probe_worker = threading.Thread(
+                            target=self._core_deck_probe_loop, name="JRBarDeckProbe", daemon=True
+                        )
+                        self._core_deck_probe_worker.start()
+                    self._core_deck_probe_at = time.monotonic()
+                    self._core_deck_probe_done.clear()
+                    self._core_deck_probe_wake.set()
             if wait:
                 self._core_deck_probe_done.wait(2.0)
 
@@ -4905,6 +5011,28 @@ def build_headless_controller_class() -> type:
             except Exception as error:
                 legacy.log_status_bar(f"core: command {box.name} failed: {traceback.format_exc(limit=6)}")
                 box.error = CommandError("internal", f"{error.__class__.__name__}: {error}"[:500])
+
+        @objc.IBAction
+        def runCoreCallable_(self, box):
+            try:
+                box.result = box.callable()
+            except Exception as error:
+                box.error = error
+
+        def _core_on_main(self, callable_: Callable[[], Any]) -> Any:
+            """Run ``callable_`` on the main thread from a socket thread.
+
+            Only for the short critical sections of a ``main_thread=False``
+            command -- the callable must not wait on the socket thread or
+            the two threads deadlock each other.
+            """
+            box = CoreCallableBox(callable_)
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "runCoreCallable:", box, True
+            )
+            if box.error is not None:
+                raise box.error
+            return box.result
 
         def _core_initial_documents(self):
             with self._core_lock:
@@ -5605,7 +5733,7 @@ def build_headless_controller_class() -> type:
         def _core_build_lights(self) -> dict[str, Any]:
             from ._led_status_legacy import delivered_brightness, led_count_for_target
             from .colors import lift_program_luminance
-            from .dot_role import normalize_dot_role
+            from .dot_role import normalize_dot_role, upsample_program
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)
@@ -5625,6 +5753,10 @@ def build_headless_controller_class() -> type:
             # strip was asked to play. Set alongside the ``hardware``
             # surface below.
             hardware_mirror_program: str | None = None
+            # The lone-Dot mirror source: with no strip mounted the bar can
+            # still follow hardware -- the Dot's program, widened 2 -> 8.
+            dot_anchor: float | None = None
+            dot_mirror_program: str | None = None
             first_strip = True
             # Connectivity, tracked apart from surfaces: a connected device
             # with no program yet has no surface, but ``dot_link`` still has
@@ -5683,6 +5815,15 @@ def build_headless_controller_class() -> type:
                     # surface entry IS the program, and it is what the
                     # strip is actually showing.
                     hardware_mirror_program = (
+                        program
+                        if previewing
+                        else getattr(controller, "last_nominal_program", None) or program
+                    )
+                if leds == 2:
+                    # Same rule as the strip: the NOMINAL text, not the
+                    # written bytes, for the lone-Dot mirror below.
+                    dot_anchor = anchor
+                    dot_mirror_program = (
                         program
                         if previewing
                         else getattr(controller, "last_nominal_program", None) or program
@@ -5746,6 +5887,25 @@ def build_headless_controller_class() -> type:
                         else dot.why_detail
                     ),
                 )
+            # What a linked bar mirrors: the followed strip when one is
+            # mounted, else a lone Dot -- its two-LED program widened to the
+            # bar's ``legacy.LED_COUNT``, since the bar compiles at eight and
+            # a 2-LED text would leave six of them dark. Never ``asks``: the
+            # beacon is deliberately dark until someone is needed, and the
+            # bar must not mirror that darkness -- it keeps its own render.
+            mirror = surfaces.get("hardware")
+            mirror_anchor = hardware_anchor
+            mirror_program = hardware_mirror_program
+            if mirror is None and "dot" in surfaces and dot_role != "asks":
+                widened = upsample_program(
+                    dot_mirror_program or surfaces["dot"].program,
+                    source_leds=2,
+                    led_count=legacy.LED_COUNT,
+                )
+                if widened is not None:
+                    mirror = surfaces["dot"]
+                    mirror_anchor = dot_anchor
+                    mirror_program = widened
             virtual = self.virtual_status_device
             call = getattr(virtual, "_live_program_call", None)
             virtual_device = next(
@@ -5777,24 +5937,24 @@ def build_headless_controller_class() -> type:
                 program, kwargs = call
                 motion = kwargs.get("motion")
                 anchor = mono_to_epoch(kwargs.get("started_at"))
-                anchor = screen_bar_anchor(anchor, hardware_anchor, linked=linked)
-                if linked and hardware_anchor is not None:
-                    anchor = hardware_anchor + bar_phase_offset
-                hardware = surfaces.get("hardware")
-                if linked and hardware is not None:
-                    # Linked means the bar FOLLOWS the strip: the strip's own
-                    # program on the strip's anchor, not the virtual render's
+                anchor = screen_bar_anchor(anchor, mirror_anchor, linked=linked)
+                if linked and mirror_anchor is not None:
+                    anchor = mirror_anchor + bar_phase_offset
+                if linked and mirror is not None:
+                    # Linked means the bar FOLLOWS the mirrored device: its
+                    # own program on its own anchor -- a lone Dot's widened
+                    # to the bar's eight -- not the virtual render's
                     # re-reading of the same state. The two renderers draw
                     # from different palettes, which is how one anchor once
                     # carried two programs that read as "blink different".
-                    # The lift is legibility only: codes the strip can show
+                    # The lift is legibility only: codes the device can show
                     # as faint light read as "off" on a display.
-                    mirror_program = lift_program_luminance(
-                        hardware_mirror_program or hardware.program
+                    mirrored = lift_program_luminance(
+                        mirror_program or mirror.program
                     )
                     surfaces["screen_bar"] = SurfaceFacts(
-                        program=mirror_program,
-                        led_count=hardware.led_count,
+                        program=mirrored,
+                        led_count=legacy.LED_COUNT,
                         anchor=anchor,
                         # What the mirrored program drives the bar at -- its
                         # own ``brightness N``, which is the strip's. The
@@ -5803,11 +5963,11 @@ def build_headless_controller_class() -> type:
                         # the bar's OWN render; a mirror reports what it
                         # plays, so a dark beat never gains a resting glow
                         # the strip does not have.
-                        brightness=delivered_brightness(mirror_program),
+                        brightness=delivered_brightness(mirrored),
                         brightness_policy=bar_brightness,
-                        why=hardware.why,
+                        why=mirror.why,
                         override=override,
-                        why_detail=hardware.why_detail,
+                        why_detail=mirror.why_detail,
                     )
                 else:
                     surfaces["screen_bar"] = SurfaceFacts(
@@ -5821,30 +5981,29 @@ def build_headless_controller_class() -> type:
                         override=override,
                         why_detail=self._core_why_detail(bar_why, bar_facts, glance),
                     )
-            elif linked and "hardware" in surfaces:
-                # The bar only mirrors the strip while the two are linked;
+            elif linked and mirror is not None:
+                # The bar only mirrors the device while the two are linked;
                 # unlinked and idle, it has no program of its own to claim.
-                hardware = surfaces["hardware"]
-                mirror_program = lift_program_luminance(
-                    hardware_mirror_program or hardware.program
+                mirrored = lift_program_luminance(
+                    mirror_program or mirror.program
                 )
                 surfaces["screen_bar"] = SurfaceFacts(
-                    program=mirror_program,
-                    led_count=hardware.led_count,
+                    program=mirrored,
+                    led_count=legacy.LED_COUNT,
                     anchor=(
-                        hardware.anchor + bar_phase_offset
-                        if hardware.anchor is not None
+                        mirror_anchor + bar_phase_offset
+                        if mirror_anchor is not None
                         else None
                     ),
                     # Same rule as the live-call branch above: the program's
-                    # own ``brightness N`` (the strip's) is what the bar is
+                    # own ``brightness N`` (the device's) is what the bar is
                     # driven at; the bar's ambient plan -- floored by
                     # ``screen_bar_min_glow`` -- is reported as policy only.
-                    brightness=delivered_brightness(mirror_program),
+                    brightness=delivered_brightness(mirrored),
                     brightness_policy=bar_brightness,
-                    why=hardware.why,
+                    why=mirror.why,
                     override=override,
-                    why_detail=hardware.why_detail,
+                    why_detail=mirror.why_detail,
                 )
             try:
                 auto_dim = self.auto_dim_result().to_dict()
@@ -5937,7 +6096,25 @@ def build_headless_controller_class() -> type:
                 }
             )
             pending = pending_hook_files()
-            checks.append({"name": "pending hook lines", "ok": not pending, "detail": f"{len(pending)} files"})
+            orphaned = orphaned_drain_files()
+            backlog = 0
+            for path in pending:
+                try:
+                    backlog += sum(1 for line in path.read_text(
+                        encoding="utf-8", errors="replace").splitlines() if line.strip())
+                except OSError:
+                    backlog = -1
+                    break
+            detail = f"{len(pending)} files"
+            if backlog >= 0:
+                detail += f", {backlog} lines"
+            if orphaned:
+                detail += f", {len(orphaned)} stranded mid-drain"
+            checks.append({
+                "name": "pending hook lines",
+                "ok": not pending and not orphaned,
+                "detail": detail,
+            })
             try:
                 performance = self._core_performance_document()
             except Exception:
@@ -6082,6 +6259,31 @@ def run_core(argv: list[str] | None = None) -> int:
             faulthandler.register(signal.SIGUSR1, file=stacks, all_threads=True, chain=False)
         except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
             pass
+
+    # Crash breadcrumbs: a fatal fault (a segfault inside a pyobjc bridge,
+    # an abort) writes every Python thread's stack to core-crash.log in the
+    # state dir before the process dies. ``faulthandler.enable`` fires only
+    # on fatal signals -- unlike the opt-in SIGUSR1 dump above, it can never
+    # interrupt a healthy syscall.
+    try:
+        import faulthandler
+
+        from .state_paths import default_state_dir
+
+        crash_log = default_state_dir() / "core-crash.log"
+        # Crash loops would grow the file forever; keep the tail.
+        try:
+            if crash_log.stat().st_size > 1024 * 1024:
+                crash_log.write_bytes(crash_log.read_bytes()[-512 * 1024 :])
+        except OSError:
+            pass
+        crash_handle = open(crash_log, "a", buffering=1)
+        crash_handle.write(
+            f"--- crash capture armed {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} pid={os.getpid()} ---\n"
+        )
+        faulthandler.enable(file=crash_handle)
+    except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
+        pass
 
     # JRBAR_TRACEMALLOC=1 profiles retained allocations from here on.
     start_if_requested(lambda message: legacy_module.log_status_bar(message))

@@ -1,5 +1,21 @@
 import Foundation
 
+/// Corners follow the presented height so interrupted resizes keep one outline.
+public enum NotchSilhouetteGeometry {
+    /// The grown island and the higher Screen Bar backing share this
+    /// corner. Card content keeps clear of the same bound.
+    public static let maximumExpandedRadius: CGFloat = 28
+
+    public static func radius(size: CGSize, notchDepth: CGFloat, restingRadius: CGFloat) -> CGFloat {
+        let limit = max(0, min(size.width / 2, size.height / 2))
+        guard notchDepth > 0 else { return min(maximumExpandedRadius, limit) }
+        let rest = max(0, restingRadius)
+        let progress = min(1, max(0, (size.height - notchDepth - 4) / 80))
+        let eased = progress * progress * (3 - 2 * progress)
+        return min(limit, rest + (max(maximumExpandedRadius, rest) - rest) * eased)
+    }
+}
+
 /// Everything the notch island shows, reduced to plain data so the view
 /// never walks `CoreSession`s and the panel never guesses its own size:
 /// `summarize` makes the idle dots, the live rows and the status line in
@@ -361,20 +377,22 @@ public enum NotchIslandLayout {
         contentWidth > 0 ? max(shoulder, contentWidth + 2 * shoulderPad) : shoulder
     }
 
-    /// The hover wink: a resting island under the pointer swells this
-    /// much — a whisper that it is alive — while the intent debounce
-    /// decides whether the hover meant the card. A pointer passing
-    /// through only ever earns this, never the grow.
-    public static let peekGrow: CGFloat = 3
-
+    /// The hover wink — the breath `NotchMotion.hoverDelay` arms: a
+    /// resting island under a resting pointer widens and deepens a few
+    /// points, proof of life while the intent debounce decides whether
+    /// the hover meant the card. A pointer passing through earns
+    /// nothing, never the grow.
     /// The wink applied to an idle size. A drawn face swells its width
-    /// symmetrically — the island reads as the notch grown sideways.
-    /// The bare housing is exactly the notch: sideways paint would reach
-    /// past the hardware and sit under menu-bar clicks, so its tell
-    /// grows straight down instead — the island's own direction.
+    /// symmetrically — the island reads as the notch grown sideways and
+    /// a touch deeper. The bare housing is exactly the notch: sideways
+    /// paint would reach past the hardware and sit under menu-bar
+    /// clicks, so its tell grows straight down instead — the island's
+    /// own direction.
     public static func peekAdjusted(_ size: CGSize, bare: Bool) -> CGSize {
-        bare ? CGSize(width: size.width, height: size.height + peekGrow)
-             : CGSize(width: size.width + 2 * peekGrow, height: size.height)
+        bare ? CGSize(width: size.width,
+                      height: size.height + NotchMotion.hoverGrowHeight)
+             : CGSize(width: size.width + NotchMotion.hoverGrowWidth,
+                      height: size.height + NotchMotion.hoverGrowHeight)
     }
 
     /// The window's frame: centred on `centerX`, its top edge `topInset`
@@ -382,10 +400,12 @@ public enum NotchIslandLayout {
     /// `edgeMargin` to spare.
     public static func frame(screenFrame: CGRect, centerX: CGFloat, size: CGSize, topInset: CGFloat = 0) -> CGRect {
         let width = min(size.width, max(0, screenFrame.width - 2 * edgeMargin))
+        let inset = max(0, topInset)
+        let height = min(max(0, size.height), max(0, screenFrame.height - inset - edgeMargin))
         let x = min(screenFrame.maxX - edgeMargin - width,
                     max(screenFrame.minX + edgeMargin, centerX - width / 2))
-        return CGRect(x: x, y: screenFrame.maxY - max(0, topInset) - size.height,
-                      width: width, height: size.height)
+        return CGRect(x: x, y: screenFrame.maxY - inset - height,
+                      width: width, height: height)
     }
 }
 
@@ -530,6 +550,67 @@ public struct NotchPullGesture: Equatable, Sendable {
     }
 }
 
+/// The island's feel in one place — every number that makes the notch
+/// move like Alcove's. The frame spring's grow/fold pairs land on
+/// `NotchFrameSpring`'s named motions; the hover breath, the notice
+/// capsule's slide-and-fade and the expanded card's content-follow
+/// timings are read straight from here. Reduce Motion swaps every
+/// morph for the quiet crossfade — `faceTransition` is the single
+/// branch the tests pin.
+public enum NotchMotion {
+    /// The grow: the island opening into the card, or any swell —
+    /// slow enough to read, loose enough to overshoot ~2%.
+    public static let expand = NotchFrameSpring.Motion(response: 0.42, dampingFraction: 0.78)
+    /// The fold: collapse runs a beat faster than the grow and lands
+    /// damped — a dismissal never bounces.
+    public static let collapse = NotchFrameSpring.Motion(response: 0.32, dampingFraction: 0.9)
+    /// Content-driven nudges — a dot arriving, a row refilling.
+    public static let morph = NotchFrameSpring.Motion(response: 0.30, dampingFraction: 0.9)
+
+    /// The hover breath: a pointer resting on the compact island this
+    /// long earns the tell — a few points of grow and a subtle swell
+    /// of the marks inside.
+    public static let hoverDelay: TimeInterval = 0.12
+    /// The breath's frame half: the island widens and deepens by a
+    /// few points, symmetric on a drawn face, straight down on the
+    /// bare housing.
+    public static let hoverGrowWidth: CGFloat = 4
+    public static let hoverGrowHeight: CGFloat = 2
+    /// The breath's content half — a whisper of a swell, not a pop.
+    public static let hoverContentScale: CGFloat = 1.02
+
+    /// The notice capsule's entrance: the face slides down a few
+    /// points while it fades in.
+    public static let noticeSlide: CGFloat = 6
+    public static let noticeFadeIn: TimeInterval = 0.18
+    /// Dismissal reverses the move, a touch quicker than the entrance.
+    public static let noticeFadeOut: TimeInterval = 0.14
+
+    /// The expanded card's content follows its frame: rows wait until
+    /// the spring has carried the frame this far toward the target,
+    /// then fade in staggered — frame leads, content follows.
+    public static let contentRevealThreshold: CGFloat = 0.85
+    public static let rowStagger: TimeInterval = 0.03
+    /// One row's own fade once its stagger lands.
+    public static let rowFade: TimeInterval = 0.18
+
+    /// Reduce Motion's whole vocabulary: a quiet crossfade, no travel.
+    public static let reduceMotionFade: TimeInterval = 0.15
+
+    /// How a face change moves: the spring morph normally, the quiet
+    /// crossfade under Reduce Motion.
+    public enum FaceTransition: Equatable, Sendable {
+        case morph, crossfade
+    }
+
+    /// The single Reduce Motion branch — the island's every motion
+    /// decision funnels through here so the accessibility path is one
+    /// testable fact, not a scatter of reads.
+    public static func faceTransition(reduceMotion: Bool) -> FaceTransition {
+        reduceMotion ? .crossfade : .morph
+    }
+}
+
 /// The island's interruptible frame motion: four scalar springs — one
 /// per rect edge — integrated on a display link, so a retarget
 /// mid-flight keeps the position and velocity the frame actually has
@@ -564,11 +645,11 @@ public struct NotchFrameSpring: Equatable, Sendable {
     }
 
     /// The grow: the island opening into the card, or any swell.
-    public static let expandMotion = Motion(response: 0.34, dampingFraction: 0.86)
+    public static let expandMotion = NotchMotion.expand
     /// The fold: collapse runs a beat faster than the grow.
-    public static let collapseMotion = Motion(response: 0.32, dampingFraction: 0.95)
+    public static let collapseMotion = NotchMotion.collapse
     /// Content-driven nudges — a dot arriving, a row refilling.
-    public static let morphMotion = Motion(response: 0.30, dampingFraction: 0.9)
+    public static let morphMotion = NotchMotion.morph
 
     /// Which way a frame change reads: growing swells, shrinking folds.
     public static func motion(from current: CGRect, to target: CGRect) -> Motion {

@@ -68,16 +68,20 @@ SETTINGS_SCHEMA_VERSION = 1
 #: ``menu_bar_icon_style``: the status item's picture. The daemon does not
 #: draw it -- the native app does -- so the list simply has to hold every
 #: style the app can write: ``agents`` (a dot per live session),
-#: ``meters``/``meters_percent`` (a usage column per provider), ``glyph``
-#: alone, ``glyph_ring`` (the glyph inside a thin usage ring) and
-#: ``glyph_label`` (the glyph beside a short text).
+#: ``meters``/``meters_percent`` (a usage column per provider),
+#: ``compact_percent`` (the tightest window's remaining percent beside its
+#: provider's mark), ``glyph`` alone, ``glyph_ring`` (the glyph inside a
+#: thin usage ring), ``glyph_label`` (the glyph beside a short text) and
+#: ``orbit`` (the mark in a usage ring with session dots below).
 MENU_BAR_ICON_STYLES = (
     "agents",
     "meters",
     "meters_percent",
+    "compact_percent",
     "glyph",
     "glyph_ring",
     "glyph_label",
+    "orbit",
 )
 DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 # The consent generation the Claude plan-limits opt-in was granted under.
@@ -90,6 +94,14 @@ DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 CLAUDE_PLAN_LIMITS_CONSENT_VERSION = 1
 CALIBRATION_PROFILE_SLOTS = ("Day", "Night", "Travel")
 BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
+SCREEN_BAR_NOTCH_PROFILE_CHOICES = (
+    "auto",
+    "macbook_air_13",
+    "macbook_air_15",
+    "macbook_pro_14",
+    "macbook_pro_16",
+    "custom",
+)
 #: The completion counts the Milestone Odometer cues on when the user has
 #: not picked its own ladder. ``milestone_odometer.MilestoneOdometerPreferences``
 #: requires at least one step while enabled, so the persisted default is a
@@ -378,6 +390,8 @@ class AgentMonitorSettings:
     # wing length is each horizontal stroke's reach beyond the gap.
     screen_bar_gap_width: float | None = None
     screen_bar_wing_length: float | None = None
+    screen_bar_notch_profile: str = "auto"
+    screen_bar_notch_corner: float = 8.0
     # The native app's notch wings: status slots drawn in the menu-bar
     # areas beside the notch (the selected task and attention count on
     # the left, the headline usage meter on the right). The daemon never
@@ -1357,6 +1371,21 @@ class AgentMonitorSettings:
             length = max(0.0, min(400.0, float(length)))
         return replace(self, screen_bar_wing_length=length)
 
+    def with_screen_bar_notch_profile(self, profile: object) -> AgentMonitorSettings:
+        normalized = (
+            profile
+            if isinstance(profile, str) and profile in SCREEN_BAR_NOTCH_PROFILE_CHOICES
+            else "auto"
+        )
+        return replace(self, screen_bar_notch_profile=normalized)
+
+    def with_screen_bar_notch_corner(self, corner: object) -> AgentMonitorSettings:
+        normalized = _optional_dimension(corner, 4.0, 16.0)
+        return replace(
+            self,
+            screen_bar_notch_corner=8.0 if normalized is None else normalized,
+        )
+
     def with_screen_bar_notch_wings(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_notch_wings=bool(enabled))
 
@@ -1628,6 +1657,8 @@ class AgentMonitorSettings:
             "virtual_status_device_wraps_menu_bar": self.virtual_status_device_wraps_menu_bar,
             "screen_bar_gap_width": self.screen_bar_gap_width,
             "screen_bar_wing_length": self.screen_bar_wing_length,
+            "screen_bar_notch_profile": self.screen_bar_notch_profile,
+            "screen_bar_notch_corner": self.screen_bar_notch_corner,
             "screen_bar_notch_wings": self.screen_bar_notch_wings,
             "screen_bar_bracket_style": self.screen_bar_bracket_style,
             "agent_keep_awake_enabled": self.agent_keep_awake_enabled,
@@ -1954,6 +1985,16 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         screen_bar_gap_width=_optional_dimension(data.get("screen_bar_gap_width"), 120.0, 1200.0),
         screen_bar_wing_length=_optional_dimension(data.get("screen_bar_wing_length"), 0.0, 400.0),
+        screen_bar_notch_profile=(
+            data.get("screen_bar_notch_profile")
+            if isinstance(data.get("screen_bar_notch_profile"), str)
+            and data.get("screen_bar_notch_profile") in SCREEN_BAR_NOTCH_PROFILE_CHOICES
+            else "auto"
+        ),
+        screen_bar_notch_corner=(
+            _optional_dimension(data.get("screen_bar_notch_corner"), 4.0, 16.0)
+            or 8.0
+        ),
         screen_bar_notch_wings=_bool_setting(data.get("screen_bar_notch_wings"), True),
         screen_bar_bracket_style=(
             data.get("screen_bar_bracket_style")

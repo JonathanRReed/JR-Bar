@@ -68,8 +68,9 @@ final class MenuBarLiveTiles {
 
     /// The items to keep fresh — the bar supplies its tile list.
     var itemsProvider: @MainActor () -> [MenuBarItem] = { [] }
-    /// The menu bar row in Quartz coordinates.
-    var rowRect: @MainActor () -> CGRect = { MenuBarItemLister.menuBarRow() }
+    /// The displays' menu bar rows in Quartz coordinates — each item
+    /// captures against the row it actually stands on.
+    var rowRects: @MainActor () -> [CGRect] = { MenuBarItemLister.menuBarRows() }
     /// Whether an item has on-screen pixels worth capturing. A
     /// concealed item's Accessibility ghost reports a frozen on-row
     /// frame while the agent owns its pixels — capturing that rect
@@ -119,13 +120,16 @@ final class MenuBarLiveTiles {
     /// parallel one-shots is a burst of WindowServer work, and 2 Hz is
     /// the cadence, not the goal.
     func refreshOnce() async {
-        let row = rowRect()
+        let rows = rowRects()
         let items = itemsProvider()
         let ids = Set(items.map(\.id))
         images = images.filter { ids.contains($0.key) }
         capturedAt = capturedAt.filter { ids.contains($0.key) }
         for item in items {
-            guard isCapturable(item),
+            // The item's own bar — a tile on a secondary display's strip
+            // captures the rect there, never the main row's math.
+            let row = rows.first { $0.intersects(item.bounds) }
+            guard isCapturable(item), let row,
                   let rect = MenuBarTileMath.captureRect(of: item, row: row),
                   MenuBarTileMath.needsRefresh(lastCapturedAt: capturedAt[item.id],
                                                now: Date(),
@@ -149,39 +153,46 @@ final class MenuBarLiveTiles {
 /// every tile.
 @MainActor
 final class DisplayFilterSource {
-    /// How long a filter — or a failed fetch — stays valid. Display
-    /// changes land within seconds, and the tiles are a 2 Hz preview.
+    /// How long a shareable-content fetch — or a failed one — stays
+    /// valid. Display changes land within seconds, and the tiles are a
+    /// 2 Hz preview.
     nonisolated static let ttl: TimeInterval = 5
 
-    private var cached: (at: Date, filter: SCContentFilter?)?
+    /// The raw content listing — one fetch feeds every display's
+    /// filter, so a multi-display bar still pays once per ttl.
+    private var cachedContent: (at: Date, content: SCShareableContent?)?
+    /// One filter per display, built on demand from the cached content.
+    private var filters: [CGDirectDisplayID: SCContentFilter] = [:]
 
-    private func filter() async -> SCContentFilter? {
-        if let cached, Date().timeIntervalSince(cached.at) < Self.ttl {
-            return cached.filter
+    private func filter(for rect: CGRect) async -> SCContentFilter? {
+        if cachedContent == nil || Date().timeIntervalSince(cachedContent!.at) >= Self.ttl {
+            cachedContent = (Date(), try? await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true))
+            filters = [:]
         }
-        let shareable = try? await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true)
-        let mainID = CGMainDisplayID()
-        let display = shareable?.displays.first(where: { $0.displayID == mainID })
-            ?? shareable?.displays.first
-        guard let shareable, let display else {
-            cached = (Date(), nil)
-            return nil
-        }
+        guard let shareable = cachedContent?.content else { return nil }
+        // The display whose bounds contain the rect — a secondary-bar
+        // item captures from its own display, not the main one.
+        let mid = CGPoint(x: rect.midX, y: rect.midY)
+        let display = shareable.displays.first(where: { $0.frame.contains(mid) })
+            ?? shareable.displays.first(where: { $0.displayID == CGMainDisplayID() })
+            ?? shareable.displays.first
+        guard let display else { return nil }
+        if let filter = filters[display.displayID] { return filter }
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let ours = shareable.applications.filter { $0.processID == ownPID }
         let filter = SCContentFilter(display: display,
                                      excludingApplications: ours,
                                      exceptingWindows: [])
-        cached = (Date(), filter)
+        filters[display.displayID] = filter
         return filter
     }
 
-    /// One Quartz rect of the main display → an image, or nil on any
-    /// failure — no permission, no display, a mid-reflow frame. The
-    /// caller's icon fallback is the honest answer.
+    /// One Quartz rect of whichever display holds it → an image, or nil
+    /// on any failure — no permission, no display, a mid-reflow frame.
+    /// The caller's icon fallback is the honest answer.
     func capture(_ rect: CGRect) async -> CGImage? {
-        guard let filter = await filter() else { return nil }
+        guard let filter = await filter(for: rect) else { return nil }
         let configuration = SCStreamConfiguration()
         configuration.sourceRect = rect
         let size = MenuBarTileMath.pixelSize(for: rect, scale: MenuBarTileMath.captureScale)

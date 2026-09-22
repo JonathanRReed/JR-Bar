@@ -60,7 +60,8 @@ class PriceQuote:
             "output_per_mtok": self.output_per_mtok,
             "cache_read_per_mtok": self.cache_read_per_mtok,
             "as_of": usage_stats.PRICING_TABLE_AS_OF,
-            "approximate": True,
+            "table_version": usage_stats.PRICING_TABLE_VERSION,
+            "approximate": self.estimated,
             "currency": "USD",
             "model": self.model,
             "source": self.source,
@@ -97,23 +98,23 @@ def _table_rates(provider: str, model: str) -> tuple[float, float] | None:
 def price_quote(provider: str, model: str, *, codex_default_model: str | None = None) -> PriceQuote | None:
     """The quote a record is billed at; None for a provider with no table."""
 
-    def cache(input_rate: float) -> float:
-        return input_rate * usage_stats.CACHE_READ_RATE
+    def cache(priced_model: str, input_rate: float) -> float:
+        return input_rate * usage_stats.cache_read_rate_for_model(priced_model)
 
     if provider == "codex" and str(model or "").lower() == CODEX_RECORD_MODEL and codex_default_model:
         rates = _table_rates(provider, codex_default_model)
         if rates is not None:
-            return PriceQuote(codex_default_model, rates[0], rates[1], cache(rates[0]), QUOTE_CODEX_DEFAULT, False)
+            return PriceQuote(codex_default_model, rates[0], rates[1], cache(codex_default_model, rates[0]), QUOTE_CODEX_DEFAULT, False)
     rates = _table_rates(provider, str(model or ""))
     if rates is not None:
-        return PriceQuote(str(model), rates[0], rates[1], cache(rates[0]), QUOTE_TABLE, False)
+        return PriceQuote(str(model), rates[0], rates[1], cache(str(model), rates[0]), QUOTE_TABLE, False)
     reference = REFERENCE_MODEL.get(provider)
     if reference is None:
         return None
     rates = _table_rates(provider, reference)
     if rates is None:
         return None
-    return PriceQuote(reference, rates[0], rates[1], cache(rates[0]), QUOTE_REFERENCE, True)
+    return PriceQuote(reference, rates[0], rates[1], cache(reference, rates[0]), QUOTE_REFERENCE, True)
 
 
 def record_rates(provider: str, model: str, *, codex_default_model: str | None = None) -> tuple[float, float, float] | None:

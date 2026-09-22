@@ -113,6 +113,26 @@ def test_provider_rows_inspect_without_secrets(fake_home):
     # The row reports availability, never the secret.
     assert "supersecret" not in json.dumps(rows)
 
+    # Options publish through a whitelist: display identifiers surface,
+    # anything else -- including names the old substring filter missed --
+    # stays inside the settings store.
+    loaded = load_provider_usage_settings()
+    settings = loaded.settings
+    for key, value in (
+        ("organization", "Cognition"),
+        ("csrf_token", "csrf-secret"),
+        ("api_password", "hunter2"),
+        ("session_cookie", "cookie-value"),
+    ):
+        settings = settings.with_option("devin", key, value)
+    save_provider_usage_settings(settings, loaded=loaded)
+    rows = pm.provider_rows(credentials=credentials, state=state)
+    devin = next(row for row in rows if row["id"] == "devin")
+    assert devin["options"] == {"organization": "Cognition"}
+    assert "csrf-secret" not in json.dumps(rows)
+    assert "hunter2" not in json.dumps(rows)
+    assert "cookie-value" not in json.dumps(rows)
+
 
 def test_set_provider_enabled_persists_and_reports():
     credentials = DictCredentials()

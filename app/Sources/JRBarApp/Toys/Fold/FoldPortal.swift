@@ -12,17 +12,22 @@ import JRBarCore
 ///   integer-degree sensor becomes a continuous glide with no
 ///   overshoot, and a slammed lid eases shut in ~300 ms instead of
 ///   lurching between samples.
+/// - `MoveAnchor` — the movement-anchored reference: where the lid was
+///   resting when the gesture began. Still for `settleAfter` while flat
+///   and the rest spot becomes the anchor; a live fold freezes it until
+///   the picture unwinds home or the dwell pause re-seats it.
 /// - `FoldArming` — the capture-lifecycle state machine. The
 ///   ScreenCaptureKit streams exist only inside the arming band
-///   (activation + margin), linger through a short cooldown so the
-///   Screen Recording indicator only shows while a fold can actually
-///   be on screen, and die at once on a full close. It also owns the
-///   fold gate's hysteresis at the activation edge.
+///   (activation + margin) in fixed-angle mode, or from the first move
+///   off the anchor in movement mode; they linger through a short
+///   cooldown so the Screen Recording indicator only shows while a fold
+///   can actually be on screen, and die at once on a full close. It
+///   also owns the fold gate's hysteresis at the activation edge.
 /// - `DeltaChase` — the displayed delta's asymmetric follower: instant
 ///   while the target grows (closing keeps the old direct-assignment
-///   response), a critically damped unwind when the gate snaps the
-///   target to 0 mid-motion, so opening counter-rotates through the
-///   hinge instead of cutting to black.
+///   response), a slew-limited unwind when the target drops — fast
+///   enough to track a real lid opening exactly, so the return trip
+///   retraces the close; only a gate snap ever sees the rate limit.
 /// - `PortalDepth` — window z-order → depth buckets and normalized card
 ///   rects for the shader's layered room.
 /// - `FoldPortalModel` — the settings+delta → shader-params mapping:
@@ -116,6 +121,85 @@ struct SlewTracker: Sendable {
     var atRest: Bool { !primed || (angle == target && velocity == 0) }
 }
 
+// MARK: - MoveAnchor
+
+/// The movement-anchored reference (FoldAnchor.movement): where the lid
+/// was resting when the gesture began.
+///
+/// While the lid is flat — at or above the anchor, no fold in flight —
+/// a rest spot held for `settleAfter` becomes the new anchor, so the
+/// fold always starts from wherever the lid was last parked. Below the
+/// anchor the fold is live and the reference freezes: parking mid-fold
+/// must not re-anchor (that would collapse a held fold after 400 ms);
+/// handing the desktop back is the dwell pause's job, and it re-seats
+/// the anchor itself. Opening back through the anchor is what counts as
+/// flat — the stillness clock resumes from there.
+struct MoveAnchor: Sendable {
+    /// The reference angle a fold measures from. nil until the first
+    /// real sample seats it.
+    private(set) var anchor: Double?
+    /// Where the lid last rested in the flat zone.
+    private var restAngle: Double?
+    /// When the current rest spot was entered.
+    private var restAt: TimeInterval = 0
+
+    /// Seconds of stillness in the flat zone before the rest spot
+    /// re-seats the anchor — long enough that the sensor's own 100 ms
+    /// cadence can't do it mid-gesture.
+    var settleAfter: TimeInterval = 0.4
+    /// The stillness deadband in degrees — the sensor's jitter window.
+    var tolerance = 1.5
+    /// How far below the anchor counts as folded: past this the
+    /// reference freezes until the lid returns.
+    var flightMargin = 3.0
+
+    init() {}
+
+    mutating func reset() { self = MoveAnchor() }
+
+    /// Feed a raw lid sample at host time `at`. Folded or not, the
+    /// anchor never moves mid-flight.
+    mutating func feed(_ angle: Double, at: TimeInterval) {
+        guard angle.isFinite, at.isFinite else { return }
+        guard let a = anchor else {
+            anchor = angle
+            restAngle = angle
+            restAt = at
+            return
+        }
+        if a - angle > flightMargin {
+            // In flight: the rest clock restarts so a return to flat
+            // still owes its own settle before re-anchoring.
+            restAngle = angle
+            restAt = at
+            return
+        }
+        if let r = restAngle, abs(angle - r) <= tolerance {
+            if at - restAt >= settleAfter { anchor = angle }
+        } else {
+            restAngle = angle
+            restAt = at
+        }
+    }
+
+    /// A real deviation from the anchor — what arms the capture in
+    /// movement mode. A held fold counts as moving (the streams must
+    /// stay); parked at rest does not.
+    func moving(_ angle: Double) -> Bool {
+        guard angle.isFinite, let a = anchor else { return false }
+        return abs(angle - a) > tolerance
+    }
+
+    /// Seat the anchor directly — the dwell pause hands the desktop
+    /// back and the parked angle becomes the new reference.
+    mutating func reseat(_ angle: Double, at: TimeInterval) {
+        guard angle.isFinite, at.isFinite else { return }
+        anchor = angle
+        restAngle = angle
+        restAt = at
+    }
+}
+
 // MARK: - FoldArming
 
 /// The capture-lifecycle state machine: when the ScreenCaptureKit
@@ -206,6 +290,44 @@ struct FoldArming: Sendable {
         return Outcome(capture: phase != .idle, foldGate: foldGateOpen,
                        cooldownEndsAt: cooldownEndsAt)
     }
+
+    /// The movement-anchored evaluation: there is no fixed activation
+    /// angle, so the streams arm on the first real move off the
+    /// `MoveAnchor` instead of on crossing the band. `moving` is the
+    /// toy's deviation-from-anchor read — a held fold stays "moving"
+    /// (the capture must live while the fold does), a parked lid goes
+    /// still and cools down, and the same `cooldown`/`closedAngle`
+    /// rules apply. The gate is open whenever capture is: the delta's
+    /// own positive-only math holds it at zero above the anchor.
+    @discardableResult
+    mutating func updateMovement(moving: Bool, closed: Bool,
+                                 now: TimeInterval) -> Outcome {
+        guard !closed else {
+            phase = .idle
+            foldGateOpen = false
+            return Outcome()
+        }
+        if moving {
+            phase = .armed
+            foldGateOpen = true
+        } else {
+            switch phase {
+            case .armed:
+                phase = .cooling(until: now + cooldown)
+            case .cooling(let until) where now >= until:
+                phase = .idle
+                foldGateOpen = false
+            case .idle:
+                foldGateOpen = false
+            default:
+                break
+            }
+        }
+        var cooldownEndsAt: TimeInterval?
+        if case .cooling(let until) = phase { cooldownEndsAt = until }
+        return Outcome(capture: phase != .idle, foldGate: foldGateOpen,
+                       cooldownEndsAt: cooldownEndsAt)
+    }
 }
 
 // MARK: - DeltaChase
@@ -222,12 +344,16 @@ struct FoldArming: Sendable {
 /// - A growing target is followed in the same tick. Closing keeps the
 ///   old direct-assignment response bit for bit — no added lag on the
 ///   gesture that matters.
-/// - A dropping target unwinds: a critically damped chase that eases
-///   the room back through the hinge in ~350–500 ms, monotone and
-///   pinned at the target so it can never swing below 0. The arrival
-///   epsilon — the same trick `SlewTracker` uses — makes it settle
-///   *exactly* on the target, so the overlay really orders out and the
-///   display link stands down.
+/// - A dropping target unwinds at a bounded rate — `unwindRate` rad/s,
+///   never a spring. The rate sits just above the tracker's own
+///   `maxRate` (150°/s ≈ 2.62 rad/s), so a real lid opening drops the
+///   target no faster than the chase can follow: the unwind lands on
+///   the target every tick and the return trip retraces the close
+///   pixel for pixel. Only a gate snap — the target leaping to 0 faster
+///   than any hinge can move — ever sees the rate limit, and there the
+///   slew IS the easing: a monotone counter-rotation through the hinge,
+///   ~300 ms for a full working-range unwind, pinned at the target so
+///   it can never swing below 0.
 struct DeltaChase: Sendable {
     /// What the renderer should draw, in radians. Monotone downward
     /// during an unwind — never below the target.
@@ -237,20 +363,16 @@ struct DeltaChase: Sendable {
     /// The newest target the chase has seen.
     private(set) var target = 0.0
 
-    /// Critical-damping stiffness for the unwind. ω = 15 carries the
-    /// visible bulk of a snap-to-0 in ~300 ms and settles exactly
-    /// inside ~500 ms — long enough to read as the room counter-
-    /// rotating, short enough that a real lid opening never waits.
-    var omega = 15.0
+    /// The unwind's speed in rad/s. Just above the fastest real lid
+    /// opening (the tracker's 150°/s cap is ~2.62 rad/s), so ordinary
+    /// opening motion is followed exactly — the same angle always draws
+    /// the same image — while a gate snap still eases back in ~300 ms
+    /// instead of cutting to black.
+    var unwindRate = 3.0
     /// A single tick larger than this is a stall (a slept display), not
     /// a frame — clamped so a huge dt can't fire the chase past its
     /// target in one step.
     var maxDt = 0.05
-    /// The arrival snap in radians. Deliberately below
-    /// `FoldMath.showsOverlay`'s 0.002: the overlay leaves on the same
-    /// threshold it entered, and the invisible tail can't creep
-    /// forever — a critically damped approach is asymptotic without it.
-    var arriveEpsilon = 0.0015
 
     init() {}
 
@@ -262,9 +384,10 @@ struct DeltaChase: Sendable {
         target = newValue
     }
 
-    /// One render-frame step toward `newTarget`. Semi-implicit Euler
-    /// like `SlewTracker`'s — stable at any vsync cadence — with the
-    /// crossing guard making overshoot structurally impossible.
+    /// One render-frame step toward `newTarget`. A dropping target is
+    /// chased linearly at `unwindRate`; the step never crosses the
+    /// target, so a real opening (slower than the rate) is tracked
+    /// exactly and only a snap is eased.
     @discardableResult
     mutating func tick(target newTarget: Double, dt rawDt: Double) -> Double {
         guard newTarget.isFinite else { return value }
@@ -277,24 +400,9 @@ struct DeltaChase: Sendable {
         }
         guard rawDt.isFinite, rawDt > 0 else { return value }
         let dt = min(rawDt, maxDt)
-        var v = velocity
-            + (-omega * omega * (value - target) - 2 * omega * velocity) * dt
-        // An unwind only ever moves downward — a residual upward rate
-        // would re-open the fold against a dropping target.
-        v = min(v, 0)
-        var next = value + v * dt
-        if next <= target {
-            // The step would cross the target — land on it instead.
-            next = target
-            v = 0
-        } else if next - target < arriveEpsilon, abs(v) < 0.05 {
-            // Arrival snap — without the epsilon the asymptotic tail
-            // keeps `atRest` false and the vsync link never sleeps.
-            next = target
-            v = 0
-        }
+        let next = max(target, value - unwindRate * dt)
+        velocity = (next - value) / dt
         value = next
-        velocity = v
         return value
     }
 
@@ -426,9 +534,15 @@ enum FoldPortalModel {
     /// and the cover fit.)
     static func apply(to p: inout FoldRenderer.Params, delta: Double,
                       perspective: Double, blur: Double, shade: Double,
-                      frost: Double, usedBuckets: Int, reduceMotion: Bool) {
+                      frost: Double, holdPicture: Bool = false,
+                      usedBuckets: Int, reduceMotion: Bool) {
         p.delta = Float(delta)
         p.persp = Float(min(1, max(0, perspective)))
+        // Hold-in-place counter-rotates the content plane by delta·k —
+        // the Perspective knob IS k, so a fixed eye sees the desktop
+        // stay put while the glass tilts over it (off = 0, the picture
+        // rides the lid).
+        p.hold = holdPicture ? Float(min(1, max(0, perspective))) : 0
         p.blurStrength = Float(min(1, max(0, blur)))
         p.dimStrength = Float(min(1, max(0, shade)))
         p.frost = Float(min(1, max(0, frost)))
@@ -444,12 +558,12 @@ enum FoldPortalModel {
     /// depth buckets actually hold cards this frame — the shader skips
     /// the rest, so an empty desktop costs the far wall only.
     static func params(delta: Double, perspective: Double, blur: Double,
-                       shade: Double, frost: Double, usedBuckets: Int,
-                       reduceMotion: Bool) -> FoldRenderer.Params {
+                       shade: Double, frost: Double, holdPicture: Bool = false,
+                       usedBuckets: Int, reduceMotion: Bool) -> FoldRenderer.Params {
         var p = FoldRenderer.Params()
         apply(to: &p, delta: delta, perspective: perspective, blur: blur,
-              shade: shade, frost: frost, usedBuckets: usedBuckets,
-              reduceMotion: reduceMotion)
+              shade: shade, frost: frost, holdPicture: holdPicture,
+              usedBuckets: usedBuckets, reduceMotion: reduceMotion)
         return p
     }
 }

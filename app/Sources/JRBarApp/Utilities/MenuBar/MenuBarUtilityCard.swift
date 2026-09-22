@@ -68,12 +68,12 @@ struct MenuBarUtilityControls: View {
 
             SettingLabel(title: "How it works",
                          subtitle: utility.concealing
-                            ? "Nothing is hidden until you choose it. Pick Hidden or Always under Overrides, or ⌘-drag an item left of the ‹ separator (or the macOS « caret while items are parked) — it joins the hidden run where it stays active and reachable. Drag it back right to show it again. Hover, click the empty bar, or scroll to peek at the hidden run."
+                            ? "Items left of the separator, including apps parked in macOS overflow, join the hidden run. Use Overrides to keep an app Shown or Always Hidden, or ⌘-drag it across the separator. Hidden apps keep running and remain accessible in the Item Bar."
                             : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
-            if utility.concealerAvailable, !utility.concealing {
+            if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
                     SettingLabel(title: "Hide the way macOS hides",
-                                 subtitle: "This build of JR-Bar isn't notarized, and macOS keeps only notarized apps on the bar while it hides the rest — JR-Bar's own icon would go too. Notarize the build (make package with the jrbar-notary profile) to get this without losing the icon, or turn it on anyway.")
+                                 subtitle: "This copy of JR-Bar is not notarized. Native hiding may also hide JR-Bar's own icon. Enable this only if you accept that limitation.")
                 }
             }
 
@@ -180,9 +180,21 @@ struct MenuBarUtilityControls: View {
                         SettingLabel(title: "Keep items out of the notch",
                                      subtitle: "An item that lands in the notch band is invisible anyway — it moves to the hidden run where the Item Bar can still reach it.")
                     }
+                    .disabled(utility.concealing)
                     Toggle(isOn: utility.bind(\.hideOnMenuOverlap)) {
                         SettingLabel(title: "Hide items under app menus",
                                      subtitle: "On a crowded bar the front app's menus draw over items — those hide instead of sitting unreachable.")
+                    }
+                    .disabled(utility.concealing)
+                    if utility.concealing {
+                        // Both feed only the positional cover plan —
+                        // under the assessment engine macOS's own
+                        // overflow does this work. Disabled, not
+                        // rewritten: the stored values stay for the
+                        // day the spacer engine stands back in.
+                        Text("Handled by macOS's own overflow while the system concealer is in use")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Toggle(isOn: utility.bind(\.barUnderlay)) {
                         SettingLabel(title: "Tint the whole bar",
@@ -211,8 +223,10 @@ struct MenuBarUtilityControls: View {
 
             DisclosureGroup(isExpanded: $showOverrides) {
                 VStack(alignment: .leading, spacing: 4) {
-                    SettingLabel(title: "Cover in place",
-                                 subtitle: "An item marked Cover or Always is hidden under a patch of menu bar where it sits, even right of the icon — a hole, honestly. Auto follows the drag position.")
+                    SettingLabel(title: utility.concealing ? "Item visibility" : "Cover in place",
+                                 subtitle: utility.concealing
+                                    ? "Apps use Shown, Hidden, or Always. Apple extras use Auto or covers in place."
+                                    : "Cover and Always mask an item where it sits. Auto follows its position in the menu bar.")
                     ForEach(hideable, id: \.id) { item in
                         overrideRow(item)
                     }
@@ -290,13 +304,14 @@ struct MenuBarUtilityControls: View {
 
     /// The override picker for one item.
     private func overrideRow(_ item: MenuBarItem) -> some View {
-        LabeledContent {
+        let appChoice = utility.concealing && item.bundleID.map(MenuBarConcealPlan.canConcealApp) == true
+        return LabeledContent {
             Picker(selection: Binding(
                 get: { utility.effectiveSection(for: item) },
                 set: { utility.setSection($0, for: item.id) }
             )) {
-                Text("Auto").tag(MenuBarItemSection.shown)
-                Text("Cover").tag(MenuBarItemSection.hidden)
+                Text(appChoice ? "Shown" : "Auto").tag(MenuBarItemSection.shown)
+                Text(appChoice ? "Hidden" : "Cover").tag(MenuBarItemSection.hidden)
                 Text("Always").tag(MenuBarItemSection.alwaysHidden)
             } label: { EmptyView() }
             .labelsHidden()
@@ -392,7 +407,7 @@ struct MenuBarUtilityControls: View {
         }
         if utility.lastPlan.hidden.contains(item) {
             if override == .hidden { return "covered" }
-            return item.bounds.intersects(MenuBarItemLister.menuBarRow()) ? "hidden" : "in overflow"
+            return MenuBarItemLister.onAnyMenuBarRow(item.bounds) ? "hidden" : "in overflow"
         }
         return "shown"
     }

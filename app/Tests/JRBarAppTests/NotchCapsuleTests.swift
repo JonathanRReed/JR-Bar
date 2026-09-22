@@ -24,7 +24,8 @@ struct NotchCapsuleTests {
                                     islandEnabled: true)
         let core = CoreModel()
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
-                              state: state, cardModel: makeTestCardModel())
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
         toy.islandVisible = true
         return (toy, store)
@@ -43,10 +44,24 @@ struct NotchCapsuleTests {
         return false
     }
 
+    @Test("the owner releases a headless toy with pending work")
+    func ownerReleaseTearsDownPendingWork() {
+        weak var releasedStore: ToysStore?
+        weak var releasedToy: NotchToy?
+        do {
+            let (toy, store) = makeToy()
+            toy.offer(notice(.ask, key: "ask:release", id: "release"))
+            releasedStore = store
+            releasedToy = toy
+        }
+        #expect(releasedStore == nil)
+        #expect(releasedToy == nil)
+    }
+
     @Test("a grow mid-gap shelves the capsule; the fold replays it and the queue unwedges")
     func expandDuringGapShelvesAndCollapseRestores() async throws {
         let (toy, store) = makeToy()
-        _ = store   // the toy holds it weakly — keep it alive
+        defer { withExtendedLifetime(store) {} }
 
         // A is up; B waits behind it.
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
@@ -96,9 +111,10 @@ struct NotchCapsuleTests {
                                     islandEnabled: true)
         let core = CoreModel()
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
-                              state: state, cardModel: makeTestCardModel())
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         // Even a stale "visible" flag — the read a crashed park could
         // leave — must not resurrect the island: `enabled` gates all.
         toy.islandVisible = true
@@ -134,7 +150,7 @@ struct NotchCapsuleTests {
     @Test("a shelf that outlives its capsule's freshness is dropped, not replayed")
     func staleShelfDropsOnCollapse() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
 
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
         toy.offer(notice(.failed, key: "failed:b", id: "b"))
@@ -156,7 +172,7 @@ struct NotchCapsuleTests {
     @Test("a swipe down on the grown card folds it and takes the shelved capsule with it")
     func swipeDownOnExpandedFoldsCardAndShelf() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
 
         // A up, B behind it; B promotes into its gap, then the band
         // grows the island and B shelves beneath the card.
@@ -182,7 +198,7 @@ struct NotchCapsuleTests {
     @Test("a swipe-down dismissal eats a band click's pending expand")
     func swipeDismissEatsPendingBandExpand() {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
 
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
         #expect(toy.activeCapsule?.id == "a")
@@ -202,7 +218,7 @@ struct NotchCapsuleTests {
     @Test("a folded card stays folded when a later capsule steps down")
     func collapsedCardStaysDownAfterCapsule() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
 
         // A HELD hover grows the card — the intent debounce has to land
         // first (a passing cursor only ever earns the wink). The swipe
@@ -210,7 +226,6 @@ struct NotchCapsuleTests {
         // remembered hover used to survive, so the next capsule's
         // settle re-grew a card the user had just let go.
         toy.setHovered(true)
-        #expect(toy.islandHoverPeek)
         #expect(!toy.islandExpanded, "hover alone never grows the card")
         try await Task.sleep(for: .seconds(0.55))
         #expect(toy.islandExpanded, "a hover that stayed earned the card")

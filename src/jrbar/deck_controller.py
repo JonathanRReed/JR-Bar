@@ -3,28 +3,73 @@
 from __future__ import annotations
 
 import threading
+import traceback
 
 from .deck_control_center import deck_executor
 from .deck_input_dispatch import DeckInputBatch
 
 
 def apply_deck_input(target, batch: object) -> None:
+    """applyDeckInput: — one drained input batch.
+
+    ``deliver`` runs on a worker: a session key bound to a live ask holds
+    the answer surface's reply wait (up to the reply budget), and that
+    wait must never park the main run loop. The executor's AppKit work
+    hops back per call; the receipt lands on main when the worker
+    finishes."""
     if type(batch) is not DeckInputBatch or getattr(target, "_runtime_termination_started", False):
         return
-    executor = deck_executor(target)
-    receipts = batch.owner.deliver(batch, executor)
-    if not receipts:
-        return
-    target._deck_action_receipt = receipts[-1]
-    if getattr(target, "current_settings_pane", None) == "devices":
-        code = receipts[-1].code
-        message = {
-            "accessibility_not_trusted": "Allow JR-Bar in macOS Accessibility settings to use app shortcuts.",
-            "target_not_frontmost": "Switch to the mapped app before using its shortcut.",
-            "target_not_running": "Open the mapped app before using its shortcut.",
-            "app_not_found": "The mapped app is not installed. Choose it again in Devices settings.",
-        }.get(code, f"Device action: {code.replace('_', ' ')}.")
-        target.set_settings_message(message)
+
+    def _deliver():
+        try:
+            # The core mixin's executor answers a live ask before revealing;
+            # a bare status-bar controller still gets the plain revealer.
+            executor = (target._core_deck_executor()
+                        if hasattr(target, "_core_deck_executor")
+                        else deck_executor(target))
+            receipts = batch.owner.deliver(batch, executor)
+        except Exception:
+            from . import status_bar_legacy as _legacy
+
+            _legacy.log_status_bar(
+                f"deck: input delivery failed: {traceback.format_exc(limit=6)}")
+            return
+        if not receipts:
+            return
+
+        def _land():
+            if getattr(target, "_runtime_termination_started", False):
+                return
+            target._deck_action_receipt = receipts[-1]
+            if getattr(target, "current_settings_pane", None) == "devices":
+                code = receipts[-1].code
+                message = {
+                    "accessibility_not_trusted": "Allow JR-Bar in macOS Accessibility settings to use app shortcuts.",
+                    "target_not_frontmost": "Switch to the mapped app before using its shortcut.",
+                    "target_not_running": "Open the mapped app before using its shortcut.",
+                    "app_not_found": "The mapped app is not installed. Choose it again in Devices settings.",
+                }.get(code, f"Device action: {code.replace('_', ' ')}.")
+                set_message = getattr(target, "set_settings_message", None)
+                if callable(set_message):
+                    set_message(message)
+            publish = getattr(target, "_core_publish_state", None)
+            if callable(publish):
+                publish()
+
+        on_main = getattr(target, "_core_on_main", None) or (lambda fn: fn())
+        on_main(_land)
+
+    # Headless is not proof inline is safe: the production daemon is
+    # headless yet owns a real main run loop. Only a harness that
+    # cannot spawn threads (single-threaded tests) opts into inline
+    # delivery, and callers already off-main can block in place.
+    on_main = threading.current_thread() is threading.main_thread()
+    if getattr(target, "_deck_deliver_inline", False) or not on_main:
+        _deliver()
+    else:
+        threading.Thread(
+            target=_deliver, name="JRBarDeckDeliver", daemon=True
+        ).start()
 
 
 def cycle_deck_scope(target, delta: int) -> None:

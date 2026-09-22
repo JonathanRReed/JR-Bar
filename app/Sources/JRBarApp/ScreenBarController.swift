@@ -143,7 +143,16 @@ final class ScreenBarController {
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     private(set) var isShown = false
     private(set) var programText: String = ""
+    /// The raw text of the last ACCEPTED program -- refusal never reaches
+    /// it, so a refused republish can neither dedupe against nor move the
+    /// anchor of the program actually on the bar.
     private var lastRawText = ""
+    /// What `apply` was last handed, accepted or not: the dedupe pair.
+    /// `lastRawText` cannot do this job -- a refused program must be
+    /// re-checked (the compiler's answer could change) but must never be
+    /// mistaken for the running one.
+    private var lastSeenText = ""
+    private var lastSeenAnchor: Double?
     private(set) var lastRejection: String?
 
     /// Settings › Screen Bar › Minimum glow — the housing rim's dial,
@@ -370,7 +379,10 @@ final class ScreenBarController {
         if let epoch = lastAnchorEpoch {
             let now = CACurrentMediaTime()
             let locked = Self.mediaTime(forEpoch: epoch)
-            if locked <= now + 0.05, now - locked < 6 * 3600 { anchor = locked }
+            // A sane epoch re-locks the phase; one that fails the check
+            // (clock skew, a daemon restarted while we slept) would pin
+            // the program to a garbage offset -- restart from wake instead.
+            anchor = locked <= now + 0.05 && now - locked < 6 * 3600 ? locked : now
         }
         present()
     }
@@ -607,6 +619,13 @@ final class ScreenBarController {
     /// pulse under the notch swell together. Without it the program starts
     /// now, as a file feed would.
     func apply(programText text: String, anchorEpoch: Double? = nil) {
+        if text == lastSeenText, anchorEpoch == lastSeenAnchor, sampler != nil {
+            // A verbatim republish -- same text at the same epoch -- carries
+            // no new information at all.
+            return
+        }
+        lastSeenText = text
+        lastSeenAnchor = anchorEpoch
         if text == lastRawText, sampler != nil {
             // Same program: only a moved anchor is a reason to act at all,
             // and a re-aligned anchor replays the plan instead of paying
@@ -622,13 +641,16 @@ final class ScreenBarController {
             present()
             return
         }
-        lastRawText = text
         let decision = Self.programDecision(text, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
         lastRejection = decision.rejection
         guard let program = decision.program, let compiledText = decision.programText else {
+            // Refused: `lastRawText`/`lastAnchorEpoch` keep describing the
+            // program still on the bar -- a refused text must not move the
+            // running program's anchor (it used to, through `lastRawText`).
             NSLog("JR-Bar: refusing LEDS program (%@); keeping the previous one", decision.rejection ?? "?")
             return
         }
+        lastRawText = text
         // The firmware starts a new program from the colours currently showing.
         let now = CACurrentMediaTime()
         if let sampler {

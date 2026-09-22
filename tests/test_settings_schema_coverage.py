@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from jrbar.settings import (
@@ -42,3 +43,18 @@ def test_every_device_setting_survives_an_unrelated_save(tmp_path: Path) -> None
     reloaded = load_settings(target)
 
     assert reloaded.devices == (expected,)
+
+
+def test_literal_native_settings_paths_exist_in_the_daemon_schema() -> None:
+    source_root = Path(__file__).parents[1] / "app" / "Sources" / "JRBarApp"
+    literal_path = re.compile(r'\bpath\s*:\s*"([^"\\]+)"')
+    paths = {
+        match.group(1)
+        for source in source_root.glob("Settings*.swift")
+        for match in literal_path.finditer(source.read_text(encoding="utf-8"))
+    }
+
+    assert paths
+    schema = AgentMonitorSettings().to_dict()
+    missing_roots = sorted({path.split(".", 1)[0] for path in paths} - schema.keys())
+    assert missing_roots == []

@@ -62,7 +62,7 @@ let package = Package(
         .target(name: "JRBarLEDS"),
         // The core daemon protocol: NDJSON over a Unix socket, Codable
         // models, an observable model. Foundation only.
-        .target(name: "JRBarCore"),
+        .target(name: "JRBarCore", linkerSettings: [.linkedLibrary("sqlite3")]),
         // AppKit pieces small enough to test without the app: the status
         // item's icon renderer.
         .target(
@@ -76,6 +76,10 @@ let package = Package(
             swiftSettings: appSwiftSettings,
             linkerSettings: appLinkerSettings
         ),
+        // The assessment-assertion holder: an asserting process's own
+        // items can never be allowlisted, so the Menu Bar utility spawns
+        // this helper to hold the assertion (agent releases on exit).
+        .executableTarget(name: "jrbar-asserter"),
         .testTarget(
             name: "JRBarLEDSTests",
             dependencies: ["JRBarLEDS"],

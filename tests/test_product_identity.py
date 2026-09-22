@@ -6,12 +6,37 @@ from jrbar.app_bundle import (
     APP_BUNDLE_IDENTIFIER,
     APP_BUNDLE_NAME,
     APP_EXECUTABLE_NAME,
+    containing_app_bundle,
 )
 from jrbar.cli import build_jrbar_parser, build_parser
 from jrbar.device_identity import DeviceKind, normalize_device_label
 from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_containing_app_bundle_accepts_main_and_nested_helper_layouts(tmp_path: Path) -> None:
+    app = tmp_path / "JR-Bar.app"
+    main = app / "Contents" / "MacOS" / "JR-Bar"
+    helper = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    main.parent.mkdir(parents=True)
+    helper.parent.mkdir(parents=True)
+
+    assert containing_app_bundle(main) == app
+    assert containing_app_bundle(helper) == app
+
+
+def test_containing_app_bundle_rejects_near_names_and_paths_without_contents(tmp_path: Path) -> None:
+    near_name = tmp_path / "JR-Bar.app-copy" / "Contents" / "MacOS" / "JR-Bar"
+    source_like = tmp_path / "JR-Bar.app" / "src" / "jrbar-core"
+    bare_helper = tmp_path / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    near_name.parent.mkdir(parents=True)
+    source_like.parent.mkdir(parents=True)
+    bare_helper.parent.mkdir(parents=True)
+
+    assert containing_app_bundle(near_name) is None
+    assert containing_app_bundle(source_like) is None
+    assert containing_app_bundle(bare_helper) is None
 
 
 def test_product_display_name_and_bundle_identity_are_jr_bar__and_2_more() -> None:

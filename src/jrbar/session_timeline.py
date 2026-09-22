@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +45,17 @@ _SECRET_RUN = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")
 _REDACTED: Final = "[redacted]"
 
 SUPPORTED_PROVIDERS: Final = ("claude", "codex")
+
+# The command answers page turns — one client paging a session re-reads
+# the same transcript on every request. Both caches are small LRU maps:
+# the path cache skips the projects-tree sweep once a session's file is
+# known (revalidated by one stat), the items cache skips the whole
+# re-parse while the file's mtime+size stand. Transcripts only append,
+# so an unchanged (mtime, size) is the same document.
+_CACHE_MAX_ENTRIES: Final = 8
+_cache_lock = threading.Lock()
+_path_cache: OrderedDict[tuple[str, str, str | None], Path] = OrderedDict()
+_items_cache: OrderedDict[str, tuple[float, int, list[dict[str, Any]], list[str]]] = OrderedDict()
 
 
 def _string(value: object) -> str | None:
@@ -112,24 +125,35 @@ def _claude_project_dir_name(cwd: str) -> str:
 
 
 def _find_named(root: Path, session_id: str, *, max_files: int) -> Path | None:
-    """Newest ``*.jsonl`` under ``root`` whose name carries the uuid."""
+    """Newest ``*.jsonl`` under ``root`` whose name carries the uuid.
+
+    The name check runs inside the ``rglob`` sweep — it needs no stat —
+    so a projects tree holding tens of thousands of transcripts costs one
+    readdir walk, not a stat per file. ``max_files`` bounds the matches
+    kept for the mtime tiebreak (a uuid can appear in several project
+    dirs when the same session is resumed under a different cwd).
+    """
+    needle = session_id.lower()
+    matches: list[tuple[float, Path]] = []
     try:
-        candidates = sorted(
-            root.rglob("*.jsonl"),
-            key=lambda p: p.stat().st_mtime if p.is_file() else 0.0,
-            reverse=True,
-        )
+        iterator = root.rglob("*.jsonl")
+        for path in iterator:
+            if needle not in path.name.lower():
+                continue
+            try:
+                if not path.is_file():
+                    continue
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            matches.append((mtime, path))
+            if len(matches) >= max_files:
+                break
     except OSError:
         return None
-    needle = session_id.lower()
-    checked = 0
-    for path in candidates:
-        checked += 1
-        if checked > max_files:
-            break
-        if needle in path.name.lower():
-            return path
-    return None
+    if not matches:
+        return None
+    return max(matches, key=lambda pair: pair[0])[1]
 
 
 def find_transcript(
@@ -149,6 +173,34 @@ def find_transcript(
     if not session_id or not _UUID.match(session_id.strip()):
         return None
     sid = session_id.strip()
+    cacheable = home is None  # a test-rooted lookup never poisons the cache
+    cache_key = (provider, sid, cwd)
+    if cacheable:
+        with _cache_lock:
+            cached = _path_cache.get(cache_key)
+            if cached is not None:
+                _path_cache.move_to_end(cache_key)
+        if cached is not None and cached.is_file():
+            return cached
+        with _cache_lock:
+            _path_cache.pop(cache_key, None)
+    found = _find_transcript_uncached(provider, sid, cwd=cwd, home=home)
+    if found is not None and cacheable:
+        with _cache_lock:
+            _path_cache[cache_key] = found
+            _path_cache.move_to_end(cache_key)
+            while len(_path_cache) > _CACHE_MAX_ENTRIES:
+                _path_cache.popitem(last=False)
+    return found
+
+
+def _find_transcript_uncached(
+    provider: str,
+    sid: str,
+    *,
+    cwd: str | None = None,
+    home: Path | None = None,
+) -> Path | None:
     if provider == "claude":
         root = claude_projects_root(home)
         if cwd:
@@ -487,6 +539,36 @@ def timeline_items(provider: str, path: Path) -> tuple[list[dict[str, Any]], lis
     return items, gaps
 
 
+def _cached_timeline_items(
+    provider: str, path: Path
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """``timeline_items`` behind the mtime+size memo.
+
+    A live transcript changes its size on every append, so the cache
+    misses exactly when it should; a rewrite that somehow keeps both
+    stamps identical is the one hole, and it is closed by the firmware's
+    own rewrite semantics (appends only). The cached lists are shared
+    read-only -- ``paginate`` slices, never mutates.
+    """
+    try:
+        stamp = path.stat()
+    except OSError:
+        return [], ["transcript_unreadable"]
+    key = str(path)
+    with _cache_lock:
+        hit = _items_cache.get(key)
+        if hit is not None and hit[0] == stamp.st_mtime and hit[1] == stamp.st_size:
+            _items_cache.move_to_end(key)
+            return hit[2], hit[3]
+    items, gaps = timeline_items(provider, path)
+    with _cache_lock:
+        _items_cache[key] = (stamp.st_mtime, stamp.st_size, items, gaps)
+        _items_cache.move_to_end(key)
+        while len(_items_cache) > _CACHE_MAX_ENTRIES:
+            _items_cache.popitem(last=False)
+    return items, gaps
+
+
 def paginate(
     items: list[dict[str, Any]],
     *,
@@ -538,7 +620,7 @@ def session_timeline(
             "source": {"provider": provider, "file": None},
             "gaps": ["transcript_not_found"],
         }
-    items, gaps = timeline_items(provider, path)
+    items, gaps = _cached_timeline_items(provider, path)
     page = paginate(items, limit=limit, before=before)
     page.update(
         {

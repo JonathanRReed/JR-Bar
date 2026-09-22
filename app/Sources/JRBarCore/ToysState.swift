@@ -65,6 +65,10 @@ public struct ToysState: Codable, Equatable, Sendable {
 /// at 0.65 the whole fold read as "super grey instead of black".
 public struct FoldSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
+    /// Where a fold measures its travel from — the fixed
+    /// `activationAngle`, or wherever the lid was resting when it
+    /// started to move.
+    public var anchor: FoldAnchor
     public var activationAngle: Double
     public var perspective: Double
     public var blur: Double
@@ -75,6 +79,10 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// How milky the cover is: 0 is the bare dark portal room, 1 a
     /// fully frosted-polypropylene sheet over the room.
     public var frost: Double
+    /// Bendy's hold-in-place: the content plane counter-rotates against
+    /// the lid so a fixed eye sees the desktop stay put while the glass
+    /// tilts over it. Off keeps the picture glued to the lid.
+    public var holdPicture: Bool
     /// Mac Duo's pause-at-angle: a lid parked mid-fold hands the
     /// desktop back after this many seconds until the hinge moves
     /// again. 0 keeps the fold however long the lid sits.
@@ -82,12 +90,14 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// Bendy's return click — a Tink when the fold fully unwinds.
     public var restoreSound: Bool
 
-    public init(enabled: Bool = false, activationAngle: Double = 65,
+    public init(enabled: Bool = false, anchor: FoldAnchor = .angle,
+                activationAngle: Double = 65,
                 perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
                 jitterTolerance: Double = 1.5, provider: FoldProvider = .jrbar,
-                frost: Double = 0, dwellTimeout: Double = 0,
+                frost: Double = 0, holdPicture: Bool = true, dwellTimeout: Double = 0,
                 restoreSound: Bool = false) {
         self.enabled = enabled
+        self.anchor = anchor
         self.activationAngle = activationAngle
         self.perspective = perspective
         self.blur = blur
@@ -95,6 +105,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         self.jitterTolerance = jitterTolerance
         self.provider = provider
         self.frost = frost
+        self.holdPicture = holdPicture
         self.dwellTimeout = dwellTimeout
         self.restoreSound = restoreSound
     }
@@ -103,13 +114,14 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // `style` is the retired Tilt/Dusk/Fog picker — decoded only so
         // a file parked on an old default set still migrates; nothing
         // reads it now and a stale value like "fog" decodes fine.
-        case enabled, activationAngle, style, perspective, blur, shade, jitterTolerance, provider, frost
-        case dwellTimeout, restoreSound
+        case enabled, anchor, activationAngle, style, perspective, blur, shade, jitterTolerance
+        case provider, frost, holdPicture, dwellTimeout, restoreSound
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        anchor = (try? c.decodeIfPresent(FoldAnchor.self, forKey: .anchor)) ?? .angle
         activationAngle = (try? c.decodeIfPresent(Double.self, forKey: .activationAngle)) ?? 65
         let style = (try? c.decodeIfPresent(String.self, forKey: .style)) ?? "fog"
         perspective = (try? c.decodeIfPresent(Double.self, forKey: .perspective)) ?? 0.6
@@ -128,6 +140,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         let jitterUntouched = storedJitter == nil || storedJitter == 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
         frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0
+        holdPicture = (try? c.decodeIfPresent(Bool.self, forKey: .holdPicture)) ?? true
         dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
         restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
         // Each past default set is treated as untouched and moved to the
@@ -155,6 +168,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(enabled, forKey: .enabled)
+        try c.encode(anchor, forKey: .anchor)
         try c.encode(activationAngle, forKey: .activationAngle)
         try c.encode(perspective, forKey: .perspective)
         try c.encode(blur, forKey: .blur)
@@ -162,6 +176,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(jitterTolerance, forKey: .jitterTolerance)
         try c.encode(provider, forKey: .provider)
         try c.encode(frost, forKey: .frost)
+        try c.encode(holdPicture, forKey: .holdPicture)
         try c.encode(dwellTimeout, forKey: .dwellTimeout)
         try c.encode(restoreSound, forKey: .restoreSound)
     }
@@ -170,6 +185,23 @@ public struct FoldSettings: Codable, Equatable, Sendable {
 /// Who renders the fold.
 public enum FoldProvider: String, Codable, CaseIterable, Sendable {
     case jrbar, bendy, lidPlane
+}
+
+/// Where a fold measures its travel from (docs/TOYS.md §Fold):
+/// `.angle` holds a fixed activation angle; `.movement` auto-anchors —
+/// wherever the lid has been resting is where the fold starts from.
+public enum FoldAnchor: String, Codable, CaseIterable, Sendable {
+    case angle, movement
+}
+
+/// How the tank's day/night wash picks its clock (docs/TOYS.md):
+/// the real clock out the window, or a self-contained four-minute
+/// cycle for a tank that always breathes.
+public enum DayNightMode: String, Codable, CaseIterable, Sendable {
+    /// 21:00–06:00 reads as night; the edges blend as dawn & dusk.
+    case realTime
+    /// The classic behaviour: a slow four-minute breathe.
+    case cycle
 }
 
 /// Aquarium: every live session is a fish.
@@ -182,17 +214,21 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     /// casting, set from a fish's inspector. A missing or unknown entry
     /// falls back to the provider's table species.
     public var speciesOverrides: [String: String]
+    /// Where the day/night wash takes its clock from.
+    public var dayNight: DayNightMode
 
     public init(enabled: Bool = false, showLabels: Bool = true, density: Double = 1.0,
-                speciesOverrides: [String: String] = [:]) {
+                speciesOverrides: [String: String] = [:],
+                dayNight: DayNightMode = .realTime) {
         self.enabled = enabled
         self.showLabels = showLabels
         self.density = density
         self.speciesOverrides = speciesOverrides
+        self.dayNight = dayNight
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, showLabels, density, speciesOverrides
+        case enabled, showLabels, density, speciesOverrides, dayNight
     }
 
     public init(from decoder: any Decoder) throws {
@@ -202,6 +238,8 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         density = (try? c.decodeIfPresent(Double.self, forKey: .density)) ?? 1.0
         let raw = (try? c.decodeIfPresent([String: String].self, forKey: .speciesOverrides)) ?? [:]
         speciesOverrides = raw.filter { FishSpecies(rawValue: $0.value) != nil }
+        let dayNightRaw = (try? c.decodeIfPresent(String.self, forKey: .dayNight)) ?? nil
+        dayNight = dayNightRaw.flatMap(DayNightMode.init(rawValue:)) ?? .realTime
     }
 
     /// What `provider` swims as: the user's pick when one is stored,
@@ -694,6 +732,20 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// Mirror. Off by default: the camera's consent is asked only when
     /// the person turns the row on, and the lens never opens before it.
     public var mirror: Bool
+    /// Real audio-reactive visualizer in the media row: a Core Audio
+    /// process tap over the now-playing app (or the global mixdown)
+    /// feeds six band levels. Off by default — the first enable asks
+    /// the system-audio permission once, and the decorative animation
+    /// stays until that consent lands.
+    public var audioVisualizer: Bool
+    /// Swallow the volume/brightness media keys and drive the level
+    /// ourselves so Apple's overlay never draws. Off by default — it
+    /// needs the event tap's Accessibility grant, and keys without a
+    /// public set path (keyboard backlight) pass through either way.
+    public var replaceSystemHUD: Bool
+    /// Shake the pointer while dragging files and the shelf pulls open
+    /// under the notch as a drop target — Alcove's summon gesture.
+    public var shelfShakeToSummon: Bool
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -703,7 +755,9 @@ public struct NotchSettings: Codable, Equatable, Sendable {
                 mediaHUD: Bool = true, alerts: Bool = true,
                 soundEffects: Bool = true, weather: Bool = false,
                 weatherCity: String = "", simulateNotch: Bool = false,
-                mirror: Bool = false) {
+                mirror: Bool = false, audioVisualizer: Bool = false,
+                replaceSystemHUD: Bool = false,
+                shelfShakeToSummon: Bool = true) {
         self.enabled = enabled
         self.provider = provider
         self.islandEnabled = islandEnabled
@@ -721,13 +775,17 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         self.weatherCity = weatherCity
         self.simulateNotch = simulateNotch
         self.mirror = mirror
+        self.audioVisualizer = audioVisualizer
+        self.replaceSystemHUD = replaceSystemHUD
+        self.shelfShakeToSummon = shelfShakeToSummon
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, islandEnabled, showUsage, expandOnHover
         case capsuleNotifications, mediaEnabled, capsuleKinds, pullGestures
         case hapticTick, mediaHUD, alerts, soundEffects, weather, weatherCity
-        case simulateNotch, mirror
+        case simulateNotch, mirror, audioVisualizer, replaceSystemHUD
+        case shelfShakeToSummon
     }
 
     public init(from decoder: any Decoder) throws {
@@ -749,6 +807,9 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         weatherCity = (try? c.decodeIfPresent(String.self, forKey: .weatherCity)) ?? ""
         simulateNotch = (try? c.decodeIfPresent(Bool.self, forKey: .simulateNotch)) ?? false
         mirror = (try? c.decodeIfPresent(Bool.self, forKey: .mirror)) ?? false
+        audioVisualizer = (try? c.decodeIfPresent(Bool.self, forKey: .audioVisualizer)) ?? false
+        replaceSystemHUD = (try? c.decodeIfPresent(Bool.self, forKey: .replaceSystemHUD)) ?? false
+        shelfShakeToSummon = (try? c.decodeIfPresent(Bool.self, forKey: .shelfShakeToSummon)) ?? true
     }
 }
 

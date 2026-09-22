@@ -35,6 +35,12 @@ final class AquariumToy: Toy {
     /// The latest game moment worth a toast ("+3 pearls", "a fish
     /// grew") — the view shows it briefly; the tick clears stale ones.
     private(set) var toast: (text: String, at: Date)?
+    /// The reward moments that deserve more than a toast — an
+    /// achievement, the daily goal, a dug-up chest — shown as a small
+    /// card sliding in at the top-right (docs/TOYS.md). The view
+    /// dismisses it; the tick clears stale ones as a backstop.
+    private(set) var notice: (id: UUID, title: String, reward: String?,
+                              symbol: String, at: Date)?
 
     /// The window is covered or hidden; the view pauses its timeline.
     var windowOccluded = false
@@ -118,6 +124,16 @@ final class AquariumToy: Toy {
                     SettingLabel(title: "Density", subtitle: "How much plankton & bubbles the tank draws.")
                 }
                 LabeledContent {
+                    Picker("", selection: dayNight) {
+                        Text("Follow the clock").tag(DayNightMode.realTime)
+                        Text("4-minute cycle").tag(DayNightMode.cycle)
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                } label: {
+                    SettingLabel(title: "Day & night", subtitle: "The tank's night wash — the real clock or a quick loop.")
+                }
+                LabeledContent {
                     Button("Fill screen") { self.fillScreen() }
                 } label: {
                     SettingLabel(title: "Fill screen", subtitle: "The tank covers the whole screen. Esc leaves.")
@@ -171,6 +187,11 @@ final class AquariumToy: Toy {
                 set: { self.store?.state.aquarium.density = $0 })
     }
 
+    private var dayNight: Binding<DayNightMode> {
+        Binding(get: { self.store?.state.aquarium.dayNight ?? .realTime },
+                set: { self.store?.state.aquarium.dayNight = $0 })
+    }
+
     // MARK: Window
 
     /// "Fill screen" opens the tank first when the toy is off — the
@@ -190,11 +211,13 @@ final class AquariumToy: Toy {
     }
 
     /// The window's close button routes back through the store, so the
-    /// card's toggle and the tank can never disagree.
+    /// card's toggle and the tank can never disagree. Goes through the
+    /// `isOn` setter — writing `enabled` raw would leave the game timer
+    /// running the economy on a tank the card reads as off.
     func windowDidClose() {
         windowController = nil
         windowOccluded = false
-        store?.state.aquarium.enabled = false
+        isOn = false
         let now = Date()
         note(game.apply(.setWindowOpen(false), now: now), now: now)
         persist()
@@ -207,6 +230,11 @@ final class AquariumToy: Toy {
     /// roster prune keeps the save small. Reads `core.state.sessions`;
     /// writes nothing back — the game can never alter an agent.
     private func gameTick(now: Date = Date()) {
+        // The timer is created only while on, but guard anyway — a tick
+        // already in flight when the tank switches off must not run the
+        // economy once more.
+        guard isOn else { return }
+        let before = game
         let sessions = core.state?.sessions ?? []
         let working = sessions
             .filter { SessionActivity.reduce($0) == .working }
@@ -220,7 +248,18 @@ final class AquariumToy: Toy {
         if let toast, now.timeIntervalSince(toast.at) > 6 {
             self.toast = nil
         }
-        persist()
+        if let notice, now.timeIntervalSince(notice.at) > 6 {
+            self.notice = nil
+        }
+        // A live tick almost always moves the document (every working
+        // fish's nourish stamp), so the heartbeat alone would write the
+        // save every twenty seconds forever. Writes batch instead: at
+        // most one per `persistInterval`, with the event-driven paths
+        // (taps, purchases, open/close) still flushing immediately.
+        if game != before,
+           now.timeIntervalSince(lastPersistAt) >= Self.persistInterval {
+            persist()
+        }
     }
 
     /// Session diffs that pay: a session reading `done` earns its
@@ -272,8 +311,65 @@ final class AquariumToy: Toy {
         persist()
     }
 
+    /// Put an owned accessory on a fish — the second wearable slot.
+    func equipAccessory(_ item: ShopItem, to fishID: String?) {
+        let now = Date()
+        note(game.apply(.equipAccessory(item, fishID: fishID), now: now), now: now)
+        persist()
+    }
+
+    /// Apply an owned substrate — the tank floor.
+    func selectSubstrate(_ item: ShopItem) {
+        let now = Date()
+        note(game.apply(.selectSubstrate(item), now: now), now: now)
+        persist()
+    }
+
+    /// Apply an owned backdrop — the back wall.
+    func selectBackdrop(_ item: ShopItem) {
+        let now = Date()
+        note(game.apply(.selectBackdrop(item), now: now), now: now)
+        persist()
+    }
+
+    /// A tap on the buried treasure's spot on the sand.
+    func digTreasure(_ id: String) {
+        let now = Date()
+        note(game.apply(.digTreasure(id), now: now), now: now)
+        persist()
+    }
+
+    /// The view finished parading a queued visitor across the tank.
+    func visitorShown(_ visitor: AquariumVisitor) {
+        let now = Date()
+        note(game.apply(.visitorShown(visitor), now: now), now: now)
+        persist()
+    }
+
+    /// The parade ended — the visitor swam off the far edge. A quiet
+    /// toast so the departure doesn't pass silently.
+    func visitorDeparted(_ visitor: AquariumVisitor) {
+        let now = Date()
+        note(game.apply(.visitorDeparted(visitor), now: now), now: now)
+        persist()
+    }
+
+    /// A core event the coordinator forwards — today only `quota_reset`
+    /// matters: the submarine comes to look at a fresh lane.
+    func noteEvent(_ event: CoreEvent) {
+        guard event.kind == "quota_reset" else { return }
+        let now = Date()
+        note(game.apply(.quotaReset, now: now), now: now)
+        persist()
+    }
+
     func dismissAwayNotice() { awayNotice = nil }
     func dismissToast() { toast = nil }
+    /// The view's fade timer answers with the card it drew; a stale
+    /// id can't dismiss a newer card.
+    func dismissNotice(id: UUID) {
+        if notice?.id == id { notice = nil }
+    }
 
     /// Effects worth surfacing: the away summary becomes the panel,
     /// the rest fold into the toast line.
@@ -289,6 +385,22 @@ final class AquariumToy: Toy {
                 toast = ("\(label(for: id)) got skinny — drop some food", now)
             case .streakDay(let days):
                 toast = (days == 1 ? "A completion streak begins" : "\(days)-day streak", now)
+            case .achievementUnlocked(let a):
+                notice = (UUID(), a.title, "+\(a.reward) pearls",
+                          "checkmark.seal.fill", now)
+            case .dailyGoalMet:
+                notice = (UUID(), "Daily goal met",
+                          "+\(AquariumRules.dailyGoalReward) pearls",
+                          "calendar.badge.checkmark", now)
+            case .treasureFound(let v):
+                notice = (UUID(), "Treasure dug up", "+\(v) pearls",
+                          "shippingbox.fill", now)
+            case .purchaseLocked(let item, let needs):
+                toast = ("\(item.displayName) unlocks at tank level \(needs)", now)
+            case .visitor(let v):
+                toast = ("A \(v.displayName) drifts by", now)
+            case .visitorDeparted(let v):
+                toast = ("The \(v.displayName) drifts on", now)
             case .pearlsSpent, .purchaseDenied: break
             }
         }
@@ -304,8 +416,16 @@ final class AquariumToy: Toy {
     /// The save: small JSON, atomic write, its own file — a failed
     /// write is not worth interrupting a fish tank over.
     private func persist() {
+        lastPersistAt = Date()
         try? saveFile.save(AquariumSave(game: game))
     }
+
+    /// The slowest the game document may be written — the heartbeat's
+    /// own pace. Event-driven changes (taps, purchases, the window
+    /// toggling) flush through `persist()` directly; the tick only
+    /// writes when something moved and the interval has passed.
+    private static let persistInterval: TimeInterval = 5 * 60
+    @ObservationIgnored private var lastPersistAt = Date.distantPast
 
     // MARK: Fish
 

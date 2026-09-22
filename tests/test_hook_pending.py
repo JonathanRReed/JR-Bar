@@ -51,6 +51,8 @@ def test_drain_submits_in_file_order_and_removes_the_files__and_1_more(tmp_path:
     assert submitted[1].payload_text == "{}"
     assert pending_hook_files(tmp_path) == []
     assert (tmp_path / "unrelated.jsonl").exists()
+    # The malformed line was accounted for, not silently deleted.
+    assert (tmp_path / "codex.rejected.jsonl").read_text().strip() == "broken"
 
     # --- scenario: drain_survives_a_submit_that_raises
     (tmp_path / f"claude{PENDING_SUFFIX}").write_text(_line() + "\n" + _line() + "\n")
@@ -63,6 +65,13 @@ def test_drain_submits_in_file_order_and_removes_the_files__and_1_more(tmp_path:
 
     assert drain_pending_hooks(submit, state_dir=tmp_path, log_path_for=lambda p: f"/logs/{p}.jsonl") == 1
     assert len(calls) == 2
+    # The failed line goes back to pending for the next drain instead of
+    # being unlinked with the file.
+    leftovers = pending_hook_files(tmp_path)
+    assert len(leftovers) == 1
+    assert leftovers[0].read_text().count("\n") == 1
+    # And the next drain, with a healthy submit, delivers it.
+    assert drain_pending_hooks(submitted.append, state_dir=tmp_path, log_path_for=lambda p: f"/logs/{p}.jsonl") == 1
     assert pending_hook_files(tmp_path) == []
 
 
@@ -139,3 +148,46 @@ def test_a_drain_that_crashes_leaves_a_file_the_next_drain_finds(tmp_path) -> No
         == 1
     )
     assert seen == ["claude"] and not list(tmp_path.glob("*.draining-*"))
+
+
+def test_lines_past_the_drain_cap_stay_pending(tmp_path) -> None:
+    """A file with more lines than one drain's cap must keep the remainder
+    queued -- before, the tail was unlinked with the file, unrecorded."""
+    from jrbar import hook_pending
+
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    total = hook_pending.MAX_PENDING_LINES_PER_DRAIN + 7
+    pending.write_text("".join(_line() + "\n" for _ in range(total)), encoding="utf-8")
+
+    seen: list[str] = []
+    count = drain_pending_hooks(
+        lambda request: seen.append(request.provider),
+        state_dir=tmp_path,
+        log_path_for=lambda provider: str(tmp_path / f"{provider}.jsonl"),
+    )
+    assert count == hook_pending.MAX_PENDING_LINES_PER_DRAIN
+    rest = pending_hook_files(tmp_path)
+    assert len(rest) == 1
+    assert len(rest[0].read_text().splitlines()) == 7
+    # A second drain delivers the tail.
+    assert (
+        drain_pending_hooks(
+            lambda request: seen.append(request.provider),
+            state_dir=tmp_path,
+            log_path_for=lambda provider: str(tmp_path / f"{provider}.jsonl"),
+        )
+        == 7
+    )
+    assert pending_hook_files(tmp_path) == []
+
+
+def test_an_oversized_pending_file_is_quarantined_not_deleted(tmp_path) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    pending.write_bytes(b"x" * (hook_pending.MAX_PENDING_FILE_BYTES + 1))
+    assert drain_pending_hooks(lambda _r: None, state_dir=tmp_path) == 0
+    assert not pending.exists()
+    overflow = tmp_path / "claude.overflow.jsonl"
+    assert overflow.exists()
+    assert overflow.stat().st_size == hook_pending.MAX_PENDING_FILE_BYTES + 1

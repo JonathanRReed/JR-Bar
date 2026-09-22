@@ -10940,6 +10940,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 json.dumps(
                     {
                         "version": usage_stats.CACHE_VERSION,
+                        "pricing_semantics_version": usage_stats.PRICING_TABLE_VERSION,
                         "files": {},
                         "sessions": [],
                         "models": [],
@@ -11018,6 +11019,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 json.dumps(
                     {
                         "version": usage_stats.CACHE_VERSION,
+                        "pricing_semantics_version": usage_stats.PRICING_TABLE_VERSION,
                         "files": {},
                         "sessions": [],
                         "models": [],
@@ -17890,10 +17892,10 @@ class UsageStatsTests(unittest.TestCase):
                 [self._assistant_row("msg_1", inp=1_000_000, cached=1_000_000, out=0)],
             )
             totals = usage_stats.scan_usage(root, None)
-            # 1M uncached at $3 + 1M cached at $0.30.
-            self.assertAlmostEqual(totals.cost_usd, 3.30, places=2)
-            # Savings: the cached MTok would have cost $3, paid $0.30.
-            self.assertAlmostEqual(totals.cache_savings_usd, 2.70, places=2)
+            # 1M uncached at $2 + 1M cached at $0.20.
+            self.assertAlmostEqual(totals.cost_usd, 2.20, places=2)
+            # Savings: the cached MTok would have cost $2, paid $0.20.
+            self.assertAlmostEqual(totals.cache_savings_usd, 1.80, places=2)
 
     def test_cache_warm_scan_matches_cold_and_survives_corruption(self) -> None:
         from jrbar import usage_stats

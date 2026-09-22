@@ -7759,7 +7759,10 @@ class StatusBarController(NSObject):
                 PersistenceDisposition.REFUSED_CLOSED,
             }:
                 log_status_bar("capacity history shutdown write not queued")
-        if not self._persistence_writer.close(timeout_seconds=1.0):
+        # The queue can be 64 writes deep on a busy quit; one second was
+        # observed to strand the tail (settings, capacity history) while
+        # the process was dying anyway. Three seconds is still bounded.
+        if not self._persistence_writer.close(timeout_seconds=3.0):
             log_status_bar("persistence drain timed out")
 
     # --- Ask escalation ------------------------------------------------

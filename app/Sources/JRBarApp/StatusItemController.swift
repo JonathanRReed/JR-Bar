@@ -36,7 +36,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The `AXIdentifier` JR-Bar's own status item carries.
     nonisolated static let accessibilityIdentifier = "com.jonathanreed.jrbar.status-item"
 
-    private let statusItem: NSStatusItem
+    /// `var`, not `let`: the item is re-created by `reseatStatusItem`
+    /// when the menu-bar agent leaves it a ghost — registered while an
+    /// assertion held, it keeps a stale slot and draws nothing until a
+    /// fresh registration lands inside a suspend window.
+    private var statusItem: NSStatusItem
     private let menu = NSMenu()
     private let headerItem = NSMenuItem()
     private let detailItem = NSMenuItem()
@@ -130,26 +134,14 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private var currentWidth: CGFloat = 0
 
     override init() {
+        Self.seedPreferredPosition(for: "com.jonathanreed.jrbar.status-item")
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        // Where the item sits is the person's to choose (Command-drag);
-        // macOS gives no API to ask for a slot. A stable autosave name is
-        // the one thing the app can do: it is the key macOS remembers that
-        // choice under, so a rebuild does not send the item back to the
-        // middle of a busy menu bar.
-        statusItem.autosaveName = "com.jonathanreed.jrbar.status-item"
-        // The Menu Bar utility finds this item in the AX listing by the
-        // identifier — its slot is where a migrated chevron seats.
-        statusItem.button?.setAccessibilityIdentifier(Self.accessibilityIdentifier)
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
+        wireStatusItem()
 
         if let button = statusItem.button {
             button.image = renderer.image(for: StatusIconSpec(style: .agents))
-            button.imagePosition = .imageOnly
-            button.toolTip = "JR-Bar"
-            button.target = self
-            button.action = #selector(clicked(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         headerItem.isEnabled = false
@@ -209,6 +201,105 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         setCore(description: "connecting")
     }
 
+    /// The identity and wiring a fresh status item needs — autosave name,
+    /// AX identifier, button target/action. Runs at init and again on
+    /// every re-seat.
+    /// How many times this process has re-seated the item — each re-seat
+    /// registers under a fresh autosave name because the parked generation's
+    /// record re-parks any recreation that reuses it (the wound the chevron
+    /// fix documented under `menubar-chevron-v2`).
+    private var reseatCount = 0
+
+    /// Writes the `NSStatusItem Preferred Position` record a fresh
+    /// autosave name needs before it registers — the value a Command-drag
+    /// would store. macOS reads it as the distance from the screen's
+    /// right edge to the item's centre (measured 2026-09-21: a seed of
+    /// 640 landed a probe at x≈861; the seed is a preference, so the
+    /// nearest legal slot wins when the target is taken). With no record
+    /// a new item seeds at the bar's leftmost free run — the notch dead
+    /// zone on this hardware — and parks there, which is how an unseeded
+    /// re-seat kept recreating the ghost. An existing record is the
+    /// person's own placement and is never overwritten unless `overwrite`
+    /// is passed — re-seat names are our own transient records, and a
+    /// poisoned one must never survive into the next registration.
+    ///
+    /// The write is synchronised before returning: `UserDefaults.set`
+    /// only updates the in-memory cache and flushes on its own schedule,
+    /// and an item registered in the same run loop turn reads cfprefsd
+    /// before the seed lands there — measured 2026-09-21: every in-process
+    /// seeded re-seat still parked until the write was forced down.
+    nonisolated static func seedPreferredPosition(for name: String,
+                                                  desiredMidX: CGFloat? = nil,
+                                                  overwrite: Bool = false) {
+        let key = "NSStatusItem Preferred Position \(name)"
+        if !overwrite, UserDefaults.standard.object(forKey: key) != nil { return }
+        let screenW = NSScreen.main?.frame.width
+            ?? CGDisplayBounds(CGMainDisplayID()).width
+        // Default target: just right of the island — the slot the icon
+        // occupies in a healthy layout on notched screens.
+        let midX = desiredMidX ?? (screenW / 2 + 115)
+        UserDefaults.standard.set(Float(screenW - midX), forKey: key)
+        UserDefaults.standard.synchronize()
+    }
+
+    private func wireStatusItem() {
+        // Where the item sits is the person's to choose (Command-drag);
+        // macOS gives no API to ask for a slot. A stable autosave name is
+        // the one thing the app can do: it is the key macOS remembers that
+        // choice under, so a rebuild does not send the item back to the
+        // middle of a busy menu bar.
+        statusItem.autosaveName = reseatCount == 0
+            ? "com.jonathanreed.jrbar.status-item"
+            : "com.jonathanreed.jrbar.status-item-r\(reseatCount)"
+        logProbeOnce()
+        // The Menu Bar utility finds this item in the AX listing by the
+        // identifier — its slot is where a migrated chevron seats.
+        statusItem.button?.setAccessibilityIdentifier(Self.accessibilityIdentifier)
+        if let button = statusItem.button {
+            button.imagePosition = .imageOnly
+            button.toolTip = "JR-Bar"
+            button.target = self
+            button.action = #selector(clicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+    }
+
+    /// The Menu Bar utility's adoption repair: drop the ghosted item and
+    /// register a fresh one (inside the agent's suspend window, where the
+    /// re-registration is adopted). The parked slot's saved position would
+    /// re-park the fresh item, so its defaults key goes first.
+    func reseatStatusItem() {
+        statusItem.button?.target = nil
+        statusItem.button?.action = nil
+        // Seed the fresh name at the item's *intended* slot, not the
+        // frame it reports now: a re-seat only ever runs against a
+        // parked item, and a parked window's screen frame is the
+        // off-row park slot — seeding from it re-parks the recreation
+        // (measured 2026-09-21: parked frames fed midX≈18, every
+        // re-seat landed at (7,970) again). The default target sits
+        // just right of the island, the slot a healthy layout gives us.
+        let midX: CGFloat? = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
+        reseatCount += 1
+        // Re-seat names repeat across launches (reseatCount restarts at
+        // 0), so a poisoned record from an earlier session would outlive
+        // the guard — overwrite is the only honest write here.
+        Self.seedPreferredPosition(
+            for: "com.jonathanreed.jrbar.status-item-r\(reseatCount)",
+            desiredMidX: midX, overwrite: true)
+        // Born slim under the agent — a variable-length birth would
+        // claim the icon's full width for a beat and could park before
+        // the clamp lands.
+        statusItem = NSStatusBar.system.statusItem(
+            withLength: anchorSlim ? Self.anchorSlimLength : NSStatusItem.variableLength)
+        wireStatusItem()
+        // Re-apply the face the old item wore: force the redraw past the
+        // spec cache, then fold the boundary spacer back into the length.
+        currentSpec = nil
+        redraw()
+        refold()
+    }
+
     /// The button's frame in screen coordinates, for anchoring the panel.
     var anchorRect: NSRect? {
         guard let button = statusItem.button, let window = button.window else { return nil }
@@ -225,6 +316,30 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
     }
 
+    /// The item window's occlusion state — the honest read on whether the
+    /// surface composites. A parked item's window reports its logical
+    /// frame forever; only the occlusion says nothing is on the glass.
+    var boundaryOcclusion: NSWindow.OcclusionState? {
+        statusItem.button?.window?.occlusionState
+    }
+
+    func logProbeOnce() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
+            guard let self else { return }
+            NSLog("JRBAR-PROBE healthy-read: \(self.boundaryWindowProbe)")
+        }
+    }
+
+    var boundaryWindowProbe: String {
+        guard let w = statusItem.button?.window else { return "window=nil" }
+        let num = w.windowNumber
+        let onScreen = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+        let ours = onScreen.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == Int32(ProcessInfo.processInfo.processIdentifier) }
+        let bounds = ours.compactMap { $0[kCGWindowBounds as String] as? [String: Double] }
+            .map { "(\($0["X"]!),\($0["Y"]!),\($0["Width"]!)x\($0["Height"]!))" }
+        return "isVis=\(w.isVisible) space=\(w.isOnActiveSpace) screen=\(w.screen != nil) alpha=\(w.alphaValue) num=\(num) cgwindows=\(bounds)"
+    }
+
     /// The icon's own width — the part of the item that is not spacer.
     var boundaryGlyphLength: CGFloat {
         naturalWidth > 0 ? naturalWidth : NSStatusBar.system.thickness
@@ -239,6 +354,28 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         refold()
     }
 
+    /// Under the agent the island face carries the visible icon and the
+    /// item is a pure boundary anchor — the notch-adjacent niche it must
+    /// hold is ~34 pt (measured 2026-09-21: the island's right edge at
+    /// 848.5 against Now Playing at 883), so a 39 pt slot can never keep
+    /// it and every registration was born parked. Slim clamps the slot
+    /// narrow enough to hold the niche.
+    private var anchorSlim = false
+    nonisolated static let anchorSlimLength: CGFloat = 28
+
+    func setAnchorSlim(_ slim: Bool) {
+        guard slim != anchorSlim else { return }
+        anchorSlim = slim
+        refold()
+        if slim { statusItem.length = Self.anchorSlimLength }
+    }
+
+    /// Every slot-width write goes through here so the slim clamp is
+    /// impossible to bypass.
+    private func applyItemLength(_ length: CGFloat) {
+        statusItem.length = anchorSlim ? Self.anchorSlimLength : length
+    }
+
     /// The face the button wears: the natural image, or — with a spacer
     /// out — a wider template composite with the icon at its right end
     /// and a ‹ mark in the spacer's last points. The spacer is always
@@ -251,7 +388,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         if boundarySpacer <= 0 {
             if button.image !== source { button.image = source }
             button.imageScaling = .scaleProportionallyDown
-            if currentWidth > 0, statusItem.length != currentWidth { statusItem.length = currentWidth }
+            if currentWidth > 0, statusItem.length != currentWidth { applyItemLength(currentWidth) }
             return
         }
         // A template strip tints itself; a coloured strip (the session
@@ -275,7 +412,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         if button.image !== folded { button.image = folded }
         button.imageScaling = .scaleNone
         let width = (currentWidth > 0 ? currentWidth : naturalWidth) + boundarySpacer
-        if statusItem.length != width { statusItem.length = width }
+        if statusItem.length != width { applyItemLength(width) }
     }
 
     /// The composite: `spacer` points of nothing, then the icon, drawn
@@ -371,7 +508,10 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         let spec = StatusIconSpec(style: style,
                                   ringFraction: style == .glyphRing || style == .orbit ? ring : nil,
                                   tintHex: tint?.statusHex,
-                                  meters: style.isMeters ? meters : [],
+                                  // The compact readout meters the tightest
+                                  // window off the same list the columns
+                                  // draw; it just renders none of them.
+                                  meters: style.isMeters || style == .compactPercent ? meters : [],
                                   overflow: style.isMeters ? meterOverflow : 0,
                                   // A failure keeps its red even while the
                                   // stage-2 escalation is pulsing: repainting
@@ -380,7 +520,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                                   dot: style.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
                                   sessions: style == .agents || style == .orbit ? sessionDots : [],
                                   phase: phase)
-        let strip = style.isMeters || style == .agents || style == .orbit
+        let strip = style.isMeters || style == .agents || style == .orbit || style == .compactPercent
         return StatusItemPlan(spec: spec,
                               label: style == .glyphLabel ? labelText : nil,
                               // The meter strip and the session strip size
@@ -415,7 +555,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             if let width = plan.stripWidth {
                 if width != currentWidth {
                     currentWidth = width
-                    if boundarySpacer <= 0 { statusItem.length = width }
+                    if boundarySpacer <= 0 { applyItemLength(width) }
                     logFrame(width: width)
                 }
             } else {
@@ -441,13 +581,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                 ])
                 button.imagePosition = .imageLeading
                 button.imageHugsTitle = true
-                statusItem.length = NSStatusItem.variableLength
+                applyItemLength(NSStatusItem.variableLength)
             } else {
                 button.title = ""
                 button.imagePosition = .imageOnly
                 // A strip sets its own width above; the square styles are
                 // square — unless the boundary spacer owns the width.
-                if !strip, boundarySpacer <= 0 { statusItem.length = NSStatusItem.squareLength }
+                if !strip, boundarySpacer <= 0 { applyItemLength(NSStatusItem.squareLength) }
             }
         }
     }
@@ -667,6 +807,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             ("meters_done", StatusIconSpec(style: .meters, meters: sample, dot: .done), nil),
             ("meters_overflow", StatusIconSpec(style: .meters, meters: sample, overflow: 2, dot: .working, phase: 0.5), nil),
             ("meters_percent", StatusIconSpec(style: .metersPercent, meters: sample, dot: .working, phase: 0.5), nil),
+            ("compact_percent", StatusIconSpec(style: .compactPercent, meters: sample), nil),
             ("glyph", StatusIconSpec(style: .glyph), nil),
             ("glyph_working", StatusIconSpec(style: .glyph, tintHex: "#00E5FF"), nil),
             ("glyph_ring_42", StatusIconSpec(style: .glyphRing, ringFraction: 0.42), nil),
@@ -737,8 +878,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// when the provider reports its primary window without a number; the
     /// strip marks that column as unread. `document` carries the
     /// configured `colors.agent_colors.<id>` accent, when one validates.
+    /// `resetsAt`/`verdict` feed the percent styles' countdown swap and
+    /// the compact style's pace tint.
     static func meter(for provider: String, fraction: Double?, approximate: Bool,
-                      document: SettingsDocument? = nil) -> StatusMeter {
+                      document: SettingsDocument? = nil,
+                      resetsAt: Double? = nil, verdict: UsageForecast.Verdict? = nil) -> StatusMeter {
         let style = ProviderStyle.style(for: provider, document: document)
         let glyph: StatusMeter.Glyph
         switch style.glyph {
@@ -747,7 +891,19 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         }
         return StatusMeter(id: style.id, name: style.name, glyph: glyph, fraction: fraction,
                            approximate: approximate,
-                           accentHex: document?.agentColorHex(provider))
+                           accentHex: document?.agentColorHex(provider),
+                           resetsAt: resetsAt, paceVerdict: paceVerdict(for: verdict))
+    }
+
+    /// The app-side verdict collapsed onto the meter's tint vocabulary.
+    static func paceVerdict(for verdict: UsageForecast.Verdict?) -> StatusMeter.PaceVerdict {
+        switch verdict {
+        case .exhausted: return .exhausted
+        case .runsOut: return .runsOut
+        case .comfortable: return .comfortable
+        case .guarded: return .guarded
+        case .unknown, .unmeasured, nil: return .unknown
+        }
     }
 }
 

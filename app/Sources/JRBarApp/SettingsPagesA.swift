@@ -228,7 +228,7 @@ struct MenuBarPreview: View {
         StatusIconSpec(style: style,
                        ringFraction: meters.first?.fraction ?? 0.42,
                        tintHex: "#00E5FF",
-                       meters: style.isMeters ? meters : [],
+                       meters: style.isMeters || style == .compactPercent ? meters : [],
                        overflow: style.isMeters ? overflow : 0,
                        dot: style.isMeters ? .working : .idle,
                        sessions: style == .agents || style == .orbit ? sessions : [],

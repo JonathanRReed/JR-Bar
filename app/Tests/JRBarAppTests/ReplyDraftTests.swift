@@ -27,16 +27,16 @@ struct ReplyDraftTests {
     func draftsSurviveRelaunch() {
         let defaults = freshDefaults()
         let a = ask()
-        let first = PanelStore(core: CoreModel(), draftsDefaults: defaults)
+        let first = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
         first.setReplyDraft("yes, but only for this repo", for: a)
 
-        let second = PanelStore(core: CoreModel(), draftsDefaults: defaults)
+        let second = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
         #expect(second.replyDraft(for: a) == "yes, but only for this repo")
     }
 
     @Test("drafts key by request id; distinct asks don't share text")
     func draftsKeyByRequest() {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults())
+        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults(), screenBarShown: false)
         let a = ask(request: "req-1")
         let b = ask(request: "req-2", summary: "other?")
         store.setReplyDraft("first", for: a)
@@ -51,7 +51,7 @@ struct ReplyDraftTests {
 
     @Test("an empty write clears the draft — send confirmation uses it")
     func emptyClearsDraft() {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults())
+        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults(), screenBarShown: false)
         let a = ask()
         store.setReplyDraft("half typed", for: a)
         store.setReplyDraft("", for: a)
@@ -61,7 +61,7 @@ struct ReplyDraftTests {
     @Test("the store stays bounded — the oldest draft drops first")
     func draftsBounded() {
         let defaults = freshDefaults()
-        let store = PanelStore(core: CoreModel(), draftsDefaults: defaults)
+        let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
         for i in 0...55 {
             store.setReplyDraft("draft \(i)", for: ask(request: "req-\(i)"))
         }

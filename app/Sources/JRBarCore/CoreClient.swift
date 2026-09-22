@@ -92,6 +92,11 @@ public final class CoreClient: @unchecked Sendable {
     private var commandCounter = 0
     private var pending: [String: CheckedContinuation<CoreReply, Error>] = [:]
     private var _isConnected = false
+    /// Decoded-frame counter, bumped on the read thread. A reply timeout
+    /// that watched frames arrive knows the daemon is alive — the command
+    /// is queued behind a slow sibling (dispatch serializes per socket),
+    /// not lost to a wedged read path — so the socket survives.
+    private var framesSeen: UInt64 = 0
     /// The local user id the socket's peer must present (the daemon checks
     /// ours, we check theirs). Nil disables the check.
     public var expectedPeerUID: uid_t? = getuid()
@@ -208,14 +213,19 @@ public final class CoreClient: @unchecked Sendable {
             // wait for the reply frame.
             let timeout = timeout ?? replyTimeout
             let id = command.id
+            lock.lock()
+            let framesAtSend = framesSeen
+            lock.unlock()
             Task.detached { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))
                 guard let self, let waiting = self.takePending(id) else { return }
                 waiting.resume(throwing: CoreClientError.timeout)
-                // A reply that never came means the daemon may be wedged
-                // mid-read; drop the socket so the run loop reconnects
-                // instead of leaving the connection half-dead.
-                self.dropConnection(socket)
+                // Frames arriving during the wait prove the daemon is
+                // alive and the socket healthy — commands serialize per
+                // connection, so a slow sibling (a cold usage scan) is
+                // what delayed this reply. Dropping here would kill the
+                // in-flight command too; only a silent socket is dropped.
+                if self.framesSeenCount() == framesAtSend { self.dropConnection(socket) }
             }
             if let errno = writeAll(socket, bytes) {
                 if let waiting = takePending(command.id) {
@@ -252,6 +262,13 @@ public final class CoreClient: @unchecked Sendable {
         let current = fd == socket
         lock.unlock()
         if current { shutdown(socket, SHUT_RDWR) }
+    }
+
+    /// Synchronous lock wrapper — `NSLock` is banned inside async
+    /// contexts, so the timeout task reads the counter through here.
+    private func framesSeenCount() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return framesSeen
     }
 
     private func takePending(_ id: String) -> CheckedContinuation<CoreReply, Error>? {
@@ -431,6 +448,9 @@ public final class CoreClient: @unchecked Sendable {
                 return (String(cString: strerror(errno)), sawHello)
             }
             for frame in splitter.feed(Data(buffer[0..<count])) {
+                lock.lock()
+                framesSeen &+= 1
+                lock.unlock()
                 do {
                     let message = try CoreCodec.decode(frame: frame)
                     if case .hello(let hello) = message {

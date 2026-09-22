@@ -56,6 +56,7 @@ PRODUCT_DISPLAY_NAME="JR-Bar"
 MINIMUM_SUPPORTED_MACOS="26.0"
 APPLE_EVENTS_USAGE_DESCRIPTION="JR-Bar uses Automation only to open a reviewed resume command in Terminal or iTerm2 when you choose Open."
 FOCUS_STATUS_USAGE_DESCRIPTION="JR-Bar uses Focus Status only when you choose Allow Focus Status, so Do Not Disturb can follow whether a macOS Focus is active."
+AUDIO_CAPTURE_USAGE_DESCRIPTION="JR-Bar reads the playing app's audio levels only while the notch's Audio visualizer setting is on, to draw its six-band animation. Audio is never recorded or stored."
 SPARKLE_FEED_URL="https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
 SPARKLE_PUBLIC_KEY_FILE="$ROOT_DIR/packaging/sparkle_public_ed_key.txt"
 
@@ -347,6 +348,18 @@ echo "==> assembling $APP_PATH"
 /bin/mkdir -p "$HELPERS"
 /usr/bin/ditto "$CORE_APP" "$HELPERS/jrbar-core.app"
 /usr/bin/install -m 755 "$HOOK_DIR/jrbar-hook" "$HELPERS/jrbar-hook"
+# The menu-bar assertion holder ships inside the app bundle — the app
+# build script puts it there (Contents/Helpers/jrbar-asserter.app, its own
+# bundle id, toolchain rpaths stripped). It must be its own .app: a bare
+# binary inside our bundle resolves Bundle.main to com.jonathanreed.jrbar,
+# which makes the agent read the holder as *us* and hide our icon again
+# (measured 2026-09-21). Verify, never rebuild — building it here would
+# bypass the APP_BUILD_SCRIPT seam the contract tests drive.
+ASSERTER_APP="$APP_PATH/Contents/Helpers/jrbar-asserter.app"
+if [ ! -x "$ASSERTER_APP/Contents/MacOS/jrbar-asserter" ]; then
+    echo "the app build did not produce $ASSERTER_APP/Contents/MacOS/jrbar-asserter" >&2
+    exit 1
+fi
 # The daemon is headless: never a Dock tile, never a window. It inherits the
 # app's Automation grant through the process tree, but TCC reads the usage
 # strings from the bundle it finds first, so it carries them too.
@@ -396,6 +409,8 @@ fi
     /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription $APPLE_EVENTS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSFocusStatusUsageDescription string $FOCUS_STATUS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :NSFocusStatusUsageDescription $FOCUS_STATUS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NSAudioCaptureUsageDescription string $AUDIO_CAPTURE_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :NSAudioCaptureUsageDescription $AUDIO_CAPTURE_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $SPARKLE_FEED_URL" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \

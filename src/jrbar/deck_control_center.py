@@ -132,6 +132,11 @@ def open_control_center(target, *, input_check: bool = False) -> None:
 
 
 def deck_executor(target) -> MacDeckActionExecutor:
+    # The executor's lambdas run on whichever thread ``deliver`` is on —
+    # since input delivery moved to a worker, every AppKit/board touch
+    # hops to main (inline when the caller already is).
+    on_main = getattr(target, "_core_on_main", None) or (lambda fn: fn())
+
     def submit_shortcut(name):
         from .deck_automation import DeckAutomationRunner
         runner = getattr(target, "_deck_automation_runner", None)
@@ -145,14 +150,15 @@ def deck_executor(target) -> MacDeckActionExecutor:
             target._deck_automation_runner = runner
         return runner.submit(name)
     return MacDeckActionExecutor(
-        reveal_current_ask=lambda: target.performRevealCurrentAsk_(None),
-        open_agent_browser=lambda: target.openAgentBrowser_(None),
-        open_usage=lambda: target.openProviderUsageCenter_(None),
-        open_control_center=lambda: open_control_center(target),
-        next_bank=lambda: change_deck_bank(target, 1),
-        previous_bank=lambda: change_deck_bank(target, -1),
-        next_scope=lambda: _cycle_scope(target, 1),
-        previous_scope=lambda: _cycle_scope(target, -1),
-        session_revealer=lambda identity, revision: reveal_deck_session(target, identity, revision),
+        reveal_current_ask=lambda: on_main(lambda: target.performRevealCurrentAsk_(None)),
+        open_agent_browser=lambda: on_main(lambda: target.openAgentBrowser_(None)),
+        open_usage=lambda: on_main(lambda: target.openProviderUsageCenter_(None)),
+        open_control_center=lambda: on_main(lambda: open_control_center(target)),
+        next_bank=lambda: on_main(lambda: change_deck_bank(target, 1)),
+        previous_bank=lambda: on_main(lambda: change_deck_bank(target, -1)),
+        next_scope=lambda: on_main(lambda: _cycle_scope(target, 1)),
+        previous_scope=lambda: on_main(lambda: _cycle_scope(target, -1)),
+        session_revealer=lambda identity, revision: on_main(
+            lambda: reveal_deck_session(target, identity, revision)),
         shortcut_runner=submit_shortcut,
     )

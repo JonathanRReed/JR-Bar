@@ -177,6 +177,19 @@ enum DockTile: String, CaseIterable {
 }
 
 enum DockEnhanceMath {
+    /// The bottom Dock label needs vertical room. A side Dock label needs
+    /// its measured width plus the bubble's horizontal padding, capped so
+    /// a pathological app name cannot push the preview across the screen.
+    static let nativeLabelHeight: CGFloat = 34
+    static let nativeSideLabelLimit: CGFloat = 240
+
+    static func nativeLabelClearance(title: String, edge: DockEdge) -> CGFloat {
+        guard edge != .bottom else { return nativeLabelHeight }
+        let width = ceil((title as NSString).size(
+            withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width)
+        return min(max(nativeLabelHeight, width + 24), nativeSideLabelLimit)
+    }
+
     static func axPoint(_ appKitPoint: CGPoint, mainScreenHeight: CGFloat) -> CGPoint {
         CGPoint(x: appKitPoint.x, y: mainScreenHeight - appKitPoint.y)
     }
@@ -236,25 +249,27 @@ enum DockEnhanceMath {
     /// over its app — and clamped inside the screen when the tile hugs
     /// a screen edge.
     static func panelFrame(anchor itemFrame: CGRect, edge: DockEdge, size: CGSize,
-                           screen: CGRect, gap: CGFloat) -> CGRect {
+                           screen: CGRect, gap: CGFloat,
+                           labelClearance: CGFloat = nativeLabelHeight) -> CGRect {
+        let offset = gap + labelClearance
         switch edge {
         case .bottom:
             let x = min(max(itemFrame.midX - size.width / 2, screen.minX + 8),
                         max(screen.minX + 8, screen.maxX - size.width - 8))
             // An auto-hidden Dock reports its tiles below the screen
             // while it slides; the panel never follows them off it.
-            let y = min(max(itemFrame.maxY + gap, screen.minY + 8),
+            let y = min(max(itemFrame.maxY + offset, screen.minY + 8),
                         max(screen.minY + 8, screen.maxY - size.height - 8))
             return CGRect(x: x, y: y, width: size.width, height: size.height)
         case .left:
             let y = min(max(itemFrame.midY - size.height / 2, screen.minY + 8),
                         max(screen.minY + 8, screen.maxY - size.height - 8))
-            return CGRect(x: itemFrame.maxX + gap, y: y,
+            return CGRect(x: itemFrame.maxX + offset, y: y,
                           width: size.width, height: size.height)
         case .right:
             let y = min(max(itemFrame.midY - size.height / 2, screen.minY + 8),
                         max(screen.minY + 8, screen.maxY - size.height - 8))
-            return CGRect(x: itemFrame.minX - gap - size.width, y: y,
+            return CGRect(x: itemFrame.minX - offset - size.width, y: y,
                           width: size.width, height: size.height)
         }
     }
@@ -411,23 +426,56 @@ enum DockEnhanceMath {
         }
     }
 
-    /// Match a captured window to an AX row. Frames are the honest key
-    /// — titles repeat, go empty, or change mid-session — with a title
-    /// match as the fallback for a window whose frame the app reports
-    /// oddly. Returns the index of the row, or nil.
-    static func matchRow(scFrame: CGRect, scTitle: String?,
-                         rows: [(frame: CGRect?, title: String)],
-                         tolerance: CGFloat = 2) -> Int? {
-        if let index = rows.firstIndex(where: { row in
-            guard let frame = row.frame else { return false }
+    enum WindowMatch: Equatable {
+        case matched(Int), ambiguous, none
+    }
+
+    /// Native IDs win. Without one, accept only an unambiguous frame or
+    /// title match; two identical windows must not borrow each other's image.
+    static func matchResult(scFrame: CGRect, scTitle: String?,
+                            rows: [(frame: CGRect?, title: String)],
+                            scWindowID: CGWindowID? = nil,
+                            rowWindowIDs: [CGWindowID?] = [],
+                            tolerance: CGFloat = 2) -> WindowMatch {
+        guard rowWindowIDs.isEmpty || rowWindowIDs.count == rows.count else { return .none }
+        if let scWindowID, !rowWindowIDs.isEmpty {
+            let exact = rows.indices.filter { rowWindowIDs[$0] == scWindowID }
+            if exact.count == 1 { return .matched(exact[0]) }
+            if exact.count > 1 { return .ambiguous }
+        }
+        let eligible = rows.indices.filter {
+            scWindowID == nil || rowWindowIDs.isEmpty || rowWindowIDs[$0] == nil
+        }
+        let frames = eligible.filter { index in
+            guard let frame = rows[index].frame else { return false }
             return abs(frame.minX - scFrame.minX) <= tolerance
                 && abs(frame.minY - scFrame.minY) <= tolerance
                 && abs(frame.width - scFrame.width) <= tolerance
                 && abs(frame.height - scFrame.height) <= tolerance
-        }) { return index }
-        guard let scTitle, !scTitle.isEmpty else { return nil }
-        return rows.firstIndex(where: { $0.title == scTitle })
+        }
+        if frames.count == 1 { return .matched(frames[0]) }
+        let pool = frames.isEmpty ? eligible : frames
+        if let scTitle, !scTitle.isEmpty {
+            let titles = pool.filter { rows[$0].title == scTitle }
+            if titles.count == 1 { return .matched(titles[0]) }
+            if titles.count > 1 { return .ambiguous }
+        }
+        return frames.count > 1 ? .ambiguous : .none
     }
+
+    static func matchRow(scFrame: CGRect, scTitle: String?,
+                         rows: [(frame: CGRect?, title: String)],
+                         scWindowID: CGWindowID? = nil,
+                         rowWindowIDs: [CGWindowID?] = [],
+                         tolerance: CGFloat = 2) -> Int? {
+        if case .matched(let index) = matchResult(
+            scFrame: scFrame, scTitle: scTitle, rows: rows,
+            scWindowID: scWindowID, rowWindowIDs: rowWindowIDs, tolerance: tolerance) {
+            return index
+        }
+        return nil
+    }
+
 }
 
 // MARK: - The Dock's AX tree
@@ -516,6 +564,19 @@ enum AppleDockReader {
 
     static func frame(of element: AXUIElement) -> CGRect? { axFrame(element) }
 
+    /// Repeated AX references are one window; matching titles and frames
+    /// are not. Stacked untitled windows must each keep their own card.
+    @MainActor
+    static func uniqueWindowsByIdentity(_ windows: [DockPreviewWindow]) -> [DockPreviewWindow] {
+        var seen = Set<AXUIElement>()
+        var seenWindowIDs = Set<CGWindowID>()
+        return windows.filter { window in
+            if let id = window.windowID, !seenWindowIDs.insert(id).inserted { return false }
+            guard let element = window.element else { return true }
+            return seen.insert(element).inserted
+        }
+    }
+
     /// One app's windows as preview rows — AX gives the title, the
     /// frame (the thumbnail match key), the minimized flag, and the
     /// element a later click can raise, close or minimize.
@@ -534,8 +595,7 @@ enum AppleDockReader {
               let elements = value as? [AXUIElement] else { return [] }
         rowStamp &+= 1
         let stamp = rowStamp << 20
-        var seen = Set<String>()
-        return elements.enumerated().compactMap { index, element in
+        let windows: [DockPreviewWindow] = elements.enumerated().compactMap { index, element in
             // Sheets, drawers, floating palettes: not windows a person
             // switches to.
             let subrole = axString(element, kAXSubroleAttribute)
@@ -549,11 +609,6 @@ enum AppleDockReader {
                   frame.height >= DockThumbnailer.minimumWindowEdge else { return nil }
             let title = axString(element, kAXTitleAttribute).flatMap { $0.isEmpty ? nil : $0 }
                 ?? "Untitled window"
-            // Some apps report the same window twice — once per AX
-            // surface. Two identical rows would leave one card empty
-            // forever, since one capture matches only one row.
-            let key = "\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width)),\(Int(frame.height))|\(title)"
-            guard seen.insert(key).inserted else { return nil }
             return DockPreviewWindow(
                 id: stamp | index,
                 title: title,
@@ -561,8 +616,9 @@ enum AppleDockReader {
                 fullScreen: fullScreenState(of: element),
                 frame: frame,
                 documentURL: documentURL(of: element),
-                element: element)
+                element: element, windowID: DockWindowIdentity.windowID(of: element))
         }
+        return uniqueWindowsByIdentity(windows)
     }
 
     /// Click a preview card: un-minimize if needed, raise the window,
@@ -743,6 +799,8 @@ struct DockPreviewWindow: Identifiable {
     /// The AX window element — the raise/close/minimize target. AX
     /// handles only ever touch the main actor here.
     let element: AXUIElement?
+    /// Native capture identity, when the OS exposes it.
+    var windowID: CGWindowID? = nil
 }
 
 /// One entry in a folder pop (DockDoor's Folder Pop): the name, the
@@ -868,6 +926,7 @@ final class DockEnhanceController {
     static let listSlop: CGSize = CGSize(width: 20, height: 96)
 
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var panelWarmupTimer: Timer?
     @ObservationIgnored private var tracker = DockHoverTracker()
     @ObservationIgnored private var panel: DockPreviewPanel?
     /// Esc and a click anywhere else close the preview even though it
@@ -947,6 +1006,7 @@ final class DockEnhanceController {
 
     isolated deinit {
         timer?.invalidate()
+        panelWarmupTimer?.invalidate()
     }
 
     // MARK: Lifecycle
@@ -983,6 +1043,7 @@ final class DockEnhanceController {
             Task { @MainActor [weak self] in self?.quickQuit(at: point, force: force) }
         }
         scheduleTick(after: Self.pollInterval)
+        schedulePanelWarmup(layoutOnly: panel != nil)
     }
 
     func stop() {
@@ -990,6 +1051,8 @@ final class DockEnhanceController {
         running = false
         timer?.invalidate()
         timer = nil
+        panelWarmupTimer?.invalidate()
+        panelWarmupTimer = nil
         tracker.reset()
         cachedList = nil
         if let quickQuitMonitor { NSEvent.removeMonitor(quickQuitMonitor) }
@@ -1003,9 +1066,41 @@ final class DockEnhanceController {
     func refreshPermissions(force: Bool = false) {
         guard force || Date().timeIntervalSince(permissionsCheckedAt) > Self.permissionTTL else { return }
         permissionsCheckedAt = Date()
+        let wasTrusted = accessibilityTrusted
         accessibilityTrusted = AXIsProcessTrusted()
         screenCaptureGranted = CGPreflightScreenCaptureAccess()
         magnificationOn = UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "magnification") ?? false
+        if running, !wasTrusted, accessibilityTrusted {
+            schedulePanelWarmup(layoutOnly: panel != nil)
+        }
+    }
+
+    /// Prepare the retained, empty panel before the first hover. Default
+    /// run-loop mode avoids doing this while a menu or drag is tracking.
+    /// Separate turns keep construction and first layout from forming one
+    /// long synchronous operation. Nothing is shown or captured here.
+    private func schedulePanelWarmup(layoutOnly: Bool) {
+        panelWarmupTimer?.invalidate()
+        let timer = Timer(timeInterval: layoutOnly ? 0.1 : 1.0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.panelWarmupTimer = nil
+                guard self.running, self.accessibilityTrusted else { return }
+                let start = ProcessInfo.processInfo.systemUptime
+                if layoutOnly {
+                    guard let panel = self.panel, !panel.isVisible else { return }
+                    _ = panel.fittingSize()
+                } else {
+                    guard self.panel == nil else { return }
+                    _ = self.ensurePanel()
+                    self.schedulePanelWarmup(layoutOnly: true)
+                }
+                let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
+                Self.log.notice("preview warmup \(layoutOnly ? "layout" : "construction", privacy: .public): \(milliseconds, privacy: .public) ms")
+            }
+        }
+        panelWarmupTimer = timer
+        RunLoop.main.add(timer, forMode: .default)
     }
 
     /// The frame a panel anchors on: the tile's, or under magnification
@@ -1188,7 +1283,9 @@ final class DockEnhanceController {
         let size = panel.fittingSize()
         let target = DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: edge, size: size,
-            screen: screenFrame, gap: Self.panelGap)
+            screen: screenFrame, gap: Self.panelGap,
+            labelClearance: DockEnhanceMath.nativeLabelClearance(
+                title: preview.appName, edge: edge))
         panel.present(frame: target, dockedAt: edge)
         watchers.start(escape: true, clickAway: true)
 
@@ -1294,7 +1391,9 @@ final class DockEnhanceController {
         let itemFrame = anchorFrame(for: item, pointer: NSEvent.mouseLocation)
         let size = panel.fittingSize()
         let target = DockEnhanceMath.panelFrame(anchor: itemFrame, edge: anchor.edge, size: size,
-                                                screen: anchor.screen, gap: Self.panelGap)
+                                                screen: anchor.screen, gap: Self.panelGap,
+                                                labelClearance: DockEnhanceMath.nativeLabelClearance(
+                                                    title: preview.appName, edge: anchor.edge))
         self.anchor = (item, anchor.edge, anchor.screen)
         if abs(target.minX - panel.frame.minX) > 1 || abs(target.minY - panel.frame.minY) > 1
             || abs(target.width - panel.frame.width) > 1 || abs(target.height - panel.frame.height) > 1 {
@@ -1742,6 +1841,8 @@ final class DockEnhanceController {
         let itemFrame = anchorFrame(for: anchor.item, pointer: NSEvent.mouseLocation)
         panel.setFrame(DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: anchor.edge, size: panel.fittingSize(),
-            screen: anchor.screen, gap: Self.panelGap), display: true)
+            screen: anchor.screen, gap: Self.panelGap,
+            labelClearance: DockEnhanceMath.nativeLabelClearance(
+                title: preview.appName, edge: anchor.edge)), display: true)
     }
 }

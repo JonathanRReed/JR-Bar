@@ -18,6 +18,14 @@ import SwiftUI
 struct NotchIslandView: View {
     let toy: NotchToy
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The notice's entrance state — driven so the slide-down-fade-in
+    /// runs at `noticeFadeIn` and the dismissal reverses at
+    /// `noticeFadeOut`, two durations a single transition can't carry.
+    @ViewState private var noticeShown = false
+    /// The departing notice's ghost: while it fades the face behind is
+    /// still "notice", so the out-fade plays over the black housing
+    /// instead of letting the idle dots read through.
+    @ViewState private var lastNotice: AlcoveNotice?
 
     /// Which face is up — the notice outranks the card, the card
     /// outranks idle. The animation value, so the morph gets the spring
@@ -31,14 +39,19 @@ struct NotchIslandView: View {
         let summary = toy.islandSummary
         ZStack(alignment: .top) {
             islandBackground
-            if let notice = toy.activeCapsule {
+            if let notice = toy.activeCapsule ?? lastNotice {
                 noticeCapsule(notice)
-                    .transition(.opacity)
+                    .opacity(noticeShown ? 1 : 0)
+                    .offset(y: reduceMotion || noticeShown
+                            ? 0 : -NotchMotion.noticeSlide)
+                    .allowsHitTesting(toy.activeCapsule != nil)
             } else if toy.islandExpanded {
                 // The card, grown out of the notch — the same rows the
                 // glass fallback shows, on black under `cardTopPad`.
-                NotchCardView(model: toy.cardModel, style: .island,
-                              width: toy.expandedCardWidth)
+                ScrollView(.vertical) {
+                    NotchCardView(model: toy.cardModel, style: .island,
+                                  width: toy.expandedCardWidth)
+                }
                     .padding(.top, toy.cardTopPad)
                     .transition(.opacity)
             } else {
@@ -47,20 +60,47 @@ struct NotchIslandView: View {
                     // face carries it, so a tap on a dot is a tap too.
                     .contentShape(Rectangle())
                     .onTapGesture { toy.islandTapped() }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Notch island")
+                    .accessibilityValue(summary.statusLine)
+                    .accessibilityHint("Opens the notch card")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { toy.islandTapped() }
                     .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(silhouette)
         .onHover { toy.setHovered($0) }
-        .animation(reduceMotion ? .easeInOut(duration: 0.15)
-                              : .spring(response: 0.32, dampingFraction: 0.82),
+        // Every face decision funnels through `NotchMotion.faceTransition`
+        // — the morph spring normally, the quiet crossfade under
+        // Reduce Motion — so the accessibility path is one pinned fact.
+        .animation(NotchMotion.faceTransition(reduceMotion: reduceMotion) == .crossfade
+                   ? .easeInOut(duration: NotchMotion.reduceMotionFade)
+                   : .spring(response: 0.32, dampingFraction: 0.82),
                    value: face)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Notch island")
-        .accessibilityValue(summary.statusLine)
-        .accessibilityHint("Opens the notch card")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: "Toggle card") { toy.islandTapped() }
+        .onChange(of: toy.activeCapsule != nil) { _, showing in
+            if showing {
+                lastNotice = toy.activeCapsule
+                withAnimation(reduceMotion
+                              ? .easeInOut(duration: NotchMotion.reduceMotionFade)
+                              : .easeOut(duration: NotchMotion.noticeFadeIn)) {
+                    noticeShown = true
+                }
+            } else {
+                // The dismissal reverses the entrance, a touch quicker.
+                withAnimation(reduceMotion
+                              ? .easeInOut(duration: NotchMotion.reduceMotionFade)
+                              : .easeIn(duration: NotchMotion.noticeFadeOut)) {
+                    noticeShown = false
+                }
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + NotchMotion.noticeFadeOut + 0.05
+                ) {
+                    if toy.activeCapsule == nil { lastNotice = nil }
+                }
+            }
+        }
     }
 
     /// Plain black — the black the notch's bezel already reads as — so
@@ -70,19 +110,14 @@ struct NotchIslandView: View {
     /// screen's edge is the island's top), and the bottom corners take
     /// the notch profile's own radius so island and bar tray match.
     /// Notch-less: a floating pill.
-    @ViewBuilder private var islandBackground: some View {
-        let tap = { toy.islandTapped() }
-        if toy.notchDepth > 0 {
-            UnevenRoundedRectangle(bottomLeadingRadius: toy.notchCornerRadius,
-                                   bottomTrailingRadius: toy.notchCornerRadius,
-                                   style: .continuous)
-                .fill(.black)
-                .onTapGesture { tap() }
-        } else {
-            Capsule(style: .continuous)
-                .fill(.black)
-                .onTapGesture { tap() }
-        }
+    private var silhouette: NotchSilhouette {
+        NotchSilhouette(notchDepth: toy.notchDepth, restingRadius: toy.notchCornerRadius)
+    }
+
+    private var islandBackground: some View {
+        silhouette.fill(.black)
+            .onTapGesture { toy.islandTapped() }
+            .accessibilityHidden(true)
     }
 
     // MARK: Idle
@@ -117,7 +152,7 @@ struct NotchIslandView: View {
             // The hover wink's other half — the frame grows a few
             // points (the toy's `islandHoverPeek` reframe), and the
             // marks swell inside it. A passing cursor earns only this.
-            .scaleEffect(toy.islandHoverPeek ? 1.12 : 1)
+            .scaleEffect(toy.islandHoverPeek ? NotchMotion.hoverContentScale : 1)
             .animation(reduceMotion ? .easeInOut(duration: 0.12)
                                     : .spring(response: 0.22, dampingFraction: 0.75),
                        value: toy.islandHoverPeek)
@@ -256,22 +291,40 @@ struct NotchIslandView: View {
 
     /// Three bars bouncing on their own phases while the track plays —
     /// set dressing, not a spectrum; paused or Reduce Motion draws them
-    /// still, and an ordered-out island's timeline never runs.
+    /// still, and an ordered-out island's timeline never runs. A live
+    /// audio tap swaps them for the real band levels — the tap's gate
+    /// only ever runs it with the card grown, so the strip falls back
+    /// to the decorative dance whenever the pipeline is down.
     private func visualizer(playing: Bool) -> some View {
+        let utility = toy.cardModel.utility
         let live = playing && toy.islandVisible && !reduceMotion
-        return TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !live)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(0..<3, id: \.self) { index in
-                    let height: CGFloat = live
-                        ? 3 + 6 * abs(sin(t * 3.2 + Double(index) * 1.9))
-                        : 3 + CGFloat(index) * 1.5
-                    RoundedRectangle(cornerRadius: 1, style: .continuous)
-                        .fill(.white.opacity(0.75))
-                        .frame(width: 2.5, height: height)
+        return Group {
+            if utility.audioTapLive {
+                HStack(alignment: .bottom, spacing: 1.5) {
+                    ForEach(utility.audioLevels.indices, id: \.self) { index in
+                        let level = CGFloat(min(1, max(0, utility.audioLevels[index])))
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
+                            .fill(.white.opacity(0.75))
+                            .frame(width: 2.5, height: 3 + 6 * level)
+                    }
+                }
+                .frame(height: 10, alignment: .bottom)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !live)) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    HStack(alignment: .bottom, spacing: 1.5) {
+                        ForEach(0..<3, id: \.self) { index in
+                            let height: CGFloat = live
+                                ? 3 + 6 * abs(sin(t * 3.2 + Double(index) * 1.9))
+                                : 3 + CGFloat(index) * 1.5
+                            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                                .fill(.white.opacity(0.75))
+                                .frame(width: 2.5, height: height)
+                        }
+                    }
+                    .frame(height: 10, alignment: .bottom)
                 }
             }
-            .frame(height: 10, alignment: .bottom)
         }
     }
 
@@ -302,6 +355,12 @@ struct NotchIslandView: View {
         // A tap on the capsule puts it away — it never re-opens it.
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Notch notification")
+        .accessibilityValue("\(notice.title). \(notice.subtitle)")
+        .accessibilityHint("Dismisses the notification")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toy.islandTapped() }
     }
 
     /// Waiting is amber, finished is green, failed is red — the app's

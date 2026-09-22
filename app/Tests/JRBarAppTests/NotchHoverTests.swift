@@ -19,7 +19,8 @@ struct NotchHoverTests {
                                     islandEnabled: true)
         let core = CoreModel()
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
-                              state: state, cardModel: makeTestCardModel())
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
         toy.islandVisible = true
         return (toy, store)
@@ -28,20 +29,35 @@ struct NotchHoverTests {
     @Test("a pointer straight onto the island grows the card on the fast floor")
     func directArrivalUsesFastFloor() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.setHovered(true)
-        #expect(toy.islandHoverPeek, "the wink lands at once")
+        #expect(!toy.islandHoverPeek, "the breath waits out its intent delay")
         try await Task.sleep(for: .seconds(0.25))
         #expect(toy.islandExpanded, "the fast floor passed — the card is up")
+    }
+
+    @Test("the breath lands after the intent delay, not at once")
+    func peekWaitsOutIntentDelay() async throws {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        store.state.notch.expandOnHover = false
+        toy.setHovered(true)
+        #expect(!toy.islandHoverPeek, "a fresh hover has earned nothing yet")
+        try await Task.sleep(for: .seconds(0.2))
+        #expect(toy.islandHoverPeek, "the rest earned the breath")
+        #expect(!toy.islandExpanded, "the tell is only a tell — no card")
+        toy.setHovered(false)
+        #expect(!toy.islandHoverPeek, "leaving settles it back")
     }
 
     @Test("a bar-row arrival waits the third-of-a-second floor")
     func barArrivalUsesSlowFloor() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         toy.bandHover(true, fromBar: true)
-        #expect(toy.islandHoverPeek, "the tell still lands at once")
+        #expect(!toy.islandHoverPeek, "the breath waits out the intent delay")
         try await Task.sleep(for: .seconds(0.2))
+        #expect(toy.islandHoverPeek, "the breath landed inside the bar's floor")
         #expect(!toy.islandExpanded, "the menu-bar floor has not landed yet")
         try await Task.sleep(for: .seconds(0.25))
         #expect(toy.islandExpanded)
@@ -71,7 +87,7 @@ struct NotchHoverTests {
     @Test("crossing from an ear onto the island keeps the arrival's deadline")
     func earToIslandKeepsDeadline() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         let start = ContinuousClock.now
         toy.bandHover(true, fromBar: true)
         try await Task.sleep(for: .seconds(0.1))
@@ -85,7 +101,7 @@ struct NotchHoverTests {
     @Test("leaving the island window onto the tray is not a leave")
     func windowLeaveOntoBandKeepsHover() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         let onBand = Answer(true)
         toy.pointerOnBand = { onBand.value }
         toy.setHovered(true)
@@ -104,7 +120,7 @@ struct NotchHoverTests {
     @Test("a space that hides the menu bar keeps the grow down — the wink still answers")
     func fullscreenSuppressesHoverOpen() async throws {
         let (toy, store) = makeToy()
-        _ = store
+        defer { withExtendedLifetime(store) {} }
         let hidden = Answer(true)
         toy.menuBarHidden = { hidden.value }
         toy.setHovered(true)
@@ -122,18 +138,18 @@ struct NotchHoverTests {
         #expect(toy.islandExpanded, "a fresh hover in a live space grows")
     }
 
-    @Test("the grow's haptic tick fires on open — and the setting silences it")
-    func hapticTickOnOpen() {
+    @Test("a headless grow never reaches the system haptic")
+    func headlessGrowSkipsHaptic() {
         let (toy, store) = makeToy()
         var ticks = 0
         toy.expandHaptic = { ticks += 1 }
         toy.expandFromBand()
         #expect(toy.islandExpanded)
-        #expect(ticks == 1)
+        #expect(ticks == 0)
         store.state.notch.hapticTick = false
         toy.collapseFromBand()
         toy.expandFromBand()
-        #expect(ticks == 1, "the toggle is the user's say over the tick")
+        #expect(ticks == 0)
     }
 
     @Test("the bare wink grows the housing down, never sideways")
@@ -143,9 +159,10 @@ struct NotchHoverTests {
         // tell grows straight down — the island's own direction.
         let size = CGSize(width: 200, height: 32)
         #expect(NotchIslandLayout.peekAdjusted(size, bare: true)
-            == CGSize(width: 200, height: 32 + NotchIslandLayout.peekGrow))
+            == CGSize(width: 200, height: 32 + NotchMotion.hoverGrowHeight))
         #expect(NotchIslandLayout.peekAdjusted(size, bare: false)
-            == CGSize(width: 200 + 2 * NotchIslandLayout.peekGrow, height: 32))
+            == CGSize(width: 200 + NotchMotion.hoverGrowWidth,
+                      height: 32 + NotchMotion.hoverGrowHeight))
     }
 
     @Test("a stored notch settings without hapticTick decodes it on")

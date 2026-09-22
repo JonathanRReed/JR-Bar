@@ -69,7 +69,7 @@ final class FoldToy: Toy {
     /// every vsync.
     @ObservationIgnored private var tracker = SlewTracker()
     /// The displayed-delta follower: instant while the fold deepens, a
-    /// critically damped unwind when the gate snaps the target to 0 —
+    /// slew-limited unwind when the gate snaps the target to 0 —
     /// opening counter-rotates the room back through the hinge instead
     /// of cutting to black mid-swing.
     @ObservationIgnored private var chase = DeltaChase()
@@ -77,6 +77,11 @@ final class FoldToy: Toy {
     /// arming band and through its cooldown, and it owns the fold gate's
     /// hysteresis at the activation edge.
     @ObservationIgnored private var arming = FoldArming()
+    /// The movement-anchored reference (`FoldAnchor.movement`): where
+    /// the lid was resting when the gesture began. Fed every raw sample
+    /// — stillness IS its signal — while the jitter filter still guards
+    /// what reaches the tracker.
+    @ObservationIgnored private var moveAnchor = MoveAnchor()
     /// The latest window-card layout, kept so an overlay created after
     /// the poll still gets it.
     @ObservationIgnored private var lastCards: [PortalDepth.Card] = []
@@ -293,6 +298,7 @@ final class FoldToy: Toy {
     private func reconcile() {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
+        moveAnchor.tolerance = settings.jitterTolerance
         // Every path — off, parked, paused — leaves the vsync link
         // matching the machine; a parked fold runs no timer.
         defer { refreshTick() }
@@ -308,6 +314,7 @@ final class FoldToy: Toy {
             scheduleCooldown(nil)
             tracker.reset()
             chase.reset()
+            moveAnchor.reset()
             displayedDelta = 0
             standDown()
             sensor.setPolling(false)
@@ -316,8 +323,12 @@ final class FoldToy: Toy {
         // Inside this band the sensor polls at 120 Hz so a 10 Hz sensor
         // edge is timestamped to ±8 ms; above it the poll idles at the
         // sensor's own 10 Hz — dense where the fold lives, quiet where
-        // it doesn't.
-        sensor.armingAngle = settings.activationAngle + 12
+        // it doesn't. Movement mode has no band: nothing consumes edge
+        // timestamps any more (the slew tracker ticks on vsync dt), so
+        // the poll stays at the sensor's own 10 Hz the whole time —
+        // the idle-power floor.
+        sensor.armingAngle = settings.anchor == .movement
+            ? -.infinity : settings.activationAngle + 12
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
         sensor.setPolling(true)
@@ -340,6 +351,7 @@ final class FoldToy: Toy {
             arming.reset()
             scheduleCooldown(nil)
             chase.reset()
+            moveAnchor.reset()
             displayedDelta = 0
             standDown()
             noteDiag(stage: "paused")
@@ -364,12 +376,24 @@ final class FoldToy: Toy {
         }
         // The arming machine decides whether the streams may exist —
         // inside the band, or lingering through its cooldown — and owns
-        // the fold gate's hysteresis at the activation edge.
-        let outcome = arming.update(
-            angle: gateAngle,
-            activation: settings.activationAngle,
-            closed: cachedClamshell == true,
-            now: CACurrentMediaTime())
+        // the fold gate's hysteresis at the activation edge. Movement
+        // mode arms on the first real move off the anchor instead: the
+        // streams come up with the gesture's start, which is the warm-up
+        // that keeps the first painted frame from being black.
+        let outcome: FoldArming.Outcome
+        if settings.anchor == .movement {
+            let moving = gateAngle.map { moveAnchor.moving($0) } ?? false
+            let lidShut = cachedClamshell == true
+                || (gateAngle.map { $0 <= FoldPause.closedAngle } ?? false)
+            outcome = arming.updateMovement(
+                moving: moving, closed: lidShut, now: CACurrentMediaTime())
+        } else {
+            outcome = arming.update(
+                angle: gateAngle,
+                activation: settings.activationAngle,
+                closed: cachedClamshell == true,
+                now: CACurrentMediaTime())
+        }
         scheduleCooldown(outcome.cooldownEndsAt)
         if outcome.capture {
             ensureCaptureRunning()
@@ -404,6 +428,13 @@ final class FoldToy: Toy {
                             guard let self else { return }
                             self.dwellWork = nil
                             self.dwellPaused = true
+                            // Movement mode: the parked angle re-seats
+                            // the anchor — the desktop came back, and
+                            // the next close folds from here.
+                            if let parked = self.dwellAnchor {
+                                self.moveAnchor.reseat(
+                                    parked, at: CACurrentMediaTime())
+                            }
                             self.reconcile()
                         }
                     }
@@ -455,8 +486,18 @@ final class FoldToy: Toy {
     /// when the gate shuts mid-motion the chase unwinds the displayed
     /// delta home instead of snapping it.
     private var targetDelta: Double {
-        guard arming.foldGateOpen, pauseReason == nil, !dwellPaused,
-              let angle = renderAngle ?? gateAngle else { return 0 }
+        guard arming.foldGateOpen, pauseReason == nil, !dwellPaused else { return 0 }
+        if settings.anchor == .movement {
+            // The streams arm on the first move; until the first
+            // complete frame lands the delta holds at 0 — the capture
+            // warm-up, so the room never opens black. The delta itself
+            // is positive only: opening back through the anchor reads 0.
+            guard capture?.hasFrame == true,
+                  let reference = moveAnchor.anchor,
+                  let angle = renderAngle ?? gateAngle else { return 0 }
+            return FoldMath.deltaRadians(angle: angle, reference: reference)
+        }
+        guard let angle = renderAngle ?? gateAngle else { return 0 }
         return FoldMath.deltaRadians(
             angle: angle, reference: settings.activationAngle)
     }
@@ -559,6 +600,7 @@ final class FoldToy: Toy {
                                   blur: reduceMotion ? 0 : settings.blur,
                                   shade: settings.shade,
                                   frost: settings.frost,
+                                  holdPicture: settings.holdPicture,
                                   usedBuckets: overlay.renderer.usedBucketCount,
                                   reduceMotion: reduceMotion)
             // The activation-edge fade is the window's own alpha — a
@@ -676,8 +718,19 @@ final class FoldToy: Toy {
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
         rawAngle = sample.angle
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
-        guard let angle = sample.angle, simulatedAngle == nil,
-              jitter.accept(angle, at: sample.at) else { return }
+        guard let angle = sample.angle, simulatedAngle == nil else { return }
+        if settings.anchor == .movement {
+            // Stillness is the anchor's signal, so it sees every raw
+            // sample — jitter-rejected ones included — while the filter
+            // still guards what reaches the tracker. Reconcile runs on
+            // every sample too: the 400 ms stillness boundary and the
+            // first-move arm can't wait for an accepted edge.
+            moveAnchor.feed(angle, at: sample.at)
+            if jitter.accept(angle, at: sample.at) { tracker.feed(angle) }
+            reconcile()
+            return
+        }
+        guard jitter.accept(angle, at: sample.at) else { return }
         tracker.feed(angle)
         reconcile()
     }
@@ -721,6 +774,11 @@ final class FoldToy: Toy {
                 // The tracker turns the slider's jumps into the same
                 // capped glide the hinge gets.
                 self.tracker.feed($0)
+                if self.settings.anchor == .movement {
+                    // The slider exercises the movement path too — a
+                    // still drag end re-seats the anchor on its own.
+                    self.moveAnchor.feed($0, at: CACurrentMediaTime())
+                }
             })
     }
 
@@ -729,6 +787,7 @@ final class FoldToy: Toy {
         // The tracker's glide belongs to the real lid — a drag that
         // just jumped the angle 40° must not carry over.
         tracker.reset()
+        moveAnchor.reset()
         if let raw = rawAngle {
             tracker.feed(raw)
         }
@@ -757,6 +816,9 @@ final class FoldToy: Toy {
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
         let tilted = displayedDelta * 180 / .pi
         guard tilted > 0.1 else {
+            if settings.anchor == .movement {
+                return "Parked — the next move folds from here"
+            }
             return "Parked — close the lid past \(Int(settings.activationAngle.rounded()))°"
         }
         if capture?.hasFrame != true { return "Tilted \(Int(tilted))° — waiting for a screen frame" }
@@ -798,6 +860,7 @@ final class FoldToy: Toy {
         scheduleCooldown(nil)
         tracker.reset()
         chase.reset()
+        moveAnchor.reset()
         displayedDelta = 0
         standDown()
         sensor.setPolling(false)
@@ -849,10 +912,20 @@ private struct FoldControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            Picker(selection: toy.bind(\.anchor)) {
+                Text("Set angle").tag(FoldAnchor.angle)
+                Text("Wherever the lid rests").tag(FoldAnchor.movement)
+            } label: {
+                SettingLabel(title: "Fold from", subtitle: "A fixed angle, or wherever the lid was parked when it started to move.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: toy.bind(\.activationAngle), in: 60...160)
                         .frame(width: 180)
+                        .disabled(toy.settings.anchor == .movement)
                     ValueText(text: "\(Int(toy.settings.activationAngle.rounded()))°")
                 }
             } label: {
@@ -897,6 +970,13 @@ private struct FoldControlsView: View {
                 }
             } label: {
                 SettingLabel(title: "Frost", subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic.")
+            }
+
+            LabeledContent {
+                Toggle("", isOn: toy.bind(\.holdPicture))
+                    .labelsHidden()
+            } label: {
+                SettingLabel(title: "Hold picture in place", subtitle: "The desktop stays put while the lid tilts over it; off keeps the picture glued to the glass.")
             }
 
             LabeledContent {

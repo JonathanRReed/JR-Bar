@@ -214,9 +214,11 @@ struct NotchGestureTests {
         #expect(AlcoveNoticeKind.quotaReset.queueRank < AlcoveNoticeKind.charging.queueRank)
     }
 
-    @Test("the hover wink stays a whisper — points, not the card")
-    func peekGrowIsSmall() {
-        #expect(NotchIslandLayout.peekGrow > 0)
-        #expect(NotchIslandLayout.peekGrow < 8)
+    @Test("the hover breath stays a whisper — points, not the card")
+    func hoverBreathIsSmall() {
+        #expect(NotchMotion.hoverGrowWidth > 0)
+        #expect(NotchMotion.hoverGrowWidth < 8)
+        #expect(NotchMotion.hoverGrowHeight > 0)
+        #expect(NotchMotion.hoverGrowHeight < 8)
     }
 }

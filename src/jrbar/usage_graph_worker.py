@@ -13,12 +13,14 @@ project, land on the main thread, done.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import usage_percent_history, usage_stats
@@ -35,6 +37,20 @@ _LAST_BUILD_ATTR = "_usage_graph_last_build"
 #: switches used to re-pay the full transcript scan (~9s warm, ~30s
 #: cold, all of it GIL time the menus feel) for identical inputs.
 _MODEL_REUSE_SECONDS = 60.0
+
+#: Persisted answer cache for the ``usage_graph`` socket command. The
+#: build itself is the expensive part (~30-65s cold over a large corpus);
+#: the fingerprint that guards a hit is a stat-only walk (~0.4s over
+#: 9.9k transcripts). The document is only served when every input --
+#: transcript trees, ledger files, auxiliary databases, the selected
+#: metric/day-range, today, and the local timezone -- is provably
+#: unchanged, so a cached reply is identical to a fresh scan, not an
+#: approximation of one.
+_USAGE_DOC_CACHE_NAME = "usage-graph-doc-cache.json"
+_USAGE_DOC_CACHE_VERSION = 1
+_USAGE_DOC_CACHE_MAX_BYTES = 8 * 1024 * 1024
+_USAGE_DOC_CACHE_SLOTS = 12
+
 T3_MAX_ACTIVITY_RECORDS = 10_000
 T3_MAX_ACTIVITY_PAYLOAD_BYTES = 64 * 1024
 T3_MAX_ACTIVITY_TOTAL_BYTES = 4 * 1024 * 1024
@@ -487,6 +503,147 @@ _VALID_DOCUMENT_DAYS = (7, 30, 90, 365)
 _VALID_DOCUMENT_METRICS = ("tokens", "cost", "sessions", "percent")
 
 
+def _file_fingerprint(path: Path) -> dict:
+    """One regular file's identity for change detection, or ``missing``."""
+    try:
+        info = path.lstat()
+    except OSError:
+        return {"missing": True}
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        return {"missing": True}
+    return {
+        "bytes": info.st_size,
+        "mtime_ns": info.st_mtime_ns,
+        "ino": info.st_ino,
+    }
+
+
+def _tree_fingerprint(root: Path) -> dict:
+    """Stat-only fingerprint of every ``.jsonl`` under ``root``.
+
+    Same file filter as the usage scan's walk (regular, non-symlinked
+    ``.jsonl``); count+bytes+newest-mtime catch append/delete, and the
+    inode xor catches a same-size same-mtime replacement that the per-
+    file parse cache would also accept.
+    """
+    files = 0
+    total_bytes = 0
+    newest_ns = 0
+    inode_xor = 0
+    try:
+        is_dir = root.is_dir() and not root.is_symlink()
+    except OSError:
+        is_dir = False
+    if not is_dir:
+        return {"missing": True}
+    try:
+        walker = os.walk(root, followlinks=False)
+        for directory, _dirnames, filenames in walker:
+            base = Path(directory)
+            for name in filenames:
+                if not name.endswith(".jsonl"):
+                    continue
+                try:
+                    info = (base / name).lstat()
+                except OSError:
+                    continue
+                if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                    continue
+                files += 1
+                total_bytes += info.st_size
+                newest_ns = max(newest_ns, info.st_mtime_ns)
+                inode_xor ^= info.st_ino
+    except OSError:
+        return {"missing": True}
+    return {"files": files, "bytes": total_bytes, "newest_ns": newest_ns, "inos": inode_xor}
+
+
+def _corpus_fingerprint(
+    snapshot: _UsageGraphSettingsSnapshot,
+    *,
+    t3_policy: T3ReadOnlyPolicy | None,
+) -> dict:
+    """Every input ``_build_payload`` can read, reduced to stat tuples."""
+    providers = set(snapshot.usage_graph_providers)
+    fingerprint: dict[str, object] = {}
+    if "claude" in providers:
+        fingerprint["claude"] = _tree_fingerprint(Path.home() / ".claude" / "projects")
+    if "codex" in providers:
+        fingerprint["codex"] = _tree_fingerprint(Path.home() / ".codex" / "sessions")
+    if "opencode" in providers:
+        fingerprint["opencode"] = _file_fingerprint(
+            Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+        )
+    if t3_policy is not None and t3_policy.may_scan_activity_statistics:
+        fingerprint["t3"] = _file_fingerprint(t3_database_path(t3_policy.base_dir))
+    if snapshot.usage_display_mode == "sessions":
+        from .session_history import TRANSCRIPT_SESSION_PROVIDERS
+
+        state_dir = default_state_dir()
+        fingerprint["ledgers"] = {
+            provider_id: _file_fingerprint(state_dir / f"{provider_id}.jsonl")
+            for provider_id in sorted(providers - TRANSCRIPT_SESSION_PROVIDERS)
+        }
+        if "antigravity" in providers:
+            fingerprint["gemini"] = _tree_fingerprint(Path.home() / ".gemini")
+    if snapshot.usage_display_mode == "percent":
+        fingerprint["percent"] = _file_fingerprint(
+            usage_percent_history.default_percent_history_path()
+        )
+    return fingerprint
+
+
+def _usage_doc_cache_path() -> Path:
+    return default_state_dir() / _USAGE_DOC_CACHE_NAME
+
+
+def _usage_doc_cache_meta(
+    snapshot: _UsageGraphSettingsSnapshot,
+    t3_policy: T3ReadOnlyPolicy | None,
+) -> dict:
+    """The non-corpus key: what the request resolved to, plus the day and
+    timezone the day-buckets were cut in. A midnight rollover or a tz
+    change must rebuild even on an untouched corpus."""
+    return {
+        "v": _USAGE_DOC_CACHE_VERSION,
+        "days": snapshot.usage_graph_days,
+        "metric": snapshot.usage_display_mode,
+        "providers": sorted(snapshot.usage_graph_providers),
+        "t3": [str(part) for part in _build_key(snapshot, t3_policy)[3]],
+        "date": date.today().isoformat(),
+        "tz": str(datetime.now().astimezone().tzinfo),
+    }
+
+
+def _usage_doc_cache_read() -> dict:
+    path = _usage_doc_cache_path()
+    try:
+        if not path.is_file() or path.stat().st_size > _USAGE_DOC_CACHE_MAX_BYTES:
+            return {}
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(document, dict) or not isinstance(document.get("entries"), dict):
+        return {}
+    return document
+
+
+def _usage_doc_cache_write(entries: dict) -> None:
+    from .private_io import atomic_private_write
+
+    payload = json.dumps(
+        {"v": _USAGE_DOC_CACHE_VERSION, "entries": entries},
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    try:
+        atomic_private_write(_usage_doc_cache_path(), payload)
+    except OSError:
+        pass
+
+
 def usage_graph_document(
     settings,
     *,
@@ -539,14 +696,37 @@ def usage_graph_document(
     )
     if not resolved_providers:
         raise ValueError("providers must be a nonempty tuple")
+    resolved_snapshot = _UsageGraphSettingsSnapshot(
+        usage_graph_days=resolved_days,
+        usage_display_mode=resolved_metric,
+        usage_graph_providers=resolved_providers,
+    )
+    meta = _usage_doc_cache_meta(resolved_snapshot, t3_policy)
+    meta_key = json.dumps(meta, sort_keys=True, separators=(",", ":"))
+    fingerprint = _corpus_fingerprint(resolved_snapshot, t3_policy=t3_policy)
+    cache = _usage_doc_cache_read()
+    entry = (cache.get("entries") or {}).get(meta_key)
+    if (
+        isinstance(entry, dict)
+        and entry.get("fingerprint") == fingerprint
+        and isinstance(entry.get("document"), dict)
+    ):
+        return entry["document"]
     model, summary = _build_payload(
-        _UsageGraphSettingsSnapshot(
-            usage_graph_days=resolved_days,
-            usage_display_mode=resolved_metric,
-            usage_graph_providers=resolved_providers,
-        ),
+        resolved_snapshot,
         t3_policy=t3_policy,
     )
+    document = _project_graph_document(model, summary, resolved_providers)
+    _usage_doc_cache_store(meta_key, fingerprint, document)
+    return document
+
+
+def _project_graph_document(model, summary, resolved_providers) -> dict:
+    """The JSON-safe socket document for one built model.
+
+    Shared by the command reply and the refresh worker's cache write --
+    both must emit the identical shape for identical inputs.
+    """
     model = dict(model)
     # Echo the resolved request: series omits providers that had no
     # samples, so without this a picker could not tell "unchecked"
@@ -565,6 +745,32 @@ def usage_graph_document(
     if heatmap is not None:
         model["heatmap"] = _heatmap_document(heatmap)
     return {"graph": model, "summary": summary or ""}
+
+
+def _usage_doc_cache_store(
+    meta_key: str,
+    fingerprint: dict,
+    document: dict,
+) -> None:
+    """Insert one document under its meta key, LRU-trimmed."""
+    cache = _usage_doc_cache_read()
+    entries = dict(cache.get("entries") or {})
+    entries[meta_key] = {
+        "fingerprint": fingerprint,
+        "document": document,
+        "stored_at": time.time(),
+    }
+    # A full set is days*metrics*provider mixes; bounded regardless.
+    if len(entries) > _USAGE_DOC_CACHE_SLOTS:
+        entries = dict(
+            sorted(entries.items(), key=lambda item: -(item[1].get("stored_at") or 0))[
+                :_USAGE_DOC_CACHE_SLOTS
+            ]
+        )
+    try:
+        _usage_doc_cache_write(entries)
+    except (TypeError, ValueError):
+        pass
 
 
 def _heatmap_document(heatmap) -> dict:
@@ -729,11 +935,30 @@ def refresh_usage_graph(
         # A settings update during the scan marks a pending refresh, which
         # captures a new snapshot after this one lands.
         built_key = key
+        # Fingerprint BEFORE the scan: the cached document claims the
+        # corpus as of scan start, so a mid-scan write lands as a miss
+        # on the next request rather than a stale claim.
+        doc_meta_key = None
+        doc_fingerprint = None
+        try:
+            doc_meta = _usage_doc_cache_meta(settings, t3_policy)
+            doc_meta_key = json.dumps(doc_meta, sort_keys=True, separators=(",", ":"))
+            doc_fingerprint = _corpus_fingerprint(settings, t3_policy=t3_policy)
+        except Exception:
+            doc_meta_key = None
         try:
             if t3_policy is None:
                 model, summary = _build_payload(settings)
             else:
                 model, summary = _build_payload(settings, t3_policy=t3_policy)
+            if doc_meta_key is not None and doc_fingerprint is not None:
+                try:
+                    document = _project_graph_document(
+                        model, summary, settings.usage_graph_providers
+                    )
+                    _usage_doc_cache_store(doc_meta_key, doc_fingerprint, document)
+                except Exception:
+                    pass
             model = {**model, "summary": summary}
         except Exception:
             model = None

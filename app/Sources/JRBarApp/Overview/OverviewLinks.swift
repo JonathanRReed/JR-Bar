@@ -72,6 +72,11 @@ enum OverviewLinkage {
         var corePID: Int?
         var connectedAt: Date?
         var inFlight = 0
+        /// Last-state-frame age and the stale verdict (`CoreModel`'s
+        /// `stateAge`/`stateIsStale`) — an open socket with no frames is
+        /// "quiet", not healthy.
+        var stateAge: TimeInterval?
+        var stateStale = false
         var localName = "This Mac"
         var localSessions = 0
         var peers: [CorePeer] = []
@@ -99,16 +104,23 @@ enum OverviewLinkage {
         if s.connected, let at = s.connectedAt {
             facts.append(.init("Connected for", AgentMonitorFeed.ageText(now.timeIntervalSince(at))))
         }
+        if s.connected, s.stateStale, let age = s.stateAge {
+            facts.append(.init("Last update", "\(AgentMonitorFeed.ageText(age)) ago — the monitor is quiet"))
+        }
         if s.inFlight > 0 { facts.append(.init("In flight", "\(s.inFlight)")) }
         if let reason = s.offlineReason, !reason.isEmpty, !s.connected {
             facts.append(.init("Last error", reason))
         }
-        let tone: OverviewLink.Tone = s.connected ? .good : (s.connecting ? .busy : .down)
+        let tone: OverviewLink.Tone = s.connected
+            ? (s.stateStale ? .warn : .good)
+            : (s.connecting ? .busy : .down)
         return OverviewLink(
             id: "core", group: .core,
             symbol: "bolt.horizontal.circle.fill",
             title: s.coreVersion.map { "Core \($0)" } ?? "Core",
-            subtitle: s.connected ? "connected" : (s.connecting ? "connecting" : "offline"),
+            subtitle: s.connected
+                ? (s.stateStale ? "connected · quiet" : "connected")
+                : (s.connecting ? "connecting" : "offline"),
             tone: tone, facts: facts)
     }
 

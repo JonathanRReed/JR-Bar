@@ -181,6 +181,50 @@ public struct LEDSProgram: Hashable, Sendable {
 
     /// Seconds after which the output stops changing, or nil when it loops forever.
     public var motionEndsAt: TimeInterval? { LEDSSampler(program: self, ledCount: ledCount).motionEndsAt }
+
+    /// This program re-rendered for a wider device: destination LED `j` takes
+    /// source LED `j * sourceLedCount / ledCount`, so a Dot's two LEDs each claim
+    /// a contiguous run of the bar's eight (the Screen Bar mirroring a lone Dot).
+    /// Brightness, roll, repeat and comment steps pass through untouched.
+    public func widened(from sourceLedCount: Int, to ledCount: Int) -> LEDSProgram {
+        let ledCount = LEDSProgram.normalizedLedCount(ledCount)
+        let source = max(1, sourceLedCount)
+        func band(_ led: Int) -> Int { led * source / ledCount }
+        let widenedSteps: [LEDSStep] = steps.compactMap { step in
+            guard case .paint(let segments) = step else { return step }
+            let widenedSegments: [LEDSSegment] = segments.compactMap { segment in
+                switch segment.kind {
+                case .wholeBar:
+                    return segment
+                case .colorList(let colors):
+                    return LEDSSegment(
+                        kind: .colorList((0..<ledCount).map { led in
+                            let index = band(led)
+                            return index < colors.count ? colors[index] : .black
+                        }),
+                        timing: segment.timing
+                    )
+                case .indexed(let assignments):
+                    var byLed: [Int: RGB8] = [:]
+                    for assignment in assignments where assignment.index >= 0 && assignment.index < source {
+                        for led in 0..<ledCount where band(led) == assignment.index {
+                            byLed[led] = assignment.color
+                        }
+                    }
+                    // A line that names only LEDs the source does not have takes
+                    // no time on either device; dropping it is exact.
+                    guard !byLed.isEmpty else { return nil }
+                    return LEDSSegment(
+                        kind: .indexed(byLed.keys.sorted().map { LEDSAssignment(index: $0, color: byLed[$0]!) }),
+                        timing: segment.timing
+                    )
+                }
+            }
+            guard !widenedSegments.isEmpty else { return nil }
+            return .paint(widenedSegments)
+        }
+        return LEDSProgram(steps: widenedSteps, ledCount: ledCount)
+    }
 }
 
 // MARK: - Errors

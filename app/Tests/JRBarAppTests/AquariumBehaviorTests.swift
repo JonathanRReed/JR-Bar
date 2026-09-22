@@ -103,4 +103,32 @@ struct AquariumBehaviorTests {
         #expect(AquariumBehavior.flightPoint(from: a, to: b, p: -1) == a)
         #expect(AquariumBehavior.flightPoint(from: a, to: b, p: 2) == b)
     }
+
+    @Test("the clock's night runs nine-to-six with blended edges")
+    func realTimeNight() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func at(_ hour: Int, _ minute: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 9, day: 20,
+                                               hour: hour, minute: minute))!
+        }
+        #expect(AquariumBehavior.realTimeNight(at: at(0), calendar: calendar) == 1)
+        #expect(AquariumBehavior.realTimeNight(at: at(5, 59), calendar: calendar) == 1)
+        #expect(AquariumBehavior.realTimeNight(at: at(21), calendar: calendar) == 1)
+        #expect(AquariumBehavior.realTimeNight(at: at(23, 30), calendar: calendar) == 1)
+        #expect(AquariumBehavior.realTimeNight(at: at(12), calendar: calendar) == 0)
+        #expect(AquariumBehavior.realTimeNight(at: at(8), calendar: calendar) == 0)
+        #expect(AquariumBehavior.realTimeNight(at: at(18, 59), calendar: calendar) == 0)
+        // The edges blend, not snap: mid-dawn and mid-dusk are partial.
+        let dawn = AquariumBehavior.realTimeNight(at: at(7), calendar: calendar)
+        #expect(dawn > 0 && dawn < 1)
+        let dusk = AquariumBehavior.realTimeNight(at: at(20), calendar: calendar)
+        #expect(dusk > 0 && dusk < 1)
+        // And they stay inside 0…1 at every boundary tick.
+        for hour in 0..<24 {
+            let n = AquariumBehavior.realTimeNight(
+                at: at(hour, 30), calendar: calendar)
+            #expect(n >= 0 && n <= 1)
+        }
+    }
 }

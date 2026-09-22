@@ -415,6 +415,35 @@ struct AquariumModelTests {
         #expect(kinds.filter { $0 == .kelp }.count >= 3)
         #expect(kinds.filter { $0 == .rock }.count >= 2)
     }
+
+    @Test("owned decor slots never overlap on their row, at either proof size")
+    func decorSlotSpacing() {
+        let items: [ShopItem] = [
+            .shipwreck, .amphora, .sunkenStatue, .ruinedColumns, .volcano,
+            .bubbleWall, .driftwood, .anemoneBed, .moonJellyLamp, .coralGarden,
+        ]
+        // Footprints are fractions of the tank's height; a piece's
+        // rect is centred on its x on its row's dune line.
+        for (width, height) in [(1200.0, 700.0), (800.0, 450.0)] {
+            for row in [true, false] {
+                let slots = items.compactMap { AquariumModel.decorSlot(for: $0) }
+                    .filter { $0.back == row }
+                    .sorted { $0.x < $1.x }
+                for (a, b) in zip(slots, slots.dropFirst()) {
+                    let aRight = a.x * width + a.w * height / 2
+                    let bLeft = b.x * width - b.w * height / 2
+                    #expect(aRight <= bLeft,
+                            "\(width)×\(height): slot at \(a.x) reaches \(aRight) into \(b.x)'s \(bLeft)")
+                }
+                for slot in slots {
+                    #expect(slot.x * width - slot.w * height / 2 >= 0,
+                            "\(width)×\(height): slot at \(slot.x) bleeds off the left edge")
+                    #expect(slot.x * width + slot.w * height / 2 <= width,
+                            "\(width)×\(height): slot at \(slot.x) bleeds off the right edge")
+                }
+            }
+        }
+    }
 }
 
 // MARK: Residents

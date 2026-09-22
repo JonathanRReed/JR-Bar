@@ -24,10 +24,6 @@ struct ScreenBarWingSlot: Equatable {
     /// The ear's ring fill, 0…1 — the usage meter's fraction. nil means
     /// no ring (state ears, notices).
     var meter: Double?
-    /// The window's time left as a fraction of its own span — a drain
-    /// arc inside the fill ring, 1 → just reset, 0 → resetting now.
-    /// nil draws none: a `credits` lane has no clock to drain.
-    var reset: Double?
     /// The mark is a live equalizer instead of a glyph — the media ear,
     /// drawn only while something is actually playing. `text` still
     /// carries the track line for the peek and VoiceOver.
@@ -89,15 +85,6 @@ final class ScreenBarWingsModel {
     /// The tray's bottom corner — the notch profile's radius, so the
     /// wrap's silhouette is the bezel's own.
     var notchCorner: CGFloat = NotchProfile.standardCornerRadius
-    /// The bezel's side edges in tray-local x — where the tray runs
-    /// under the notch its silhouette must keep the hardware's bottom
-    /// corner arcs, or it paves them and reads as a slab clipping in.
-    var bezelLeft: CGFloat = 0
-    var bezelRight: CGFloat = 0
-    /// How far each ear's lobe hangs below the bezel's bottom edge —
-    /// `wingEarDrop` while a wing claims room, 0 otherwise. The tray's
-    /// middle run stays at the bezel's bottom; only the lobes drop.
-    var earDrop: CGFloat = 0
     var viewHeight: CGFloat = 0
     /// The dismiss-pull: the ear rides the finger's horizontal travel,
     /// already eased, so a flick visibly drags it off the notch.
@@ -120,17 +107,11 @@ struct ScreenBarWingsView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let tray = model.tray {
-                // The one shape: flush with the screen's top edge, square
-                // where it runs under the bezel, the outer bottom corners
-                // rounded like the notch's own — and the bezel's own
-                // bottom-corner arcs scooped back out of it where it
-                // passes under them, so the hardware's curve stays the
-                // silhouette instead of being paved into a slab. The
-                // ears and the chin are the same fill — the notch sits
-                // in it.
-                NotchTrayShape(bezelLeft: model.bezelLeft, bezelRight: model.bezelRight,
-                               corner: model.notchCorner, drop: model.earDrop)
-                    .fill(.black, style: FillStyle(eoFill: true))
+                // A continuous body joins the wings across the physical notch.
+                UnevenRoundedRectangle(bottomLeadingRadius: model.notchCorner,
+                                       bottomTrailingRadius: model.notchCorner,
+                                       style: .continuous)
+                    .fill(.black)
                     .frame(width: tray.width, height: tray.height)
                     .position(x: tray.midX, y: model.viewHeight - tray.midY)
             }
@@ -153,7 +134,7 @@ struct ScreenBarWingsView: View {
                 UnevenRoundedRectangle(
                     topLeadingRadius: 0,
                     bottomLeadingRadius: 0,
-                    bottomTrailingRadius: NotchTrayShape.capRadius,
+                    bottomTrailingRadius: model.notchCorner,
                     topTrailingRadius: 0, style: .continuous)
                     .fill(.white.opacity(0.10))
                     .frame(width: ear.width, height: ear.height)
@@ -239,8 +220,8 @@ struct ScreenBarWingsView: View {
                     // itself answers the pointer, not just the mark.
                     UnevenRoundedRectangle(
                         topLeadingRadius: 0,
-                        bottomLeadingRadius: side == .left ? NotchTrayShape.capRadius : 0,
-                        bottomTrailingRadius: side == .right ? NotchTrayShape.capRadius : 0,
+                        bottomLeadingRadius: side == .left ? model.notchCorner : 0,
+                        bottomTrailingRadius: side == .right ? model.notchCorner : 0,
                         topTrailingRadius: 0, style: .continuous)
                         .fill(.white.opacity(0.10))
                 }
@@ -306,98 +287,5 @@ struct ScreenBarWingsView: View {
                 .font(.system(size: size, weight: .semibold, design: .rounded))
                 .foregroundStyle(tint ?? style.accent)
         }
-    }
-}
-
-/// The ears' shared body: a flat top at the screen's edge running one
-/// uniform band `drop` below the bezel's bottom edge — the ears are the
-/// band's own end caps, so the whole silhouette reads as the notch
-/// continued, not two drips stepped under it. The band's outer bottom
-/// corners carry a small radius. Where the tray passes under the bezel,
-/// the hardware's bottom-corner arcs are scooped back out (the caller
-/// fills even-odd, so each gap subpath punches a hole) — a square fill
-/// would pave the notch's rounded corners and read as a slab clipping
-/// into it rather than the notch's own continuation.
-private struct NotchTrayShape: Shape {
-    /// The bezel's side edges in tray-local x. A side whose edge sits
-    /// inside the tray has a claimed ear — the tray steps down into that
-    /// ear's lobe; a side at the tray's own edge has none.
-    var bezelLeft: CGFloat
-    var bezelRight: CGFloat
-    /// The notch profile's corner radius — the arcs the punched gaps
-    /// keep under the hardware's corners, so the bezel's own curve
-    /// stays the silhouette where the tray passes beneath it.
-    var corner: CGFloat
-    /// How far the ear lobes hang below the bezel's bottom edge
-    /// (`wingEarDrop`). The middle run under the bezel never drops —
-    /// a chin there read as the notch grown downward.
-    var drop: CGFloat
-
-    /// The ear's outer bottom corner — rounder than the hardware's
-    /// arc, so each lobe ends in the pill-cap curve Alcove's wings
-    /// carry rather than the bezel's tighter bend.
-    static let capRadius: CGFloat = 12
-
-    func path(in rect: CGRect) -> Path {
-        // One uniform band: the whole tray runs `drop` below the bezel's
-        // bottom edge (0 today — the ears win with width, not depth), so
-        // the ears read as the island's own end caps. Two radii: `cap`
-        // rounds the band's outer bottom corners into each ear's pill
-        // end, while `scoop` is the notch profile's own corner — the arc
-        // the punched gaps keep under the hardware's corners.
-        let depth = rect.height - max(0, drop)
-        let scoop = max(0, min(corner, depth, rect.width / 2.0))
-        let cap = max(0, min(Self.capRadius, depth, rect.width / 2.0))
-        var path = Path()
-        guard rect.width > 0, rect.height > 0, depth > 0 else {
-            path.addRect(rect)
-            return path
-        }
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        if cap > 0 {
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cap))
-            path.addArc(center: CGPoint(x: rect.maxX - cap, y: rect.maxY - cap), radius: cap,
-                        startAngle: .degrees(0), endAngle: .degrees(90), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.minX + cap, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.minX + cap, y: rect.maxY - cap), radius: cap,
-                        startAngle: .degrees(90), endAngle: .degrees(180), clockwise: true)
-        } else {
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        }
-        path.closeSubpath()
-        for (edge, leading) in [(bezelLeft, true), (bezelRight, false)] {
-            // A corner square the tray covers gets its gap punched back
-            // out; one outside the tray is open already. Partial coverage
-            // would paint the spill — those never arise from the claims.
-            let square = CGRect(x: leading ? edge : edge - scoop,
-                                y: depth - scoop, width: scoop, height: scoop)
-            guard scoop > 0, square.minX >= rect.minX - 0.5, square.maxX <= rect.maxX + 0.5,
-                  square.minY >= rect.minY else { continue }
-            path.addPath(cornerGap(square: square, leading: leading))
-        }
-        return path
-    }
-
-    /// The below-arc region of a bottom-corner square — the sliver the
-    /// bezel leaves open at its feet. y grows downward in the view.
-    private func cornerGap(square: CGRect, leading: Bool) -> Path {
-        var gap = Path()
-        if leading {
-            gap.move(to: CGPoint(x: square.minX, y: square.minY))
-            gap.addLine(to: CGPoint(x: square.minX, y: square.maxY))
-            gap.addLine(to: CGPoint(x: square.maxX, y: square.maxY))
-            gap.addArc(center: CGPoint(x: square.maxX, y: square.minY), radius: square.width,
-                       startAngle: .degrees(90), endAngle: .degrees(180), clockwise: true)
-        } else {
-            gap.move(to: CGPoint(x: square.maxX, y: square.minY))
-            gap.addLine(to: CGPoint(x: square.maxX, y: square.maxY))
-            gap.addLine(to: CGPoint(x: square.minX, y: square.maxY))
-            gap.addArc(center: CGPoint(x: square.minX, y: square.minY), radius: square.width,
-                       startAngle: .degrees(90), endAngle: .degrees(0), clockwise: false)
-        }
-        gap.closeSubpath()
-        return gap
     }
 }

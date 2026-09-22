@@ -380,10 +380,26 @@ def test_physical_inputs_become_events_and_state__and_1_more(headless) -> None: 
     controller._deck_input_check_active = False
     delivered: list = []
     controller._core_deck_reveal_or_answer = lambda identity, revision: delivered.append(identity) or DeckActionReceipt("navigation_requested", True)
-    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = (
-        lambda selector, payload, wait: controller.applyDeckInput_(payload)
-    )
+    # Input delivery runs on a worker now — the stub routes each selector
+    # the way the real run loop would (inline), and the receipt's land
+    # hop goes through runCoreCallable: rather than applyDeckInput:.
+    def _perform(selector, payload, wait):
+        if selector == "applyDeckInput:":
+            controller.applyDeckInput_(payload)
+        elif selector == "runCoreCallable:":
+            payload.callable()
+        else:
+            raise AssertionError(f"unexpected selector {selector}")
+    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = _perform
     dispatch.receive_normalized((ControlInput(0, "press"),))
+    landed = threading.Event()
+    original_publish = getattr(controller, "_core_publish_state", None)
+    def _publish():
+        if callable(original_publish):
+            original_publish()
+        landed.set()
+    controller._core_publish_state = _publish
+    assert landed.wait(5.0) or delivered
     assert delivered == [controller._core_build_state()["deck"]["slots"][0]["identity"]]
     assert controller._deck_action_receipt.code == "navigation_requested"
 

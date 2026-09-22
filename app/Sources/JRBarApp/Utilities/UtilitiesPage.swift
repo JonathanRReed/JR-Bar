@@ -31,6 +31,7 @@ struct UtilitiesPage: View {
                 // The roster's management seat — the compact list and
                 // the session verbs; the Overview window stays the canvas.
                 AgentUtilityCard(utility: utilities.agents, tint: tint)
+                ToyCard(toy: utilities.dataHoarder, tint: tint)
                 // Notch lives in ToysStore but reads as a utility — it
                 // manages the notch itself, not something playful.
                 if let notch = store.toys?.notch {

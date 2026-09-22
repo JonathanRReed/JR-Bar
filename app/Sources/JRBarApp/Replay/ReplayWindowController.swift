@@ -15,6 +15,7 @@ final class ReplayWindowController: NSObject, NSWindowDelegate {
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
+        store.isOpen = true
         Task { await store.load() }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -38,5 +39,11 @@ final class ReplayWindowController: NSObject, NSWindowDelegate {
         window.center()
         window.identifier = NSUserInterfaceItemIdentifier("jrbar.replay")
         return window
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Closed, the live-frame reloads stop; the next `show()` reads
+        // the journal fresh anyway.
+        store.isOpen = false
     }
 }

@@ -9,6 +9,9 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     case agents
     case meters
     case metersPercent = "meters_percent"
+    /// The tightest window's remaining percent beside its provider's
+    /// mark — the CodexBar glanceable readout.
+    case compactPercent = "compact_percent"
     case glyph
     case glyphRing = "glyph_ring"
     case glyphLabel = "glyph_label"
@@ -24,6 +27,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case "glyph_label", "label", "text", "counts": self = .glyphLabel
         case "meters", "meter", "bars", "columns": self = .meters
         case "meters_percent", "meters+percent", "percent", "meters_pct": self = .metersPercent
+        case "compact_percent", "compact", "percent_left", "remaining": self = .compactPercent
         case "orbit", "orbital", "fold", "unified", "device": self = .orbit
         default: self = .agents
         }
@@ -37,7 +41,8 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         switch self {
         case .agents: return "Session dots"
         case .meters: return "Usage meters"
-        case .metersPercent: return "Usage meters with percent"
+        case .metersPercent: return "Usage meters with % left"
+        case .compactPercent: return "Compact % left"
         case .glyph: return "Glyph only"
         case .glyphRing: return "Glyph with usage ring"
         case .glyphLabel: return "Glyph with label"
@@ -49,7 +54,8 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         switch self {
         case .agents: return "One dot per live session, coloured by what it is doing; the mark alone when nothing runs."
         case .meters: return "A column per provider checked under Settings › Usage, plus a state dot."
-        case .metersPercent: return "The same columns, with the first provider's number."
+        case .metersPercent: return "The same columns, with the first provider's remaining percent — or its reset countdown when that is the more urgent number."
+        case .compactPercent: return "The tightest window's remaining percent beside its provider's mark, tinted by pace; shows the reset countdown when it is nearly spent or nearly due."
         case .glyph: return "The JR-Bar mark, tinted by what the agents are doing."
         case .glyphRing: return "The mark inside a ring of your primary window."
         case .glyphLabel: return "The mark beside “1 ask · 2 working”."
@@ -83,15 +89,29 @@ public struct StatusMeter: Hashable, Sendable {
     /// column cannot be a template image, so one accent renders the whole
     /// strip in colours.
     public var accentHex: String?
+    /// Epoch seconds the window resets. The percent-bearing styles swap
+    /// the figure for a countdown when the reset is imminent — and they
+    /// cannot show one without this stamp.
+    public var resetsAt: Double?
+    /// What the window is heading for, collapsed for the tint decision:
+    /// `comfortable` (reset comes first), `runsOut` (pace hits 100 %
+    /// first), `exhausted` (nothing left), `guarded` (the daemon refused
+    /// a pace), `unknown` (no verdict worth a colour).
+    public enum PaceVerdict: String, Hashable, Sendable {
+        case comfortable, runsOut, exhausted, guarded, unknown
+    }
+    public var paceVerdict: PaceVerdict
 
     public init(id: String, name: String, glyph: Glyph, fraction: Double?, approximate: Bool = false,
-                accentHex: String? = nil) {
+                accentHex: String? = nil, resetsAt: Double? = nil, paceVerdict: PaceVerdict = .unknown) {
         self.id = id
         self.name = name
         self.glyph = glyph
         self.fraction = fraction.map { max(0, min(1, $0)) }
         self.approximate = approximate
         self.accentHex = accentHex
+        self.resetsAt = resetsAt
+        self.paceVerdict = paceVerdict
     }
 
     /// The window exists and nobody said how full it is.
@@ -310,6 +330,10 @@ public final class StatusIconRenderer: @unchecked Sendable {
             if over { width += agentsGap + overflowWidth(spec.sessions.count - shown) }
             return NSSize(width: (width + edgeInset).rounded(.up), height: barHeight)
         }
+        if spec.style == .compactPercent {
+            let width = edgeInset + glyphBox + glyphGap + compactWidth(spec)
+            return NSSize(width: (width + edgeInset).rounded(.up), height: barHeight)
+        }
         guard spec.style.isMeters else { return size }
         var width = edgeInset + dotDiameter + dotGap
         if spec.meters.isEmpty {
@@ -327,18 +351,77 @@ public final class StatusIconRenderer: @unchecked Sendable {
         return NSSize(width: (width + edgeInset).rounded(.up), height: barHeight)
     }
 
-    static func percentWidth(_ meter: StatusMeter) -> CGFloat {
-        (percentText(meter) as NSString).size(withAttributes: [.font: percentFont]).width.rounded(.up)
+    static func percentWidth(_ meter: StatusMeter, now: Date = Date()) -> CGFloat {
+        (percentText(meter, now: now) as NSString).size(withAttributes: [.font: percentFont]).width.rounded(.up)
     }
 
-    static func percentText(_ meter: StatusMeter) -> String {
+    /// What the percent styles print: the window's *remaining* percent —
+    /// the CodexBar semantics a menu-bar figure should glance at — or the
+    /// reset countdown when the countdown rule fires.
+    static func percentText(_ meter: StatusMeter, now: Date = Date()) -> String {
+        if let countdown = countdownText(meter, now: now) { return countdown }
         guard let fraction = meter.fraction else { return unknownPercentText }
-        return (meter.approximate ? "~" : "") + "\(Int((fraction * 100).rounded()))"
+        return (meter.approximate ? "~" : "") + "\(Int(((1 - fraction) * 100).rounded()))"
+    }
+
+    /// "12m" / "3h" / "2d" to the window's reset when the reset deserves
+    /// the slot: under a tenth of the window left, or the reset inside
+    /// fifteen minutes. Nil while neither holds, when the reset already
+    /// passed (a stale stamp — the next reading refreshes it), or when no
+    /// reset time was reported.
+    static func countdownText(_ meter: StatusMeter, now: Date = Date()) -> String? {
+        guard let resetsAt = meter.resetsAt else { return nil }
+        let delta = resetsAt - now.timeIntervalSince1970
+        guard delta >= 0 else { return nil }
+        let nearlySpent = meter.fraction.map { $0 > 0.90 } ?? false
+        guard nearlySpent || delta < 900 else { return nil }
+        if delta < 3600 { return "\(Int(delta / 60))m" }
+        if delta < 86400 { return "\(Int(delta / 3600))h" }
+        return "\(Int(delta / 86400))d"
     }
 
     /// What the percent style prints for a window with no reading. Two
     /// dashes, never "0".
     static let unknownPercentText = "--"
+
+    /// The meter whose window is nearest to spent — the compact strip's
+    /// subject. Unmeasured windows sort last, so a provider that never
+    /// reported a number cannot win the readout over one that did.
+    static func tightestMeter(_ spec: StatusIconSpec) -> StatusMeter? {
+        spec.meters.max(by: { ($0.fraction ?? -1) < ($1.fraction ?? -1) })
+    }
+
+    /// The compact strip's figure: the reset countdown when the rule
+    /// fires, else the remaining percent with its `%`, else two dashes.
+    static func compactText(_ meter: StatusMeter?, now: Date = Date()) -> String {
+        guard let meter else { return unknownPercentText }
+        if let countdown = countdownText(meter, now: now) { return countdown }
+        guard let fraction = meter.fraction else { return unknownPercentText }
+        return (meter.approximate ? "~" : "") + "\(Int(((1 - fraction) * 100).rounded()))%"
+    }
+
+    static func compactWidth(_ spec: StatusIconSpec, now: Date = Date()) -> CGFloat {
+        (compactText(tightestMeter(spec), now: now) as NSString)
+            .size(withAttributes: [.font: percentFont]).width.rounded(.up)
+    }
+
+    /// The compact strip's tint: the pace verdict's colour when the
+    /// window is heading somewhere bad — exhausted red, running out
+    /// amber — then the meter's own warning, then the provider accent;
+    /// nil leaves a template image to follow the menu bar's colour.
+    static func compactColor(_ meter: StatusMeter?) -> NSColor? {
+        guard let meter else { return nil }
+        switch meter.paceVerdict {
+        case .exhausted: return .systemRed
+        case .runsOut: return .systemOrange
+        case .comfortable, .guarded, .unknown: break
+        }
+        switch meter.warning {
+        case .red: return .systemRed
+        case .amber: return .systemOrange
+        case .none: return meter.accentHex.flatMap(NSColor.init(statusHex:))
+        }
+    }
 
     static func overflowWidth(_ overflow: Int) -> CGFloat {
         ("+\(overflow)" as NSString).size(withAttributes: [.font: overflowFont]).width.rounded(.up)
@@ -380,6 +463,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// (the drawing handler runs at draw time, so it re-resolves).
     static func draw(_ spec: StatusIconSpec) -> NSImage {
         if spec.style.isMeters { return drawMeters(spec) }
+        if spec.style == .compactPercent { return drawCompact(spec) }
         if spec.style == .agents { return drawAgents(spec) }
         if spec.style == .orbit { return drawOrbit(spec) }
         let warning = spec.ringWarning
@@ -638,6 +722,45 @@ public final class StatusIconRenderer: @unchecked Sendable {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    // MARK: Compact percent
+
+    /// The CodexBar glanceable: the tightest measured window's provider
+    /// glyph beside its remaining percent — or its reset countdown when
+    /// the window is nearly spent or nearly due — tinted by the pace
+    /// verdict. No state dot and no columns: this style is the readout
+    /// and nothing else, which is what keeps it compact.
+    static func drawCompact(_ spec: StatusIconSpec) -> NSImage {
+        let meter = tightestMeter(spec)
+        let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
+        let colour = compactColor(meter) ?? tint
+        let template = colour == nil
+        let imageSize = Self.size(for: spec)
+        let image = NSImage(size: imageSize, flipped: false) { _ in
+            let ink: NSColor = template ? .black : .labelColor
+            let midY = imageSize.height / 2
+            var x = edgeInset
+            if let meter {
+                drawGlyph(meter.glyph, in: NSRect(x: x, y: midY - glyphBox / 2, width: glyphBox, height: glyphBox),
+                          color: colour ?? ink.withAlphaComponent(0.8))
+            } else {
+                // Nothing to meter yet: keep a mark so the item is never a gap.
+                drawGlyph(.symbol("chart.bar.fill"), in: NSRect(x: x, y: midY - glyphBox / 2, width: glyphBox, height: glyphBox),
+                          color: ink.withAlphaComponent(0.45))
+            }
+            x += glyphBox + glyphGap
+            let text = compactText(meter) as NSString
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: percentFont, .foregroundColor: colour ?? ink,
+            ]
+            let height = text.size(withAttributes: attributes).height
+            text.draw(at: NSPoint(x: x, y: midY - height / 2), withAttributes: attributes)
+            return true
+        }
+        image.isTemplate = template
+        image.accessibilityDescription = accessibilityLabel(spec)
+        return image
+    }
+
     /// The thinnest visible foot: a provider that has barely started still
     /// shows something, so an empty column always means "nothing reported"
     /// rather than "nothing used".
@@ -697,6 +820,14 @@ public final class StatusIconRenderer: @unchecked Sendable {
         if spec.style == .orbit {
             return (["JR-Bar"] + orbitWords(spec)).joined(separator: " · ")
         }
+        if spec.style == .compactPercent {
+            guard let meter = tightestMeter(spec) else { return "JR-Bar" }
+            if let countdown = countdownText(meter) {
+                return "JR-Bar · \(meter.name) resets in \(countdown)"
+            }
+            guard let fraction = meter.fraction else { return "JR-Bar · \(meter.name) no reading" }
+            return "JR-Bar · \(meter.name) \(Int(((1 - fraction) * 100).rounded()))% left"
+        }
         guard spec.style.isMeters else { return "JR-Bar" }
         var parts: [String] = ["JR-Bar"]
         switch spec.dot {
@@ -724,6 +855,15 @@ public final class StatusIconRenderer: @unchecked Sendable {
         }
         if spec.style == .orbit {
             return ([headline] + orbitWords(spec)).joined(separator: "\n")
+        }
+        if spec.style == .compactPercent {
+            var lines = [headline]
+            if !spec.meters.isEmpty {
+                var readout = spec.meters.map(\.readout).joined(separator: " · ")
+                if spec.overflow > 0 { readout += " · \(spec.overflow) more" }
+                lines.append(readout)
+            }
+            return lines.joined(separator: "\n")
         }
         guard spec.style.isMeters else { return headline }
         var lines = [headline, spec.dot.meaning]

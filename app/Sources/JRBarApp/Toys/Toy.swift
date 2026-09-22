@@ -70,38 +70,53 @@ struct ToyCard: View {
         let status = toy.status
         let isOn = toy.isOn
         let toggle = Binding(get: { isOn }, set: { toy.isOn = $0 })
-        DisclosureGroup(isExpanded: $expanded) {
-            toy.controls
-                .padding(.top, 2)
-        } label: {
+        // Keep expansion and enablement as sibling controls. Nested actions
+        // in a DisclosureGroup label can replace its expansion action.
+        VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(tint.gradient)
-                    Image(systemName: toy.symbol)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .symbolRenderingMode(.hierarchical)
+                Button { expanded.toggle() } label: {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 10)
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(tint.gradient)
+                            Image(systemName: toy.symbol)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .symbolRenderingMode(.hierarchical)
+                        }
+                        .frame(width: 26, height: 26)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(toy.name)
+                                .fontWeight(.medium)
+                            Text(toy.blurb)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        StatusChip(status: status)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(width: 26, height: 26)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(toy.name)
-                        .fontWeight(.medium)
-                    Text(toy.blurb)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                StatusChip(status: status)
-                Toggle(isOn: toggle) { EmptyView() }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
+                Toggle(toy.name, isOn: toggle)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
             }
             .padding(.vertical, 2)
-            .contentShape(Rectangle())
+            if expanded {
+                toy.controls
+                    .padding(.leading, 20)
+                    .padding(.top, 2)
+            }
         }
     }
 }

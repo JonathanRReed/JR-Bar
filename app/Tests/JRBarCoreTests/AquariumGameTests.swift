@@ -25,8 +25,9 @@ struct AquariumGameTests {
         var game = AquariumGame()
         game.apply(.workTick(seconds: AquariumRules.workSecondsPerPearl, working: ["a"]),
                    now: Self.t0)
-        #expect(game.pearls == 1)
-        #expect(game.lifetimePearls == 1)
+        // The first pearl minted also unlocks its milestone reward.
+        #expect(game.pearls == 1 + AquariumAchievement.firstPearl.reward)
+        #expect(game.lifetimePearls == 1 + AquariumAchievement.firstPearl.reward)
         // The fractional bank is spent, not carried twice.
         #expect(game.pearlProgress < 1)
         // Two half-ticks mint the same pearl once.
@@ -36,7 +37,7 @@ struct AquariumGameTests {
         #expect(again.pearls == 0)
         again.apply(.workTick(seconds: AquariumRules.workSecondsPerPearl / 2, working: ["a"]),
                     now: Self.t0 + 10)
-        #expect(again.pearls == 1)
+        #expect(again.pearls == 1 + AquariumAchievement.firstPearl.reward)
     }
 
     @Test("concurrent working scales mildly and caps")
@@ -45,27 +46,30 @@ struct AquariumGameTests {
         let many = (0..<20).map { "s\($0)" }
         game.apply(.workTick(seconds: AquariumRules.workSecondsPerPearl, working: many),
                    now: Self.t0)
-        // 1 + 0.25·19 = 5.75 uncapped → capped at 3×.
-        #expect(game.pearls == 3)
+        // 1 + 0.25·19 = 5.75 uncapped → capped at 3×, plus the first-pearl reward.
+        #expect(game.pearls == 3 + AquariumAchievement.firstPearl.reward)
         var two = AquariumGame()
         two.apply(.workTick(seconds: AquariumRules.workSecondsPerPearl, working: ["a", "b"]),
                   now: Self.t0)
-        #expect(two.pearls == 1)   // 1.25× — fractional bank keeps the quarter
+        #expect(two.pearls == 1 + AquariumAchievement.firstPearl.reward)
         #expect(two.pearlProgress > 0.2)
     }
 
     @Test("a completed session pays the bonus once")
     func completionBonus() {
         var game = AquariumGame()
-        game.apply(.sessionCompleted(id: "a"), now: Self.t0)
-        #expect(game.pearls == AquariumRules.completionBonus)
+        game.apply(.sessionCompleted(id: "a"), now: Self.t0, calendar: Self.utc)
+        #expect(game.pearls == AquariumRules.completionBonus
+                + AquariumAchievement.firstPearl.reward)
         // Still listed, still done — never paid twice.
-        game.apply(.sessionCompleted(id: "a"), now: Self.t0 + 5)
-        #expect(game.pearls == AquariumRules.completionBonus)
+        game.apply(.sessionCompleted(id: "a"), now: Self.t0 + 5, calendar: Self.utc)
+        #expect(game.pearls == AquariumRules.completionBonus
+                + AquariumAchievement.firstPearl.reward)
         #expect(game.totals.completions == 1)
         // A different session pays its own.
-        game.apply(.sessionCompleted(id: "b"), now: Self.t0 + 6)
-        #expect(game.pearls == AquariumRules.completionBonus * 2)
+        game.apply(.sessionCompleted(id: "b"), now: Self.t0 + 6, calendar: Self.utc)
+        #expect(game.pearls == AquariumRules.completionBonus * 2
+                + AquariumAchievement.firstPearl.reward)
     }
 
     @Test("a waiting session earns nothing")
@@ -107,9 +111,83 @@ struct AquariumGameTests {
     func pellet() {
         var game = AquariumGame()
         game.apply(.pelletEaten(fishID: "a"), now: Self.t0)
-        #expect(game.pearls == AquariumRules.pelletPearl)
+        #expect(game.pearls == AquariumRules.pelletPearl
+                + AquariumAchievement.firstPearl.reward)
         #expect(game.pets["a"]?.feedings == 1)
         #expect(game.totals.feedings == 1)
+    }
+
+    @Test("only feedingsPerFishPerDay pellets a day pay & count; the rest are just supper")
+    func feedingCap() {
+        var game = AquariumGame()
+        let cap = AquariumRules.feedingsPerFishPerDay
+        for _ in 0..<(cap + 4) {
+            game.apply(.pelletEaten(fishID: "a"), now: Self.t0, calendar: Self.utc)
+        }
+        // The cap, not the tap count, is what the fish banked.
+        #expect(game.pets["a"]?.feedings == cap)
+        #expect(game.pets["a"]?.feedingsToday == cap)
+        #expect(game.totals.feedings == cap)
+        // Pearls: one per counted pellet, the first-pearl milestone,
+        // and the day's chore when t0's goal happens to be pellets —
+        // counted feedings reach its target exactly at the cap.
+        var expected = cap * AquariumRules.pelletPearl
+            + AquariumAchievement.firstPearl.reward
+        if game.dailyGoal?.kind == .pellets, game.dailyGoal?.claimed == true {
+            expected += AquariumRules.dailyGoalReward
+        }
+        #expect(game.pearls == expected)
+        // …but every pellet still nourishes — a fed fish is a fed fish.
+        #expect(game.pets["a"]?.hungry(at: Self.t0 + 60) == false)
+        // Another fish eats under its own cap the same day.
+        game.apply(.pelletEaten(fishID: "b"), now: Self.t0, calendar: Self.utc)
+        #expect(game.totals.feedings == cap + 1)
+        // Tomorrow the counter rolls over.
+        let tomorrow = Self.utc.date(byAdding: .day, value: 1, to: Self.t0)!
+        let effects = game.apply(.pelletEaten(fishID: "a"), now: tomorrow, calendar: Self.utc)
+        #expect(effects.contains(.pearlsEarned(AquariumRules.pelletPearl)))
+        #expect(game.pets["a"]?.feedings == cap + 1)
+        #expect(game.pets["a"]?.feedingsToday == 1)
+    }
+
+    @Test("a work beat after a stale gap restarts the marathon clock")
+    func staleWorkBank() {
+        var game = AquariumGame()
+        game.apply(.workTick(seconds: 600, working: ["a"]), now: Self.t0)
+        #expect(game.continuousWorkSeconds == 600)
+        // Inside the gap it keeps accumulating.
+        game.apply(.workTick(seconds: 60, working: ["a"]),
+                   now: Self.t0 + AquariumRules.workContinuityGap - 1)
+        #expect(game.continuousWorkSeconds == 660)
+        // Past the gap the bank is stale — the new beat is a fresh
+        // stretch, not 660 + 60.
+        game.apply(.workTick(seconds: 60, working: ["a"]),
+                   now: Self.t0 + 2 * AquariumRules.workContinuityGap + 1)
+        #expect(game.continuousWorkSeconds == 60)
+        // A stale bank can never ride into the whale: two hours banked
+        // a day ago (say, a save from before load-resetting) followed
+        // by a fresh beat queues nothing.
+        var saved = AquariumGame()
+        saved.continuousWorkSeconds = AquariumRules.whaleWorkSeconds + 60
+        saved.lastWorkAt = Self.t0.timeIntervalSince1970
+        let effects = saved.apply(.workTick(seconds: 20, working: ["a"]),
+                                  now: Self.t0 + 24 * 3600)
+        #expect(saved.continuousWorkSeconds == 20)
+        #expect(!effects.contains(.visitor(.whale)))
+        #expect(saved.unlocked["marathon"] == nil)
+    }
+
+    @Test("a visitor's departure reports back for the goodbye beat")
+    func visitorDeparture() {
+        var game = AquariumGame()
+        game.apply(.quotaReset, now: Self.t0)
+        #expect(game.pendingVisitors == [.submarine])
+        game.apply(.visitorShown(.submarine), now: Self.t0 + 10)
+        let effects = game.apply(.visitorDeparted(.submarine), now: Self.t0 + 24)
+        #expect(effects.contains(.visitorDeparted(.submarine)))
+        // It changes nothing else — the parade is the view's business.
+        #expect(game.totals.visitorsSeen == 1)
+        #expect(game.pendingVisitors.isEmpty)
     }
 
     @Test("a starved fish shrinks one stage per starve period, never below zero")
@@ -166,15 +244,20 @@ struct AquariumGameTests {
         // The interval restarted.
         game.apply(.tick, now: t1 + 60)
         #expect(game.drops.count == 1)
-        // Collecting pays.
+        // Collecting pays — plus the first-pearl milestone and the
+        // full-grown one the stage-2 "big" fish already earned.
         let id = game.drops[0].id
         game.apply(.collectDrop(id), now: t1 + 61)
-        #expect(game.pearls == AquariumRules.dropPearlValue)
+        #expect(game.pearls == AquariumRules.dropPearlValue
+                + AquariumAchievement.firstPearl.reward
+                + AquariumAchievement.fullGrown.reward)
         #expect(game.drops.isEmpty)
         #expect(game.totals.dropsCollected == 1)
         // An unknown id is a no-op.
         game.apply(.collectDrop("ghost"), now: t1 + 62)
-        #expect(game.pearls == AquariumRules.dropPearlValue)
+        #expect(game.pearls == AquariumRules.dropPearlValue
+                + AquariumAchievement.firstPearl.reward
+                + AquariumAchievement.fullGrown.reward)
     }
 
     @Test("an owned snail collects a sat drop; no snail, it waits")
@@ -188,7 +271,7 @@ struct AquariumGameTests {
         game.inventory[ShopItem.snail.rawValue] = 1
         game.apply(.tick, now: Self.t0 + AquariumRules.snailCollectAfter + 2)
         #expect(game.drops.isEmpty)
-        #expect(game.pearls == 1)
+        #expect(game.pearls == 1 + AquariumAchievement.firstPearl.reward)
         #expect(game.totals.dropsCollected == 1)
     }
 
@@ -196,9 +279,13 @@ struct AquariumGameTests {
 
     @Test("a purchase spends pearls once; re-buying or overspending is denied")
     func purchase() {
-        var game = AquariumGame(pearls: 60)
+        // Lifetime 50 puts the tank at level 1 — the castle's tier.
+        var game = AquariumGame(pearls: 60, lifetimePearls: 50)
         let effects = game.apply(.purchase(.castle), now: Self.t0)
-        #expect(game.pearls == 0)
+        // The spend is exact; the first-pearl and first-purchase
+        // milestones pay on top.
+        #expect(game.pearls == AquariumAchievement.firstPearl.reward
+                + AquariumAchievement.firstPurchase.reward)
         #expect(game.owns(.castle))
         #expect(game.totals.purchases == 1)
         #expect(effects.contains(.pearlsSpent(ShopItem.castle.price)))
@@ -274,7 +361,7 @@ struct AquariumGameTests {
         game.apply(.workTick(seconds: AquariumRules.workSecondsPerPearl, working: ["a"]),
                    now: Self.t0 + 3)
         game.apply(.pelletEaten(fishID: "a"), now: Self.t0 + 4)
-        game.apply(.sessionCompleted(id: "a"), now: Self.t0 + 5)
+        game.apply(.sessionCompleted(id: "a"), now: Self.t0 + 5, calendar: Self.utc)
         let effects = game.apply(.setWindowOpen(true), now: Self.t0 + 6)
         guard case .awaySummary(let summary) = effects.first(where: {
             if case .awaySummary = $0 { return true }; return false

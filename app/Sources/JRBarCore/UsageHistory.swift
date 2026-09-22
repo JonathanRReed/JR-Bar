@@ -119,13 +119,21 @@ public struct UsageHistoryHour: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// Per-million-token prices the daemon used for `cost_usd`; always an
-/// approximation of the provider's list price.
+/// Per-million-token prices the daemon used for `cost_usd`: the model's
+/// own list price when its table row priced the records (`estimated ==
+/// false`), else a stand-in's rate marked approximate.
 public struct UsagePricing: Codable, Hashable, Sendable {
     public var inputPerMillion: Double?
     public var outputPerMillion: Double?
     public var cacheReadPerMillion: Double?
     public var asOf: String?
+    /// The rate-table generation this quote was priced under
+    /// (`jrbar-rates-v3`), when the daemon stamps it.
+    public var tableVersion: String?
+    /// The same flag as `estimated`: a stand-in rate is approximate, a
+    /// model's own table row is a list price. Kept decoded-and-derived —
+    /// the daemon writes it, and older daemons that hardcoded `true`
+    /// stay honest because it is recomputed from `estimated` here.
     public var approximate: Bool
     public var currency: String
     /// The model this quote is for — the dominant model's own row, the
@@ -137,12 +145,13 @@ public struct UsagePricing: Codable, Hashable, Sendable {
     public var estimated: Bool
 
     public init(inputPerMillion: Double? = nil, outputPerMillion: Double? = nil, cacheReadPerMillion: Double? = nil,
-                asOf: String? = nil, approximate: Bool = true, currency: String = "USD",
+                asOf: String? = nil, tableVersion: String? = nil, approximate: Bool = true, currency: String = "USD",
                 model: String? = nil, source: String? = nil, estimated: Bool = false) {
         self.inputPerMillion = inputPerMillion
         self.outputPerMillion = outputPerMillion
         self.cacheReadPerMillion = cacheReadPerMillion
         self.asOf = asOf
+        self.tableVersion = tableVersion
         self.approximate = approximate
         self.currency = currency
         self.model = model
@@ -155,6 +164,7 @@ public struct UsagePricing: Codable, Hashable, Sendable {
         case outputPerMillion = "output_per_mtok"
         case cacheReadPerMillion = "cache_read_per_mtok"
         case asOf = "as_of"
+        case tableVersion = "table_version"
         case approximate, currency, model, source, estimated
     }
 
@@ -164,11 +174,15 @@ public struct UsagePricing: Codable, Hashable, Sendable {
         outputPerMillion = try c.decodeIfPresent(Double.self, forKey: .outputPerMillion)
         cacheReadPerMillion = try c.decodeIfPresent(Double.self, forKey: .cacheReadPerMillion)
         asOf = try c.decodeIfPresent(String.self, forKey: .asOf)
-        approximate = try c.decodeIfPresent(Bool.self, forKey: .approximate) ?? true
+        tableVersion = try c.decodeIfPresent(String.self, forKey: .tableVersion)
         currency = try c.decodeIfPresent(String.self, forKey: .currency) ?? "USD"
         model = try c.decodeIfPresent(String.self, forKey: .model)
         source = try c.decodeIfPresent(String.self, forKey: .source)
         estimated = try c.decodeIfPresent(Bool.self, forKey: .estimated) ?? false
+        // The wire's `approximate` says the same thing `estimated` does;
+        // derive it here so a daemon that still hardcodes true cannot
+        // call a list price approximate.
+        approximate = estimated
     }
 }
 
@@ -243,6 +257,14 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         estimatedRecords = (try? c.decodeIfPresent(Int.self, forKey: .estimatedRecords)) ?? 0
         unpricedRecords = (try? c.decodeIfPresent(Int.self, forKey: .unpricedRecords)) ?? 0
         unpricedModels = (try? c.decodeIfPresent([String].self, forKey: .unpricedModels)) ?? []
+    }
+
+    /// True while the dollars are approximate: the headline quote is a
+    /// stand-in (`pricing.estimated`), some counted record was priced at
+    /// a reference rate, or no table was reported at all. The UI prefixes
+    /// approximate costs with `≈`; a fully table-priced range drops it.
+    public var costsApproximate: Bool {
+        (pricing?.estimated ?? true) || estimatedRecords > 0
     }
 
     public var isEmpty: Bool { days.isEmpty && hours.isEmpty }

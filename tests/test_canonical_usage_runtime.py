@@ -172,9 +172,9 @@ def test_provider_usage_result_is_immutable_source_scoped_and_privacy_safe__and_
     assert mixed.pricing_coverage is PricingCoverage.PARTIAL
     assert mixed.priced_record_count == 1
     assert mixed.unpriced_record_count == 1
-    assert mixed.covered_cost_estimate_usd == pytest.approx(3.0)
+    assert mixed.covered_cost_estimate_usd == pytest.approx(2.0)
     assert mixed.covered_cache_savings_estimate_usd == pytest.approx(0.0)
-    assert mixed.pricing_as_of == "2026-08-26"  # rates-v2: fable + GPT rows
+    assert mixed.pricing_as_of == "2026-09-20"  # rates-v3: fable + GPT + Gemini rows
 
     totals = scan_usage(mixed_root)
     copy = usage_summary_line(totals, "cost")
@@ -194,9 +194,9 @@ def test_provider_usage_result_is_immutable_source_scoped_and_privacy_safe__and_
     known = scan_provider_usage(source, known_root, None, since_epoch=0.0)
 
     assert known.pricing_coverage is PricingCoverage.COMPLETE
-    assert known.covered_cost_estimate_usd == pytest.approx(3.3)
-    assert known.covered_cache_savings_estimate_usd == pytest.approx(2.7)
-    assert known.pricing_as_of == "2026-08-26"
+    assert known.covered_cost_estimate_usd == pytest.approx(2.2)
+    assert known.covered_cache_savings_estimate_usd == pytest.approx(1.8)
+    assert known.pricing_as_of == "2026-09-20"
 
     # --- scenario: provider_local_failure_cache_and_health_never_cross_source_keys
     claude_root = tmp_path / "claude"

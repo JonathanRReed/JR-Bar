@@ -51,6 +51,7 @@ from enum import Enum
 from typing import Final
 
 from .animation import (
+    MAX_TIME_MS,
     OFF,
     Animation,
     BrightnessStep,
@@ -452,6 +453,23 @@ def _line_duration_ms(segments) -> int | None:
     return max(durations) if durations else None
 
 
+def _line_span_ms(segments) -> int:
+    """When a paint line finishes: the longest delay-plus-duration on it.
+
+    ``Timing.span_ms`` already knows the firmware's clock -- an easing with
+    no duration runs 330 ms, a bare timing one 60 Hz frame -- so this is
+    only the max over the line's segments.
+    """
+    return max(
+        (
+            segment.timing.span_ms
+            for segment in segments
+            if getattr(segment, "timing", None) is not None
+        ),
+        default=0,
+    )
+
+
 def downsample_program(
     program: str,
     *,
@@ -503,6 +521,35 @@ def downsample_program(
             if not narrowed.segments:
                 return None
             steps.append(narrowed)
+            # The earliest-delay merge shortens a staggered line, and a
+            # shorter line loops faster: the Dot drifts off the strip's
+            # clock the first lap. The hold line paints every band with
+            # the colour the source line left it on and sits for the
+            # missing span -- visually a pause, arithmetically the same
+            # period.
+            shortfall = _line_span_ms(step.segments) - _line_span_ms(narrowed.segments)
+            if shortfall > 0:
+                steps.append(
+                    PaintStep(
+                        segments=(
+                            IndexedPaint(
+                                assignments=tuple(
+                                    (
+                                        band,
+                                        resolved[band]
+                                        if band < len(resolved)
+                                        else BLACK,
+                                    )
+                                    for band in range(led_count)
+                                ),
+                                timing=Timing(
+                                    duration_ms=min(shortfall, MAX_TIME_MS),
+                                    easing="none",
+                                ),
+                            ),
+                        )
+                    )
+                )
         elif type(step) in (BrightnessStep, RollStep, RepeatStep, CommentStep):
             steps.append(step)
         else:  # pragma: no cover - the union is closed
@@ -511,6 +558,98 @@ def downsample_program(
         return render_animation(Animation(animation.name, tuple(steps)))
     except Exception:
         return None
+
+
+def upsample_segment(segment, *, source_leds: int, led_count: int):
+    """One paint segment re-rendered for a wider device, or ``None``.
+
+    Destination LED ``j`` takes source LED ``j * source_leds // led_count``:
+    each source LED claims a contiguous run, so the Dot's two colours land
+    on the bar as two bands of four. ``None`` is an indexed segment that
+    names no destination LED -- the caller drops it the way the firmware
+    drops a line that addresses nothing.
+    """
+    if type(segment) is WholeBar:
+        return segment
+    if type(segment) is ColorList:
+        colors = tuple(
+            segment.colors[band] if band < len(segment.colors) else BLACK
+            for band in (
+                led * source_leds // led_count for led in range(led_count)
+            )
+        )
+        return ColorList(colors=colors, timing=segment.timing)
+    if type(segment) is IndexedPaint:
+        by_led: dict[int, str] = {}
+        for index, color in segment.assignments:
+            position = int(index)
+            if position < 0 or position >= source_leds:
+                continue
+            for led in range(led_count):
+                if led * source_leds // led_count == position:
+                    by_led[led] = normalize_color(color)
+        if not by_led:
+            return None
+        return IndexedPaint(
+            assignments=tuple(sorted(by_led.items())),
+            timing=segment.timing,
+        )
+    return segment
+
+
+def upsample_program(
+    program: str,
+    *,
+    source_leds: int,
+    led_count: int,
+) -> str | None:
+    """A narrow program re-rendered for ``led_count`` LEDs, or ``None``.
+
+    The Screen Bar mirroring a lone Dot: the Dot's two LEDs each claim a
+    contiguous run of the bar's eight, so a two-colour pulse still reads as
+    two colours. ``None`` means "this text is not something I can honestly
+    widen" -- the caller keeps its own render rather than play a wrong one.
+
+    The inverse of ``downsample_program``, and simpler than it: expansion
+    is one-to-many, so no band is ever left unaddressed and no "make
+    total" pass is needed. Brightness, roll, repeat and comment lines pass
+    through untouched -- the bar runs the same clock as the Dot.
+    """
+    if not isinstance(program, str) or not program.strip():
+        return None
+    source_leds = max(1, int(source_leds))
+    led_count = max(1, int(led_count))
+    animation, problems = read_program(
+        program, led_count=max(source_leds, led_count)
+    )
+    if errors_only(problems):
+        return None
+    steps: list[object] = []
+    for step in animation.steps:
+        if type(step) is PaintStep:
+            widened = [
+                segment
+                for segment in (
+                    upsample_segment(
+                        original, source_leds=source_leds, led_count=led_count
+                    )
+                    for original in step.segments
+                )
+                if segment is not None
+            ]
+            if widened:
+                steps.append(PaintStep(segments=tuple(widened)))
+            # A line that named only LEDs the source does not have took no
+            # time on either device; dropping it is exact.
+        elif type(step) in (BrightnessStep, RollStep, RepeatStep, CommentStep):
+            steps.append(step)
+        else:  # pragma: no cover - the union is closed
+            steps.append(step)
+    try:
+        rendered = render_animation(Animation(animation.name, tuple(steps)))
+    except Exception:
+        return None
+    return rendered if rendered.strip() else None
 
 
 def beacon_program(
@@ -957,4 +1096,6 @@ __all__ = [
     "normalize_dot_role",
     "plan_dot_surface",
     "shift_program_phase",
+    "upsample_program",
+    "upsample_segment",
 ]

@@ -1,7 +1,9 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import JRBarCore
 import Observation
+import ScreenCaptureKit
 import SwiftUI
 
 /// The Menu Bar utility (docs/UTILITIES.md): owns the hider's spacer
@@ -117,7 +119,9 @@ final class MenuBarUtility: Toy {
     /// The macOS 27 engine: `MenuBarAgent` conceals the hidden apps
     /// itself (`MenuBarConcealer`). nil where the private framework
     /// does not resolve — the spacer engine stands in then.
-    @ObservationIgnored private(set) var concealer: MenuBarConcealer?
+    /// Internal (not private) so a test can inject a fake-backend
+    /// concealer and drive `stopConcealer`/`noteWorkspaceChange`.
+    @ObservationIgnored var concealer: MenuBarConcealer?
     /// The click bridge for the system's own items while an assertion
     /// is live.
     @ObservationIgnored private var clickBridge: MenuBarSystemClickBridge?
@@ -126,6 +130,9 @@ final class MenuBarUtility: Toy {
     /// tree, and the card and the Item Bar still list them from here.
     @ObservationIgnored private var knownItems: [String: [MenuBarItem]] = [:]
     @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
+    /// NSWorkspace enumeration is expensive. Notifications invalidate this
+    /// snapshot promptly; a bounded refresh still discovers quiet helpers.
+    @ObservationIgnored private let runningApps: RunningBundleIDCache
     /// Whether the concealer drives hiding right now.
     var concealing: Bool { concealer != nil }
     /// Whether the agent's mechanism resolves on this macOS at all.
@@ -194,7 +201,8 @@ final class MenuBarUtility: Toy {
     /// When the concealer came up — the first assertion waits
     /// `adoptionGrace` past it so a relaunch's dying assertion has
     /// drained and our own icon is adopted by the agent first.
-    @ObservationIgnored private var concealerStartedAt = Date.distantPast
+    /// Internal (not private) so the seed-race test can age the engine.
+    @ObservationIgnored var concealerStartedAt = Date.distantPast
     /// Apps a deliberate Show released into the hidden zone: the
     /// boundary reconcile leaves them standing left of ‹ until they
     /// move in front of it or are re-hidden — a Show verb that the
@@ -202,6 +210,25 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private var boundaryExempt: Set<String> = []
     @ObservationIgnored private var adoptionRetries = 0
     @ObservationIgnored private var adoptionCheck: Task<Void, Never>?
+    /// When our own icon first read stale — an adoption suspend lives
+    /// inside the first 30 s of the engine or of a fresh staleness,
+    /// never in steady state.
+    @ObservationIgnored private var iconStaleSince: Date?
+    /// The paced re-seat tail for a ghosted anchor: the 3-try adoption
+    /// burst lives inside 30 seconds, but an invisible boundary is never
+    /// a state to settle into — past the burst the icon alone keeps
+    /// earning suspend+re-seat attempts this far apart, up to a cap.
+    @ObservationIgnored private var iconReseats = 0
+    @ObservationIgnored private var lastIconReseat = Date.distantPast
+    @ObservationIgnored private var iconReseatExhaustedLogged = false
+    /// Consecutive dark pixel reads of the anchor's slot. The pixel
+    /// oracle is honest but not instant — the activation's own layout
+    /// transient can dark-read a healthy item, and a re-seat on that
+    /// one read destroys the registration it was meant to save. Two
+    /// consecutive dark reads make a confirmed park.
+    @ObservationIgnored private var parkedReads = 0
+    private static let iconReseatInterval: TimeInterval = 45
+    private static let maxIconReseats = 6
     nonisolated static let adoptionGrace: TimeInterval = 2.5
     /// The first assertion waits for our own icon at most this long —
     /// a crowded bar can overlap it forever, which used to defer the
@@ -243,7 +270,14 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    init() {
+    init(
+        runningBundleIDRead: (@MainActor () -> Set<String>)? = nil,
+        monotonic: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
+        runningApps = RunningBundleIDCache(
+            read: runningBundleIDRead ?? MenuBarUtility.readRunningBundleIDs,
+            monotonic: monotonic
+        )
         hider.settings = { [weak self] in self?.settings() ?? MenuBarSettings() }
         hider.onPlan = { [weak self] plan in
             guard let self else { return }
@@ -254,10 +288,10 @@ final class MenuBarUtility: Toy {
             self.lastPlan = self.concealer == nil ? plan : self.concealedPlan(from: plan)
             // The hider draws the utility-owned plan's covers (items
             // the agent cannot target); nil under the spacer engine,
-            // where its own plan rules.
+            // where its own plan rules. Assigned here — the plan
+            // callback lands before the shutter pass — so the cover
+            // plan never lags a reconcile behind the listing.
             self.hider.externalPlan = self.concealer == nil ? nil : self.lastPlan
-            self.learnDraggedSections(from: plan)
-            self.reconcileBoundarySections(from: plan)
             self.watchConcealedEscapees(in: plan)
             self.refreshChevron()
             // Ear limits read the raw listing — the items physically on
@@ -266,7 +300,18 @@ final class MenuBarUtility: Toy {
             self.publishEarAvoidance(plan)
             self.syncConcealer()
             self.pollDisplayProfile()
-            self.noticeUpdates(in: self.lastPlan)
+            self.bar.syncItems()
+            // The writing passes land off the plan's stack — a settings
+            // write inside `onPlan` would nest a whole reconcile inside
+            // one, and the updates pass can itself reveal. Deferred like
+            // `pollDisplayProfile`'s apply.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.learnDraggedSections(from: plan)
+                self.reconcileBoundarySections(from: plan)
+                self.noticeUpdates(in: self.lastPlan)
+                self.pruneUninstalledConcealedApps()
+            }
         }
         // Our own control is never covered — its live frame splits
         // cover runs even on the no-AX path where it cannot list.
@@ -323,10 +368,37 @@ final class MenuBarUtility: Toy {
         // nowhere near its slot there).
         reveal.hotFrames = { [weak self] in
             guard let self else { return [] }
-            return [self.controlFrames().hidden, ScreenBarGeometry.menuHandleScreenRect]
+            if self.concealer != nil {
+                // Under the agent there is no « to point at: only our
+                // own affordances answer a hover — the status item's
+                // slot widened a touch each side, the boundary
+                // chevron's when one stands, and the island's ‹
+                // handle. The row itself never does.
+                let height = CGDisplayBounds(CGMainDisplayID()).height
+                var frames: [NSRect] = []
+                if let boundary = self.host?.boundaryFrame {
+                    frames.append(NSRect(x: boundary.minX - 16, y: height - boundary.maxY,
+                                         width: boundary.width + 32, height: boundary.height))
+                }
+                if let chevron = self.chevronScreenFrame() {
+                    frames.append(chevron.insetBy(dx: -16, dy: 0))
+                }
+                if let handle = ScreenBarGeometry.menuHandleScreenRect { frames.append(handle) }
+                return frames
+            }
+            // controlFrames().hidden is Quartz; mouseLocation is AppKit.
+            // Without the flip a hover on the « never registers — the
+            // spacer engine's hot zone sat at the bottom of the screen
+            // (audit 2026-09-21).
+            let height = CGDisplayBounds(CGMainDisplayID()).height
+            return [self.controlFrames().hidden.map {
+                NSRect(x: $0.minX, y: height - $0.maxY,
+                       width: $0.width, height: $0.height)
+            }, ScreenBarGeometry.menuHandleScreenRect]
                 .compactMap { $0 }
         }
         reveal.barFrame = { [weak self] in self?.bar.panelFrame }
+        reveal.itemMenuOpen = { [weak self] in self?.listedItemMenuOpen() ?? false }
         // The reveal style picks the surface: `.bar` opens the Item
         // Bar — Bartender's model, the row never un-conceals so the
         // assertion holds and nothing flaps — while `.inline` drops the
@@ -338,8 +410,7 @@ final class MenuBarUtility: Toy {
             case .inline:
                 self.hider.reveal([.hidden])
             case .bar:
-                guard !self.bar.isOpen, !self.barItems().isEmpty else { return }
-                self.bar.open()
+                self.revealBarStyle()
             }
         }
         reveal.onHide = { [weak self] in
@@ -381,6 +452,7 @@ final class MenuBarUtility: Toy {
             providerObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.runningApps.invalidate()
                     self.workspaceVersion += 1
                     // A launch only matters while parked under a
                     // counterpart — the note flips live. Under JR-Bar
@@ -451,7 +523,7 @@ final class MenuBarUtility: Toy {
             guard let item = listedItems.first(where: { $0.id == itemID }),
                   !MenuBarItemLister.isProtected(item),
                   !Self.isOwnFamily(item.bundleID) else { return }
-            if let bundleID = item.bundleID, !bundleID.hasPrefix("com.apple.") {
+            if let bundleID = item.bundleID, MenuBarConcealPlan.canConcealApp(bundleID) {
                 update { draft in
                     // `.shown` is written, not deleted: the explicit
                     // marker records a deliberate pick, and absent keys
@@ -490,13 +562,29 @@ final class MenuBarUtility: Toy {
     /// The section an item's app is in under the concealer; the item
     /// map's answer otherwise.
     func effectiveSection(for item: MenuBarItem) -> MenuBarItemSection {
-        if concealer != nil {
-            if let id = item.bundleID, !id.hasPrefix("com.apple."), !Self.isOwnFamily(id) {
-                return settings().concealedApps[id] ?? .shown
-            }
-            return section(for: item.id)
+        Self.effectiveSection(itemID: item.id, bundleID: item.bundleID,
+                              sections: settings().sections,
+                              concealedApps: settings().concealedApps,
+                              concealing: concealer != nil,
+                              ownBundleID: Bundle.main.bundleIdentifier)
+    }
+
+    /// The per-item truth the palette and covers read, pure so a test
+    /// can pin it: under the concealer a concealable app's section is
+    /// its `concealedApps` entry — a concealed item reads hidden and
+    /// offers "Show"; Apple extras and bare helpers fall back to the
+    /// positional map.
+    nonisolated static func effectiveSection(
+        itemID: String, bundleID: String?,
+        sections: [String: MenuBarItemSection],
+        concealedApps: [String: MenuBarItemSection],
+        concealing: Bool, ownBundleID: String?
+    ) -> MenuBarItemSection {
+        if concealing, let bundleID, MenuBarConcealPlan.canConcealApp(bundleID),
+           !(ownBundleID.map { bundleID == $0 || bundleID.hasPrefix($0 + ".") } ?? false) {
+            return concealedApps[bundleID] ?? .shown
         }
-        return section(for: item.id)
+        return sections[itemID] ?? .shown
     }
 
     /// One-click relief for a crowded bar: hide every listed foreign
@@ -512,7 +600,7 @@ final class MenuBarUtility: Toy {
         if concealer != nil {
             update { draft in
                 for item in targets {
-                    if let id = item.bundleID, !id.hasPrefix("com.apple.") {
+                    if let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id) {
                         draft.concealedApps[id] = .hidden
                         boundaryExempt.remove(id)
                     } else {
@@ -530,10 +618,9 @@ final class MenuBarUtility: Toy {
         hider.reconcile()
     }
 
-    /// Bring every hidden item back. The write is an outright clear —
-    /// an absent key is "shown" now that no auto-hide sweep exists to
-    /// re-grab it. Positional overrides clear the same way (absent =
-    /// the row's own placement).
+    /// Bring every hidden item back and retain that choice across launches.
+    /// An absent app entry follows position, so released apps need an
+    /// explicit Shown assignment. Per-item covers return to Auto.
     func showAllListed() {
         // Everything the map held hidden is released at once; whatever
         // macOS re-stands behind the mark is exempt from the positional
@@ -543,8 +630,14 @@ final class MenuBarUtility: Toy {
             $0.value == .shown ? nil : $0.key
         })
         boundaryExempt.formUnion(released)
+        let listedApps = listedItems.compactMap { item -> String? in
+            guard let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id),
+                  !MenuBarItemLister.isProtected(item), !Self.isOwnFamily(id) else { return nil }
+            return id
+        }
         update { draft in
-            draft.concealedApps = [:]
+            draft.concealedApps = draft.concealedApps.mapValues { _ in .shown }
+            for id in listedApps { draft.concealedApps[id] = .shown }
             draft.sections = [:]
         }
         hider.reconcile()
@@ -738,6 +831,7 @@ final class MenuBarUtility: Toy {
     /// The card toggle and the store's `state` write land here: start
     /// on enable, stop on disable, reconcile on any other change.
     func applySettings() {
+        runningApps.invalidate()
         migrateSectionsIfNeeded()
         syncSpacing()
         let enabled = settings().enabled && settings().provider == .jrbar
@@ -801,12 +895,22 @@ final class MenuBarUtility: Toy {
     /// map as well: hiding is opt-in, the person's ⌘-drag layout and
     /// the pickers are the arrangement now.
     func migrateSectionsIfNeeded() {
-        guard settings().layoutModel < MenuBarSettings.currentLayoutModel else { return }
+        let current = settings()
+        let legacy = current.layoutModel < MenuBarSettings.currentLayoutModel
+        let supported = current.concealedApps.filter { MenuBarConcealPlan.canConcealApp($0.key) }
+        guard legacy || supported != current.concealedApps else { return }
         update { draft in
-            draft.sections = [:]
-            draft.concealedApps = [:]
-            draft.concealSeeded = true
-            draft.layoutModel = MenuBarSettings.currentLayoutModel
+            if legacy {
+                draft.sections = [:]
+                draft.concealedApps = [:]
+                draft.concealSeeded = true
+                draft.layoutModel = MenuBarSettings.currentLayoutModel
+            } else {
+                // Old positional learning put Apple extras in a second
+                // map their picker never reads or clears. Keep the actual
+                // per-item choices and remove only those invalid entries.
+                draft.concealedApps = supported
+            }
         }
     }
 
@@ -1080,13 +1184,24 @@ final class MenuBarUtility: Toy {
     /// sections come from the per-app map; the bridge takes the
     /// system's clicks.
     private func startConcealer() {
+        runningApps.invalidate()
         let concealer = MenuBarConcealer()
         concealer.onChange = { [weak self] in self?.concealerChanged() }
         self.concealer = concealer
         concealerStartedAt = Date()
         adoptionRetries = 0
+        iconReseats = 0
+        lastIconReseat = .distantPast
+        iconReseatExhaustedLogged = false
         hider.shuttersSuppressed = true
-        host?.setBoundarySpacer(Self.boundaryAffordance)
+        // No affordance under the agent: the extra width pushed our slot
+        // left into the notch dead zone and parked the item unseen. And
+        // slim the anchor itself: the niche right of the island is only
+        // ~34 pt — a 39 pt item cannot hold it (every registration was
+        // born parked, measured 2026-09-21); the island face is the
+        // visible icon anyway, so the item's job here is the slot.
+        host?.setBoundarySpacer(0)
+        host?.setAnchorSlim(true)
         let bridge = MenuBarSystemClickBridge { [weak self] point in
             self?.bridgeClick(at: point)
         }
@@ -1095,25 +1210,9 @@ final class MenuBarUtility: Toy {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
-            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: nil) { [weak self] note in
-                // Extracted off-actor: Notification is not Sendable, but
-                // the bundle identifier string is.
-                let launchedID = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
-                let isLaunch = name == NSWorkspace.didLaunchApplicationNotification
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self, let concealer = self.concealer else { return }
-                    self.syncConcealer()
-                    // The adoption beat exists so a freshly launched app's
-                    // item lands before the allowlist goes back up — but
-                    // only a VISIBLE newcomer needs it. A concealed app's
-                    // item stays hidden either way, and a termination
-                    // frees a slot without adopting anything. Suspending
-                    // for those drops the whole bar for nothing — the
-                    // flicker that made hiding read as broken — so only
-                    // an unmapped launch earns the beat.
-                    guard isLaunch, let launchedID,
-                          self.settings().concealedApps[launchedID] == nil else { return }
-                    Task { await concealer.suspend(for: MenuBarConcealer.adoptionBeat) }
+                    self?.noteWorkspaceChange()
                 }
             })
         }
@@ -1124,9 +1223,27 @@ final class MenuBarUtility: Toy {
         refreshChevron()
     }
 
-    private func stopConcealer() {
+    /// A workspace launch or terminate under the concealer: refresh
+    /// the running universe and re-apply. The concealer's allowlist is
+    /// monotonic — a first-seen app joins it and the union re-assert
+    /// shows it without dropping anything; a quit changes nothing. No
+    /// suspend: the bar never lifts for a launch — the steady-state
+    /// `conceal: released` churn the old adoption beat caused several
+    /// times an hour. Suspending survives only where a click must
+    /// physically land (the bridged system items) and in the early
+    /// adoption checks.
+    func noteWorkspaceChange() {
+        runningApps.invalidate()
+        syncConcealer()
+    }
+
+    func stopConcealer() {
         guard let concealer else { return }
-        concealer.releaseAll()
+        runningApps.invalidate()
+        // The drop lands now — a disable or quit must not leave the
+        // run concealed for the drain; `releaseAll` invalidates the
+        // live assertion synchronously, then unwinds queued work.
+        Task { await concealer.releaseAll() }
         clickBridge?.stop()
         clickBridge = nil
         for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
@@ -1138,12 +1255,13 @@ final class MenuBarUtility: Toy {
         // again, and a standalone chevron would double it — without a
         // host it stays the separator, same as install.
         chevron?.isVisible = host == nil
+        host?.setAnchorSlim(false)
     }
 
     /// The bundle identifiers of every running app — the allowlist's
     /// universe. An app that launches later is re-applied for by the
     /// workspace observers.
-    private static func runningBundleIDs() -> Set<String> {
+    private static func readRunningBundleIDs() -> Set<String> {
         var ids = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         // Ourselves, always: the workspace list can omit the current
         // process, and an allowlist without us concealed our own icon.
@@ -1185,11 +1303,26 @@ final class MenuBarUtility: Toy {
     /// frozen on-row frames to parked ones); a return to a reported
     /// slot is still the ghost, a novel on-row slot is a live item.
     @ObservationIgnored private var concealedGhostFrames: [String: Set<CGRect>] = [:]
-    /// Concealed-bundle item ids that proved live — a frame that
-    /// moved to a slot the ghost never reported. Everything else
-    /// those bundles field is the ghost and must not drive
-    /// re-asserts, covers or section writes.
-    @ObservationIgnored private var liveConcealedItems: Set<String> = []
+    /// Concealed-bundle item ids that proved live, stamped with when
+    /// the proof landed — a frame that moved to a slot the ghost never
+    /// reported. Proof is NOT sticky: ten seconds without a novel
+    /// slot, or a return to a ghost slot, and the item reads as the
+    /// ghost again until pixels say otherwise.
+    @ObservationIgnored private var liveConcealedItems: [String: Date] = [:]
+    /// Re-assert stamps each standing escapee survived, ≥20 s apart —
+    /// the no-permission path to `resistantConcealed` (three
+    /// consecutive standings where the pixel test cannot reach).
+    @ObservationIgnored private var escapeStandings: [String: [Date]] = [:]
+    /// Escapees with a pixel probe in flight — one capture at a time.
+    @ObservationIgnored private var pendingResistance: Set<String> = []
+    /// Escapees the pixel test disproved — a flat capture means the
+    /// rect is the ghost; cleared when the bundle leaves `standing`.
+    @ObservationIgnored private var pixelDisproven: Set<String> = []
+    /// The pixel-proof seam — the live-tile capture path while Screen
+    /// Recording is granted. Tests stub it; a nil *answer* means the
+    /// capture is unavailable and the standings rule decides.
+    @ObservationIgnored var escapeeCapture: ((CGRect) async -> CGImage?)?
+    @ObservationIgnored private var escapeeCaptureSource: DisplayFilterSource?
 
     /// The assertion only adopts items that exist when it activates —
     /// a concealed app that re-creates its status item afterwards
@@ -1200,26 +1333,41 @@ final class MenuBarUtility: Toy {
     /// bar; a throttled escape stays out of the baseline so the next
     /// scan retries it.
     private func watchConcealedEscapees(in listing: MenuBarHidePlan) {
-        guard let concealer, concealer.isConcealing else {
+        // A suspend is a lift, not a teardown — the assertion is off but
+        // coming back, so the bookkeeping (first-seen clocks, standings,
+        // pixel verdicts) must survive the window or every Item Bar open
+        // restarts the ~60 s classification from zero.
+        guard let concealer, concealer.isConcealing || concealer.isSuspended else {
             concealedStanding = []
             escapeFirstSeen = [:]
+            escapeStandings = [:]
             resistantConcealed = []
+            pendingResistance = []
+            pixelDisproven = []
             concealLiveSince = .distantPast
             lastConcealedFrames = [:]
             concealedGhostFrames = [:]
-            liveConcealedItems = []
+            liveConcealedItems = [:]
             return
         }
         guard hider.revealed.isEmpty else { return }
-        let row = MenuBarItemLister.menuBarRow()
+        // Every display's bar counts — an item standing on a secondary
+        // screen's strip is just as visible as one on the main row.
+        let rows = MenuBarItemLister.menuBarRows()
         let all = listing.shown + listing.hidden + listing.alwaysHidden
         // Same on-row rule the hider plans by: an item parked under
         // the « control reports its frame, not a row position.
         let overflowFrames = all
-            .filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
+            .filter { item in item.isNativeOverflowControl
+                && rows.contains { $0.intersects(item.bounds) } }
             .map(\.bounds)
-        let apps = settings().concealedApps
-        let concealedIDs = Set(apps.lazy.filter { $0.value != .shown }.map(\.key))
+        // The live target, not the persisted setting: `trigger(_:)`
+        // narrows the assertion for the scoped reveal, and the revealed
+        // app must not classify as an escapee while the user reads it —
+        // that re-conceals the item under its open menu. During a
+        // suspend the live set is empty, so nothing counts as escaped
+        // while everything legitimately stands.
+        let concealedIDs = concealer.concealedApps
         let concealedItems = all.filter { item in
             item.bundleID.map { concealedIDs.contains($0) } ?? false
         }
@@ -1232,21 +1380,26 @@ final class MenuBarUtility: Toy {
         let frames = Dictionary(concealedItems.map { ($0.id, $0.bounds) },
                                 uniquingKeysWith: { first, _ in first })
         let onRowIDs = Set(concealedItems.filter { item in
-            item.bounds.intersects(row)
+            rows.contains { $0.intersects(item.bounds) }
                 && !overflowFrames.contains(where: { $0.intersection(item.bounds).width >= 4 })
         }.map(\.id))
+        let now = Date()
+        // Ids mid-classification keep their proof past the decay window —
+        // the standings rule takes ~60 s and must not be reset by it.
+        let classifying = Set(escapeFirstSeen.keys)
+            .union(escapeStandings.keys).union(pendingResistance)
         let triage = Self.concealedEscapees(
             onRow: onRowIDs, frames: frames, previous: lastConcealedFrames,
-            ghostHistory: concealedGhostFrames, proven: liveConcealedItems)
+            ghostHistory: concealedGhostFrames, proven: liveConcealedItems, now: now,
+            retain: classifying)
         liveConcealedItems = triage.proven
         concealedGhostFrames = triage.ghostHistory
         lastConcealedFrames = frames
         var standing = Set<String>()
         for item in concealedItems
-            where liveConcealedItems.contains(item.id) && onRowIDs.contains(item.id) {
+            where liveConcealedItems[item.id] != nil && onRowIDs.contains(item.id) {
             if let id = item.bundleID { standing.insert(id) }
         }
-        let now = Date()
         if concealLiveSince == .distantPast { concealLiveSince = now }
         // Still settling the last activation — keep the baseline stale
         // so the first post-grace scan catches whatever stood through it.
@@ -1260,6 +1413,12 @@ final class MenuBarUtility: Toy {
         for id in escapeFirstSeen.keys where !standing.contains(id) {
             escapeFirstSeen[id] = nil
         }
+        for id in escapeStandings.keys where !standing.contains(id) {
+            escapeStandings[id] = nil
+        }
+        for id in pixelDisproven where !standing.contains(id) {
+            pixelDisproven.remove(id)
+        }
         // `resistantConcealed` deliberately does NOT clear when an
         // escapee leaves the row: the agent holding it for a beat does
         // not make it takeable — it re-escapes on the same cadence
@@ -1269,18 +1428,114 @@ final class MenuBarUtility: Toy {
         // rest of this concealment session; the set resets wholesale
         // when the assertion lifts (the guard above).
         // Eight seconds standing through the re-assert it triggered —
-        // the agent had its chance; the item is agent-proof and falls
-        // to the cover fallback like a bare helper.
+        // the agent had its chance. Then PIXELS decide: a live item's
+        // tile has real variance, the ghost's rect captures featureless
+        // bar. Without Screen Recording the standings rule stands in.
         for (id, first) in escapeFirstSeen
             where standing.contains(id) && lastReassert >= first
                 && now.timeIntervalSince(first) > 8
-                && resistantConcealed.insert(id).inserted {
-            MenuBarAssessmentBackend.log.notice("resistant: \(id, privacy: .public) stands through a re-assert — covering")
+                && !resistantConcealed.contains(id)
+                && !pendingResistance.contains(id)
+                && !pixelDisproven.contains(id) {
+            if let item = concealedItems.first(where: {
+                $0.bundleID == id && onRowIDs.contains($0.id)
+            }), let rect = MenuBarTileMath.captureRect(
+                of: item, row: rows.first { $0.intersects(item.bounds) } ?? rows[0]) {
+                pendingResistance.insert(id)
+                let lastReassert = self.lastReassert
+                Task { [weak self] in
+                    guard let self else { return }
+                    defer { self.pendingResistance.remove(id) }
+                    guard let image = await self.captureEscapee(rect) else {
+                        // No Screen Recording — the standings rule.
+                        self.noteEscapeStanding(id, lastReassert: lastReassert)
+                        return
+                    }
+                    if Self.tileHasPixels(image) {
+                        if self.resistantConcealed.insert(id).inserted {
+                            MenuBarAssessmentBackend.log.notice("resistant: \(id, privacy: .public) — pixels prove the escape; covering")
+                        }
+                    } else {
+                        // A flat capture is the ghost — not an escapee,
+                        // and the standings rule must not promote it.
+                        self.pixelDisproven.insert(id)
+                    }
+                }
+            } else {
+                noteEscapeStanding(id, lastReassert: lastReassert)
+            }
         }
-        guard !escaped.isEmpty, !throttled else { return }
+        // `lastReassert` is also the standings clock: it must keep
+        // advancing while unresolved escapees stand, or a lone stubborn
+        // escapee collects one stamp and the three-stamp proof never
+        // completes. The ≥20 s cadence matches `recordEscapeStanding`'s
+        // spacing — each sweep is one stamp, and the re-assert itself is
+        // the retry the standing item exists to provoke.
+        let unresolved = standing.subtracting(resistantConcealed).subtracting(pixelDisproven)
+        let sweepDue = !unresolved.isEmpty && now.timeIntervalSince(lastReassert) >= 20
+        guard (!escaped.isEmpty && !throttled) || sweepDue else { return }
         lastReassert = now
         MenuBarAssessmentBackend.log.notice("reassert: \(escaped.sorted().joined(separator: ", "), privacy: .public) standing while concealed")
         concealer.reassert()
+    }
+
+    /// The no-permission proof: an escapee that stands through three
+    /// re-asserts, each ≥20 s after the last, earns the cover the
+    /// pixel test would have settled in one. `resistant:` logs only
+    /// when the state actually fires.
+    private func noteEscapeStanding(_ id: String, lastReassert: Date) {
+        escapeStandings[id] = Self.recordEscapeStanding(
+            stamps: escapeStandings[id] ?? [], lastReassert: lastReassert)
+        if (escapeStandings[id]?.count ?? 0) >= 3,
+           resistantConcealed.insert(id).inserted {
+            MenuBarAssessmentBackend.log.notice("resistant: \(id, privacy: .public) stood through three re-asserts — covering")
+        }
+    }
+
+    /// One more standing on a re-assert's stamp — a new stamp per
+    /// re-assert, ≥20 s apart, so a still-standing item accumulates
+    /// exactly one per sweep. Pure so the test pins the cadence.
+    nonisolated static func recordEscapeStanding(stamps: [Date], lastReassert: Date) -> [Date] {
+        guard lastReassert > .distantPast, stamps.last != lastReassert,
+              stamps.last.map({ lastReassert.timeIntervalSince($0) >= 20 }) ?? true
+        else { return stamps }
+        return stamps + [lastReassert]
+    }
+
+    /// Capture the rect an escapee reports — the same path the Item
+    /// Bar's tiles take (the display filter excludes our windows, so
+    /// what lands is the item, not a cover). nil means capture is
+    /// unavailable — no Screen Recording grant.
+    private func captureEscapee(_ rect: CGRect) async -> CGImage? {
+        if let escapeeCapture { return await escapeeCapture(rect) }
+        if escapeeCaptureSource == nil { escapeeCaptureSource = DisplayFilterSource() }
+        return await escapeeCaptureSource?.capture(rect)
+    }
+
+    /// Whether a captured tile proves the item draws pixels — a live
+    /// escapee's glyph spreads luma widely over the bar's material;
+    /// the Accessibility ghost's rect captures a featureless strip.
+    nonisolated static func tileHasPixels(_ image: CGImage?) -> Bool {
+        guard let image else { return false }
+        let width = 16, height = 16
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var lumas: [Double] = []
+        lumas.reserveCapacity(width * height)
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            lumas.append(0.2126 * Double(pixels[i]) + 0.7152 * Double(pixels[i + 1])
+                         + 0.0722 * Double(pixels[i + 2]))
+        }
+        let mean = lumas.reduce(0, +) / Double(lumas.count)
+        let variance = lumas.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(lumas.count)
+        // A real item's glyph deviates hard from the flat material —
+        // a std dev over ~20 luma points; uniform bar reads ~0.
+        return variance > 400
     }
 
     /// One pass of ghost triage over a concealed app's items. An item
@@ -1289,23 +1544,47 @@ final class MenuBarUtility: Toy {
     /// did not adopt. A frozen frame, an off-row report, or a return
     /// to a slot the ghost already showed is still the Accessibility
     /// ghost the agent leaves behind: pressable, undrawn, harmless.
-    /// Once proven, an item stays live for the concealment session —
-    /// a standing item holding still is still a standing item. Pure
-    /// so the test pins the table.
+    /// Proof is NOT sticky — an item un-proves when its frame returns
+    /// to a ghost slot, or when ten seconds pass without a novel slot
+    /// (a still-standing "escapee" is the ghost relayouted, and a live
+    /// item that keeps moving re-proves on its own). Pure so the test
+    /// pins the table.
+    /// `retain` holds item ids with a classification in flight — the
+    /// standings proof needs ~60 s to accumulate, so the 10 s decay must
+    /// not pull the ground out from under it. A ghost-frame return still
+    /// un-proves regardless.
+    nonisolated static let proofSeconds: TimeInterval = 10
     nonisolated static func concealedEscapees(
         onRow: Set<String>, frames: [String: CGRect], previous: [String: CGRect],
-        ghostHistory: [String: Set<CGRect>], proven: Set<String>
-    ) -> (proven: Set<String>, ghostHistory: [String: Set<CGRect>]) {
+        ghostHistory: [String: Set<CGRect>], proven: [String: Date], now: Date,
+        retain: Set<String> = []
+    ) -> (proven: [String: Date], ghostHistory: [String: Set<CGRect>]) {
         var proven = proven
         var history = ghostHistory
         for id in onRow {
-            guard !proven.contains(id), let frame = frames[id] else { continue }
+            guard let frame = frames[id] else { continue }
+            let seen = history[id] ?? []
+            if let stamp = proven[id] {
+                if seen.contains(frame)
+                    || (now.timeIntervalSince(stamp) > proofSeconds && !retain.contains(id)) {
+                    proven[id] = nil
+                } else {
+                    continue
+                }
+            }
             let moved = previous[id].map { $0 != frame } ?? false
-            if moved && !(history[id] ?? []).contains(frame) {
-                proven.insert(id)
+            if moved && !seen.contains(frame) {
+                proven[id] = now
             } else {
                 history[id, default: []].insert(frame)
             }
+        }
+        // Decay applies off-row too — a proven item that left the row
+        // ten seconds ago is the ghost again, unless its classification
+        // is still being settled.
+        for (id, stamp) in proven
+            where now.timeIntervalSince(stamp) > proofSeconds && !retain.contains(id) {
+            proven[id] = nil
         }
         return (proven, history)
     }
@@ -1319,7 +1598,7 @@ final class MenuBarUtility: Toy {
         guard let id = item.bundleID,
               let section = settings().concealedApps[id], section != .shown
         else { return false }
-        return !liveConcealedItems.contains(item.id)
+        return liveConcealedItems[item.id] == nil
     }
 
     private func concealedPlan(from listing: MenuBarHidePlan) -> MenuBarHidePlan {
@@ -1333,7 +1612,7 @@ final class MenuBarUtility: Toy {
         // Ghost eviction: an app that quit takes its remembered bounds
         // with it — stale frames must not feed the plan, the covers, or
         // the card forever.
-        let running = Self.runningBundleIDs()
+        let running = runningApps.snapshot()
         for id in knownItems.keys where seen[id] == nil && !running.contains(id) {
             knownItems[id] = nil
         }
@@ -1342,7 +1621,10 @@ final class MenuBarUtility: Toy {
         // target (no bundle identifier) — see the cover-fallback below.
         let sections = settings().sections
         var plan = MenuBarHidePlan()
-        let row = MenuBarItemLister.menuBarRow()
+        // Standing means on ANY display's bar — a secondary-screen item
+        // is visible exactly like a main-row one.
+        let rows = MenuBarItemLister.menuBarRows()
+        let onRow: (CGRect) -> Bool = { bounds in rows.contains { $0.intersects(bounds) } }
         plan.shown = all.filter { item in
             // Positional overrides win for anything the agent cannot
             // take (Apple extras, bare helpers) — the cover-fallback
@@ -1350,8 +1632,25 @@ final class MenuBarUtility: Toy {
             if let override = sections[item.id], override != .shown { return false }
             guard let id = item.bundleID, let section = apps[id] else { return true }
             return section == .shown
-        }.filter { $0.bounds.intersects(row) || MenuBarItemLister.isProtected($0) }
-        for (id, section) in apps.sorted(by: { $0.key < $1.key }) {
+        }.filter { onRow($0.bounds) || MenuBarItemLister.isProtected($0) }
+        // The Item Bar mirrors the row's order: each app's last known
+        // on-row x — the remembered items' frames where they are on the
+        // row, plus every ghost slot history reported — and bundle IDs
+        // nobody ever saw placed sort after, by name.
+        var lastX: [String: CGFloat] = [:]
+        for (id, items) in knownItems {
+            for item in items where onRow(item.bounds) {
+                lastX[id] = min(lastX[id] ?? .infinity, item.bounds.minX)
+            }
+        }
+        for item in all {
+            guard let id = item.bundleID,
+                  let ghosts = concealedGhostFrames[item.id] else { continue }
+            for ghost in ghosts where onRow(ghost) {
+                lastX[id] = min(lastX[id] ?? .infinity, ghost.minX)
+            }
+        }
+        for (id, section) in Self.concealedOrder(apps: apps, lastX: lastX) {
             let items = knownItems[id] ?? []
             switch section {
             case .hidden: plan.hidden.append(contentsOf: items)
@@ -1405,9 +1704,9 @@ final class MenuBarUtility: Toy {
         var coverHidden: [MenuBarItem] = []
         var coverAlways: [MenuBarItem] = []
         for item in plan.hidden where listedIDs.contains(item.id)
-            && item.bounds.intersects(row) && !agentOwned(item) { coverHidden.append(item) }
+            && onRow(item.bounds) && !agentOwned(item) { coverHidden.append(item) }
         for item in plan.alwaysHidden where listedIDs.contains(item.id)
-            && item.bounds.intersects(row) && !agentOwned(item) { coverAlways.append(item) }
+            && onRow(item.bounds) && !agentOwned(item) { coverAlways.append(item) }
         var blockers = plan.shown.map(\.bounds)
         if let boundary = host?.boundaryFrame { blockers.append(boundary) }
         // The island (notch plus shoulders — the ears' home) and the
@@ -1418,6 +1717,21 @@ final class MenuBarUtility: Toy {
         plan.hiddenCovers = MenuBarItemHider.coverRuns(covered: coverHidden, blockers: blockers)
         plan.alwaysHiddenCovers = MenuBarItemHider.coverRuns(covered: coverAlways, blockers: blockers)
         return plan
+    }
+
+    /// The Item Bar's app order under the concealer: the system menu
+    /// bar's own left-to-right. Apps with a remembered on-row x sort
+    /// by it; apps never seen placed follow, bundle ID as tiebreak.
+    /// Pure so the test pins the order.
+    nonisolated static func concealedOrder(
+        apps: [String: MenuBarItemSection],
+        lastX: [String: CGFloat]
+    ) -> [(id: String, section: MenuBarItemSection)] {
+        apps.sorted { lhs, rhs in
+            let lx = lastX[lhs.key] ?? .infinity
+            let rx = lastX[rhs.key] ?? .infinity
+            return lx == rx ? lhs.key < rhs.key : lx < rx
+        }.map { ($0.key, $0.value) }
     }
 
     /// Learns ⌘-drags across the separator: between two listings with
@@ -1447,7 +1761,7 @@ final class MenuBarUtility: Toy {
         let own = Bundle.main.bundleIdentifier
         var current: [String: (frame: CGRect, left: Bool, parked: Bool)] = [:]
         for item in plan.shown {
-            guard let id = item.bundleID, id != own,
+            guard let id = item.bundleID, id != own, MenuBarConcealPlan.canConcealApp(id),
                   !MenuBarItemLister.isProtected(item), !item.isNativeOverflowControl,
                   // A concealed item's ghost reports the frame it froze
                   // at — a boundary sliding past it is not the hand
@@ -1458,7 +1772,7 @@ final class MenuBarUtility: Toy {
         // A parked item is behind the separator by definition — its
         // frame is stale, membership is the truth.
         for item in plan.hidden + plan.alwaysHidden {
-            guard let id = item.bundleID, id != own,
+            guard let id = item.bundleID, id != own, MenuBarConcealPlan.canConcealApp(id),
                   !MenuBarItemLister.isProtected(item), !item.isNativeOverflowControl else { continue }
             current[id] = (item.bounds, true, true)
         }
@@ -1529,14 +1843,22 @@ final class MenuBarUtility: Toy {
         for row in rows where boundaryExempt.contains(row.id) && row.frame.midX >= boundary.minX {
             boundaryExempt.remove(row.id)
         }
-        let writes = Self.boundaryWrites(
+        var writes = Self.boundaryWrites(
             shown: rows, boundaryX: boundary.minX,
             row: MenuBarItemLister.menuBarRow(),
             apps: apps, exempt: boundaryExempt,
-            // Un-hiding is the hand's alone: a .hidden item standing in
-            // front of the mark only flips while ⌘ is live — a fresh
-            // Hide pick mid-park is not the person showing it.
-            allowShownWrites: Date().timeIntervalSince(commandDownAt) < Self.commandLearnWindow)
+            // Actual drags are handled by learnDraggedSections above.
+            // Holding Command for another shortcut must not overwrite
+            // a saved visibility choice after a restart or reflow.
+            allowShownWrites: false)
+        let candidates = (plan.shown + plan.hidden + plan.alwaysHidden).map {
+            (itemID: $0.id, bundleID: $0.bundleID, ownerName: $0.ownerName,
+             frame: $0.bounds, isNativeOverflowControl: $0.isNativeOverflowControl)
+        }
+        writes.merge(Self.parkedAppWrites(
+            candidates: candidates, rows: MenuBarItemLister.menuBarRows(), apps: apps,
+            sections: settings().sections, exempt: boundaryExempt,
+            ownBundleID: Bundle.main.bundleIdentifier), uniquingKeysWith: { current, _ in current })
         guard !writes.isEmpty else { return }
         update { draft in
             for (id, section) in writes { draft.concealedApps[id] = section }
@@ -1556,15 +1878,58 @@ final class MenuBarUtility: Toy {
         allowShownWrites: Bool
     ) -> [String: MenuBarItemSection] {
         var writes: [String: MenuBarItemSection] = [:]
-        for item in shown where item.frame.intersects(row) {
+        for item in shown where item.frame.intersects(row) && MenuBarConcealPlan.canConcealApp(item.id) {
             switch apps[item.id] {
             case .alwaysHidden:
                 continue
             case .hidden:
                 if allowShownWrites, item.frame.midX >= boundaryX { writes[item.id] = .shown }
+            case .shown:
+                // macOS reorders items while concealment changes. Keep a
+                // saved Show choice unless the person is Command-dragging.
+                if allowShownWrites, item.frame.midX < boundaryX, !exempt.contains(item.id) {
+                    writes[item.id] = .hidden
+                }
             default:
                 if item.frame.midX < boundaryX, !exempt.contains(item.id) { writes[item.id] = .hidden }
             }
+        }
+        return writes
+    }
+
+    /// Apps macOS has already parked never appear in the live on-row
+    /// boundary pass. Adopt only unassigned third-party apps into the
+    /// concealed run so successive passes can empty the separator's
+    /// left side. Saved app choices, per-item Show choices and Show All
+    /// exemptions outrank the parked position.
+    nonisolated static func parkedAppWrites(
+        candidates: [(itemID: String, bundleID: String?, ownerName: String,
+                      frame: CGRect, isNativeOverflowControl: Bool)],
+        rows: [CGRect], apps: [String: MenuBarItemSection],
+        sections: [String: MenuBarItemSection], exempt: Set<String>,
+        ownBundleID: String?
+    ) -> [String: MenuBarItemSection] {
+        let eligible = candidates.compactMap { item -> (String, String, CGRect)? in
+            guard let id = item.bundleID,
+                  MenuBarConcealPlan.canConcealApp(id),
+                  !MenuBarItemLister.isProtected(ownerName: item.ownerName),
+                  !item.isNativeOverflowControl,
+                  ownBundleID.map({ id != $0 && !id.hasPrefix($0 + ".") }) ?? true
+            else { return nil }
+            return (id, item.itemID, item.frame)
+        }
+        let bundles = Dictionary(grouping: eligible, by: { $0.0 })
+        var writes: [String: MenuBarItemSection] = [:]
+        for (id, items) in bundles {
+            // Parked means off EVERY bar — an item standing on a
+            // secondary display's strip is visible, not parked, and
+            // must not be auto-learned into the concealed run.
+            guard apps[id] == nil, !exempt.contains(id),
+                  items.contains(where: { item in !rows.contains { $0.intersects(item.2) } }),
+                  !items.contains(where: { sections[$0.1] == .shown })
+            else { continue }
+            writes[id] = items.contains(where: { sections[$0.1] == .alwaysHidden })
+                ? .alwaysHidden : .hidden
         }
         return writes
     }
@@ -1573,9 +1938,16 @@ final class MenuBarUtility: Toy {
     /// person picks a section or ⌘-drags an item across the boundary.
     /// The marker stays for file compatibility — old files that carry
     /// an auto-seeded map are cleared by `migrateSectionsIfNeeded`.
-    private func seedConcealedAppsIfNeeded(from listing: MenuBarHidePlan) -> Bool {
+    func seedConcealedAppsIfNeeded(from listing: MenuBarHidePlan) -> Bool {
         guard !settings().concealSeeded else { return true }
-        guard listing.shown.contains(where: { !Self.isForeignOwner($0.ownerName) }) else { return false }
+        // A fresh install whose own icon is parked at the first scan
+        // must not block the engine forever: past the same deadline
+        // `syncConcealer` asserts by, seed from the listing as it
+        // stands.
+        let ownPresent = listing.shown.contains { !Self.isForeignOwner($0.ownerName) }
+        guard ownPresent
+                || Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionTimeout
+        else { return false }
         update { draft in draft.concealSeeded = true }
         return true
     }
@@ -1584,9 +1956,10 @@ final class MenuBarUtility: Toy {
     private func syncConcealer() {
         guard let concealer else { return }
         // Nothing of ours grows under the agent — whatever the spacer
-        // engine wrote on the seeding pass folds back. The affordance
-        // floor stays: the ‹ mark keeps the drop zone visible.
-        host?.setBoundarySpacer(Self.boundaryAffordance)
+        // engine wrote on the seeding pass folds back. No affordance:
+        // the extra width pushed our slot left into the notch dead
+        // zone, which parked the item unseen (measured 2026-09-16).
+        host?.setBoundarySpacer(0)
         // Not before our own icon stands on the row: an item registered
         // while an assertion holds is not adopted by the agent, and the
         // first assertion at launch left JR-Bar's own icon parked
@@ -1614,7 +1987,7 @@ final class MenuBarUtility: Toy {
         // Our family is never concealed — belt and suspenders against a
         // stale map entry (the daemon's meter hid itself once).
         concealed = concealed.filter { !Self.isOwnFamily($0) }
-        concealer.apply(concealed: concealed, running: Self.runningBundleIDs())
+        concealer.apply(concealed: concealed, running: runningApps.snapshot())
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
     }
 
@@ -1630,40 +2003,111 @@ final class MenuBarUtility: Toy {
     /// deferred it; a beat with no assertion lets it land (Pelmet's
     /// adoption window), three tries at most.
     private func ownIconStale() -> Bool {
-        let row = MenuBarItemLister.menuBarRow()
+        let rows = MenuBarItemLister.menuBarRows()
+        let onRow: (CGRect) -> Bool = { bounds in rows.contains { $0.intersects(bounds) } }
         guard let own = lastPlan.shown.first(where: { !Self.isForeignOwner($0.ownerName) }) else { return true }
-        guard own.bounds.intersects(row) else { return true }
+        guard onRow(own.bounds) else { return true }
         let concealed = concealer?.concealedApps ?? []
         return lastPlan.shown.contains { other in
-            Self.isForeignOwner(other.ownerName) && other.bounds.intersects(row)
+            Self.isForeignOwner(other.ownerName) && onRow(other.bounds)
                 && other.bundleID.map { !concealed.contains($0) } ?? true
                 && other.bounds.intersection(own.bounds).width > 3
         }
     }
 
-    private func scheduleAdoptionCheck() {
+    private func scheduleAdoptionCheck(after delay: TimeInterval = 1.5) {
         adoptionCheck?.cancel()
         adoptionCheck = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1e9))
             guard !Task.isCancelled, let self, let concealer = self.concealer, concealer.isConcealing else { return }
             _ = await MenuBarItemLister.refreshAXItems()
             self.hider.reconcile()
             let chevronParked = self.chevronStale()
-            guard self.ownIconStale() || chevronParked, self.adoptionRetries < 3 else { return }
+            // Two stale reads: the frame heuristic (stacked or off-row)
+            // plus the decisive ghost test — the drawn window against the
+            // slot the agent reports, the same drift check the chevron
+            // gets. An unadopted icon answers AX forever and draws
+            // nothing; the icon is the boundary anchor, so it can never
+            // be allowed to stay that way.
+            let iconParked = await self.ownIconParked()
+            self.parkedReads = iconParked ? self.parkedReads + 1 : 0
+            let parkedConfirmed = self.parkedReads >= 2
+            let iconStale = self.ownIconStale() || parkedConfirmed
+            MenuBarAssessmentBackend.log.notice("conceal: adoption check — iconStale=\(iconStale, privacy: .public) parked=\(iconParked, privacy: .public) chevron=\(chevronParked, privacy: .public) drawn=\(String(describing: self.host?.boundaryFrame), privacy: .public) probe=\(String(describing: self.host?.boundaryWindowProbe), privacy: .public) ax=\(String(describing: self.ownIconAXFrame()), privacy: .public)")
+            if iconStale {
+                if self.iconStaleSince == nil { self.iconStaleSince = Date() }
+            } else {
+                self.iconStaleSince = nil
+                self.iconReseats = 0
+            }
+            guard iconStale || chevronParked else {
+                // A first dark read with no other stale signal is not
+                // yet a park — but it must be re-checked or the
+                // confirmation could never arrive.
+                if iconParked { self.scheduleAdoptionCheck(after: 6) }
+                return
+            }
+            // A steady-state bar never lifts: an adoption suspend lives
+            // inside the first 30 seconds of the engine, or the first
+            // 30 seconds after our own icon turned stale. A parked
+            // chevron alone never earns one past startup — but the
+            // anchor icon does: past the burst it keeps earning paced
+            // re-seats, since an invisible boundary is never a
+            // state the utility may settle into.
+            let startupWindow = Date().timeIntervalSince(self.concealerStartedAt) < 30
+            let freshStale = self.iconStaleSince.map { Date().timeIntervalSince($0) < 30 } ?? false
+            let burstOpen = self.adoptionRetries < 3 && (startupWindow || freshStale)
+            let pacedDue = parkedConfirmed && self.iconReseats < Self.maxIconReseats
+                && Date().timeIntervalSince(self.lastIconReseat) >= Self.iconReseatInterval
+            guard burstOpen || pacedDue else {
+                if iconStale, self.iconReseats >= Self.maxIconReseats, !self.iconReseatExhaustedLogged {
+                    self.iconReseatExhaustedLogged = true
+                    MenuBarAssessmentBackend.log.error("conceal: our icon stayed stale through \(Self.maxIconReseats, privacy: .public) re-seats — leaving it until the bar changes")
+                }
+                // A parked anchor that is not yet due keeps the tail
+                // armed — concealerChanged may never fire again.
+                if parkedConfirmed, self.iconReseats < Self.maxIconReseats {
+                    let wait = max(1, Self.iconReseatInterval
+                        - Date().timeIntervalSince(self.lastIconReseat))
+                    self.scheduleAdoptionCheck(after: wait)
+                }
+                return
+            }
             self.adoptionRetries += 1
             MenuBarAssessmentBackend.log.notice("conceal: our own items read stale under the assertion — adoption window \(self.adoptionRetries, privacy: .public)/3")
-            await concealer.suspend(for: 0.8)
+            await concealer.suspend(for: 4)
+            // The drop lands while concealed items are still flooding
+            // back — a registration mid-reflow seeds wherever the churn
+            // leaves a gap, which is how re-seats kept landing in the
+            // park zone. Wait out the reflow, then re-seat into the
+            // settled bar.
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if parkedConfirmed, pacedDue || burstOpen {
+                self.lastIconReseat = Date()
+                self.iconReseats += 1
+                self.iconReseatExhaustedLogged = false
+                MenuBarAssessmentBackend.log.notice("conceal: re-seating our status item inside the suspend window")
+                self.host?.reseatStatusItem()
+            }
             if chevronParked {
                 // A suspend alone never re-places a parked surface —
                 // the agent only adopts at registration. Recreate the
-                // item inside the free window so the fresh one lands;
-                // clear the autosaved position first so it re-seeds
-                // right of the island instead of re-parking under it.
+                // item inside the free window so the fresh one lands,
+                // seeded just left of the anchor icon — an unseeded
+                // item falls to the leftmost free run under the island.
                 self.removeChevronItem()
-                UserDefaults.standard.removeObject(
-                    forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron-v2")
+                StatusItemController.seedPreferredPosition(
+                    for: "com.jonathanreed.jrbar.menubar-chevron-v2",
+                    desiredMidX: self.ownIconAXFrame().map { $0.midX - 26 },
+                    overwrite: true)
                 self.installChevron()
                 self.refreshChevron()
+            }
+            // A still-parked anchor keeps the tail alive — the next
+            // check schedules itself on the paced interval, since a
+            // concealerChanged may never fire again to prompt one.
+            if parkedConfirmed, self.iconReseats < Self.maxIconReseats {
+                self.scheduleAdoptionCheck(after: Self.iconReseatInterval)
             }
         }
     }
@@ -1686,6 +2130,115 @@ final class MenuBarUtility: Toy {
         // small drift is just the agent's placement, not a park.
         return abs(drawn.minX - slot.minX) > 40
             || abs(drawn.minY - (height - slot.maxY)) > 4
+    }
+
+    /// The parked test for the anchor icon itself. The frame signals
+    /// come first: an item macOS has overflow-parked reports its off-row
+    /// ledge honestly through both AX and the drawn window (measured
+    /// 2026-09-21 — every genuinely parked read showed y≈970 in both),
+    /// and a detached surface shows as drawn-vs-AX drift, the same test
+    /// the chevron gets.
+    ///
+    /// The pixel store only arbitrates the case the frames cannot: an
+    /// on-row slot whose surface stopped compositing. And it can only
+    /// arbitrate where our own windows do not cover the slot — an
+    /// `excludingWindows` capture renders our coverage black rather than
+    /// compositing through to the item beneath (measured 2026-09-21:
+    /// 0 lit under the Screen Bar frame while the glyph drew at 532 lit
+    /// unfiltered). The island face owning the anchor's pixels is the
+    /// design — the island draws the visible `</>` itself — so a covered
+    /// on-row slot is healthy, never a re-seat cause. nil-safe: no
+    /// Screen Recording permission means no verdict, never a churn.
+    private func ownIconParked() async -> Bool {
+        guard let slot = ownIconAXFrame(), slot.width > 4, slot.height > 4 else { return false }
+        // The overflow park — the surface sits on the off-row ledge.
+        guard MenuBarItemLister.menuBarRows().contains(where: { $0.intersects(slot) })
+        else { return true }
+        // A detached surface: AX reads the logical slot while the drawn
+        // window stayed behind — the chevron's drift test, applied to
+        // the anchor.
+        if let drawn = host?.boundaryFrame,
+           abs(drawn.minX - slot.minX) > 40 || abs(drawn.minY - slot.minY) > 4 {
+            return true
+        }
+        guard CGPreflightScreenCaptureAccess() else { return false }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true) else { return false }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let ownWindows = content.windows.filter { $0.owningApplication?.processID == ownPID }
+        // Our own glass over the slot — the island face draws our glyph
+        // there by design, and an exclusion capture reads that region
+        // black whether the item is healthy or not. No measurement is
+        // honest here; the frames already said the item stands.
+        if ownWindows.contains(where: { $0.frame.intersects(slot) }) { return false }
+        let mid = CGPoint(x: slot.midX, y: slot.midY)
+        guard let display = content.displays.first(where: { $0.frame.contains(mid) })
+                ?? content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+                ?? content.displays.first else { return false }
+        let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = slot
+        let size = MenuBarTileMath.pixelSize(for: slot, scale: MenuBarTileMath.captureScale)
+        configuration.width = size.width
+        configuration.height = size.height
+        configuration.showsCursor = false
+        guard let image = try? await SCScreenshotManager.captureImage(
+                contentFilter: filter, configuration: configuration) else { return false }
+        return Self.iconParked(litPixels: Self.litPixels(in: image),
+                               slotPixels: size.width * size.height)
+    }
+
+    /// The parked predicate — pure so tests drive it without a live bar.
+    /// A drawn icon lights hundreds of pixels against the bar material;
+    /// a parked one lights none. Five lit pixels is the floor a single
+    /// antialiased stem still crosses.
+    nonisolated static func iconParked(litPixels: Int, slotPixels: Int) -> Bool {
+        litPixels < 5
+    }
+
+    /// Pixels brighter than the bar material — the glyphs our icon
+    /// draws. The count is what `iconParked` reads.
+    nonisolated static func litPixels(in image: CGImage) -> Int {
+        guard let data = image.dataProvider?.data else { return 0 }
+        let bytes = CFDataGetBytePtr(data)
+        let count = CFDataGetLength(data)
+        var lit = 0
+        // BGRA premultiplied; the bar material reads under luma 60 at
+        // any appearance the capture hands back.
+        var i = 0
+        while i + 2 < count {
+            let b = Int(bytes![i]), g = Int(bytes![i + 1]), r = Int(bytes![i + 2])
+            if (r * 299 + g * 587 + b * 114) / 1000 > 60 { lit += 1 }
+            i += 4
+        }
+        return lit
+    }
+
+    /// Our status item's slot as the agent places it — the extras-bar
+    /// child carrying the item's accessibility identifier, in Quartz
+    /// points. nil while AX is refused or the item has no slot.
+    private func ownIconAXFrame() -> CGRect? {
+        let app = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, Float(MenuBarAX.messagingTimeout))
+        var extras: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras) == .success,
+              let extras, CFGetTypeID(extras) == AXUIElementGetTypeID() else { return nil }
+        var kids: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(extras as! AXUIElement, kAXChildrenAttribute as CFString, &kids) == .success,
+              let children = kids as? [AXUIElement] else { return nil }
+        for item in children {
+            var ident: CFTypeRef?
+            AXUIElementCopyAttributeValue(item, "AXIdentifier" as CFString, &ident)
+            guard (ident as? String) == StatusItemController.accessibilityIdentifier else { continue }
+            var pos: CFTypeRef?; var size: CFTypeRef?
+            AXUIElementCopyAttributeValue(item, kAXPositionAttribute as CFString, &pos)
+            AXUIElementCopyAttributeValue(item, kAXSizeAttribute as CFString, &size)
+            var p = CGPoint.zero; var s = CGSize.zero
+            if let pos { AXValueGetValue((pos as! AXValue), .cgPoint, &p) }
+            if let size { AXValueGetValue((size as! AXValue), .cgSize, &s) }
+            return CGRect(origin: p, size: s)
+        }
+        return nil
     }
 
     /// The chevron's slot as the agent places it — the extras-bar child
@@ -1754,14 +2307,14 @@ final class MenuBarUtility: Toy {
         guard !running else { return }
         guard accessibilityGranted else {
             lastPlan = MenuBarItemHider.unzonedPlan(
-                items: MenuBarItemLister.list(), row: MenuBarItemLister.menuBarRow())
+                items: MenuBarItemLister.list(), rows: MenuBarItemLister.menuBarRows())
             return
         }
         Task { [weak self] in
             _ = await MenuBarItemLister.refreshAXItems()
             guard let self, !self.running else { return }
             self.lastPlan = MenuBarItemHider.unzonedPlan(
-                items: MenuBarItemLister.axItems, row: MenuBarItemLister.menuBarRow())
+                items: MenuBarItemLister.axItems, rows: MenuBarItemLister.menuBarRows())
         }
     }
 
@@ -1773,6 +2326,59 @@ final class MenuBarUtility: Toy {
     /// The Item Bar's tiles: both hidden runs.
     private func barItems() -> [MenuBarItem] {
         lastPlan.hidden + lastPlan.alwaysHidden
+    }
+
+    /// The `.bar` reveal surface. The Item Bar opens when it has items
+    /// to show; a trigger while it is up closes it, matching the
+    /// chevron's toggle. When the item list is empty — the grant is
+    /// gone or macOS stopped reporting — an empty bar would answer the
+    /// gesture with nothing, so a deployed hidden section falls back
+    /// to the inline reveal: the covers drop and the run is reachable
+    /// without any listing at all.
+    private func revealBarStyle() {
+        if bar.isOpen {
+            bar.close()
+            return
+        }
+        if !barItems().isEmpty {
+            bar.open()
+            return
+        }
+        let glyph = host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength
+        if (hider.assignedLengths[.hidden] ?? glyph) > glyph + 1 {
+            hider.reveal([.hidden, .alwaysHidden])
+        }
+    }
+
+    /// Whether an owner of a covered item currently has a menu-layer
+    /// window up — the reveal must not fold the run out from under a
+    /// menu the person is reading.
+    private func listedItemMenuOpen() -> Bool {
+        let pids = Set((lastPlan.hidden + lastPlan.alwaysHidden).map(\.ownerPID))
+        guard !pids.isEmpty else { return false }
+        return MenuBarItemLister.menuOpen(ownerPIDs: pids,
+                                          infos: MenuBarItemLister.windowInfos())
+    }
+
+    /// `concealedApps` entries whose bundle identifier no longer
+    /// resolves — uninstalled apps the map still carries. A quit app's
+    /// id still resolves on disk, so only genuinely gone entries are
+    /// dropped; the user's choices survive an app merely not running.
+    private func pruneUninstalledConcealedApps() {
+        let apps = settings().concealedApps
+        guard !apps.isEmpty else { return }
+        let stale = apps.keys.filter { id in
+            NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+                && NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) == nil
+                // A helper bundled inside another app resolves neither
+                // lookup but is installed and will be back — an id that
+                // owned an item this session is not "uninstalled".
+                && knownItems[id] == nil
+        }
+        guard !stale.isEmpty else { return }
+        update { draft in
+            for id in stale { draft.concealedApps.removeValue(forKey: id) }
+        }
     }
 
     /// Anyone's item but ours — the system's extras included: a gesture
@@ -1847,19 +2453,38 @@ final class MenuBarUtility: Toy {
             item.owner?.activate()
             return
         }
-        if concealer != nil, let id = item.bundleID,
+        if let concealer, let id = item.bundleID,
            MenuBarConcealPlan.concealed(apps: settings().concealedApps, revealed: hider.revealed).contains(id) {
-            // Concealed: the element is not in the tree. Reveal the run
-            // (the rehide clock takes it back), give the agent a beat
-            // to draw the item, then press it where it landed.
-            hider.reveal([.hidden, .alwaysHidden])
-            reveal.rearm()
+            // Concealed: only this app stands. The assertion's target
+            // narrows by exactly this bundle — every other hidden app
+            // stays concealed, so the bar never lifts — then the item
+            // gets a beat to draw, the press lands on its fresh frame,
+            // and the full target goes back up after the rehide window.
+            let target = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
+                                                    revealed: hider.revealed)
+            concealer.apply(concealed: target.subtracting([id]),
+                            running: runningApps.snapshot())
+            let rehide = settings().rehideSeconds
             Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 450_000_000)
-                _ = await MenuBarItemLister.refreshAXItems()
-                let fresh = MenuBarItemLister.axItems.first { $0.id == item.id } ?? item
-                if MenuBarAX.press(fresh) { return }
-                await MainActor.run { self?.clickFallback(fresh) }
+                guard let self else { return }
+                var fresh = item
+                // Poll up to ~600 ms for the item's real frame — the
+                // agent needs a beat to draw a just-unconcealed item,
+                // and its ghost's frozen frame is not where it lands.
+                for _ in 0..<6 {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    _ = await MenuBarItemLister.refreshAXItems()
+                    if let found = MenuBarItemLister.axItems.first(where: { $0.id == item.id }) {
+                        fresh = found
+                        if MenuBarItemLister.onAnyMenuBarRow(found.bounds) { break }
+                    }
+                }
+                if !MenuBarAX.press(fresh) {
+                    await MainActor.run { self.clickFallback(fresh) }
+                }
+                try? await Task.sleep(nanoseconds: UInt64(rehide * 1e9))
+                self.runningApps.invalidate()
+                self.syncConcealer()
             }
             return
         }
@@ -1928,6 +2553,10 @@ final class MenuBarUtility: Toy {
         let key = "NSStatusItem Preferred Position \(autosaveName)"
         if UserDefaults.standard.object(forKey: key) == nil {
             UserDefaults.standard.set(position, forKey: key)
+            // The item registers a beat later — without the sync the
+            // write can sit in the in-memory cache and cfprefsd hands
+            // the registrar nothing.
+            UserDefaults.standard.synchronize()
         }
     }
 
@@ -1957,12 +2586,13 @@ final class MenuBarUtility: Toy {
         // agent adopts it born-visible, and our own items are protected
         // so the plan can never park it.
         chevron?.isVisible = host == nil
-        // Under the agent the hider never sizes the control — the
-        // affordance floor is claimed here so the boundary's ‹ mark
-        // stands from the moment a host attaches. Under the spacer
-        // engine the plan's own writes floor it too; this only makes
-        // the mark immediate.
-        host?.setBoundarySpacer(Self.boundaryAffordance)
+        // Under the agent the hider never sizes the control — and no
+        // affordance is claimed: the width pushed our slot into the
+        // notch dead zone and parked the item. Under the spacer engine
+        // the plan's own writes floor the mark; this only makes it
+        // immediate.
+        host?.setBoundarySpacer(concealer == nil ? Self.boundaryAffordance : 0)
+        host?.setAnchorSlim(concealer != nil)
         // The always-hidden control of earlier builds left its slot in
         // our defaults; a stale key is harmless but says nothing true.
         UserDefaults.standard.removeObject(
@@ -2213,9 +2843,10 @@ final class MenuBarUtility: Toy {
     /// empty bar.
     private func setControlLength(_ section: MenuBarItemSection, length: CGFloat) {
         if concealer != nil {
-            // The agent hides; nothing of ours ever grows — but the
-            // affordance floor stays so the drop zone keeps its ‹ mark.
-            host?.setBoundarySpacer(Self.boundaryAffordance)
+            // The agent hides; nothing of ours ever grows — the
+            // affordance floor would push our slot into the notch dead
+            // zone and park the item.
+            host?.setBoundarySpacer(0)
             return
         }
         switch section {
@@ -2257,41 +2888,60 @@ final class MenuBarUtility: Toy {
             ScreenBarGeometry.earItemLimitRight = nil
             return
         }
-        let row = MenuBarItemLister.menuBarRow()
-        var left: CGFloat? = nil
-        var right: CGFloat? = nil
-        let apps = settings().concealedApps
-        let sections = settings().sections
-        let reveal = hider.revealed
-        for item in plan.shown + plan.hidden + plan.alwaysHidden {
-            let f = item.bounds
-            guard f.intersects(row) else { continue }
-            // A parked or covered item is already invisible — the wing
-            // may stand on its slot without paving anything the person
-            // can see. A revealed run stands for real and still counts.
-            let section = item.bundleID.flatMap { apps[$0] } ?? sections[item.id]
-            if let section, section != .shown, !reveal.contains(section) { continue }
-            if f.maxX <= island.minX + 4 {
-                left = max(left ?? -.infinity, f.maxX)
-            } else if f.minX >= island.maxX - 4 {
-                right = min(right ?? .infinity, f.minX)
-            }
-        }
-        // The standalone chevron is ours — the lister keeps it out of
-        // the plan, so its live frame joins the limits separately.
-        if let frame = chevronScreenFrame() {
-            if frame.maxX <= island.minX + 4 {
-                left = max(left ?? -.infinity, frame.maxX)
-            } else if frame.minX >= island.maxX - 4 {
-                right = min(right ?? .infinity, frame.minX)
-            }
-        }
+        let s = settings()
+        let (left, right) = Self.earLimits(
+            items: plan.shown + plan.hidden + plan.alwaysHidden,
+            island: island, row: MenuBarItemLister.menuBarRow(),
+            concealedApps: s.concealedApps, sections: s.sections,
+            revealed: hider.revealed, chevron: chevronScreenFrame())
         if ScreenBarGeometry.earItemLimitLeft != left {
             ScreenBarGeometry.earItemLimitLeft = left
         }
         if ScreenBarGeometry.earItemLimitRight != right {
             ScreenBarGeometry.earItemLimitRight = right
         }
+    }
+
+    /// The ear-limit classifier — pure so tests drive it without a notch
+    /// window. The nearest on-row item edge on each flank is the limit;
+    /// side is decided by centre, not edge clearance, because an item
+    /// that merely straddles the island's edge — our own boundary icon
+    /// seats that close — used to fail both tests and earn no limit at
+    /// all, so the wing drew straight over it. A limit inside the
+    /// island's span just suppresses the ear, which is the honest answer
+    /// when the flank is already taken.
+    nonisolated static func earLimits(
+        items: [MenuBarItem], island: CGRect, row: CGRect,
+        concealedApps: [String: MenuBarItemSection],
+        sections: [String: MenuBarItemSection],
+        revealed: Set<MenuBarItemSection>, chevron: CGRect?
+    ) -> (left: CGFloat?, right: CGFloat?) {
+        var left: CGFloat? = nil
+        var right: CGFloat? = nil
+        for item in items {
+            let f = item.bounds
+            guard f.intersects(row) else { continue }
+            // A parked or covered item is already invisible — the wing
+            // may stand on its slot without paving anything the person
+            // can see. A revealed run stands for real and still counts.
+            let section = item.bundleID.flatMap { concealedApps[$0] } ?? sections[item.id]
+            if let section, section != .shown, !revealed.contains(section) { continue }
+            if f.midX <= island.midX {
+                left = max(left ?? -.infinity, f.maxX)
+            } else {
+                right = min(right ?? .infinity, f.minX)
+            }
+        }
+        // The standalone chevron is ours — the lister keeps it out of
+        // the plan, so its live frame joins the limits separately.
+        if let chevron {
+            if chevron.midX <= island.midX {
+                left = max(left ?? -.infinity, chevron.maxX)
+            } else {
+                right = min(right ?? .infinity, chevron.minX)
+            }
+        }
+        return (left, right)
     }
 
     /// The chevron's live frame in AppKit screen coordinates — nil until
@@ -2317,7 +2967,11 @@ final class MenuBarUtility: Toy {
             let edge = NSScreen.main?.auxiliaryTopRightArea?.minX ?? row.midX
             guard let leftmost = lastPlan.shown
                 .filter({ $0.bounds.intersects(row) && $0.bounds.minX > edge })
-                .map(\.bounds.minX).min() else { return nil }
+                .map(\.bounds.minX).min() else {
+                // No computable stretch: the hot frames alone answer
+                // the gesture — the whole row must never pop the run.
+                return NSRect.zero
+            }
             return NSRect(x: edge, y: height - row.maxY,
                           width: max(0, leftmost - edge), height: row.height)
         }
@@ -2426,7 +3080,12 @@ extension MenuBarUtility: MenuBarActionsDelegate {
     func menuBarItems(for _: MenuBarActions) -> [MenuBarItem] { listedItems }
 
     func menuBarSections(for _: MenuBarActions) -> [String: MenuBarItemSection] {
-        settings().sections
+        // The palette's truth is the effective section: under the
+        // concealer a concealed item reads hidden, so its row offers
+        // "Show" and "Open" — never "Hide".
+        var map: [String: MenuBarItemSection] = [:]
+        for item in listedItems { map[item.id] = effectiveSection(for: item) }
+        return map
     }
 
     func menuBarArrangeOrder(for _: MenuBarActions) -> [String] {
@@ -2499,10 +3158,25 @@ extension MenuBarUtility: MenuBarActionsDelegate {
 protocol MenuBarBoundaryHost: AnyObject {
     /// The item's frame in Quartz coordinates; nil before it has a window.
     var boundaryFrame: CGRect? { get }
+    /// The item window's occlusion state — a parked item's surface never
+    /// composites, so `.visible` drops even though AX keeps answering.
+    var boundaryOcclusion: NSWindow.OcclusionState? { get }
+    /// Diagnostics for the parked-window hunt: isVisible, onActiveSpace,
+    /// screen presence, alpha — whichever one the surface state moves.
+    var boundaryWindowProbe: String { get }
     /// The icon's own width — the part that is not spacer.
     var boundaryGlyphLength: CGFloat { get }
     /// Claim `length` points of blank bar left of the icon (0 folds).
     func setBoundarySpacer(_ length: CGFloat)
+    /// Under the agent the island face is the icon's visible surface;
+    /// the item itself is a pure anchor and must fit the notch-adjacent
+    /// niche (~34 pt between the island edge and the next item) or it
+    /// parks off-row. Slim clamps the slot to `anchorSlimLength`.
+    func setAnchorSlim(_ slim: Bool)
+    /// Re-register the item — the agent adopts only at registration, so a
+    /// ghosted item (AX answers a stale frame, nothing draws) comes back
+    /// only through remove + recreate inside a suspend window.
+    func reseatStatusItem()
     var onBoundaryClick: (@MainActor () -> Void)? { get set }
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }

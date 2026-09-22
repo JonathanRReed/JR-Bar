@@ -21,8 +21,10 @@ struct ToysStateTests {
         let state = ToysState()
         #expect(state.fold == FoldSettings())
         #expect(state.fold.enabled == false)
+        #expect(state.fold.anchor == .angle)
         #expect(state.fold.activationAngle == 65)
         #expect(state.fold.provider == .jrbar)
+        #expect(state.fold.holdPicture == true)
         #expect(state.aquarium == AquariumSettings())
         #expect(state.notchBuddy == NotchBuddySettings())
         #expect(state.confetti == ConfettiSettings())
@@ -31,8 +33,9 @@ struct ToysStateTests {
     @Test("encode then decode returns the same state")
     func roundTrip() throws {
         var state = ToysState()
-        state.fold = FoldSettings(enabled: true, activationAngle: 95, perspective: 0.8,
-                                  blur: 0.2, shade: 0.7, jitterTolerance: 2, provider: .bendy)
+        state.fold = FoldSettings(enabled: true, anchor: .movement, activationAngle: 95,
+                                  perspective: 0.8, blur: 0.2, shade: 0.7, jitterTolerance: 2,
+                                  provider: .bendy, holdPicture: false)
         state.aquarium = AquariumSettings(enabled: true, showLabels: false, density: 0.4)
         state.notchBuddy = NotchBuddySettings(enabled: true, character: "dot")
         state.confetti = ConfettiSettings(enabled: true)
@@ -47,11 +50,13 @@ struct ToysStateTests {
 
     @Test("missing and mistyped keys fall back, unknown keys are ignored")
     func tolerantDecode() throws {
-        let json = #"{"fold": {"enabled": true, "activationAngle": "soon", "style": "glow", "provider": "someone"}, "confetti": {"enabled": "yes"}, "externalApps": "many", "futureToy": {"enabled": true}}"#
+        let json = #"{"fold": {"enabled": true, "anchor": "someday", "activationAngle": "soon", "style": "glow", "provider": "someone", "holdPicture": "sure"}, "confetti": {"enabled": "yes"}, "externalApps": "many", "futureToy": {"enabled": true}}"#
         let state = try decode(ToysState.self, json)
         #expect(state.fold.enabled == true)
+        #expect(state.fold.anchor == .angle, "an unknown anchor reads as a set angle")
         #expect(state.fold.activationAngle == 65, "a string is not an angle")
         #expect(state.fold.provider == .jrbar, "an unknown renderer is jrbar")
+        #expect(state.fold.holdPicture == true, "a string is not a flag")
         #expect(state.confetti.enabled == false, "a string is not a flag")
         #expect(state.aquarium == AquariumSettings())
     }
@@ -115,5 +120,34 @@ struct ToysStateTests {
         let app = try decode(AppState.self, #"{"showScreenBar": true, "toys": "fun"}"#)
         #expect(app.toys == ToysState())
         #expect(app.showScreenBar == true)
+    }
+
+    @Test("the aquarium's day/night mode defaults to the clock and round-trips")
+    func aquariumDayNightRoundTrip() throws {
+        #expect(AquariumSettings().dayNight == .realTime)
+        var settings = AquariumSettings(enabled: true)
+        settings.dayNight = .cycle
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AquariumSettings.self, from: data)
+        #expect(decoded.dayNight == .cycle)
+    }
+
+    @Test("an aquarium blob without `dayNight` — or with a bad one — reads as the clock")
+    func aquariumDayNightTolerant() throws {
+        // A settings file from before the picker existed.
+        let old = try decode(AquariumSettings.self,
+                             #"{"enabled": true, "showLabels": false, "density": 0.5}"#)
+        #expect(old.dayNight == .realTime)
+        #expect(old.showLabels == false)
+        #expect(old.density == 0.5)
+        // An unknown future value can't sink the mode, let alone the rest.
+        let future = try decode(AquariumSettings.self,
+                                #"{"dayNight": "sundial", "enabled": true}"#)
+        #expect(future.dayNight == .realTime)
+        #expect(future.enabled == true)
+        // A mistyped key is no better.
+        let mistyped = try decode(AquariumSettings.self,
+                                  #"{"dayNight": 4}"#)
+        #expect(mistyped.dayNight == .realTime)
     }
 }

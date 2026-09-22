@@ -685,7 +685,7 @@ def test_application_will_terminate_only_closes_once_when_called_twice(
     target.stop_event_server.assert_called_once_with()
     target.closed_lid_awake.release.assert_called_once_with()
     target.keep_awake.release.assert_called_once_with()
-    target._persistence_writer.close.assert_called_once_with(timeout_seconds=1.0)
+    target._persistence_writer.close.assert_called_once_with(timeout_seconds=3.0)
 
 
 def test_application_closes_global_actions_before_native_surface_teardown(

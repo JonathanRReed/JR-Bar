@@ -96,4 +96,68 @@ import Testing
         #expect(blurred < sharp * 0.6,
                 "blur 1 should collapse the far wall's contrast (\(blurred) vs \(sharp))")
     }
+
+    @Test func holdInPlaceCounterRotatesTheContentPlane() throws {
+        // The viewer-compensation term must actually reach the GPU: at
+        // Perspective 1 + hold, the content plane counter-rotates the
+        // full delta, so a mid-fold render can't match the same render
+        // with hold off — the far wall's pixels have to move.
+        let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
+        let width = 128, height = 128
+        var maybeBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+        ]
+        #expect(CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+                                    kCVPixelFormatType_32BGRA,
+                                    attrs as CFDictionary,
+                                    &maybeBuffer) == kCVReturnSuccess)
+        let buffer = try #require(maybeBuffer)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let base = CVPixelBufferGetBaseAddress(buffer)!
+            .assumingMemoryBound(to: UInt8.self)
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<height {
+            for x in 0..<width {
+                let on = ((x / 8) + (y / 8)) % 2 == 0
+                let v: UInt8 = on ? 255 : 0
+                base[y * rowBytes + x * 4 + 0] = v
+                base[y * rowBytes + x * 4 + 1] = v
+                base[y * rowBytes + x * 4 + 2] = v
+                base[y * rowBytes + x * 4 + 3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        #expect(renderer.setFullFrame(buffer))
+
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: 256, height: 160, mipmapped: false)
+        desc.usage = [.shaderRead, .renderTarget]
+        desc.storageMode = .shared
+        let target = try #require(renderer.device.makeTexture(descriptor: desc))
+
+        func pixels(hold: Bool) -> [UInt8]? {
+            FoldPortalModel.apply(to: &renderer.params, delta: 1.0,
+                                  perspective: 1.0, blur: 0, shade: 0.7,
+                                  frost: 0, holdPicture: hold,
+                                  usedBuckets: 0, reduceMotion: false)
+            guard renderer.render(to: target, size: CGSize(width: 256, height: 160)) else {
+                return nil
+            }
+            var px = [UInt8](repeating: 0, count: 256 * 160 * 4)
+            target.getBytes(&px, bytesPerRow: 256 * 4,
+                            from: MTLRegionMake2D(0, 0, 256, 160), mipmapLevel: 0)
+            return px
+        }
+
+        let riding = try #require(pixels(hold: false))
+        let held = try #require(pixels(hold: true))
+        var differ = 0
+        for i in stride(from: 0, to: riding.count, by: 4) {
+            if abs(Int(riding[i]) - Int(held[i])) > 12 { differ += 1 }
+        }
+        #expect(differ > 2000,
+                "hold should visibly move the content plane (\(differ) px differ)")
+    }
 }

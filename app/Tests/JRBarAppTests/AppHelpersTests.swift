@@ -117,6 +117,9 @@ import JRBarUI
         let plan = StatusItemController.plan(style: .meters, meters: Self.meters, dotState: .working)
         #expect(plan.spec.meters == Self.meters)
         #expect(plan.spec.dot == .working)
+        let compact = StatusItemController.plan(style: .compactPercent, meters: Self.meters, dotState: .working)
+        #expect(compact.spec.meters == Self.meters, "the compact readout needs the meters to pick its tightest")
+        #expect(compact.spec.dot == .idle, "the figure is the signal; no state dot rides along")
         #expect(plan.isStrip)
     }
 
@@ -360,5 +363,59 @@ import JRBarUI
         let (primary, secondary) = PanelStore.windows(of: provider)
         #expect(primary?.id == "seven_day")
         #expect(secondary?.id == "five_hour")
+    }
+}
+
+/// The pricing sentence under the Usage Center's totals: a table-priced
+/// quote is a list price, an estimated one names its stand-in, and an
+/// absent table keeps the old "no table" line.
+@Suite struct PricingDisclosureTests {
+    static func history(pricing: UsagePricing?, unpriced: Int = 0, models: [String] = []) -> UsageHistory {
+        UsageHistory(provider: "codex", range: "7d",
+                     days: [UsageHistoryDay(date: "2026-09-20")],
+                     pricing: pricing, unpricedRecords: unpriced, unpricedModels: models)
+    }
+
+    @Test func listPriceNamesTheModelAndTable() {
+        let text = ProviderUsageCard.pricingDisclosure(Self.history(pricing: UsagePricing(
+            inputPerMillion: 10, outputPerMillion: 50, cacheReadPerMillion: 1,
+            asOf: "2026-09-20", model: "gpt-6-astra", source: "table", estimated: false)))
+        #expect(text.hasPrefix("List price for gpt-6-astra: $10.00 in / $50.00 out / $1.00 cache per M tokens, as of 2026-09-20."))
+        #expect(!text.contains("Approximate"), "a list price does not hedge")
+    }
+
+    @Test func estimatedNamesTheStandIn() {
+        let text = ProviderUsageCard.pricingDisclosure(Self.history(pricing: UsagePricing(
+            inputPerMillion: 4, outputPerMillion: 20, asOf: "2026-09-20",
+            model: "gpt-5.6-sol", source: "reference", estimated: true)))
+        #expect(text.hasPrefix("Approximate: list prices"))
+        #expect(text.contains("for gpt-5.6-sol"))
+        #expect(text.contains("reference rate"))
+    }
+
+    @Test func noTableKeepsTheOldSentence() {
+        #expect(ProviderUsageCard.pricingDisclosure(Self.history(pricing: nil))
+            .hasPrefix("Approximate: the monitor reported no price table"))
+    }
+
+    @Test func unpricedRecordsStillDisclose() {
+        let text = ProviderUsageCard.pricingDisclosure(Self.history(
+            pricing: UsagePricing(inputPerMillion: 10, outputPerMillion: 50, model: "gpt-6-astra", estimated: false),
+            unpriced: 2, models: ["mystery-1"]))
+        #expect(text.contains("2 records (mystery-1) have no price"))
+        #expect(text.hasSuffix("Subscription plans are not billed per token."))
+    }
+
+    @Test func decodedApproximateFollowsEstimated() throws {
+        // A v3 wire quote: approximate mirrors estimated; a table row is a
+        // list price even if an old payload said approximate.
+        let table = try JSONDecoder().decode(UsagePricing.self, from: Data(#"{"input_per_mtok":10,"output_per_mtok":50,"as_of":"2026-09-20","approximate":true,"table_version":"jrbar-rates-v3","model":"gpt-6-astra","source":"table","estimated":false}"#.utf8))
+        #expect(!table.estimated && !table.approximate && table.tableVersion == "jrbar-rates-v3")
+        let guessed = try JSONDecoder().decode(UsagePricing.self, from: Data(#"{"input_per_mtok":4,"source":"reference","estimated":true}"#.utf8))
+        #expect(guessed.estimated && guessed.approximate)
+        // `estimated` was already on the v2 wire, so a payload without it
+        // (never emitted by a real daemon) reads as list-priced.
+        let bare = try JSONDecoder().decode(UsagePricing.self, from: Data(#"{"input_per_mtok":3,"approximate":true}"#.utf8))
+        #expect(!bare.approximate)
     }
 }

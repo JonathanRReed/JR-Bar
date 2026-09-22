@@ -116,26 +116,33 @@ class DeckInputDispatch:
             if batch is not self._pending or self._closed:
                 return ()
             self._pending = None
-            try:
-                if (getattr(self._target, "_runtime_termination_started", False)
-                        or batch.generation != self._generation
-                        or not 0 <= self._clock() - batch.created_at <= self.MAX_AGE):
-                    self.dropped_inputs += len(batch.actions)
-                    setattr(self._target, "_deck_dropped_inputs", self.dropped_inputs)
-                    return ()
-                receipts = []
-                for index, action in enumerate(batch.actions):
+            if (getattr(self._target, "_runtime_termination_started", False)
+                    or batch.generation != self._generation
+                    or not 0 <= self._clock() - batch.created_at <= self.MAX_AGE):
+                self.dropped_inputs += len(batch.actions)
+                setattr(self._target, "_deck_dropped_inputs", self.dropped_inputs)
+                self._schedule()
+                return ()
+        # Executor calls run OUTSIDE the lock: an answer-first reveal can
+        # wait out the reply budget (seconds) and holding _lock through it
+        # stalls the HID service loop's receive() the whole way. The
+        # batch is already detached — only this caller may execute it.
+        receipts = []
+        try:
+            for index, action in enumerate(batch.actions):
+                with self._lock:
                     if (self._closed or batch.generation != self._generation
                             or getattr(self._target, "_deck_input_check_active", False)
                             or not 0 <= self._clock() - batch.created_at <= self.MAX_AGE):
-                        break
-                    session = batch.session_targets[index] if index < len(batch.session_targets) else None
-                    if session is not None:
-                        receipts.append(executor.reveal_session(session, batch.board_revision))
-                    else:
-                        receipts.append(executor.execute(action))
-                return tuple(receipts)
-            finally:
+                        return tuple(receipts)
+                session = batch.session_targets[index] if index < len(batch.session_targets) else None
+                if session is not None:
+                    receipts.append(executor.reveal_session(session, batch.board_revision))
+                else:
+                    receipts.append(executor.execute(action))
+            return tuple(receipts)
+        finally:
+            with self._lock:
                 self._schedule()
 
     def reset_connection(self) -> None:

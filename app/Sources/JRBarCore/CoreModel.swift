@@ -248,11 +248,16 @@ public final class CoreModel {
     /// `session_timeline`: the session's provider transcript as bounded
     /// items — messages, tool_use/tool_result pairs, turn ends — newest
     /// page first. `before` pages older items; ended sessions keep
-    /// working through `session`+`provider` once the roster row is gone.
+    /// working through `session`+`provider` once the roster row is gone —
+    /// pass them so a row that aged out mid-browse still resolves.
     public func sessionTimeline(id: String, limit: Int = 100,
-                                before: Int? = nil) async throws -> CoreTimelinePage {
+                                before: Int? = nil, provider: String? = nil,
+                                session: String? = nil, cwd: String? = nil) async throws -> CoreTimelinePage {
         var args: [String: JSONValue] = ["id": .string(id), "limit": .number(Double(limit))]
         if let before { args["before"] = .number(Double(before)) }
+        if let provider { args["provider"] = .string(provider) }
+        if let session { args["session"] = .string(session) }
+        if let cwd { args["cwd"] = .string(cwd) }
         let reply = try await send("session_timeline", args: args)
         guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "session_timeline failed") }
         guard let result = reply.result else {

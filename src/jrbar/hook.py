@@ -142,7 +142,13 @@ def write_normalized_hook_record(
         log_path.expanduser(),
         json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
     )
-    audit.compact_jsonl_file(log_path.expanduser())
+    # The append is already durable, so a compaction error must not
+    # propagate: inside ``run_once`` it would skip token recording and a
+    # later drain would append the same event again.
+    try:
+        audit.compact_jsonl_file(log_path.expanduser())
+    except OSError:
+        pass
 
 
 def hook_dedupe_path(log_path: Path) -> Path:

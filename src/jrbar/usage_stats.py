@@ -109,26 +109,61 @@ _CACHE_BYTES_PER_ENTRY = 320
 DEDUPE_DIGEST_HEX_CHARS = 32
 USAGE_MARKER = '"usage"'
 CODEX_MARKER = '"token_count"'
-PRICING_TABLE_VERSION = "sidepulse-rates-v2"
-PRICING_TABLE_AS_OF = "2026-08-26"
+PRICING_TABLE_VERSION = "jrbar-rates-v3"
+PRICING_TABLE_AS_OF = "2026-09-20"
 
 
-# (input $/MTok, output $/MTok) by model-id substring, first match wins.
-# Cache reads bill at 0.1x input; cache writes at 1.25x input.
-# Rates checked 2026-08-26 against Anthropic's published pricing
-# (Fable 5: $10/$50, cache read $1/MTok). Before this row, 55% of this
-# machine's tokens were fable-model records dropped from every dollar
-# figure with no disclosure -- the "$23k estimated" was a silent floor.
+# (input $/MTok, output $/MTok) by model-id substring, first match wins,
+# so the most specific markers come first. Cache reads bill at 0.1x input
+# unless CACHE_READ_RATE_OVERRIDES says otherwise; cache writes at 1.25x.
+# Rates checked 2026-09-20 against platform.claude.com/docs/en/about-claude/pricing:
+# Fable 5.1 / Mythos 5.1 $10/$50 (cache read 0.025x); Fable 5 / Mythos 5
+# $10/$50; Opus 4.5-4.8 and Opus 5 $5/$25; Opus 4 / 4.1 $15/$75;
+# Sonnet 5 $2/$10 (introductory price made permanent); Sonnet 4-4.6
+# $3/$15; Haiku 4.5 $1/$5; Haiku 3.5 $0.80/$4.
 MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("fable", 10.0, 50.0),
-    ("opus", 15.0, 75.0),
-    ("sonnet", 3.0, 15.0),
+    ("mythos", 10.0, 50.0),
+    ("opus-4-5", 5.0, 25.0),
+    ("opus-4-6", 5.0, 25.0),
+    ("opus-4-7", 5.0, 25.0),
+    ("opus-4-8", 5.0, 25.0),
+    ("opus-4.5", 5.0, 25.0),
+    ("opus-4.6", 5.0, 25.0),
+    ("opus-4.7", 5.0, 25.0),
+    ("opus-4.8", 5.0, 25.0),
+    # Opus 4 and 4.1 (retired) keep the old $15/$75; anything else
+    # named opus is the current $5/$25 generation.
+    ("opus-4", 15.0, 75.0),
+    ("opus", 5.0, 25.0),
+    ("sonnet-5", 2.0, 10.0),
+    ("sonnet-4", 3.0, 15.0),
+    ("sonnet", 2.0, 10.0),
+    # Haiku 3.5's real ids are claude-3-5-haiku-*; the "haiku-3" marker
+    # only catches the rare "haiku-3..." spelling.
+    ("3-5-haiku", 0.80, 4.0),
+    ("3.5-haiku", 0.80, 4.0),
+    ("haiku-3", 0.80, 4.0),
     ("haiku", 1.0, 5.0),
 )
-# Codex models, same substring-match convention. Checked 2026-08-26
-# against OpenAI's published pricing (GPT-5.6 Sol after the Aug-22 cut;
-# Luna/Terra; GPT-5.4 family). Order matters: longest prefixes first.
+# Per-marker cache-read multipliers where a model departs from 0.1x.
+# Fable 5.1 and Mythos 5.1 read cache at 0.025x base input ($0.25/MTok);
+# every other Anthropic model, and OpenAI/Gemini, use 0.1x.
+CACHE_READ_RATE_OVERRIDES: dict[str, float] = {
+    "fable-5-1": 0.025,
+    "fable-5.1": 0.025,
+    "mythos-5-1": 0.025,
+    "mythos-5.1": 0.025,
+}
+# Codex models, same substring-match convention. Checked 2026-09-20
+# against developers.openai.com/api/docs/pricing (standard tier, short
+# context): GPT-6 Astra $10/$50 (cache read $1, write $12.50); GPT-5.6
+# Sol $4/$20, Terra $2/$12, Luna $0.20/$1.20; GPT-5.4 family unchanged.
+# Requests past 272K input reprice at 2x/1.5x -- not modelled; the
+# short-context rate is the floor.
 GPT_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
+    ("gpt-6-astra", 10.0, 50.0),
+    ("gpt-6", 10.0, 50.0),
     ("gpt-5.6-luna", 0.20, 1.20),
     ("gpt-5.6-terra", 2.0, 12.0),
     ("gpt-5.6-sol", 4.0, 20.0),
@@ -138,17 +173,34 @@ GPT_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("gpt-5.4", 2.50, 15.0),
     ("gpt-5", 2.50, 15.0),
 )
-# Gemini models, same substring-match convention (Gemini 3 list prices:
-# Pro $2/$12, Flash $0.50/$3.00; cache reads 0.1x input like the others).
-# The Gemini CLI keeps no local transcript this scanner reads, so these
-# only ever price a usage_history quote, never a token row.
+# Gemini models, same substring-match convention. Checked 2026-09-20
+# against ai.google.dev/gemini-api/docs/pricing: Gemini 3.1 Pro $2/$12
+# (<=200K); Gemini 3.6-3.8 Flash $0.75/$3.75 introductory through
+# 2026-12-31 (then $1.50/$7.50); Gemini 3 Flash $0.50/$3; 3.1 Flash-Lite
+# $0.25/$1.50; cache reads 0.1x input. The Gemini CLI keeps no local
+# transcript this scanner reads, so these only ever price a
+# usage_history quote, never a token row.
 GEMINI_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
+    ("3.1-flash-lite", 0.25, 1.50),
     ("flash-lite", 0.10, 0.40),
+    ("3.8-flash", 0.75, 3.75),
+    ("3.7-flash", 0.75, 3.75),
+    ("3.6-flash", 0.75, 3.75),
     ("flash", 0.50, 3.00),
     ("pro", 2.0, 12.0),
 )
 CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
+
+
+def cache_read_rate_for_model(model: str) -> float:
+    """The cache-read multiplier for ``model``: an override when the
+    model has one, else ``CACHE_READ_RATE``."""
+    lowered = str(model or "").lower()
+    for marker, rate in CACHE_READ_RATE_OVERRIDES.items():
+        if marker in lowered:
+            return rate
+    return CACHE_READ_RATE
 
 
 class PricingCoverage(str, Enum):
@@ -483,6 +535,20 @@ def _gemini_pricing_for_model(model: str) -> tuple[float, float] | None:
     return None
 
 
+def _record_model_key(model: str) -> str:
+    """The model key a transcript record stores: the cache-read override
+    marker when one matches, so the totals pass can bill that model's own
+    cache rate (``fable-5-1`` reads at 0.025x, ``fable`` at 0.1x -- the
+    plain pricing marker ``fable`` could not tell them apart), else the
+    pricing key. Override markers still contain a pricing marker, so
+    ``_pricing_for_model`` works on them unchanged."""
+    lowered = str(model or "").lower()
+    for marker in CACHE_READ_RATE_OVERRIDES:
+        if marker in lowered:
+            return marker
+    return _pricing_key_for_model(model)
+
+
 def _token_counts(mapping: dict, keys: tuple[str, ...]) -> tuple[int, ...] | None:
     values: list[int] = []
     for key in keys:
@@ -552,7 +618,7 @@ def _record_from_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple
     return (
         "claude",
         session_id,
-        _pricing_key_for_model(str(message.get("model") or "")),
+        _record_model_key(str(message.get("model") or "")),
         epoch,
         counts[0],
         counts[1],
@@ -1489,6 +1555,12 @@ def _load_cache(
         # it would preserve copied/forked overcounts. Claude caches are not
         # affected and remain warm.
         return {}
+    if data.get("pricing_semantics_version") != PRICING_TABLE_VERSION:
+        # A rate-table change rewrites both what a record's model key
+        # holds (cache-read overrides key differently) and what the
+        # numbers mean. Recosting stored tuples under new rates would
+        # silently mix semantics, so the whole cache goes cold once.
+        return {}
     if source_key is not None and data.get("source_key") != _source_key_payload(source_key):
         return {}
     files = data.get("files")
@@ -2274,6 +2346,7 @@ def _scan_inventory_usage_with_index(
         payload = {
             "version": CACHE_VERSION,
             "source_key": _source_key_payload(cache_source_key),
+            "pricing_semantics_version": PRICING_TABLE_VERSION,
             "files": new_files,
             "sessions": sessions_table,
             "models": models_table,
@@ -2382,13 +2455,14 @@ def _scan_inventory_usage_with_index(
         priced_records += 1
         priced_token_count += record_tokens
         input_rate, output_rate = pricing
+        cache_read_rate = cache_read_rate_for_model(model)
         totals.estimated_cost_usd += (
             inp * input_rate
-            + cached_in * input_rate * CACHE_READ_RATE
+            + cached_in * input_rate * cache_read_rate
             + cache_create * input_rate * CACHE_WRITE_RATE
             + out * output_rate
         ) / 1_000_000.0
-        totals.estimated_cache_savings_usd += (cached_in * input_rate * (1.0 - CACHE_READ_RATE)) / 1_000_000.0
+        totals.estimated_cache_savings_usd += (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
     totals.pricing_coverage = PricingCoverageMetrics(
         priced_records=priced_records,
         total_records=total_pricing_records,
@@ -2763,7 +2837,7 @@ def daily_buckets(records, days: int = 7, *, now: datetime | None = None):
             input_rate, output_rate = gpt_pricing
             provider_bucket["cost"] += (
                 inp * input_rate
-                + cached_in * input_rate * CACHE_READ_RATE
+                + cached_in * input_rate * cache_read_rate_for_model(model)
                 + cache_create * input_rate
                 + out * output_rate
             ) / 1_000_000.0
@@ -2774,7 +2848,7 @@ def daily_buckets(records, days: int = 7, *, now: datetime | None = None):
             input_rate, output_rate = pricing
             cost = (
                 inp * input_rate
-                + cached_in * input_rate * CACHE_READ_RATE
+                + cached_in * input_rate * cache_read_rate_for_model(model)
                 + cache_create * input_rate * CACHE_WRITE_RATE
                 + out * output_rate
             ) / 1_000_000.0

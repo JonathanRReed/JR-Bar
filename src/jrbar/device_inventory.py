@@ -13,8 +13,10 @@ from pathlib import Path
 
 from .device_identity import (
     DeviceHardwareFacts,
+    DeviceKind,
     StableDeviceIdentity,
     derive_device_identity,
+    device_kind,
 )
 
 DISKUTIL = Path("/usr/sbin/diskutil")
@@ -152,6 +154,19 @@ def refine_facts_with_hardware_status(
         serial_number=serial,
         product_name=product or facts.product_name,
     )
+
+
+def mounted_device_kind(mount_path: Path, product_name: str | None = None) -> DeviceKind:
+    """Classify one mounted volume's role for diagnostics.
+
+    Reads the firmware serial first (a Pro labeled just "SIDEPULSE" would
+    otherwise classify as a Dot by the bare-name rule), then falls back
+    to the mount-name heuristic. ``product_name`` lets a caller supply a
+    name it already knows instead of re-deriving it from the path.
+    """
+    serial = hardware_status_serial(mount_path)
+    product = _SERIAL_PREFIX_PRODUCT.get(serial[:3].upper()) if serial else None
+    return device_kind(product or product_name or mount_path.name, str(mount_path))
 
 
 def _jrbar_candidate(path: Path) -> bool:

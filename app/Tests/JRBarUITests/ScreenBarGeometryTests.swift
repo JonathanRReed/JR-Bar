@@ -245,6 +245,23 @@ import Testing
         #expect(Self.frame().height == 36)
     }
 
+    @Test func coupledWindowLeavesRoomForTheWingUnderlight() {
+        let island = CGRect(x: 651.5, y: 950, width: 209, height: 32)
+        let frame = ScreenBarGeometry.windowFrame(
+            screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
+            auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
+            wrapMenuBar: true, contentExtent: 60, chin: 6, coupledIsland: island)
+        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 38))
+    }
+
+    @Test func standaloneWindowLeavesRoomForTheWingUnderlight() {
+        let frame = ScreenBarGeometry.windowFrame(
+            screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
+            auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
+            wrapMenuBar: true, contentExtent: 60, chin: 6)
+        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 38))
+    }
+
     @Test func notchlessSlotsFlankTheBand() {
         // No notch: the window is the 260 pt fallback plus a fixed claim
         // per populated side, and the chips hug the band's ends.

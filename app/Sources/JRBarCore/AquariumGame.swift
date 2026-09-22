@@ -15,6 +15,12 @@ public enum AquariumRules {
     public static let completionBonus: Int = 5
     /// Pearls for each pellet a fish eats.
     public static let pelletPearl: Int = 1
+    /// Pellets per fish per day that count toward growth, pearls and the
+    /// day's chore — past that, supper is just supper (it still
+    /// nourishes). Sized to the pellets goal's target, so a one-fish
+    /// tank can still finish the chore; ten pearls a day stays a trickle
+    /// beside honest work's twelve an hour.
+    public static let feedingsPerFishPerDay = 10
     /// Feedings needed per growth stage…
     public static let feedingsPerStage: Int = 3
     /// …plus this much session work-time (the fish grows because the
@@ -45,6 +51,29 @@ public enum AquariumRules {
     /// How often the toy feeds the model a tick (its own constant —
     /// the model takes whatever `dt` the tick carries).
     public static let tickInterval: TimeInterval = 20
+    /// The longest silence between working beats the marathon clock
+    /// forgives — a beat arriving after this gap starts a fresh stretch
+    /// instead of paying a stale bank to the whale.
+    public static let workContinuityGap: TimeInterval = tickInterval * 2
+    /// Pearls the daily goal pays when its chore is done.
+    public static let dailyGoalReward = 15
+    /// A buried treasure surfaces this often…
+    public static let treasureInterval: TimeInterval = 90 * 60
+    /// …waits this long for a digger before sinking back…
+    public static let treasureLifetime: TimeInterval = 6 * 60 * 60
+    /// …and takes this many taps to dig up.
+    public static let treasureTaps = 3
+    /// Its value is this plus a few pearls per tank level.
+    public static let treasureBaseValue = 10
+    public static let treasureValuePerLevel = 3
+    /// No visitor crosses twice inside this window.
+    public static let visitorCooldown: TimeInterval = 24 * 60 * 60
+    /// The whale visits when the tank has worked this long straight.
+    public static let whaleWorkSeconds: TimeInterval = 2 * 60 * 60
+    /// The marathon achievement wants this much unbroken work.
+    public static let marathonSeconds: TimeInterval = 4 * 60 * 60
+    /// The diver visits on today's nth completion.
+    public static let diverCompletions = 10
 }
 
 /// The tank's shop: every spendable thing is one case. `rawValue` is
@@ -55,10 +84,34 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case rock
     case treasureChest
     case castle
+    case driftwood
+    case amphora
+    case bubbleWall
+    case anemoneBed
+    case sunkenStatue
+    case shipwreck
+    case ruinedColumns
+    case coralGarden
+    case moonJellyLamp
+    case volcano
     // Pets — live in the tank once owned.
     case snail
     case jellyfish
     case hermitCrab
+    case cleanerShrimp
+    case tetraSchool
+    case seaTurtle
+    case axolotl
+    case octopus
+    case manta
+    // Accessories — worn like hats, in a slot of their own.
+    case sunglasses
+    case bowTie
+    case monocle
+    case headphones
+    case scarf
+    case topHat
+    case tinyLaptop
     // Hats — worn by a chosen fish once owned.
     case hatBeanie
     case hatParty
@@ -68,26 +121,51 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case themeLagoon
     case themeTwilight
     case themeMidnight
+    case themeDawn
+    case themeSunset
+    case themeKelpForest
+    case themeBlackwater
+    case themeAbyss
+    // Substrate & backdrop — the floor and the back wall.
+    case sandWhite
+    case gravelBlack
+    case reefWallBackdrop
+    case rockyBackdrop
 
     public enum Category: String, Equatable, Sendable, CaseIterable {
-        case decor, pets, themes, hats
+        case decor, pets, accessories, hats, themes, substrates
 
         public var displayName: String {
             switch self {
             case .decor: return "Decor"
             case .pets: return "Pets"
-            case .themes: return "Themes"
+            case .accessories: return "Accessories"
             case .hats: return "Hats"
+            case .themes: return "Themes"
+            case .substrates: return "Substrate & backdrop"
             }
         }
     }
 
     public var category: Category {
         switch self {
-        case .plant, .rock, .treasureChest, .castle: return .decor
-        case .snail, .jellyfish, .hermitCrab: return .pets
+        case .plant, .rock, .treasureChest, .castle, .driftwood, .amphora,
+             .bubbleWall, .anemoneBed, .sunkenStatue, .shipwreck,
+             .ruinedColumns, .coralGarden, .moonJellyLamp, .volcano:
+            return .decor
+        case .snail, .jellyfish, .hermitCrab, .cleanerShrimp, .tetraSchool,
+             .seaTurtle, .axolotl, .octopus, .manta:
+            return .pets
+        case .sunglasses, .bowTie, .monocle, .headphones, .scarf,
+             .topHat, .tinyLaptop:
+            return .accessories
         case .hatBeanie, .hatParty, .hatCrown: return .hats
-        case .themeReef, .themeLagoon, .themeTwilight, .themeMidnight: return .themes
+        case .themeReef, .themeLagoon, .themeTwilight, .themeMidnight,
+             .themeDawn, .themeSunset, .themeKelpForest, .themeBlackwater,
+             .themeAbyss:
+            return .themes
+        case .sandWhite, .gravelBlack, .reefWallBackdrop, .rockyBackdrop:
+            return .substrates
         }
     }
 
@@ -97,13 +175,51 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .plant: return 15
         case .hatBeanie: return 12
         case .hatParty: return 18
-        case .themeReef, .themeLagoon: return 25
-        case .jellyfish: return 30
-        case .themeTwilight: return 35
-        case .treasureChest, .hermitCrab: return 40
-        case .hatCrown: return 45
+        case .bowTie: return 20
+        case .themeReef, .themeLagoon, .sunglasses: return 25
+        case .jellyfish, .monocle, .sandWhite: return 30
+        case .themeTwilight, .driftwood, .scarf: return 35
+        case .treasureChest, .hermitCrab, .themeDawn: return 40
+        case .hatCrown, .headphones, .amphora, .gravelBlack: return 45
         case .snail: return 50
-        case .themeMidnight, .castle: return 60
+        case .bubbleWall, .themeKelpForest: return 55
+        case .themeMidnight, .castle, .cleanerShrimp, .topHat, .themeSunset:
+            return 60
+        case .anemoneBed: return 70
+        case .themeBlackwater: return 75
+        case .tinyLaptop, .rockyBackdrop: return 80
+        case .ruinedColumns, .tetraSchool: return 90
+        case .sunkenStatue: return 95
+        case .reefWallBackdrop: return 100
+        case .moonJellyLamp: return 110
+        case .shipwreck, .themeAbyss: return 120
+        case .coralGarden: return 130
+        case .axolotl: return 140
+        case .volcano: return 150
+        case .seaTurtle: return 160
+        case .octopus: return 180
+        case .manta: return 220
+        }
+    }
+
+    /// The tank level the shop asks for before it sells this — a
+    /// `tierUnlockLevel` index into `AquariumProgression`.
+    public var tier: Int {
+        switch self {
+        case .castle, .themeMidnight, .snail, .hatCrown, .driftwood,
+             .amphora, .bubbleWall, .cleanerShrimp, .monocle, .headphones,
+             .scarf, .themeDawn, .gravelBlack:
+            return 1
+        case .anemoneBed, .sunkenStatue, .shipwreck, .ruinedColumns,
+             .tetraSchool, .seaTurtle, .topHat, .tinyLaptop, .themeSunset,
+             .themeKelpForest, .themeBlackwater, .reefWallBackdrop,
+             .rockyBackdrop:
+            return 2
+        case .coralGarden, .moonJellyLamp, .volcano, .axolotl, .octopus,
+             .themeAbyss:
+            return 3
+        case .manta: return 4
+        default: return 0
         }
     }
 
@@ -113,9 +229,32 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .rock: return "Big smooth rock"
         case .treasureChest: return "Treasure chest"
         case .castle: return "Little castle"
+        case .driftwood: return "Driftwood"
+        case .amphora: return "Amphora"
+        case .bubbleWall: return "Bubble wall"
+        case .anemoneBed: return "Anemone bed"
+        case .sunkenStatue: return "Sunken statue"
+        case .shipwreck: return "Shipwreck"
+        case .ruinedColumns: return "Ruined columns"
+        case .coralGarden: return "Coral garden"
+        case .moonJellyLamp: return "Moon-jelly lamp"
+        case .volcano: return "Bubble volcano"
         case .snail: return "Snail"
         case .jellyfish: return "Jellyfish"
         case .hermitCrab: return "Hermit crab"
+        case .cleanerShrimp: return "Cleaner shrimp"
+        case .tetraSchool: return "Tetra school"
+        case .seaTurtle: return "Sea turtle"
+        case .axolotl: return "Axolotl"
+        case .octopus: return "Octopus"
+        case .manta: return "Manta ray"
+        case .sunglasses: return "Sunglasses"
+        case .bowTie: return "Bow tie"
+        case .monocle: return "Monocle"
+        case .headphones: return "Headphones"
+        case .scarf: return "Scarf"
+        case .topHat: return "Top hat"
+        case .tinyLaptop: return "Tiny laptop"
         case .hatBeanie: return "Beanie"
         case .hatParty: return "Party hat"
         case .hatCrown: return "Crown"
@@ -123,6 +262,15 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .themeLagoon: return "Lagoon"
         case .themeTwilight: return "Twilight"
         case .themeMidnight: return "Midnight"
+        case .themeDawn: return "Dawn"
+        case .themeSunset: return "Sunset"
+        case .themeKelpForest: return "Kelp forest"
+        case .themeBlackwater: return "Blackwater"
+        case .themeAbyss: return "Abyss"
+        case .sandWhite: return "White sand"
+        case .gravelBlack: return "Black gravel"
+        case .reefWallBackdrop: return "Reef wall"
+        case .rockyBackdrop: return "Rocky backdrop"
         }
     }
 
@@ -133,9 +281,32 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .rock: return "A place to lurk behind."
         case .treasureChest: return "Burps bubbles. Very pirate."
         case .castle: return "Every tank needs one."
+        case .driftwood: return "Beachcombed. Almost free of charge."
+        case .amphora: return "A pot with history. Excellent hiding."
+        case .bubbleWall: return "A curtain of bubbles along the back glass."
+        case .anemoneBed: return "A ticklish patch for brave fish."
+        case .sunkenStatue: return "Nobody remembers who it was."
+        case .shipwreck: return "Sank with full honours."
+        case .ruinedColumns: return "Once held up something important."
+        case .coralGarden: return "A whole reef in miniature."
+        case .moonJellyLamp: return "A soft glow after dark."
+        case .volcano: return "Glows at night. Erupts bubbles, not lava."
         case .snail: return "Creeps the glass & collects dropped pearls for you."
         case .jellyfish: return "Drifts through the mid-water, unbothered."
         case .hermitCrab: return "Wanders the sand in a borrowed shell."
+        case .cleanerShrimp: return "Visits the fish. Everyone feels better."
+        case .tetraSchool: return "Seven little fish moving as one."
+        case .seaTurtle: return "Glides through like it owns the place."
+        case .axolotl: return "Permanently delighted."
+        case .octopus: return "Hides in the amphora if you own one, else a rock."
+        case .manta: return "Glides through occasionally, majestic and late."
+        case .sunglasses: return "For a fish with nothing to prove."
+        case .bowTie: return "Business casual gills."
+        case .monocle: return "Distinguished. Slightly alarming."
+        case .headphones: return "Do not disturb the flow state."
+        case .scarf: return "The deep lanes get chilly."
+        case .topHat: return "Formal swimming."
+        case .tinyLaptop: return "Worn only while its fish is working."
         case .hatBeanie: return "A warm hat for a hard-working fish."
         case .hatParty: return "For a fish that finishes things."
         case .hatCrown: return "Royalty. Obviously."
@@ -143,6 +314,15 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .themeLagoon: return "Bright shallow turquoise."
         case .themeTwilight: return "Deeper violet water."
         case .themeMidnight: return "Night lighting: dark water, moon rays."
+        case .themeDawn: return "Early light over the sand."
+        case .themeSunset: return "Golden hour, all hours."
+        case .themeKelpForest: return "Green, dappled, enormous."
+        case .themeBlackwater: return "Dark tannin water, glowing fish."
+        case .themeAbyss: return "Bioluminescence. Bring your own light."
+        case .sandWhite: return "A bright Caribbean floor."
+        case .gravelBlack: return "Moody substrate, dramatic fish."
+        case .reefWallBackdrop: return "A living wall behind the glass."
+        case .rockyBackdrop: return "Canyon walls for the tank."
         }
     }
 
@@ -153,8 +333,41 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .themeLagoon: return "lagoon"
         case .themeTwilight: return "twilight"
         case .themeMidnight: return "midnight"
+        case .themeDawn: return "dawn"
+        case .themeSunset: return "sunset"
+        case .themeKelpForest: return "kelp"
+        case .themeBlackwater: return "blackwater"
+        case .themeAbyss: return "abyss"
         default: return nil
         }
+    }
+
+    /// Substrate items only: the substrate id `selectSubstrate` writes.
+    public var substrateID: String? {
+        switch self {
+        case .sandWhite: return "white"
+        case .gravelBlack: return "black"
+        default: return nil
+        }
+    }
+
+    /// Backdrop items only: the backdrop id `selectBackdrop` writes.
+    public var backdropID: String? {
+        switch self {
+        case .reefWallBackdrop: return "reefwall"
+        case .rockyBackdrop: return "rocky"
+        default: return nil
+        }
+    }
+
+    /// Hats and accessories ride on a fish; everything else stays put.
+    public var isWearable: Bool {
+        category == .hats || category == .accessories
+    }
+
+    /// Whether the tank level has reached this item's shelf.
+    public func isUnlocked(atLevel level: Int) -> Bool {
+        level >= AquariumProgression.tierUnlockLevel(tier: tier)
     }
 }
 
@@ -187,11 +400,17 @@ public struct FishCare: Codable, Equatable, Sendable {
     public var label: String?
     /// The session's provider — the resident's species and colour.
     public var provider: String?
+    /// `calendar.startOfDay` epoch `feedingsToday` counts against — the
+    /// per-day feeding cap's rollover marker.
+    public var fedDay: Double
+    /// Pellets counted today toward growth, pearls and the day's chore.
+    public var feedingsToday: Int
 
     public init(stage: Int = 0, feedings: Int = 0, workSeconds: Double = 0,
                 lastNourishedAt: Double = 0, starvingAt: Double = 0,
                 lastDropAt: Double = 0, completionGranted: Bool = false,
-                createdAt: Double = 0, label: String? = nil, provider: String? = nil) {
+                createdAt: Double = 0, label: String? = nil, provider: String? = nil,
+                fedDay: Double = 0, feedingsToday: Int = 0) {
         self.stage = stage
         self.feedings = feedings
         self.workSeconds = workSeconds
@@ -202,6 +421,33 @@ public struct FishCare: Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.label = label
         self.provider = provider
+        self.fedDay = fedDay
+        self.feedingsToday = feedingsToday
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case stage, feedings, workSeconds, lastNourishedAt, starvingAt
+        case lastDropAt, completionGranted, createdAt, label, provider
+        case fedDay, feedingsToday
+    }
+
+    /// Field-by-field tolerant decode: a record missing a newer key —
+    /// or carrying one mistyped — fills that one field instead of
+    /// sinking the whole `pets` dictionary on `try?`.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        stage = max(0, (try? c.decodeIfPresent(Int.self, forKey: .stage)) ?? 0)
+        feedings = max(0, (try? c.decodeIfPresent(Int.self, forKey: .feedings)) ?? 0)
+        workSeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .workSeconds)) ?? 0)
+        lastNourishedAt = (try? c.decodeIfPresent(Double.self, forKey: .lastNourishedAt)) ?? 0
+        starvingAt = (try? c.decodeIfPresent(Double.self, forKey: .starvingAt)) ?? 0
+        lastDropAt = (try? c.decodeIfPresent(Double.self, forKey: .lastDropAt)) ?? 0
+        completionGranted = (try? c.decodeIfPresent(Bool.self, forKey: .completionGranted)) ?? false
+        createdAt = (try? c.decodeIfPresent(Double.self, forKey: .createdAt)) ?? 0
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil
+        provider = (try? c.decodeIfPresent(String.self, forKey: .provider)) ?? nil
+        fedDay = max(0, (try? c.decodeIfPresent(Double.self, forKey: .fedDay)) ?? 0)
+        feedingsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .feedingsToday)) ?? 0)
     }
 
     /// No feeding and no work for `starveAfter`: the hungry mouth.
@@ -263,12 +509,29 @@ public enum AquariumEvent: Equatable, Sendable {
     case sessionCompleted(id: String)
     /// A fish reached a dropped pellet.
     case pelletEaten(fishID: String)
-    /// Shop purchase; denied when unaffordable or already owned.
+    /// Shop purchase; denied when unaffordable or already owned, and
+    /// locked while the tank level hasn't reached the item's tier.
     case purchase(ShopItem)
     /// Apply an owned theme item's theme.
     case selectTheme(ShopItem)
     /// Put an owned hat on a fish (nil takes it off wherever it is).
     case equipHat(ShopItem, fishID: String?)
+    /// Put an owned accessory on a fish — its own slot beside the hat
+    /// (nil takes it off wherever it is). Non-accessories are denied.
+    case equipAccessory(ShopItem, fishID: String?)
+    /// Apply an owned substrate item's floor.
+    case selectSubstrate(ShopItem)
+    /// Apply an owned backdrop item's back wall.
+    case selectBackdrop(ShopItem)
+    /// A dig at the buried treasure by id.
+    case digTreasure(String)
+    /// A queued visitor finished its pass across the tank.
+    case visitorShown(AquariumVisitor)
+    /// The view's parade of this visitor ended — the departure beat,
+    /// so the goodbye doesn't pass silently.
+    case visitorDeparted(AquariumVisitor)
+    /// A quota lane reset — the submarine comes to look.
+    case quotaReset
     /// A clicked pearl drop.
     case collectDrop(String)
     /// The heartbeat: starvation, pearl drops, snail collection.
@@ -306,6 +569,18 @@ public enum AquariumGameEffect: Equatable, Sendable {
     case pearlsEarned(Int)
     case pearlsSpent(Int)
     case purchaseDenied(ShopItem)
+    /// The item's tier sits above the tank level — how far it needs.
+    case purchaseLocked(ShopItem, needsLevel: Int)
+    /// A milestone paid its reward; `unlocked` remembers it.
+    case achievementUnlocked(AquariumAchievement)
+    /// Today's chore hit its target and paid the reward.
+    case dailyGoalMet(AquariumDailyGoal)
+    /// The third dig landed; carries the pearls it paid.
+    case treasureFound(Int)
+    /// A visitor queued — the view parades it, then `visitorShown`.
+    case visitor(AquariumVisitor)
+    /// The visitor's parade ended — the toast's goodbye.
+    case visitorDeparted(AquariumVisitor)
     /// Emitted once on `setWindowOpen(true)` when things happened while
     /// the tank was closed; carries the drained counters.
     case awaySummary(AquariumAwaySummary)
@@ -337,6 +612,12 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     public var themeID: String
     /// Session id → hat item raw value.
     public var hats: [String: String]
+    /// Session id → accessory item raw value — the second wearable slot.
+    public var accessories: [String: String]
+    /// The active floor: "classic" plus the shop's substrate ids.
+    public var substrateID: String
+    /// The active back wall: "classic" plus the shop's backdrop ids.
+    public var backdropID: String
     /// Uncollected pearl drops sitting in the tank.
     public var drops: [PearlDrop]
     /// Consecutive days with ≥1 completed session.
@@ -353,19 +634,63 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     public var dropSeq: Int
     /// When the save began; also the first `away.since`.
     public var createdAt: Double
+    /// Achievement raw value → the epoch it unlocked.
+    public var unlocked: [String: Double]
+    /// Today's chore; nil until the first event of the save's day.
+    public var dailyGoal: AquariumDailyGoal?
+    /// Leftover work seconds toward the goal's whole minutes.
+    public var goalCarrySeconds: Double
+    /// The buried treasure, while one is in the sand.
+    public var treasure: AquariumTreasure?
+    /// The epoch the last treasure spawned (or was dug); paces the next.
+    public var lastTreasureAt: Double
+    /// Visitors queued for a pass across the tank.
+    public var pendingVisitors: [AquariumVisitor]
+    /// Visitor raw value → the epoch it last queued (the 24 h gate).
+    public var lastVisitorAt: [String: Double]
+    /// Unbroken work time — feeds the whale and the marathon.
+    public var continuousWorkSeconds: Double
+    /// Epoch of the last working `workTick`; a quiet tick decays it.
+    public var lastWorkAt: Double
+    /// Completions on the current streak day; feeds the diver.
+    public var completionsToday: Int
 
     public struct Totals: Codable, Equatable, Sendable {
         public var feedings: Int
         public var completions: Int
         public var purchases: Int
         public var dropsCollected: Int
+        public var treasuresFound: Int
+        public var visitorsSeen: Int
 
         public init(feedings: Int = 0, completions: Int = 0,
-                    purchases: Int = 0, dropsCollected: Int = 0) {
+                    purchases: Int = 0, dropsCollected: Int = 0,
+                    treasuresFound: Int = 0, visitorsSeen: Int = 0) {
             self.feedings = feedings
             self.completions = completions
             self.purchases = purchases
             self.dropsCollected = dropsCollected
+            self.treasuresFound = treasuresFound
+            self.visitorsSeen = visitorsSeen
+        }
+
+        // Tolerant like the game itself: a save written before
+        // `treasuresFound`/`visitorsSeen` existed still loads its
+        // counters — synthesized decoding would throw on the missing
+        // keys and the `try?` in the game's decoder would drop them all.
+        private enum CodingKeys: String, CodingKey {
+            case feedings, completions, purchases, dropsCollected,
+                 treasuresFound, visitorsSeen
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            feedings = max(0, (try? c.decodeIfPresent(Int.self, forKey: .feedings)) ?? 0)
+            completions = max(0, (try? c.decodeIfPresent(Int.self, forKey: .completions)) ?? 0)
+            purchases = max(0, (try? c.decodeIfPresent(Int.self, forKey: .purchases)) ?? 0)
+            dropsCollected = max(0, (try? c.decodeIfPresent(Int.self, forKey: .dropsCollected)) ?? 0)
+            treasuresFound = max(0, (try? c.decodeIfPresent(Int.self, forKey: .treasuresFound)) ?? 0)
+            visitorsSeen = max(0, (try? c.decodeIfPresent(Int.self, forKey: .visitorsSeen)) ?? 0)
         }
     }
 
@@ -374,7 +699,15 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 themeID: String = "classic", hats: [String: String] = [:],
                 drops: [PearlDrop] = [], streakDays: Int = 0, lastStreakDay: Double = 0,
                 windowOpen: Bool = false, away: AquariumAwaySummary = AquariumAwaySummary(),
-                totals: Totals = Totals(), dropSeq: Int = 0, createdAt: Double = 0) {
+                totals: Totals = Totals(), dropSeq: Int = 0, createdAt: Double = 0,
+                accessories: [String: String] = [:], substrateID: String = "classic",
+                backdropID: String = "classic", unlocked: [String: Double] = [:],
+                dailyGoal: AquariumDailyGoal? = nil, goalCarrySeconds: Double = 0,
+                treasure: AquariumTreasure? = nil, lastTreasureAt: Double = 0,
+                pendingVisitors: [AquariumVisitor] = [],
+                lastVisitorAt: [String: Double] = [:],
+                continuousWorkSeconds: Double = 0, lastWorkAt: Double = 0,
+                completionsToday: Int = 0) {
         self.pearls = pearls
         self.lifetimePearls = lifetimePearls
         self.pearlProgress = pearlProgress
@@ -390,6 +723,19 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         self.totals = totals
         self.dropSeq = dropSeq
         self.createdAt = createdAt
+        self.accessories = accessories
+        self.substrateID = substrateID
+        self.backdropID = backdropID
+        self.unlocked = unlocked
+        self.dailyGoal = dailyGoal
+        self.goalCarrySeconds = goalCarrySeconds
+        self.treasure = treasure
+        self.lastTreasureAt = lastTreasureAt
+        self.pendingVisitors = pendingVisitors
+        self.lastVisitorAt = lastVisitorAt
+        self.continuousWorkSeconds = continuousWorkSeconds
+        self.lastWorkAt = lastWorkAt
+        self.completionsToday = completionsToday
     }
 
     // MARK: Reducer
@@ -403,9 +749,38 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                                calendar: Calendar = .current) -> [AquariumGameEffect] {
         if createdAt == 0 { createdAt = now.timeIntervalSince1970 }
         var effects: [AquariumGameEffect] = []
+        // Every event keeps the day's chore current before it lands.
+        syncDailyGoal(now: now, calendar: calendar)
         switch event {
         case .workTick(let seconds, let working):
-            guard seconds > 0, !working.isEmpty else { break }
+            // A beat with nobody working snaps the marathon clock.
+            if working.isEmpty {
+                continuousWorkSeconds = 0
+                break
+            }
+            guard seconds > 0 else { break }
+            // A beat arriving long after the last working one is a new
+            // stretch, not a continuation — a stale bank mustn't pay
+            // the whale or the marathon for time nobody saw. The quiet
+            // `.tick` decay below is the same clock for the pause side.
+            if lastWorkAt > 0,
+               now.timeIntervalSince1970 - lastWorkAt > AquariumRules.workContinuityGap {
+                continuousWorkSeconds = 0
+            }
+            continuousWorkSeconds += seconds
+            lastWorkAt = now.timeIntervalSince1970
+            // Two unbroken hours at it and the whale comes to look.
+            if continuousWorkSeconds >= AquariumRules.whaleWorkSeconds {
+                queueVisitor(.whale, now: now, effects: &effects)
+            }
+            // The goal counts whole minutes; the carry keeps the rest.
+            goalCarrySeconds += seconds
+            let wholeMinutes = Int(goalCarrySeconds / 60)
+            if wholeMinutes > 0 {
+                goalCarrySeconds -= Double(wholeMinutes) * 60
+                advanceDailyGoal(.workMinutes, by: wholeMinutes,
+                                 effects: &effects)
+            }
             // +1 pearl per `workSecondsPerPearl` of working, scaled by
             // concurrency: 1 + 0.25 per extra worker, capped.
             let extra = max(0, working.count - 1)
@@ -437,9 +812,14 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             if !windowOpen { away.completions += 1 }
             earn(AquariumRules.completionBonus)
             effects.append(.pearlsEarned(AquariumRules.completionBonus))
+            advanceDailyGoal(.completions, by: 1, effects: &effects)
             // The daily streak: one counted completion per calendar
             // day, consecutive days extend it, a gap restarts it.
             let today = calendar.startOfDay(for: now).timeIntervalSince1970
+            completionsToday = lastStreakDay == today ? completionsToday + 1 : 1
+            if completionsToday >= AquariumRules.diverCompletions {
+                queueVisitor(.diver, now: now, effects: &effects)
+            }
             if lastStreakDay != today {
                 let yesterday = calendar.date(
                     byAdding: .day, value: -1,
@@ -451,18 +831,43 @@ public struct AquariumGame: Codable, Equatable, Sendable {
 
         case .pelletEaten(let fishID):
             var care = pet(fishID, now: now)
-            care.feedings += 1
+            // A fish counts only so many pellets a day — past the cap,
+            // supper is just supper. It still nourishes (a fed fish is
+            // a fed fish), but growth, the pearl, the totals and the
+            // day's chore stop listening, so tapping can't out-earn
+            // honest work or stockpile stages.
+            let today = calendar.startOfDay(for: now).timeIntervalSince1970
+            if care.fedDay != today {
+                care.fedDay = today
+                care.feedingsToday = 0
+            }
+            let counted = care.feedingsToday < AquariumRules.feedingsPerFishPerDay
+            if counted {
+                care.feedings += 1
+                care.feedingsToday += 1
+            }
             nourish(&care, now: now)
-            grow(&care, effects: &effects, id: fishID)
+            if counted {
+                grow(&care, effects: &effects, id: fishID)
+            }
             pets[fishID] = care
-            totals.feedings += 1
-            if !windowOpen { away.feedings += 1 }
-            earn(AquariumRules.pelletPearl)
-            effects.append(.pearlsEarned(AquariumRules.pelletPearl))
+            if counted {
+                totals.feedings += 1
+                if !windowOpen { away.feedings += 1 }
+                earn(AquariumRules.pelletPearl)
+                effects.append(.pearlsEarned(AquariumRules.pelletPearl))
+                advanceDailyGoal(.pellets, by: 1, effects: &effects)
+            }
 
         case .purchase(let item):
             guard inventory[item.rawValue, default: 0] == 0 else {
                 effects.append(.purchaseDenied(item))
+                break
+            }
+            // The deeper shelves wait for the tank to climb the ladder.
+            let needsLevel = AquariumProgression.tierUnlockLevel(tier: item.tier)
+            guard tankLevel >= needsLevel else {
+                effects.append(.purchaseLocked(item, needsLevel: needsLevel))
                 break
             }
             guard pearls >= item.price else {
@@ -474,7 +879,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             inventory[item.rawValue] = 1
             effects.append(.pearlsSpent(item.price))
             // A theme applies on purchase; the picker can still switch.
+            // Same for the floor and the back wall.
             if let theme = item.themeID { themeID = theme }
+            if let substrate = item.substrateID { substrateID = substrate }
+            if let backdrop = item.backdropID { backdropID = backdrop }
 
         case .selectTheme(let item):
             guard inventory[item.rawValue, default: 0] > 0,
@@ -494,9 +902,64 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             for (k, v) in hats where v == item.rawValue { hats.removeValue(forKey: k) }
             if let fishID { hats[fishID] = item.rawValue }
 
+        case .equipAccessory(let item, let fishID):
+            guard item.category == .accessories,
+                  inventory[item.rawValue, default: 0] > 0 else {
+                effects.append(.purchaseDenied(item))
+                break
+            }
+            // Same rule as hats: one accessory, one fish at a time.
+            for (k, v) in accessories where v == item.rawValue {
+                accessories.removeValue(forKey: k)
+            }
+            if let fishID { accessories[fishID] = item.rawValue }
+
+        case .selectSubstrate(let item):
+            guard inventory[item.rawValue, default: 0] > 0,
+                  let substrate = item.substrateID else {
+                effects.append(.purchaseDenied(item))
+                break
+            }
+            substrateID = substrate
+
+        case .selectBackdrop(let item):
+            guard inventory[item.rawValue, default: 0] > 0,
+                  let backdrop = item.backdropID else {
+                effects.append(.purchaseDenied(item))
+                break
+            }
+            backdropID = backdrop
+
+        case .digTreasure(let treasureID):
+            guard var find = treasure, find.id == treasureID else { break }
+            find.taps += 1
+            if find.taps >= AquariumRules.treasureTaps {
+                treasure = nil
+                lastTreasureAt = now.timeIntervalSince1970
+                totals.treasuresFound += 1
+                earn(find.value)
+                effects.append(.treasureFound(find.value))
+            } else {
+                treasure = find
+            }
+
+        case .visitorShown(let visitor):
+            if pendingVisitors.contains(visitor) {
+                pendingVisitors.removeAll { $0 == visitor }
+                totals.visitorsSeen += 1
+            }
+
+        case .visitorDeparted(let visitor):
+            // Nothing to write down — the departure is a beat for the
+            // toast, the goodbye to the arrival's hello.
+            effects.append(.visitorDeparted(visitor))
+
+        case .quotaReset:
+            queueVisitor(.submarine, now: now, effects: &effects)
+
         case .collectDrop(let dropID):
             if let drop = drops.first(where: { $0.id == dropID }) {
-                collect(drop)
+                collect(drop, effects: &effects)
             }
 
         case .tick:
@@ -525,8 +988,35 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             // The snail collects whatever has sat long enough.
             if inventory[ShopItem.snail.rawValue, default: 0] > 0 {
                 for drop in drops where nowS - drop.at >= AquariumRules.snailCollectAfter {
-                    collect(drop)
+                    collect(drop, effects: &effects)
                 }
+            }
+            // Quiet too long after the last work beat — the marathon
+            // clock runs out (a beat with nobody working snaps it too,
+            // and a stale bank on the next working beat is the same gap).
+            if nowS - lastWorkAt > AquariumRules.workContinuityGap {
+                continuousWorkSeconds = 0
+            }
+            // A treasure left buried eventually sinks back into the sand;
+            // the interval paces the next glint from the sinking, not
+            // the burial — else one would surface again the same tick.
+            if let find = treasure, nowS - find.buriedAt >= AquariumRules.treasureLifetime {
+                treasure = nil
+                lastTreasureAt = nowS
+            }
+            // Every `treasureInterval` a new glint surfaces — the spot
+            // is hashed off the interval bucket, so the same clock
+            // buries the same chest in every tank.
+            if treasure == nil,
+               nowS - lastTreasureAt >= AquariumRules.treasureInterval {
+                let bucket = Int(nowS / AquariumRules.treasureInterval)
+                let hash = AquariumModel.stableHash("treasure-\(bucket)")
+                treasure = AquariumTreasure(
+                    id: "treasure-\(bucket)",
+                    x: 0.08 + 0.84 * Double(hash & 0xFFFF) / 0xFFFF,
+                    taps: 0, buriedAt: nowS,
+                    value: AquariumRules.treasureBaseValue
+                        + AquariumRules.treasureValuePerLevel * tankLevel)
             }
 
         case .identify(let id, let label, let provider):
@@ -544,6 +1034,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 for (id, _) in dead.prefix(pets.count - AquariumRules.maxPets) {
                     pets.removeValue(forKey: id)
                     hats.removeValue(forKey: id)
+                    accessories.removeValue(forKey: id)
                 }
             }
             // Drops whose fish is gone keep their value but lose the
@@ -561,6 +1052,8 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 away = AquariumAwaySummary(since: now.timeIntervalSince1970)
             }
         }
+        checkAchievements(now: now, event: event,
+                          calendar: calendar, effects: &effects)
         return effects
     }
 
@@ -604,11 +1097,97 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         if !windowOpen { away.pearlsEarned += count }
     }
 
-    private mutating func collect(_ drop: PearlDrop) {
+    private mutating func collect(_ drop: PearlDrop,
+                                  effects: inout [AquariumGameEffect]) {
         drops.removeAll { $0.id == drop.id }
         totals.dropsCollected += 1
         if !windowOpen { away.dropsCollected += 1 }
         earn(drop.value)
+        advanceDailyGoal(.dropsCollected, by: 1, effects: &effects)
+    }
+
+    /// Keeps `dailyGoal` on today's chore: a nil goal or a goal dated
+    /// to another `startOfDay` is replaced fresh — progress never
+    /// carries across midnight.
+    private mutating func syncDailyGoal(now: Date, calendar: Calendar) {
+        let today = calendar.startOfDay(for: now).timeIntervalSince1970
+        if let goal = dailyGoal, goal.day == today { return }
+        let kind = AquariumDailyGoal.Kind.forDay(today)
+        dailyGoal = AquariumDailyGoal(kind: kind, target: kind.target,
+                                      day: today)
+        goalCarrySeconds = 0
+    }
+
+    /// Feeds progress into today's goal when the kinds match; hitting
+    /// the target claims the reward once — a `claimed` goal is inert
+    /// for the rest of its day.
+    private mutating func advanceDailyGoal(
+        _ kind: AquariumDailyGoal.Kind, by amount: Int,
+        effects: inout [AquariumGameEffect]
+    ) {
+        guard amount > 0, var goal = dailyGoal,
+              goal.kind == kind, !goal.claimed else { return }
+        goal.progress += amount
+        if goal.progress >= goal.target {
+            goal.claimed = true
+            earn(AquariumRules.dailyGoalReward)
+            effects.append(.dailyGoalMet(goal))
+        }
+        dailyGoal = goal
+    }
+
+    /// Queues a visitor once per cooldown — the stamp lands when it
+    /// queues, so a trigger that fires while it's already pending or
+    /// still inside the window does nothing.
+    private mutating func queueVisitor(
+        _ visitor: AquariumVisitor, now: Date,
+        effects: inout [AquariumGameEffect]
+    ) {
+        let nowS = now.timeIntervalSince1970
+        guard nowS - (lastVisitorAt[visitor.rawValue] ?? 0)
+                >= AquariumRules.visitorCooldown,
+              !pendingVisitors.contains(visitor) else { return }
+        pendingVisitors.append(visitor)
+        lastVisitorAt[visitor.rawValue] = nowS
+        effects.append(.visitor(visitor))
+    }
+
+    /// The milestone sweep — run after every event so an old save
+    /// that's already earned things collects them on its first tick.
+    /// `unlocked` is the memory: each achievement pays exactly once.
+    private mutating func checkAchievements(
+        now: Date, event: AquariumEvent, calendar: Calendar,
+        effects: inout [AquariumGameEffect]
+    ) {
+        func unlock(_ achievement: AquariumAchievement, _ earned: Bool) {
+            guard earned, unlocked[achievement.rawValue] == nil else { return }
+            unlocked[achievement.rawValue] = now.timeIntervalSince1970
+            earn(achievement.reward)
+            effects.append(.achievementUnlocked(achievement))
+        }
+        unlock(.firstPearl, lifetimePearls >= 1)
+        unlock(.firstPurchase, totals.purchases >= 1)
+        unlock(.fullGrown,
+               pets.values.contains { $0.stage >= AquariumRules.maxStage })
+        unlock(.fiveResidents,
+               pets.values.filter { $0.stage >= 1 }.count >= 5)
+        unlock(.streak7, streakDays >= 7)
+        unlock(.streak30, streakDays >= 30)
+        unlock(.hundredPellets, totals.feedings >= 100)
+        unlock(.hundredCompletions, totals.completions >= 100)
+        if case .sessionCompleted = event {
+            let hour = calendar.component(.hour, from: now)
+            unlock(.nightOwl, hour < 5)
+            unlock(.earlyBird, hour >= 5 && hour < 7)
+        }
+        let ownedCount = inventory.values.reduce(0, +)
+        unlock(.collector, ownedCount >= 10)
+        unlock(.curator, ownedCount >= 25)
+        unlock(.level5, tankLevel >= 5)
+        unlock(.level9, tankLevel >= 9)
+        unlock(.treasureHunter, totals.treasuresFound >= 1)
+        unlock(.marathon,
+               continuousWorkSeconds >= AquariumRules.marathonSeconds)
     }
 
     /// The raised fish that keep swimming while their sessions are
@@ -636,9 +1215,20 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         .map { $0 }
     }
 
+    /// Where the tank sits on the ladder — derived, never stored, so
+    /// an old save's lifetime earnings place it immediately.
+    public var tankLevel: Int {
+        AquariumProgression.tankLevel(lifetimePearls: lifetimePearls)
+    }
+
     /// The item the fish wears, if any.
     public func hat(for fishID: String) -> ShopItem? {
         hats[fishID].flatMap(ShopItem.init(rawValue:))
+    }
+
+    /// The accessory the fish wears, if any — the second slot.
+    public func accessory(for fishID: String) -> ShopItem? {
+        accessories[fishID].flatMap(ShopItem.init(rawValue:))
     }
 
     public func owns(_ item: ShopItem) -> Bool {
@@ -650,7 +1240,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case pearls, lifetimePearls, pearlProgress, pets, inventory, themeID,
              hats, drops, streakDays, lastStreakDay, windowOpen, away, totals,
-             dropSeq, createdAt
+             dropSeq, createdAt, accessories, substrateID, backdropID,
+             unlocked, dailyGoal, goalCarrySeconds, treasure, lastTreasureAt,
+             pendingVisitors, lastVisitorAt, continuousWorkSeconds,
+             lastWorkAt, completionsToday
     }
 
     public init(from decoder: any Decoder) throws {
@@ -672,6 +1265,21 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         totals = (try? c.decodeIfPresent(Totals.self, forKey: .totals)) ?? Totals()
         dropSeq = max(0, (try? c.decodeIfPresent(Int.self, forKey: .dropSeq)) ?? 0)
         createdAt = (try? c.decodeIfPresent(Double.self, forKey: .createdAt)) ?? 0
+        accessories = ((try? c.decodeIfPresent([String: String].self, forKey: .accessories)) ?? [:])
+            .filter { ShopItem(rawValue: $0.value)?.category == .accessories }
+        substrateID = (try? c.decodeIfPresent(String.self, forKey: .substrateID)) ?? "classic"
+        backdropID = (try? c.decodeIfPresent(String.self, forKey: .backdropID)) ?? "classic"
+        unlocked = (try? c.decodeIfPresent([String: Double].self, forKey: .unlocked)) ?? [:]
+        dailyGoal = try? c.decodeIfPresent(AquariumDailyGoal.self, forKey: .dailyGoal)
+        goalCarrySeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .goalCarrySeconds)) ?? 0)
+        treasure = try? c.decodeIfPresent(AquariumTreasure.self, forKey: .treasure)
+        lastTreasureAt = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastTreasureAt)) ?? 0)
+        pendingVisitors = ((try? c.decodeIfPresent([String].self, forKey: .pendingVisitors)) ?? [])
+            .compactMap(AquariumVisitor.init(rawValue:))
+        lastVisitorAt = (try? c.decodeIfPresent([String: Double].self, forKey: .lastVisitorAt)) ?? [:]
+        continuousWorkSeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .continuousWorkSeconds)) ?? 0)
+        lastWorkAt = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastWorkAt)) ?? 0)
+        completionsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .completionsToday)) ?? 0)
         // A corrupt care record can't sink the file — clamp the stage.
         for (id, var care) in pets where care.stage < 0 || care.stage > AquariumRules.maxStage {
             care.stage = min(AquariumRules.maxStage, max(0, care.stage))

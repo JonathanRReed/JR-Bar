@@ -45,6 +45,11 @@ final class ShelfUtilityModel {
     /// mode, desktop icons, hidden files, mute, saver, lock, Dock
     /// autohide. Reads truth on show; verbs fire and never latch.
     let toggles = SystemTogglesStore()
+    /// The audio visualizer's six band levels — published by the toy's
+    /// `AudioLevelTap` only while it runs. `audioTapLive` is the row's
+    /// signal to draw these; false falls back to the decorative bars.
+    var audioLevels: [Float] = [Float](repeating: 0, count: 6)
+    var audioTapLive = false
     private(set) var running = false
 
     /// `feed` is the shared Now Playing source; tests pass their own so

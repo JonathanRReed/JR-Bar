@@ -44,10 +44,27 @@ if [[ "$SPARKLE_LINKED" == "1" ]]; then
 else
     echo "==> swift build -c release (no Sparkle.framework: the updater is a stub)"
 fi
+# The manifest reads JRBAR_SPARKLE_FRAMEWORK_DIR to pick the link flags;
+# SwiftPM caches both that evaluation and the resulting build products
+# without keying on the environment — a stub-flavoured cache would
+# silently ship a Sparkle-less binary. Track the mode ourselves: a flip
+# wipes .build so the compile runs under this invocation's flags.
+MODE_STAMP=".build/.sparkle-mode"
+if [[ ! -f "$MODE_STAMP" || "$(cat "$MODE_STAMP")" != "$SPARKLE_LINKED" ]]; then
+    rm -rf .build
+    mkdir -p .build
+    echo "$SPARKLE_LINKED" > "$MODE_STAMP"
+fi
+# Products build separately: a combined `--product A --product B` can
+# report "Build complete" while silently skipping A — measured twice
+# shipping a stale JRBarApp (2026-09-21).
 swift build -c release --product JRBarApp
+swift build -c release --product jrbar-asserter
 BIN_DIR="$(swift build -c release --show-bin-path)"
 BINARY="$BIN_DIR/JRBarApp"
 [[ -x "$BINARY" ]] || { echo "binary not found at $BINARY" >&2; exit 1; }
+ASSERTER="$BIN_DIR/jrbar-asserter"
+[[ -x "$ASSERTER" ]] || { echo "asserter not found at $ASSERTER" >&2; exit 1; }
 
 echo "==> assembling $BUNDLE"
 rm -rf "$BUNDLE"
@@ -146,6 +163,46 @@ rm -rf "$ICON_TMP"
 CORE_APP="$APP_DIR/../build/macos-pkg/pyinstaller/jrbar-core.app"
 HOOK_BIN="$APP_DIR/../build/macos-pkg/hook/jrbar-hook"
 HELPERS="$BUNDLE/Contents/Helpers"
+# The assertion holder needs its own bundle id — a bare binary inside
+# our bundle resolves Bundle.main to com.jonathanreed.jrbar and the
+# agent hides our own icon as the holder's (measured 2026-09-21).
+ASSERTER_APP="$HELPERS/jrbar-asserter.app"
+mkdir -p "$ASSERTER_APP/Contents/MacOS"
+install -m 755 "$ASSERTER" "$ASSERTER_APP/Contents/MacOS/jrbar-asserter"
+# Same rule as the app binary: no toolchain rpaths may survive into a
+# bundle — this used to happen only in the packaging script, which left
+# dev bundles carrying Command Line Tools paths.
+for rpath in $(otool -l "$ASSERTER_APP/Contents/MacOS/jrbar-asserter" | awk '/cmd LC_RPATH/{getline; getline; print $2}'); do
+    case "$rpath" in
+        /Library/Developer/*|/Applications/Xcode*) install_name_tool -delete_rpath "$rpath" "$ASSERTER_APP/Contents/MacOS/jrbar-asserter" ;;
+    esac
+done
+cat > "$ASSERTER_APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>jrbar-asserter</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.jonathanreed.jrbar.asserter</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>jrbar-asserter</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$VERSION</string>
+	<key>CFBundleVersion</key>
+	<string>$VERSION</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>
+PLIST
 if [[ -x "$CORE_APP/Contents/MacOS/jrbar-core" ]]; then
     echo "==> bundling Contents/Helpers (jrbar-core.app + jrbar-hook)"
     mkdir -p "$HELPERS"

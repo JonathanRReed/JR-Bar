@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+import JRBarCore
 @testable import JRBarApp
 
 /// The right ear's claim: it is the menu handle's home while the
@@ -11,6 +12,24 @@ import Testing
 @MainActor
 struct ScreenBarEarTests {
 
+    @Test func unchangedQuotaDoesNotRelayoutOnEveryLightingUpdate() async throws {
+        let core = CoreModel()
+        var state = CoreState(usage: CoreUsage(providers: [CoreProviderUsage(
+            id: "codex", windows: [CoreUsageWindow(key: "5h", name: "5h", usedPct: 42,
+                resetsAt: Date().timeIntervalSince1970 + 3600)])]))
+        core.apply(.state(state))
+        let store = PanelStore(core: core, screenBarShown: false)
+        let first = store.screenBarWings
+        #expect(first.right?.meter == 0.42)
+        #expect(first.right?.text.contains("resets in") == true)
+        try await Task.sleep(for: .milliseconds(10))
+        #expect(store.screenBarWings == first,
+                "subsecond clock changes must not invalidate an unchanged ring")
+        state.usage?.providers[0].windows[0].usedPct = 50
+        core.apply(.state(state))
+        #expect(store.screenBarWings != first, "real usage changes must still update the ring")
+    }
+
     /// A window-sized view with a measured right claim — the geometry a
     /// notched screen answers when the right flank has room.
     private func makeView() -> ScreenBarView {
@@ -19,6 +38,58 @@ struct ScreenBarEarTests {
             notchWidth: 185, notchDepth: 32, bandSpan: 500,
             leftExtent: 0, rightExtent: 60)
         return view
+    }
+
+    @Test func lightSitsBelowTheWholeNotchAndWings() throws {
+        let view = makeView()
+        view.wings = ScreenBarWings(
+            left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.islandFrame = CGRect(x: 157.5, y: 16, width: 185, height: 32)
+        view.relayout()
+        let tray = try #require(view.trayRect)
+        #expect(view.bandRect.maxY <= tray.minY,
+                "the wings must not cut through the light")
+        #expect(view.bandRect.minX == tray.minX)
+        #expect(view.bandRect.maxX == tray.maxX)
+    }
+
+    @Test func standaloneWingsDoNotCoverTheLight() throws {
+        let view = makeView()
+        view.wings = ScreenBarWings(
+            left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.relayout()
+        let tray = try #require(view.trayRect)
+        #expect(view.bandRect.maxY <= tray.minY)
+        #expect(view.bandRect.minX == tray.minX)
+        #expect(view.bandRect.maxX == tray.maxX)
+    }
+
+    @Test func aGrownCardKeepsTheLightAtItsFoot() {
+        let view = makeView()
+        view.frame.size.height = 320
+        view.wings = ScreenBarWings(
+            left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.islandFrame = CGRect(x: 60, y: 20, width: 380, height: 300)
+        view.relayout()
+        #expect(view.bandRect.maxY == 20)
+        #expect(view.bandRect.width == 380)
+        #expect(view.bandRect.minY >= 0)
+    }
+
+    @Test func wideNotchWingsDoNotWidenAGrownCardFootlight() {
+        let view = makeView()
+        view.frame.size.height = 320
+        view.wingGeometry = ScreenBarWingGeometry(
+            notchWidth: 300, notchDepth: 32, bandSpan: 328,
+            leftExtent: 100, rightExtent: 100)
+        view.wings = ScreenBarWings(
+            left: ScreenBarWingSlot(text: "Working", provider: "claude"),
+            right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.menuHandleRevealed = false
+        view.islandFrame = CGRect(x: 90, y: 20, width: 320, height: 300)
+        view.relayout()
+        #expect(view.bandRect.minX == 90)
+        #expect(view.bandRect.width == 320)
     }
 
     @Test func theEarStandsWhileTheHandleLives() {

@@ -11,6 +11,9 @@ struct OverviewView: View {
     /// `ViewState` not `@State`: the Command Line Tools ship no
     /// `SwiftUIMacros` plugin, so state goes through the alias.
     @ViewState private var saveName = ""
+    /// The row whose ask gets a free-text reply — the Reply… prompt's
+    /// target. nil hides the sheet.
+    @ViewState private var replyEntry: CoreRosterEntry?
 
     var body: some View {
         NavigationSplitView {
@@ -24,15 +27,31 @@ struct OverviewView: View {
         .font(.system(size: 13))
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search titles, projects, tools")
         .toolbar {
-            if store.canCompare {
+            if store.canCompare || store.comparing {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         store.compareSelected()
                     } label: {
-                        Label("Compare", systemImage: "arrow.left.arrow.right")
+                        if store.comparing {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Label("Compare", systemImage: "arrow.left.arrow.right")
+                        }
                     }
+                    .disabled(store.comparing || !store.canCompare)
                     .help("Compare the two selected runs")
                 }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Clear completed") { Task { await store.clearCompleted() } }
+                    Button("Undo clear") { Task { await store.undoClear() } }
+                        .disabled(!store.core.canUndoClear)
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .help("Completion actions — clear acknowledged runs, or undo the last clear")
+                .accessibilityLabel("Completion actions")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -45,11 +64,17 @@ struct OverviewView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await store.load() }
+                    // Pane-aware: on Usage the refresh re-scans the chart,
+                    // on the roster it reloads sessions.
+                    if store.pane == .usage {
+                        Task { await store.loadGraph() }
+                    } else {
+                        Task { await store.load(userInitiated: true) }
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("Refresh")
+                .help(store.pane == .usage ? "Rescan the usage chart" : "Refresh")
                 .accessibilityLabel("Refresh")
             }
         }
@@ -67,6 +92,9 @@ struct OverviewView: View {
                 CompareRunsSheet(comparison: comparison)
             }
         }
+        .sheet(item: $replyEntry) { entry in
+            ReplyPromptSheet(store: store, entry: entry)
+        }
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
             Task { await store.loadTimeline(for: id) }
@@ -79,20 +107,36 @@ struct OverviewView: View {
     @ViewBuilder
     private var sidebar: some View {
         List(selection: Binding(
-            get: { SidebarSelection(filter: store.filter, saved: store.activeSavedFilter, pane: store.pane) },
+            // The Usage tag carries `saved: nil` — emit it that way while
+            // the usage pane is up or a live saved filter makes the
+            // selection match nothing and the sidebar shows no highlight.
+            get: { SidebarSelection(filter: store.filter, saved: store.pane == .usage ? nil : store.activeSavedFilter, pane: store.pane) },
             set: { selection in
                 guard let selection else { return }
                 if selection.pane == .usage {
                     store.showUsage()
                 } else {
                     store.pane = .roster
-                    store.filter = selection.filter
-                    store.activeSavedFilter = selection.saved
+                    store.workerFilter = nil
+                    // A saved view is applied as a definition: the filter
+                    // it stored, the highlight on its name, and a cleared
+                    // search — same semantics as `apply(_:)`, never a
+                    // half-copied state the strip could disagree with.
+                    if let name = selection.saved,
+                       let saved = store.savedFilters.first(where: { $0.name == name }) {
+                        store.apply(saved)
+                    } else {
+                        store.filter = selection.filter
+                        store.activeSavedFilter = selection.saved
+                    }
                 }
             }
         )) {
             Section("Views") {
-                ForEach(OverviewPreset.allCases, id: \.self) { preset in
+                // `thisProject` is deliberately absent: without a project
+                // it matches nothing, and the real entry points are the
+                // per-project rows under Projects below.
+                ForEach(OverviewPreset.sidebarPresets, id: \.self) { preset in
                     presetRow(preset)
                         .tag(SidebarSelection(filter: OverviewFilter(preset: preset), saved: nil, pane: .roster))
                 }
@@ -188,10 +232,61 @@ struct OverviewView: View {
                 .padding(.horizontal, 12).padding(.vertical, 5)
                 .accessibilityElement(children: .combine)
             }
+            if let status = store.actionStatus {
+                HStack(spacing: 8) {
+                    Image(systemName: store.actionIsError ? "xmark.octagon" : "checkmark.circle")
+                        .foregroundStyle(store.actionIsError ? .red : .green)
+                    Text(status).font(.system(size: 11))
+                        .foregroundStyle(store.actionIsError ? .red : .secondary)
+                        .lineLimit(1).truncationMode(.tail).textSelection(.enabled)
+                    Spacer()
+                    Button { store.actionStatus = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .accessibilityLabel("Dismiss status")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .accessibilityElement(children: .combine)
+            }
+            if let parent = store.workerFilter {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.2").foregroundStyle(.secondary)
+                    // The raw agent id ("claude:session:9f3a…") is noise —
+                    // the parent row's label or short id is the name a
+                    // user actually recognises.
+                    let parentName = store.roster.first { $0.id == parent }
+                        .map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
+                    Text("Workers of \(parentName)").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { store.workerFilter = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .accessibilityLabel("Show all sessions")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .accessibilityElement(children: .combine)
+            }
             Divider()
-            if !store.isLive {
+            if !store.isLive, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                    text: "The roster comes from the monitor. Rows appear as soon as the socket is live.")
+            } else if !store.isLive {
+                // The window is the record of what happened — a dead
+                // socket must not erase it. Show the last roster, dimmed
+                // and disclaimed, with live actions gated by `canOpen`/
+                // `askAction` which already refuse remote/dead work.
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.horizontal.circle")
+                        .foregroundStyle(.orange)
+                    Text("Monitor not connected — showing the last roster it reported.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(.orange.opacity(0.07))
+                rosterTable.opacity(0.55)
             } else if let error = store.error, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "exclamationmark.triangle", title: "Couldn't load the roster",
                                    text: error)
@@ -202,16 +297,65 @@ struct OverviewView: View {
                                        ? "The monitor has no sessions on record yet."
                                        : "No row fits this view. Try another preset or clear the search.")
             } else {
-                Table(store.rows, selection: Binding(
-                    get: { store.selectedIDs },
-                    set: { store.selectionChanged(to: $0) }
-                ), sortOrder: $store.sortOrder) {
+                rosterTable
+            }
+            if let note = store.coverageNote {
+                Divider()
+                Text(note)
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 12).padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if store.counts.listed < store.counts.total {
+                Divider()
+                // The honest bound: the roster retained more than this
+                // scoped answer carried — say so rather than let the
+                // table read as the whole record.
+                Text("Showing \(store.counts.listed) of \(store.counts.total) sessions on record")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 12).padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    /// The session table — shared by the live branch and the dimmed
+    /// offline replay, so both render the identical record.
+    @ViewBuilder
+    private var rosterTable: some View {
+        Table(store.rows, selection: Binding(
+            get: { store.selectedIDs },
+            set: { store.selectionChanged(to: $0) }
+        ), sortOrder: $store.sortOrder) {
                     TableColumn("Task", value: \.labelSortKey) { entry in
                         HStack(spacing: 6) {
                             Text(entry.session.label ?? entry.session.shortId ?? "Session")
                                 .lineLimit(1)
+                                // A row the panel's aging would hide is a
+                                // record, not a live session — muted so
+                                // it never reads as current work.
+                                .foregroundStyle(entry.visibility == "hidden" ? .tertiary : .primary)
                             if entry.session.workers > 0 {
-                                Text("+\(entry.session.workers)").foregroundStyle(.secondary).font(.system(size: 10))
+                                Button {
+                                    store.workerFilter = entry.id
+                                } label: {
+                                    Text("+\(entry.session.workers)")
+                                        .foregroundStyle(.secondary).font(.system(size: 10))
+                                }
+                                .buttonStyle(.plain)
+                                .help("\(entry.session.workers) workers — show only this session's workers")
+                            }
+                            if store.showsUnseenDot(entry) {
+                                // `state.unseen_completions`: finished
+                                // since the user last looked — the same
+                                // accent dot the panel gives the row.
+                                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                                    .help("Finished since you last looked")
+                            }
+                            if OverviewStore.isSnoozed(entry, now: store.now) {
+                                Text("snoozed").font(.system(size: 10))
+                                    .foregroundStyle(.tertiary).lineLimit(1)
+                                    .help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
                             }
                         }
                     }
@@ -248,7 +392,7 @@ struct OverviewView: View {
                             .foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                     }
                     .width(min: 120, ideal: 200)
-                    TableColumn("Elapsed", value: \.elapsedSortKey) { entry in
+                    TableColumn("Quiet", value: \.elapsedSortKey) { entry in
                         Text(elapsedText(entry))
                             .monospacedDigit().foregroundStyle(.secondary)
                     }
@@ -260,27 +404,55 @@ struct OverviewView: View {
                     TableColumn("Attention", value: \.attentionSortKey) { entry in
                         attentionCell(entry)
                     }
-                    .width(min: 44, ideal: 52)
+                    .width(min: 44, ideal: 60)
                 }
-                .contextMenu(forSelectionType: String.self) { _ in
-                    Button("Open session") { store.openSelected() }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    let entry = store.rows.first { ids.contains($0.id) }
+                    // The menu acts on the CLICKED row — `openSelected`
+                    // fires on the primary selection, which can diverge
+                    // when the right-clicked row isn't it.
+                    Button("Open session") { if let entry { Task { await store.openSession(entry.id) } } }
+                        .disabled(entry.map { !store.canOpen($0) } ?? true)
+                        .help(entry.map { e in store.canOpen(e)
+                            ? "Open the session's terminal"
+                            : "A remote session — open it on \(e.session.origin?.label ?? "that Mac")" } ?? "")
+                    if let entry, store.askAction(for: entry) == .actionable {
+                        Divider()
+                        Button("Approve ask") { Task { await store.answerAsk(entry: entry, approve: true) } }
+                        Button("Deny ask") { Task { await store.answerAsk(entry: entry, approve: false) } }
+                        if store.canReply(entry) {
+                            Button("Reply…") { replyEntry = entry }
+                        }
+                    } else if let entry, let reason = store.askDisabledReason(for: entry),
+                              entry.session.ask != nil {
+                        Text(reason)
+                    }
+                    if let entry {
+                        Divider()
+                        Button("Mark reviewed") { Task { await store.markReviewed(entry: entry) } }
+                            .disabled(entry.session.remote || entry.session.ask != nil)
+                            .help(entry.session.ask != nil
+                                ? "A row pinned by an open ask cannot be dismissed — answer it first"
+                                : (entry.session.remote
+                                    ? "A remote session is the peer's to manage"
+                                    : "Acknowledge until the session next speaks"))
+                        Button("Snooze 1h") { Task { await store.snooze(entry: entry) } }
+                            .disabled(entry.session.remote)
+                            .help(entry.session.remote
+                                ? "A remote session is the peer's to snooze"
+                                : "Mute this session's family mailbox for an hour")
+                    }
                     if store.canCompare {
+                        Divider()
                         Button("Compare selected runs") { store.compareSelected() }
                     }
                 }
-            }
-            if let note = store.coverageNote {
-                Divider()
-                Text(note)
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
-                    .padding(.horizontal, 12).padding(.vertical, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
     }
 
-    /// "2 live · 1 needs you · 1 unreviewed · 3 hidden" — over the filtered
-    /// rows, so the strip and the table can never disagree.
+    /// "2 live · 1 needs you · 1 failed · 1 unreviewed · 3 hidden" —
+    /// over the filtered rows, so the strip and the table can never
+    /// disagree. Failed gets its own red word: a dead run is not a
+    /// question and must not read as one anywhere in the window.
     @ViewBuilder
     private var summaryStrip: some View {
         let counts = store.stripCounts
@@ -288,6 +460,9 @@ struct OverviewView: View {
             Text("\(counts.live) live")
             if counts.attention > 0 {
                 Text("· \(counts.attention) need\(counts.attention == 1 ? "s" : "") you").foregroundStyle(.orange)
+            }
+            if counts.failed > 0 {
+                Text("· \(counts.failed) failed").foregroundStyle(.red)
             }
             if counts.unreviewed > 0 {
                 Text("· \(counts.unreviewed) unreviewed").foregroundStyle(.secondary)
@@ -355,7 +530,17 @@ struct OverviewView: View {
         }
         .buttonStyle(.plain)
         .help(link.helpText)
-        .accessibilityLabel("\(link.group.title): \(link.title)")
+        .accessibilityLabel(Self.chipLabel(link))
+    }
+
+    /// A chip's spoken form: group, title, tone and subtitle — the same
+    /// words the tooltip says, so VoiceOver hears the link's status,
+    /// not just its name.
+    static func chipLabel(_ link: OverviewLink) -> String {
+        var parts = ["\(link.group.title): \(link.title)"]
+        if let subtitle = link.subtitle { parts.append(subtitle) }
+        parts.append(link.tone.rawValue)
+        return parts.joined(separator: ", ")
     }
 
     /// Providers draw their brand tile; everything else takes the link's
@@ -459,6 +644,8 @@ struct OverviewView: View {
         .accessibilityLabel("State: \(activity.word)")
     }
 
+    /// The "Quiet" column: how long since the session last spoke —
+    /// `since` is the last-event stamp, not a start time.
     private func elapsedText(_ entry: CoreRosterEntry) -> String {
         guard let since = entry.session.since else { return "—" }
         let seconds = max(0, store.now.timeIntervalSince1970 - since)
@@ -474,14 +661,42 @@ struct OverviewView: View {
             }
             Text(word).foregroundStyle(word == "live" ? Color.secondary : Color.orange)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Freshness: \(word)")
     }
 
     @ViewBuilder
     private func attentionCell(_ entry: CoreRosterEntry) -> some View {
-        if entry.pinned || entry.session.ask != nil {
-            Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(.orange)
-                .help(entry.session.ask?.summary ?? "Waiting on you")
+        HStack(spacing: 5) {
+            if entry.pinned || entry.session.ask != nil {
+                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(.orange)
+                    .help(entry.session.ask?.summary ?? "Waiting on you")
+            }
+            if entry.axes?.outcome == "failed" {
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                    .help("Run failed — outcome reported by the monitor")
+            }
+            if let waiting = OverviewStore.waitingText(entry, now: store.now) {
+                Text(waiting).font(.system(size: 9))
+                    .foregroundStyle(.orange).lineLimit(1)
+            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Self.attentionLabel(entry, now: store.now))
+    }
+
+    /// The attention cell's spoken form — extracted so tests can assert
+    /// the exact string VoiceOver reads.
+    static func attentionLabel(_ entry: CoreRosterEntry, now: Date) -> String {
+        var parts: [String] = []
+        if entry.pinned || entry.session.ask != nil {
+            parts.append("Waiting on you")
+            if let waiting = OverviewStore.waitingText(entry, now: now) {
+                parts.append(waiting)
+            }
+        }
+        if entry.axes?.outcome == "failed" { parts.append("Failed") }
+        return parts.isEmpty ? "No attention needed" : parts.joined(separator: ", ")
     }
 
     // MARK: Inspector
@@ -498,7 +713,7 @@ struct OverviewView: View {
                         .lineLimit(2)
                     inspectorFacts(entry)
                     if let ask = entry.session.ask {
-                        inspectorSection("Waiting on you", text: ask.summary ?? "This session has an open question.")
+                        waitingSection(entry: entry, ask: ask)
                     }
                     if let message = entry.session.message, !message.isEmpty {
                         inspectorSection("Last message", text: message)
@@ -512,7 +727,11 @@ struct OverviewView: View {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     } else {
-                        Button("Open session") { store.openSelected() }
+                        // The button names its target: the terminal app
+                        // the daemon says hosts the session — "Open in
+                        // iTerm", never a bare promise.
+                        let app = entry.session.terminal?.app
+                        Button(app.map { "Open in \($0)" } ?? "Open session") { store.openSelected() }
                             .buttonStyle(.borderedProminent).controlSize(.small)
                     }
                 }
@@ -544,7 +763,13 @@ struct OverviewView: View {
             if let tool = session.tool { fact("Tool", tool, evidence: .reported) }
             if session.workers > 0 { fact("Workers", "\(session.workers)", evidence: .reported) }
             if session.stale { fact("Stale", "yes", evidence: .reported) }
-            fact("Model", "not reported", evidence: .unavailable)
+            if let model = store.transcriptModel, store.timelineSessionID == entry.id {
+                // The transcript's own word for the model — the label
+                // names the source so it never reads as a roster fact.
+                fact("Model (transcript)", model, evidence: .reported)
+            } else {
+                fact("Model", "not reported", evidence: .unavailable)
+            }
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -589,19 +814,81 @@ struct OverviewView: View {
         }
     }
 
+    /// The "Waiting on you" section: the ask's summary and age, then the
+    /// explicit actions — Approve / Deny / Reply…. Every button sends
+    /// through `answerAskNow` with the ask's `request` pinned, so the
+    /// daemon itself refuses a stale card (`stale_request`) or an ask
+    /// that moved on. Nothing here ever auto-answers; disabled buttons
+    /// carry the reason as a tooltip rather than silently greying.
+    @ViewBuilder
+    private func waitingSection(entry: CoreRosterEntry, ask: CoreAsk) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Waiting on you")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                if let waiting = OverviewStore.waitingText(entry, now: store.now) {
+                    Text(waiting).font(.system(size: 10)).foregroundStyle(.orange)
+                }
+            }
+            Text(ask.summary ?? "This session has an open question.")
+                .font(.system(size: 12)).textSelection(.enabled)
+            let reason = store.askDisabledReason(for: entry)
+            HStack(spacing: 8) {
+                Button("Approve") {
+                    Task { await store.answerAsk(entry: entry, approve: true) }
+                }
+                .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+                Button("Deny") {
+                    Task { await store.answerAsk(entry: entry, approve: false) }
+                }
+                .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                if store.canReply(entry) {
+                    Button("Reply…") { replyEntry = entry }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+            .disabled(reason != nil)
+            .help(reason ?? "Send the answer to the session's terminal — the monitor's verdict is shown on the status line")
+            if let reason {
+                Label(reason, systemImage: "info.circle")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
     // MARK: Timeline
 
     /// S7.2 Timeline: the session's transcript rows — messages, tool
     /// pairs, turn ends — occurrence time on the left. "Load earlier"
     /// is the only way deeper history enters; nothing is virtualised
-    /// silently past the daemon's page bound.
+    /// silently past the daemon's page bound. Kind chips and "Jump to
+    /// error" are display cuts over the loaded items, never new fetches.
     @ViewBuilder
     private func timelineSection(for entry: CoreRosterEntry) -> some View {
+        if entry.session.remote {
+            // The transcript lives on the peer Mac — a local fetch can
+            // only answer "not found", which reads as broken.
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Timeline")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                Text("The transcript is on \(entry.session.origin?.label ?? "the remote Mac") — open the session there to read it.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        } else {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text("Timeline").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
                 Spacer()
                 if store.timelineLoading { ProgressView().controlSize(.mini) }
+                Button {
+                    Task { await store.refreshTimeline() }
+                } label: {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 9))
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                .disabled(store.timelineLoading || store.timelinePage == nil)
+                .help("Reload the newest page")
+                .accessibilityLabel("Refresh timeline")
                 if let page = store.timelinePage, store.timelineSessionID == entry.id, page.hasMore {
                     Button("Load earlier") { Task { await store.loadEarlierTimeline() } }
                         .controlSize(.mini)
@@ -609,23 +896,108 @@ struct OverviewView: View {
             }
             if store.timelineSessionID == entry.id {
                 if let page = store.timelinePage {
-                    ForEach(store.timeline) { item in
-                        timelineRow(item)
+                    let counts = store.timelineKindCounts
+                    if !store.timeline.isEmpty {
+                        HStack(spacing: 5) {
+                            ForEach(OverviewStore.TimelineKindFilter.allCases, id: \.self) { kind in
+                                let label: String = switch kind {
+                                case .all: "All \(store.timeline.count)"
+                                case .messages: "Messages \(counts.messages)"
+                                case .tools: "Tools \(counts.tools)"
+                                case .errors: "Errors \(counts.errors)"
+                                }
+                                Button {
+                                    store.timelineKind = kind
+                                } label: {
+                                    Text(label)
+                                        .font(.system(size: 9, weight: store.timelineKind == kind ? .semibold : .regular))
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(
+                                            Capsule().fill(store.timelineKind == kind
+                                                ? Color.accentColor.opacity(0.18) : .primary.opacity(0.06)))
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(kind == .errors && counts.errors > 0 ? .red : .secondary)
+                                .accessibilityLabel("Show \(kind.rawValue.lowercased()) timeline rows")
+                            }
+                        }
+                    }
+                    ScrollViewReader { proxy in
+                        if store.firstErrorSeq != nil {
+                            Button {
+                                if let seq = store.firstErrorSeq {
+                                    // A kind filter can leave the error
+                                    // row unrendered — scrollTo needs a
+                                    // live target, so switch first.
+                                    if store.timelineKind != .all && store.timelineKind != .errors {
+                                        store.timelineKind = .errors
+                                    }
+                                    withAnimation { proxy.scrollTo(seq, anchor: .top) }
+                                }
+                            } label: {
+                                Label("Jump to error", systemImage: "arrow.down.to.line")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.plain).foregroundStyle(.red)
+                        }
+                        LazyVStack(alignment: .leading, spacing: 5) {
+                            ForEach(store.filteredTimeline) { item in
+                                timelineRow(item).id(item.seq)
+                            }
+                        }
                     }
                     ForEach(page.gaps, id: \.self) { gap in
                         Text(Self.gapText(gap))
                             .font(.system(size: 10)).foregroundStyle(.orange)
                     }
+                    if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
+                        Button {
+                            store.onOpenArchive?(OverviewStore.archiveSearchTerm(for: entry))
+                        } label: {
+                            Label("Search archive for this session", systemImage: "archivebox")
+                                .font(.system(size: 10))
+                        }
+                        .buttonStyle(.plain).foregroundStyle(.orange)
+                        .help("Open Data Hoarder seeded with this session's id")
+                    }
                     if let file = page.file {
-                        Text("Source: \(file) · \(page.total) items")
-                            .font(.system(size: 9)).foregroundStyle(.quaternary)
-                            .textSelection(.enabled)
+                        archiveSourceLine(file: file, total: page.total)
                     }
                 } else if store.timelineLoading {
                     Text("Reading transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
             }
         }
+        }
+    }
+
+    /// The transcript's source line: path + item count, plus the Data
+    /// Hoarder's verdict when the archive probe answered — "Archived"
+    /// with a Reveal affordance, or nothing when the archive can't say.
+    @ViewBuilder
+    private func archiveSourceLine(file: String, total: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Source: \(file) · \(total) items")
+                .font(.system(size: 9)).foregroundStyle(.quaternary)
+                .textSelection(.enabled)
+            if let state = store.archiveStates[file], let row = state {
+                HStack(spacing: 6) {
+                    Text("Archived")
+                        .font(.system(size: 8, weight: .medium))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.green.opacity(0.15), in: .capsule)
+                        .foregroundStyle(.green)
+                    Button("Reveal") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: row.path)])
+                    }
+                    .buttonStyle(.plain).font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .help("Show the transcript in Finder")
+                }
+            }
+        }
+        .task { await store.probeArchive(file: file) }
     }
 
     private func timelineRow(_ item: CoreTimelineItem) -> some View {
@@ -648,7 +1020,15 @@ struct OverviewView: View {
                     Text(text).font(.system(size: 11)).lineLimit(4).textSelection(.enabled)
                 }
             }
+            if item.sidechain == true {
+                Text("subagent")
+                    .font(.system(size: 8, weight: .medium))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(Color.purple.opacity(0.15), in: .capsule)
+                    .foregroundStyle(.purple)
+            }
         }
+        .padding(.leading, item.sidechain == true ? 10 : 0)
         .accessibilityElement(children: .combine)
     }
 
@@ -917,7 +1297,7 @@ private struct ExportPreviewSheet: View {
             try store.saveExport(to: url, markdown: markdown)
             store.exportPreview = nil
         } catch {
-            store.error = error.localizedDescription
+            store.error = OverviewStore.describe(error)
         }
     }
 }
@@ -926,6 +1306,7 @@ private extension OverviewPreset {
     var symbol: String {
         switch self {
         case .needsMe: return "exclamationmark.bubble"
+        case .failed: return "xmark.octagon"
         case .working: return "gearshape"
         case .unreviewed: return "checkmark.circle.badge.questionmark"
         case .thisProject: return "folder"
@@ -945,6 +1326,63 @@ private extension OverviewLink.Tone {
         case .warn: return .orange
         case .down: return .red
         case .idle: return .secondary.opacity(0.35)
+        }
+    }
+}
+
+/// The Reply… prompt: a small sheet with a multiline editor, Send and
+/// Cancel — the one explicit free-text action the daemon accepts on a
+/// `replyable` ask. Send stays disabled on empty text (the daemon would
+/// refuse `reply_text` that normalizes to nothing anyway); the reply
+/// goes through `answerAskNow` with the ask's `request` pinned, so a
+/// stale card gets the daemon's refusal, not a silent send. Nothing
+/// here ever fires on its own.
+private struct ReplyPromptSheet: View {
+    @Bindable var store: OverviewStore
+    let entry: CoreRosterEntry
+    @ViewState private var text = ""
+    @ViewState private var sending = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Reply to \(entry.session.label ?? entry.session.shortId ?? "session")")
+                .font(.system(size: 14, weight: .semibold))
+            if let summary = entry.session.ask?.summary {
+                Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
+            }
+            TextEditor(text: $text)
+                .font(.system(size: 12))
+                .frame(minHeight: 110)
+                .padding(6)
+                .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 8))
+                .accessibilityLabel("Reply text")
+            HStack {
+                if sending { ProgressView().controlSize(.mini) }
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(sending)
+                Button("Send") { send() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
+            }
+        }
+        .padding(16)
+        .frame(width: 380)
+    }
+
+    private func send() {
+        let reply = text
+        sending = true
+        Task {
+            await store.answerAsk(entry: entry, approve: true, replyText: reply)
+            sending = false
+            // The daemon's verdict lands on the store's status line;
+            // close only on a delivered answer — a refusal keeps the
+            // draft open so the text isn't lost.
+            if store.actionIsError == false { dismiss() }
         }
     }
 }

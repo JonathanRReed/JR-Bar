@@ -93,6 +93,10 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         var mode: Float = 0
         var bucketCount: Float = 0
         var frost: Float = 0.65
+        /// The viewer-compensation fraction: 0 the picture rides the
+        /// lid, 1 the content plane counter-rotates the full delta so a
+        /// fixed eye sees it hold its place.
+        var hold: Float = 0
     }
 
     let device: MTLDevice
@@ -367,6 +371,7 @@ struct FoldParams {
     float mode;         // 0 portal, 1 Reduce-Motion flat dim
     float bucketCount;
     float frost;        // 0 bare dark room .. 1 frosted-PP cover
+    float hold;         // 0 picture rides the lid .. 1 holds its place
 };
 
 struct FoldOut {
@@ -451,6 +456,11 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
     }
 
     float a = clamp(p.delta, 0.0, 1.25);
+    // Hold-in-place: the content plane counter-rotates against the lid
+    // by delta·hold, so a fixed eye sees the picture stay put while the
+    // room's own terms (fog, shade, dissolve, sheen) still read the
+    // real delta. hold == 0 keeps the picture glued to the glass.
+    float aL = a * (1.0 - clamp(p.hold, 0.0, 1.0));
     float h = 1.0 - in.uv.y;
     float sa = sin(a);
     // The sheet itself: frosted polypropylene. `milk` is the plastic's
@@ -482,7 +492,7 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
         if (covered || float(i) >= p.bucketCount) { continue; }
         float d = p.depths[i];
         float depthN_i = d / max(0.05, p.roomDepth);
-        float2 luv = (foldLayerUV(in.uv, a, d, p) - 0.5) * p.cover + 0.5;
+        float2 luv = (foldLayerUV(in.uv, aL, d, p) - 0.5) * p.cover + 0.5;
         float lod = min(5.0, lodStep * (0.25 + depthN_i) * lodEdge);
         float rad = radUV * (0.35 + 0.65 * depthN_i);
         texture2d<float> bucket = i == 0 ? bucket0 : (i == 1 ? bucket1 : bucket2);
@@ -501,7 +511,7 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
         // defocus. Out past the room there is only void — feathered
         // over the defocus's own scale, never a razor clip.
         float d = p.roomDepth;
-        float2 luv = (foldLayerUV(in.uv, a, d, p) - 0.5) * p.cover + 0.5;
+        float2 luv = (foldLayerUV(in.uv, aL, d, p) - 0.5) * p.cover + 0.5;
         float lod = min(5.0, lodStep * 1.2 * lodEdge);
         float3 c = foldBlur(far, sampl, luv, radUV * 1.1, lod, p.texAspect, phase).rgb;
         float2 feather = max(float2(2.0) / p.imageSize + radUV, fwidth(luv));

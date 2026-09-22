@@ -16,12 +16,14 @@ enum MenuBarProfiles {
     /// The name the built-in state shows.
     nonisolated static let noneName = "None"
 
-    /// Snapshot the settings a profile keeps: sections plus the cover
+    /// Snapshot the settings a profile keeps: sections — and under
+    /// the concealer the per-app concealment map — plus the cover
     /// appearance and control layout.
     nonisolated static func capture(name: String, from settings: MenuBarSettings,
                                     id: String = UUID().uuidString) -> MenuBarSettings.Profile {
         MenuBarSettings.Profile(
             id: id, name: name, sections: settings.sections,
+            concealedApps: settings.concealedApps,
             coverMaterial: settings.coverMaterial, coverTint: settings.coverTint,
             coverTintOpacity: settings.coverTintOpacity,
             coverRoundness: settings.coverRoundness,
@@ -38,6 +40,7 @@ enum MenuBarProfiles {
                                   to settings: inout MenuBarSettings) {
         guard let profile else {
             settings.sections = [:]
+            settings.concealedApps = [:]
             settings.coverMaterial = .menu
             settings.coverTint = ""
             settings.coverTintOpacity = MenuBarSettings.defaultCoverTintOpacity
@@ -47,6 +50,7 @@ enum MenuBarProfiles {
             return
         }
         settings.sections = profile.sections
+        settings.concealedApps = profile.concealedApps
         settings.coverMaterial = profile.coverMaterial
         settings.coverTint = profile.coverTint
         settings.coverTintOpacity = profile.coverTintOpacity

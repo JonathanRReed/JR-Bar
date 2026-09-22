@@ -31,12 +31,17 @@ final class ShelfCalendarModel {
     private(set) var state: State = .needsPermission
     private var store: EKEventStore?
     private var refreshTimer: Timer?
+    /// Bumps on `stop` — the async permission answer can land after the
+    /// card unpinned, and a grant must not restart the refresh timer
+    /// the stop just killed.
+    private var epoch = 0
 
     /// The explicit opt-in — called from the card's calendar button,
     /// never at launch or on a timer.
     func authorizeAndLoad() {
         let store = self.store ?? EKEventStore()
         self.store = store
+        let epoch = self.epoch
         switch EKEventStore.authorizationStatus(for: .event) {
         case .fullAccess:
             loadNext(from: store)
@@ -47,7 +52,8 @@ final class ShelfCalendarModel {
                 Task { @MainActor [weak self] in
                     // EKEventStore isn't Sendable — read it back off
                     // self on the actor rather than sending it in.
-                    guard let self, let store = self.store else { return }
+                    guard let self, let store = self.store,
+                          self.epoch == epoch else { return }
                     if granted {
                         self.loadNext(from: store)
                     } else {
@@ -61,8 +67,19 @@ final class ShelfCalendarModel {
     }
 
     func stop() {
+        epoch += 1
         refreshTimer?.invalidate()
         refreshTimer = nil
+    }
+
+    /// Pin-side entry — the refresh cadence `stop` killed on unpin has
+    /// no other restart path, so a repinned card would otherwise show
+    /// a stale event forever. Only ever reloads when access was granted
+    /// earlier; asking stays the button's job.
+    func resume() {
+        guard let store,
+              EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
+        loadNext(from: store)
     }
 
     /// Next event within the lookahead window. `nil` is an honest
