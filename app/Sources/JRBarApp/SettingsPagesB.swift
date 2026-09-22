@@ -599,7 +599,19 @@ struct FocusRuleRow: View {
     let focusID: String
     let name: String
 
-    private var rule: Double? { store.document.double(SettingsPath("focus_dim_rules.\(focusID)")) }
+    /// The rule for this Focus, read out of the rules object: the id is
+    /// dotted, so it is a key, never a path.
+    private var rule: Double? { store.document.object("focus_dim_rules")?[focusID]?.doubleValue }
+
+    /// Writes the rules object whole with this Focus's entry set or
+    /// removed. `focus_dim_rules.<id>` would split the dotted id into
+    /// nested objects, which the daemon's loader drops — the rule never
+    /// stuck.
+    private func write(_ value: Double?, throttled: Bool = false) {
+        let rules = LightProfiles.rules(store.document.object("focus_dim_rules"), setting: focusID,
+                                        to: value.map(JSONValue.number))
+        store.set("focus_dim_rules", rules, throttled: throttled)
+    }
 
     var body: some View {
         Provided(store, "focus_dim_rules") {
@@ -612,10 +624,10 @@ struct FocusRuleRow: View {
             HStack(spacing: 10) {
                 Toggle("Rule", isOn: Binding(
                     get: { rule != nil },
-                    set: { on in store.set("focus_dim_rules.\(focusID)", on ? .number(0.3) : .null) }
+                    set: { on in write(on ? 0.3 : nil) }
                 ))
                 .toggleStyle(.checkbox)
-                Slider(value: Binding(get: { rule ?? 0.3 }, set: { store.set("focus_dim_rules.\(focusID)", .number($0), throttled: true) }), in: 0...1)
+                Slider(value: Binding(get: { rule ?? 0.3 }, set: { write($0, throttled: true) }), in: 0...1)
                     .frame(width: 130)
                     .disabled(rule == nil)
                 ValueText(text: rule.map(SettingsStore.percent) ?? "idle dim")
