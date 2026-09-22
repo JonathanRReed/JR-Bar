@@ -876,12 +876,16 @@ capped at 250 ms. Measured on this Mac (2026-09-09, 100 invocations from a
 shell loop): 6.2 ms wall per invocation of which 3.3 ms is the bare
 fork/exec (`/usr/bin/true` in the same loop), so the shim's own work is
 about 3 ms; from Python's `subprocess.run` the median is 5.7 ms; the
-Python hook client took 88 ms. If the socket is absent the shim appends
-`{"provider","ppid","ppid_start","payload"}` as one JSON line to
-`$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and exits 0;
-the daemon drains those files at start and every 30 s, registering each
-payload's agent process from `ppid`/`ppid_start` (for a node-hosted CLI
-such as pi or Gemini the nearest `node` ancestor is the agent process).
+Python hook client took 88 ms. If the socket is absent, or the budget cut
+the frame short, the shim appends
+`{"provider","ppid","ppid_start","queued_at_ms","payload"}` as one JSON
+line to `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and
+exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one
+generation) and a fresh one starts. The daemon drains those files at start
+and every 30 s, registering each payload's agent process from
+`ppid`/`ppid_start` (for a node-hosted CLI such as pi or Gemini the nearest
+`node` ancestor is the agent process). A replayed record is logged at its
+`queued_at_ms`; one older than 30 min does not wake the live monitor.
 For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
 contracts require (`--emit-empty-json` forces it for any provider);
 otherwise it prints nothing.

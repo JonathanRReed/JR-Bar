@@ -69,10 +69,20 @@ class HookIngressRequest:
     payload_text: str = field(repr=False)
     ppid: int | None = None
     ppid_start: float | None = None
+    # When the shim spooled this payload (hook_pending); never on the wire,
+    # where the daemon's own arrival time is the event's time.
+    queued_at_epoch: float | None = None
 
     def __post_init__(self) -> None:
         if self.ppid is not None and (
             type(self.ppid) is not int or self.ppid <= 1 or self.ppid > MAX_HOOK_PPID
+        ):
+            raise ValueError("invalid hook ingress request")
+        if self.queued_at_epoch is not None and (
+            isinstance(self.queued_at_epoch, bool)
+            or not isinstance(self.queued_at_epoch, (int, float))
+            or not math.isfinite(float(self.queued_at_epoch))
+            or float(self.queued_at_epoch) <= 0.0
         ):
             raise ValueError("invalid hook ingress request")
         if self.ppid_start is not None and (

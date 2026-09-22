@@ -6,9 +6,11 @@
  * hook-ingress socket in the existing wire format
  * (src/jrbar/hook_ingress_protocol.py) and exits 0. When the daemon is not
  * listening, or the frame did not get through whole, the payload is
- * appended to <state>/<provider>.pending.jsonl and the daemon drains that
- * file later. Nothing here can block an agent: the whole run is bounded by
- * HARD_BUDGET_MS and every failure path exits 0.
+ * appended to <state>/<provider>.pending.jsonl with the time it was queued
+ * and the daemon drains that file later (src/jrbar/hook_pending.py). The
+ * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
+ * can block an agent: the whole run is bounded by HARD_BUDGET_MS and every
+ * failure path exits 0.
  *
  *   jrbar-hook --provider <id> [--log <path>]
  *
@@ -24,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -31,6 +34,10 @@
 #include <unistd.h>
 
 #define MAX_PAYLOAD (1024 * 1024)
+/* The spool is bounded here, not by the daemon: while it is down nothing
+ * else trims the file, and a multi-agent session spooled 53 MB at ~23 MB/h
+ * (2026-09-22). */
+#define MAX_SPOOL_BYTES (16 * 1024 * 1024)
 #define HARD_BUDGET_MS 250
 #define REPLY_TIMEOUT_MS 200
 #define MAGIC "JRBARHOOK\x01"
@@ -120,10 +127,35 @@ static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_
     return 0;
 }
 
+static int open_spool(const char *path) {
+    return open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600);
+}
+
+/* An fd on the spool with room for `need` more bytes. At the cap the file
+ * is renamed to `overflow` (one generation kept) and a fresh one opened:
+ * the line is always written, because the newest events are the ones the
+ * daemon's live state needs. The lock makes check-and-rename one step for
+ * shims that hit the cap together, so only the one still holding the file
+ * at `path` renames it; the rest find a new inode there and reopen. */
+static int open_spool_with_room(const char *path, const char *overflow, size_t need) {
+    int fd = open_spool(path);
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) != 0 || st.st_size == 0
+        || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) return fd;
+    if (flock(fd, LOCK_EX) == 0) {
+        struct stat at;
+        if (lstat(path, &at) == 0 && at.st_ino == st.st_ino && at.st_dev == st.st_dev)
+            (void)rename(path, overflow);
+    }
+    close(fd);
+    return open_spool(path);
+}
+
 static void queue_pending(const char *dir, const char *provider, pid_t ppid, double ppid_start,
-                          const char *payload, size_t payload_len) {
-    char path[4096];
+                          uint64_t queued_at_ms, const char *payload, size_t payload_len) {
+    char path[4096], overflow[4096];
     if ((size_t)snprintf(path, sizeof path, "%s/%s.pending.jsonl", dir, provider) >= sizeof path) return;
+    if ((size_t)snprintf(overflow, sizeof overflow, "%s/%s.overflow.jsonl", dir, provider) >= sizeof overflow) return;
     mkdir(dir, 0700);
     char *escaped = malloc(payload_len * 6 + 1);
     if (!escaped) return;
@@ -131,16 +163,20 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
     size_t cap = strlen(escaped) + 256;
     char *line = malloc(cap);
     if (!line) { free(escaped); return; }
-    int n = snprintf(line, cap, "{\"provider\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f,\"payload\":\"%s\"}\n",
-                     provider, (int)ppid, ppid_start, escaped);
-    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600);
-    if (fd >= 0 && n > 0) { (void)write(fd, line, (size_t)n); close(fd); }
+    int n = snprintf(line, cap,
+                     "{\"provider\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f,\"queued_at_ms\":%llu,\"payload\":\"%s\"}\n",
+                     provider, (int)ppid, ppid_start, (unsigned long long)queued_at_ms, escaped);
+    if (n > 0 && (size_t)n < cap) {
+        int fd = open_spool_with_room(path, overflow, (size_t)n);
+        if (fd >= 0) { (void)write(fd, line, (size_t)n); close(fd); }
+    }
     free(line);
     free(escaped);
 }
 
 int main(int argc, char **argv) {
-    uint64_t deadline = now_ms() + HARD_BUDGET_MS;
+    uint64_t started = now_ms();
+    uint64_t deadline = started + HARD_BUDGET_MS;
     const char *provider = NULL, *log = NULL;
     int emit_empty = 0;
     for (int i = 1; i < argc; i++) {
@@ -193,7 +229,7 @@ int main(int argc, char **argv) {
     memcpy(frame + prefix + header_len, payload, len);
 
     int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline);
-    if (result < 0) queue_pending(dir, provider, ppid, ppid_start, payload, len);
+    if (result < 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len);
     if (cursor) puts("{}");
     return 0;
 }

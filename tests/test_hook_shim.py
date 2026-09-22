@@ -135,7 +135,9 @@ def test_shim_defaults_the_log_path_when_none_is_given__and_2_more(shim: Path, s
 
     # --- scenario: shim_queues_the_payload_when_the_daemon_is_down
     payload = '{"hook_event_name":"Stop","session_id":"q\\"1","note":"tab\\there"}'
+    before_ms = int(time.time() * 1000)
     result = _run(shim, sock_dir, "claude", payload)
+    after_ms = int(time.time() * 1000)
     assert result.returncode == 0
     pending = sock_dir / "claude.pending.jsonl"
     assert pending.exists()
@@ -147,6 +149,8 @@ def test_shim_defaults_the_log_path_when_none_is_given__and_2_more(shim: Path, s
     assert row["ppid"] == os.getpid()
     assert row["payload"] == payload
     assert isinstance(row["ppid_start"], float)
+    # The time it was queued, so a late drain logs it when it happened.
+    assert before_ms <= row["queued_at_ms"] <= after_ms
     # A second run appends.
     _run(shim, sock_dir, "claude", "{}")
     assert len(pending.read_text().splitlines()) == 2
@@ -182,6 +186,27 @@ def test_shim_never_fails_on_bad_arguments_or_oversize_input__and_1_more(shim: P
         assert median < 60.0
     finally:
         ingress.close()
+
+
+def test_shim_rotates_a_full_spool_instead_of_growing_it(shim: Path, sock_dir: Path) -> None:
+    """16 MiB cap: the full file becomes the overflow generation and the new
+    event starts a fresh spool -- the newest event is never the one dropped."""
+    pending = sock_dir / "claude.pending.jsonl"
+    overflow = sock_dir / "claude.overflow.jsonl"
+    overflow.write_text("previous generation\n")
+    with open(pending, "wb") as handle:
+        handle.truncate(16 * 1024 * 1024 - 64)  # sparse: the size is what counts
+    payload = '{"hook_event_name":"Stop","session_id":"newest"}'
+    assert _run(shim, sock_dir, "claude", payload).returncode == 0
+    assert overflow.stat().st_size == 16 * 1024 * 1024 - 64
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]
+    assert oct(pending.stat().st_mode & 0o777) == "0o600"
+
+    # Under the cap the spool just appends.
+    assert _run(shim, sock_dir, "claude", "{}").returncode == 0
+    assert len(pending.read_text().splitlines()) == 2
+    assert overflow.stat().st_size == 16 * 1024 * 1024 - 64
 
 
 def test_shim_spools_a_frame_the_budget_cut_short(shim: Path, sock_dir: Path) -> None:

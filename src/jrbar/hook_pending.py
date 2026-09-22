@@ -1,11 +1,16 @@
 """Drain the shim's ``<provider>.pending.jsonl`` files into the ingress FIFO.
 
 When the daemon is not listening, ``jrbar-hook`` appends each payload as one
-JSON line ``{"provider", "ppid", "ppid_start", "payload"}`` under the state
-directory. The daemon drains those files when it starts and every
-``PENDING_DRAIN_INTERVAL_SECONDS`` after that. A file is renamed before it is
-read so a shim appending at the same moment starts a fresh file instead of
-racing the reader.
+JSON line ``{"provider", "ppid", "ppid_start", "queued_at_ms", "payload"}``
+under the state directory, rotating the file to ``<provider>.overflow.jsonl``
+once it reaches 16 MiB. The daemon drains those files when it starts and
+every ``PENDING_DRAIN_INTERVAL_SECONDS`` after that. A file is renamed before
+it is read so a shim appending at the same moment starts a fresh file
+instead of racing the reader.
+
+A replayed record keeps the time the shim queued it; one older than
+``PENDING_REPLAY_HORIZON_SECONDS`` still reaches the log but does not wake
+the live monitor (hook_ingress).
 """
 
 from __future__ import annotations
@@ -26,7 +31,11 @@ from .state_paths import default_state_dir
 
 PENDING_SUFFIX: Final = ".pending.jsonl"
 PENDING_DRAIN_INTERVAL_SECONDS: Final = 30.0
+# No drain reads more than this: an oversized file drains its newest bytes
+# and keeps the older head as the overflow generation.
 MAX_PENDING_FILE_BYTES: Final = 64 * 1024 * 1024
+# A spooled payload older than this is history, not a live turn.
+PENDING_REPLAY_HORIZON_SECONDS: Final = 30 * 60.0
 MAX_PENDING_LINES_PER_DRAIN: Final = 5000
 DRAINING_INFIX: Final = ".draining-"
 REJECTED_SUFFIX: Final = ".rejected.jsonl"
@@ -124,15 +133,25 @@ def request_from_pending_line(
         return None
     ppid = row.get("ppid")
     ppid_start = row.get("ppid_start")
+    queued_at_ms = row.get("queued_at_ms")
     try:
         return HookIngressRequest(
             provider,
             log_path_for(provider),
             payload,
             ppid=ppid if isinstance(ppid, int) and not isinstance(ppid, bool) and ppid > 1 else None,
+            # The shim writes -1 when it could not read its parent's start.
             ppid_start=(
                 float(ppid_start)
-                if isinstance(ppid_start, (int, float)) and not isinstance(ppid_start, bool)
+                if isinstance(ppid_start, (int, float))
+                and not isinstance(ppid_start, bool)
+                and ppid_start >= 0
+                else None
+            ),
+            # Lines from a shim older than the stamp replay at drain time.
+            queued_at_epoch=(
+                queued_at_ms / 1000.0
+                if isinstance(queued_at_ms, int) and not isinstance(queued_at_ms, bool) and queued_at_ms > 0
                 else None
             ),
         )
@@ -153,6 +172,24 @@ def _sibling(path: Path, suffix: str) -> Path:
     pending = _pending_name(path.name)
     base = pending[: -len(PENDING_SUFFIX)] if pending.endswith(PENDING_SUFFIX) else pending
     return path.with_name(base + suffix)
+
+
+def _read_newest(path: Path, limit: int) -> tuple[str, int]:
+    """The text of ``path``'s newest whole lines within ``limit`` bytes, and
+    the size of the older head left unread (0 when the file fits)."""
+    with open(path, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size <= limit:
+            return handle.read().decode("utf-8", errors="replace"), 0
+        # One byte early, so a tail that starts exactly on a line boundary
+        # keeps its first line.
+        start = size - limit - 1
+        handle.seek(start)
+        tail = handle.read(limit + 1)
+    cut = tail.find(b"\n") + 1
+    if not cut:  # no line ends in the window: all of it is head
+        return "", start + len(tail)
+    return tail[cut:].decode("utf-8", errors="replace"), start + cut
 
 
 def _append_lines(path: Path, lines: list[str]) -> bool:
@@ -182,8 +219,10 @@ def drain_pending_hooks(
     appended back to the pending file for the next pass; malformed lines
     are written to ``<provider>.rejected.jsonl`` so a corrupt record is
     accounted for rather than unlinked; a file over
-    ``MAX_PENDING_FILE_BYTES`` is renamed aside to ``.overflow.jsonl``
-    (one generation kept) instead of deleted.
+    ``MAX_PENDING_FILE_BYTES`` drains its newest ``MAX_PENDING_FILE_BYTES``
+    and its older head is kept as ``.overflow.jsonl`` (one generation, the
+    same file the shim rotates into) -- the newest events are the ones live
+    state needs, where quarantining the whole file replayed none of them.
     """
     log = log or (lambda _line: None)
     submitted = 0
@@ -197,14 +236,9 @@ def drain_pending_hooks(
             else path.name
         )
         try:
-            if path.stat().st_size > MAX_PENDING_FILE_BYTES:
-                overflow = _sibling(path, OVERFLOW_SUFFIX)
-                path.rename(overflow)
-                log(f"hook_pending oversized file quarantined: {overflow.name}")
-                continue
             if not adopted:
                 path.rename(draining)
-            text = draining.read_text(encoding="utf-8", errors="replace")
+            text, head_bytes = _read_newest(draining, MAX_PENDING_FILE_BYTES)
         except OSError:
             continue
         lines = text.splitlines()
@@ -242,6 +276,15 @@ def drain_pending_hooks(
                 # survive as an orphan for the next drain to adopt.
                 log(f"hook_pending could not requeue {len(retry)} lines; keeping {draining.name}")
                 continue
+        if head_bytes:
+            overflow = _sibling(draining, OVERFLOW_SUFFIX)
+            try:
+                os.truncate(draining, head_bytes)
+                draining.replace(overflow)
+                log(f"hook_pending oversized file: drained its newest lines, kept {head_bytes} older bytes in {overflow.name}")
+                continue
+            except OSError:
+                pass
         try:
             draining.unlink()
         except OSError:
@@ -299,6 +342,7 @@ class PendingHookDrainer:
 
 __all__ = [
     "PENDING_DRAIN_INTERVAL_SECONDS",
+    "PENDING_REPLAY_HORIZON_SECONDS",
     "PENDING_SUFFIX",
     "PendingHookDrainer",
     "drain_pending_hooks",

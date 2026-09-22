@@ -35,6 +35,21 @@ class HookProcessingOutcome(str, Enum):
     IGNORED = "ignored"
 
 
+def hook_logged_at(epoch: float | None = None) -> str:
+    """The ``logged_at`` stamp for a hook record: now, or ``epoch`` for a
+    payload the shim spooled while the daemon was down.
+
+    Microseconds, not whole seconds: a hook burst (SessionStart,
+    UserPromptSubmit and PreToolUse from one pi turn; Interrupt and
+    SessionEnd from one Ctrl-C) lands inside a second, and the monitor
+    orders records by their stamp. Whole seconds tied them and left the
+    order to the per-event rank, which dropped the tool start and, for an
+    interrupted Codex, the session end.
+    """
+    moment = datetime.now(timezone.utc) if epoch is None else datetime.fromtimestamp(epoch, timezone.utc)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def format_hook_payload(
     provider: str,
     payload_text: str,
@@ -42,13 +57,7 @@ def format_hook_payload(
     logged_at: str | None = None,
     include_origin: bool = True,
 ) -> dict[str, Any]:
-    # Microseconds, not whole seconds: a hook burst (SessionStart,
-    # UserPromptSubmit and PreToolUse from one pi turn; Interrupt and
-    # SessionEnd from one Ctrl-C) lands inside a second, and the monitor
-    # orders records by their stamp. Whole seconds tied them and left the
-    # order to the per-event rank, which dropped the tool start and, for an
-    # interrupted Codex, the session end.
-    timestamp = logged_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    timestamp = logged_at or hook_logged_at()
     try:
         payload: Any = json.loads(payload_text or "{}")
     except json.JSONDecodeError as exc:
@@ -73,8 +82,10 @@ def routed_hook_payload(
     provider: str,
     log_path: Path,
     payload_text: str,
+    *,
+    logged_at: str | None = None,
 ) -> tuple[str, Path, dict[str, Any]]:
-    line = format_hook_payload(provider, payload_text, include_origin=False)
+    line = format_hook_payload(provider, payload_text, logged_at=logged_at, include_origin=False)
     actual_provider = infer_provider_from_hook_line(provider, line)
     line = annotate_hook_line(actual_provider, line)
     actual_log_path = log_path
@@ -192,12 +203,21 @@ def process_hook_payload(
     payload_text: str,
     *,
     refresh_hint_handler: Callable[[ProviderRefreshHint], object] | None = None,
+    logged_at: str | None = None,
+    refresh: bool = True,
 ) -> HookProcessingOutcome:
-    """Normalize and persist one payload without owning process stdio."""
+    """Normalize and persist one payload without owning process stdio.
+
+    ``logged_at`` stamps a replayed payload with the time it was queued
+    instead of the time it was drained. ``refresh=False`` writes the record
+    without the refresh hint: a replay older than the horizon is history
+    for the log, not a live turn for the monitor to wake on.
+    """
     actual_provider, actual_log_path, line = routed_hook_payload(
         provider,
         log_path,
         payload_text,
+        logged_at=logged_at,
     )
     record = _normalized_hook_record(actual_provider, line)
     if record is None:
@@ -213,6 +233,8 @@ def process_hook_payload(
     )
     if not written:
         return HookProcessingOutcome.DUPLICATE
+    if not refresh:
+        return HookProcessingOutcome.WRITTEN
     if refresh_hint_handler is None:
         send_refresh_hint(
             hint,
@@ -255,6 +277,7 @@ __all__ = [
     "format_hook_payload",
     "hook_dedupe_path",
     "hook_log_main",
+    "hook_logged_at",
     "infer_provider_from_hook_line",
     "process_hook_payload",
     "routed_hook_payload",

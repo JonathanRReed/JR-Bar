@@ -24,6 +24,7 @@ from .hook_ingress_protocol import (
     default_hook_ingress_socket_path,
     encode_hook_ingress_response,
 )
+from .hook_pending import PENDING_REPLAY_HORIZON_SECONDS
 from .ipc import (
     ProviderRefreshHint,
     _accept_one,
@@ -134,7 +135,23 @@ class AppOwnedHookIngressProcessor:
             Path(request.log_path),
             request.payload_text,
             refresh_hint_handler=self.refresh_hint_handler,
+            **_replay_arguments(request),
         )
+
+
+def _replay_arguments(request: HookIngressRequest) -> dict[str, object]:
+    """A payload the shim spooled keeps the time it was queued, and one
+    older than the replay horizon is written without the refresh hint:
+    drained hours later it is history for the log, not a live turn."""
+    queued_at = request.queued_at_epoch
+    if queued_at is None:
+        return {}
+    from .hook import hook_logged_at
+
+    return {
+        "logged_at": hook_logged_at(queued_at),
+        "refresh": time.time() - queued_at <= PENDING_REPLAY_HORIZON_SECONDS,
+    }
 
 
 def register_shim_process(request: HookIngressRequest) -> None:
@@ -182,6 +199,7 @@ def _process_request(request: HookIngressRequest) -> object:
         request.provider,
         Path(request.log_path),
         request.payload_text,
+        **_replay_arguments(request),
     )
 
 

@@ -36,6 +36,16 @@ def test_request_from_pending_line_carries_the_shim_fields() -> None:
     assert request_from_pending_line(_line(provider="nope")) is None
     assert request_from_pending_line(_line(ppid=1)).ppid is None
     assert request_from_pending_line(_line(ppid_start="x")).ppid_start is None
+    # The shim writes -1 when it could not read its parent's start time;
+    # that line is still a delivery, not a rejection.
+    assert request_from_pending_line(_line(ppid_start=-1.0)).ppid_start is None
+    # queued_at_ms (milliseconds) arrives as the request's epoch; lines from
+    # an older shim, or with a nonsense stamp, simply have none.
+    assert request_from_pending_line(_line(queued_at_ms=1790078400250)).queued_at_epoch == 1790078400.25
+    assert request_from_pending_line(_line()).queued_at_epoch is None
+    assert request_from_pending_line(_line(queued_at_ms=True)).queued_at_epoch is None
+    assert request_from_pending_line(_line(queued_at_ms="soon")).queued_at_epoch is None
+    assert request_from_pending_line(_line(queued_at_ms=-5)).queued_at_epoch is None
 
 
 def test_drain_submits_in_file_order_and_removes_the_files__and_1_more(tmp_path: Path) -> None:
@@ -181,13 +191,91 @@ def test_lines_past_the_drain_cap_stay_pending(tmp_path) -> None:
     assert pending_hook_files(tmp_path) == []
 
 
-def test_an_oversized_pending_file_is_quarantined_not_deleted(tmp_path) -> None:
+def test_an_oversized_pending_file_drains_its_newest_lines_and_keeps_the_head(tmp_path, monkeypatch) -> None:
+    """Quarantining the whole file replayed none of it -- including the
+    newest events, the ones live state needs."""
     from jrbar import hook_pending
 
+    lines = [_line(payload=json.dumps({"hook_event_name": "Stop", "n": n})) + "\n" for n in range(40)]
+    blob = "".join(lines).encode("utf-8")
+    limit = len(lines[-1].encode("utf-8")) * 10 + 5  # ten whole lines and a partial one
+    monkeypatch.setattr(hook_pending, "MAX_PENDING_FILE_BYTES", limit)
     pending = tmp_path / f"claude{PENDING_SUFFIX}"
-    pending.write_bytes(b"x" * (hook_pending.MAX_PENDING_FILE_BYTES + 1))
+    pending.write_bytes(blob)
+    (tmp_path / "claude.overflow.jsonl").write_text("an older generation\n")
+
+    seen: list[int] = []
+    count = drain_pending_hooks(
+        lambda request: seen.append(json.loads(request.payload_text)["n"]),
+        state_dir=tmp_path,
+        log_path_for=lambda provider: f"/logs/{provider}.jsonl",
+    )
+
+    assert count == 10 and seen == list(range(30, 40))
+    assert pending_hook_files(tmp_path) == [] and not list(tmp_path.glob("*.draining-*"))
+    # The older head is kept, whole lines only, as the overflow generation.
+    assert (tmp_path / "claude.overflow.jsonl").read_bytes() == "".join(lines[:30]).encode("utf-8")
+
+
+def test_an_oversized_tail_that_starts_on_a_line_boundary_keeps_its_first_line(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    lines = [_line(payload=json.dumps({"n": n})) + "\n" for n in range(6)]
+    monkeypatch.setattr(hook_pending, "MAX_PENDING_FILE_BYTES", sum(len(line) for line in lines[2:]))
+    (tmp_path / f"claude{PENDING_SUFFIX}").write_text("".join(lines))
+    seen: list[int] = []
+    drain_pending_hooks(
+        lambda request: seen.append(json.loads(request.payload_text)["n"]),
+        state_dir=tmp_path,
+        log_path_for=lambda provider: f"/logs/{provider}.jsonl",
+    )
+    assert seen == [2, 3, 4, 5]
+    assert (tmp_path / "claude.overflow.jsonl").read_text() == "".join(lines[:2])
+
+
+def test_an_oversized_file_without_a_whole_line_in_reach_is_kept_as_overflow(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    monkeypatch.setattr(hook_pending, "MAX_PENDING_FILE_BYTES", 4096)
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    pending.write_bytes(b"x" * 10_000)
     assert drain_pending_hooks(lambda _r: None, state_dir=tmp_path) == 0
     assert not pending.exists()
     overflow = tmp_path / "claude.overflow.jsonl"
-    assert overflow.exists()
-    assert overflow.stat().st_size == hook_pending.MAX_PENDING_FILE_BYTES + 1
+    assert overflow.read_bytes() == b"x" * 10_000
+
+
+def test_a_spooled_payload_replays_with_its_queued_time_and_wakes_the_monitor_only_while_fresh(
+    monkeypatch,
+) -> None:
+    import time
+
+    from jrbar import hook
+    from jrbar.hook_ingress import AppOwnedHookIngressProcessor
+    from jrbar.hook_pending import PENDING_REPLAY_HORIZON_SECONDS
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        hook,
+        "process_hook_payload",
+        lambda provider, log_path, payload, **kwargs: calls.append(kwargs),
+    )
+    processor = AppOwnedHookIngressProcessor(lambda _hint: None)
+    now = time.time()
+
+    def request(queued_at: float | None) -> HookIngressRequest:
+        return HookIngressRequest("claude", "/logs/claude.jsonl", "{}", queued_at_epoch=queued_at)
+
+    processor(request(None))
+    processor(request(now - 60.0))
+    processor(request(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0))
+
+    live, fresh, stale = calls
+    # A live delivery is stamped on arrival and always refreshes.
+    assert set(live) == {"refresh_hint_handler"}
+    assert fresh["logged_at"] == hook.hook_logged_at(now - 60.0) and fresh["refresh"] is True
+    assert stale["logged_at"] == hook.hook_logged_at(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0)
+    assert stale["refresh"] is False
+    for bad in (True, float("nan"), float("inf"), 0.0, -1.0, "1790078400"):
+        with pytest.raises(ValueError):
+            request(bad)  # type: ignore[arg-type]
