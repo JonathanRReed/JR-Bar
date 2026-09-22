@@ -557,6 +557,15 @@ final class MenuBarConcealer {
     /// when `isConcealing` drops must keep it through this.
     var isSuspended: Bool { suspendWindow != nil }
     var concealedApps: Set<String> { live?.concealed ?? [] }
+    /// The last activation threw and nothing is live: the helper
+    /// answered `err`, timed out or would not spawn, or the framework
+    /// refused. Not a start that is still coming — readers that treat
+    /// the target as concealed until the first assertion lands (the
+    /// icon's mirror) must stop, because macOS keeps drawing every
+    /// target app while this holds. Cleared by an activation that
+    /// succeeds, an empty target and `releaseAll` — not by a bridged
+    /// click's lift, which had nothing live to drop.
+    private(set) var activationFailing = false
 
     /// Conceal exactly `concealed` among `running`. An empty set
     /// releases everything — no assertion at all, so the system's
@@ -600,6 +609,7 @@ final class MenuBarConcealer {
     /// and stands down instead of re-concealing behind us.
     func releaseAll() async {
         target = []
+        activationFailing = false
         dropLive()
         if let pending = queue {
             await withTaskGroup(of: Void.self) { group in
@@ -670,6 +680,8 @@ final class MenuBarConcealer {
     private func converge() async {
         let concealed = target.intersection(seenRunning)
         if concealed.isEmpty {
+            // Nothing asked for, so nothing is failing.
+            activationFailing = false
             dropLive()
             return
         }
@@ -683,6 +695,7 @@ final class MenuBarConcealer {
            backend.isAlive(live.token) { return }
         do {
             let token = try await backend.activate(allowedBundleIDs: allowlist)
+            activationFailing = false
             // A release or retarget that landed mid-activation wins:
             // the plan this token was built for no longer stands, so
             // it goes straight back rather than resurrecting a
@@ -696,6 +709,10 @@ final class MenuBarConcealer {
             if let old { backend.invalidate(old.token) }
             MenuBarAssessmentBackend.log.notice("conceal: \(concealed.count, privacy: .public) apps hidden by the agent (\(concealed.sorted().joined(separator: ", "), privacy: .public)); allowlist \(allowlist.count, privacy: .public) apps, ours \(allowlist.contains(Bundle.main.bundleIdentifier ?? "-") ? "in" : "MISSING", privacy: .public)")
         } catch {
+            // A failed swap keeps the old assertion concealing; only a
+            // bar with nothing live — and a target still asked for, not
+            // one a release emptied mid-activation — is failing.
+            if live == nil, !target.isEmpty { activationFailing = true }
             MenuBarAssessmentBackend.log.error("conceal: \(String(describing: error), privacy: .public)")
         }
         onChange?()

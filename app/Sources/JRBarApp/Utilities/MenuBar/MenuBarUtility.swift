@@ -1192,12 +1192,17 @@ final class MenuBarUtility: Toy {
     /// draws an icon, and something is (or is about to be) concealed —
     /// the assertion is live, a click-bridge lift is only a suspend, or
     /// the engine has a target it is still asserting (the first 2.5 s
-    /// after start, while a relaunch's old assertion drains). Otherwise
-    /// no assertion holds and macOS draws the real item itself. Pure so
-    /// a test pins the table.
+    /// after start, while a relaunch's old assertion drains, or an
+    /// activation in flight). A target the engine keeps failing to
+    /// assert is not about to be concealed: nothing holds, macOS draws
+    /// the real item, and a mirror would only blank it. Otherwise no
+    /// assertion holds and macOS draws the real item itself. Pure so a
+    /// test pins the table.
     nonisolated static func mirrorsIcon(engineUp: Bool, styleDrawsIcon: Bool, concealing: Bool,
-                                        suspended: Bool, targetEmpty: Bool) -> Bool {
-        engineUp && styleDrawsIcon && (concealing || suspended || !targetEmpty)
+                                        suspended: Bool, targetEmpty: Bool,
+                                        activationFailing: Bool = false) -> Bool {
+        engineUp && styleDrawsIcon
+            && (concealing || (!activationFailing && (suspended || !targetEmpty)))
     }
 
     /// The set the engine converges to: the map's hidden apps less the
@@ -1219,7 +1224,8 @@ final class MenuBarUtility: Toy {
                                         styleDrawsIcon: host?.anchorWantsVisibleSeat ?? false,
                                         concealing: concealer.isConcealing,
                                         suspended: concealer.isSuspended,
-                                        targetEmpty: concealTarget().isDisjoint(with: runningApps.snapshot()))
+                                        targetEmpty: concealTarget().isDisjoint(with: runningApps.snapshot()),
+                                        activationFailing: concealer.activationFailing)
         iconMirrored = mirrored
         host?.setFaceMirrored(mirrored)
         guard mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first else {
@@ -1258,12 +1264,14 @@ final class MenuBarUtility: Toy {
     /// every listed item on the main row that is not ours and not
     /// concealed, the native « included. While no assertion holds (a
     /// bridged click's lift, the start grace) the target counts as
-    /// concealed, so a 0.45 s reflow never walks the icon.
+    /// concealed, so a 0.45 s reflow never walks the icon — unless the
+    /// engine is failing to assert it: then macOS draws every target
+    /// app, and a seat that skipped them would stand on one.
     private func mirrorSeat(width: CGFloat) -> CGFloat {
         let row = Self.primaryRow()
         let clear = mirrorClearOf()
-        let concealed = (concealer?.isConcealing ?? false)
-            ? (concealer?.concealedApps ?? []) : concealTarget()
+        let targetOnItsWay = concealer.map { !$0.isConcealing && !$0.activationFailing } ?? true
+        let concealed = targetOnItsWay ? concealTarget() : (concealer?.concealedApps ?? [])
         let ourPID = ProcessInfo.processInfo.processIdentifier
         let drawn = (lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden).filter { item in
             item.ownerPID != ourPID && Self.isForeignOwner(item.ownerName)

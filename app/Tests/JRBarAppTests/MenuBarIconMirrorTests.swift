@@ -293,6 +293,15 @@ struct MenuBarIconMirrorTests {
                                             suspended: false, targetEmpty: false))
         #expect(!MenuBarUtility.mirrorsIcon(engineUp: true, styleDrawsIcon: false, concealing: true,
                                             suspended: false, targetEmpty: false))
+        // An engine whose activations keep throwing holds nothing: macOS
+        // draws the real item, so the mirror must not blank it.
+        let failing = { (concealing: Bool, suspended: Bool) in
+            MenuBarUtility.mirrorsIcon(engineUp: true, styleDrawsIcon: true, concealing: concealing,
+                                       suspended: suspended, targetEmpty: false, activationFailing: true)
+        }
+        #expect(!failing(false, false), "a target the agent keeps refusing is not about to be concealed")
+        #expect(!failing(false, true), "a bridged click on a failing engine lifts nothing")
+        #expect(failing(true, false), "a failed swap leaves the old assertion concealing")
     }
 
     @Test("the reveal zone is the blank run up to the mirror — never the ears, never the icon")

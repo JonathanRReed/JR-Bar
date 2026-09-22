@@ -217,6 +217,48 @@ struct MenuBarConcealerTests {
     }
 
     @MainActor
+    @Test("an activation that throws with nothing live marks the engine failing until one lands or the target empties")
+    func activationFailingSignal() async {
+        final class Flaky: MenuBarConcealBackend {
+            var refuse = true
+            var n = 0
+            func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+                n += 1
+                if refuse { throw MenuBarAssessmentBackend.Failure.timedOut }
+                return MenuBarAssertionToken(NSNumber(value: n))
+            }
+            func invalidate(_ token: MenuBarAssertionToken) {}
+        }
+        let flaky = Flaky()
+        let concealer = MenuBarConcealer(backend: flaky)
+        #expect(!concealer.activationFailing, "a fresh engine is starting, not failing")
+        concealer.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(!concealer.isConcealing)
+        #expect(concealer.activationFailing)
+        // The agent takes the next one: the flag clears with it.
+        flaky.refuse = false
+        concealer.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(concealer.isConcealing)
+        #expect(!concealer.activationFailing)
+        // A failed swap keeps the old assertion concealing — not failing.
+        flaky.refuse = true
+        concealer.apply(concealed: ["h.app", "s.app"], running: ["h.app", "s.app"])
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(concealer.isConcealing)
+        #expect(!concealer.activationFailing)
+        // Dropped, then failing again; an empty target ends it.
+        await concealer.releaseAll()
+        concealer.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(concealer.activationFailing)
+        concealer.apply(concealed: [], running: ["h.app", "s.app"])
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(!concealer.activationFailing)
+    }
+
+    @MainActor
     @Test("releaseAll drops the live assertion immediately, then unwinds queued work")
     func releaseAllDrops() async {
         let fake = FakeBackend()
