@@ -968,6 +968,32 @@ struct MenuBarSpacerTests {
     }
 
     @MainActor
+    @Test("a gesture only opens the Item Bar — a second one never folds it, and a fold's own click never reopens it")
+    func gesturesOpenIdempotently() {
+        let utility = MenuBarUtility()
+        utility.settings = {
+            MenuBarSettings(enabled: true, sections: ["A": .hidden], revealStyle: .bar)
+        }
+        utility.hider.listItems = { [self.item("A", x: 100)] }
+        utility.hider.rowRect = { self.row }
+        utility.hider.shuttersSuppressed = true
+        utility.hider.reconcile()
+        utility.reveal.onReveal()
+        #expect(utility.bar.isOpen)
+        // The scroll stream's next tick, a hover re-entry.
+        utility.reveal.onReveal()
+        #expect(utility.bar.isOpen, "a gesture never folds the bar")
+        // A click on the blank stretch: the bar's outside-click monitor
+        // folds it, and the same click's reveal lands a hop later.
+        utility.bar.close()
+        utility.reveal.onReveal()
+        #expect(!utility.bar.isOpen, "the click that folded the bar does not reopen it")
+        #expect(MenuBarUtility.gestureRefolds(closedAt: 10, now: 10.1))
+        #expect(!MenuBarUtility.gestureRefolds(closedAt: 10, now: 10.5))
+        #expect(!MenuBarUtility.gestureRefolds(closedAt: -.infinity, now: 0))
+    }
+
+    @MainActor
     @Test("a host arriving takes the fallback chevron down — one status item of ours")
     func hostRetiresTheChevron() {
         let utility = MenuBarUtility()

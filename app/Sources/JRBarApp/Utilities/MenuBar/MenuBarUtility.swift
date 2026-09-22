@@ -207,6 +207,10 @@ final class MenuBarUtility: Toy {
     func openExternal() { externalProbe?.open() }
     /// Whether this build passes Gatekeeper — nil until probed.
     private(set) var notarized: Bool?
+    /// Which `start()` a pending notarization answer belongs to — a
+    /// disable and re-enable inside the probe must not let the stale
+    /// answer act on the new run.
+    @ObservationIgnored private var startGeneration = 0
     /// When the concealer came up — the first assertion waits
     /// `adoptionGrace` past it so a relaunch's dying assertion has
     /// drained first. Internal (not private) so the seed-race test can
@@ -402,7 +406,10 @@ final class MenuBarUtility: Toy {
             // the hider gates on the setting itself, this is only the
             // "a reveal surface is up" signal.
             self.hider.setBarCoveringShown(open)
-            if !open { self.reveal.noteBarClosed() }
+            if !open {
+                self.barClosedAtUptime = ProcessInfo.processInfo.systemUptime
+                self.reveal.noteBarClosed()
+            }
         }
         actions.delegate = self
         actions.rules = { [weak self] in self?.settings().triggerRules ?? [] }
@@ -893,6 +900,8 @@ final class MenuBarUtility: Toy {
     private func start() {
         guard !running else { return }
         running = true
+        startGeneration += 1
+        let generation = startGeneration
         probeAccessibility()
         installChevron()
         if MenuBarAssessmentBackend.isAvailable, host != nil {
@@ -902,7 +911,7 @@ final class MenuBarUtility: Toy {
             // person chose the agent anyway.
             Task { [weak self] in
                 let notarized = await MenuBarAssessmentBackend.bundleIsNotarized()
-                guard let self, self.running else { return }
+                guard let self, self.running, self.startGeneration == generation else { return }
                 self.notarized = notarized
                 if notarized || self.settings().concealUnnotarized {
                     self.startConcealer()
@@ -939,6 +948,9 @@ final class MenuBarUtility: Toy {
         stopConcealer()
         removeChevron()
         removeExtras()
+        // An update reveal's pending re-hide belongs to this run.
+        updateHideTask?.cancel()
+        updateHideTask = nil
         failedHotkeyActions = []
         running = false
     }
@@ -1123,6 +1135,10 @@ final class MenuBarUtility: Toy {
     /// sections come from the per-app map; the bridge takes the
     /// system's clicks; the mirror carries the icon.
     private func startConcealer() {
+        // One engine at a time: a second start would overwrite the first
+        // engine's bridge and helper without stopping them, leaving a
+        // live event tap pointing at a freed bridge.
+        guard concealer == nil else { return }
         runningApps.invalidate()
         let concealer = MenuBarConcealer()
         concealer.onChange = { [weak self] in self?.concealerChanged() }
@@ -1890,18 +1906,23 @@ final class MenuBarUtility: Toy {
         lastPlan.hidden + lastPlan.alwaysHidden
     }
 
-    /// The `.bar` reveal surface. The Item Bar opens when it has items
-    /// to show; a trigger while it is up closes it, matching the
-    /// chevron's toggle. When the item list is empty — the grant is
-    /// gone or macOS stopped reporting — an empty bar would answer the
-    /// gesture with nothing, so a deployed hidden section falls back
-    /// to the inline reveal: the covers drop and the run is reachable
-    /// without any listing at all.
+    /// The `.bar` reveal surface for a gesture — a hover, a click on the
+    /// blank stretch, a scroll. A gesture only ever opens: a scroll
+    /// stream re-fires every half second and a hover re-entry lands
+    /// while the bar is up, and a toggle here flapped the bar shut under
+    /// the hand (161 scroll notices in two minutes, 2026-09-22). A click
+    /// on the blank stretch still folds an open bar — the bar's own
+    /// outside-click monitor closes it — so a gesture landing in the same
+    /// beat as that close does not reopen it. The deliberate toggle is
+    /// `toggleHiddenSection` (the ‹, the menu, the hotkey). When the item
+    /// list is empty — the grant is gone or macOS stopped reporting — an
+    /// empty bar would answer the gesture with nothing, so a deployed
+    /// hidden section falls back to the inline reveal: the covers drop
+    /// and the run is reachable without any listing at all.
     private func revealBarStyle() {
-        if bar.isOpen {
-            bar.close()
-            return
-        }
+        guard !bar.isOpen,
+              !Self.gestureRefolds(closedAt: barClosedAtUptime,
+                                   now: ProcessInfo.processInfo.systemUptime) else { return }
         if !barItems().isEmpty {
             bar.open()
             return
@@ -1910,6 +1931,19 @@ final class MenuBarUtility: Toy {
         if (hider.assignedLengths[.hidden] ?? glyph) > glyph + 1 {
             hider.reveal([.hidden, .alwaysHidden])
         }
+    }
+
+    /// When the Item Bar last folded, in system uptime.
+    @ObservationIgnored private var barClosedAtUptime: TimeInterval = -.infinity
+    /// How close behind a fold a gesture counts as the click that
+    /// folded it: the bar's monitor and the reveal's arrive as two
+    /// unordered main-actor hops of the same event.
+    nonisolated static let gestureRefoldWindow: TimeInterval = 0.3
+
+    /// Whether a gesture at `now` belongs to the fold at `closedAt`.
+    /// Pure so a test pins the window.
+    nonisolated static func gestureRefolds(closedAt: TimeInterval, now: TimeInterval) -> Bool {
+        now - closedAt < gestureRefoldWindow
     }
 
     /// Whether an owner of a covered item currently has a menu-layer
@@ -1995,19 +2029,11 @@ final class MenuBarUtility: Toy {
 
     /// A plain click on a tile: `AXPress` the item's element —
     /// Accessibility required. It reaches a covered item without
-    /// dropping the shutter and a system-parked item a reposted click
-    /// could never hit. Without the grant the tile just raises the
-    /// owning app, the posture the permissions row sets. When the
-    /// element can no longer be resolved — the app reordered its
-    /// extras mid-relaunch — the click falls back to a reveal plus a
-    /// reposted click at wherever the item settled.
-    /// macOS needs a beat to reflow the row once the covers drop —
-    /// the click must land where the item settles, not where the stash
-    /// left it. The retry is the insurance: an item still off the row
-    /// at the deadline gets one more beat before the click goes anyway.
-    nonisolated static let reflowDelay: TimeInterval = 0.7
-    nonisolated static let reflowRetryDelay: TimeInterval = 0.4
-
+    /// dropping the shutter and a system-parked item a click could
+    /// never hit. Without the grant the tile just raises the owning
+    /// app, the posture the permissions row sets — and so does an
+    /// element that can no longer be resolved (the app reordered its
+    /// extras mid-relaunch).
     private func trigger(_ item: MenuBarItem) {
         let granted = probeAccessibility()
         bar.close()
@@ -2056,33 +2082,12 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// The no-press fallback: uncover both runs and repost a real
-    /// click at the item's frame once it settles on the row.
+    /// The no-press fallback: raise the owning app, the answer the
+    /// no-Accessibility path gives. A posted click at the item's frame
+    /// would move the person's pointer there — synthetic input the
+    /// utility never sends on its own.
     private func clickFallback(_ item: MenuBarItem) {
-        hider.reveal([.hidden, .alwaysHidden])
-        reveal.rearm()
-        clickWhenSettled(item, retriesLeft: 1, deadline: Self.reflowDelay)
-    }
-
-    /// Re-list after the spacer's drop and click where the item landed.
-    /// A target still parked off the row means the reflow has not
-    /// settled — wait one more beat rather than clicking the stash's
-    /// offscreen bounds.
-    private func clickWhenSettled(_ item: MenuBarItem, retriesLeft: Int, deadline: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + deadline) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.hider.reconcile()
-                let all = self.lastPlan.shown + self.lastPlan.hidden + self.lastPlan.alwaysHidden
-                let target = all.first { $0.id == item.id } ?? item
-                if retriesLeft > 0 && !target.bounds.intersects(MenuBarItemLister.menuBarRow()) {
-                    self.clickWhenSettled(item, retriesLeft: retriesLeft - 1,
-                                          deadline: Self.reflowRetryDelay)
-                    return
-                }
-                Self.postClick(at: CGPoint(x: target.bounds.midX, y: target.bounds.midY))
-            }
-        }
+        item.owner?.activate()
     }
 
     /// A ⌘-click on a tile: pull the item up into the hidden run and
@@ -2092,16 +2097,6 @@ final class MenuBarUtility: Toy {
         setSection(.hidden, for: item.id)
         hider.reveal([.hidden])
         reveal.rearm()
-    }
-
-    /// One synthetic click at a Quartz global point.
-    nonisolated static func postClick(at point: CGPoint) {
-        let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
-                           mouseCursorPosition: point, mouseButton: .left)
-        let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
-                         mouseCursorPosition: point, mouseButton: .left)
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
     }
 
     // MARK: The boundary
