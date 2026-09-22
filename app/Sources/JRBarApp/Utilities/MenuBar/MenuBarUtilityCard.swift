@@ -648,7 +648,7 @@ private struct MenuBarAutomationControls: View {
     private var rulesSection: some View {
         let rules = utility.settings().triggerRules
         SettingLabel(title: "Rules",
-                     subtitle: "When something happens, the bar reacts — lock, unlock, an app activating, a time, the charger.")
+                     subtitle: "When something happens, the bar reacts — lock, unlock, an app, a time, the charger, a display, the lid, and what your agents are doing.")
         ForEach(rules) { rule in
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
@@ -684,11 +684,25 @@ private struct MenuBarAutomationControls: View {
                 Text("Mic goes quiet").tag("micOff")
                 Text("Focus turns on").tag("focusOn")
                 Text("Focus turns off").tag("focusOff")
+                Divider()
+                Text("App launches").tag("appLaunch")
+                Text("App quits").tag("appQuit")
+                Text("Display connects").tag("displayOn")
+                Text("Display disconnects").tag("displayOff")
+                Text("Lid closes").tag("lidClosed")
+                Text("Lid opens").tag("lidOpened")
+                Divider()
+                Text("Agents start working").tag("agentsWork")
+                Text("An agent needs you").tag("agentAsk")
+                Text("Agents finish").tag("agentsDone")
+                Text("Usage headroom falls to…").tag("quotaLow")
+                Text("SidePulse connects").tag("sidePulseOn")
+                Text("SidePulse disconnects").tag("sidePulseOff")
             } label: { EmptyView() }
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
-            if triggerKind == "app" {
+            if Self.appTriggerKinds.contains(triggerKind) {
                 TextField("bundle id", text: $triggerBundleID)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
@@ -706,7 +720,7 @@ private struct MenuBarAutomationControls: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 34)
             }
-            if triggerKind == "battLow" || triggerKind == "battHigh" {
+            if triggerKind == "battLow" || triggerKind == "battHigh" || triggerKind == "quotaLow" {
                 TextField("%", value: $triggerPercent, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 40)
@@ -751,8 +765,12 @@ private struct MenuBarAutomationControls: View {
         }
     }
 
+    /// The trigger kinds that name an app by bundle id.
+    private static let appTriggerKinds: Set<String> = ["app", "appLaunch", "appQuit"]
+
     private var ruleDraftValid: Bool {
-        if triggerKind == "app" && triggerBundleID.trimmingCharacters(in: .whitespaces).isEmpty {
+        if Self.appTriggerKinds.contains(triggerKind)
+            && triggerBundleID.trimmingCharacters(in: .whitespaces).isEmpty {
             return false
         }
         if triggerKind == "wifiJoin" && triggerSSID.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -786,6 +804,20 @@ private struct MenuBarAutomationControls: View {
         case "micOff": trigger = .microphoneIdle
         case "focusOn": trigger = .focusEnabled
         case "focusOff": trigger = .focusDisabled
+        case "appLaunch": trigger = .appLaunched(
+            bundleID: triggerBundleID.trimmingCharacters(in: .whitespaces))
+        case "appQuit": trigger = .appQuit(
+            bundleID: triggerBundleID.trimmingCharacters(in: .whitespaces))
+        case "displayOn": trigger = .displayConnected
+        case "displayOff": trigger = .displayDisconnected
+        case "lidClosed": trigger = .lidClosed
+        case "lidOpened": trigger = .lidOpened
+        case "agentsWork": trigger = .agentsStartedWorking
+        case "agentAsk": trigger = .agentNeedsYou
+        case "agentsDone": trigger = .agentsFinished
+        case "quotaLow": trigger = .quotaBelow(percent: min(100, max(1, triggerPercent)))
+        case "sidePulseOn": trigger = .sidePulseConnected
+        case "sidePulseOff": trigger = .sidePulseDisconnected
         default: trigger = .screenUnlocked
         }
         let action: MenuBarTriggerAction

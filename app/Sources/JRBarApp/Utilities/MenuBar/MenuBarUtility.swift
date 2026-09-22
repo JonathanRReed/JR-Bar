@@ -124,6 +124,13 @@ final class MenuBarUtility: Toy {
     var agentState: @MainActor () -> (state: AgentAggregateState, detail: String) = { (.idle, "") }
     /// The agent item's click — opens the Overview.
     var onOpenOverview: () -> Void = {}
+    /// The daemon's facts for the rules — the agents, the asks, the
+    /// usage headroom, SidePulse. Wired by the app delegate, read on
+    /// every `coreFactsChanged()`.
+    var coreFacts: @MainActor () -> MenuBarCoreFacts = { MenuBarCoreFacts() }
+    /// The facts the rules last heard — samples go out only when a
+    /// value moved, so a 20 Hz state stream costs a compare.
+    @ObservationIgnored private(set) var lastCoreFacts: MenuBarCoreFacts?
     /// The display whose mapped profile was last applied, and the
     /// pointer-screen sightings a pending switch has collected.
     @ObservationIgnored private var activeDisplayKey: String?
@@ -799,6 +806,18 @@ final class MenuBarUtility: Toy {
 
     func deleteTriggerRule(id: String) {
         update { $0.triggerRules.removeAll { $0.id == id } }
+    }
+
+    /// The daemon's feed changed: whatever moved among the agents, the
+    /// asks, the headroom and SidePulse reaches the rule engine as a
+    /// sample. Always delivered — parked rules included — so the
+    /// engine's baselines stay current and enabling a rule later never
+    /// fires on a transition that happened while it was off.
+    func coreFactsChanged() {
+        let facts = coreFacts()
+        let samples = MenuBarCoreFacts.samples(from: lastCoreFacts, to: facts)
+        lastCoreFacts = facts
+        for sample in samples { systemTriggerSource.onEvent?(sample) }
     }
 
     // MARK: Lifecycle

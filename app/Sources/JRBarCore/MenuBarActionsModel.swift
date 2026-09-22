@@ -53,6 +53,33 @@ public enum MenuBarTrigger: Equatable, Codable, Sendable {
     case focusEnabled
     /// The last Focus mode switched off.
     case focusDisabled
+    /// The agents went to work — the combined state became working
+    /// from anything else. JR-Bar's own feed; no standalone menu-bar
+    /// manager can see it.
+    case agentsStartedWorking
+    /// An agent is waiting on you — the combined state became "needs
+    /// you".
+    case agentNeedsYou
+    /// The work stopped — working became done or idle.
+    case agentsFinished
+    /// The tightest measured usage window's remaining share fell to
+    /// `percent` or under — the same crossing rule as `batteryBelow`.
+    case quotaBelow(percent: Int)
+    /// A SidePulse strip or Dot came up on the daemon's device list.
+    case sidePulseConnected
+    case sidePulseDisconnected
+    /// The lid shut with the Mac still awake — clamshell on an external
+    /// display.
+    case lidClosed
+    case lidOpened
+    /// An app with this bundle id launched (case-insensitive).
+    case appLaunched(bundleID: String)
+    /// An app with this bundle id quit.
+    case appQuit(bundleID: String)
+    /// A display joined the desk.
+    case displayConnected
+    /// A display left it.
+    case displayDisconnected
 }
 
 public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
@@ -107,6 +134,18 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .microphoneIdle: t = "when the microphone goes quiet"
         case .focusEnabled: t = "when a Focus turns on"
         case .focusDisabled: t = "when the Focus turns off"
+        case .agentsStartedWorking: t = "when agents start working"
+        case .agentNeedsYou: t = "when an agent needs you"
+        case .agentsFinished: t = "when the agents finish"
+        case .quotaBelow(let p): t = "when usage headroom falls to \(p)%"
+        case .sidePulseConnected: t = "when a SidePulse device connects"
+        case .sidePulseDisconnected: t = "when the SidePulse device disconnects"
+        case .lidClosed: t = "when the lid closes"
+        case .lidOpened: t = "when the lid opens"
+        case .appLaunched(let bundleID): t = "when \(bundleID) launches"
+        case .appQuit(let bundleID): t = "when \(bundleID) quits"
+        case .displayConnected: t = "when a display connects"
+        case .displayDisconnected: t = "when a display disconnects"
         }
         let a: String
         switch action {

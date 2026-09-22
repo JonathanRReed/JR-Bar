@@ -416,6 +416,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         utilitiesStore.menuBar.onOpenOverview = { [weak overviewWindow] in
             overviewWindow?.show()
         }
+        utilitiesStore.menuBar.coreFacts = { [weak core, weak store] in
+            guard let core, let store else { return MenuBarCoreFacts() }
+            return MenuBarCoreFacts.read(core: core, aggregate: store.aggregate)
+        }
 
         // Event Replay: the read-only journaled-events surface (S7.4).
         let replayStore = ReplayStore(core: core)
@@ -1092,6 +1096,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if wasLive, !live { events?.reset() }
         wasLive = live
         refreshAggregate()
+        // The menu bar's rules hear the agents, the asks, the headroom
+        // and SidePulse from the same change.
+        utilitiesStore?.menuBar.coreFactsChanged()
         refreshIconStyle()
         refreshLights()
         refreshAlcoveFollowing()
