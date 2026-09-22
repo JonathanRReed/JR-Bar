@@ -266,6 +266,32 @@ struct FoldMathTests {
                                  mirrored: false, screenAsleep: true) == "screen asleep")
     }
 
+    @Test("a locked screen and a switched-away session pause the fold")
+    func pauseLockAndSession() {
+        #expect(FoldPause.reason(angle: 90, closedLid: false, builtInPresent: true,
+                                 mirrored: false, screenAsleep: false,
+                                 screenLocked: true) == "screen locked")
+        #expect(FoldPause.reason(angle: 90, closedLid: false, builtInPresent: true,
+                                 mirrored: false, screenAsleep: false,
+                                 sessionInactive: true) == "another user is signed in")
+        #expect(FoldPause.reason(angle: 90, closedLid: false, builtInPresent: true,
+                                 mirrored: false, screenAsleep: false,
+                                 screenLocked: false, sessionInactive: false) == nil)
+    }
+
+    @Test("a sleeping screen names itself before the lock behind it")
+    func pauseLockPrecedence() {
+        #expect(FoldPause.reason(angle: 90, closedLid: false, builtInPresent: true,
+                                 mirrored: false, screenAsleep: true,
+                                 screenLocked: true, sessionInactive: true) == "screen asleep")
+        #expect(FoldPause.reason(angle: 90, closedLid: false, builtInPresent: true,
+                                 mirrored: false, screenAsleep: false,
+                                 screenLocked: true, sessionInactive: true) == "screen locked")
+        #expect(FoldPause.reason(angle: 4, closedLid: false, builtInPresent: true,
+                                 mirrored: false, screenAsleep: false,
+                                 screenLocked: true) == "lid closed")
+    }
+
     @Test("the lid wins over the display reasons")
     func pausePrecedence() {
         #expect(FoldPause.reason(angle: 3, closedLid: false, builtInPresent: false,

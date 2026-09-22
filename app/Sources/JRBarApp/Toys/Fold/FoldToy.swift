@@ -65,6 +65,10 @@ final class FoldToy: Toy {
     /// Notification-fed state, kept as observed vars so one observation
     /// pass sees every change.
     private(set) var screenAsleep = false
+    /// The login window is up over this session (`com.apple.screenIsLocked`).
+    private(set) var screenLocked = FoldSessionState.current().locked
+    /// Another user switched in over this session (fast user switching).
+    private(set) var sessionInactive = !FoldSessionState.current().onConsole
     private(set) var displayVersion = 0
     private(set) var motionVersion = 0
     private(set) var workspaceVersion = 0
@@ -108,6 +112,8 @@ final class FoldToy: Toy {
     var overlayOnScreen: Bool { overlay?.isVisible == true }
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// The lock and unlock broadcasts arrive on the distributed centre.
+    @ObservationIgnored private var distributedObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
     /// Safety facts, cached instead of queried per frame: the clamshell
     /// truth rides in on the sensor's 1 Hz beat, and display topology
@@ -186,6 +192,31 @@ final class FoldToy: Toy {
                 MainActor.assumeIsolated { self?.workspaceVersion += 1 }
             })
         }
+        // The lock and a fast-user switch both hand the screen to
+        // someone who is not looking at this desktop: the fold stands
+        // down and its capture streams stop, so the Screen Recording
+        // indicator never sits behind a lock screen.
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessionInactive = true }
+        })
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessionInactive = false }
+        })
+        let distributed = DistributedNotificationCenter.default()
+        distributedObservers.append(distributed.addObserver(
+            forName: FoldSessionState.lockedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screenLocked = true }
+        })
+        distributedObservers.append(distributed.addObserver(
+            forName: FoldSessionState.unlockedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screenLocked = false }
+        })
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -264,9 +295,10 @@ final class FoldToy: Toy {
 
     /// Why the fold is parked right now, per the safety contract: closed
     /// lid (sensor ≤ 5° or real clamshell state), no built-in display,
-    /// a mirrored one, or a sleeping screen. Every input is a cached
-    /// fact — IOKit and CoreGraphics queries on the per-frame path were
-    /// the jitter the old engine could never ease away.
+    /// a mirrored one, a sleeping screen, a locked one, or another user
+    /// switched in. Every input is a cached fact — IOKit and CoreGraphics
+    /// queries on the per-frame path were the jitter the old engine
+    /// could never ease away.
     private var pauseReason: String? {
         refreshDisplayFactsIfStale()
         return FoldPause.reason(
@@ -274,7 +306,9 @@ final class FoldToy: Toy {
             closedLid: cachedClamshell == true,
             builtInPresent: cachedBuiltinPresent,
             mirrored: cachedMirrored,
-            screenAsleep: screenAsleep)
+            screenAsleep: screenAsleep,
+            screenLocked: screenLocked,
+            sessionInactive: sessionInactive)
     }
 
     /// Re-reads the display-topology facts when the screen-parameters
@@ -826,6 +860,8 @@ final class FoldToy: Toy {
             // rawAngle for the live reading.
             _ = simulatedAngle
             _ = screenAsleep
+            _ = screenLocked
+            _ = sessionInactive
             _ = displayVersion
             _ = motionVersion
             _ = workspaceVersion
@@ -982,6 +1018,33 @@ final class FoldToy: Toy {
 
     var controls: AnyView {
         AnyView(FoldControlsView(toy: self))
+    }
+}
+
+/// The login session's two facts the fold pauses on, read once at
+/// launch from the window server's session dictionary (no permission
+/// needed); after that the lock broadcasts and the workspace's session
+/// notifications keep them current.
+enum FoldSessionState {
+    static let lockedNotification = Notification.Name("com.apple.screenIsLocked")
+    static let unlockedNotification = Notification.Name("com.apple.screenIsUnlocked")
+
+    static func current() -> (locked: Bool, onConsole: Bool) {
+        guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+            return (false, true)
+        }
+        return parse(info)
+    }
+
+    /// Pure, for the tests: a missing key reads as the unlocked,
+    /// on-console session — a guess that pauses would bench the fold for
+    /// the life of the app.
+    static func parse(_ info: [String: Any]) -> (locked: Bool, onConsole: Bool) {
+        let locked = (info["CGSSessionScreenIsLocked"] as? Bool)
+            ?? ((info["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false)
+        let onConsole = (info[kCGSessionOnConsoleKey as String] as? Bool)
+            ?? ((info[kCGSessionOnConsoleKey as String] as? NSNumber)?.boolValue ?? true)
+        return (locked, onConsole)
     }
 }
 

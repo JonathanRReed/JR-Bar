@@ -131,13 +131,25 @@ public enum FoldPause {
 
     /// Checks the safety inputs in contract order: a closed lid (sensor
     /// or daemon), a missing built-in display, a mirrored one, a sleeping
-    /// screen. The first that holds names the pause.
+    /// screen, a locked one, and a session another user switched in
+    /// over. The first that holds names the pause.
+    ///
+    /// The lock matters because the display stays lit through agent runs
+    /// (keep-display-awake is on by default): a locked Mac with the lid
+    /// at an angle is a real state, and the fold's capture streams — and
+    /// the Screen Recording indicator with them — must never sit behind
+    /// a lock screen. Mac Duo stops its capture on lock for the same
+    /// reason.
     public static func reason(angle: Double?, closedLid: Bool, builtInPresent: Bool,
-                              mirrored: Bool, screenAsleep: Bool) -> String? {
+                              mirrored: Bool, screenAsleep: Bool,
+                              screenLocked: Bool = false,
+                              sessionInactive: Bool = false) -> String? {
         if closedLid || (angle.map { $0 <= closedAngle } ?? false) { return "lid closed" }
         if !builtInPresent { return "no built-in display" }
         if mirrored { return "display is mirrored" }
         if screenAsleep { return "screen asleep" }
+        if screenLocked { return "screen locked" }
+        if sessionInactive { return "another user is signed in" }
         return nil
     }
 }
