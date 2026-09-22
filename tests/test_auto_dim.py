@@ -158,6 +158,40 @@ def test_controller_feeds_the_factor_into_the_night_dim_stage(headless, monkeypa
     assert lights["auto_dim"]["source"] == "display" and lights["auto_dim"]["factor"] == 0.9
 
 
+def test_the_screen_bar_never_follows_the_backlight_twice(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    """The Screen Bar is drawn on the display, whose backlight already
+    dims with the room: neither auto brightness nor the lux/display
+    auto-dim may scale it again. A deliberate night schedule still does,
+    and a strip beside the screen still follows both."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(auto_dim, "display_brightness_fraction", lambda: 0.3)
+    monkeypatch.setattr(auto_dim, "ambient_light_lux", lambda: None)
+    from jrbar import display_brightness
+    from jrbar.status_bar_legacy import VIRTUAL_DEVICE_ID, StatusBarDevice
+
+    monkeypatch.setattr(display_brightness, "auto_led_brightness", lambda: 72)
+    bar = StatusBarDevice(VIRTUAL_DEVICE_ID, "Screen Bar", Path("/tmp/x"), Path("/tmp/x/LEDS.LED"), True, "agent", 255,
+                          auto_brightness_enabled=True)
+    strip = StatusBarDevice("sidepulse:pro:TEST", "SidePulse", Path("/tmp/x"), Path("/tmp/x/LEDS.LED"), True, "agent", 255,
+                            auto_brightness_enabled=True)
+
+    def step(device, name: str):
+        plan = controller.ambient_brightness_plan_for_device(device)
+        return next(entry for entry in plan.trace if entry.name == name)
+
+    for mode in ("ambient", "display"):
+        controller.settings = controller.settings.with_auto_dim(AutoDimSettings(mode=mode))
+        assert step(bar, "base").after == 255
+        assert step(bar, "night_dim").factor == 1.0
+        assert step(strip, "base").after == 72
+        assert step(strip, "night_dim").factor == 0.3
+    controller.settings = controller.settings.with_auto_dim(
+        AutoDimSettings(mode="schedule", schedule_start_minutes=0, schedule_end_minutes=1439, schedule_fraction=0.3)
+    )
+    assert step(bar, "night_dim").factor == 0.3
+
+
 def test_set_setting_round_trips_auto_dim_by_dot_path(headless) -> None:  # noqa: F811
     controller = headless
     controller.applicationDidFinishLaunching_(None)

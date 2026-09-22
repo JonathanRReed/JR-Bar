@@ -12914,7 +12914,21 @@ class StatusBarController(NSObject):
     def ambient_brightness_plan_for_device(self, device: StatusBarDevice):
         """The full brightness policy result (with its trace) for one
         device; effective_brightness_for_device is its ``.brightness``."""
-        if not device.auto_brightness_enabled:
+        # The Screen Bar IS the display: its pixels already ride the
+        # backlight, which macOS dims with the room. Following the
+        # backlight again (auto brightness) or the lux / display auto-dim
+        # squares that dim -- measured 2026-09-22: the bar played a
+        # working pulse at brightness 72 of 255 in a dim room and read as
+        # brown paint. Deliberate dims (idle, sleep, Focus, the night
+        # schedule, the master dial) still apply.
+        is_screen_bar = device.device_id == VIRTUAL_DEVICE_ID
+        auto_dim = self.auto_dim_result()
+        night_factor = (
+            1.0
+            if is_screen_bar and auto_dim.mode in ("ambient", "display")
+            else auto_dim.factor
+        )
+        if is_screen_bar or not device.auto_brightness_enabled:
             base = device.brightness
         else:
             try:
@@ -12946,10 +12960,10 @@ class StatusBarController(NSObject):
                 now_monotonic=time.monotonic(),
             ),
             focus_factor=1.0,
-            night_factor=self.auto_dim_result().factor,
+            night_factor=night_factor,
             global_factor=float(self.settings.global_brightness_scale),
             escalation_boost=boost,
-            is_screen_bar=device.device_id == VIRTUAL_DEVICE_ID,
+            is_screen_bar=is_screen_bar,
             screen_bar_min_glow=float(self.settings.screen_bar_min_glow),
             dnd_factor=self.current_dnd_projection().brightness_factor,
         )
