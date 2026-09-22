@@ -1049,17 +1049,19 @@ struct MenuBarSpacerTests {
     private final class FakeHost: MenuBarBoundaryHost {
         var frame: CGRect? = CGRect(x: 1084, y: 0, width: 39, height: 24)
         var boundaryFrame: CGRect? { frame }
-        var boundaryOcclusion: NSWindow.OcclusionState? = .visible
-        var boundaryWindowProbe: String = ""
         var boundaryGlyphLength: CGFloat = 39
         var spacers: [CGFloat] = []
         func setBoundarySpacer(_ length: CGFloat) { spacers.append(length) }
-        var slims: [Bool] = []
-        func setAnchorSlim(_ slim: Bool) { slims.append(slim) }
         var anchorWantsVisibleSeat = true
-        var reseats = 0
-        var boundaryIconImage: NSImage? { nil }
-        func reseatStatusItem(desiredMidX: CGFloat?) { reseats += 1 }
+        var mirrors: [Bool] = []
+        func setFaceMirrored(_ mirrored: Bool) { mirrors.append(mirrored) }
+        var mirroredFaceFrame: NSRect?
+        var face = MenuBarIconFace()
+        var onFaceChange: (@MainActor () -> Void)?
+        var faceClicks = 0
+        func faceClicked() { faceClicks += 1 }
+        var menuPops = 0
+        func popUpMenu(in view: NSView) { menuPops += 1 }
         var onBoundaryClick: (@MainActor () -> Void)?
         var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
         var hiddenCount = 0
@@ -1127,7 +1129,7 @@ struct MenuBarSpacerTests {
         #expect(collapsed.hiddenControlLength == 39, "no edge: the icon alone")
     }
 
-    // MARK: Ear avoidance and the parked anchor
+    // MARK: Ear avoidance
 
     @Test("an item straddling the island edge still clamps the wing — side is by centre, not edge clearance")
     func earLimitStraddler() {
@@ -1182,62 +1184,5 @@ struct MenuBarSpacerTests {
             concealedApps: [:], sections: [:], revealed: [], chevron: nil,
             ourPID: 500)
         #expect(r2 == 824)
-    }
-
-    @Test("the icon's default seat clears the island's right edge — the notch-relative target parked it under the face")
-    func visibleSeatClearsIsland() {
-        // The live wound: a seed of screenW/2 + 115 landed the item at
-        // x≈871 on a 1512 screen — "just right of the notch" — but the
-        // band window reaches 980 (the wings' claims carry it past the
-        // island), so the face painted black over it. The seat is the
-        // covering surface's edge plus margin, or the notch edge plus
-        // the wings' maximum claim before the band lays out.
-        #expect(StatusItemController.visibleSeatMidX(coveringRight: 980, notchEdge: 848,
-                                                     screenW: 1512) == 1010)
-        #expect(StatusItemController.visibleSeatMidX(coveringRight: nil, notchEdge: 848,
-                                                     screenW: 1512)
-                == 848 + ScreenBarGeometry.wingContentMaxExtent + 30)
-        #expect(StatusItemController.visibleSeatMidX(coveringRight: nil, notchEdge: nil,
-                                                     screenW: 1512) == 871,
-                "notch-less screens keep the old guess — nothing covers an item there")
-    }
-
-    @Test("the seat target is just left of the leftmost shown item clear of the band — ours, the «, ghosts and stale left-standers never count")
-    func visibleSeatTargetIsLeftOfTheVisibleRun() {
-        let row = [CGRect(x: 0, y: 0, width: 1512, height: 24)]
-        // The live listing under the concealer: our anchor at 848 under
-        // the band (to 980), a stale hidden-run ghost at 905 (also under
-        // the band), the « at 1080, Wi-Fi at 1092 as the first shown
-        // item in the open, weather beyond it, and a parked item
-        // reporting an off-row frame.
-        let shown = [
-            item("ours", owner: "JR-Bar", x: 848, w: 28, pid: 999),
-            item("ghost", owner: "Ollama", x: 905),
-            item("overflow", owner: "MenuBarAgent", x: 1080, w: 12, overflow: true),
-            item("wifi", owner: "MenuBarAgent", x: 1092, w: 30),
-            item("weather", owner: "WeatherMenu", x: 1161, w: 60),
-            item("parked", owner: "Shottr", x: 7, y: 970),
-        ]
-        let target = MenuBarUtility.visibleSeatTarget(shown: shown, rows: row, ourPID: 999,
-                                                      clearOf: 980, ownWidth: 28)
-        #expect(target == 1074.0, "Wi-Fi's left edge less the gap and half our width")
-        // Nothing shown past the band: no target — the host's default
-        // seat (clear of the face) stands in.
-        let none = MenuBarUtility.visibleSeatTarget(shown: Array(shown.prefix(3)), rows: row,
-                                                    ourPID: 999, clearOf: 980, ownWidth: 28)
-        #expect(none == nil)
-    }
-
-    @Test("the pixel verdict: a slot with no lit pixels is parked — frames and flags all lie")
-    func parkedByPixels() {
-        // The live wound: slot (824, 69) answered AX healthy while its
-        // pixels composited nothing — the only honest read is the
-        // capture's luma, not a surface list that never contains
-        // status-item windows.
-        let slotPixels = 78 * 48  // a 39×24pt slot at 2x
-        #expect(MenuBarUtility.iconParked(litPixels: 0, slotPixels: slotPixels))
-        #expect(MenuBarUtility.iconParked(litPixels: 4, slotPixels: slotPixels))
-        #expect(!MenuBarUtility.iconParked(litPixels: 5, slotPixels: slotPixels))
-        #expect(!MenuBarUtility.iconParked(litPixels: 400, slotPixels: slotPixels))
     }
 }

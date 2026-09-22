@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import JRBarUI
+import OSLog
 import QuartzCore
 
 /// `redraw`'s decision, computed pure so the reconciliation rules are
@@ -31,16 +32,22 @@ struct StatusItemPlan: Equatable {
 /// small chevron beside it while anything is tucked away; a click on
 /// the blank part is the reveal, a click on the icon is the panel as
 /// ever.
+///
+/// Under the macOS 27 concealer macOS draws none of this — it will not
+/// draw the asserting identity's own item — so the utility's
+/// `MenuBarIconMirror` carries the icon instead: this item goes slim
+/// and blank (`setFaceMirrored`), pushes its face to the mirror, and
+/// anchors the panel on the mirror's frame.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost {
     /// The `AXIdentifier` JR-Bar's own status item carries.
     nonisolated static let accessibilityIdentifier = "com.jonathanreed.jrbar.status-item"
+    /// The one autosave name the item registers under — the key macOS
+    /// files the person's ⌘-drag placement under.
+    nonisolated static let autosaveName = "com.jonathanreed.jrbar.status-item"
+    private static let log = Logger(subsystem: "devin.jrbar", category: "status-item")
 
-    /// `var`, not `let`: the item is re-created by `reseatStatusItem`
-    /// when the menu-bar agent leaves it a ghost — registered while an
-    /// assertion held, it keeps a stale slot and draws nothing until a
-    /// fresh registration lands inside a suspend window.
-    private var statusItem: NSStatusItem
+    private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let headerItem = NSMenuItem()
     private let detailItem = NSMenuItem()
@@ -57,6 +64,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// re-fold without re-deciding.
     private var naturalImage: NSImage?
     private var naturalWidth: CGFloat = 0
+    /// What the button wears when it is the icon — the natural image, or
+    /// the folded composite with a spacer out. `dressButton` decides
+    /// whether it actually goes on.
+    private var wornImage: NSImage?
+    /// Whether the panel is open — the button's highlight, and the
+    /// mirror's.
+    private var panelOpen = false
     /// Points of blank bar the item claims left of its icon — the Menu
     /// Bar utility's spacer. 0 is the plain icon.
     private(set) var boundarySpacer: CGFloat = 0
@@ -124,25 +138,23 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// One tooltip line per session for the `agents` style
     /// ("docs-sweep · waiting on you 2h 31m · Gemini"), same order.
     var sessionLines: [String] = [] { didSet { if sessionLines != oldValue { redraw() } } }
-    private static let pulseKey = "jrbar.escalationPulse"
     /// The breathing clock: two frames a second, only while the dot moves.
     private static let breathingInterval: TimeInterval = 0.5
     private var breathing: Timer?
     private var phase: Double = 0
-    /// The width the status item was last given, so a same-width redraw
-    /// does not churn the menu bar's layout.
+    /// A strip's own width as the plan last gave it; 0 for the square
+    /// and label styles. `syncLength` writes the item's length only when
+    /// it changes, so a same-width redraw never churns the bar's layout.
     private var currentWidth: CGFloat = 0
 
     override init() {
-        Self.seedPreferredPosition(for: "com.jonathanreed.jrbar.status-item")
+        Self.seedPreferredPosition()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
         wireStatusItem()
-
-        if let button = statusItem.button {
-            button.image = renderer.image(for: StatusIconSpec(style: .agents))
-        }
+        wornImage = renderer.image(for: StatusIconSpec(style: .agents))
+        dressButton()
 
         headerItem.isEnabled = false
         detailItem.isEnabled = false
@@ -211,95 +223,74 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         onMenuWillOpen?()
     }
 
-    /// The identity and wiring a fresh status item needs — autosave name,
-    /// AX identifier, button target/action. Runs at init and again on
-    /// every re-seat.
-    /// How many times this process has re-seated the item — each re-seat
-    /// registers under a fresh autosave name because the parked generation's
-    /// record re-parks any recreation that reuses it (the wound the chevron
-    /// fix documented under `menubar-chevron-v2`).
-    private var reseatCount = 0
+    /// The `NSStatusItem Preferred Position` record macOS files the
+    /// item's slot under. It is a sort key, not a measure — larger sorts
+    /// further left (measured 2026-09-22: 300 → x 1062, 420 → 916, 440
+    /// and up → the leftmost slot under the notch). It only decides
+    /// anything while the item itself is the icon: the concealer off,
+    /// another provider, the spacer engine. Under the concealer the
+    /// mirror carries the face wherever macOS puts the item.
+    nonisolated static let preferredPositionKey = "NSStatusItem Preferred Position \(autosaveName)"
+    /// Marks the one-time sweep of the records the retired seat walk
+    /// left: it overwrote the primary record at every step and
+    /// registered `-rN` generations, none of them a placement the person
+    /// chose.
+    nonisolated static let seatMigrationKey = "jrbar.statusItemSeat.v2"
 
-    /// Writes the `NSStatusItem Preferred Position` record a fresh
-    /// autosave name needs before it registers — the value a Command-drag
-    /// would store. macOS reads it as the distance from the screen's
-    /// right edge to the item's centre (measured 2026-09-21: a seed of
-    /// 640 landed a probe at x≈861; the seed is a preference, so the
-    /// nearest legal slot wins when the target is taken). With no record
-    /// a new item seeds at the bar's leftmost free run — the notch dead
-    /// zone on this hardware — and parks there, which is how an unseeded
-    /// re-seat kept recreating the ghost. An existing record is the
-    /// person's own placement and is never overwritten unless `overwrite`
-    /// is passed — re-seat names are our own transient records, and a
-    /// poisoned one must never survive into the next registration.
+    /// Seeds the record before the item registers — best effort, since
+    /// macOS offers no placement API. Once, the walk's records go; then,
+    /// only while no record exists, the item seeds just left of Wi-Fi.
+    /// A record that exists is the person's ⌘-drag and is never
+    /// overwritten.
     ///
     /// The write is synchronised before returning: `UserDefaults.set`
-    /// only updates the in-memory cache and flushes on its own schedule,
-    /// and an item registered in the same run loop turn reads cfprefsd
-    /// before the seed lands there — measured 2026-09-21: every in-process
-    /// seeded re-seat still parked until the write was forced down.
-    static func seedPreferredPosition(for name: String,
-                                      desiredMidX: CGFloat? = nil,
-                                      overwrite: Bool = false) {
-        let key = "NSStatusItem Preferred Position \(name)"
-        if !overwrite, UserDefaults.standard.object(forKey: key) != nil { return }
-        let screenW = NSScreen.main?.frame.width
-            ?? CGDisplayBounds(CGMainDisplayID()).width
-        let midX = desiredMidX ?? visibleSeatMidX(screenW: screenW)
-        UserDefaults.standard.set(Float(screenW - midX), forKey: key)
-        UserDefaults.standard.synchronize()
-    }
-
-    /// The seat the icon wants when nothing says otherwise: the first
-    /// slot clear of the band's covering surface — the leftmost
-    /// position of the *visible* extras run. The Screen Bar window
-    /// overhangs the physical notch by the wings' claim (up to
-    /// `wingContentMaxExtent`, measured 132 pt live), so the old target
-    /// of "just right of the notch" (screenW/2 + 115 → x≈871) seated the
-    /// item under the band's right wing where its housing and tray paint
-    /// black over it — the invisible-icon wound of 2026-09-22. The live
-    /// window frame wins once the band is up; before layout the notch's
-    /// right edge plus the wings' maximum claim is the estimate, and on
-    /// a notch-less screen it falls back to the old centre-right guess —
-    /// no surface is covering anything there anyway.
-    static func visibleSeatMidX(screenW: CGFloat) -> CGFloat {
-        visibleSeatMidX(coveringRight: ScreenBarGeometry.coveringScreenRect?.maxX,
-                        notchEdge: NSScreen.main?.auxiliaryTopRightArea?.minX,
-                        screenW: screenW)
-    }
-
-    /// The seat's pure math: the covering surface's live right edge wins
-    /// (the band window outreaches the island — its wings' claims carry
-    /// it past the notch), the notch edge plus the wings' maximum claim
-    /// is the pre-layout estimate, and a notch-less screen keeps the old
-    /// centre-right guess — nothing covers an item there.
-    nonisolated static func visibleSeatMidX(coveringRight: CGFloat?,
-                                            notchEdge: CGFloat?,
-                                            screenW: CGFloat) -> CGFloat {
-        if let coveringRight { return coveringRight + visibleSeatMargin }
-        if let notchEdge {
-            return notchEdge + ScreenBarGeometry.wingContentMaxExtent + visibleSeatMargin
+    /// only updates the in-memory cache, and an item registered in the
+    /// same run-loop turn reads cfprefsd before the seed lands there
+    /// (measured 2026-09-21).
+    static func seedPreferredPosition(defaults: UserDefaults = .standard,
+                                      wifi: () -> Double? = wifiPreferredPosition) {
+        var wrote = false
+        if !defaults.bool(forKey: seatMigrationKey) {
+            for key in defaults.dictionaryRepresentation().keys
+                where key == preferredPositionKey || key.hasPrefix(preferredPositionKey + "-r") {
+                defaults.removeObject(forKey: key)
+            }
+            defaults.set(true, forKey: seatMigrationKey)
+            wrote = true
         }
-        return screenW / 2 + 115
+        if defaults.object(forKey: preferredPositionKey) == nil {
+            defaults.set(rightSideSeedKey(wifi: wifi()), forKey: preferredPositionKey)
+            wrote = true
+        }
+        if wrote { defaults.synchronize() }
     }
 
-    /// How far past the island's right edge the icon's centre sits —
-    /// half the widest style plus a gap, so even a full-width meters
-    /// strip lands entirely clear of the face.
-    nonisolated static let visibleSeatMargin: CGFloat = 30
+    /// The fresh seed: just left of Wi-Fi when Control Center keeps a
+    /// record for it (a slightly larger key sorts just left of it), else
+    /// a key that sorts into the right-hand run of a typical bar.
+    nonisolated static func rightSideSeedKey(wifi: Double?) -> Double {
+        wifi.map { $0 + 4 } ?? 250
+    }
 
+    /// Control Center's own record for Wi-Fi — the right-hand run's
+    /// anchor. nil when it has none.
+    nonisolated static func wifiPreferredPosition() -> Double? {
+        let value = CFPreferencesCopyAppValue("NSStatusItem Preferred Position WiFi" as CFString,
+                                              "com.apple.controlcenter" as CFString)
+        return (value as? NSNumber)?.doubleValue
+    }
+
+    /// The identity and wiring the item needs — autosave name, AX
+    /// identifier, button target/action, the appearance watch.
     private func wireStatusItem() {
         // Where the item sits is the person's to choose (Command-drag);
         // macOS gives no API to ask for a slot. A stable autosave name is
         // the one thing the app can do: it is the key macOS remembers that
         // choice under, so a rebuild does not send the item back to the
         // middle of a busy menu bar.
-        statusItem.autosaveName = reseatCount == 0
-            ? "com.jonathanreed.jrbar.status-item"
-            : "com.jonathanreed.jrbar.status-item-r\(reseatCount)"
-        logProbeOnce()
+        statusItem.autosaveName = Self.autosaveName
         // The Menu Bar utility finds this item in the AX listing by the
-        // identifier — its slot is where a migrated chevron seats.
+        // identifier.
         statusItem.button?.setAccessibilityIdentifier(Self.accessibilityIdentifier)
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
@@ -307,98 +298,35 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             button.target = self
             button.action = #selector(clicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // The bar's appearance follows the wallpaper under it; the
+            // mirror resolves its template glyph against the same one.
+            appearanceWatch = button.observe(\.effectiveAppearance) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.onFaceChange?() }
+            }
         }
     }
 
-    /// The Menu Bar utility's adoption repair: drop the ghosted item and
-    /// register a fresh one (inside the agent's suspend window, where the
-    /// re-registration is adopted). The parked slot's saved position would
-    /// re-park the fresh item, so its defaults key goes first.
-    func reseatStatusItem(desiredMidX: CGFloat?) {
-        statusItem.button?.target = nil
-        statusItem.button?.action = nil
-        // Seed the fresh name at the item's *intended* slot, not the
-        // frame it reports now: a re-seat only ever runs against a
-        // parked item, and a parked window's screen frame is the
-        // off-row park slot — seeding from it re-parks the recreation
-        // (measured 2026-09-21: parked frames fed midX≈18, every
-        // re-seat landed at (7,970) again). The caller's target is the
-        // left end of the visible run; with none, the default sits
-        // just clear of the band, the slot a healthy layout gives us.
-        let midX = desiredMidX
-        NSStatusBar.system.removeStatusItem(statusItem)
-        reseatCount += 1
-        // Re-seat names repeat across launches (reseatCount restarts at
-        // 0), so a poisoned record from an earlier session would outlive
-        // the guard — overwrite is the only honest write here.
-        Self.seedPreferredPosition(
-            for: "com.jonathanreed.jrbar.status-item-r\(reseatCount)",
-            desiredMidX: midX, overwrite: true)
-        // The primary record put the item where a re-seat was needed —
-        // under the band's face or off the row — so it was never a
-        // placement the person chose. Move it to the seat this re-seat
-        // takes, so the next launch registers there directly instead of
-        // repeating the covered beat and the re-seat.
-        Self.seedPreferredPosition(
-            for: "com.jonathanreed.jrbar.status-item",
-            desiredMidX: midX, overwrite: true)
-        // Born slim under the agent — a variable-length birth would
-        // claim the icon's full width for a beat and could park before
-        // the clamp lands.
-        statusItem = NSStatusBar.system.statusItem(
-            withLength: anchorSlim ? Self.anchorSlimLength : NSStatusItem.variableLength)
-        wireStatusItem()
-        // Re-apply the face the old item wore: force the redraw past the
-        // spec cache, then fold the boundary spacer back into the length.
-        currentSpec = nil
-        redraw()
-        refold()
-    }
-
-    /// The button's frame in screen coordinates, for anchoring the panel.
+    /// Where the icon is on screen, for anchoring the panel: the
+    /// mirror's face while it carries the icon, else the button. The
+    /// panel's click-through test reads the same rect, so a second click
+    /// on the visible icon closes the panel rather than closing and
+    /// reopening it.
     var anchorRect: NSRect? {
+        if faceMirrored, let mirroredFaceFrame { return mirroredFaceFrame }
         guard let button = statusItem.button, let window = button.window else { return nil }
         return window.convertToScreen(button.convert(button.bounds, to: nil))
     }
 
     // MARK: MenuBarBoundaryHost
 
-    /// The item's frame in Quartz coordinates (top-left origin), the
-    /// space the Menu Bar utility measures in.
+    /// The icon's frame in Quartz coordinates (top-left origin), the
+    /// space the Menu Bar utility measures in — the mirror's face while
+    /// it carries the icon.
     var boundaryFrame: CGRect? {
         guard let rect = anchorRect else { return nil }
         let height = CGDisplayBounds(CGMainDisplayID()).height
         return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
     }
-
-    /// The item window's occlusion state — the honest read on whether the
-    /// surface composites. A parked item's window reports its logical
-    /// frame forever; only the occlusion says nothing is on the glass.
-    var boundaryOcclusion: NSWindow.OcclusionState? {
-        statusItem.button?.window?.occlusionState
-    }
-
-    func logProbeOnce() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
-            guard let self else { return }
-            NSLog("JRBAR-PROBE healthy-read: \(self.boundaryWindowProbe)")
-        }
-    }
-
-    var boundaryWindowProbe: String {
-        guard let w = statusItem.button?.window else { return "window=nil" }
-        let num = w.windowNumber
-        let onScreen = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
-        let ours = onScreen.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == Int32(ProcessInfo.processInfo.processIdentifier) }
-        let bounds = ours.compactMap { $0[kCGWindowBounds as String] as? [String: Double] }
-            .map { "(\($0["X"]!),\($0["Y"]!),\($0["Width"]!)x\($0["Height"]!))" }
-        return "isVis=\(w.isVisible) space=\(w.isOnActiveSpace) screen=\(w.screen != nil) alpha=\(w.alphaValue) num=\(num) cgwindows=\(bounds)"
-    }
-
-    /// The face the item currently draws — read straight off the button
-    /// so the concealer's mirror shows whatever style is live, meters
-    /// and all.
-    var boundaryIconImage: NSImage? { statusItem.button?.image }
 
     /// The icon's own width — the part of the item that is not spacer.
     var boundaryGlyphLength: CGFloat {
@@ -414,30 +342,125 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         refold()
     }
 
-    /// Under the agent a `.hidden` icon asks for no bar seat at all —
-    /// the slim clamp holds its slot to `anchorSlimLength` inside the
-    /// notch-adjacent niche under the island face. A visible style seats
-    /// in the open extras run instead, where its natural width has room.
-    private var anchorSlim = false
-
-    /// The seat contract: `.hidden` draws nothing and keeps the free
-    /// niche under the island; every other style is a real icon and
-    /// belongs in the visible extras run — the utility reads this to
-    /// decide slimming and whether a face-covered anchor needs reseating.
+    /// Every style but `.hidden` draws an icon — only a drawn icon is
+    /// worth a mirror under the concealer.
     var anchorWantsVisibleSeat: Bool { iconStyle != .hidden }
+    /// The slot the item keeps while the mirror carries its face.
     nonisolated static let anchorSlimLength: CGFloat = 28
 
-    func setAnchorSlim(_ slim: Bool) {
-        guard slim != anchorSlim else { return }
-        anchorSlim = slim
-        refold()
-        if slim { statusItem.length = Self.anchorSlimLength }
+    /// Whether the concealer's mirror carries the icon. While it does
+    /// the button wears nothing and keeps the slim slot: under the
+    /// assertion macOS draws no pixels of ours anyway, and a lift of it
+    /// (a bridged clock or Wi-Fi click, 0.45 s) would otherwise flash a
+    /// second icon wherever macOS keeps the real item.
+    private(set) var faceMirrored = false
+    /// The mirror's face frame in AppKit screen coordinates — written by
+    /// the utility on every move, nil while the mirror is down.
+    var mirroredFaceFrame: NSRect?
+    /// Fires whenever `face` changes — the mirror's feed.
+    var onFaceChange: (@MainActor () -> Void)?
+    private var appearanceWatch: NSKeyValueObservation?
+
+    /// Hand the icon to the mirror or take it back — the one owner of
+    /// the slim clamp and of the blank face.
+    func setFaceMirrored(_ mirrored: Bool) {
+        guard mirrored != faceMirrored else { return }
+        faceMirrored = mirrored
+        if !mirrored { mirroredFaceFrame = nil }
+        dressButton()
+        syncLength()
     }
 
-    /// Every slot-width write goes through here so the slim clamp is
-    /// impossible to bypass.
-    private func applyItemLength(_ length: CGFloat) {
-        statusItem.length = anchorSlim ? Self.anchorSlimLength : length
+    /// What the icon wears, for the mirror — built from the model, never
+    /// read off the button's pixels, which are blank while mirrored.
+    var face: MenuBarIconFace {
+        let button = statusItem.button
+        return MenuBarIconFace(
+            image: naturalImage ?? wornImage,
+            tint: button?.contentTintColor,
+            title: currentLabel.map(Self.labelTitle),
+            length: currentWidth > 0 ? currentWidth
+                : (currentLabel == nil ? NSStatusBar.system.thickness : 0),
+            highlighted: panelOpen,
+            pulsing: pulseDrawsOnLayer,
+            toolTip: button?.toolTip,
+            accessibilityLabel: button?.accessibilityLabel(),
+            appearance: button?.effectiveAppearance,
+            hiddenCount: hiddenCount,
+            hiddenRevealed: hiddenRevealed)
+    }
+
+    /// The mirror's ordinary click — the button's left click.
+    func faceClicked() {
+        onTogglePanel?()
+    }
+
+    /// The mirror's right/Option click: the item's full menu, Hidden
+    /// Items prepared as the button's own secondary click prepares it,
+    /// dropped from the bar's bottom edge at the face's left — where a
+    /// status item's menu opens.
+    func popUpMenu(in view: NSView) {
+        guard let window = view.window else { return }
+        prepareHiddenItemsRow()
+        let face = window.convertToScreen(view.convert(view.bounds, to: nil))
+        let barBottom = (window.screen ?? NSScreen.screens.first)?.visibleFrame.maxY ?? face.minY
+        menu.popUp(positioning: nil, at: NSPoint(x: face.minX, y: min(face.minY, barBottom)), in: nil)
+    }
+
+    /// The one place the button's pixels are written — image and label
+    /// alike — so the blank face while mirrored cannot be bypassed.
+    private func dressButton() {
+        guard let button = statusItem.button else { return }
+        let worn = Self.worn(image: wornImage, label: currentLabel, mirrored: faceMirrored)
+        if button.image !== worn.image { button.image = worn.image }
+        if let label = worn.label {
+            if button.attributedTitle.string != label || button.imagePosition != .imageLeading {
+                button.attributedTitle = Self.labelTitle(label)
+                button.imagePosition = .imageLeading
+                button.imageHugsTitle = true
+            }
+        } else if !button.title.isEmpty || button.imagePosition != .imageOnly {
+            button.title = ""
+            button.imagePosition = .imageOnly
+        }
+    }
+
+    /// What the button wears: nothing while the mirror carries the
+    /// face, its own image and label otherwise. Pure so a test pins the
+    /// blank.
+    nonisolated static func worn(image: NSImage?, label: String?,
+                                 mirrored: Bool) -> (image: NSImage?, label: String?) {
+        mirrored ? (nil, nil) : (image, label)
+    }
+
+    /// Every slot-width write goes through here, so the slim clamp is
+    /// impossible to bypass and every path back from it lands on the
+    /// same natural width.
+    private func syncLength() {
+        let length = Self.itemLength(mirrored: faceMirrored, hasLabel: currentLabel != nil,
+                                     spacer: boundarySpacer, stripWidth: currentWidth,
+                                     glyphWidth: naturalWidth)
+        if statusItem.length != length { statusItem.length = length }
+    }
+
+    /// The item's length: the slim slot while mirrored; otherwise a
+    /// label's variable length, the folded width with a spacer out, a
+    /// strip's own width, or the square.
+    static func itemLength(mirrored: Bool, hasLabel: Bool, spacer: CGFloat,
+                           stripWidth: CGFloat, glyphWidth: CGFloat) -> CGFloat {
+        if mirrored { return anchorSlimLength }
+        if hasLabel { return NSStatusItem.variableLength }
+        if spacer > 0 { return (stripWidth > 0 ? stripWidth : glyphWidth) + spacer }
+        if stripWidth > 0 { return stripWidth }
+        return NSStatusItem.squareLength
+    }
+
+    /// The label style's title, as the button and the mirror draw it.
+    static func labelTitle(_ label: String) -> NSAttributedString {
+        NSAttributedString(string: label, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+        ])
     }
 
     /// The face the button wears: the natural image, or — with a spacer
@@ -450,33 +473,33 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         guard let button = statusItem.button, let source = naturalImage else { return }
         let chevron = boundarySpacer > 0
         if boundarySpacer <= 0 {
-            if button.image !== source { button.image = source }
+            wornImage = source
             button.imageScaling = .scaleProportionallyDown
-            if currentWidth > 0, statusItem.length != currentWidth { applyItemLength(currentWidth) }
-            return
-        }
-        // A template strip tints itself; a coloured strip (the session
-        // dots) does not, so the hint takes the bar's own label colour
-        // resolved under the button's appearance — black on a dark bar
-        // is no hint at all.
-        let appearance = button.effectiveAppearance
-        var tint = NSColor.labelColor
-        appearance.performAsCurrentDrawingAppearance {
-            tint = NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
-        }
-        let folded: NSImage
-        if let cache = foldedCache, cache.source === source, cache.spacer == boundarySpacer,
-           cache.chevron == chevron, cache.appearance == appearance.name.rawValue {
-            folded = cache.image
         } else {
-            folded = Self.folded(source, spacer: boundarySpacer, chevron: chevron,
-                                 hintTint: source.isTemplate ? nil : tint)
-            foldedCache = (source, boundarySpacer, chevron, appearance.name.rawValue, folded)
+            // A template strip tints itself; a coloured strip (the session
+            // dots) does not, so the hint takes the bar's own label colour
+            // resolved under the button's appearance — black on a dark bar
+            // is no hint at all.
+            let appearance = button.effectiveAppearance
+            var tint = NSColor.labelColor
+            appearance.performAsCurrentDrawingAppearance {
+                tint = NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
+            }
+            let folded: NSImage
+            if let cache = foldedCache, cache.source === source, cache.spacer == boundarySpacer,
+               cache.chevron == chevron, cache.appearance == appearance.name.rawValue {
+                folded = cache.image
+            } else {
+                folded = Self.folded(source, spacer: boundarySpacer, chevron: chevron,
+                                     hintTint: source.isTemplate ? nil : tint)
+                foldedCache = (source, boundarySpacer, chevron, appearance.name.rawValue, folded)
+            }
+            wornImage = folded
+            button.imageScaling = .scaleNone
         }
-        if button.image !== folded { button.image = folded }
-        button.imageScaling = .scaleNone
-        let width = (currentWidth > 0 ? currentWidth : naturalWidth) + boundarySpacer
-        if statusItem.length != width { applyItemLength(width) }
+        dressButton()
+        syncLength()
+        onFaceChange?()
     }
 
     /// The composite: `spacer` points of nothing, then the icon, drawn
@@ -525,10 +548,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             tip += " · \(hiddenCount) menu bar item\(hiddenCount == 1 ? "" : "s") tucked away to the left — hover or click the blank stretch to reveal"
         }
         button.toolTip = tip
+        onFaceChange?()
     }
 
     func setPanelOpen(_ open: Bool) {
+        panelOpen = open
         statusItem.button?.highlight(open)
+        onFaceChange?()
     }
 
     func update(state: AgentAggregateState, detail: String) {
@@ -615,7 +641,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             let image = renderer.image(for: spec)
             naturalImage = image
             naturalWidth = plan.stripWidth ?? StatusIconRenderer.size(for: spec).width
-            if boundarySpacer <= 0, button.image !== image { button.image = image }
             // A template image takes the tint from the button; a coloured
             // one carries its own. A strip is never tinted whole:
             // its dots and meters carry the only colour that means anything.
@@ -623,13 +648,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             if let width = plan.stripWidth {
                 if width != currentWidth {
                     currentWidth = width
-                    if boundarySpacer <= 0 { applyItemLength(width) }
                     logFrame(width: width)
                 }
             } else {
                 currentWidth = 0
             }
-            if boundarySpacer > 0 { refold() }
         }
         if strip {
             var tip = StatusIconRenderer.tooltip(spec, headline: stateSummary,
@@ -640,36 +663,23 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             button.toolTip = tip
             button.setAccessibilityLabel(StatusIconRenderer.accessibilityLabel(spec))
         }
-        if label != currentLabel || (strip && button.imagePosition != .imageOnly) {
-            currentLabel = label
-            if let label {
-                button.attributedTitle = NSAttributedString(string: label, attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium),
-                    .foregroundColor: NSColor.labelColor,
-                ])
-                button.imagePosition = .imageLeading
-                button.imageHugsTitle = true
-                applyItemLength(NSStatusItem.variableLength)
-            } else {
-                button.title = ""
-                button.imagePosition = .imageOnly
-                // A strip sets its own width above; the square styles are
-                // square — unless the boundary spacer owns the width.
-                if !strip, boundarySpacer <= 0 { applyItemLength(NSStatusItem.squareLength) }
-            }
-        }
+        currentLabel = label
+        // The fold wears the new image (folded or plain), then the label
+        // and the length follow through the same choke points.
+        refold()
     }
 
-    /// Every width change prints where the item is, the way the panel
-    /// prints its frame: `screencapture -R` can then crop exactly the
+    /// Every width change logs where the item is, the way the panel
+    /// logs its frame: `screencapture -R` can then crop exactly the
     /// status item, which is the only way to photograph it on a menu bar
     /// that collapses its extras.
     private func logFrame(width: CGFloat) {
         guard let rect = anchorRect, let screen = NSScreen.screens.first else { return }
         let top = screen.frame.maxY - rect.maxY
-        print(String(format: "status item: %@ %d meters (+%d) %d sessions dot=%@ x=%.0f y=%.0f w=%.0f h=%.0f top=%.0f (screencapture -R%.0f,%.0f,%.0f,%.0f)",
-                     iconStyle.rawValue, meters.count, meterOverflow, sessionDots.count, dotState.rawValue,
-                     rect.minX, rect.minY, width, rect.height, top, rect.minX, top, width, rect.height))
+        let line = String(format: "status item: %@ %d meters (+%d) %d sessions dot=%@ x=%.0f y=%.0f w=%.0f h=%.0f top=%.0f (screencapture -R%.0f,%.0f,%.0f,%.0f)",
+                          iconStyle.rawValue, meters.count, meterOverflow, sessionDots.count, dotState.rawValue,
+                          rect.minX, rect.minY, width, rect.height, top, rect.minX, top, width, rect.height)
+        Self.log.debug("\(line, privacy: .public)")
     }
 
     /// The 2 Hz clock behind the breathing dots: it runs only while a dot
@@ -731,20 +741,20 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private func applyPulseAnimation() {
         guard let button = statusItem.button else { return }
         button.wantsLayer = true
-        button.layer?.removeAnimation(forKey: Self.pulseKey)
-        let dotsPulse = iconStyle == .agents && !sessionDots.isEmpty
-        if isPulsing, !iconStyle.isMeters, !dotsPulse,
-           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 1.0
-            pulse.toValue = 0.3
-            pulse.duration = 0.7
-            pulse.autoreverses = true
-            pulse.repeatCount = .infinity
-            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            button.layer?.add(pulse, forKey: Self.pulseKey)
+        button.layer?.removeAnimation(forKey: MenuBarIconFace.pulseKey)
+        if pulseDrawsOnLayer {
+            button.layer?.add(MenuBarIconFace.pulseAnimation(), forKey: MenuBarIconFace.pulseKey)
         }
         button.layer?.opacity = 1
+        onFaceChange?()
+    }
+
+    /// Whether the escalation fades the whole icon — the glyph styles
+    /// only, and never under Reduce Motion.
+    private var pulseDrawsOnLayer: Bool {
+        let dotsPulse = iconStyle == .agents && !sessionDots.isEmpty
+        return isPulsing && !iconStyle.isMeters && !dotsPulse
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     func setFeed(description: String) {
@@ -781,25 +791,32 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         // utility's reveal, whichever button.
         if let event, let button = statusItem.button, boundarySpacer > 0 {
             let x = button.convert(event.locationInWindow, from: nil).x
-            MenuBarCombinedItem.log.notice("status click: x=\(x, privacy: .public) spacer=\(self.boundarySpacer, privacy: .public) win=\(event.locationInWindow.x, privacy: .public) type=\(event.type.rawValue, privacy: .public)")
+            Self.log.debug("status click: x=\(x, privacy: .public) spacer=\(self.boundarySpacer, privacy: .public) win=\(event.locationInWindow.x, privacy: .public) type=\(event.type.rawValue, privacy: .public)")
             if Self.clickIsOnSpacer(x: x, spacer: boundarySpacer) {
                 onBoundaryClick?()
                 return
             }
         }
         if secondary {
-            if let submenu = hiddenItemsMenu?() {
-                hiddenItemsMenuItem.submenu = submenu
-                hiddenItemsMenuItem.isHidden = false
-            } else {
-                hiddenItemsMenuItem.submenu = nil
-                hiddenItemsMenuItem.isHidden = true
-            }
+            prepareHiddenItemsRow()
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
         } else {
             onTogglePanel?()
+        }
+    }
+
+    /// The menu's "Hidden Menu Bar Items" row: the utility's submenu
+    /// while it runs, gone while it is parked. Both secondary clicks —
+    /// the button's and the mirror's — prepare it here.
+    private func prepareHiddenItemsRow() {
+        if let submenu = hiddenItemsMenu?() {
+            hiddenItemsMenuItem.submenu = submenu
+            hiddenItemsMenuItem.isHidden = false
+        } else {
+            hiddenItemsMenuItem.submenu = nil
+            hiddenItemsMenuItem.isHidden = true
         }
     }
 

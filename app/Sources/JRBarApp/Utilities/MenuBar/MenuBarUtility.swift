@@ -3,7 +3,6 @@ import ApplicationServices
 import CoreGraphics
 import JRBarCore
 import Observation
-import ScreenCaptureKit
 import SwiftUI
 
 /// The Menu Bar utility (docs/UTILITIES.md): owns the hider's spacer
@@ -18,13 +17,15 @@ import SwiftUI
 /// second boundary — a second status item of ours swapped places with
 /// the first on every reflow. Hiding is the boundary growing a spacer
 /// that packs those items off the row into macOS's own overflow;
-/// revealing collapses it. The object itself is
+/// revealing collapses it. Under the macOS 27 concealer the agent hides
+/// whole apps instead and reorders the bar itself, so sections there
+/// are explicit per app, and the icon is `MenuBarIconMirror` standing at
+/// the right end of the blank run. The object itself is
 /// a façade — the rules live in the pieces it wires: `MenuBarItemHider`
 /// measures and plans, `MenuBarReveal` decides what counts as a
-/// gesture, and the boundary's click toggles the run by hand. Nothing
-/// here posts mouse events: tile clicks go through `AXPress` — the one
-/// reposted-click fallback only fires when a person clicked a tile and
-/// the item's element could not be resolved.
+/// gesture, and the boundary's click toggles the run by hand. Tile
+/// clicks go through `AXPress`; an element that cannot be resolved
+/// raises its app instead — the pointer never moves.
 @MainActor
 @Observable
 final class MenuBarUtility: Toy {
@@ -206,71 +207,19 @@ final class MenuBarUtility: Toy {
     func openExternal() { externalProbe?.open() }
     /// Whether this build passes Gatekeeper — nil until probed.
     private(set) var notarized: Bool?
-    @ObservationIgnored private var ownAdoptionLogged = false
     /// When the concealer came up — the first assertion waits
     /// `adoptionGrace` past it so a relaunch's dying assertion has
-    /// drained and our own icon is adopted by the agent first.
-    /// Internal (not private) so the seed-race test can age the engine.
+    /// drained first. Internal (not private) so the seed-race test can
+    /// age the engine.
     @ObservationIgnored var concealerStartedAt = Date.distantPast
     /// Apps a deliberate Show released into the hidden zone: the
     /// boundary reconcile leaves them standing left of ‹ until they
     /// move in front of it or are re-hidden — a Show verb that the
     /// positional pass silently re-hid would read as broken.
     @ObservationIgnored private var boundaryExempt: Set<String> = []
-    @ObservationIgnored private var adoptionRetries = 0
-    @ObservationIgnored private var adoptionCheck: Task<Void, Never>?
-    /// When our own icon first read stale — an adoption suspend lives
-    /// inside the first 30 s of the engine or of a fresh staleness,
-    /// never in steady state.
-    @ObservationIgnored private var iconStaleSince: Date?
-    /// The paced re-seat tail for a ghosted anchor: the 3-try adoption
-    /// burst lives inside 30 seconds, but an invisible boundary is never
-    /// a state to settle into — past the burst the icon alone keeps
-    /// earning suspend+re-seat attempts this far apart, up to a cap.
-    @ObservationIgnored private var iconReseats = 0
-    @ObservationIgnored private var lastIconReseat = Date.distantPast
-    @ObservationIgnored private var iconReseatExhaustedLogged = false
-    /// Consecutive dark pixel reads of the anchor's slot. The pixel
-    /// oracle is honest but not instant — the activation's own layout
-    /// transient can dark-read a healthy item, and a re-seat on that
-    /// one read destroys the registration it was meant to save. Two
-    /// consecutive dark reads make a confirmed park.
-    @ObservationIgnored private var parkedReads = 0
-    private static let iconReseatInterval: TimeInterval = 45
-    private static let maxIconReseats = 6
-    /// The `Preferred Position` record is a sort key, not a measure —
-    /// the agent orders items by it and packs the visible run, so a
-    /// seed of `screenW − midX` lands short of `midX` by whatever the
-    /// run's own keys dictate (measured 2026-09-22: 300 → x 1062,
-    /// 420 → 916, 440 and up → the leftmost slot under the notch). The
-    /// bias is the correction learned from the last landing: target
-    /// minus landed, added to the next seed's centre so the search
-    /// walks toward the slot instead of repeating the miss.
-    @ObservationIgnored private var seatBias: CGFloat = 0
-    @ObservationIgnored private var lastSeatTarget: CGFloat?
-    /// The pre-assertion seat walk: attempts spent, when the last one
-    /// registered, and whether the walk is over (seated, exhausted, or
-    /// out of time) — a finished walk never holds the assertion again.
-    @ObservationIgnored private var preSeatAttempts = 0
-    @ObservationIgnored private var lastPreSeat: Date = .distantPast
-    @ObservationIgnored private var preSeatDone = false
-    /// The bisection's bracket over the sort key: the last key tried,
-    /// the largest known to land right of the target, the smallest
-    /// known to land under the band or in the overflow.
-    @ObservationIgnored private var lastSeatKey: CGFloat?
-    @ObservationIgnored private var seatKeyLow: CGFloat?
-    @ObservationIgnored private var seatKeyHigh: CGFloat?
-    private static let maxPreSeatAttempts = 5
-    /// Listings run about a second apart; a landing must be listed
-    /// before the next aim reads it.
-    private static let preSeatPace: TimeInterval = 1.6
-    /// The walk's own budget past the engine start, after which the
-    /// assertion goes up with the icon wherever it stands.
-    private static let preSeatTimeout: TimeInterval = 20
     nonisolated static let adoptionGrace: TimeInterval = 2.5
-    /// The first assertion waits for our own icon at most this long —
-    /// a crowded bar can overlap it forever, which used to defer the
-    /// first assertion forever (and nothing ever hid).
+    /// How long the seed waits for our own item to list before it seeds
+    /// from the listing as it stands — a fresh install must never wedge.
     nonisolated static let adoptionTimeout: TimeInterval = 8
 
     /// Drag learning: the previous listing's on-row frames and the
@@ -304,6 +253,7 @@ final class MenuBarUtility: Toy {
         didSet {
             host?.onBoundaryClick = { [weak self] in self?.boundaryClicked() }
             host?.hiddenItemsMenu = { [weak self] in self?.hiddenItemsMenu() }
+            host?.onFaceChange = { [weak self] in self?.faceChanged() }
             if running { installChevron(); hider.controlsReinstalled() }
         }
     }
@@ -401,23 +351,18 @@ final class MenuBarUtility: Toy {
         // chevron opens on hover), while its click stays its own toggle.
         // The frame is the live control's — the host's boundary when one
         // hosts, the fallback chevron otherwise — and under the concealer
-        // the island's ‹ handle stands in, its frame published by the
-        // screen bar (the chevron's own parked surface reads a frame
-        // nowhere near its slot there).
+        // the ear's ‹ handle, its frame published by the screen bar,
+        // while it stands.
         reveal.hotFrames = { [weak self] in
             guard let self else { return [] }
             if self.concealer != nil {
-                // Under the agent there is no « to point at: only our
-                // own affordances answer a hover — the status item's
-                // slot widened a touch each side, the boundary
-                // chevron's when one stands, and the island's ‹
-                // handle. The row itself never does.
-                let height = CGDisplayBounds(CGMainDisplayID()).height
+                // Under the agent there is no « to point at, and the
+                // icon is never a hover target: its click is the panel,
+                // and a 0.18 s hover reveal raced that click and popped
+                // the Item Bar under the hand reaching for it. Only the
+                // fallback chevron and the ear's ‹ answer a hover; the
+                // blank run left of the icon is the reveal zone.
                 var frames: [NSRect] = []
-                if let boundary = self.host?.boundaryFrame {
-                    frames.append(NSRect(x: boundary.minX - 16, y: height - boundary.maxY,
-                                         width: boundary.width + 32, height: boundary.height))
-                }
                 if let chevron = self.chevronScreenFrame() {
                     frames.append(chevron.insetBy(dx: -16, dy: 0))
                 }
@@ -1248,31 +1193,17 @@ final class MenuBarUtility: Toy {
     /// planning (the card, the Item Bar, the reveal clock all read its
     /// plan) but never grows a spacer or draws a cover; the plan's
     /// sections come from the per-app map; the bridge takes the
-    /// system's clicks.
+    /// system's clicks; the mirror carries the icon.
     private func startConcealer() {
         runningApps.invalidate()
         let concealer = MenuBarConcealer()
         concealer.onChange = { [weak self] in self?.concealerChanged() }
         self.concealer = concealer
         concealerStartedAt = Date()
-        adoptionRetries = 0
-        iconReseats = 0
-        lastIconReseat = .distantPast
-        iconReseatExhaustedLogged = false
-        preSeatAttempts = 0
-        preSeatDone = false
-        lastPreSeat = .distantPast
-        lastSeatKey = nil
-        seatKeyLow = nil
-        seatKeyHigh = nil
         hider.shuttersSuppressed = true
-        // No affordance under the agent: the extra width pushed our slot
-        // left into the notch dead zone and parked the item unseen. And
-        // slim the anchor only when the icon draws nothing — a visible
-        // style seats in the open extras run at its natural width, while
-        // the hidden style keeps the free niche under the island face.
+        // No affordance under the agent: nothing of ours grows while the
+        // agent hides — the icon is the mirror's.
         host?.setBoundarySpacer(0)
-        host?.setAnchorSlim(!(host?.anchorWantsVisibleSeat ?? false))
         let bridge = MenuBarSystemClickBridge { [weak self] point in
             self?.bridgeClick(at: point)
         }
@@ -1289,39 +1220,123 @@ final class MenuBarUtility: Toy {
             })
         }
         MenuBarAssessmentBackend.log.notice("conceal: engine up (MenuBarClientCore resolved)")
-        // The agent draws no boundary of its own — stand the « toggle
-        // up so a hidden run still has a visible handle. And because the
-        // agent will not draw the asserting identity's own item, the
-        // icon's pixels ride the mirror window at the run's left end.
         installChevron()
         refreshChevron()
-        let mirror = MenuBarIconMirror()
-        mirror.iconSource = { [weak self] in self?.host?.boundaryIconImage }
-        mirror.onPrimaryClick = { [weak self] in self?.host?.onBoundaryClick?() }
-        mirror.onSecondaryClick = { [weak self] in self?.host?.hiddenItemsMenu?() }
-        iconMirror = mirror
+        iconMirror = makeIconMirror()
         updateIconMirror()
     }
 
-    /// The mirror shows while the assertion is up and the configured
-    /// style wants a seat — the band carries its pixels at the run's
-    /// left end. No band, no mirror: a notch-less screen keeps the real
-    /// item and its seat walk.
-    private var iconMirror: MenuBarIconMirror?
-    @ObservationIgnored private var mirrorActive = false
+    /// The icon while the concealer runs — see `MenuBarIconMirror`.
+    @ObservationIgnored private var iconMirror: MenuBarIconMirror?
+    /// Whether the mirror carries the icon right now; the ear's ‹ reads
+    /// it.
+    @ObservationIgnored private var iconMirrored = false
+    /// The last seat logged — the log speaks only when it moves.
+    @ObservationIgnored private var lastMirrorSeat: CGFloat?
 
+    /// The mirror, wired the way the real button is: the face's click is
+    /// the panel, its right/Option click the item's full menu, the ‹ the
+    /// hidden run's toggle. Internal so a test can drive the wiring
+    /// without an engine.
+    func makeIconMirror() -> MenuBarIconMirror {
+        let mirror = MenuBarIconMirror()
+        mirror.onPrimaryClick = { [weak self] in self?.host?.faceClicked() }
+        mirror.onSecondaryClick = { [weak self] view in self?.host?.popUpMenu(in: view) }
+        mirror.onChevronClick = { [weak self] in self?.host?.onBoundaryClick?() }
+        mirror.onPlace = { [weak self] frame in self?.host?.mirroredFaceFrame = frame }
+        if let face = host?.face { mirror.update(face: face) }
+        return mirror
+    }
+
+    /// When the mirror carries the icon: the engine is up, the style
+    /// draws an icon, and something is (or is about to be) concealed —
+    /// the assertion is live, a click-bridge lift is only a suspend, or
+    /// the engine has a target it is still asserting (the first 2.5 s
+    /// after start, while a relaunch's old assertion drains). Otherwise
+    /// no assertion holds and macOS draws the real item itself. Pure so
+    /// a test pins the table.
+    nonisolated static func mirrorsIcon(engineUp: Bool, styleDrawsIcon: Bool, concealing: Bool,
+                                        suspended: Bool, targetEmpty: Bool) -> Bool {
+        engineUp && styleDrawsIcon && (concealing || suspended || !targetEmpty)
+    }
+
+    /// The set the engine converges to: the map's hidden apps less the
+    /// live reveal — our own family never, whatever a stale map says
+    /// (the daemon's meter hid itself once).
+    private func concealTarget() -> Set<String> {
+        MenuBarConcealPlan.concealed(apps: settings().concealedApps, revealed: hider.revealed)
+            .filter { !Self.isOwnFamily($0) }
+    }
+
+    /// Settle who draws the icon and, while the mirror does, where it
+    /// stands. Runs on every plan pass and every engine change; the
+    /// window moves only when its frame does.
     private func updateIconMirror() {
-        let wants = (concealer?.isConcealing ?? false)
-            && (host?.anchorWantsVisibleSeat ?? false)
-            && ScreenBarGeometry.bandScreenRect != nil
-        mirrorActive = wants
-        if wants {
-            iconMirror?.show(bandRight: { ScreenBarGeometry.bandScreenRect?.maxX },
-                             row: { MenuBarItemLister.menuBarRows().first },
-                             screen: { NSScreen.main })
-        } else {
+        guard let concealer else { return }
+        let mirrored = Self.mirrorsIcon(engineUp: true,
+                                        styleDrawsIcon: host?.anchorWantsVisibleSeat ?? false,
+                                        concealing: concealer.isConcealing,
+                                        suspended: concealer.isSuspended,
+                                        targetEmpty: concealTarget().isEmpty)
+        iconMirrored = mirrored
+        host?.setFaceMirrored(mirrored)
+        guard mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first else {
             iconMirror?.hide()
+            return
         }
+        mirror.show(row: MenuBarItemLister.menuBarRow(), primaryMaxY: primary.frame.maxY) { width in
+            mirrorSeat(width: width)
+        }
+    }
+
+    /// The host redrew its face — style, tint, tooltip, highlight,
+    /// pulse, the hidden run's count. The mirror wears it and re-seats
+    /// (a label or the ‹ changes its width); a flip to or from the
+    /// `.hidden` style settles whether it stands at all.
+    private func faceChanged() {
+        guard concealer != nil, let host else { return }
+        iconMirror?.update(face: host.face)
+        updateIconMirror()
+    }
+
+    /// The mirror's left edge for a `width`-wide panel: flush left of
+    /// the first drawn item, from the right, with room to stand — the
+    /// right end of the blank run the concealed apps leave. Drawn is
+    /// every listed item on the main row that is not ours and not
+    /// concealed, the native « included. While no assertion holds (a
+    /// bridged click's lift, the start grace) the target counts as
+    /// concealed, so a 0.45 s reflow never walks the icon.
+    private func mirrorSeat(width: CGFloat) -> CGFloat {
+        let row = MenuBarItemLister.menuBarRow()
+        let clear = mirrorClearOf()
+        let concealed = (concealer?.isConcealing ?? false)
+            ? (concealer?.concealedApps ?? []) : concealTarget()
+        let ourPID = ProcessInfo.processInfo.processIdentifier
+        let drawn = (lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden).filter { item in
+            item.ownerPID != ourPID && Self.isForeignOwner(item.ownerName)
+                && item.bounds.intersects(row)
+                && !(item.bundleID.map { concealed.contains($0) } ?? false)
+        }.map(\.bounds)
+        let seat = MenuBarIconMirror.seatMinX(drawn: drawn, clearOf: clear, width: width)
+            ?? min(clear + 6, row.maxX - width)
+        if seat != lastMirrorSeat {
+            lastMirrorSeat = seat
+            MenuBarAssessmentBackend.log.debug("conceal: mirror seat \(String(format: "%.0f", seat), privacy: .public) w=\(String(format: "%.0f", width), privacy: .public) clear of \(String(format: "%.0f", clear), privacy: .public), \(drawn.count, privacy: .public) drawn")
+        }
+        return seat
+    }
+
+    /// Where nothing covers the row on the Quartz origin display: the
+    /// notch's right edge, or our band's (or island's) right edge when
+    /// it reaches further — the band window claims its ears' full
+    /// extent. The mirror seats, and the reveal zone starts, right of it.
+    private func mirrorClearOf() -> CGFloat {
+        guard let primary = NSScreen.screens.first else { return 0 }
+        let notch = primary.auxiliaryTopRightArea?.minX ?? 0
+        let covering = ScreenBarGeometry.coveringScreenRect.flatMap { rect in
+            primary.frame.contains(NSPoint(x: rect.midX, y: rect.midY)) ? rect.maxX : nil
+        } ?? 0
+        return max(notch, covering, 0)
     }
 
     /// A workspace launch or terminate under the concealer: refresh
@@ -1331,8 +1346,7 @@ final class MenuBarUtility: Toy {
     /// suspend: the bar never lifts for a launch — the steady-state
     /// `conceal: released` churn the old adoption beat caused several
     /// times an hour. Suspending survives only where a click must
-    /// physically land (the bridged system items) and in the early
-    /// adoption checks.
+    /// physically land: the bridged system items.
     func noteWorkspaceChange() {
         runningApps.invalidate()
         syncConcealer()
@@ -1340,9 +1354,12 @@ final class MenuBarUtility: Toy {
 
     func stopConcealer() {
         guard let concealer else { return }
-        mirrorActive = false
+        iconMirrored = false
         iconMirror?.hide()
         iconMirror = nil
+        lastMirrorSeat = nil
+        // The real item is the icon again, at its natural width.
+        host?.setFaceMirrored(false)
         runningApps.invalidate()
         // The drop lands now — a disable or quit must not leave the
         // run concealed for the drain; `releaseAll` invalidates the
@@ -1360,7 +1377,6 @@ final class MenuBarUtility: Toy {
         // again, and a standalone chevron would double it — without a
         // host it stays the separator, same as install.
         chevron?.isVisible = host == nil
-        host?.setAnchorSlim(false)
     }
 
     /// The bundle identifiers of every running app — the allowlist's
@@ -1814,10 +1830,12 @@ final class MenuBarUtility: Toy {
             && onRow(item.bounds) && !agentOwned(item) { coverAlways.append(item) }
         var blockers = plan.shown.map(\.bounds)
         if let boundary = host?.boundaryFrame { blockers.append(boundary) }
-        // The island (notch plus shoulders — the ears' home) and the
-        // standalone chevron are ours: a merged run must break at them
-        // or the cover paves the wing it shares the window level with.
+        // The island (notch plus shoulders — the ears' home), the icon's
+        // mirror (its ‹ included) and the standalone chevron are ours: a
+        // merged run must break at them or the cover paves a surface it
+        // shares the window level with.
         if let island = ScreenBarGeometry.islandScreenRect { blockers.append(island) }
+        if let mirror = iconMirror, mirror.isVisible { blockers.append(mirror.frame) }
         if let chevron = chevronScreenFrame() { blockers.append(chevron) }
         plan.hiddenCovers = MenuBarItemHider.coverRuns(covered: coverHidden, blockers: blockers)
         plan.alwaysHiddenCovers = MenuBarItemHider.coverRuns(covered: coverAlways, blockers: blockers)
@@ -2046,9 +2064,8 @@ final class MenuBarUtility: Toy {
     func seedConcealedAppsIfNeeded(from listing: MenuBarHidePlan) -> Bool {
         guard !settings().concealSeeded else { return true }
         // A fresh install whose own icon is parked at the first scan
-        // must not block the engine forever: past the same deadline
-        // `syncConcealer` asserts by, seed from the listing as it
-        // stands.
+        // must not block the engine forever: past `adoptionTimeout`,
+        // seed from the listing as it stands.
         let ownPresent = listing.shown.contains { !Self.isForeignOwner($0.ownerName) }
         guard ownPresent
                 || Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionTimeout
@@ -2061,462 +2078,26 @@ final class MenuBarUtility: Toy {
     private func syncConcealer() {
         guard let concealer else { return }
         // Nothing of ours grows under the agent — whatever the spacer
-        // engine wrote on the seeding pass folds back. No affordance:
-        // the extra width pushed our slot left into the notch dead
-        // zone, which parked the item unseen (measured 2026-09-16).
+        // engine wrote on the seeding pass folds back.
         host?.setBoundarySpacer(0)
-        // Not before our own icon stands on the row: an item registered
-        // while an assertion holds is not adopted by the agent, and the
-        // first assertion at launch left JR-Bar's own icon parked
-        // unseen (measured 2026-09-16).
-        let age = Date().timeIntervalSince(concealerStartedAt)
-        // Before the first assertion the agent adopts a registration at
-        // once — the one window where a re-seat lands where its key
-        // sorts it (under an assertion a re-registered item ghosts on a
-        // neighbour, measured 2026-09-22). Walk the icon to the left
-        // end of the run that stays visible, then assert.
-        if !concealer.isConcealing, preAssertionSeat(age: age) { return }
-        // Hard deadline: a crowded bar can keep our icon overlapping a
-        // neighbour forever, which made the first assertion wait forever
-        // (nothing ever hid). Past the deadline the assertion goes up
-        // regardless — the adoption check below still frees a parked icon.
-        let hardPast = age >= Self.adoptionTimeout
-        let settled = (!ownIconStale() && age >= Self.adoptionGrace) || hardPast
-        if hardPast, !ownAdoptionLogged {
-            ownAdoptionLogged = true
-            MenuBarAssessmentBackend.log.notice("conceal: adoption deadline passed with our icon still stale — asserting anyway")
-        }
-        guard settled || concealer.isConcealing else {
-            if !ownAdoptionLogged {
-                ownAdoptionLogged = true
-                MenuBarAssessmentBackend.log.notice("conceal: waiting for our own icon to land before the first assertion")
-            }
-            return
-        }
-        var concealed = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
-                                                     revealed: hider.revealed)
-        // Our family is never concealed — belt and suspenders against a
-        // stale map entry (the daemon's meter hid itself once).
-        concealed = concealed.filter { !Self.isOwnFamily($0) }
+        // The icon follows the engine from its first pass, not from the
+        // first assertion.
+        updateIconMirror()
+        // The first assertion waits out the grace: a relaunch's previous
+        // assertion is still draining for a beat after the engine comes
+        // up. Nothing else gates it — macOS never draws our own item
+        // under our assertion, so there is no adoption to wait for.
+        guard concealer.isConcealing
+                || Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionGrace else { return }
+        let concealed = concealTarget()
         concealer.apply(concealed: concealed, running: runningApps.snapshot())
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
-        // The band may appear or morph between assertion changes — the
-        // pass cadence keeps the mirror's seat honest.
-        updateIconMirror()
     }
 
     private func concealerChanged() {
         clickBridge?.update(items: lastPlan.shown, concealing: concealer?.isConcealing ?? false)
         refreshChevron()
         updateIconMirror()
-        scheduleAdoptionCheck()
-    }
-
-    /// Our own icon, as the agent draws it: an item the agent has not
-    /// adopted keeps a frame from before — stacked on a neighbour, or
-    /// off the row. A stale icon after an assertion means the agent
-    /// deferred it; a beat with no assertion lets it land (Pelmet's
-    /// adoption window), three tries at most.
-    private func ownIconStale() -> Bool {
-        let rows = MenuBarItemLister.menuBarRows()
-        let onRow: (CGRect) -> Bool = { bounds in rows.contains { $0.intersects(bounds) } }
-        guard let own = lastPlan.shown.first(where: { !Self.isForeignOwner($0.ownerName) }) else { return true }
-        guard onRow(own.bounds) else { return true }
-        let concealed = concealer?.concealedApps ?? []
-        return lastPlan.shown.contains { other in
-            Self.isForeignOwner(other.ownerName) && onRow(other.bounds)
-                && other.bundleID.map { !concealed.contains($0) } ?? true
-                && other.bounds.intersection(own.bounds).width > 3
-        }
-    }
-
-    /// Whether our own bar surface covers the item's slot: the anchor
-    /// seated inside the band window's span answers AX and reports
-    /// on-row, but the housing and ear tray paint black over it — the
-    /// icon composites nothing the person can see. The band window
-    /// outreaches the island (the wings' claims carry it past the notch
-    /// edge), so the band's span is the test. Only counts when the
-    /// configured style wants a real seat; a `.hidden` anchor belongs
-    /// under the face.
-    /// Where the icon belongs: the left end of the *visible* run, just
-    /// left of the leftmost shown item that stands clear of the band —
-    /// Bartender's grammar, the icon as the boundary with the hidden
-    /// run behind it. nil when no shown item is listed on the main row
-    /// past the band, in which case the host's default (clear of the
-    /// face) is the seat.
-    private func visibleSeatTarget() -> CGFloat? {
-        let cover = ScreenBarGeometry.coveringScreenRect
-            ?? NSScreen.main?.auxiliaryTopRightArea.map {
-                CGRect(x: 0, y: 0, width: $0.minX + ScreenBarGeometry.wingContentMaxExtent, height: 1)
-            }
-        let ownWidth = host?.boundaryFrame?.width ?? 28
-        return Self.visibleSeatTarget(shown: lastPlan.shown,
-                                      rows: MenuBarItemLister.menuBarRows(),
-                                      ourPID: ProcessInfo.processInfo.processIdentifier,
-                                      clearOf: cover?.maxX ?? 0,
-                                      ownWidth: ownWidth)
-    }
-
-    /// One step of the pre-assertion seat walk. Returns true while the
-    /// assertion must wait: a re-seat just went out, or its landing has
-    /// not been listed yet. False once the icon stands at the run's
-    /// left end (or the walk has spent its attempts or its time), and
-    /// from then on for the engine's life.
-    private func preAssertionSeat(age: TimeInterval) -> Bool {
-        // With a band the mirror carries the icon's pixels and the
-        // anchor belongs under the face — the walk exists for the
-        // band-free bar, where the item itself must stand visible.
-        guard !preSeatDone, host?.anchorWantsVisibleSeat ?? false,
-              ScreenBarGeometry.bandScreenRect == nil else { return false }
-        guard age < Self.preSeatTimeout, preSeatAttempts < Self.maxPreSeatAttempts else {
-            preSeatDone = true
-            MenuBarAssessmentBackend.log.notice("conceal: seat walk over after \(self.preSeatAttempts, privacy: .public) re-seats — asserting with the icon where it stands")
-            return false
-        }
-        // A landing lists a beat after registration — hold, don't aim
-        // at a frame the last re-seat is still moving.
-        guard Date().timeIntervalSince(lastPreSeat) >= Self.preSeatPace else { return true }
-        guard let own = host?.boundaryFrame, let target = visibleSeatTarget() else {
-            // No target: nothing shown past the band to seat beside.
-            // Covered under the band is still a wound worth one default
-            // re-seat; otherwise the icon is fine where it is.
-            if ownIconCovered(), preSeatAttempts == 0 {
-                preSeatAttempts += 1
-                lastPreSeat = Date()
-                host?.reseatStatusItem(desiredMidX: nil)
-                return true
-            }
-            preSeatDone = true
-            return false
-        }
-        // Seated: clear of the band and left of the first item that
-        // stays shown. Anything between us and it is bound for
-        // concealment, and the agent packs the run rightward over a
-        // concealed slot — so the icon ends up flush against that item.
-        let landed = own.midX
-        let covered = ownIconCovered()
-        if !covered, landed <= target + 6 {
-            preSeatDone = true
-            MenuBarAssessmentBackend.log.notice("conceal: icon seated at \(String(format: "%.0f", landed), privacy: .public) (target \(String(format: "%.0f", target), privacy: .public)) after \(self.preSeatAttempts, privacy: .public) re-seats")
-            return false
-        }
-        // The record is a sort key (larger sorts further left) and the
-        // landing is slot-quantised (measured 2026-09-22: 300 → 1062,
-        // 320 → 1030, 340 → 992 … 440+ → the leftmost slot), so the
-        // walk bisects the key between "landed under the band or in
-        // the notch overflow" (too large) and "landed right of the
-        // target" (too small).
-        let screenW = NSScreen.main?.frame.width ?? CGDisplayBounds(CGMainDisplayID()).width
-        if let lastKey = lastSeatKey {
-            if covered || landed <= target { seatKeyHigh = lastKey } else { seatKeyLow = lastKey }
-        }
-        let key: CGFloat
-        switch (seatKeyLow, seatKeyHigh) {
-        case (nil, nil): key = screenW - target
-        case (let lo?, nil): key = lo + 60
-        case (nil, let hi?): key = hi - 100
-        case (let lo?, let hi?): key = (lo + hi) / 2
-        }
-        lastSeatKey = key
-        preSeatAttempts += 1
-        lastPreSeat = Date()
-        MenuBarAssessmentBackend.log.notice("conceal: seat walk \(self.preSeatAttempts, privacy: .public)/\(Self.maxPreSeatAttempts, privacy: .public) — at \(String(format: "%.0f", landed), privacy: .public)\(covered ? " (covered)" : "", privacy: .public), target \(String(format: "%.0f", target), privacy: .public), key \(String(format: "%.0f", key), privacy: .public)")
-        host?.reseatStatusItem(desiredMidX: screenW - key)
-        return true
-    }
-
-    nonisolated static func visibleSeatTarget(shown: [MenuBarItem], rows: [CGRect], ourPID: pid_t,
-                                              clearOf: CGFloat, ownWidth: CGFloat) -> CGFloat? {
-        let candidates = shown.filter { item in
-            item.ownerPID != ourPID && !item.isNativeOverflowControl
-                && item.bounds.minX >= clearOf
-                && rows.contains { $0.intersects(item.bounds) }
-        }
-        guard let first = candidates.min(by: { $0.bounds.minX < $1.bounds.minX }) else { return nil }
-        return first.bounds.minX - 4 - ownWidth / 2
-    }
-
-    private func ownIconCovered() -> Bool {
-        // Under a band the anchor's niche IS under the face — the
-        // mirror carries its pixels — so "covered" is only a wound on a
-        // band-free bar.
-        guard ScreenBarGeometry.bandScreenRect == nil,
-              host?.anchorWantsVisibleSeat ?? false,
-              let cover = ScreenBarGeometry.coveringScreenRect,
-              let own = host?.boundaryFrame else { return false }
-        guard MenuBarItemLister.menuBarRows().contains(where: { $0.intersects(own) })
-        else { return false }
-        // The band spans the row's height wherever it stands, so the
-        // x axis decides: a centre under the face is a covered icon.
-        return own.midX < cover.maxX - 2 && own.midX > cover.minX + 2
-    }
-
-    private func scheduleAdoptionCheck(after delay: TimeInterval = 1.5) {
-        adoptionCheck?.cancel()
-        adoptionCheck = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1e9))
-            guard !Task.isCancelled, let self, let concealer = self.concealer, concealer.isConcealing else { return }
-            _ = await MenuBarItemLister.refreshAXItems()
-            self.hider.reconcile()
-            let chevronParked = self.chevronStale()
-            // Two stale reads: the frame heuristic (stacked or off-row)
-            // plus the decisive ghost test — the drawn window against the
-            // slot the agent reports, the same drift check the chevron
-            // gets. An unadopted icon answers AX forever and draws
-            // nothing; the icon is the boundary anchor, so it can never
-            // be allowed to stay that way.
-            let iconParked = await self.ownIconParked()
-            self.parkedReads = iconParked ? self.parkedReads + 1 : 0
-            // A face-covered anchor is the same wound as a parked one —
-            // the icon is invisible either way — so it counts as a
-            // confirmed park: it earns the same re-seat on the same
-            // pacing, landing at the band-aware slot instead. Geometry
-            // needs no second read; the band's frame is not a flicker.
-            let covered = self.ownIconCovered()
-            let parkedConfirmed = self.parkedReads >= 2 || covered
-            let iconStale = self.ownIconStale() || parkedConfirmed
-            MenuBarAssessmentBackend.log.notice("conceal: adoption check — iconStale=\(iconStale, privacy: .public) parked=\(iconParked, privacy: .public) covered=\(covered, privacy: .public) chevron=\(chevronParked, privacy: .public) drawn=\(String(describing: self.host?.boundaryFrame), privacy: .public) probe=\(String(describing: self.host?.boundaryWindowProbe), privacy: .public) ax=\(String(describing: self.ownIconAXFrame()), privacy: .public)")
-            if iconStale {
-                if self.iconStaleSince == nil { self.iconStaleSince = Date() }
-            } else {
-                self.iconStaleSince = nil
-                self.iconReseats = 0
-            }
-            guard iconStale || chevronParked else {
-                // A first dark read with no other stale signal is not
-                // yet a park — but it must be re-checked or the
-                // confirmation could never arrive.
-                if iconParked { self.scheduleAdoptionCheck(after: 6) }
-                return
-            }
-            // A steady-state bar never lifts: an adoption suspend lives
-            // inside the first 30 seconds of the engine, or the first
-            // 30 seconds after our own icon turned stale. A parked
-            // chevron alone never earns one past startup — but the
-            // anchor icon does: past the burst it keeps earning paced
-            // re-seats, since an invisible boundary is never a
-            // state the utility may settle into.
-            let startupWindow = Date().timeIntervalSince(self.concealerStartedAt) < 30
-            let freshStale = self.iconStaleSince.map { Date().timeIntervalSince($0) < 30 } ?? false
-            let burstOpen = self.adoptionRetries < 3 && (startupWindow || freshStale)
-            let pacedDue = parkedConfirmed && self.iconReseats < Self.maxIconReseats
-                && Date().timeIntervalSince(self.lastIconReseat) >= Self.iconReseatInterval
-            guard burstOpen || pacedDue else {
-                if iconStale, self.iconReseats >= Self.maxIconReseats, !self.iconReseatExhaustedLogged {
-                    self.iconReseatExhaustedLogged = true
-                    MenuBarAssessmentBackend.log.error("conceal: our icon stayed stale through \(Self.maxIconReseats, privacy: .public) re-seats — leaving it until the bar changes")
-                }
-                // A parked anchor that is not yet due keeps the tail
-                // armed — concealerChanged may never fire again.
-                if parkedConfirmed, self.iconReseats < Self.maxIconReseats {
-                    let wait = max(1, Self.iconReseatInterval
-                        - Date().timeIntervalSince(self.lastIconReseat))
-                    self.scheduleAdoptionCheck(after: wait)
-                }
-                return
-            }
-            self.adoptionRetries += 1
-            MenuBarAssessmentBackend.log.notice("conceal: our own items read stale under the assertion — adoption window \(self.adoptionRetries, privacy: .public)/3")
-            await concealer.suspend(for: 4)
-            // The drop lands while concealed items are still flooding
-            // back — a registration mid-reflow seeds wherever the churn
-            // leaves a gap, which is how re-seats kept landing in the
-            // park zone. Wait out the reflow, then re-seat into the
-            // settled bar.
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            if parkedConfirmed, pacedDue || burstOpen {
-                self.lastIconReseat = Date()
-                self.iconReseats += 1
-                self.iconReseatExhaustedLogged = false
-                let target = self.visibleSeatTarget()
-                if let target, let last = self.lastSeatTarget, abs(last - target) < 80,
-                   let landed = self.ownIconAXFrame()?.midX, landed > 0 {
-                    // The last seed aimed at (about) this target and the
-                    // key sorted it elsewhere — learn the miss.
-                    self.seatBias = max(-400, min(400, self.seatBias + (target - landed)))
-                }
-                self.lastSeatTarget = target
-                let desired = target.map { $0 + self.seatBias }
-                MenuBarAssessmentBackend.log.notice("conceal: re-seating our status item inside the suspend window — target \(target.map { String(format: "%.0f", $0) } ?? "default", privacy: .public) bias \(String(format: "%.0f", self.seatBias), privacy: .public)")
-                self.host?.reseatStatusItem(desiredMidX: desired)
-            }
-            if chevronParked {
-                // A suspend alone never re-places a parked surface —
-                // the agent only adopts at registration. Recreate the
-                // item inside the free window so the fresh one lands,
-                // seeded just left of the anchor icon — an unseeded
-                // item falls to the leftmost free run under the island.
-                self.removeChevronItem()
-                StatusItemController.seedPreferredPosition(
-                    for: "com.jonathanreed.jrbar.menubar-chevron-v2",
-                    desiredMidX: self.ownIconAXFrame().map { $0.midX - 26 },
-                    overwrite: true)
-                self.installChevron()
-                self.refreshChevron()
-            }
-            // A still-parked anchor keeps the tail alive — the next
-            // check schedules itself on the paced interval, since a
-            // concealerChanged may never fire again to prompt one.
-            if parkedConfirmed, self.iconReseats < Self.maxIconReseats {
-                self.scheduleAdoptionCheck(after: Self.iconReseatInterval)
-            }
-        }
-    }
-
-    /// The chevron under the concealer carries the same deferred-
-    /// adoption wound as the host icon — an item registered while an
-    /// assertion held keeps the window it was born with. The plan never
-    /// lists it (it is ours and always shown), so `ownIconStale` cannot
-    /// see it; instead compare the drawn surface (`button.window`) with
-    /// the slot the agent reports over AX — a parked item answers a
-    /// stale frame for a slot that moved on.
-    private func chevronStale() -> Bool {
-        guard let chevron else { return false }
-        guard let button = chevron.button, let window = button.window else { return true }
-        guard let slot = chevronAXFrame(), slot.width > 0 else { return false }
-        let drawn = window.convertToScreen(button.frame)  // AppKit y-up
-        let height = CGDisplayBounds(CGMainDisplayID()).height
-        // A parked surface sits at its seed while the agent's slot
-        // moved on — a spread measured in ear-widths, not points; a
-        // small drift is just the agent's placement, not a park.
-        return abs(drawn.minX - slot.minX) > 40
-            || abs(drawn.minY - (height - slot.maxY)) > 4
-    }
-
-    /// The parked test for the anchor icon itself. The frame signals
-    /// come first: an item macOS has overflow-parked reports its off-row
-    /// ledge honestly through both AX and the drawn window (measured
-    /// 2026-09-21 — every genuinely parked read showed y≈970 in both),
-    /// and a detached surface shows as drawn-vs-AX drift, the same test
-    /// the chevron gets.
-    ///
-    /// The pixel store only arbitrates the case the frames cannot: an
-    /// on-row slot whose surface stopped compositing. And it can only
-    /// arbitrate where our own windows do not cover the slot — an
-    /// `excludingWindows` capture renders our coverage black rather than
-    /// compositing through to the item beneath (measured 2026-09-21:
-    /// 0 lit under the Screen Bar frame while the glyph drew at 532 lit
-    /// unfiltered). The island face owning the anchor's pixels is the
-    /// design — the island draws the visible `</>` itself — so a covered
-    /// on-row slot is healthy, never a re-seat cause. nil-safe: no
-    /// Screen Recording permission means no verdict, never a churn.
-    private func ownIconParked() async -> Bool {
-        guard let slot = ownIconAXFrame(), slot.width > 4, slot.height > 4 else { return false }
-        // The overflow park — the surface sits on the off-row ledge.
-        guard MenuBarItemLister.menuBarRows().contains(where: { $0.intersects(slot) })
-        else { return true }
-        // A detached surface: AX reads the logical slot while the drawn
-        // window stayed behind — the chevron's drift test, applied to
-        // the anchor.
-        if let drawn = host?.boundaryFrame,
-           abs(drawn.minX - slot.minX) > 40 || abs(drawn.minY - slot.minY) > 4 {
-            return true
-        }
-        guard CGPreflightScreenCaptureAccess() else { return false }
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: true) else { return false }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let ownWindows = content.windows.filter { $0.owningApplication?.processID == ownPID }
-        // Our own glass over the slot — the island face draws our glyph
-        // there by design, and an exclusion capture reads that region
-        // black whether the item is healthy or not. No measurement is
-        // honest here; the frames already said the item stands.
-        if ownWindows.contains(where: { $0.frame.intersects(slot) }) { return false }
-        let mid = CGPoint(x: slot.midX, y: slot.midY)
-        guard let display = content.displays.first(where: { $0.frame.contains(mid) })
-                ?? content.displays.first(where: { $0.displayID == CGMainDisplayID() })
-                ?? content.displays.first else { return false }
-        let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
-        let configuration = SCStreamConfiguration()
-        configuration.sourceRect = slot
-        let size = MenuBarTileMath.pixelSize(for: slot, scale: MenuBarTileMath.captureScale)
-        configuration.width = size.width
-        configuration.height = size.height
-        configuration.showsCursor = false
-        guard let image = try? await SCScreenshotManager.captureImage(
-                contentFilter: filter, configuration: configuration) else { return false }
-        return Self.iconParked(litPixels: Self.litPixels(in: image),
-                               slotPixels: size.width * size.height)
-    }
-
-    /// The parked predicate — pure so tests drive it without a live bar.
-    /// A drawn icon lights hundreds of pixels against the bar material;
-    /// a parked one lights none. Five lit pixels is the floor a single
-    /// antialiased stem still crosses.
-    nonisolated static func iconParked(litPixels: Int, slotPixels: Int) -> Bool {
-        litPixels < 5
-    }
-
-    /// Pixels brighter than the bar material — the glyphs our icon
-    /// draws. The count is what `iconParked` reads.
-    nonisolated static func litPixels(in image: CGImage) -> Int {
-        guard let data = image.dataProvider?.data else { return 0 }
-        let bytes = CFDataGetBytePtr(data)
-        let count = CFDataGetLength(data)
-        var lit = 0
-        // BGRA premultiplied; the bar material reads under luma 60 at
-        // any appearance the capture hands back.
-        var i = 0
-        while i + 2 < count {
-            let b = Int(bytes![i]), g = Int(bytes![i + 1]), r = Int(bytes![i + 2])
-            if (r * 299 + g * 587 + b * 114) / 1000 > 60 { lit += 1 }
-            i += 4
-        }
-        return lit
-    }
-
-    /// Our status item's slot as the agent places it — the extras-bar
-    /// child carrying the item's accessibility identifier, in Quartz
-    /// points. nil while AX is refused or the item has no slot.
-    private func ownIconAXFrame() -> CGRect? {
-        let app = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
-        AXUIElementSetMessagingTimeout(app, Float(MenuBarAX.messagingTimeout))
-        var extras: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras) == .success,
-              let extras, CFGetTypeID(extras) == AXUIElementGetTypeID() else { return nil }
-        var kids: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(extras as! AXUIElement, kAXChildrenAttribute as CFString, &kids) == .success,
-              let children = kids as? [AXUIElement] else { return nil }
-        for item in children {
-            var ident: CFTypeRef?
-            AXUIElementCopyAttributeValue(item, "AXIdentifier" as CFString, &ident)
-            guard (ident as? String) == StatusItemController.accessibilityIdentifier else { continue }
-            var pos: CFTypeRef?; var size: CFTypeRef?
-            AXUIElementCopyAttributeValue(item, kAXPositionAttribute as CFString, &pos)
-            AXUIElementCopyAttributeValue(item, kAXSizeAttribute as CFString, &size)
-            var p = CGPoint.zero; var s = CGSize.zero
-            if let pos { AXValueGetValue((pos as! AXValue), .cgPoint, &p) }
-            if let size { AXValueGetValue((size as! AXValue), .cgSize, &s) }
-            return CGRect(origin: p, size: s)
-        }
-        return nil
-    }
-
-    /// The chevron's slot as the agent places it — the extras-bar child
-    /// carrying the chevron's accessibility description, in Quartz
-    /// points. nil while AX is refused or the item has no slot.
-    private func chevronAXFrame() -> CGRect? {
-        let app = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
-        AXUIElementSetMessagingTimeout(app, Float(MenuBarAX.messagingTimeout))
-        var extras: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras) == .success,
-              let extras, CFGetTypeID(extras) == AXUIElementGetTypeID() else { return nil }
-        var kids: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(extras as! AXUIElement, kAXChildrenAttribute as CFString, &kids) == .success,
-              let children = kids as? [AXUIElement] else { return nil }
-        for item in children {
-            var desc: CFTypeRef?
-            AXUIElementCopyAttributeValue(item, "AXDescription" as CFString, &desc)
-            guard (desc as? String) == "JR-Bar hidden items" else { continue }
-            var pos: CFTypeRef?; var size: CFTypeRef?
-            AXUIElementCopyAttributeValue(item, kAXPositionAttribute as CFString, &pos)
-            AXUIElementCopyAttributeValue(item, kAXSizeAttribute as CFString, &size)
-            var p = CGPoint.zero; var s = CGSize.zero
-            if let pos { AXValueGetValue((pos as! AXValue), .cgPoint, &p) }
-            if let size { AXValueGetValue((size as! AXValue), .cgSize, &s) }
-            return CGRect(origin: p, size: s)
-        }
-        return nil
     }
 
     /// A held-back click on the clock, battery or Wi-Fi: lift, replay,
@@ -2846,7 +2427,6 @@ final class MenuBarUtility: Toy {
         // the plan's own writes floor the mark; this only makes it
         // immediate.
         host?.setBoundarySpacer(concealer == nil ? Self.boundaryAffordance : 0)
-        host?.setAnchorSlim(concealer != nil)
         // The always-hidden control of earlier builds left its slot in
         // our defaults; a stale key is harmless but says nothing true.
         UserDefaults.standard.removeObject(
@@ -3047,22 +2627,18 @@ final class MenuBarUtility: Toy {
                    in: nil)
     }
 
-    /// The island's ‹ handle — the hidden run's visible affordance
-    /// while the agent conceals: non-nil (the glyph's direction)
-    /// exactly while an assertion holds items. The screen bar reads it
-    /// through `menuHandleProvider`; our own surface draws what a
-    /// status item kept parking out of.
+    /// The ear's ‹ handle — the hidden run's affordance while the agent
+    /// conceals and the real item is the icon: non-nil (the glyph's
+    /// direction) while it should stand. The screen bar reads it through
+    /// `menuHandleProvider`. While the mirror carries the icon its own ‹
+    /// is the handle, and a second one on the ear ~165 pt away would
+    /// only split the job — the right ear keeps just its provider mark.
     var menuHandleRevealed: Bool? {
         // The concealer's presence, not its instant assertion — a
-        // reveal or an adoption beat lifts it for seconds, and the
-        // handle is exactly the ‹ rehide affordance while the run is
-        // out. Seeded keeps it off a map-less fresh bar.
-        guard concealer != nil, settings().concealSeeded else { return nil }
-        // The ear's ‹ stands while the concealer lives — it IS the
-        // right wing the person looks for, and the notch flank is the
-        // one stretch of bar the status item can never be parked out
-        // of. Two marks doing one job is the redundancy the affordance
-        // wants: the item's ‹ is the divider, the ear's is the button.
+        // reveal lifts it for seconds, and the handle is exactly the ‹
+        // rehide affordance while the run is out. Seeded keeps it off a
+        // map-less fresh bar.
+        guard concealer != nil, settings().concealSeeded, !iconMirrored else { return nil }
         return hider.revealed.contains(.hidden)
     }
 
@@ -3223,22 +2799,28 @@ final class MenuBarUtility: Toy {
         let row = MenuBarItemLister.menuBarRow()
         let height = CGDisplayBounds(CGMainDisplayID()).height
         if concealer != nil {
-            // Under the concealer there is no boundary item: the zone
-            // is the empty bar from the notch's right edge to the
-            // leftmost shown item on the right — the stretch macOS
-            // leaves blank in front of the parked run. Without it the
-            // reveal falls back to the whole row, so a hover over the
-            // File menu or a click on the clock pops the run.
-            let edge = NSScreen.main?.auxiliaryTopRightArea?.minX ?? row.midX
-            guard let leftmost = lastPlan.shown
-                .filter({ $0.bounds.intersects(row) && $0.bounds.minX > edge })
-                .map(\.bounds.minX).min() else {
+            // Under the concealer the zone is the blank run the hidden
+            // apps leave left of the icon — from where nothing of ours
+            // covers the row (the notch, the band and its ears) to the
+            // mirror's left edge. A notch-less bar keeps its right half:
+            // the app menus own the rest, and a hover over the File menu
+            // must never pop the run.
+            var start = mirrorClearOf()
+            if NSScreen.screens.first?.auxiliaryTopRightArea == nil { start = max(start, row.midX) }
+            let mirrorMinX = iconMirrored
+                ? iconMirror.flatMap { $0.isVisible ? $0.frame.minX : nil } : nil
+            let shown = lastPlan.shown.filter {
+                $0.bounds.intersects(row) && Self.isForeignOwner($0.ownerName)
+                    && !$0.isNativeOverflowControl
+            }.map(\.bounds.minX)
+            guard let span = Self.concealedRevealSpan(start: start, mirrorMinX: mirrorMinX,
+                                                      shownMinXs: shown) else {
                 // No computable stretch: the hot frames alone answer
                 // the gesture — the whole row must never pop the run.
                 return NSRect.zero
             }
-            return NSRect(x: edge, y: height - row.maxY,
-                          width: max(0, leftmost - edge), height: row.height)
+            return NSRect(x: span.lowerBound, y: height - row.maxY,
+                          width: span.upperBound - span.lowerBound, height: row.height)
         }
         let frames = controlFrames()
         guard let boundary = frames.hidden, boundary.intersects(row) else { return nil }
@@ -3248,6 +2830,19 @@ final class MenuBarUtility: Toy {
         let minX = min(edge, boundary.minX)
         return NSRect(x: minX, y: height - row.maxY,
                       width: max(0, boundary.maxX - minX), height: row.height)
+    }
+
+    /// The concealer's reveal span on x: from `start` to the mirror's
+    /// left edge — or, while no mirror stands, the leftmost foreign
+    /// shown item right of `start`. Our own items never bound it (the
+    /// slim real item sits wherever macOS keeps it), and the icon itself
+    /// is never inside it. nil when there is no stretch. Pure so a test
+    /// pins it.
+    nonisolated static func concealedRevealSpan(start: CGFloat, mirrorMinX: CGFloat?,
+                                                shownMinXs: [CGFloat]) -> ClosedRange<CGFloat>? {
+        guard let end = mirrorMinX ?? shownMinXs.filter({ $0 > start }).min(),
+              end > start else { return nil }
+        return start...end
     }
 
     /// The last scan's hidden-item titles for "show for updates" —
@@ -3434,40 +3029,37 @@ extension MenuBarUtility: MenuBarActionsDelegate {
 /// The boundary's host: what the Menu Bar utility needs from the app's
 /// own status item to make it the hidden run's edge — its frame, its
 /// icon's width, a spacer write, the reveal click, the hidden-items
-/// submenu, and the counts it draws its hint from.
+/// submenu, and the counts it draws its hint from — and, under the
+/// concealer, what the mirror needs to stand in for it.
 @MainActor
 protocol MenuBarBoundaryHost: AnyObject {
-    /// The item's frame in Quartz coordinates; nil before it has a window.
+    /// The icon's frame in Quartz coordinates — the mirror's face while
+    /// it carries the icon; nil before the item has a window.
     var boundaryFrame: CGRect? { get }
-    /// The item window's occlusion state — a parked item's surface never
-    /// composites, so `.visible` drops even though AX keeps answering.
-    var boundaryOcclusion: NSWindow.OcclusionState? { get }
-    /// Diagnostics for the parked-window hunt: isVisible, onActiveSpace,
-    /// screen presence, alpha — whichever one the surface state moves.
-    var boundaryWindowProbe: String { get }
     /// The icon's own width — the part that is not spacer.
     var boundaryGlyphLength: CGFloat { get }
     /// Claim `length` points of blank bar left of the icon (0 folds).
     func setBoundarySpacer(_ length: CGFloat)
-    /// Whether the configured icon style wants a real seat in the
-    /// visible extras run — every style but `.hidden`, which draws
-    /// nothing and keeps the free niche under the island face.
+    /// Whether the configured style draws an icon at all — every style
+    /// but `.hidden`. Only a drawn icon gets a mirror.
     var anchorWantsVisibleSeat: Bool { get }
-    /// The niche seat under the island face is only for the hidden
-    /// style — a visible icon seats in the open extras run, so slim
-    /// stays engaged only while the anchor wants no seat at all.
-    func setAnchorSlim(_ slim: Bool)
-    /// The face the item currently draws — the mirror's pixels under
-    /// the concealer, where the agent never draws our own item (the
-    /// helper shares the app's signing identity, and the agent exempts
-    /// by identity, not by process — measured 2026-09-22).
-    var boundaryIconImage: NSImage? { get }
-    /// Re-register the item — the agent adopts only at registration, so a
-    /// ghosted item (AX answers a stale frame, nothing draws) comes back
-    /// only through remove + recreate inside a suspend window.
-    /// `desiredMidX` is the seat's centre in screen points; nil takes the
-    /// host's default (clear of the band's face).
-    func reseatStatusItem(desiredMidX: CGFloat?)
+    /// Hand the icon to the mirror (true) or take it back. While
+    /// mirrored the real item wears nothing and keeps a slim slot — the
+    /// single owner of both, so no other path can un-blank it.
+    func setFaceMirrored(_ mirrored: Bool)
+    /// The mirror's face frame in AppKit screen coordinates while it
+    /// carries the icon — the panel anchors on it. The utility writes it
+    /// on every move and nils it when the mirror goes down.
+    var mirroredFaceFrame: NSRect? { get set }
+    /// What the icon wears, for the mirror.
+    var face: MenuBarIconFace { get }
+    /// Fires whenever `face` changes — the mirror is pushed, never polls.
+    var onFaceChange: (@MainActor () -> Void)? { get set }
+    /// The icon's ordinary click — the panel toggle.
+    func faceClicked()
+    /// The icon's right/Option click — the item's full menu, popped
+    /// under `view`.
+    func popUpMenu(in view: NSView)
     var onBoundaryClick: (@MainActor () -> Void)? { get set }
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }
