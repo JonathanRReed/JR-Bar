@@ -126,6 +126,9 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
 public enum MenuBarHotkeyAction: String, Codable, CaseIterable, Sendable {
     /// The chevron's own toggle, from anywhere.
     case toggleReveal
+    /// The deeper run's own gesture: a temporary reveal of the
+    /// always-hidden section — the Item Bar is its only other way out.
+    case revealAlwaysHidden
     /// Every listed unprotected item behind the covers.
     case hideAll
     /// Clear every assignment.

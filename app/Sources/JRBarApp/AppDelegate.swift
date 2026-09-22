@@ -198,6 +198,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         panel.onOpenStateChange = { [weak statusItem] open in statusItem?.setPanelOpen(open) }
         statusItem.onTogglePanel = { [weak panel] in panel?.toggle() }
         statusItem.onUnsnoozeAll = { [weak core] in core?.snooze(session: nil, seconds: 0) }
+        // Menu open is the reader's moment: force a usage refresh so the
+        // meters answer with now, not the idle cadence's last reading.
+        // The daemon admission-controls the poke, so rapid opens cost
+        // nothing extra.
+        statusItem.onMenuWillOpen = { [weak core] in
+            guard let core else { return }
+            Task { try? await core.refreshUsage() }
+        }
         // The optional global hotkey (Settings › General) toggles the panel
         // through the same path the status item's click does.
         let hotkey = PanelHotkey()
@@ -1250,14 +1258,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// The providers the strip meters, in the panel's order: the ones
     /// named by `usage_graph_providers` first, then anything else the
-    /// daemon reports, each of which must have a window to meter.
-    static func meteredProviders(preferred: [String], usage: [CoreProviderUsage]) -> [CoreProviderUsage] {
+    /// daemon reports, each of which must have a window to meter. The
+    /// list orders, it does not filter — a provider the daemon measures
+    /// stays metered even when the preference names only others, or the
+    /// strip is empty for every provider whose only entry is the
+    /// preference's own default.
+    nonisolated static func meteredProviders(preferred: [String], usage: [CoreProviderUsage]) -> [CoreProviderUsage] {
         let metered = usage.filter { !$0.windows.isEmpty }
         guard !preferred.isEmpty else { return metered }
         var seen = Set<String>()
         var result: [CoreProviderUsage] = []
         for id in preferred {
-            guard let provider = metered.first(where: { $0.id == id }), seen.insert(provider.id).inserted else { continue }
+            guard let provider = metered.first(where: { $0.id == id }), seen.insert(provider.identity).inserted else { continue }
+            result.append(provider)
+        }
+        for provider in metered where seen.insert(provider.identity).inserted {
             result.append(provider)
         }
         return result

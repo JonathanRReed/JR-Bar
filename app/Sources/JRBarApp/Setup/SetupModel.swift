@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
+import AVFoundation
+import CoreBluetooth
 import EventKit
+import Intents
 import JRBarCore
 import JRBarUI
 import UserNotifications
@@ -44,15 +47,20 @@ struct SetupNote: Equatable, Sendable {
     }
 }
 
-/// The five permission rows, in the order the step shows them. Each
-/// names the existing code path that grants or checks it — the step is
-/// a hub over flows that already exist, never a new request path.
+/// The permission rows, in the order the step shows them. Each names
+/// the existing code path that grants or checks it — the step is a hub
+/// over flows that already exist, never a new request path.
 enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
     case notifications
     case calendar
+    case reminders
+    case camera
     case screenRecording
+    case audioCapture
+    case bluetooth
     case accessibility
     case fullDiskAccess
+    case focusStatus
 
     var id: String { rawValue }
 
@@ -60,9 +68,14 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .notifications: return "Notifications"
         case .calendar: return "Calendar"
+        case .reminders: return "Reminders"
+        case .camera: return "Camera"
         case .screenRecording: return "Screen Recording"
+        case .audioCapture: return "System Audio"
+        case .bluetooth: return "Bluetooth"
         case .accessibility: return "Accessibility"
         case .fullDiskAccess: return "Full Disk Access"
+        case .focusStatus: return "Focus Status"
         }
     }
 
@@ -73,12 +86,22 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
             return "A banner when a session finishes or needs you — the ask can even carry Approve and Deny."
         case .calendar:
             return "The next meeting on the notch card, with a Join button."
+        case .reminders:
+            return "The shelf's reminder list — checking one off writes back to Reminders."
+        case .camera:
+            return "The notch card's Mirror row — the Mac's own camera, live only while the row is on."
         case .screenRecording:
             return "Lets Fold see the desktop to fold it; nothing is uploaded."
+        case .audioCapture:
+            return "The media row's live visualizer — it taps the playing app's output, keeps nothing."
+        case .bluetooth:
+            return "The notch's connect announcements — \"AirPods connected\"."
         case .accessibility:
             return "Answering asks straight into the session's terminal, and following Alcove's capsule."
         case .fullDiskAccess:
-            return "Focus sync — the monitor reads the active Focus so the lights quiet down in Do Not Disturb."
+            return "Focus sync in the monitor — it reads the Do Not Disturb database so the lights quiet down when a Focus is on."
+        case .focusStatus:
+            return "The app's own read of the active Focus — Menu Bar triggers and the status item's moon. Separate from Full Disk Access."
         }
     }
 
@@ -86,18 +109,28 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .notifications: return "bell.badge.fill"
         case .calendar: return "calendar"
+        case .reminders: return "checklist"
+        case .camera: return "camera.fill"
         case .screenRecording: return "rectangle.dashed.badge.record"
+        case .audioCapture: return "waveform"
+        case .bluetooth: return "antenna.radiowaves.left.and.right"
         case .accessibility: return "accessibility"
         case .fullDiskAccess: return "internaldrive.fill"
+        case .focusStatus: return "moon.fill"
         }
     }
 
     /// macOS offers a real prompt for these; the rest are grant-by-pane
-    /// only, so their button is "Open Settings…" from the start.
+    /// only (or have no public request at all — audio capture is asked
+    /// by the tap's first start), so their button is "Open Settings…"
+    /// from the start.
     var canPrompt: Bool {
         switch self {
-        case .notifications, .calendar, .screenRecording: return true
-        case .accessibility, .fullDiskAccess: return false
+        case .notifications, .calendar, .reminders, .camera, .screenRecording,
+             .focusStatus:
+            return true
+        case .accessibility, .fullDiskAccess, .audioCapture, .bluetooth:
+            return false
         }
     }
 
@@ -163,8 +196,11 @@ struct SetupModel {
     /// `install_hooks` awaited for one provider; the reply's own words
     /// become the row note, the same reading `SettingsStore.runHook` gives.
     var installHooks: (String) async -> SetupNote = { _ in SetupNote("Monitor offline", isError: true) }
-    /// Re-probes every row: EventKit, the notification centre,
-    /// `CGPreflightScreenCaptureAccess`, `AXIsProcessTrusted`, the FDA probe.
+    /// Re-probes every row: EventKit (events + reminders), the
+    /// notification centre, `CGPreflightScreenCaptureAccess`,
+    /// `AVCaptureDevice`, `CBManager.authorization`, `AXIsProcessTrusted`,
+    /// `INFocusStatusCenter`, the FDA probe. Audio capture has no public
+    /// status read — its row stays "Unknown" with a pane link.
     var refreshPermissions: () async -> [SetupPermission: SetupPermissionStatus] = { [:] }
     /// The row's button: the real request where one exists, the
     /// system-settings deep link otherwise.
@@ -197,6 +233,25 @@ extension SetupModel {
     /// Calendars privacy, for a denied calendar row.
     static let calendarSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!
+    /// Reminders privacy, for a denied reminders row.
+    static let remindersSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders")!
+    /// Camera privacy — the same deep link the notch card's Mirror row
+    /// offers when the owner has said no (`NotchCardView`).
+    static let cameraSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
+    /// Bluetooth privacy, for the notch's connect announcements.
+    static let bluetoothSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")!
+    /// macOS 15+ folds the audio-capture consent into the "Screen &
+    /// System Audio Recording" pane — the same anchor Screen Recording
+    /// uses (`FoldCapturePermission.settingsURL`).
+    static let audioCaptureSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+    /// The Focus privacy pane — `INFocusStatusCenter`'s own TCC service,
+    /// a grant apart from Full Disk Access.
+    static let focusSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Focus")!
     /// Full Disk Access — the pane the legacy setup window's FDA row
     /// opened for `focus_sync` (`openFullDiskAccessSettings:`).
     static let fullDiskAccessSettingsURL = URL(
@@ -265,8 +320,19 @@ extension SetupModel {
             // The check AlcoveFollower runs before reading Alcove's frames.
             .accessibility: AXIsProcessTrusted() ? .granted : .needed,
             .fullDiskAccess: probeFullDiskAccess() ? .granted : .needed,
+            // The app's own Focus grant — MenuBarTriggers' rules and
+            // the combined status item's moon read `INFocusStatusCenter`.
+            .focusStatus: focusStatus(),
+            // The announce watcher's IOBluetooth registration is what
+            // prompts; `CBManager.authorization` reads TCC without it.
+            .bluetooth: bluetoothStatus(),
+            // No public preflight for the process tap's consent —
+            // the row is honest about not knowing.
+            .audioCapture: .unknown,
         ]
         statuses[.calendar] = calendarStatus()
+        statuses[.reminders] = reminderStatus()
+        statuses[.camera] = cameraStatus()
         statuses[.notifications] = await notificationStatus()
         return statuses
     }
@@ -279,6 +345,59 @@ extension SetupModel {
         case .denied: return .denied
         case .restricted: return .unavailable
         case .notDetermined, .writeOnly: return .needed
+        @unknown default: return .unknown
+        }
+    }
+
+    /// `EKEventStore.authorizationStatus(for: .reminder)` — the same
+    /// status read `ShelfReminders` switches on.
+    static func reminderStatus() -> SetupPermissionStatus {
+        switch EKEventStore.authorizationStatus(for: .reminder) {
+        case .fullAccess: return .granted
+        case .denied: return .denied
+        case .restricted: return .unavailable
+        case .notDetermined, .writeOnly: return .needed
+        @unknown default: return .unknown
+        }
+    }
+
+    /// `AVCaptureDevice.authorizationStatus(for: .video)` — the read
+    /// `ShelfMirrorModel` runs before it ever opens the lens.
+    static func cameraStatus() -> SetupPermissionStatus {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: return .granted
+        case .denied: return .denied
+        case .restricted: return .unavailable
+        case .notDetermined: return .needed
+        @unknown default: return .unknown
+        }
+    }
+
+    /// `CBCentralManager.authorization` — the class property reads the
+    /// Bluetooth TCC state without standing a central up, so the probe
+    /// can never prompt. The app's asker is `NotchAnnouncements`'s
+    /// `IOBluetoothDevice.register` handshake.
+    static func bluetoothStatus() -> SetupPermissionStatus {
+        switch CBCentralManager.authorization {
+        case .allowedAlways: return .granted
+        case .denied: return .denied
+        case .restricted: return .unavailable
+        case .notDetermined: return .needed
+        @unknown default: return .unknown
+        }
+    }
+
+    /// `INFocusStatusCenter.default.authorizationStatus` — the app's
+    /// own Focus grant, which `MenuBarSystemTriggerSource` polls only
+    /// once authorized and asks for from its "add rule" path. Entirely
+    /// separate from the monitor's Full-Disk-Access read of the Focus
+    /// database — one grant never stands in for the other.
+    static func focusStatus() -> SetupPermissionStatus {
+        switch INFocusStatusCenter.default.authorizationStatus {
+        case .authorized: return .granted
+        case .denied: return .denied
+        case .restricted: return .unavailable
+        case .notDetermined: return .needed
         @unknown default: return .unknown
         }
     }
@@ -318,9 +437,14 @@ extension SetupModel {
         switch permission {
         case .notifications: await requestNotifications()
         case .calendar: await requestCalendar()
+        case .reminders: await requestReminders()
+        case .camera: await requestCamera()
         case .screenRecording: requestScreenRecording()
+        case .audioCapture: NSWorkspace.shared.open(audioCaptureSettingsURL)
+        case .bluetooth: NSWorkspace.shared.open(bluetoothSettingsURL)
         case .accessibility: NSWorkspace.shared.open(accessibilitySettingsURL)
         case .fullDiskAccess: NSWorkspace.shared.open(fullDiskAccessSettingsURL)
+        case .focusStatus: await requestFocusStatus()
         }
     }
 
@@ -350,6 +474,58 @@ extension SetupModel {
             _ = try? await store.requestFullAccessToEvents()
         case .denied, .unavailable:
             NSWorkspace.shared.open(calendarSettingsURL)
+        default:
+            break
+        }
+    }
+
+    /// `requestFullAccessToReminders` — the call `ShelfReminders` makes
+    /// from its own enable path; a denied row deep-links instead.
+    static func requestReminders() async {
+        switch reminderStatus() {
+        case .needed:
+            let store = EKEventStore()
+            // The store is captured by the completion, so it outlives
+            // the prompt no matter when the answer lands.
+            _ = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                store.requestFullAccessToReminders { granted, _ in
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .unavailable:
+            NSWorkspace.shared.open(remindersSettingsURL)
+        default:
+            break
+        }
+    }
+
+    /// `AVCaptureDevice.requestAccess(for: .video)` — `ShelfMirrorModel`'s
+    /// ask, made up front here instead of on the Mirror row's first
+    /// enable; a denied row deep-links to the Camera pane.
+    static func requestCamera() async {
+        switch cameraStatus() {
+        case .needed:
+            _ = await AVCaptureDevice.requestAccess(for: .video)
+        case .denied, .unavailable:
+            NSWorkspace.shared.open(cameraSettingsURL)
+        default:
+            break
+        }
+    }
+
+    /// `INFocusStatusCenter.requestAuthorization` — the same call
+    /// `MenuBarSystemTriggerSource.requestFocusAuthorization` makes when
+    /// a Focus rule is added; a denied row deep-links to the Focus pane.
+    static func requestFocusStatus() async {
+        switch focusStatus() {
+        case .needed:
+            _ = await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                INFocusStatusCenter.default.requestAuthorization { _ in
+                    continuation.resume()
+                }
+            }
+        case .denied, .unavailable:
+            NSWorkspace.shared.open(focusSettingsURL)
         default:
             break
         }

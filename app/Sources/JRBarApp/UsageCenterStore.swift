@@ -515,6 +515,32 @@ final class UsageCenterStore {
         }
     }
 
+    /// `provider_add_instance`: one more configured account for a
+    /// provider the daemon says can hold one. The row comes back
+    /// metered-but-empty until the instance's own credential or consent
+    /// lands — the card's manage row is where that happens next.
+    func addProviderInstance(_ row: ProviderRow, instance: String, label: String?) {
+        let trimmed = instance.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !managing.contains(row.identity) else { return }
+        managing.insert(row.identity)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.managing.remove(row.identity) }
+            do {
+                let labelText = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let added = try await self.core.addProviderInstance(
+                    row.id,
+                    instance: trimmed,
+                    label: (labelText?.isEmpty ?? true) ? nil : labelText
+                )
+                self.providerRows[added.identity] = added
+                self.loadProviderRows()
+            } catch {
+                self.show(error: Self.describe(error))
+            }
+        }
+    }
+
     /// Runs the staged flow behind the provider's current action label —
     /// clipboard import, reconnect, repair. The daemon's own message is
     /// surfaced verbatim; it may be a success note, not only an error.

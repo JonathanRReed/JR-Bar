@@ -565,6 +565,28 @@ public final class CoreModel {
         return try ReplyDecoding.decode(ProviderRow.self, from: reply.result?["provider"])
     }
 
+    /// `provider_add_instance {provider, instance, label}` → the new
+    /// row. Only providers with a per-instance source accept it — the
+    /// daemon answers `unsupported` where a second account would just
+    /// mirror this Mac's own sign-in.
+    @discardableResult
+    public func addProviderInstance(
+        _ provider: String,
+        instance: String,
+        label: String? = nil
+    ) async throws -> ProviderRow {
+        var args: [String: JSONValue] = [
+            "provider": .string(provider),
+            "instance": .string(instance),
+        ]
+        if let label { args["label"] = .string(label) }
+        let reply = try await send("provider_add_instance", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "provider_add_instance failed")
+        }
+        return try ReplyDecoding.decode(ProviderRow.self, from: reply.result?["provider"])
+    }
+
     /// `provider_consent` — list, or grant/revoke one exact
     /// provider+browser+profile scope. Grant imports nothing.
     @discardableResult

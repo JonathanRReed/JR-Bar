@@ -238,4 +238,59 @@ struct DockSwitcherTests {
         #expect(model.items.first?.title == "memo")
         #expect(model.items.count == 2)
     }
+
+    // MARK: Minimized-window tiles
+
+    @Test("a minimized tile's owner needs a sole claimant — no guessing")
+    func minimizedOwner() {
+        let rows = [
+            row(pid: 1, wid: 10, title: "Doc"),
+            row(pid: 2, wid: 20, title: "Doc"),
+            row(pid: 3, wid: 30, title: "Solo"),
+        ]
+        #expect(DockSwitcherList.minimizedOwnerPID(title: "Doc", rows: rows) == nil,
+                "two apps claim the title — the tile stays tile-backed")
+        #expect(DockSwitcherList.minimizedOwnerPID(title: "Solo", rows: rows) == 3)
+        #expect(DockSwitcherList.minimizedOwnerPID(title: "Gone", rows: rows) == nil)
+        // Two same-titled windows of ONE app still resolve the owner —
+        // the AX match downstream picks between them.
+        let sameApp = [row(pid: 4, wid: 40, title: "Doc"),
+                       row(pid: 4, wid: 41, title: "Doc")]
+        #expect(DockSwitcherList.minimizedOwnerPID(title: "Doc", rows: sameApp) == 4)
+    }
+
+    // MARK: The preview key surface
+
+    /// nil from `handle` is an eaten event; a returned event passed.
+    private func passes(_ tap: SwitcherKeyTap, _ event: CGEvent) -> Bool {
+        tap.handle(type: .keyDown, event: event)?.takeRetainedValue() != nil
+    }
+
+    @Test("the preview's keys are the tap's while its panel floats")
+    func previewKeyRouting() throws {
+        let tap = SwitcherKeyTap()
+        let arrow = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 124, keyDown: true))
+        // No flag set: the arrow passes through to the front app.
+        #expect(passes(tap, arrow))
+        tap.setPreviewOpen(true)
+        #expect(!passes(tap, arrow),
+                "the panel can't take key status — the tap eats its arrows")
+        let esc = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true))
+        let enter = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
+        #expect(!passes(tap, esc) && !passes(tap, enter))
+        // A letter still passes — the preview owns only its keys.
+        let a = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        #expect(passes(tap, a))
+        tap.setPreviewOpen(false)
+        #expect(passes(tap, arrow), "closing the panel hands the keys back")
+    }
+
+    @MainActor
+    @Test("the strip joins fullscreen spaces like the preview panel")
+    func stripIsFullScreenAuxiliary() {
+        let panel = DockSwitcherPanel(controller: DockSwitcherController())
+        #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary),
+                "without it the switcher can't surface over a fullscreen space")
+        panel.close()
+    }
 }

@@ -464,7 +464,11 @@ struct DockPreviewView: View {
                 return content.folderEntries.count == 1 ? "1 item" : "\(content.folderEntries.count) items"
             }
         }
-        if !content.isRunning { return "Not running" }
+        // A minimized-window tile whose owner didn't resolve still
+        // carries its one card — "Not running" would misname it.
+        if !content.isRunning {
+            return content.windows.isEmpty ? "Not running" : "Minimized window"
+        }
         let minimized = content.windows.filter(\.minimized).count
         switch content.windows.count {
         case 0: return "No open windows"

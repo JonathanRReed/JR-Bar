@@ -370,7 +370,6 @@ struct AquariumGameTests {
             return
         }
         #expect(summary.pearlsEarned == 1 + AquariumRules.pelletPearl + AquariumRules.completionBonus)
-        #expect(summary.feedings == 1)
         #expect(summary.completions == 1)
         // Drained: closing and reopening with nothing in between is empty.
         game.apply(.setWindowOpen(false), now: Self.t0 + 7)
@@ -378,6 +377,77 @@ struct AquariumGameTests {
         #expect(!again.contains(where: {
             if case .awaySummary = $0 { return true }; return false
         }))
+    }
+
+    @Test("the snail's closed-tank rounds credit the away summary on reopen")
+    func snailAwayCatchUp() {
+        var game = AquariumGame()
+        game.inventory[ShopItem.snail.rawValue] = 1
+        game.apply(.setWindowOpen(true), now: Self.t0)
+        game.apply(.setWindowOpen(false), now: Self.t0 + 1)
+        // Two drops were on the sand when the tank closed: one long
+        // past the snail's pick-up wait by reopen, one still fresh.
+        game.drops = [
+            PearlDrop(id: "ripe", fishID: "a",
+                      at: (Self.t0 + 1).timeIntervalSince1970,
+                      value: AquariumRules.dropPearlValue),
+            PearlDrop(id: "fresh", fishID: "a",
+                      at: (Self.t0 + 1).timeIntervalSince1970
+                          + AquariumRules.snailCollectAfter + 4,
+                      value: AquariumRules.dropPearlValue)]
+        let reopen = Self.t0 + 1 + AquariumRules.snailCollectAfter + 6
+        let effects = game.apply(.setWindowOpen(true), now: reopen)
+        let summary = effects.compactMap { effect -> AquariumAwaySummary? in
+            if case .awaySummary(let s) = effect { return s }
+            return nil
+        }.first
+        // The ripe drop was collected while the away window was still
+        // open — it lands in the summary; the fresh one stays on the
+        // sand for the next live tick.
+        #expect(summary?.dropsCollected == 1)
+        #expect(summary?.pearlsEarned == AquariumRules.dropPearlValue)
+        #expect(game.drops.map(\.id) == ["fresh"])
+        #expect(game.totals.dropsCollected == 1)
+    }
+
+    @Test("with no snail, closed-window drops wait on the sand")
+    func noSnailNoCatchUp() {
+        var game = AquariumGame()
+        game.drops = [PearlDrop(id: "d1", fishID: "a",
+                                at: Self.t0.timeIntervalSince1970,
+                                value: AquariumRules.dropPearlValue)]
+        game.apply(.setWindowOpen(true), now: Self.t0)
+        game.apply(.setWindowOpen(false), now: Self.t0 + 1)
+        let effects = game.apply(.setWindowOpen(true),
+                                 now: Self.t0 + 1 + AquariumRules.snailCollectAfter + 60)
+        #expect(game.drops.map(\.id) == ["d1"])
+        #expect(game.totals.dropsCollected == 0)
+        // Nothing happened while closed, so nothing is reported.
+        #expect(!effects.contains(where: {
+            if case .awaySummary = $0 { return true }; return false
+        }))
+    }
+
+    @Test("the reopen catch-up runs before the window flips open — the drops count as away")
+    func catchUpCreditsAwayWindow() {
+        var game = AquariumGame()
+        game.inventory[ShopItem.snail.rawValue] = 1
+        game.drops = [PearlDrop(id: "d1", fishID: "a",
+                                at: Self.t0.timeIntervalSince1970,
+                                value: AquariumRules.dropPearlValue)]
+        // Reopening drains a summary whose only content is the snail's
+        // pick-up — the collection itself minted it.
+        let effects = game.apply(.setWindowOpen(true),
+                                 now: Self.t0 + AquariumRules.snailCollectAfter + 1)
+        let summary = effects.compactMap { effect -> AquariumAwaySummary? in
+            if case .awaySummary(let s) = effect { return s }
+            return nil
+        }.first
+        #expect(summary?.dropsCollected == 1)
+        // The drop's pearl landed inside the away window too.
+        #expect(summary?.pearlsEarned == AquariumRules.dropPearlValue)
+        #expect(game.windowOpen)
+        #expect(game.drops.isEmpty)
     }
 
     @Test("nothing accrues without events — no wall-clock catch-up")

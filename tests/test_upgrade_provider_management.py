@@ -500,3 +500,62 @@ def test_provider_action_resign_in_reconnects_and_forces_refresh():
             _controller(), {"provider": "nonsense", "action": "resign_in"}
         )
     assert error.value.code == "unknown_provider"
+
+
+def test_add_provider_instance_persists_and_reports():
+    credentials = DictCredentials()
+    row = pm.add_provider_instance(
+        "devin", "work", label="Devin · work", credentials=credentials
+    )
+    assert row["id"] == "devin" and row["instance"] == "work"
+    assert row["label"] == "Devin · work"
+    assert row["enabled"] is True
+    assert row["supports_instances"] is True
+    persisted = load_provider_usage_settings()
+    assert persisted.settings.profile("devin", "work").label == "Devin · work"
+    rows = pm.provider_rows(credentials=credentials, only="devin")
+    assert [r["instance"] for r in rows] == ["default", "work"]
+    work_row = next(r for r in rows if r["instance"] == "work")
+    assert work_row["supports_instances"] is True
+
+
+def test_add_provider_instance_refusals():
+    # This-Mac's-own-sign-in providers can't read a second account.
+    with pytest.raises(pm.ProviderManagementError) as error:
+        pm.add_provider_instance("codex", "work")
+    assert error.value.code == "unsupported"
+    with pytest.raises(pm.ProviderManagementError) as error:
+        pm.add_provider_instance("nonsense", "work")
+    assert error.value.code == "unknown_provider"
+    # "default" already exists for every provider.
+    with pytest.raises(pm.ProviderManagementError) as error:
+        pm.add_provider_instance("devin", "default")
+    assert error.value.code == "invalid_args"
+    # Reserved characters can't survive the instance id.
+    with pytest.raises(pm.ProviderManagementError) as error:
+        pm.add_provider_instance("devin", "a/b")
+    assert error.value.code == "invalid_args"
+
+
+def test_provider_add_instance_command():
+    controller = _controller()
+    reply = core_runtime._cmd_provider_add_instance(
+        controller, {"provider": "devin", "instance": "work", "label": "Devin · work"}
+    )
+    assert reply["provider"]["instance"] == "work"
+    controller._request_provider_usage.assert_called_once_with(
+        force=True, providers=("devin",)
+    )
+    with pytest.raises(CommandError) as error:
+        core_runtime._cmd_provider_add_instance(controller, {"provider": ""})
+    assert error.value.code == "invalid_args"
+    with pytest.raises(CommandError) as error:
+        core_runtime._cmd_provider_add_instance(
+            controller, {"provider": "devin"}
+        )
+    assert error.value.code == "invalid_args"
+    with pytest.raises(CommandError) as error:
+        core_runtime._cmd_provider_add_instance(
+            controller, {"provider": "codex", "instance": "work"}
+        )
+    assert error.value.code == "unsupported"

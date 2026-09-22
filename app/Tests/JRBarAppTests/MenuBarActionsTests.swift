@@ -658,6 +658,10 @@ struct MenuBarActionsTests {
             calls.append("open:\(itemID)")
         }
         func menuBarActionsRevealHidden(_ actions: MenuBarActions) { calls.append("reveal") }
+        func menuBarActionsToggleReveal(_ actions: MenuBarActions) { calls.append("toggleReveal") }
+        func menuBarActionsRevealAlwaysHidden(_ actions: MenuBarActions) {
+            calls.append("revealAlwaysHidden")
+        }
         func menuBarActions(_ actions: MenuBarActions, revealFor seconds: Double) {
             calls.append("reveal:\(seconds)")
         }
@@ -681,6 +685,8 @@ struct MenuBarActionsTests {
         actions.commandBar.onAction(.setSection(itemID: "A", .hidden))
         actions.commandBar.onAction(.openItem(itemID: "B"))
         actions.commandBar.onAction(.revealHidden)
+        actions.hotkeys.onAction(.toggleReveal)
+        actions.hotkeys.onAction(.revealAlwaysHidden)
         actions.hotkeys.onAction(.hideAll)
         actions.hotkeys.onAction(.nextProfile)
         // The trigger path: feed the engine through the facade's own
@@ -695,7 +701,8 @@ struct MenuBarActionsTests {
         source.onEvent?(.screenLocked)
 
         #expect(delegate.calls == [
-            "setSection:A:hidden", "open:B", "reveal", "hideAll",
+            "setSection:A:hidden", "open:B", "reveal", "toggleReveal",
+            "revealAlwaysHidden", "hideAll",
             "cycle:1", "profile:Away",
         ])
     }

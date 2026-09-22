@@ -207,6 +207,39 @@ import Testing
         #expect(sliding.minY >= screen.minY)
     }
 
+    @Test func magnificationAnchorsOnTheDocksRunAxis() {
+        // Bottom dock: the magnified icon rides the pointer's x, its
+        // base stays pinned to the edge.
+        let bottomTile = CGRect(x: 700, y: 0, width: 40, height: 40)
+        let bottom = DockEnhanceMath.magnifiedAnchor(
+            tile: bottomTile, edge: .bottom, pointer: CGPoint(x: 542, y: 20))
+        #expect(bottom == CGRect(x: 522, y: 0, width: 40, height: 40),
+                "bottom Dock: re-centred on the pointer's x")
+        // Side docks run vertically — the icon rides the pointer's y
+        // and its x stays at the screen edge. Centring a side tile on
+        // the pointer's x was the defect: the panel drifted sideways.
+        let leftTile = CGRect(x: 0, y: 400, width: 40, height: 40)
+        let left = DockEnhanceMath.magnifiedAnchor(
+            tile: leftTile, edge: .left, pointer: CGPoint(x: 542, y: 700))
+        #expect(left == CGRect(x: 0, y: 680, width: 40, height: 40),
+                "left Dock: re-centred on the pointer's y, x untouched")
+        let rightTile = CGRect(x: 1400, y: 400, width: 40, height: 40)
+        let right = DockEnhanceMath.magnifiedAnchor(
+            tile: rightTile, edge: .right, pointer: CGPoint(x: 542, y: 700))
+        #expect(right == CGRect(x: 1400, y: 680, width: 40, height: 40),
+                "right Dock: same y-tracking, edge x preserved")
+    }
+
+    @Test func theDockReachInflatesTheListFrame() {
+        // (100,850,400,50) inflated by the 20/96 slop → (80,754,440,242).
+        let reach = DockEnhanceController.listReach(
+            of: CGRect(x: 100, y: 850, width: 400, height: 50))
+        #expect(reach.contains(CGPoint(x: 300, y: 800)),
+                "above the dock's tiles still counts as over it")
+        #expect(!reach.contains(CGPoint(x: 300, y: 750)))
+        #expect(!reach.contains(CGPoint(x: 50, y: 900)))
+    }
+
     // MARK: The corridor
 
     @Test func theCorridorCoversTheRoadToThePanel() {
@@ -536,6 +569,26 @@ import Testing
         #expect(byURL.hoverID == "/Applications/Safari.app")
         #expect(byTitle.hoverID == "Safari")
         #expect(bySlot.hoverID == "dock-item@10")
+    }
+
+    @Test func tileKindsMapTheDocksSubroles() {
+        #expect(DockAXItem.kind(forSubrole: "AXApplicationDockItem") == .app)
+        #expect(DockAXItem.kind(forSubrole: "AXFolderDockItem") == .folder)
+        #expect(DockAXItem.kind(forSubrole: "AXMinimizedWindowDockItem") == .minimizedWindow)
+        #expect(DockAXItem.kind(forSubrole: "AXSeparatorDockItem") == nil)
+        #expect(DockAXItem.kind(forSubrole: "AXTrashDockItem") == nil)
+        #expect(DockAXItem.kind(forSubrole: nil) == nil)
+    }
+
+    @Test func minimizedTilesWithOneTitleStillRetarget() {
+        // Two minimized "Untitled" windows carry no URL and share a
+        // title — the slot in the hover id keeps them distinct.
+        let element = AXUIElementCreateSystemWide()
+        let first = DockAXItem(element: element, frame: CGRect(x: 10, y: 0, width: 50, height: 50),
+                               title: "Untitled", url: nil, kind: .minimizedWindow)
+        let second = DockAXItem(element: element, frame: CGRect(x: 70, y: 0, width: 50, height: 50),
+                                title: "Untitled", url: nil, kind: .minimizedWindow)
+        #expect(first.hoverID != second.hoverID)
     }
 
     @Test func permissionsAreCachedNotPolled() {

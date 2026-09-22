@@ -58,11 +58,14 @@ final class AquariumToy: Toy {
         game.apply(.setWindowOpen(false), now: Date())
         refreshFish()
         observeSessions()
-        // The economy runs whenever the toy is on — the window being
-        // closed is exactly when the away counters fill. Twenty
-        // seconds of live time per tick; nothing accrues while the
-        // app is not running (no wall-clock catch-up anywhere), and
-        // nothing ticks or writes to disk while the toy is off.
+        // The economy's tick runs only while the toy is on — the
+        // window being closed is exactly when the away counters fill.
+        // Twenty seconds of live time per tick; nothing accrues while
+        // the app is not running (no wall-clock catch-up anywhere).
+        // Off is not deaf, though: `observeSessions` and `noteEvent`
+        // stay armed, so a completion or quota reset landing while the
+        // tank is closed still applies to the game and persists — the
+        // away summary depends on it.
         syncGameTimer()
         // Left on at quit: the tank comes back at launch, without
         // stealing focus for it.
@@ -106,7 +109,10 @@ final class AquariumToy: Toy {
         }
     }
 
-    var status: ToyStatus { isOn ? .on : .off }
+    /// Off still watches: `observeSessions` and `noteEvent` keep the
+    /// game's accrual alive while the tank is closed (the away summary
+    /// needs it), so the chip never claims a fully-off state.
+    var status: ToyStatus { isOn ? .on : .paused("Watching quietly") }
 
     var controls: AnyView {
         AnyView(

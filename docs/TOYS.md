@@ -42,25 +42,33 @@ public struct ToysState {
     public var aquarium: AquariumSettings
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
+    public var notch: NotchSettings       // also decodes the legacy `alcove` key
 }
 public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .angle;
                              activationAngle: Double = 65;
                              perspective: Double = 0.6; blur: Double = 0.5; shade: Double = 0.7;
-                             jitterTolerance: Double = 0; provider: FoldProvider = .jrbar;
-                             holdPicture: Bool = true }
+                             jitterTolerance: Double = 1.5; provider: FoldProvider = .jrbar;
+                             frost: Double = 0; holdPicture: Bool = true;
+                             dwellTimeout: Double = 0; restoreSound: Bool = false }
 // (the Tilt/Dusk/Fog style picker is retired — `style` is decoded only to
 //  recognize old default sets for migration; nothing reads it)
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
 public enum FoldAnchor: String { case angle, movement }  // fixed angle, or wherever the lid rests
-public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0 }
+public enum DayNightMode: String { case realTime, cycle }  // the clock / the four-minute breathe
+public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0;
+                                 speciesOverrides: [String: String] = [:]  /* provider id → species */;
+                                 dayNight: DayNightMode = .realTime }
 public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
+                                   presentation: String = "character" /* or "mini" */;
                                    buddyName: String = ""; care: BuddyCare;
                                    freePosition: BuddySpot?; tucked: Bool = false;
                                    showCaption: Bool = true; scale: Double = 1.0 /* 1…3, floating only */ }
 public struct BuddySpot { x: Double; y: Double }                    // parked screen point
 public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime,
                                      axolotl, crab, mushroom, ufo }
-public struct BuddyCare { lastInteractionAt: Date?; petCount: Int; treatsGiven: Int; crumbsEaten: Int }
+public struct BuddyCare { lastInteractionAt: Double; lastTreatAt: Double; lastCrumbAt: Double;
+                          /* epoch seconds; 0 = never */
+                          petCount: Int; treatsGiven: Int; crumbsEaten: Int }
 public struct ConfettiSettings { enabled: Bool = false; landing: ConfettiLanding = .rest;
                                  density: Double = 1.0; duration: Double = 1.0;
                                  palette: ConfettiPalette = .provider; shapes: ConfettiShapes = .mixed;
@@ -74,7 +82,13 @@ public enum ConfettiShapes: String { case mixed, streamers, flecks }
 public struct NotchSettings { enabled: Bool = false; provider: NotchProvider = .jrbar;
                               islandEnabled: Bool = true; showUsage: Bool = true;
                               expandOnHover: Bool = true; capsuleNotifications: Bool = true;
-                              mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds }
+                              mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds;
+                              pullGestures: Bool = true; hapticTick: Bool = true;
+                              mediaHUD: Bool = true; alerts: Bool = true;
+                              soundEffects: Bool = true; weather: Bool = false;
+                              weatherCity: String = ""; simulateNotch: Bool = false;
+                              mirror: Bool = false; audioVisualizer: Bool = false;
+                              replaceSystemHUD: Bool = false; shelfShakeToSummon: Bool = true }
 public struct AlcoveCapsuleKinds { ask: Bool = true; completed: Bool = true;
                                    failed: Bool = true; quotaReset: Bool = true;
                                    charging: Bool = true }
@@ -337,7 +351,9 @@ stacked boulders) draws behind everything. Every
 piece sits on the dune line under a soft pooled shadow. A jellyfish
 pulses through the mid-water every ~40 s (and stays on as the
 resident drifter while the tank is empty, under a small quiet caption
-low on the left) and a snail inches along the sand. Behind it all: a
+low on the left) and a snail inches along the sand — it keeps its
+rounds while the window is closed, so dropped pearls it has picked up
+land in the "while you were away" card on reopen. Behind it all: a
 multi-stop gradient from a bright green surface band to a deep
 blue-green floor, five soft god rays breathing a couple of degrees
 and pooling as wandering caustic light on the dune crest, a slow
@@ -465,6 +481,13 @@ strokes, eyes and the badge stay crisp — with padding, caption (up to
 re-measures off the hosting view on every present, so the slider drags
 the pet bigger live and a parked 3× buddy still clamps fully on-screen;
 the docked pill ignores the dial entirely — the notch slot is fixed.
+Docked is the same 18pt figure, not a lesser one: poses, tricks, hearts
+and crumbs all show in the slot. The card's Mini toggle
+(`presentation: "mini"`) swaps the body for the bare status dot wherever
+the buddy sits, and while the daemon publishes a `screen_bar` LED
+program the docked slot is that dot anyway — it is the strip's extra
+LED at the centre seam, sampled on the program's own anchor rather than
+a private clock.
 
 The skeleton is a soft body, two pupils under lids, a mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
@@ -492,7 +515,9 @@ carry: no dangle, no landing squash. Off by default.
 ## Confetti (native)
 
 When a provider's **weekly** quota resets, a confetti cannon pops at the
-notch/Screen Bar centre: a flash & starburst at the muzzle with three
+top centre of every attached screen — one overlay window per display,
+each on its own timer — at the notch/Screen Bar's spot: a flash &
+starburst at the muzzle with three
 hot spark streaks inside the cone's first 0.15 s, then ~140 pieces in
 that provider's colours burst up & out in a cone (a few fired sideways,
 like spray), arc under gravity & quadratic air drag, and tumble down —
@@ -633,14 +658,6 @@ a parked island holds no listener and runs no clock.
 Blurb: "Who's working, up in the notch. Alcove or Boring Notch can
 draw it instead."
 
-## External app toys
-
-"Add an app…" opens an `NSOpenPanel` on `/Applications` for `.app`
-bundles. Each row: app icon (`NSWorkspace.shared.icon(forFile:)`), name,
-running dot, Launch / Quit, "Launch with JR-Bar" toggle (JR-Bar opens it
-at its own launch if not running), Remove. Identity is the bundle id;
-a removed or missing app shows "not installed" and Remove.
-
 ## Copy
 
 Every string on the page is in Jonathan's voice (see the jr-writing
@@ -649,12 +666,13 @@ marketing words. Examples:
 
 - Page intro: "Stuff that's just fun. None of it touches your agents or
   your usage, & every bit of it can be turned off."
-- Fold blurb: "Your desktop tilts & blurs as the lid comes down."
+- Fold blurb: "Your desktop folds into the screen as the lid comes
+  down."
 - Aquarium blurb: "Every session is a fish. Asks come up for air."
 - Notch Buddy blurb: "A little guy in the notch who lives by what your
   agents are doing."
-- Confetti blurb: "A burst in the provider's colours when your weekly
-  limit resets."
+- Confetti blurb: "A burst in the provider's colours when the moment
+  earns it."
 - Notch blurb: "Who's working, up in the notch. Alcove or Boring Notch
   can draw it instead."
 

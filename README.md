@@ -135,11 +135,11 @@ then, build it yourself (Command Line Tools with Swift 6.2+, Python 3.12):
 
 ```sh
 git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar
-make package          # dist/JR-Bar-0.8.0.pkg, signed with whatever identity the keychain has
+make package          # dist/JR-Bar-0.9.9.pkg, signed with whatever identity the keychain has
 make clean-install    # installs it into ~/Applications (no password) and opens it
 ```
 
-`sudo installer -pkg dist/JR-Bar-0.8.0.pkg -target /` puts it in
+`sudo installer -pkg dist/JR-Bar-0.9.9.pkg -target /` puts it in
 `/Applications` instead. On first launch the app starts its daemon, points
 every provider's hook at the bundled shim, and registers itself as a login
 item. Click the icon for the panel; right-click for the menu. The command
@@ -162,10 +162,14 @@ Everything works with nothing granted; features ask when you turn them on.
 | Permission | Unlocks | Asked when |
 | --- | --- | --- |
 | Notifications | Ask and completion banners, with Approve / Deny on asks | The first time a banner is due, never at launch |
-| Accessibility | Answering an ask by keystroke into the session's terminal (a Creator Micro 2 key, or Approve / Deny when the terminal is frontmost) | The first time you answer that way |
-| Calendar, Reminders | Event and reminder glows | When you enable those signals |
-| Screen Recording | The Screen Bar following Alcove's live capsule width | Automatic if granted; skipped quietly otherwise |
-| Full Disk Access | macOS Focus following (reads the Focus database) | When you turn Focus following on |
+| Accessibility | Answering an ask by keystroke into the session's terminal (a Creator Micro 2 key, or Approve / Deny when the terminal is frontmost); the Screen Bar following Alcove's capsule; Menu Bar arrange and click-through | The first time a feature needs it |
+| Calendar, Reminders | Event and reminder glows; the shelf's calendar row and reminder list | When you enable those signals |
+| Camera | The notch card's Mirror row | When you turn the row on |
+| Screen Recording | The Fold toy's desktop capture; live previews in the Dock and Menu Bar utilities | When you turn Fold on; the utilities fall back to icons without it |
+| System Audio | The media row's live visualizer (a Core Audio tap on the playing app) | The first time the visualizer starts |
+| Bluetooth | The notch's device-connect announcements | When the announcements run |
+| Focus Status | The app's own read of the active Focus — Menu Bar triggers and the status item's moon | When a feature that reads it is turned on |
+| Full Disk Access | macOS Focus following in the monitor (reads the Do Not Disturb database) — a grant apart from Focus Status | When you turn Focus following on |
 | An administrator password, once | The closed-lid sleep helper (`/etc/sudoers.d/jrbar-disablesleep`) | When you set the closed-lid policy |
 
 Grants are keyed to the signed `JR-Bar.app`; a development build signed

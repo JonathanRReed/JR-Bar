@@ -571,6 +571,26 @@ struct AquariumView: View {
         var activeVisitor: (kind: AquariumVisitor, startedAt: Date)?
         /// A beat between parades so queued visitors don't conga.
         var visitorCooldownUntil = Date.distantPast
+        /// Game events the draw pass produced, waiting to be reported.
+        /// `stepSwim` and the visitor parade run inside the Canvas
+        /// draw closure, where game events must not land — every one
+        /// applies to the document and persists, and a draw pass is no
+        /// place for disk I/O (nor for re-entrant mutation: a double
+        /// evaluation would double-feed). `queueEventDrain` flushes
+        /// the list once the pass returns, each event reported once.
+        var pendingEvents: [PendingGameEvent] = []
+        /// A drain is already queued for after this pass.
+        var eventDrainQueued = false
+    }
+
+    /// A game event a draw pass produced — recorded, not applied.
+    private enum PendingGameEvent {
+        /// A fish reached its pellet; `fishID` is the eater.
+        case pelletEaten(fishID: String)
+        /// A visitor's parade across the back layer began.
+        case visitorShown(AquariumVisitor)
+        /// The parade ended — the visitor swam off the far edge.
+        case visitorDeparted(AquariumVisitor)
     }
 
     /// What a tapped fish shows off (docs/TOYS.md: fish tricks).
@@ -752,7 +772,8 @@ struct AquariumView: View {
         }
 
         // A fish that reached its pellet eats it: the game hears the
-        // feeding, the mouth smiles, the body squash-stretches.
+        // feeding after the pass (the pending-events drain), the mouth
+        // smiles, the body squash-stretches.
         var eaten: [Int] = []
         for pellet in m.pellets {
             guard let claim = m.claims[pellet.id],
@@ -767,7 +788,9 @@ struct AquariumView: View {
                 m.flights.append((from: CGPoint(x: pellet.x * size.width,
                                                 y: pellet.y * size.height),
                                   bornAt: now))
-                toy?.pelletEaten(by: claim)
+                // Recorded, not applied — the game write waits for the
+                // drain after this draw pass.
+                m.pendingEvents.append(.pelletEaten(fishID: claim))
             }
         }
         if !eaten.isEmpty {
@@ -788,6 +811,31 @@ struct AquariumView: View {
                 m.stages[fish.id] = stage
             } else if m.stages[fish.id] == nil {
                 m.stages[fish.id] = stage
+            }
+        }
+        queueEventDrain()
+    }
+
+    /// Flush the game events a draw pass recorded, once the Canvas
+    /// closure has returned — one queued hop per frame, so a re-entrant
+    /// or multiplied evaluation can never double-apply an event. The
+    /// hop runs on the next main-queue turn: same tick, after the pass.
+    private func queueEventDrain() {
+        let m = motion
+        guard !m.eventDrainQueued, !m.pendingEvents.isEmpty else { return }
+        m.eventDrainQueued = true
+        DispatchQueue.main.async { [weak toy] in
+            MainActor.assumeIsolated {
+                m.eventDrainQueued = false
+                let pending = m.pendingEvents
+                m.pendingEvents.removeAll(keepingCapacity: true)
+                for event in pending {
+                    switch event {
+                    case .pelletEaten(let fishID): toy?.pelletEaten(by: fishID)
+                    case .visitorShown(let visitor): toy?.visitorShown(visitor)
+                    case .visitorDeparted(let visitor): toy?.visitorDeparted(visitor)
+                    }
+                }
             }
         }
     }
@@ -4184,17 +4232,21 @@ struct AquariumView: View {
     /// The visitor parade (docs/TOYS.md shop): a queued passer-by
     /// crosses the back layer once — a whale's great dim silhouette
     /// spouting if it nears the surface, a diver's torch sweeping, a
-    /// submarine's portholes glowing. `visitorShown` answers when the
-    /// parade starts so a relaunch can't replay it; Reduce Motion
+    /// submarine's portholes glowing. `visitorShown` answers as the
+    /// parade starts — through the post-pass drain — so a relaunch
+    /// can't replay it; Reduce Motion
     /// holds the portrait still mid-tank for the same span instead of
     /// crossing, so the visit is a thing on screen, not only a toast.
     private func drawVisitor(canvas: inout GraphicsContext, size: CGSize,
                              t: Double, now: Date) {
-        // Claim the queue's head when the lane is free.
+        // Claim the queue's head when the lane is free. The claim lands
+        // on `activeVisitor` now; the game's `visitorShown` waits for
+        // the post-pass drain like every draw-time event.
         if motion.activeVisitor == nil, now >= motion.visitorCooldownUntil,
            let next = game?.pendingVisitors.first {
             motion.activeVisitor = (next, now)
-            toy?.visitorShown(next)
+            motion.pendingEvents.append(.visitorShown(next))
+            queueEventDrain()
         }
         guard let visitor = motion.activeVisitor else { return }
         let duration: Double = visitor.kind == .whale ? 17 : 14
@@ -4202,7 +4254,8 @@ struct AquariumView: View {
         guard elapsed < duration else {
             motion.activeVisitor = nil
             motion.visitorCooldownUntil = now.addingTimeInterval(6)
-            toy?.visitorDeparted(visitor.kind)
+            motion.pendingEvents.append(.visitorDeparted(visitor.kind))
+            queueEventDrain()
             return
         }
         let p = fixture?.visitorProgress ?? (reduceMotion ? 0.5 : elapsed / duration)
@@ -5172,9 +5225,6 @@ struct AquariumView: View {
         if away.pearlsEarned > 0 { parts.append("+\(away.pearlsEarned) pearls") }
         if away.completions > 0 {
             parts.append("\(away.completions) session\(away.completions == 1 ? "" : "s") finished")
-        }
-        if away.feedings > 0 {
-            parts.append("\(away.feedings) feeding\(away.feedings == 1 ? "" : "s")")
         }
         if away.dropsCollected > 0 {
             parts.append("\(away.dropsCollected) drop\(away.dropsCollected == 1 ? "" : "s") collected")

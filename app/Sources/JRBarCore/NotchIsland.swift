@@ -219,6 +219,10 @@ public struct NotchIdleLayout: Equatable, Sendable {
     public var rightWidth: CGFloat = 0
     /// What the right shoulder carries.
     public var right: Right = .nothing
+    /// The privacy dots — mic live, camera live — sharing the right
+    /// shoulder, hugging the notch like the hardware LED they mirror.
+    /// Quiet is the default and draws nothing.
+    public var sensors: NotchSensorState = NotchSensorState()
     /// The idle face is a bare housing — the ears carry the HUD.
     public var bare: Bool = false
 
@@ -263,7 +267,8 @@ extension NotchIsland {
     /// Screen Bar's own wings over the same shoulders: then the island
     /// is bare, whatever the summary says.
     public static func idleLayout(_ summary: NotchIslandSummary, media: AlcoveMedia?,
-                                  earsDrawn: Bool) -> NotchIdleLayout {
+                                  earsDrawn: Bool,
+                                  sensors: NotchSensorState = NotchSensorState()) -> NotchIdleLayout {
         var layout = NotchIdleLayout()
         if earsDrawn {
             layout.bare = true
@@ -282,6 +287,15 @@ extension NotchIsland {
         } else if media != nil {
             layout.right = .media
             layout.rightWidth = mediaContentWidth
+        }
+        // The privacy dots share the right shoulder rather than
+        // competing for it: they sit nearest the notch — the hardware
+        // LED's own spot — and attention or media move over, never
+        // hide them.
+        if sensors.anyInUse {
+            layout.sensors = sensors
+            layout.rightWidth += sensorDotsWidth(sensors)
+                + (layout.rightWidth > 0 ? sensorSeparatorWidth : 0)
         }
         return layout
     }

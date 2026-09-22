@@ -125,8 +125,12 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var revealOnClick: Bool
     /// A scroll or swipe over the menu bar reveals it.
     public var revealOnScroll: Bool
-    /// Seconds a reveal lasts before the spacers stand back up.
+    /// Seconds a reveal lasts before the spacers stand back up —
+    /// while `rehideMode` is `.timed`.
     public var rehideSeconds: Double
+    /// How a reveal ends: on the `rehideSeconds` clock, or only when a
+    /// click lands off the bar (Bartender's "show until clicked").
+    public var rehideMode: RehideMode
     /// Where a reveal surfaces the hidden run — the Item Bar panel
     /// (Bartender) or inline on the row (Ice, Hidden Bar).
     public var revealStyle: RevealStyle
@@ -153,10 +157,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var coverRoundness: Double
     /// A hairline drawn where a covered run meets visible menu bar.
     public var showCoverSeparator: Bool
-    /// One status item carrying both controls' jobs — the chevron's
-    /// reveal and the always-hidden control's Item Bar — instead of
-    /// two separate ones.
-    public var combinedStatusItem: Bool
     /// Named presets: a captured section map plus the cover appearance
     /// and control layout, applied wholesale through reconcile.
     public var profiles: [Profile]
@@ -242,9 +242,20 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         case inline
     }
 
+    /// What ends a reveal. `.timed` re-hides after `rehideSeconds`
+    /// once the pointer leaves the surfaces; `.untilClick` keeps the
+    /// run out until a click lands off the bar — Bartender's "show
+    /// until clicked elsewhere".
+    public enum RehideMode: String, Codable, CaseIterable, Sendable {
+        case timed
+        case untilClick
+    }
+
     /// A named preset: the section map — and under the concealer the
-    /// per-app concealment map — plus the cover's appearance and the
-    /// control layout, captured at save time.
+    /// per-app concealment map — plus the cover's appearance, the
+    /// reveal's style and clock, the item spacing and the spacer items,
+    /// captured at save time. Triggers and hotkeys are deliberately
+    /// not the profile's business — they are machine-local.
     public struct Profile: Codable, Equatable, Sendable, Identifiable {
         public var id: String
         public var name: String
@@ -259,7 +270,16 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         public var coverTintOpacity: Double
         public var coverRoundness: Double
         public var showCoverSeparator: Bool
-        public var combinedStatusItem: Bool
+        /// Where a reveal surfaces the run — captured so a profile can
+        /// carry "panel for work, inline for presentations".
+        public var revealStyle: RevealStyle
+        /// How a reveal ends and, for `.timed`, how long it lasts.
+        public var rehideMode: RehideMode
+        public var rehideSeconds: Double
+        /// The system-wide status-item gap — 0 is the system default.
+        public var itemSpacing: Int
+        /// The labelled spacer items — they are layout, like the cover.
+        public var spacers: [Spacer]
 
         public init(id: String, name: String,
                     sections: [String: MenuBarItemSection] = [:],
@@ -269,7 +289,11 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                     coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                     coverRoundness: Double = 0,
                     showCoverSeparator: Bool = false,
-                    combinedStatusItem: Bool = false) {
+                    revealStyle: RevealStyle = .bar,
+                    rehideMode: RehideMode = .timed,
+                    rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
+                    itemSpacing: Int = 0,
+                    spacers: [Spacer] = []) {
             self.id = id
             self.name = name
             self.sections = sections
@@ -279,16 +303,23 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             self.coverTintOpacity = MenuBarSettings.clampedOpacity(coverTintOpacity)
             self.coverRoundness = MenuBarSettings.clampedRoundness(coverRoundness)
             self.showCoverSeparator = showCoverSeparator
-            self.combinedStatusItem = combinedStatusItem
+            self.revealStyle = revealStyle
+            self.rehideMode = rehideMode
+            self.rehideSeconds = MenuBarSettings.clampedRehide(rehideSeconds)
+            self.itemSpacing = max(0, itemSpacing)
+            self.spacers = spacers
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, name, sections, concealedApps, coverMaterial, coverTint
-            case coverTintOpacity, coverRoundness, showCoverSeparator, combinedStatusItem
+            case coverTintOpacity, coverRoundness, showCoverSeparator
+            case revealStyle, rehideMode, rehideSeconds, itemSpacing, spacers
         }
 
         /// Tolerant like the settings themselves: a key a build never
-        /// wrote reads as its default rather than dropping the profile.
+        /// wrote reads as its default rather than dropping the profile,
+        /// and keys an older build wrote that this one retired are
+        /// ignored.
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
@@ -309,8 +340,15 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 (try? c.decodeIfPresent(Double.self, forKey: .coverRoundness)) ?? 0)
             showCoverSeparator = (try? c.decodeIfPresent(Bool.self,
                                                          forKey: .showCoverSeparator)) ?? false
-            combinedStatusItem = (try? c.decodeIfPresent(Bool.self,
-                                                         forKey: .combinedStatusItem)) ?? false
+            revealStyle = (try? c.decodeIfPresent(RevealStyle.self,
+                                                  forKey: .revealStyle)) ?? .bar
+            rehideMode = (try? c.decodeIfPresent(RehideMode.self,
+                                                 forKey: .rehideMode)) ?? .timed
+            rehideSeconds = MenuBarSettings.clampedRehide(
+                (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds))
+                    ?? MenuBarSettings.defaultRehideSeconds)
+            itemSpacing = max(0, (try? c.decodeIfPresent(Int.self, forKey: .itemSpacing)) ?? 0)
+            spacers = (try? c.decodeIfPresent([Spacer].self, forKey: .spacers)) ?? []
         }
     }
 
@@ -331,6 +369,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
     /// The card's rehide dial.
     public static let rehideRange: ClosedRange<Double> = 1...15
+    /// The card's custom-spacing dial — 0 is the system default, the
+    /// presets live inside the range too.
+    public static let itemSpacingRange: ClosedRange<Double> = 0...24
     /// The default reveal window.
     public static let defaultRehideSeconds: Double = 4
     /// The hiding model this build writes: 2 is positional sections
@@ -353,13 +394,13 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 sections: [String: MenuBarItemSection] = [:],
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
+                rehideMode: RehideMode = .timed,
                 revealStyle: RevealStyle = .bar,
                 hideShownWhileRevealing: Bool = false,
                 layoutModel: Int = MenuBarSettings.currentLayoutModel,
                 coverMaterial: CoverMaterial = .blend, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
-                combinedStatusItem: Bool = false,
                 profiles: [Profile] = [], arrangeOrder: [String] = [],
                 hotkeyBindings: [MenuBarHotkeyBinding] = [],
                 triggerRules: [MenuBarTriggerRule] = [],
@@ -383,6 +424,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.revealOnClick = revealOnClick
         self.revealOnScroll = revealOnScroll
         self.rehideSeconds = Self.clampedRehide(rehideSeconds)
+        self.rehideMode = rehideMode
         self.revealStyle = revealStyle
         self.hideShownWhileRevealing = hideShownWhileRevealing
         self.layoutModel = layoutModel
@@ -391,7 +433,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.coverTintOpacity = Self.clampedOpacity(coverTintOpacity)
         self.coverRoundness = Self.clampedRoundness(coverRoundness)
         self.showCoverSeparator = showCoverSeparator
-        self.combinedStatusItem = combinedStatusItem
         self.profiles = profiles
         self.arrangeOrder = arrangeOrder
         self.hotkeyBindings = hotkeyBindings
@@ -444,12 +485,15 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, revealStyle, hideShownWhileRevealing, layoutModel
+        case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, rehideMode, revealStyle, hideShownWhileRevealing, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
-        case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
+        case profiles, arrangeOrder, hotkeyBindings, triggerRules
         case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
         case hideUnderNotch, hideOnMenuOverlap, spacers, barUnderlay
         case agentStatusItem, combinedSystemItem, displayProfiles, showForUpdates
+        // Retired keys — e.g. `combinedStatusItem`, replaced by
+        // `combinedSystemItem` — are simply unlisted: decode ignores
+        // them, encode never writes them.
     }
 
     public init(from decoder: any Decoder) throws {
@@ -465,6 +509,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         revealOnScroll = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnScroll)) ?? true
         rehideSeconds = Self.clampedRehide(
             (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds)) ?? Self.defaultRehideSeconds)
+        rehideMode = (try? c.decodeIfPresent(RehideMode.self, forKey: .rehideMode)) ?? .timed
         revealStyle = (try? c.decodeIfPresent(RevealStyle.self, forKey: .revealStyle)) ?? .bar
         hideShownWhileRevealing = (try? c.decodeIfPresent(Bool.self, forKey: .hideShownWhileRevealing)) ?? false
         // Absent with a map present means a file from the cover era —
@@ -479,7 +524,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         coverRoundness = Self.clampedRoundness(
             (try? c.decodeIfPresent(Double.self, forKey: .coverRoundness)) ?? 0)
         showCoverSeparator = (try? c.decodeIfPresent(Bool.self, forKey: .showCoverSeparator)) ?? false
-        combinedStatusItem = (try? c.decodeIfPresent(Bool.self, forKey: .combinedStatusItem)) ?? false
         profiles = (try? c.decodeIfPresent([Profile].self, forKey: .profiles)) ?? []
         arrangeOrder = (try? c.decodeIfPresent([String].self, forKey: .arrangeOrder)) ?? []
         hotkeyBindings = (try? c.decodeIfPresent([MenuBarHotkeyBinding].self,

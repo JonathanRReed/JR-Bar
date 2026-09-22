@@ -48,9 +48,20 @@ final class FoldToy: Toy {
     /// early, and a filtered straggler can never hold it open above the
     /// limit.
     private(set) var rawAngle: Double?
-    /// Once Metal or the shader fails we stop trying: the chip keeps
-    /// saying why instead of retrying a compile every frame.
+    /// Metal or the shader failed, so the fold is parked — but not for
+    /// the app's lifetime: re-enabling the toy clears the flag at once,
+    /// and past `rendererRetryCooldown` the next arm attempt tries the
+    /// init again, so a transient Metal failure can't bench the fold
+    /// forever. While it stands the chip keeps saying why.
     private(set) var rendererFailed = false
+    /// When the last renderer init failed (host seconds) — the retry
+    /// cooldown counts from here.
+    @ObservationIgnored private var rendererFailedAt: TimeInterval = 0
+    /// Seconds a renderer failure holds before the next arm attempt may
+    /// retry: long enough that a still-broken renderer can't spam a
+    /// Metal compile every sensor beat, short enough that a transient
+    /// hiccup clears itself inside a minute.
+    private static let rendererRetryCooldown: TimeInterval = 30
     /// Notification-fed state, kept as observed vars so one observation
     /// pass sees every change.
     private(set) var screenAsleep = false
@@ -208,6 +219,11 @@ final class FoldToy: Toy {
         set {
             store?.state.fold.enabled = newValue
             store?.save()
+            if newValue {
+                // Re-enabling is a fresh ask — a stale renderer
+                // failure must not outlive the toggle.
+                rendererFailed = false
+            }
             reconcile()
         }
     }
@@ -332,6 +348,16 @@ final class FoldToy: Toy {
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
         sensor.setPolling(true)
+        // A failed renderer re-arms past its cooldown rather than
+        // staying benched for the app's lifetime: the flag lifts here
+        // and the next arm attempt retries the init — if Metal is
+        // still broken the attempt stamps the failure again and the
+        // gate re-shuts for another cooldown.
+        if rendererFailed,
+           CACurrentMediaTime() - rendererFailedAt >= Self.rendererRetryCooldown {
+            FoldLog.log.notice("renderer: retrying after cooldown")
+            rendererFailed = false
+        }
         guard !rendererFailed, FoldCapturePermission.granted else {
             arming.reset()
             scheduleCooldown(nil)
@@ -621,6 +647,7 @@ final class FoldToy: Toy {
             return overlay
         } catch {
             rendererFailed = true
+            rendererFailedAt = CACurrentMediaTime()
             core.appendLocalLog(level: "error", "Fold can't start its renderer: \(error.localizedDescription)")
             return nil
         }
@@ -850,6 +877,9 @@ final class FoldToy: Toy {
         store?.state.fold.provider = provider
         store?.save()
         guard provider != .jrbar else {
+            // Handing the render back to us is a fresh ask — a stale
+            // failure must not outlive the switch.
+            rendererFailed = false
             reconcile()
             return
         }

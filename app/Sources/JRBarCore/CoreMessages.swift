@@ -2014,6 +2014,11 @@ public struct ProviderRow: Codable, Hashable, Sendable {
     public var supportsBrowserSources: Bool
     public var supportsLocalTokens: Bool
     public var supportsQuota: Bool
+    /// The daemon's word on whether a second configured account could
+    /// read a *different* account — only where a source is per-instance
+    /// (stored credential or consented browser session). Governs the
+    /// "Add account" affordance.
+    public var supportsInstances: Bool
     public var sourceOrder: [String]
     public var options: [String: String]
     public var consents: [ProviderConsentRow]
@@ -2040,6 +2045,7 @@ public struct ProviderRow: Codable, Hashable, Sendable {
         case supportsBrowserSources = "supports_browser_sources"
         case supportsLocalTokens = "supports_local_tokens"
         case supportsQuota = "supports_quota"
+        case supportsInstances = "supports_instances"
         case sourceOrder = "source_order"
         case importedCredential = "imported_credential"
         case accountLabel = "account_label"
@@ -2057,6 +2063,7 @@ public struct ProviderRow: Codable, Hashable, Sendable {
         supportsBrowserSources = (try? c.decodeIfPresent(Bool.self, forKey: .supportsBrowserSources)) ?? false
         supportsLocalTokens = (try? c.decodeIfPresent(Bool.self, forKey: .supportsLocalTokens)) ?? false
         supportsQuota = (try? c.decodeIfPresent(Bool.self, forKey: .supportsQuota)) ?? false
+        supportsInstances = (try? c.decodeIfPresent(Bool.self, forKey: .supportsInstances)) ?? false
         sourceOrder = (try? c.decodeIfPresent([String].self, forKey: .sourceOrder)) ?? []
         options = (try? c.decodeIfPresent([String: String].self, forKey: .options)) ?? [:]
         consents = tolerantRows(

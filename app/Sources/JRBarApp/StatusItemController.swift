@@ -201,6 +201,16 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         setCore(description: "connecting")
     }
 
+    /// Fires when the status item's menu opens — the app uses it to poke
+    /// the daemon's menu-open refresh so the meters shown are fresh
+    /// rather than the idle cadence's last reading.
+    var onMenuWillOpen: (() -> Void)?
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        onMenuWillOpen?()
+    }
+
     /// The identity and wiring a fresh status item needs — autosave name,
     /// AX identifier, button target/action. Runs at init and again on
     /// every re-seat.

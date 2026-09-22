@@ -149,14 +149,14 @@ public enum EventPolicy {
             return delivery
 
         case "quota_crossed":
-            guard notify, settings?.bool("quota_alerts_enabled") ?? true else { return .nothing }
+            guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
             var delivery = EventDelivery(sound: sound(quotaSound))
             delivery.notification = .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) usage \(event.detail ?? "threshold crossed")",
                                           body: event.label ?? "The window is nearly spent; expect throttling.", session: nil)
             return delivery
 
         case "quota_reset":
-            guard notify, settings?.bool("quota_alerts_enabled") ?? true else { return .nothing }
+            guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
             return EventDelivery(notification: .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) quota reset",
                                                      body: event.detail ?? "A fresh window. Off you go.", session: nil))
 

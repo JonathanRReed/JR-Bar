@@ -21,7 +21,8 @@ struct MenuBarOverflowTests {
             itemCount: items.count, menuBarDepth: 24, on: screen)
         let panel = MenuBarBarPanel(
             model: model, tiles: tiles,
-            onTrigger: { _ in }, onRevealItem: { _ in })
+            onTrigger: { _ in }, onRevealItem: { _ in },
+            itemSection: { _ in .hidden }, onMoveItem: { _, _ in })
 
         panel.setFrame(intendedFrame, display: false)
         panel.contentView?.layoutSubtreeIfNeeded()

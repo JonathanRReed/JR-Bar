@@ -1,18 +1,22 @@
 # JR-Bar roadmap
 
-Updated 2026-09-10. 0.8.0 shipped: the Swift app over the bundled Python
-daemon, running on the owner's Mac from `main`. The plan that got it there
-is [PLAN-0.8.md](PLAN-0.8.md); what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
-This is the short list of what comes after, in rough order.
+Updated 2026-09-21. 0.8.0 shipped the Swift app over the bundled Python
+daemon; 0.9.9 is what runs on the owner's Mac now — signed, notarized and
+stapled. The plan that got it here is [PLAN-0.8.md](PLAN-0.8.md); what
+ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md). This is the short list of
+what comes after, in rough order.
 
-## After 0.8
+## After 0.9
 
-1. **Notarized releases.** `make package` already signs with the Developer
-   ID identity and staples when the `jrbar-notary` keychain profile exists;
-   the profile has not been created yet, so the built PKG is not
-   distributable to another Mac. Create the profile, cut `v0.8.x`, upload
-   the PKG and ZIP, then the signed `appcast.xml` to the `updates` release
-   ([PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md)).
+1. **A first public release.** The app is already Developer-ID signed,
+   notarized and stapled. The PKG is installable but unsigned — there is
+   no Developer ID Installer identity in the keychain, so the package
+   itself can never be notarized (only signed PKGs can); the stapled app
+   inside is what carries the trust. Either add an installer identity so
+   the PKG carries its own ticket, or ship the notarized ZIP as the
+   primary artifact. Then cut `v0.9.x`, upload the PKG and ZIP, and the
+   signed `appcast.xml` to the `updates` release — the Sparkle feed 404s
+   until a release exists ([PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md)).
 2. **Creator Micro 2 live verification.** The pad has been verified
    powered off only (approval, keymap plan, the board without hardware).
    Turn it on and exercise: approval on first sight, a session key press

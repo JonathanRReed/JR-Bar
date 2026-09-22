@@ -23,10 +23,14 @@ struct NotchBuddyView: View {
     /// rides the render tree as a transform, not a resample: strokes,
     /// eyes and the badge stay crisp at 3×.
     var scale: Double = 1
-    /// The docked slot's presentation: always the status dot — compact
-    /// beside the notch, no character body. Floating keeps whichever
-    /// presentation the settings picked.
-    var compact = false
+    /// Living in the docked slot under the notch. The slot draws the
+    /// picked character at its native 18pt — the same `BuddyFigure` the
+    /// floating pet wears, tricks, hearts and crumbs included — and only
+    /// two cases still call for the bare status dot: `miniMode` (the
+    /// card's Mini presentation), and a published `screen_bar` program,
+    /// where the slot is the strip's extra LED at the seam and the dot
+    /// is the right body for it.
+    var docked = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The window a hop plays across; `NotchBuddyToy.hopUntil` sets it.
@@ -40,7 +44,14 @@ struct NotchBuddyView: View {
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
             let dress = dragDress(at: context.date)
-            if compact || toy.miniMode {
+            // The strip link only exists where the dot can show: the
+            // docked slot and the Mini presentation. A floating
+            // character never pays for the sample.
+            let strip = (docked || toy.miniMode)
+                ? toy.stripDot(at: context.date.timeIntervalSince1970,
+                               still: reduceMotion)
+                : nil
+            if toy.showsDot(docked: docked, stripLinked: strip != nil) {
                 // The status dot extends the pulse strip: while the
                 // daemon publishes a screen_bar program the dot is its
                 // centre seam's extra LED, sampled on the anchor's own
@@ -51,8 +62,7 @@ struct NotchBuddyView: View {
                 MiniFigure(
                     mood: summary.mood,
                     tint: tint(for: summary),
-                    strip: toy.stripDot(at: context.date.timeIntervalSince1970,
-                                        still: reduceMotion),
+                    strip: strip,
                     waiting: summary.waiting,
                     working: summary.working,
                     still: reduceMotion,
@@ -210,7 +220,9 @@ struct NotchBuddyView: View {
 /// the mood — dim when idle, provider-coloured while one session works,
 /// and a number beside it once the work is plural. The "!" still wears
 /// the open-ask count; tap, drag and menu behave exactly like the full
-/// figure.
+/// figure. Two places wear it: the card's Mini presentation (docked or
+/// floating), and the docked slot while a `screen_bar` program is
+/// published — there the dot is the strip's own extra LED.
 ///
 /// While the daemon publishes a Screen Bar program the dot is also the
 /// strip's extension: `strip` carries the seam's sampled colour and its

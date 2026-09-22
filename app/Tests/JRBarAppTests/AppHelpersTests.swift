@@ -419,3 +419,45 @@ import JRBarUI
         #expect(!bare.approximate)
     }
 }
+
+@Suite struct MeteredProvidersTests {
+    private func usage(_ id: String, instance: String? = nil,
+                       windows: [CoreUsageWindow] = [CoreUsageWindow(name: "5h", usedPct: 40)]) -> CoreProviderUsage {
+        CoreProviderUsage(id: id, windows: windows, instance: instance)
+    }
+
+    @Test func preferredOrdersButNeverFilters() {
+        // A gemini-only user with the stock claude/codex preference still
+        // gets their meter — the list orders, it does not hide.
+        let shown = AppDelegate.meteredProviders(
+            preferred: ["claude", "codex"],
+            usage: [usage("gemini"), usage("grok")])
+        #expect(shown.map(\.id) == ["gemini", "grok"])
+    }
+
+    @Test func preferredComeFirst() {
+        let shown = AppDelegate.meteredProviders(
+            preferred: ["codex", "claude"],
+            usage: [usage("gemini"), usage("claude"), usage("codex")])
+        #expect(shown.map(\.id) == ["codex", "claude", "gemini"])
+    }
+
+    @Test func emptyPreferredShowsEverythingMetered() {
+        let shown = AppDelegate.meteredProviders(
+            preferred: [], usage: [usage("claude"), usage("grok")])
+        #expect(shown.map(\.id) == ["claude", "grok"])
+    }
+
+    @Test func windowlessProvidersStayOut() {
+        let shown = AppDelegate.meteredProviders(
+            preferred: [], usage: [usage("claude"), usage("pi", windows: [])])
+        #expect(shown.map(\.id) == ["claude"])
+    }
+
+    @Test func twoInstancesBothSurvive() {
+        let shown = AppDelegate.meteredProviders(
+            preferred: ["claude"],
+            usage: [usage("claude"), usage("claude", instance: "work")])
+        #expect(shown.map(\.identity) == ["claude", "claude|work"])
+    }
+}

@@ -98,6 +98,51 @@ struct UtilitiesStateTests {
         #expect((try? decode(MenuBarSettings.self, #"{"spacerLength": 8000}"#)) != nil)
     }
 
+    @Test("the retired `combinedStatusItem` key decodes away — never written, never fatal")
+    func retiredCombinedStatusItem() throws {
+        // The dead setting's data is ignored outright: the live
+        // feature is `combinedSystemItem`, which still reads normally.
+        let state = try decode(MenuBarSettings.self,
+                               #"{"combinedStatusItem": true, "combinedSystemItem": true}"#)
+        #expect(state.combinedSystemItem)
+        #expect(state == MenuBarSettings(combinedSystemItem: true))
+        // An old profile carrying the key still decodes, the key dropped.
+        let profile = try decode(MenuBarSettings.Profile.self,
+                                 #"{"id": "p1", "name": "Old", "combinedStatusItem": true}"#)
+        #expect(profile.name == "Old")
+        #expect(profile.sections.isEmpty)
+    }
+
+    @Test("the rehide mode defaults to timed and decodes tolerantly")
+    func rehideModeDecode() throws {
+        #expect(MenuBarSettings().rehideMode == .timed)
+        #expect(try decode(MenuBarSettings.self, "{}").rehideMode == .timed)
+        #expect(try decode(MenuBarSettings.self,
+                           #"{"rehideMode": "untilClick"}"#).rehideMode == .untilClick)
+        // A newer build's mode falls back rather than sinking the decode.
+        #expect(try decode(MenuBarSettings.self,
+                           #"{"rehideMode": "scheduled"}"#).rehideMode == .timed)
+        var state = MenuBarSettings()
+        state.rehideMode = .untilClick
+        #expect(try JSONDecoder().decode(MenuBarSettings.self,
+                                         from: JSONEncoder().encode(state)) == state)
+    }
+
+    @Test("a profile saved before the breadth fields decodes with the defaults")
+    func profileBreadthDecode() throws {
+        // The old profile shape: sections plus the cover look — no
+        // reveal style, clock, spacing or spacers.
+        let json = #"{"id": "p1", "name": "Old", "sections": {"A": "hidden"}, "coverMaterial": "hud"}"#
+        let profile = try decode(MenuBarSettings.Profile.self, json)
+        #expect(profile.sections == ["A": .hidden])
+        #expect(profile.coverMaterial == .hud)
+        #expect(profile.revealStyle == .bar)
+        #expect(profile.rehideMode == .timed)
+        #expect(profile.rehideSeconds == MenuBarSettings.defaultRehideSeconds)
+        #expect(profile.itemSpacing == 0)
+        #expect(profile.spacers.isEmpty)
+    }
+
     @Test("the reveal style defaults to the Item Bar and decodes tolerantly")
     func revealStyleDecode() throws {
         // Bartender's model is the default — the row never un-conceals.

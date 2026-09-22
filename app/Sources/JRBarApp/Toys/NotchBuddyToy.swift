@@ -120,6 +120,15 @@ final class NotchBuddyToy: Toy {
                 set: { self.store?.state.notchBuddy.presentation = $0 ? "mini" : "character" })
     }
 
+    /// Whether the slot's face is the bare status dot rather than the
+    /// character. Mini always is. Docked, a published `screen_bar`
+    /// program also claims the slot — the dot is the strip's extra LED
+    /// at the centre seam, so the pet steps aside for the light show and
+    /// comes back when it ends. A floating character never swaps.
+    func showsDot(docked: Bool, stripLinked: Bool) -> Bool {
+        miniMode || (docked && stripLinked)
+    }
+
     /// The card's name field writes straight into the settings blob;
     /// blank keeps the character's own `defaultName`.
     var nameBinding: Binding<String> {
@@ -644,7 +653,7 @@ private struct BuddyControlsView: View {
             .disabled(toy.miniMode)
 
             Toggle(isOn: toy.presentationBinding) {
-                SettingLabel(title: "Mini", subtitle: "Just the status dot while floating too — the docked slot is always the dot.")
+                SettingLabel(title: "Mini", subtitle: "Just the status dot — docked or floating, no body.")
             }
             .toggleStyle(.checkbox)
 
@@ -667,7 +676,7 @@ private struct BuddyControlsView: View {
                 }
             } label: {
                 SettingLabel(title: "Size",
-                             subtitle: "How big the floating buddy grows — the docked slot stays a small status dot.")
+                             subtitle: "How big the floating buddy grows — the docked slot stays its 18pt self.")
             }
 
             HStack(spacing: 10) {

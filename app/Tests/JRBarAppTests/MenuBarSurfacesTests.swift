@@ -166,12 +166,16 @@ struct MenuBarSurfacesTests {
 
     // MARK: Profiles — capture / apply / save / rename / delete
 
-    @Test("capture snapshots sections plus the appearance and control layout")
+    @Test("capture snapshots sections plus the appearance, reveal style, spacing and spacers")
     func profileCapture() {
-        var settings = MenuBarSettings(enabled: true, coverMaterial: .hud,
+        var settings = MenuBarSettings(enabled: true,
+                                       rehideSeconds: 9, rehideMode: .untilClick,
+                                       revealStyle: .inline,
+                                       coverMaterial: .hud,
                                        coverTint: "#112233", coverTintOpacity: 0.5,
                                        coverRoundness: 6, showCoverSeparator: true,
-                                       combinedStatusItem: true)
+                                       itemSpacing: 8,
+                                       spacers: [MenuBarSettings.Spacer(id: "s1", label: "•", width: 40)])
         settings.sections = ["A": .hidden]
         let profile = MenuBarProfiles.capture(name: "Work", from: settings, id: "p1")
         #expect(profile.name == "Work")
@@ -181,25 +185,36 @@ struct MenuBarSurfacesTests {
         #expect(profile.coverTintOpacity == 0.5)
         #expect(profile.coverRoundness == 6)
         #expect(profile.showCoverSeparator)
-        #expect(profile.combinedStatusItem)
+        #expect(profile.revealStyle == .inline)
+        #expect(profile.rehideMode == .untilClick)
+        #expect(profile.rehideSeconds == 9)
+        #expect(profile.itemSpacing == 8)
+        #expect(profile.spacers == [MenuBarSettings.Spacer(id: "s1", label: "•", width: 40)])
     }
 
     @Test("applying a profile replaces sections and appearance; None resets to defaults")
     func profileApply() {
         var settings = MenuBarSettings(enabled: true, revealOnHover: false,
-                                       coverMaterial: .hud, combinedStatusItem: true)
+                                       coverMaterial: .hud)
         settings.sections = ["A": .alwaysHidden]
         let profile = MenuBarSettings.Profile(
             id: "p1", name: "Clean", sections: ["B": .hidden],
             coverMaterial: .popover, coverTint: "#FF0000", coverTintOpacity: 0.8,
-            coverRoundness: 10, showCoverSeparator: true, combinedStatusItem: true)
+            coverRoundness: 10, showCoverSeparator: true,
+            revealStyle: .inline, rehideMode: .untilClick, rehideSeconds: 12,
+            itemSpacing: 4,
+            spacers: [MenuBarSettings.Spacer(id: "s1", label: "|")])
         MenuBarProfiles.apply(profile, to: &settings)
         #expect(settings.sections == ["B": .hidden])
         #expect(settings.coverMaterial == .popover)
         #expect(settings.coverTint == "#FF0000")
         #expect(settings.coverRoundness == 10)
         #expect(settings.showCoverSeparator)
-        #expect(settings.combinedStatusItem)
+        #expect(settings.revealStyle == .inline)
+        #expect(settings.rehideMode == .untilClick)
+        #expect(settings.rehideSeconds == 12)
+        #expect(settings.itemSpacing == 4)
+        #expect(settings.spacers.map(\.id) == ["s1"])
         // Reveal gestures are not the profile's business.
         #expect(!settings.revealOnHover)
         #expect(settings.enabled)
@@ -209,7 +224,11 @@ struct MenuBarSurfacesTests {
         #expect(settings.coverMaterial == .menu)
         #expect(settings.coverTint.isEmpty)
         #expect(!settings.showCoverSeparator)
-        #expect(!settings.combinedStatusItem)
+        #expect(settings.revealStyle == .bar)
+        #expect(settings.rehideMode == .timed)
+        #expect(settings.rehideSeconds == MenuBarSettings.defaultRehideSeconds)
+        #expect(settings.itemSpacing == 0)
+        #expect(settings.spacers.isEmpty)
     }
 
     @Test("save-as overwrites a same-named profile, appends a new one")
@@ -255,7 +274,6 @@ struct MenuBarSurfacesTests {
         let back = try JSONDecoder().decode(MenuBarSettings.self, from: data)
         #expect(back.profiles == settings.profiles)
         #expect(back.coverMaterial == settings.coverMaterial)
-        #expect(back.combinedStatusItem == settings.combinedStatusItem)
     }
 
     // MARK: The hidden-items submenu
@@ -289,18 +307,21 @@ struct MenuBarSurfacesTests {
         var state = MenuBarSettings(enabled: true, profiles: [
             MenuBarSettings.Profile(id: "p1", name: "Focus",
                                     sections: ["X": .alwaysHidden],
-                                    coverMaterial: .hud, combinedStatusItem: true),
+                                    coverMaterial: .hud,
+                                    revealStyle: .inline, itemSpacing: 4),
         ])
         utility.settings = { state }
         utility.onSettingsChange = { draft in state = draft }
         utility.applyProfile(id: "p1")
         #expect(state.sections == ["X": .alwaysHidden])
         #expect(state.coverMaterial == .hud)
-        #expect(state.combinedStatusItem)
+        #expect(state.revealStyle == .inline)
+        #expect(state.itemSpacing == 4)
         // "None" is a real apply — everything back to the open state.
         utility.applyProfile(id: MenuBarProfiles.noneID)
         #expect(state.sections.isEmpty)
-        #expect(!state.combinedStatusItem)
+        #expect(state.revealStyle == .bar)
+        #expect(state.itemSpacing == 0)
     }
 
     @MainActor

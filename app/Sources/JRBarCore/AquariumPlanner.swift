@@ -120,11 +120,12 @@ public enum AquariumPlanner {
     public static let toolEventLife: TimeInterval = 45
 
     /// The session's plan for `now`. Reads the same fields the panel's
-    /// reduce reads; `axes` is the roster's separated record when the
-    /// caller has it — `state.sessions` doesn't carry axes, so the tank
-    /// passes nil and review/freshness overlays degrade to what the
-    /// session row itself says (`stale`, ask, lifecycle) rather than
-    /// inventing an axis.
+    /// reduce reads; `axes` is the roster's separated record, carried on
+    /// the session itself (`CoreSession.axes`) — the tank passes it
+    /// through in `AquariumModel.fishFor`. A caller without it may pass
+    /// nil: review/freshness overlays then degrade to what the session
+    /// row itself says (`stale`, ask, lifecycle) rather than inventing
+    /// an axis.
     public static func plan(for session: CoreSession,
                             axes: CoreSessionAxes? = nil,
                             now: Date) -> FishPlan {

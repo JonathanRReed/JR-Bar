@@ -8,7 +8,9 @@ import OSLog
 /// A gesture lifts the covers through `onReveal` and arms a rehide for
 /// `rehideSeconds`; while the pointer is still on the row or the open
 /// Item Bar the timer re-arms instead of firing, so a reveal never folds
-/// away under the hand that is using it.
+/// away under the hand that is using it. `rehideMode == .untilClick`
+/// arms no clock at all: the reveal stands until a click lands off the
+/// row — the fold `outsideDown` already performs for the timed mode.
 ///
 /// Hover is a poll timer, not an event tap: a global `mouseMoved`
 /// monitor delivers ~125 events a second and every delivery costs a
@@ -307,10 +309,11 @@ final class MenuBarReveal {
 
     /// A reveal with an explicit clock — the trigger engine's
     /// `.reveal(seconds)` action. The caller drops the covers; this
-    /// arms their return.
+    /// arms their return. The rule named its own seconds, so the
+    /// `rehideMode` setting does not gate it.
     func rearm(for seconds: TimeInterval) {
         revealed = true
-        armRehide(max(0.5, seconds))
+        armClock(max(0.5, seconds))
     }
 
     /// A deliberate hide — the chevron's own toggle. Drops the pending
@@ -323,12 +326,29 @@ final class MenuBarReveal {
     }
 
     /// The bar dismissed: if a reveal is still out, give it a short
-    /// clock rather than leaving the items up indefinitely.
+    /// clock rather than leaving the items up indefinitely. Under the
+    /// click-scoped mode the surface was the reveal — its close is
+    /// the fold.
     func noteBarClosed() {
-        if revealed { armRehide(0.6) }
+        guard revealed else { return }
+        if settings().rehideMode == .timed {
+            armRehide(0.6)
+        } else {
+            cancelReveal()
+            onHide()
+        }
     }
 
+    /// The settings-driven clock. Click-scoped mode arms none — a
+    /// click off the row (`outsideDown`) is the only fold it knows.
     private func armRehide(_ seconds: TimeInterval) {
+        guard settings().rehideMode == .timed else { return }
+        armClock(seconds)
+    }
+
+    /// The clock itself — the explicit `rearm(for:)` seconds and the
+    /// re-arm a fired timer earns are clocks regardless of mode.
+    private func armClock(_ seconds: TimeInterval) {
         cancelPendingRehide?()
         cancelPendingRehide = scheduleRehide(seconds) { [weak self] in self?.rehideTimerFired() }
     }
@@ -353,7 +373,7 @@ final class MenuBarReveal {
         // A cancelled reveal owes no hide — the covers already stand.
         guard revealed else { return }
         if pointerOnRevealSurface() || itemMenuOpen() {
-            armRehide(0.5)
+            armClock(0.5)
             return
         }
         revealed = false

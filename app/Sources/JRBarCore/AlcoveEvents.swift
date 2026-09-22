@@ -504,13 +504,17 @@ extension NotchIsland {
     /// The gap between the session dots and the media strip.
     public static let mediaSeparatorWidth: CGFloat = 10
 
-    /// The idle width with Now Playing in it. The media strip rides the
-    /// same capsule as the dots; when nothing is working the capsule is
-    /// the strip plus the resting dot.
-    public static func idleContentWidth(_ summary: NotchIslandSummary, media: AlcoveMedia?) -> CGFloat {
-        let base = idleContentWidth(summary)
-        guard media != nil else { return base }
-        return base + mediaSeparatorWidth + mediaContentWidth
+    /// The idle width with Now Playing and the privacy dots in it. The
+    /// media strip and the sensor dots ride the same capsule as the
+    /// provider dots; when nothing is working the capsule is the strip
+    /// plus the resting dot.
+    public static func idleContentWidth(_ summary: NotchIslandSummary, media: AlcoveMedia?,
+                                        sensors: NotchSensorState = NotchSensorState()) -> CGFloat {
+        var width = idleContentWidth(summary)
+        if media != nil { width += mediaSeparatorWidth + mediaContentWidth }
+        let dots = sensorDotsWidth(sensors)
+        if dots > 0 { width += sensorSeparatorWidth + dots }
+        return width
     }
 }
 

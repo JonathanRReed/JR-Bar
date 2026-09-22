@@ -2203,6 +2203,38 @@ def _cmd_provider_consent(self, args):
     return {"consent": consent}
 
 
+@command("provider_add_instance")
+def _cmd_provider_add_instance(self, args):
+    provider = args.get("provider")
+    instance = args.get("instance")
+    label = args.get("label")
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    if not isinstance(instance, str) or not instance:
+        raise CommandError("invalid_args", "instance is required")
+    if label is not None and not isinstance(label, str):
+        raise CommandError("invalid_args", "label must be a string")
+    from .provider_management import (
+        ProviderManagementError,
+        add_provider_instance,
+    )
+
+    try:
+        row = add_provider_instance(
+            provider,
+            instance,
+            label=label,
+            credentials=_provider_credentials(self),
+        )
+    except ProviderManagementError as exc:
+        raise CommandError(exc.code, str(exc)) from exc
+    try:
+        self._request_provider_usage(force=True, providers=(provider,))
+    except Exception:
+        pass
+    return {"provider": row}
+
+
 @command("provider_action")
 def _cmd_provider_action(self, args):
     provider = args.get("provider")

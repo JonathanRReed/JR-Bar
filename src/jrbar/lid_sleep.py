@@ -30,6 +30,9 @@ CAFFEINATE_CLOSED_LID_COMMAND = (
 )
 #: The watchdog clears disablesleep when the renewal file goes stale.
 RENEWAL_FILE_NAME = "lid-hold-renewal"
+#: The watchdog records its pid here so a new spawn reclaims the role
+#: (kill the recorded predecessor) instead of stacking beside it.
+WATCHDOG_PID_FILE_NAME = "lid-hold-watchdog.pid"
 RENEWAL_STALE_SECONDS = 900
 WATCHDOG_POLL_SECONDS = 300
 IOREG_CLAMSHELL_COMMAND = ("/usr/sbin/ioreg", "-r", "-k", "AppleClamshellState", "-d", "4")
@@ -336,20 +339,57 @@ def _default_renewal_path() -> Path:
     return default_state_dir() / RENEWAL_FILE_NAME
 
 
-def watchdog_script(renewal_path: Path) -> str:
+def watchdog_script(renewal_path: Path, pid_path: Path | None = None) -> str:
     """The detached fail-safe. Survives the app (new session), needs no
     Python, and has exactly one job: when the renewal heartbeat goes
-    stale or vanishes, put the system back to sleepable and exit."""
+    stale or vanishes, put the system back to sleepable and exit.
+
+    The pidfile keeps at most one watchdog alive per marker. On startup
+    the script kills whichever predecessor the pidfile records -- but
+    only when that pid's command line still references this marker, so a
+    stale pidfile or a recycled pid is left alone -- then writes its own
+    pid. Each poll it re-reads the pidfile and exits the moment it names
+    someone else (a newer watchdog took over, or a clean release removed
+    it), so orphans from past daemon lifetimes cannot pile up."""
     quoted = shlex.quote(str(renewal_path))
+    pidfile = shlex.quote(
+        str(pid_path or renewal_path.with_name(WATCHDOG_PID_FILE_NAME))
+    )
     return (
+        # Reclaim: a watchdog orphaned by a previous daemon lifetime is
+        # still looping on this same marker. Its /bin/sh -c command text
+        # embeds the marker path -- that is the same-script sanity check
+        # before killing the recorded pid.
+        f"old=$(cat {pidfile} 2>/dev/null)\n"
+        f"case \"$old\" in ''|*[!0-9]*) old= ;; esac\n"
+        f"if [ -n \"$old\" ] && [ \"$old\" != \"$$\" ]; then\n"
+        f"  if kill -0 \"$old\" 2>/dev/null"
+        f" && ps -p \"$old\" -o command= 2>/dev/null"
+        f" | grep -F {quoted} >/dev/null 2>&1; then\n"
+        f"    kill \"$old\" 2>/dev/null\n"
+        f"  fi\n"
+        f"fi\n"
+        # Orphan sweep: watchdogs spawned before the pidfile existed
+        # recorded nothing, so the pidfile reclaim can never reach them.
+        # Their /bin/sh -c command text still embeds the marker path --
+        # kill every match but this shell. At most one watchdog may loop
+        # on a marker, and the ones that predate the file are all
+        # predecessors by definition.
+        f"for orphan in $(pgrep -f {quoted} 2>/dev/null); do\n"
+        f"  [ \"$orphan\" != \"$$\" ] && kill \"$orphan\" 2>/dev/null\n"
+        f"done\n"
+        f"echo $$ > {pidfile}\n"
         f"while true; do\n"
         f"  sleep {WATCHDOG_POLL_SECONDS}\n"
-        f"  if [ ! -f {quoted} ]; then exit 0; fi\n"
+        # Superseded -- the pidfile names another watchdog, or a clean
+        # release removed it: bow out without touching anything.
+        f"  if [ \"$(cat {pidfile} 2>/dev/null)\" != \"$$\" ]; then exit 0; fi\n"
+        f"  if [ ! -f {quoted} ]; then rm -f {pidfile}; exit 0; fi\n"
         f"  now=$(date +%s)\n"
         f"  mt=$(stat -f %m {quoted} 2>/dev/null || echo 0)\n"
         f"  if [ $((now - mt)) -gt {RENEWAL_STALE_SECONDS} ]; then\n"
         f"    /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0 2>/dev/null\n"
-        f"    rm -f {quoted}\n"
+        f"    rm -f {quoted} {pidfile}\n"
         f"    exit 0\n"
         f"  fi\n"
         f"done\n"
@@ -367,6 +407,7 @@ class ClosedLidAwakeController:
         watch_current_process: bool = True,
         use_system_disable: bool = False,
         renewal_path: Path | None = None,
+        watchdog_pid_path: Path | None = None,
         keep_display_awake: bool = False,
     ) -> None:
         self.command = tuple(command)
@@ -384,6 +425,11 @@ class ClosedLidAwakeController:
         self.last_policy = CLOSED_LID_AWAKE_NEVER
         self.last_requested = False
         self.renewal_path = renewal_path or _default_renewal_path()
+        self.watchdog_pid_path = (
+            watchdog_pid_path
+            if watchdog_pid_path is not None
+            else self.renewal_path.with_name(WATCHDOG_PID_FILE_NAME)
+        )
         self.watchdog_process = None
 
     def set_use_system_disable(self, enabled: bool) -> None:
@@ -432,8 +478,16 @@ class ClosedLidAwakeController:
         if watchdog is not None and watchdog.poll() is None:
             return
         try:
+            # The script itself reclaims the role: its first act is to
+            # kill the watchdog the pidfile records (same-script sanity
+            # check inside), so a new hold or a new daemon session can
+            # never stack a second loop on this marker.
             self.watchdog_process = self.process_factory(
-                ["/bin/sh", "-c", watchdog_script(self.renewal_path)],
+                [
+                    "/bin/sh",
+                    "-c",
+                    watchdog_script(self.renewal_path, self.watchdog_pid_path),
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
@@ -478,17 +532,41 @@ class ClosedLidAwakeController:
 
     def release(self) -> None:
         errors: list[str] = []
-        # Clean release retires the heartbeat; the watchdog sees the file
-        # gone on its next poll and exits without touching anything.
+        # Clean release retires the heartbeat and the watchdog pidfile;
+        # any watchdog still looping exits on its next poll (marker gone
+        # or pidfile no longer naming it) without touching anything.
         try:
             self.renewal_path.unlink(missing_ok=True)
         except OSError:
             pass
+        self._retire_watchdog(errors)
         self._terminate_caffeinate(errors)
 
         self.release_system_disable(errors=errors)
 
         self.last_error = "; ".join(errors) if errors else None
+
+    def _retire_watchdog(self, errors: list[str]) -> None:
+        """A normal release leaves no watchdog behind: unlink the pidfile
+        (a watchdog we did not spawn exits on its next poll when the file
+        no longer names it) and stop the one we spawned right away."""
+        try:
+            self.watchdog_pid_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        process = self.watchdog_process
+        self.watchdog_process = None
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=1)
+        except Exception:
+            try:
+                process.kill()
+            except Exception as exc:
+                errors.append(f"watchdog: {exc}")
 
     def _terminate_caffeinate(self, errors: list[str]) -> None:
         process = self.process

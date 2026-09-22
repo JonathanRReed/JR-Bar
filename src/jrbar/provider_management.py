@@ -48,6 +48,19 @@ CREDENTIAL_ACCOUNTS: dict[str, tuple[str, ...]] = {
     "openai-api": ("admin-key",),
 }
 
+
+def supports_provider_instances(provider_id: str) -> bool:
+    """Whether a second configured account can read a *different* account.
+
+    Only true where a source is per-instance -- a stored credential
+    (``CREDENTIAL_ACCOUNTS``) or a consented browser session
+    (``BROWSER_CONSENT_SCOPES``). A provider whose sources are all this
+    Mac's own CLI/app sign-in (Codex, Gemini, OpenCode, Antigravity)
+    would report the same account twice, so the UI must not offer the
+    "+" for it.
+    """
+    return provider_id in CREDENTIAL_ACCOUNTS or provider_id in BROWSER_CONSENT_SCOPES
+
 _IMPORT_LEDGER_NAME = "browser-imports.json"
 _IMPORT_ACCOUNT = "token"
 
@@ -285,6 +298,7 @@ def provider_rows(
                 "supports_browser_sources": provider_id in BROWSER_CONSENT_SCOPES,
                 "supports_local_tokens": descriptor.supports_local_tokens,
                 "supports_quota": descriptor.supports_quota,
+                "supports_instances": supports_provider_instances(provider_id),
                 "source_order": list(descriptor.source_order),
                 # Whitelist, not substring filter: an option named
                 # ``api_password`` or ``session_cookie`` would sail
@@ -360,6 +374,97 @@ def set_provider_enabled(
         "enabled": enabled,
     }
     return row
+
+
+def add_provider_instance(
+    provider_id: str,
+    source_instance_id: str,
+    *,
+    label: str | None = None,
+    settings_path: Path | None = None,
+    credentials=None,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Persist one more configured account for a provider.
+
+    The new preference lands through the settings document's optimistic
+    concurrency (T25), exactly like ``set_provider_enabled``. It starts
+    enabled and metered; the instance's own credential/consent is what
+    separates it from the default account, so providers without a
+    per-instance source are refused ``unsupported`` rather than silently
+    mirroring the first account.
+    """
+    from .provider_instances import (
+        DEFAULT_PROVIDER_INSTANCE_SOURCE_ID,
+        ProviderInstanceError,
+        ProviderInstanceKey,
+    )
+    from .provider_usage_settings import ProviderPreference
+
+    try:
+        descriptor = provider_descriptor(provider_id)
+    except ValueError as exc:
+        raise ProviderManagementError("unknown_provider", f"unknown provider {provider_id!r}") from exc
+    if not supports_provider_instances(provider_id):
+        raise ProviderManagementError(
+            "unsupported",
+            f"{descriptor.label} reads this Mac's own sign-in; a second "
+            "configured account would report the same account twice",
+        )
+    try:
+        key = ProviderInstanceKey(provider_id, source_instance_id)
+    except ProviderInstanceError as exc:
+        raise ProviderManagementError("invalid_args", str(exc)) from exc
+    instance_id = key.source_instance_id.value
+    if instance_id == DEFAULT_PROVIDER_INSTANCE_SOURCE_ID:
+        raise ProviderManagementError(
+            "invalid_args", "every provider already has the default instance"
+        )
+    if label is not None and (
+        not isinstance(label, str)
+        or not label.strip()
+        or len(label) > 128
+        or any(ord(char) < 32 for char in label)
+    ):
+        raise ProviderManagementError("invalid_args", "invalid instance label")
+    loaded = load_provider_usage_settings(settings_path)
+    try:
+        loaded.settings.preference(provider_id, instance_id)
+    except StopIteration:
+        pass
+    else:
+        raise ProviderManagementError(
+            "already_exists",
+            f"{provider_id} already has instance {instance_id!r}",
+        )
+    preference = ProviderPreference(
+        provider_id,
+        enabled=True,
+        browser_sources=False,
+        source_instance_id=instance_id,
+        # None lets ProviderPreference name it "<Label> · <instance>".
+        label=label.strip() if label else None,
+    )
+    try:
+        save_provider_usage_settings(
+            loaded.settings.with_instance(preference),
+            settings_path or default_provider_usage_settings_path(),
+            loaded=loaded,
+        )
+    except ProviderUsageSettingsWriteRefusedError as exc:
+        raise ProviderManagementError("settings_changed", str(exc)) from exc
+    rows = provider_rows(
+        credentials=credentials,
+        home=home,
+        settings_path=settings_path,
+        only=provider_id,
+        instance=instance_id,
+    )
+    return rows[0] if rows else {
+        "id": provider_id,
+        "instance": instance_id,
+        "enabled": True,
+    }
 
 
 def grant_browser_consent(
@@ -457,6 +562,7 @@ __all__ = [
     "BROWSER_CONSENT_SCOPES",
     "CREDENTIAL_ACCOUNTS",
     "ProviderManagementError",
+    "add_provider_instance",
     "forget_browser_import",
     "grant_browser_consent",
     "provider_rows",
@@ -464,4 +570,5 @@ __all__ = [
     "record_browser_import",
     "revoke_browser_consent",
     "set_provider_enabled",
+    "supports_provider_instances",
 ]

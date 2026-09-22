@@ -222,18 +222,21 @@ struct SetupAgentRow: View {
 
 /// One row per permission — icon, what it enables, a live status dot,
 /// and the Grant/Open Settings button. The dots keep polling while the
-/// step is on screen, so a grant made in System Settings lands on its own.
+/// step is on screen, so a grant made in System Settings lands on its
+/// own. Scrolls: the row count outgrew the window's fixed height.
 struct SetupPermissionsStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(SetupPermission.allCases.enumerated()), id: \.element) { index, permission in
-                if index > 0 { Divider().opacity(0.5) }
-                SetupPermissionRow(store: store, permission: permission)
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(Array(SetupPermission.allCases.enumerated()), id: \.element) { index, permission in
+                    if index > 0 { Divider().opacity(0.5) }
+                    SetupPermissionRow(store: store, permission: permission)
+                }
             }
+            .padding(.horizontal, 24)
         }
-        .padding(.horizontal, 24)
         .onAppear { store.startPermissionUpdates() }
         .onDisappear { store.stopPermissionUpdates() }
     }

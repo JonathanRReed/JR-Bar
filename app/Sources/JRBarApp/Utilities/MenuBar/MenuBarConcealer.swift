@@ -727,6 +727,11 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     private var items: [MenuBarItem] = []
     private var concealing = false
     private var swallowUp = false
+    /// Whether the event tap is live — `tapCreate` refuses without the
+    /// Accessibility grant, and the card reads this to say so instead
+    /// of silently no-opping. Written on the main thread by
+    /// `start`/`stop`, read there too.
+    private(set) var tapLive = false
     private let onBridge: @MainActor (CGPoint) -> Void
 
     init(onBridge: @escaping @MainActor (CGPoint) -> Void) {
@@ -757,6 +762,7 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
             },
             userInfo: pointer) else {
             MenuBarAssessmentBackend.log.error("click bridge: no event tap — system item clicks stay native")
+            tapLive = false
             return
         }
         self.tap = tap
@@ -764,9 +770,11 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
         self.source = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        tapLive = true
     }
 
     func stop() {
+        tapLive = false
         guard let tap else { return }
         CGEvent.tapEnable(tap: tap, enable: false)
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }

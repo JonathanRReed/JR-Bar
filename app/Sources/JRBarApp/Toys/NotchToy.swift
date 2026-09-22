@@ -121,6 +121,28 @@ final class NotchToy: Toy {
     /// The battery poller; exists only while the island is ours, shown,
     /// and `capsuleNotifications` + `capsuleKinds.charging` are on.
     @ObservationIgnored private var powerMonitor: AlcovePowerMonitor?
+    /// The mic/camera poller; exists only while the island is ours,
+    /// shown, and the indicators switch is on.
+    @ObservationIgnored private var sensorMonitor: NotchSensorMonitor?
+    /// What the idle face reads for its privacy dots — quiet while the
+    /// monitor is off or nothing is live.
+    private(set) var sensorState = NotchSensorState()
+    /// The mic/camera dots' own switch — app-local persistence under a
+    /// `jrbar.*` defaults key, the same place the island's wing hints
+    /// keep theirs (`NotchCardView`). `NotchSettings` is ToysState's and
+    /// not this file's to extend; default on, like the hardware LED it
+    /// mirrors.
+    static let sensorIndicatorsDefaultsKey = "jrbar.notchSensorIndicators"
+    var sensorIndicatorsEnabled = true {
+        didSet {
+            guard sensorIndicatorsEnabled != oldValue else { return }
+            UserDefaults.standard.set(sensorIndicatorsEnabled,
+                                      forKey: Self.sensorIndicatorsDefaultsKey)
+            if !sensorIndicatorsEnabled { sensorState = NotchSensorState() }
+            syncSensorMonitor()
+            reframeCurrent(animated: false)
+        }
+    }
     /// The hover-leave timer — a short delay so a cursor grazing the
     /// island's edge doesn't flap the card.
     @ObservationIgnored private var collapseWork: DispatchWorkItem?
@@ -142,6 +164,8 @@ final class NotchToy: Toy {
         self.cardModel = cardModel
         self.mediaFeed = mediaFeed ?? MediaFeed.shared
         self.runtimeEnabled = runtimeEnabled
+        sensorIndicatorsEnabled = UserDefaults.standard.object(
+            forKey: Self.sensorIndicatorsDefaultsKey) as? Bool ?? true
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
@@ -400,7 +424,8 @@ final class NotchToy: Toy {
     /// What the resting island draws in its shoulders — the view and
     /// the frame read the same answer.
     var idleLayout: NotchIdleLayout {
-        NotchIsland.idleLayout(islandSummary, media: idleMedia, earsDrawn: earsDrawn)
+        NotchIsland.idleLayout(islandSummary, media: idleMedia, earsDrawn: earsDrawn,
+                               sensors: sensorIndicatorsEnabled ? sensorState : NotchSensorState())
     }
 
     /// True while Fold's overlay is covering the screen — the island is
@@ -923,7 +948,9 @@ final class NotchToy: Toy {
                     slotWidth: slot?.width ?? 0, notchDepth: depth,
                     leftShoulder: layout.windowShoulder, rightShoulder: layout.windowShoulder)
                 : NotchIslandLayout.floatingSize(
-                    contentWidth: NotchIsland.idleContentWidth(islandSummary, media: idleMedia))
+                    contentWidth: NotchIsland.idleContentWidth(
+                        islandSummary, media: idleMedia,
+                        sensors: sensorIndicatorsEnabled ? sensorState : NotchSensorState()))
             if islandHoverPeek {
                 // The wink's frame half — a few points of grow under
                 // the pointer, symmetric on a drawn face, straight
@@ -985,6 +1012,7 @@ final class NotchToy: Toy {
         publishSurface()
         syncMediaMonitor()
         syncPowerMonitor()
+        syncSensorMonitor()
         syncAudioTap()
         syncShakeMonitor()
     }
@@ -1035,6 +1063,7 @@ final class NotchToy: Toy {
         island?.orderOut(nil)
         syncMediaMonitor()
         syncPowerMonitor()
+        syncSensorMonitor()
         syncAudioTap()
         syncShakeMonitor()
     }
@@ -1300,6 +1329,44 @@ final class NotchToy: Toy {
         }
     }
 
+    // MARK: Sensors
+
+    /// The mic/camera poller lives exactly as long as the island is
+    /// shown with the indicators switch on; `reconcile`/`parkIsland`
+    /// land here. `runtimeEnabled` is folded in, so state-machine
+    /// tests never build a CoreAudio/CoreMediaIO read.
+    private func syncSensorMonitor() {
+        let want = runtimeEnabled && islandVisible && sensorIndicatorsEnabled
+        if want {
+            if sensorMonitor == nil {
+                let monitor = NotchSensorMonitor()
+                monitor.onChange = { [weak self] state in self?.noteSensors(state) }
+                sensorMonitor = monitor
+            }
+            sensorMonitor?.start()
+        } else {
+            sensorMonitor?.stop()
+            sensorMonitor = nil
+            if sensorState.anyInUse {
+                sensorState = NotchSensorState()
+                if islandVisible, currentFace == .idle {
+                    reframeCurrent(animated: false)
+                }
+            }
+        }
+    }
+
+    /// A sensor edge landed: publish it, and reframe when the resting
+    /// face is up — the dots change the shoulder's width. Mid-capsule
+    /// or mid-card it just waits; the next idle reframe picks it up.
+    private func noteSensors(_ state: NotchSensorState) {
+        guard state != sensorState else { return }
+        sensorState = state
+        if currentFace == .idle {
+            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
+    }
+
     // MARK: Tap
 
     /// A tap on the island itself — the view's tap gesture. The card
@@ -1551,6 +1618,12 @@ private struct NotchControlsView: View {
                 Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
                     SettingLabel(title: "Power", subtitle: "Plugging in, switching to battery, fully charged.")
                 }
+            }
+            Toggle(isOn: Binding(
+                get: { toy.sensorIndicatorsEnabled },
+                set: { toy.sensorIndicatorsEnabled = $0 })) {
+                SettingLabel(title: "Mic & camera indicators",
+                             subtitle: "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar asks the system whether they are running; it never opens the mic or camera itself.")
             }
             Toggle(isOn: toy.bind(\.mediaEnabled)) {
                 SettingLabel(title: "Now Playing",

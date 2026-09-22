@@ -18,7 +18,8 @@ enum MenuBarProfiles {
 
     /// Snapshot the settings a profile keeps: sections — and under
     /// the concealer the per-app concealment map — plus the cover
-    /// appearance and control layout.
+    /// appearance, the reveal's style and clock, the item spacing and
+    /// the spacer items.
     nonisolated static func capture(name: String, from settings: MenuBarSettings,
                                     id: String = UUID().uuidString) -> MenuBarSettings.Profile {
         MenuBarSettings.Profile(
@@ -28,14 +29,20 @@ enum MenuBarProfiles {
             coverTintOpacity: settings.coverTintOpacity,
             coverRoundness: settings.coverRoundness,
             showCoverSeparator: settings.showCoverSeparator,
-            combinedStatusItem: settings.combinedStatusItem)
+            revealStyle: settings.revealStyle,
+            rehideMode: settings.rehideMode,
+            rehideSeconds: settings.rehideSeconds,
+            itemSpacing: settings.itemSpacing,
+            spacers: settings.spacers)
     }
 
-    /// Apply a profile wholesale: its sections and appearance replace
-    /// the live ones. `nil` is the "None" state — every section back
-    /// to shown, the plain `.menu` cover, the two separate controls.
-    /// The reveal gestures and `enabled` are not the profile's
-    /// business and survive either way.
+    /// Apply a profile wholesale: its sections, appearance, reveal
+    /// style and clock, spacing and spacers replace the live ones.
+    /// `nil` is the "None" state — every section back to shown, the
+    /// plain `.menu` cover, the timed default reveal, the system's own
+    /// spacing and no spacers. The reveal gestures, `enabled`, the
+    /// hotkeys and the trigger rules are not the profile's business
+    /// and survive either way.
     nonisolated static func apply(_ profile: MenuBarSettings.Profile?,
                                   to settings: inout MenuBarSettings) {
         guard let profile else {
@@ -46,7 +53,11 @@ enum MenuBarProfiles {
             settings.coverTintOpacity = MenuBarSettings.defaultCoverTintOpacity
             settings.coverRoundness = 0
             settings.showCoverSeparator = false
-            settings.combinedStatusItem = false
+            settings.revealStyle = .bar
+            settings.rehideMode = .timed
+            settings.rehideSeconds = MenuBarSettings.defaultRehideSeconds
+            settings.itemSpacing = 0
+            settings.spacers = []
             return
         }
         settings.sections = profile.sections
@@ -56,7 +67,11 @@ enum MenuBarProfiles {
         settings.coverTintOpacity = profile.coverTintOpacity
         settings.coverRoundness = profile.coverRoundness
         settings.showCoverSeparator = profile.showCoverSeparator
-        settings.combinedStatusItem = profile.combinedStatusItem
+        settings.revealStyle = profile.revealStyle
+        settings.rehideMode = profile.rehideMode
+        settings.rehideSeconds = profile.rehideSeconds
+        settings.itemSpacing = profile.itemSpacing
+        settings.spacers = profile.spacers
     }
 
     /// A usable name: trimmed, non-empty, and not the reserved

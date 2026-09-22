@@ -123,15 +123,25 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Scroll over the bar",
                              subtitle: "A swipe or scroll wheel on the menu bar.")
             }
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: utility.bind(\.rehideSeconds), in: MenuBarSettings.rehideRange)
-                        .frame(width: 160)
-                    ValueText(text: SettingsStore.seconds(utility.settings().rehideSeconds))
-                }
+            Picker(selection: utility.bind(\.rehideMode)) {
+                Text("After a delay").tag(MenuBarSettings.RehideMode.timed)
+                Text("When you click elsewhere").tag(MenuBarSettings.RehideMode.untilClick)
             } label: {
-                SettingLabel(title: "Tuck away after",
-                             subtitle: "How long a reveal lasts once the pointer leaves the bar.")
+                SettingLabel(title: "Tuck away",
+                             subtitle: "On a clock once the pointer leaves the bar, or only when a click lands outside it.")
+            }
+            .pickerStyle(.menu)
+            if utility.settings().rehideMode == .timed {
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        Slider(value: utility.bind(\.rehideSeconds), in: MenuBarSettings.rehideRange)
+                            .frame(width: 160)
+                        ValueText(text: SettingsStore.seconds(utility.settings().rehideSeconds))
+                    }
+                } label: {
+                    SettingLabel(title: "Tuck away after",
+                                 subtitle: "How long a reveal lasts once the pointer leaves the bar.")
+                }
             }
             Picker(selection: utility.bind(\.revealStyle)) {
                 Text("Item Bar — Bartender").tag(MenuBarSettings.RevealStyle.bar)
@@ -169,6 +179,14 @@ struct MenuBarUtilityControls: View {
                     Button("Open Settings") { utility.openAccessibilitySettings() }
                         .controlSize(.small)
                 }
+            }
+            if utility.clickBridgeFailed {
+                Divider()
+                    .padding(.vertical, 4)
+                Text("The system-item click bridge could not start — macOS refused its event tap (Accessibility is required). Clicks on the clock, battery and Wi-Fi stay native while items are concealed.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Divider()
@@ -252,6 +270,18 @@ struct MenuBarUtilityControls: View {
                     } label: {
                         SettingLabel(title: "Item spacing",
                                      subtitle: "A tighter gap between every app's items, system-wide. Items pick it up as they relaunch.")
+                    }
+                    LabeledContent {
+                        HStack(spacing: 10) {
+                            Slider(value: utility.itemSpacingBinding,
+                                   in: MenuBarSettings.itemSpacingRange, step: 1)
+                                .frame(width: 160)
+                            ValueText(text: utility.settings().itemSpacing > 0
+                                      ? "\(utility.settings().itemSpacing) pt" : "System")
+                        }
+                    } label: {
+                        SettingLabel(title: "Custom spacing",
+                                     subtitle: "An exact gap in points — the presets above all live on this dial.")
                     }
                     Divider()
                         .padding(.vertical, 4)
@@ -589,6 +619,13 @@ private struct MenuBarAutomationControls: View {
             }
         }
 
+        if !utility.failedHotkeyActions.isEmpty {
+            Text("macOS refused to register: \(utility.failedHotkeyActions.map { hotkeyTitle($0) }.sorted().joined(separator: ", ")). The keys likely belong to another app.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
         rulesSection
         arrangeSection
     }
@@ -596,6 +633,7 @@ private struct MenuBarAutomationControls: View {
     private func hotkeyTitle(_ action: MenuBarHotkeyAction) -> String {
         switch action {
         case .toggleReveal: return "Toggle hidden items"
+        case .revealAlwaysHidden: return "Reveal always-hidden items"
         case .hideAll: return "Hide all"
         case .showAll: return "Show all"
         case .commandBar: return "Command bar"

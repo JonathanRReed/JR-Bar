@@ -198,6 +198,15 @@ enum DockSwitcherList {
         return windows[index]
     }
 
+    /// The owning pid of a minimized-window Dock tile: the tile carries
+    /// no `AXURL`, so its title is matched against the off-screen
+    /// window list — exactly one claimant pid is trusted; zero or
+    /// several means the card stays tile-backed rather than guessing.
+    static func minimizedOwnerPID(title: String, rows: [SwitcherWindowRow]) -> pid_t? {
+        let claimants = Set(rows.filter { $0.title == title }.map(\.pid))
+        return claimants.count == 1 ? claimants.first : nil
+    }
+
 }
 
 // MARK: - The model (pure, tested)
@@ -420,8 +429,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
         tap = nil
     }
 
-    /// nil return eats the event; passRetained hands it on.
-    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    /// nil return eats the event; passRetained hands it on. Internal
+    /// for the tests, which drive it with synthetic CGEvents.
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passRetained(event)
@@ -429,6 +439,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock()
         let isOpen = open, isCmdOpen = cmdOpen
         let isEnabled = enabled, isCmdEnabled = cmdEnabled
+        let isPreviewOpen = previewOpen
         lock.unlock()
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
@@ -481,6 +492,15 @@ final class SwitcherKeyTap: @unchecked Sendable {
                     }
                 }
             }
+            // The dock preview floats but can't take key status — while
+            // it's up the tap owns its keys wherever the pointer sits:
+            // a card walk with the pointer parked on the Dock still
+            // lands, and nothing leaks into the front app. The strip's
+            // own keys are all consumed above, so an open strip keeps
+            // precedence.
+            if isPreviewOpen, Self.previewKeyCodes.contains(code) {
+                return swallow { self.onPreviewKey(code) }
+            }
             return Unmanaged.passRetained(event)
         }
 
@@ -501,6 +521,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return cmdOpen
     }
+
+    /// The keys the floating dock preview owns — Esc closes it, the
+    /// arrows walk its cards, Return raises the pick.
+    nonisolated static let previewKeyCodes: Set<Int64> = [53, 123, 124, 125, 126, 36, 76]
 
     /// The ⌘-verb letters — the row of actions stock ⌘⇥ and AltTab
     /// share. Type-ahead keeps every other key.
@@ -556,6 +580,14 @@ final class DockSwitcherController {
     /// The preview's off-screen switch: minimized and other-Space
     /// windows only attempt captures when it's on.
     var offscreenAllowed: () -> Bool = { false }
+    /// The dock preview's keys while its panel floats — Esc closes,
+    /// arrows walk the cards, Return raises. The tap eats them either
+    /// way: the panel can't take key status, so a pass-through would
+    /// type them into the front app.
+    var onPreviewKey: ((Int64) -> Void)?
+    /// Mirrors the preview panel's visibility into the tap — the
+    /// enhance controller's show/hide drives it.
+    func setPreviewOpen(_ value: Bool) { tap.setPreviewOpen(value) }
     /// An open can land while the last open's captures still run —
     /// the generation tells a stale async batch from the live strip.
     private var thumbGeneration = 0
@@ -589,6 +621,7 @@ final class DockSwitcherController {
             self?.panel?.present(model: self?.model ?? SwitcherModel())
         }
         tap.onVerb = { [weak self] char in self?.verb(char) }
+        tap.onPreviewKey = { [weak self] code in self?.onPreviewKey?(code) }
         tap.start()
     }
 
@@ -925,7 +958,7 @@ final class DockSwitcherPanel: NSPanel {
         // The strip keeps itself out of screenshots and other apps'
         // window lists — the preview panel does the same.
         sharingType = .none
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .fullScreenAuxiliary, .ignoresCycle]
         level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 10)
         title = "JR-Bar Window Switcher"
     }

@@ -80,10 +80,13 @@ final class MenuBarBarPanel: NSPanel {
     init(model: MenuBarBarModel,
          tiles: MenuBarLiveTiles,
          onTrigger: @escaping @MainActor (MenuBarItem) -> Void,
-         onRevealItem: @escaping @MainActor (MenuBarItem) -> Void) {
+         onRevealItem: @escaping @MainActor (MenuBarItem) -> Void,
+         itemSection: @escaping @MainActor (MenuBarItem) -> MenuBarItemSection,
+         onMoveItem: @escaping @MainActor (MenuBarItem, MenuBarItemSection) -> Void) {
         let hosting = NSHostingView(rootView: MenuBarBarView(
             model: model, tiles: tiles,
-            onTrigger: onTrigger, onRevealItem: onRevealItem))
+            onTrigger: onTrigger, onRevealItem: onRevealItem,
+            itemSection: itemSection, onMoveItem: onMoveItem))
         self.hosting = hosting
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
         glass.cornerRadius = Self.cornerRadius
@@ -123,12 +126,19 @@ final class MenuBarBarPanel: NSPanel {
 /// `SCScreenshotManager` one-shot of the item's real on-screen rect
 /// while the bar is up, falling back to the owner app's icon when
 /// capture has nothing honest to show (no Screen Recording, a parked
-/// item). Click triggers the item, ⌘-click reveals it.
+/// item). Click triggers the item, ⌘-click reveals it, right-click
+/// offers the section moves.
 struct MenuBarBarView: View {
     let model: MenuBarBarModel
     let tiles: MenuBarLiveTiles
     let onTrigger: @MainActor (MenuBarItem) -> Void
     let onRevealItem: @MainActor (MenuBarItem) -> Void
+    /// The tile's right-click menu reads the live section through this
+    /// so the "Move to…" rows always offer the other two homes.
+    let itemSection: @MainActor (MenuBarItem) -> MenuBarItemSection
+    /// A context-menu move — the same section write the card's pickers
+    /// make; the tile itself never drags anything.
+    let onMoveItem: @MainActor (MenuBarItem, MenuBarItemSection) -> Void
 
     private var items: [MenuBarItem] { model.items }
 
@@ -158,6 +168,7 @@ struct MenuBarBarView: View {
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(itemLabel(for: item))
                                 .help(tooltip(for: item))
+                                .contextMenu { moveMenu(for: item) }
                             }
                         }
                     }
@@ -201,10 +212,26 @@ struct MenuBarBarView: View {
             }
     }
 
+    /// The right-click menu: re-home the item to whichever sections it
+    /// is not already in — the same writes the card's pickers make.
+    @ViewBuilder
+    private func moveMenu(for item: MenuBarItem) -> some View {
+        let section = itemSection(item)
+        if section != .hidden {
+            Button("Move to Hidden") { onMoveItem(item, .hidden) }
+        }
+        if section != .alwaysHidden {
+            Button("Move to Always Hidden") { onMoveItem(item, .alwaysHidden) }
+        }
+        if section != .shown {
+            Button("Move to Shown") { onMoveItem(item, .shown) }
+        }
+    }
+
     private func tooltip(for item: MenuBarItem) -> String {
         var name = item.ownerName
         if let title = item.title { name += " · \(title)" }
-        return name + " — click to open, ⌘-click to keep it out"
+        return name + " — click to open, ⌘-click to keep it out, right-click to move it"
     }
 }
 
@@ -220,6 +247,10 @@ final class MenuBarBar {
     var onTrigger: @MainActor (MenuBarItem) -> Void = { _ in }
     /// A ⌘-click on a tile — pull the item up a section.
     var onRevealItem: @MainActor (MenuBarItem) -> Void = { _ in }
+    /// The tile's context menu: which section it sits in, and the
+    /// write a "Move to…" row makes.
+    var itemSection: @MainActor (MenuBarItem) -> MenuBarItemSection = { _ in .hidden }
+    var onMoveItem: @MainActor (MenuBarItem, MenuBarItemSection) -> Void = { _, _ in }
     /// Open changes, so the reveal can hold while the pointer is on it
     /// and start a short clock when it folds.
     var onOpenChange: @MainActor (Bool) -> Void = { _ in }
@@ -270,7 +301,13 @@ final class MenuBarBar {
             model: model,
             tiles: tiles,
             onTrigger: { [weak self] item in self?.onTrigger(item) },
-            onRevealItem: { [weak self] item in self?.onRevealItem(item) })
+            onRevealItem: { [weak self] item in self?.onRevealItem(item) },
+            itemSection: { [weak self] item in
+                self.map { $0.itemSection(item) } ?? .hidden
+            },
+            onMoveItem: { [weak self] item, section in
+                self?.onMoveItem(item, section)
+            })
         let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
         panel.setFrame(MenuBarBarLayout.frame(itemCount: listed.count,
                                               menuBarDepth: depth,

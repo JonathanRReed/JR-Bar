@@ -259,6 +259,9 @@ struct ProviderUsageCard: View {
                 }
                 ResignInButton(provider: provider, store: store)
                 Spacer()
+                if row.supportsInstances {
+                    AddAccountButton(providerID: provider.id, row: row, store: store)
+                }
                 if row.importedCredential {
                     Text("imported session")
                         .font(.caption2)
@@ -792,6 +795,73 @@ struct ResignInButton: View {
         default:
             return "Re-check this provider's sign-in and refresh its usage"
         }
+    }
+}
+
+/// The "Add account" affordance — only offered where the daemon says a
+/// second configured instance could read a *different* account (a stored
+/// credential or a consented browser session). A popover keeps it light:
+/// an instance slug plus an optional display label.
+struct AddAccountButton: View {
+    let providerID: String
+    let row: ProviderRow
+    @Bindable var store: UsageCenterStore
+    // `ViewState`, not `@State` — the Command Line Tools ship no
+    // SwiftUIMacros plugin; the alias names the wrapper directly.
+    @ViewState private var open = false
+    @ViewState private var instance = ""
+    @ViewState private var label = ""
+
+    var body: some View {
+        Button {
+            open.toggle()
+        } label: {
+            Label("Add account", systemImage: "plus")
+        }
+        .controlSize(.small)
+        .disabled(!store.isLive)
+        .help("Meter a second \(providerID) account — its credential or browser consent is what keeps it from mirroring this one")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Add a \(providerID) account")
+                    .font(.headline)
+                Text("The instance id distinguishes the account — \"work\", \"personal\". The account's own credential or consented browser session is set up next, from its card's manage row.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 260)
+                TextField("Instance id (e.g. work)", text: $instance)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Label (optional)", text: $label)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { open = false }
+                        .controlSize(.small)
+                    Button("Add") {
+                        let slug = Self.slug(instance)
+                        guard !slug.isEmpty else { return }
+                        store.addProviderInstance(row, instance: slug,
+                                                  label: label.isEmpty ? nil : label)
+                        open = false
+                        instance = ""
+                        label = ""
+                    }
+                    .controlSize(.small)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(Self.slug(instance).isEmpty)
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    /// The instance id as the daemon expects it — lowercase slug.
+    static func slug(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
     }
 }
 

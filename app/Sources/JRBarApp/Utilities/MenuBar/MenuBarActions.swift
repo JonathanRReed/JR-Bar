@@ -46,6 +46,12 @@ protocol MenuBarActionsDelegate: AnyObject {
     func menuBarActions(_ actions: MenuBarActions, openItem itemID: String)
     /// The plain reveal — the utility's `rehideSeconds` clock.
     func menuBarActionsRevealHidden(_ actions: MenuBarActions)
+    /// The hotkey's true toggle: the reveal surface up means hide,
+    /// down means reveal — the chevron's click, fired from anywhere.
+    func menuBarActionsToggleReveal(_ actions: MenuBarActions)
+    /// The dedicated gesture for the deeper run: a temporary reveal
+    /// of the always-hidden section on the `rehideSeconds` clock.
+    func menuBarActionsRevealAlwaysHidden(_ actions: MenuBarActions)
     /// A reveal with an explicit clock (trigger rules carry one).
     func menuBarActions(_ actions: MenuBarActions, revealFor seconds: Double)
     /// Hide every listed unprotected item.
@@ -201,7 +207,9 @@ final class MenuBarActions {
         guard let delegate else { return }
         switch action {
         case .toggleReveal:
-            delegate.menuBarActionsRevealHidden(self)
+            delegate.menuBarActionsToggleReveal(self)
+        case .revealAlwaysHidden:
+            delegate.menuBarActionsRevealAlwaysHidden(self)
         case .hideAll:
             delegate.menuBarActionsHideAll(self)
         case .showAll:

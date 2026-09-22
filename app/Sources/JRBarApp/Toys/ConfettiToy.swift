@@ -15,8 +15,10 @@ import SwiftUI
 final class ConfettiToy: Toy {
     /// The owning store; weak, the store keeps the toy.
     weak var store: ToysStore?
-    /// The burst in flight, if any. One window at a time.
-    @ObservationIgnored private var window: ConfettiWindow?
+    /// The burst in flight: one overlay window per attached screen,
+    /// each living & dying on its own timer. A new burst replaces all
+    /// of them — the single-burst policy holds per screen.
+    @ObservationIgnored private var windows: [ConfettiWindow] = []
     /// The state-edge memory for the triggers no event carries (banked
     /// credits growing, the ask set emptying).
     @ObservationIgnored private var edges = ConfettiEdgeTracker()
@@ -90,8 +92,9 @@ final class ConfettiToy: Toy {
         fire(providerColor: ProviderStyle.style(for: provider ?? "", document: document).accent)
     }
 
-    /// One burst, or the soft flash under Reduce Motion. A burst already
-    /// on screen is replaced — the newest reset wins.
+    /// One burst per attached screen, or the soft flash under Reduce
+    /// Motion. A burst already on screen is replaced — the newest reset
+    /// wins, on every screen at once.
     func fire(providerColor: Color) {
         guard isOn else { return }
         present(providerColor)
@@ -104,13 +107,27 @@ final class ConfettiToy: Toy {
     }
 
     private func present(_ color: Color) {
-        window?.close()
-        window = nil
-        let overlay = ConfettiWindow(color: color, settings: settings)
-        self.window = overlay
-        overlay.burst { [weak self] in
-            MainActor.assumeIsolated { self?.window = nil }
+        for window in windows { window.close() }
+        // One overlay per attached screen — each framed & timed off its
+        // own display, same physics & life rules everywhere, and each
+        // closes itself, so the replaces-burst policy stays per screen.
+        // `NSScreen.screens` is empty only headless; a nil screen keeps
+        // the old fallback frame for that.
+        var screens = NSScreen.screens as [NSScreen?]
+        if screens.isEmpty { screens = [nil] }
+        var overlays: [ConfettiWindow] = []
+        for screen in screens {
+            let overlay = ConfettiWindow(color: color, settings: settings,
+                                         screen: screen)
+            overlays.append(overlay)
+            overlay.burst { [weak self, weak overlay] in
+                MainActor.assumeIsolated {
+                    guard let overlay else { return }
+                    self?.windows.removeAll { $0 === overlay }
+                }
+            }
         }
+        windows = overlays
     }
 }
 
@@ -262,12 +279,12 @@ private struct ConfettiControlsView: View {
 }
 
 /// The burst's overlay: a borderless, transparent, click-through window
-/// hung from the top of the notched screen at `.screenSaver` level,
-/// closed by its own timer. How tall it is and how long it lives are the
-/// landing mode's business, both measured off the screen — Rest rains in
-/// the top band, Fall spans the screen, Fade needs only the top ~70%.
-/// Shares nothing with screen capture (`sharingType = .none`), like the
-/// Fold overlay.
+/// hung from the top of its screen at `.screenSaver` level — one per
+/// attached display, each closed by its own timer. How tall it is and
+/// how long it lives are the landing mode's business, both measured off
+/// that screen — Rest rains in the top band, Fall spans the screen,
+/// Fade needs only the top ~70%. Shares nothing with screen capture
+/// (`sharingType = .none`), like the Fold overlay.
 @MainActor
 private final class ConfettiWindow: NSPanel {
     private let hosting: NSHostingView<ConfettiView>
@@ -281,9 +298,11 @@ private final class ConfettiWindow: NSPanel {
     /// The Reduce Motion bloom is shorter — it is one fade, not a burst.
     static let flashLife: TimeInterval = 0.9
 
-    init(color: Color, settings: ConfettiSettings) {
+    /// `screen` is the display this overlay covers — nil only when the
+    /// Mac reports no screens at all, in which case the fallback frame
+    /// stands in.
+    init(color: Color, settings: ConfettiSettings, screen: NSScreen?) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let screen = ScreenBarGeometry.preferredScreen() ?? NSScreen.main
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let height = ConfettiView.viewHeight(for: settings.landing, screenHeight: frame.height)
         let bandBottom = (screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0) + 12

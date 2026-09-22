@@ -1,7 +1,8 @@
-# JR-Bar feature matrix (0.8.0)
+# JR-Bar feature matrix (0.9.9)
 
-Updated 2026-09-10 from what is installed and running on the owner's Mac
-from `main`. Labels:
+Updated 2026-09-21 from what is installed and running on the owner's Mac
+from `main` (installed build 22, signed, notarized and stapled —
+`docs/finish-2026-09-19.md`). Labels:
 
 - **Ships**: reachable in the installed `JR-Bar.app`, exercised on the
   owner's Mac, covered by tests at its seam.
@@ -37,7 +38,8 @@ at the end so nobody claims them.
 | Status item with six icon styles (session dots, usage meters, meters + percent, glyph, glyph + usage ring, glyph + label), tinted by the aggregate, amber pulse during escalation | Ships | Session dots |
 | Glass panel: asks pinned with Approve / Deny, sessions, usage bars, device chips, brightness, Quiet…, Clear done, keyboard navigation (↑↓ ↩ ⌘↩ ⌘D ⌘Y ⌘U ⌘K ⌘, ⌘Q) | Ships | Click the icon |
 | "Why this light" row with a hover popover (programs per surface, time in state, dimming, brightness settings) | Ships | On |
-| Settings window: General, Agents, Usage, Devices & Screen Bar, Lighting, Notifications & Focus, Remote, Advanced; every control writes through `set_setting`, refused writes shown | Ships | ⌘, |
+| Settings window: General, Agents, Usage, Devices & Screen Bar, Utilities, Lighting, Toys, Notifications & Focus, Remote, Advanced; every daemon control writes through `set_setting`, refused writes shown | Ships | ⌘, |
+| First-run setup walkthrough: Welcome, Agents, Permissions, Menu bar & Screen Bar, Done; re-runnable from Settings | Ships | First two launches |
 | History window: rows by day, away banner, filters, Clear completed with 5-minute Undo | Ships | ⌘Y |
 | Overview window: sidebar presets (Needs me, Working, Unreviewed, This project, This Mac, All connected), scoped roster table, summary strip, inspector with per-session transcript Timeline (Claude/Codex, paginated), saved filters, search, two-run Compare sheet | Ships | ⌘O |
 | Event Replay window: read-only journaled events, persistent REPLAY badge, journal coverage, live-attention indicator kept separate | Ships | ⌘R |
@@ -68,6 +70,25 @@ at the end so nobody claims them.
 | Escalation: light ramp → menu-bar pulse → chime every 30 s; webhook | Ships | Conservative timings |
 | Smart suppression: an ask whose terminal pane is frontmost gets its banner but no burst, pulse or chime (host bundle + process-ancestry proof, `answer_local`'s read); walking away re-arms the stage | Ships | On |
 | Studio: hand-written LEDS programs, `INIT.LED` burn | Daemon only | Off |
+
+## Toys (the Toys page)
+
+| Capability | Status | Default |
+| --- | --- | --- |
+| Fold: the desktop folds into the screen as the lid closes — the portal room (lid-angle sensor, two ScreenCaptureKit streams, Metal overlay); Bendy or Lid Plane can render it instead | Ships | Off; needs Screen Recording |
+| Aquarium: every live session is a fish in a resizable tank window; idle game (pearls, shop, level, streaks, achievements, residents, fry schools) | Ships | Off |
+| Notch Buddy: a creature by the notch that lives by agent state; ten characters, draggable off the notch, Tamagotchi-lite care log | Ships | Off |
+| Confetti: a burst in the provider's colours at the notch — weekly reset by default; session-completion, per-provider, banked-credits and all-clear triggers opt in | Ships | Off |
+
+## Utilities (the Utilities page)
+
+| Capability | Status | Default |
+| --- | --- | --- |
+| Notch island: capsule hugging the notch — live counts, expand-on-hover card, event capsules (asks, completions, failures, quota resets, charging), Now Playing via the `mediaremote` helper, media HUD, system alerts, weather, Mirror row, audio visualizer, shelf; Alcove or Boring Notch can own the notch instead | Ships | Off |
+| Menu Bar: hide items behind the JR-Bar item (the concealer on macOS 27, spacer engine elsewhere), reveal gestures, Item Bar with live tiles, ⌘⇧K command bar, hotkeys, triggers, profiles, cover appearance; Bartender, Ice or Hidden Bar can be handed the surface instead | Ships | On (utility enabled; nothing hidden until items are dragged over) |
+| Dock: hover window previews over Apple's Dock, per-window actions, app switcher; DockDoor or ActiveDock can render instead | Ships | Off |
+| Agent Overview: the roster card — counts by state, session verbs (open, approve/deny, dismiss, snooze, clear), ⌘O window | Ships | On |
+| Data Hoarder: local searchable archive of traces and session files — hash-deduped copies, per-source import consent, full export, recoverable Archive Trash; no automatic capture or proxy connection yet | Ships (capture is manual/import-only so far) | Off |
 
 ## Quiet, Focus and power
 
@@ -108,7 +129,7 @@ at the end so nobody claims them.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle 2.9.6), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Ships (Developer ID signed; not notarized until the `jrbar-notary` profile exists) | Manual |
+| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Ships (Developer ID signed, notarized and stapled; the PKG is installable but unsigned — no Developer ID Installer identity, so it can't be notarized itself) | Manual |
 | `make clean-install`: home-directory install without a password | Ships | Manual |
 | Doctor: `jrbar doctor` and Settings › Advanced (commit the daemon was built from, memory, sockets, hooks, devices, checks) | Ships | Manual |
 | SidePulse → JR-Bar migration of config, state, data, hooks, LaunchAgents, Keychain items | Ships | Automatic, once |

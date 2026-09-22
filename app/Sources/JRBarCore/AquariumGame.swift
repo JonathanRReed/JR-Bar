@@ -476,26 +476,30 @@ public struct PearlDrop: Codable, Equatable, Sendable, Identifiable {
 
 /// What happened while the tank window was closed (docs/TOYS.md: the
 /// "while you were away" panel). Counters accumulate only while
-/// `windowOpen` is false; opening drains them into an effect.
+/// `windowOpen` is false; opening drains them into an effect. Every
+/// field names something that can genuinely happen closed — pearls &
+/// completions ride in on session diffs, and `dropsCollected` is the
+/// snail's rounds, credited by the reopen catch-up. (Feedings never
+/// land while closed — a pellet is a tap — so the summary carries no
+/// counter for them.)
 public struct AquariumAwaySummary: Codable, Equatable, Sendable {
     /// When the accumulation window began (the close, or game start).
     public var since: Double
     public var pearlsEarned: Int
-    public var feedings: Int
     public var completions: Int
+    /// Drops the snail picked up while the tank was closed.
     public var dropsCollected: Int
 
-    public init(since: Double = 0, pearlsEarned: Int = 0, feedings: Int = 0,
+    public init(since: Double = 0, pearlsEarned: Int = 0,
                 completions: Int = 0, dropsCollected: Int = 0) {
         self.since = since
         self.pearlsEarned = pearlsEarned
-        self.feedings = feedings
         self.completions = completions
         self.dropsCollected = dropsCollected
     }
 
     public var isEmpty: Bool {
-        pearlsEarned == 0 && feedings == 0 && completions == 0 && dropsCollected == 0
+        pearlsEarned == 0 && completions == 0 && dropsCollected == 0
     }
 }
 
@@ -853,7 +857,6 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             pets[fishID] = care
             if counted {
                 totals.feedings += 1
-                if !windowOpen { away.feedings += 1 }
                 earn(AquariumRules.pelletPearl)
                 effects.append(.pearlsEarned(AquariumRules.pelletPearl))
                 advanceDailyGoal(.pellets, by: 1, effects: &effects)
@@ -1042,6 +1045,21 @@ public struct AquariumGame: Codable, Equatable, Sendable {
 
         case .setWindowOpen(let open):
             if open && !windowOpen {
+                // The snail kept its rounds while the tank was closed:
+                // before the reopen drains the summary it picks up
+                // every drop that has sat past `snailCollectAfter` —
+                // the same pass `.tick` runs, once per qualifying drop,
+                // credited to the away window it ripened in. Drops only
+                // age in place (the tick that mints them doesn't run
+                // while closed), so this is deterministic catch-up, not
+                // a wall-clock guess.
+                if inventory[ShopItem.snail.rawValue, default: 0] > 0 {
+                    let nowS = now.timeIntervalSince1970
+                    for drop in drops
+                    where nowS - drop.at >= AquariumRules.snailCollectAfter {
+                        collect(drop, effects: &effects)
+                    }
+                }
                 windowOpen = true
                 if !away.isEmpty {
                     effects.append(.awaySummary(away))

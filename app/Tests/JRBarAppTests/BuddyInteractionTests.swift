@@ -92,6 +92,22 @@ struct BuddyInteractionTests {
         #expect(toy.careLine.hasPrefix("Blissed out"))
     }
 
+    // MARK: Docked presentation
+
+    @Test("docked wears the character; Mini or a live program keeps the dot")
+    func dockedPresentation() {
+        let (toy, store) = makeToy()
+        #expect(toy.showsDot(docked: true, stripLinked: false) == false,
+                "the docked slot is the character now")
+        #expect(toy.showsDot(docked: true, stripLinked: true) == true,
+                "a published program reclaims the slot as the strip's seam LED")
+        #expect(toy.showsDot(docked: false, stripLinked: true) == false,
+                "the floating pet never swaps for the strip")
+        store.state.notchBuddy.presentation = "mini"
+        #expect(toy.showsDot(docked: true, stripLinked: false) == true)
+        #expect(toy.showsDot(docked: false, stripLinked: false) == true)
+    }
+
     // MARK: Strip link
 
     /// A lights document with `program` on the screen_bar surface.

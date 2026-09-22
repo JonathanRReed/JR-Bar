@@ -62,7 +62,7 @@ struct NotchIslandView: View {
                     .onTapGesture { toy.islandTapped() }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Notch island")
-                    .accessibilityValue(summary.statusLine)
+                    .accessibilityValue(summary.statusLine + sensorSpokenSuffix)
                     .accessibilityHint("Opens the notch card")
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { toy.islandTapped() }
@@ -177,20 +177,30 @@ struct NotchIslandView: View {
             Spacer(minLength: 0)
             Group {
                 if !layout.bare {
-                    switch layout.right {
-                    case .attention(let count):
-                        markCount(count, color: .orange).padding(.leading, NotchIslandLayout.shoulderPad)
-                    case .failed(let count):
-                        markCount(count, color: .red).padding(.leading, NotchIslandLayout.shoulderPad)
-                    case .media:
-                        if let media = toy.islandMedia, toy.settings.mediaEnabled {
-                            mediaStrip(media).padding(.leading, NotchIslandLayout.shoulderPad)
-                        } else {
+                    HStack(spacing: 0) {
+                        // The privacy dots lead, hugging the notch —
+                        // the hardware LED's own spot.
+                        if layout.sensors.anyInUse {
+                            sensorDots(layout.sensors)
+                                .padding(.trailing, layout.right == .nothing
+                                         ? 0 : NotchIsland.sensorSeparatorWidth)
+                        }
+                        switch layout.right {
+                        case .attention(let count):
+                            markCount(count, color: .orange)
+                        case .failed(let count):
+                            markCount(count, color: .red)
+                        case .media:
+                            if let media = toy.islandMedia, toy.settings.mediaEnabled {
+                                mediaStrip(media)
+                            } else {
+                                Color.clear
+                            }
+                        case .nothing:
                             Color.clear
                         }
-                    case .nothing:
-                        Color.clear
                     }
+                    .padding(.leading, NotchIslandLayout.shoulderPad)
                 } else {
                     Color.clear
                 }
@@ -226,12 +236,48 @@ struct NotchIslandView: View {
         }
     }
 
+    /// The idle face's spoken tail — the privacy dots named, since the
+    /// dots themselves are colour alone.
+    private var sensorSpokenSuffix: String {
+        guard toy.sensorIndicatorsEnabled else { return "" }
+        let sensors = toy.sensorState
+        if sensors.cameraInUse, sensors.microphoneInUse {
+            return " · camera and microphone in use"
+        }
+        if sensors.cameraInUse { return " · camera in use" }
+        if sensors.microphoneInUse { return " · microphone in use" }
+        return ""
+    }
+
+    /// The privacy dots — macOS's own convention in the island's own
+    /// dot language: green while a camera rolls, orange while a mic is
+    /// live. Camera leads, sitting nearest the notch like the hardware
+    /// LED it mirrors.
+    private func sensorDots(_ sensors: NotchSensorState) -> some View {
+        HStack(spacing: 4) {
+            if sensors.cameraInUse {
+                Circle().fill(.green).frame(width: 5, height: 5)
+            }
+            if sensors.microphoneInUse {
+                Circle().fill(.orange).frame(width: 5, height: 5)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(sensors.cameraInUse && sensors.microphoneInUse
+                                 ? "Camera and microphone in use"
+                                 : sensors.cameraInUse ? "Camera in use"
+                                 : "Microphone in use"))
+    }
+
     /// The notch-less pill's row: the Now Playing strip when media is
     /// up, then a dot per working provider, an orange one for open
     /// asks, a red one for failures, then the live count — or a single
     /// dim dot when nothing is live.
     private func centredRow(summary: NotchIslandSummary) -> some View {
         HStack(spacing: 4) {
+            if toy.sensorIndicatorsEnabled, toy.sensorState.anyInUse {
+                sensorDots(toy.sensorState)
+            }
             if let media = toy.islandMedia, toy.settings.mediaEnabled {
                 mediaStrip(media)
             }

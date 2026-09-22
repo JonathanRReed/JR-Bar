@@ -137,8 +137,9 @@ final class CarbonHotkeyRegistrar: MenuBarHotkeyRegistering {
 ///   * persist `bindings` wherever the settings grow a hotkey field —
 ///     the struct is Codable for exactly that;
 ///   * route `onAction` to the utility (`toggleReveal` → the chevron's
-///     toggle, `commandBar` → `MenuBarCommandBar.toggle()`, the
-///     profile pair → `MenuBarProfiles` apply with wrap-around).
+///     toggle — a true toggle, reveal or re-hide — `commandBar` →
+///     `MenuBarCommandBar.toggle()`, the profile pair →
+///     `MenuBarProfiles` apply with wrap-around).
 @MainActor
 final class MenuBarHotkeys {
     var bindings: [MenuBarHotkeyBinding]
@@ -159,6 +160,8 @@ final class MenuBarHotkeys {
                              modifiers: UInt32(cmdKey | shiftKey), enabled: true),
         MenuBarHotkeyBinding(action: .toggleReveal, keyCode: UInt32(kVK_ANSI_B),
                              modifiers: UInt32(cmdKey | optionKey), enabled: false),
+        MenuBarHotkeyBinding(action: .revealAlwaysHidden, keyCode: UInt32(kVK_ANSI_B),
+                             modifiers: UInt32(cmdKey | optionKey | shiftKey), enabled: false),
         MenuBarHotkeyBinding(action: .hideAll, keyCode: UInt32(kVK_ANSI_H),
                              modifiers: UInt32(cmdKey | optionKey | shiftKey), enabled: false),
         MenuBarHotkeyBinding(action: .showAll, keyCode: UInt32(kVK_ANSI_H),

@@ -50,6 +50,15 @@ final class MenuBarUtility: Toy {
     /// The real trigger feed, created once; `syncActions` runs it only
     /// while at least one rule is enabled.
     @ObservationIgnored private let systemTriggerSource = MenuBarSystemTriggerSource()
+    /// Hotkey registrations the system refused — a key another app
+    /// already owns. Mirrored out of `actions.hotkeys` after each
+    /// registration pass so the card's note observes it.
+    private(set) var failedHotkeyActions: Set<MenuBarHotkeyAction> = []
+    /// The system-item click bridge could not install its event tap —
+    /// Accessibility is missing, so clicks on the clock, battery and
+    /// Wi-Fi stay native while the run is concealed. Set from the
+    /// bridge's own start, not inferred.
+    private(set) var clickBridgeFailed = false
     /// The last arrange run's outcome — the card's report line.
     private(set) var lastArrangeOutcome: MenuBarArrangeOutcome?
     /// True while an arrange is dragging — the card disables its button.
@@ -428,6 +437,14 @@ final class MenuBarUtility: Toy {
         }
         bar.onTrigger = { [weak self] item in self?.trigger(item) }
         bar.onRevealItem = { [weak self] item in self?.revealItem(item) }
+        // The tile's context menu: the same section write the pickers
+        // and the palette make — a tile never drags anything itself.
+        bar.itemSection = { [weak self] item in
+            self.map { $0.effectiveSection(for: item) } ?? .hidden
+        }
+        bar.onMoveItem = { [weak self] item, section in
+            self?.setSection(section, for: item.id)
+        }
         bar.onOpenChange = { [weak self] open in
             guard let self else { return }
             self.reveal.holdOpen = open
@@ -508,6 +525,14 @@ final class MenuBarUtility: Toy {
         Binding(
             get: { self.settings()[keyPath: keyPath] },
             set: { value in self.update { $0[keyPath: keyPath] = value } })
+    }
+
+    /// The custom-spacing dial's binding: `itemSpacing` is stored as
+    /// whole points; the slider speaks Double.
+    var itemSpacingBinding: Binding<Double> {
+        Binding(
+            get: { Double(self.settings().itemSpacing) },
+            set: { value in self.update { $0.itemSpacing = Int(value.rounded()) } })
     }
 
     /// The section an item sits in; unlisted is shown.
@@ -731,9 +756,19 @@ final class MenuBarUtility: Toy {
 
     /// The bindings the hotkey registry actually uses — the persisted
     /// list, or the shipping set while the file has never carried one.
+    /// An action this build added after the file's list materialized
+    /// joins it disabled: the card can still bind it, and an upgrade
+    /// never turns a key on by itself.
     func resolvedHotkeyBindings() -> [MenuBarHotkeyBinding] {
         let stored = settings().hotkeyBindings
-        return stored.isEmpty ? MenuBarHotkeys.standard : stored
+        let base = stored.isEmpty ? MenuBarHotkeys.standard : stored
+        let missing = MenuBarHotkeys.standard.filter { standard in
+            !base.contains { $0.action == standard.action }
+        }
+        return base + missing.map {
+            MenuBarHotkeyBinding(action: $0.action, keyCode: $0.keyCode,
+                                 modifiers: $0.modifiers, enabled: false)
+        }
     }
 
     /// The card's per-action toggle — writes the materialized list so
@@ -974,6 +1009,7 @@ final class MenuBarUtility: Toy {
         // set, not the defaults the actions object was built with.
         syncActions()
         actions.start()
+        failedHotkeyActions = actions.hotkeys.failedActions
         syncExtras()
         // First AX fill — a no-op without the grant — then reconcile
         // against real frames.
@@ -1001,6 +1037,7 @@ final class MenuBarUtility: Toy {
         lastDragSnapshot = [:]
         lastBoundary = nil
         boundaryExempt = []
+        failedHotkeyActions = []
         running = false
     }
 
@@ -1207,6 +1244,7 @@ final class MenuBarUtility: Toy {
         }
         bridge.start()
         clickBridge = bridge
+        clickBridgeFailed = !bridge.tapLive
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
@@ -1246,6 +1284,7 @@ final class MenuBarUtility: Toy {
         Task { await concealer.releaseAll() }
         clickBridge?.stop()
         clickBridge = nil
+        clickBridgeFailed = false
         for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         workspaceObservers = []
         hider.shuttersSuppressed = false
@@ -2294,6 +2333,9 @@ final class MenuBarUtility: Toy {
         } else {
             systemTriggerSource.stop()
         }
+        // `apply()` re-registers — the refusal set is refreshed either
+        // way, and a fresh start clears a stale failure list.
+        failedHotkeyActions = actions.hotkeys.failedActions
     }
 
     // MARK: Listing (the card's item rows)
@@ -3111,6 +3153,22 @@ extension MenuBarUtility: MenuBarActionsDelegate {
 
     func menuBarActionsRevealHidden(_: MenuBarActions) {
         hider.reveal([.hidden])
+        reveal.rearm()
+    }
+
+    /// The `toggleReveal` hotkey is the chevron's click: whatever the
+    /// transition is — reveal when the run is parked, re-hide when a
+    /// reveal is out — it happens.
+    func menuBarActionsToggleReveal(_: MenuBarActions) {
+        toggleHiddenSection()
+    }
+
+    /// The dedicated always-hidden gesture: drop that run's covers on
+    /// the rehide clock. Under the concealer the reveal set narrows
+    /// the assertion the same way — the deeper apps stand back on the
+    /// row for the window.
+    func menuBarActionsRevealAlwaysHidden(_: MenuBarActions) {
+        hider.reveal([.alwaysHidden])
         reveal.rearm()
     }
 

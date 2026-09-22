@@ -583,6 +583,28 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("untilClick mode arms no clock — the surface closing folds the reveal instead")
+    func rehideUntilClick() async {
+        let h = RevealHarness()
+        h.reveal.settings = { MenuBarSettings(rehideMode: .untilClick) }
+        h.reveal.triggerReveal()
+        #expect(h.reveals == 1)
+        #expect(h.reveal.revealed)
+        // No clock is armed — the reveal stands for as long as it stands.
+        #expect(h.pending == nil)
+        // The bar folding is the fold: no short clock, just the hide.
+        h.reveal.noteBarClosed()
+        #expect(h.hides == 1)
+        #expect(!h.reveal.revealed)
+        // An explicit trigger clock still clocks — the rule named its
+        // own seconds, the mode does not gate it.
+        h.reveal.rearm(for: 3)
+        #expect(h.pending != nil)
+        h.fireClock()
+        #expect(h.hides == 2)
+    }
+
+    @MainActor
     @Test("hovering another app's item is not the gesture — the zone is the chevron and empty space")
     func hoverZone() async {
         let h = RevealHarness()
