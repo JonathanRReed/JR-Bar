@@ -505,6 +505,8 @@ struct DevicesPage: View {
             DeviceCard(store: store, device: device)
         }
 
+        CalibrationProfilesSection(store: store)
+
         SettingGroup("Pro & Dot", note: "The role is what the Dot is for; the link is whether the monitor drives it at all.") {
             SettingToggle(store, "Dot follows strip", subtitle: "The Dot mirrors the Pro instead of rendering its own; which cue is the role below.",
                           path: "devices_linked", default: true)
