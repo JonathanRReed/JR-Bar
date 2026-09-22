@@ -269,6 +269,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.onOpenSession = { [weak self] session in
             self?.core?.openSession(session)
         }
+        // The glass card's waiting rows answer through the island's own
+        // answerer — one pending set, one refusal line per session.
+        notchCard.model.answerer = toysStore.notch.answerer
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.

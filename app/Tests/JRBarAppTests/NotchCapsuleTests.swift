@@ -200,7 +200,9 @@ struct NotchCapsuleTests {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
 
-        toy.offer(notice(.ask, key: "ask:a", id: "a"))
+        // News holds a band click until it steps down (a latched ask
+        // yields to it instead — `NotchAskTests`).
+        toy.offer(notice(.failed, key: "failed:a", id: "a"))
         #expect(toy.activeCapsule?.id == "a")
         // The click lands mid-capsule — remembered, not grown yet.
         toy.expandFromBand()

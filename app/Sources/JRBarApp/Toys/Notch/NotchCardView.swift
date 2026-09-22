@@ -85,6 +85,11 @@ final class NotchCardModel {
     /// Motion, where the whole card is a single crossfade.
     var contentRevealed = true
     var onOpenSession: (() -> Void)?
+    /// A click on a session row — that session's own window.
+    var onOpenRow: ((String) -> Void)?
+    /// Approve / Deny on a waiting row. nil draws no verbs: a card
+    /// without an answer path only ever offers the click-to-open.
+    var answerer: NotchAskAnswerer?
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
     var onOpenOverview: (() -> Void)?
@@ -355,23 +360,63 @@ struct NotchCardView: View {
     }
 
     /// One live session under the header: the provider's dot, its label,
-    /// and the same activity word the island would say.
+    /// and the same activity word the island would say. A click opens
+    /// the session. A waiting row the daemon can answer carries Deny and
+    /// Approve inline instead of the word (`NotchAskVerbs` — hidden
+    /// where the answer chain cannot deliver), with the question itself
+    /// on a faint second line; a refused answer takes that line and
+    /// says why, and the ask stays open.
     private func sessionRow(_ row: NotchIslandRow) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(ProviderStyle.style(for: row.provider).accent)
-                .frame(width: 5, height: 5)
-            Text(row.label)
-                .font(.system(size: 11))
-                .foregroundStyle(style == .island ? .white.opacity(0.85) : .primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 4)
-            Text(row.activity.word)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(row.activity.wordColor)
+        let verbs = row.activity == .waiting
+            ? NotchAskVerbs.resolve(live: row.ask, session: row.id) : .none
+        let answerer = model.answerer
+        let pending = answerer?.isPending(row.id) ?? false
+        let second = answerer?.note(for: row.id)
+            ?? row.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
+        let opens = !CoreSession.isRemoteID(row.id) && model.onOpenRow != nil
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(ProviderStyle.style(for: row.provider).accent)
+                    .frame(width: 5, height: 5)
+                Text(row.label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(style == .island ? .white.opacity(0.85) : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                if verbs.answers, let answerer {
+                    NotchVerbButton(title: "Deny", style: style, prominent: false,
+                                    busy: pending) {
+                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: false) }
+                    }
+                    NotchVerbButton(title: "Approve", style: style, prominent: true,
+                                    busy: pending) {
+                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: true) }
+                    }
+                } else {
+                    Text(row.activity.word)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(row.activity.wordColor)
+                }
+            }
+            if let second {
+                Text(second)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(answerer?.note(for: row.id) != nil
+                                     ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.faintColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 11)
+            }
         }
-        .accessibilityElement(children: .combine)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if opens { model.onOpenRow?(row.id) }
+        }
+        .help(opens ? "Open \(row.label)" : "")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(row.label), \(row.activity.word)")
     }
 
     /// One quota meter: provider, window, a short bar, the percent —
@@ -1224,6 +1269,49 @@ private struct ShelfMirrorRow: View {
                 .font(.system(size: 10))
                 .foregroundStyle(style.faintColor)
         }
+    }
+}
+
+/// One verb on an ask — Approve, Deny, Open — as a small capsule the
+/// card rows and the island's ask face share. The prominent one is the
+/// white fill (the island's own colour for "yes"), the rest sit on the
+/// chip fill; a verb whose answer is in flight dims and takes no second
+/// click.
+struct NotchVerbButton: View {
+    let title: String
+    let style: NotchCardStyle
+    var prominent = false
+    var busy = false
+    var systemImage: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 8.5, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 10, weight: prominent ? .semibold : .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(prominent
+                             ? AnyShapeStyle(style == .island ? Color.black : Color.white)
+                             : AnyShapeStyle(style.titleColor.opacity(0.9)))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(prominent
+                          ? AnyShapeStyle(style == .island ? Color.white.opacity(0.92) : Color.accentColor)
+                          : AnyShapeStyle(style.chipFill)))
+            .contentShape(Capsule())
+            .opacity(busy ? 0.45 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .accessibilityLabel(title)
     }
 }
 

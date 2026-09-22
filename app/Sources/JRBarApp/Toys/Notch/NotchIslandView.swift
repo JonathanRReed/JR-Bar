@@ -27,24 +27,33 @@ struct NotchIslandView: View {
     /// instead of letting the idle dots read through.
     @ViewState private var lastNotice: AlcoveNotice?
 
+    /// What the notice face draws: key feedback over a capsule, a
+    /// capsule over nothing.
+    private var shownNotice: AlcoveNotice? { toy.activeOverlay ?? toy.activeCapsule }
+
     /// Which face is up — the notice outranks the card, the card
-    /// outranks idle. The animation value, so the morph gets the spring
-    /// (or, under Reduce Motion, the quiet crossfade the opacity
-    /// transitions on the faces provide).
+    /// outranks idle; the ask and its takeover are faces of their own.
+    /// The animation value, so the morph gets the spring (or, under
+    /// Reduce Motion, the quiet crossfade the opacity transitions on the
+    /// faces provide).
     private var face: Int {
-        toy.activeCapsule != nil ? 1 : (toy.islandExpanded ? 2 : 0)
+        if let notice = shownNotice {
+            guard notice.kind == .ask else { return 1 }
+            return notice.takeover ? 4 : 3
+        }
+        return toy.islandExpanded ? 2 : 0
     }
 
     var body: some View {
         let summary = toy.islandSummary
         ZStack(alignment: .top) {
             islandBackground
-            if let notice = toy.activeCapsule ?? lastNotice {
+            if let notice = shownNotice ?? lastNotice {
                 noticeCapsule(notice)
                     .opacity(noticeShown ? 1 : 0)
                     .offset(y: reduceMotion || noticeShown
                             ? 0 : -NotchMotion.noticeSlide)
-                    .allowsHitTesting(toy.activeCapsule != nil)
+                    .allowsHitTesting(shownNotice != nil)
             } else if toy.islandExpanded {
                 // The card, grown out of the notch — the same rows the
                 // glass fallback shows, on black under `cardTopPad`.
@@ -79,9 +88,10 @@ struct NotchIslandView: View {
                    ? .easeInOut(duration: NotchMotion.reduceMotionFade)
                    : .spring(response: 0.32, dampingFraction: 0.82),
                    value: face)
-        .onChange(of: toy.activeCapsule != nil) { _, showing in
-            if showing {
-                lastNotice = toy.activeCapsule
+        .onChange(of: shownNotice) { _, shown in
+            if let shown {
+                lastNotice = shown
+                guard !noticeShown else { return }
                 withAnimation(reduceMotion
                               ? .easeInOut(duration: NotchMotion.reduceMotionFade)
                               : .easeOut(duration: NotchMotion.noticeFadeIn)) {
@@ -97,7 +107,7 @@ struct NotchIslandView: View {
                 DispatchQueue.main.asyncAfter(
                     deadline: .now() + NotchMotion.noticeFadeOut + 0.05
                 ) {
-                    if toy.activeCapsule == nil { lastNotice = nil }
+                    if toy.activeOverlay == nil, toy.activeCapsule == nil { lastNotice = nil }
                 }
             }
         }
@@ -187,7 +197,12 @@ struct NotchIslandView: View {
                         }
                         switch layout.right {
                         case .attention(let count):
+                            // The amber count goes straight to the
+                            // longest-waiting session, not the card.
                             markCount(count, color: .orange)
+                                .contentShape(Rectangle())
+                                .onTapGesture { toy.openOldestAsk() }
+                                .help("Open the session that has waited longest")
                         case .failed(let count):
                             markCount(count, color: .red)
                         case .media:
@@ -376,15 +391,26 @@ struct NotchIslandView: View {
 
     // MARK: Notice capsule
 
-    /// The event capsule — Alcove's instant notification, one line:
-    /// the kind's glyph in its colour (the provider's accent for a
-    /// quota reset) and "Claude · rename-the-fish needs you" — title
-    /// and subtitle joined into a single truncating line, centred in the
-    /// lip under the notch, above a live Screen Bar's housing, inside the
-    /// notice frame the toy sized.
+    /// The notice face for whatever the queue put up: the ask with its
+    /// verbs, a level as one continuous fill, or the one-line capsule.
+    @ViewBuilder
     private func noticeCapsule(_ notice: AlcoveNotice) -> some View {
+        switch notice.kind {
+        case .ask: askFace(notice)
+        case .level: levelFace(notice)
+        default: lineFace(notice)
+        }
+    }
+
+    /// The event capsule — Alcove's instant notification, one line:
+    /// the glyph in its colour (the provider's accent for a quota
+    /// reset) and "Claude · rename-the-fish finished" — title and
+    /// subtitle joined into a single truncating line, centred in the lip
+    /// under the notch, above a live Screen Bar's housing, inside the
+    /// notice frame the toy sized.
+    private func lineFace(_ notice: AlcoveNotice) -> some View {
         HStack(spacing: 7) {
-            Image(systemName: notice.kind.symbol)
+            Image(systemName: notice.symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(noticeTint(notice))
             Text("\(notice.title) · \(notice.subtitle)")
@@ -402,20 +428,155 @@ struct NotchIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.top, toy.notchDepth)
         .padding(.bottom, toy.noticeClimb)
-        // A tap on the capsule puts it away — it never re-opens it.
+        // A tap on news about a session opens it; anything else puts
+        // itself away. Neither re-opens the card.
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Notch notification")
         .accessibilityValue("\(notice.title). \(notice.subtitle)")
-        .accessibilityHint("Dismisses the notification")
+        .accessibilityHint(notice.session != nil ? "Opens the session" : "Dismisses the notification")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { toy.islandTapped() }
     }
 
+    /// A level key's answer, grown out of the notch — the Alcove HUD in
+    /// the island's own black rather than a pill hung under it. The
+    /// reading is one continuous fill with its number: no segments, the
+    /// same unbroken language the Screen Bar speaks. Muted is red.
+    private func levelFace(_ notice: AlcoveNotice) -> some View {
+        let fraction = min(1, max(0, notice.fraction ?? 0))
+        let tint: Color = notice.muted ? .red.opacity(0.85) : .white.opacity(0.92)
+        return HStack(spacing: 10) {
+            Image(systemName: notice.symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(notice.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(Color.white.opacity(0.85)))
+                .frame(width: 16)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous).fill(.white.opacity(0.18))
+                    Capsule(style: .continuous).fill(tint)
+                        .frame(width: max(geo.size.height, geo.size.width * fraction))
+                        .opacity(fraction > 0 ? 1 : 0)
+                }
+            }
+            .frame(height: 5)
+            Text(notice.muted ? "Muted" : "\(Int((fraction * 100).rounded()))")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(minWidth: 24, alignment: .trailing)
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: fraction)
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.top, toy.notchDepth)
+        .padding(.bottom, toy.noticeClimb)
+        .contentShape(Rectangle())
+        .onTapGesture { toy.islandTapped() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(notice.title)
+        .accessibilityValue(notice.muted ? "Muted" : "\(Int((fraction * 100).rounded())) percent")
+    }
+
+    /// The ask, where it can be answered: who (the glyph, "Claude ·
+    /// rename-the-fish" and how long it has waited), what they ask (the
+    /// summary — one line on the capsule, up to three on the takeover
+    /// card), and the verbs. Approve and Deny exist only where the
+    /// daemon can deliver the answer (`NotchAskVerbs`); every other ask
+    /// offers Open with its reason. A refusal takes the reason's place
+    /// in orange and the ask stays. A tap anywhere off the buttons opens
+    /// the session.
+    private func askFace(_ notice: AlcoveNotice) -> some View {
+        let verbs = toy.askVerbs(for: notice)
+        let session = notice.session ?? ""
+        let pending = toy.answerer.isPending(session)
+        let refusal = toy.answerer.note(for: session)
+        let lines = toy.askSummaryLines
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: notice.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text(notice.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                if let opened = toy.liveAsk(for: notice)?.openedAt ?? notice.ask?.openedAt {
+                    TimelineView(.periodic(from: .now, by: 15)) { context in
+                        Text(Self.waited(since: opened, now: context.date))
+                            .font(.system(size: 9.5, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+            }
+            .frame(height: NotchIslandLayout.askTitleLine)
+            Text(toy.askSummary(notice))
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.62))
+                .lineLimit(lines)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity,
+                       minHeight: CGFloat(lines) * NotchIslandLayout.askSummaryLine,
+                       maxHeight: CGFloat(lines) * NotchIslandLayout.askSummaryLine,
+                       alignment: .topLeading)
+            Spacer(minLength: NotchIslandLayout.askGap)
+            HStack(spacing: 6) {
+                if let line = refusal ?? verbs.note {
+                    Text(line)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(refusal != nil
+                                         ? AnyShapeStyle(Color.orange)
+                                         : AnyShapeStyle(Color.white.opacity(0.4)))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 4)
+                if verbs.answers {
+                    NotchVerbButton(title: "Deny", style: .island, busy: pending) {
+                        toy.answerCapsule(approve: false)
+                    }
+                    NotchVerbButton(title: "Approve", style: .island, prominent: true, busy: pending) {
+                        toy.answerCapsule(approve: true)
+                    }
+                }
+                if verbs.opens {
+                    NotchVerbButton(title: "Open", style: .island, systemImage: "arrow.up.forward") {
+                        toy.openCapsuleSession()
+                    }
+                }
+            }
+            .frame(height: NotchIslandLayout.askVerbRow)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, NotchIslandLayout.askPad)
+        .padding(.top, toy.notchDepth > 0 ? toy.notchDepth : NotchIslandLayout.askFloatingTop)
+        .padding(.bottom, toy.askClimb)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { toy.islandTapped() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(notice.title) needs you")
+        .accessibilityValue(toy.askSummary(notice))
+    }
+
+    /// "4m", "1h 5m" — how long the ask has waited, off its own
+    /// `opened_at`.
+    static func waited(since openedAt: Double, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince1970 - openedAt))
+        if seconds < 60 { return "now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        return "\(minutes / 60)h \(minutes % 60)m"
+    }
+
     /// Waiting is amber, finished is green, failed is red — the app's
     /// standing state colours; a quota reset borrows its provider's
-    /// accent and power is yellow, the bolt's own colour.
+    /// accent and power is yellow, the bolt's own colour. The Mac's own
+    /// announcements stay white: they are facts, not states.
     private func noticeTint(_ notice: AlcoveNotice) -> Color {
         switch notice.kind {
         case .ask: return .orange
@@ -423,6 +584,9 @@ struct NotchIslandView: View {
         case .failed: return .red
         case .quotaReset: return ProviderStyle.style(for: notice.provider ?? "").accent
         case .charging: return .yellow
+        case .timer: return .orange
+        case .focus: return .indigo
+        case .level, .device, .capsLock, .display: return .white.opacity(0.85)
         }
     }
 }

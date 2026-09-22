@@ -62,6 +62,17 @@ final class NotchToy: Toy {
     /// The notification capsule on screen, if any — Alcove's instant
     /// notification: the island's only face besides idle.
     private(set) var activeCapsule: AlcoveNotice?
+    /// Key feedback drawn over the face — a level, Caps Lock
+    /// (`AlcoveCapsuleQueue.present`). It outranks a transient capsule
+    /// for its short beat and never covers a latched ask.
+    private(set) var activeOverlay: AlcoveNotice?
+    @ObservationIgnored private var overlayWork: DispatchWorkItem?
+    /// The ask capsule's Approve / Deny / Open — the same answerer the
+    /// grown card's rows use.
+    let answerer: NotchAskAnswerer
+    /// Per ask notice id: when it was offered and whether its ask has
+    /// shown up in the state yet — `NotchIsland.askStillOpen`'s inputs.
+    @ObservationIgnored private var askTrack: [String: (offered: Date, seen: Bool)] = [:]
     /// What Now Playing reports, nil while MediaRemote is absent, off,
     /// or has nothing playing. The view reads it for the idle strip.
     private(set) var islandMedia: AlcoveMedia?
@@ -153,9 +164,10 @@ final class NotchToy: Toy {
     /// change can accidentally reconcile a real surface into the test.
     @ObservationIgnored private var runtimeEnabled: Bool
 
-    /// The island's three faces on the same window — idle capsule,
-    /// notice capsule, the grown card.
-    private enum NotchIslandFace { case idle, notice, expanded }
+    /// The island's faces on the same window — idle capsule, the
+    /// one-line notice capsule, the ask (a two-line capsule with its
+    /// verbs, or the takeover card), the grown card.
+    private enum NotchIslandFace { case idle, notice, ask, expanded }
 
     init(core: CoreModel, store: ToysStore, cardModel: NotchCardModel,
          mediaFeed: MediaFeed? = nil, runtimeEnabled: Bool = true) {
@@ -164,8 +176,20 @@ final class NotchToy: Toy {
         self.cardModel = cardModel
         self.mediaFeed = mediaFeed ?? MediaFeed.shared
         self.runtimeEnabled = runtimeEnabled
+        answerer = NotchAskAnswerer(core: core)
         sensorIndicatorsEnabled = UserDefaults.standard.object(
             forKey: Self.sensorIndicatorsDefaultsKey) as? Bool ?? true
+        // An answer the daemon took steps the capsule down at once — the
+        // `ask_resolved` that follows finds nothing left to close.
+        answerer.onAnswered = { [weak self] session, request in
+            self?.resolveAsk(session: session, request: request)
+        }
+        cardModel.answerer = answerer
+        cardModel.onOpenRow = { [weak self] session in
+            guard let self else { return }
+            self.collapseIsland()
+            self.answerer.open(session: session)
+        }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
@@ -324,7 +348,7 @@ final class NotchToy: Toy {
 
     /// The capsule's contents, reduced by `NotchIsland` — the view reads
     /// this and `core.sessions` is observed, so it never sits stale.
-    var islandSummary: NotchIslandSummary { NotchIsland.summarize(core.sessions) }
+    var islandSummary: NotchIslandSummary { NotchIsland.summarize(core.sessions, asks: core.asks) }
 
     /// The island's on-screen frame — part of the band's shared hover
     /// region while the island is up.
@@ -379,6 +403,43 @@ final class NotchToy: Toy {
             slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
             notchDepth: depth, underHousing: corner)
         return NotchIslandLayout.housingClimb(size: size, notchDepth: depth, restingRadius: corner)
+    }
+
+    /// Points of the ask face's foot the Screen Bar's housing draws over
+    /// — the ask's verbs stand clear of it. Zero while no housing
+    /// couples under the island or no ask is up.
+    var askClimb: CGFloat {
+        _ = displayVersion
+        guard let screen = ScreenBarGeometry.preferredScreen(),
+              let corner = housingCorner(on: screen),
+              let size = askFaceSize(on: screen) else { return 0 }
+        return NotchIslandLayout.housingClimb(size: size,
+                                              notchDepth: ScreenBarGeometry.islandDepth(of: screen),
+                                              restingRadius: corner)
+    }
+
+    /// The ask face's size on `screen` for the capsule up now — nil
+    /// while the capsule is not an ask. The frame and the climb read
+    /// the same measure.
+    private func askFaceSize(on screen: NSScreen) -> CGSize? {
+        guard let capsule = activeCapsule, capsule.kind == .ask else { return nil }
+        return NotchIslandLayout.askSize(
+            slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
+            notchDepth: ScreenBarGeometry.islandDepth(of: screen),
+            summaryLines: askSummaryLines, takeover: capsule.takeover,
+            underHousing: housingCorner(on: screen))
+    }
+
+    /// Lines the ask face gives its summary: one on the capsule, as many
+    /// as the takeover card's width needs (capped) — decided here so the
+    /// frame is exactly the drawn copy.
+    var askSummaryLines: Int {
+        _ = displayVersion
+        guard let capsule = activeCapsule, capsule.kind == .ask, capsule.takeover else { return 1 }
+        let slot = ScreenBarGeometry.preferredScreen().flatMap { ScreenBarGeometry.islandSlot(on: $0) }
+        let width = NotchIslandLayout.askWidth(slotWidth: slot?.width ?? 0, takeover: true)
+        return NotchIslandLayout.askSummaryLines(askSummary(capsule), width: width,
+                                                 maxLines: NotchIslandLayout.askTakeoverLines)
     }
 
     /// The resting corner the Screen Bar's housing is measured with
@@ -540,7 +601,7 @@ final class NotchToy: Toy {
         }
         collapseWork?.cancel()
         collapseWork = nil
-        guard activeCapsule == nil else { return }
+        guard activeCapsule == nil, activeOverlay == nil else { return }
         if hovering {
             if !islandExpanded, s.expandOnHover {
                 // The wink lands now; the card only after the pause.
@@ -609,9 +670,21 @@ final class NotchToy: Toy {
         // not grow a card the user cannot see — it would still be open
         // when the fold lets go.
         guard isDrawingIsland, !foldEngaged else { return }
-        if activeCapsule != nil {
-            bandExpandPending = true
-            return
+        // Key feedback is a beat, not a face worth waiting on.
+        if activeOverlay != nil { endOverlay(settle: false) }
+        if let capsule = activeCapsule {
+            // A latched ask yields to a deliberate grow — the card
+            // carries the same ask with its verbs, and the fold brings
+            // the capsule back while the ask is still open. News only
+            // holds the click until it steps down.
+            guard capsule.kind.life == nil else {
+                bandExpandPending = true
+                return
+            }
+            shelvedCapsule = (capsule, Date())
+            activeCapsule = nil
+            capsuleWork?.cancel()
+            capsuleWork = nil
         }
         expand(held: true)
     }
@@ -771,7 +844,8 @@ final class NotchToy: Toy {
         // return and leave `current` parked forever, wedging every
         // later offer behind it. Shelve it instead; `collapseIsland`
         // re-shows it while it is still fresh.
-        if activeCapsule == nil, let promoted = capsuleQueue.current {
+        if activeCapsule == nil, let promoted = capsuleQueue.current,
+           shelvedCapsule?.notice != promoted {
             shelvedCapsule = (promoted, Date())
             capsuleWork?.cancel()
             capsuleWork = nil
@@ -819,8 +893,12 @@ final class NotchToy: Toy {
         let shelved = shelvedCapsule
         shelvedCapsule = nil
         if let current = capsuleQueue.current {
+            // News is fresh for its own life; a latched ask for as long
+            // as it is still open.
             if let shelved, current == shelved.notice,
-               Date().timeIntervalSince(shelved.at) < AlcoveCapsuleQueue.life {
+               current.kind.life == nil
+                ? askHolds(current)
+                : Date().timeIntervalSince(shelved.at) < AlcoveCapsuleQueue.life {
                 showCurrentCapsule()
                 return
             }
@@ -883,15 +961,18 @@ final class NotchToy: Toy {
     /// bar that is not there, not for us — the grow stays down; the
     /// wink still answers, it is only a tell.
     private func applyHover() {
-        guard hoverHeld, settings.expandOnHover, activeCapsule == nil,
+        guard hoverHeld, settings.expandOnHover, activeCapsule == nil, activeOverlay == nil,
               !menuBarHidden() else { return }
         expand(held: false)
     }
 
-    /// The face the window should wear right now — a capsule outranks
-    /// the card, the card outranks idle.
+    /// The face the window should wear right now — key feedback
+    /// outranks a capsule, a capsule outranks the card, the card
+    /// outranks idle. An ask capsule wears the ask face.
     private var currentFace: NotchIslandFace {
-        activeCapsule != nil ? .notice : (islandExpanded ? .expanded : .idle)
+        if activeOverlay != nil { return .notice }
+        if let capsule = activeCapsule { return capsule.kind == .ask ? .ask : .notice }
+        return islandExpanded ? .expanded : .idle
     }
 
     /// Resize the window to `face`'s frame — the island morphs in place;
@@ -938,6 +1019,10 @@ final class NotchToy: Toy {
         switch face {
         case .notice:
             size = NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
+                                                underHousing: housingCorner(on: screen))
+        case .ask:
+            size = askFaceSize(on: screen)
+                ?? NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
                                                 underHousing: housingCorner(on: screen))
         case .expanded:
             let width = NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
@@ -989,6 +1074,9 @@ final class NotchToy: Toy {
         // Sessions, usage or the focus may have moved while the card is
         // grown — refill before the frame re-measures its height.
         if islandExpanded { feedCard() }
+        // A latched ask answered anywhere else steps down on the
+        // document that says so.
+        noteAskState()
         // The weather toggle or city text changed — re-read now rather
         // than on the half-hour tick.
         cardModel.utility.weather.reload()
@@ -1061,6 +1149,10 @@ final class NotchToy: Toy {
         capsuleWork = nil
         collapseWork?.cancel()
         collapseWork = nil
+        activeOverlay = nil
+        overlayWork?.cancel()
+        overlayWork = nil
+        askTrack.removeAll()
         capsuleQueue.clear()
         desiredFrame = nil
         islandVisible = false
@@ -1098,8 +1190,14 @@ final class NotchToy: Toy {
     /// capsule; the queue's cooldown keeps a burst of asks from strobing
     /// the notch. While the card is grown the event is already visible
     /// in its rows — a capsule over it would only blink — so a grown
-    /// island eats them quietly.
+    /// island eats them quietly. `ask_resolved` is never a capsule, but
+    /// it always closes one: an ask answered anywhere steps its capsule
+    /// down, whatever face is up.
     func noteEvent(_ event: CoreEvent) {
+        if event.kind == "ask_resolved", let session = event.session {
+            resolveAsk(session: session, request: event.request)
+            return
+        }
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
               s.capsuleNotifications, islandVisible, !islandExpanded else { return }
@@ -1129,10 +1227,16 @@ final class NotchToy: Toy {
     /// an arriving power blip does not push a waiting ask aside, it
     /// simply never enters (and so never spends its key's cooldown).
     /// Internal so tests can drive the queue straight — `noteEvent` and
-    /// the power path both land here.
+    /// the power path both land here. Key feedback never queues: it goes
+    /// to the overlay (`presentSystemNotice`).
     func offer(_ notice: AlcoveNotice) {
+        if notice.kind.isFeedback {
+            presentFeedback(notice)
+            return
+        }
         if let pending = capsuleQueue.pending,
            notice.kind.queueRank > pending.kind.queueRank { return }
+        if notice.kind == .ask { askTrack[notice.id] = (Date(), false) }
         switch capsuleQueue.offer(notice, at: Date()) {
         case .now: showCurrentCapsule()
         case .after(let delay): scheduleCapsuleShow(after: delay)
@@ -1142,24 +1246,216 @@ final class NotchToy: Toy {
 
     /// Draw `capsuleQueue.current` as the island's face and arm its life
     /// timer. A grown island already tells the event's story in its
-    /// rows — a capsule queued before the grow simply does not draw.
+    /// rows — a capsule queued before the grow simply does not draw. An
+    /// ask whose question has already gone (answered while it waited
+    /// its turn) steps straight down instead of asking again.
     private func showCurrentCapsule() {
-        guard capsuleQueue.current != nil, islandVisible, !islandExpanded else { return }
-        activeCapsule = capsuleQueue.current
-        reframe(.notice, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        guard let current = capsuleQueue.current, islandVisible, !islandExpanded else { return }
+        if current.kind == .ask, !askHolds(current) {
+            finishCapsule()
+            return
+        }
+        activeCapsule = current
+        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         armCapsuleLife()
     }
 
-    /// The 2.4 s a shown capsule holds before `finishCapsule` steps it
-    /// down — the same arm a collapse-restored capsule gets.
+    /// The shown capsule's own life (`AlcoveNoticeKind.life`) before
+    /// `finishCapsule` steps it down — the same arm a collapse-restored
+    /// capsule gets. A latched ask arms nothing: it holds until it is
+    /// answered, opened, swiped away or resolved.
     private func armCapsuleLife() {
         capsuleWork?.cancel()
+        capsuleWork = nil
+        guard let life = activeCapsule?.kind.life else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.finishCapsule() }
         }
         capsuleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + AlcoveCapsuleQueue.life,
+        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
+    }
+
+    // MARK: Asks
+
+    /// The live ask behind an ask capsule — pinned in `state.asks`
+    /// first, the session's own otherwise.
+    func liveAsk(for notice: AlcoveNotice) -> CoreAsk? {
+        notice.session.flatMap { NotchIsland.liveAsk(session: $0, state: core.state) }
+    }
+
+    /// What the ask face may offer right now — read live, so a daemon
+    /// that learns it can type into the terminal lights the buttons up
+    /// without a new capsule.
+    func askVerbs(for notice: AlcoveNotice) -> NotchAskVerbs {
+        NotchAskVerbs.resolve(live: liveAsk(for: notice), session: notice.session)
+    }
+
+    /// The question itself — the live summary, else the event's.
+    func askSummary(_ notice: AlcoveNotice) -> String {
+        let live = liveAsk(for: notice)?.summary
+        let text = (live?.isEmpty == false ? live : nil)
+            ?? notice.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
+            ?? notice.subtitle
+        return text
+    }
+
+    /// Whether a latched ask capsule still holds — `NotchIsland
+    /// .askStillOpen` over this notice's own bookkeeping. Reading it
+    /// marks the ask seen once the state carries it.
+    private func askHolds(_ notice: AlcoveNotice) -> Bool {
+        let live = liveAsk(for: notice)
+        var track = askTrack[notice.id] ?? (Date(), false)
+        if live != nil { track.seen = true }
+        askTrack[notice.id] = track
+        return NotchIsland.askStillOpen(notice, live: live, seenLive: track.seen,
+                                        age: Date().timeIntervalSince(track.offered))
+    }
+
+    /// The state moved: a shown ask whose question is gone — answered in
+    /// the terminal, replaced by a new request, the session ended —
+    /// steps down. `reconcile` calls it on every document; internal so
+    /// tests can run it without one.
+    func noteAskState() {
+        if let capsule = activeCapsule, capsule.kind == .ask, !askHolds(capsule) {
+            finishCapsule()
+        }
+        let live = Set([capsuleQueue.current?.id, capsuleQueue.pending?.id,
+                        shelvedCapsule?.notice.id].compactMap { $0 })
+        askTrack = askTrack.filter { live.contains($0.key) }
+    }
+
+    /// An ask was answered — here, in the panel, or in the terminal. A
+    /// waiting capsule about it is dropped; the shown one steps down and
+    /// whatever waits behind it gets its turn. A capsule the card
+    /// shelved goes too, so the fold never replays a settled question.
+    func resolveAsk(session: String, request: String?) {
+        let shown = capsuleQueue.resolveAsk(session: session, request: request)
+        if let shelved = shelvedCapsule, shelved.notice.kind == .ask,
+           shelved.notice.session == session {
+            shelvedCapsule = nil
+        }
+        guard shown else { return }
+        finishCapsule()
+    }
+
+    /// Approve or Deny on the ask face — only ever from a click on a
+    /// button `askVerbs` allowed. The pin is the episode the capsule
+    /// shows; answerability is the live ask's.
+    func answerCapsule(approve: Bool) {
+        guard let capsule = activeCapsule, capsule.kind == .ask,
+              let session = capsule.session else { return }
+        var ask = liveAsk(for: capsule) ?? capsule.ask
+        if let pinned = capsule.ask?.request { ask?.request = pinned }
+        Task { [weak self] in
+            await self?.answerer.answer(session: session, ask: ask, approve: approve)
+        }
+    }
+
+    /// Open on the ask face, or a tap on any capsule about a session:
+    /// news you tap takes you to the thing. The capsule steps down — the
+    /// person acted on it.
+    func openCapsuleSession() {
+        guard let capsule = activeCapsule, let session = capsule.session else { return }
+        answerer.open(session: session)
+        dismissCapsule()
+    }
+
+    // MARK: Takeover
+
+    /// The `takeover` tier's stage 3 (`EventDelivery.takeover`): the
+    /// island grows into the ask card and holds it until the person
+    /// answers, opens or swipes it away. The card already open carries
+    /// the ask in its rows, so a grown island is left alone; so is a
+    /// session with no open ask left to show.
+    func noteTakeover(_ event: CoreEvent) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
+              !islandExpanded, !foldEngaged, let session = event.session,
+              let live = NotchIsland.liveAsk(session: session, state: core.state) else { return }
+        let opened = CoreEvent(id: "takeover:\(event.id)", kind: "ask_opened", session: session,
+                               label: event.label, provider: event.provider,
+                               detail: live.summary, request: live.request)
+        // The tier is its own opt-in: the capsule switches do not gate it.
+        guard let notice = AlcoveEventPolicy.notice(
+            for: opened, session: core.state?.session(withID: session),
+            kinds: AlcoveCapsuleKinds()) else { return }
+        endOverlay(settle: false)
+        capsuleWork?.cancel()
+        capsuleWork = nil
+        shelvedCapsule = nil
+        bandExpandPending = false
+        capsuleQueue.takeOver(notice, at: Date())
+        if let current = capsuleQueue.current, askTrack[current.id] == nil {
+            askTrack[current.id] = (Date(), true)
+        }
+        activeCapsule = capsuleQueue.current
+        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    /// The escalation stood down without the ask closing (its pane came
+    /// to the front): the card shrinks back to the ask capsule, which
+    /// keeps holding.
+    func releaseTakeover() {
+        guard activeCapsule?.takeover == true else { return }
+        capsuleQueue.releaseTakeover()
+        activeCapsule = capsuleQueue.current
+        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    // MARK: Feedback overlay
+
+    /// The Mac's own announcements (`NotchHUD`): the level keys, Caps
+    /// Lock, Focus, devices, displays. True when the island took it —
+    /// ours, shown, not grown, not under Fold — so the HUD's glass pill
+    /// stays down and nothing is said twice. Key feedback overlays at
+    /// once; news joins the capsule line. False sends it to the pill.
+    @discardableResult
+    func presentSystemNotice(_ notice: AlcoveNotice) -> Bool {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
+              !islandExpanded, !foldEngaged else { return false }
+        if notice.kind.isFeedback { return presentFeedback(notice) }
+        offer(notice)
+        return true
+    }
+
+    /// Draw key feedback over the island for its beat. A latched ask
+    /// refuses it (`acceptsOverlay`) — its buttons are why the island
+    /// is open — and the caller falls back to the pill.
+    @discardableResult
+    private func presentFeedback(_ notice: AlcoveNotice) -> Bool {
+        guard islandVisible, !islandExpanded, capsuleQueue.present(notice) else { return false }
+        let wasUp = activeOverlay != nil
+        activeOverlay = notice
+        overlayWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endOverlay(settle: true) }
+        }
+        overlayWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (notice.kind.life ?? AlcoveCapsuleQueue.feedbackLife),
                                       execute: work)
+        // A held key updates the fill in place — the face is already
+        // the notice, so only a first press morphs.
+        if !wasUp {
+            reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
+        return true
+    }
+
+    /// The feedback's beat ended: the face under it shows again — the
+    /// capsule it covered, or whatever the cursor wants.
+    func endOverlay(settle: Bool) {
+        overlayWork?.cancel()
+        overlayWork = nil
+        guard activeOverlay != nil else { return }
+        activeOverlay = nil
+        capsuleQueue.endOverlay()
+        guard settle else { return }
+        if activeCapsule == nil {
+            settleToRest()
+        } else {
+            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
     }
 
     /// The gap between two capsules: nothing drawn yet, `current` already
@@ -1211,7 +1507,12 @@ final class NotchToy: Toy {
     /// a dismissal — the held cursor must not pop the card right back
     /// open where the capsule was.
     func dismissCapsule() {
+        if activeOverlay != nil, activeCapsule == nil, capsuleQueue.current == nil {
+            endOverlay(settle: true)
+            return
+        }
         guard activeCapsule != nil || capsuleQueue.current != nil else { return }
+        endOverlay(settle: false)
         capsuleWork?.cancel()
         capsuleWork = nil
         capsuleQueue.cancel(at: Date())
@@ -1378,17 +1679,39 @@ final class NotchToy: Toy {
     /// A tap on the island itself — the view's tap gesture. The card
     /// toggles: grown folds, resting grows (the same deliberate pin a
     /// band click earns — a tap is a click, so outside-click and Esc
-    /// still let it go), and a showing capsule dismisses — a tap on
-    /// news puts it away, it never re-opens it.
+    /// still let it go). A capsule about a session opens that session —
+    /// news you tap takes you to the thing, and a tap on "failed" no
+    /// longer throws away the only pointer to the broken run — and steps
+    /// down; one about nothing in particular (power, a device) just puts
+    /// itself away. Key feedback is only ever put away. None of them
+    /// re-opens the card.
     func islandTapped() {
         guard isDrawingIsland, !foldEngaged else { return }
         if islandExpanded {
             collapseIsland()
-        } else if activeCapsule != nil {
-            dismissCapsule()
+        } else if activeOverlay != nil {
+            endOverlay(settle: true)
+        } else if let capsule = activeCapsule {
+            if let session = capsule.session, !CoreSession.isRemoteID(session) {
+                openCapsuleSession()
+            } else {
+                dismissCapsule()
+            }
         } else {
             expandFromBand()
         }
+    }
+
+    /// A click on the resting island's amber count — straight to the
+    /// session that has waited longest, rather than the card: one click
+    /// from "someone needs me" to the terminal that does.
+    func openOldestAsk() {
+        guard isDrawingIsland, !foldEngaged,
+              let session = islandSummary.oldestWaiting else {
+            islandTapped()
+            return
+        }
+        answerer.open(session: session)
     }
 
     // MARK: Pull
@@ -1461,7 +1784,7 @@ final class NotchToy: Toy {
         case .down:
             if islandExpanded {
                 foldExpandedCard()
-            } else if activeCapsule != nil || capsuleQueue.current != nil {
+            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
                 dismissCapsule()
             } else {
                 // The pull-open: a down swipe on the resting island
@@ -1475,7 +1798,7 @@ final class NotchToy: Toy {
                 // Alcove's dismiss flick, the same fold a down-swipe
                 // earns.
                 foldExpandedCard()
-            } else if activeCapsule != nil || capsuleQueue.current != nil {
+            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
                 dismissCapsule()
             }
             // On a resting island an up-flick means nothing — the
@@ -1504,6 +1827,7 @@ final class NotchToy: Toy {
         withObservationTracking {
             _ = store?.state.notch
             _ = core.sessions
+            _ = core.state?.asks          // a pinned ask answered elsewhere steps its capsule down
             _ = core.state?.usage
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
             _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb

@@ -4,9 +4,16 @@ import Foundation
 /// One daemon event that matters (`ask_opened`, `completed`, `failed`,
 /// `quota_reset`) becomes an `AlcoveNotice`: an icon, a title, a
 /// subtitle, shown for a couple of seconds before the island settles
-/// back to its idle face. Which kinds may raise one is the user's;
-/// `AlcoveCapsuleKinds` is the per-kind switchboard `NotchSettings`
-/// persists.
+/// back to its idle face. An ask is the exception: it holds the island
+/// until it is answered, opened or swiped away. Which kinds may raise
+/// one is the user's; `AlcoveCapsuleKinds` is the per-kind switchboard
+/// `NotchSettings` persists.
+///
+/// The Mac's own announcements ride the same queue as kinds of their
+/// own — a level key's answer, a Focus turning on, a device joining or
+/// leaving, Caps Lock, a display arriving, a shelf timer coming due —
+/// so one announcer owns the top of the screen and the cooldown and
+/// priority rules police them all.
 public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
     case ask
     case completed
@@ -15,10 +22,25 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
     /// The synthetic power capsule — no daemon event carries it; the
     /// toy's IOPS poller raises it on real battery transitions only.
     case charging
+    /// A volume, brightness or keyboard-backlight key's answer: the
+    /// level as one continuous fill. Feedback, not news — it overlays
+    /// the island at once rather than waiting its turn.
+    case level
+    /// A Focus mode turning on or off.
+    case focus
+    /// A Bluetooth device connecting or disconnecting.
+    case device
+    /// Caps Lock flipping — feedback for the key just pressed.
+    case capsLock
+    /// A display arriving or leaving.
+    case display
+    /// A shelf timer came due.
+    case timer
 
     /// The SF Symbol the capsule's leading glyph draws. The tint is the
     /// view's business (amber / green / red / the provider's accent) —
-    /// core names shapes, never colours.
+    /// core names shapes, never colours. A notice may carry a `glyph`
+    /// of its own (the Focus mode's, the device's) over this default.
     public var symbol: String {
         switch self {
         case .ask: return "exclamationmark.circle.fill"
@@ -26,6 +48,12 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .failed: return "xmark.circle.fill"
         case .quotaReset: return "arrow.clockwise.circle.fill"
         case .charging: return "bolt.fill"
+        case .level: return "speaker.wave.2.fill"
+        case .focus: return "moon.fill"
+        case .device: return "headphones"
+        case .capsLock: return "capslock.fill"
+        case .display: return "display"
+        case .timer: return "timer"
         }
     }
 
@@ -37,8 +65,35 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .failed: return "failed"
         case .quotaReset: return "quota reset"
         case .charging: return "power changed"
+        case .level: return "level"
+        case .focus: return "Focus changed"
+        case .device: return "connected"
+        case .capsLock: return "Caps Lock"
+        case .display: return "display changed"
+        case .timer: return "done"
         }
     }
+
+    /// How long a shown capsule of this kind holds before it steps
+    /// down. nil is latched: an ask stays until it is answered, opened,
+    /// swiped away or resolved elsewhere — the island is where the
+    /// answer happens, so the question must still be there when the
+    /// person looks up. A timer holds longer than news: it was set to
+    /// be noticed.
+    public var life: TimeInterval? {
+        switch self {
+        case .ask: return nil
+        case .level, .capsLock: return AlcoveCapsuleQueue.feedbackLife
+        case .timer: return AlcoveCapsuleQueue.timerLife
+        case .completed, .failed, .quotaReset, .charging, .focus, .device, .display:
+            return AlcoveCapsuleQueue.life
+        }
+    }
+
+    /// Feedback for a key the person just pressed: it answers at once
+    /// as the queue's overlay — never waiting behind news, never
+    /// spending a cooldown — and a repeat press updates it in place.
+    public var isFeedback: Bool { self == .level || self == .capsLock }
 }
 
 /// One capsule's worth of copy, fully resolved: the view is a renderer,
@@ -60,9 +115,28 @@ public struct AlcoveNotice: Equatable, Sendable, Identifiable {
     /// provider-scoped resets). A repeat inside the cooldown is strobe,
     /// not news.
     public var key: String
+    /// The ask an ask capsule answers, as the event saw it — its
+    /// `request` pins the answer to this episode, so a click can never
+    /// approve whatever replaced it. Whether the buttons may show is
+    /// read off the live ask (`NotchAskVerbs`); this snapshot carries
+    /// the pin and the summary.
+    public var ask: CoreAsk?
+    /// A glyph of the notice's own over `kind.symbol` — the Focus
+    /// mode's, the output device's, the display's.
+    public var glyph: String?
+    /// A level notice's reading, 0…1 — drawn as one continuous fill.
+    public var fraction: Double?
+    /// A level notice for a muted output: the slashed speaker and a
+    /// dimmed fill.
+    public var muted: Bool
+    /// The ask reached the `takeover` tier: the island grows into the
+    /// ask card and holds it until the person acts.
+    public var takeover: Bool
 
     public init(id: String, kind: AlcoveNoticeKind, title: String, subtitle: String,
-                provider: String? = nil, session: String? = nil, key: String) {
+                provider: String? = nil, session: String? = nil, key: String,
+                ask: CoreAsk? = nil, glyph: String? = nil, fraction: Double? = nil,
+                muted: Bool = false, takeover: Bool = false) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -70,7 +144,15 @@ public struct AlcoveNotice: Equatable, Sendable, Identifiable {
         self.provider = provider
         self.session = session
         self.key = key
+        self.ask = ask
+        self.glyph = glyph
+        self.fraction = fraction
+        self.muted = muted
+        self.takeover = takeover
     }
+
+    /// The glyph the capsule draws.
+    public var symbol: String { glyph ?? kind.symbol }
 }
 
 /// Which event kinds may raise a capsule — all on by default, since the
@@ -99,6 +181,10 @@ public struct AlcoveCapsuleKinds: Codable, Equatable, Sendable {
         case .failed: return failed
         case .quotaReset: return quotaReset
         case .charging: return charging
+        // The Mac's own announcements keep their switches on the notch
+        // settings (`alerts`, `mediaHUD`), checked where they are
+        // raised; a timer is the person's own ask to be told.
+        case .level, .focus, .device, .capsLock, .display, .timer: return true
         }
     }
 
@@ -165,9 +251,29 @@ public enum AlcoveEventPolicy {
                 ?? kind.verb
         }
 
+        // An ask's identity is its episode: once one is answered, the
+        // session's next request is news, not a repeat inside the
+        // cooldown — so the pin joins the key when the event names one.
+        var key = "\(kind.rawValue):\(event.session ?? provider ?? event.id)"
+        if kind == .ask, let request = event.request, !request.isEmpty { key += "|\(request)" }
         return AlcoveNotice(id: event.id, kind: kind, title: title, subtitle: subtitle,
-                            provider: provider, session: event.session,
-                            key: "\(kind.rawValue):\(event.session ?? provider ?? event.id)")
+                            provider: provider, session: event.session, key: key,
+                            ask: kind == .ask ? askSnapshot(for: event, session: session) : nil)
+    }
+
+    /// The ask an `ask_opened` capsule answers: the session's ask when
+    /// the state already carries it, else one built from the event. The
+    /// event's `request` is the pin either way — it names the episode
+    /// this capsule is about, and the daemon refuses `stale_request`
+    /// rather than approve whatever replaced it.
+    static func askSnapshot(for event: CoreEvent, session: CoreSession?) -> CoreAsk {
+        var ask = session?.ask ?? CoreAsk(summary: event.detail)
+        ask.session = event.session
+        if let request = event.request { ask.request = request }
+        if ask.summary?.isEmpty != false, let detail = event.detail, !detail.isEmpty {
+            ask.summary = detail
+        }
+        return ask
     }
 }
 
@@ -201,25 +307,45 @@ public enum AlcoveCapsuleNext: Equatable, Sendable {
 /// the first — the newest news wins), a 30 s cooldown per kind+subject,
 /// and a minimum gap so successive capsules never strobe the notch.
 /// The toy owns the timers; this owns the decisions.
+///
+/// Two slots sit beside the line. The overlay is feedback for a key the
+/// person just pressed (a level, Caps Lock): it answers at once over
+/// whatever transient face is up and never touches the line — but it
+/// never covers a latched ask, whose buttons are the reason the island
+/// is open. And a takeover jumps the line: the escalated ask becomes
+/// the shown capsule, a waiting ask keeps its place behind it.
 public struct AlcoveCapsuleQueue: Equatable, Sendable {
     /// Seconds a capsule holds before it steps down.
     public static let life: TimeInterval = 2.4
+    /// Seconds a key's feedback holds — the system HUD's own beat.
+    public static let feedbackLife: TimeInterval = 2.0
+    /// Seconds a due timer's capsule holds: it was set to be noticed.
+    public static let timerLife: TimeInterval = 8
     /// The same kind about the same session/provider repeats inside this
     /// window are suppressed.
     public static let sameKeyCooldown: TimeInterval = 30
     /// The smallest gap between two capsules' show times.
     public static let minGap: TimeInterval = 1.2
+    /// A waiting capsule this old is history, not news: it is dropped
+    /// when its turn comes rather than shown late. A latched ask can
+    /// hold the island for minutes, and "finished" from three minutes
+    /// ago would only mislead — the card's rows already tell it. An ask
+    /// never goes stale here; the toy checks it is still open instead.
+    public static let pendingStaleAfter: TimeInterval = 30
 
     /// The capsule the island should be drawing (or is about to, on an
     /// `.after` verdict). The view reads the toy's copy of this.
     public private(set) var current: AlcoveNotice?
     /// The one waiting behind it; replaced, never stacked.
     public private(set) var pending: AlcoveNotice?
+    /// Feedback drawn over the current face — see `present`.
+    public private(set) var overlay: AlcoveNotice?
     /// kind+subject → when it was last accepted. Entries age out at
     /// `sameKeyCooldown`.
     public private(set) var recent: [String: Date] = [:]
     private var currentShownAt: Date?
     private var lastShownAt: Date?
+    private var pendingAt: Date?
 
     public init() {}
 
@@ -232,6 +358,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         recent[notice.key] = now
         guard current == nil else {
             pending = notice
+            pendingAt = now
             return .queued
         }
         current = notice
@@ -257,7 +384,13 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         current = nil
         currentShownAt = nil
         guard let next = pending else { return .idle }
+        let waitedSince = pendingAt
         pending = nil
+        pendingAt = nil
+        if next.kind != .ask, let waitedSince,
+           now.timeIntervalSince(waitedSince) >= Self.pendingStaleAfter {
+            return .idle
+        }
         current = next
         let elapsed = now.timeIntervalSince(shownAt)
         guard elapsed < Self.minGap else {
@@ -276,6 +409,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         if let shownAt = currentShownAt { lastShownAt = shownAt }
         current = nil
         pending = nil
+        pendingAt = nil
         currentShownAt = nil
     }
 
@@ -285,8 +419,90 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
     public mutating func clear() {
         current = nil
         pending = nil
+        pendingAt = nil
+        overlay = nil
         currentShownAt = nil
         lastShownAt = nil
+    }
+
+    // MARK: Asks
+
+    /// An ask was answered here or resolved elsewhere. A waiting capsule
+    /// about it is dropped on the spot; the answer says whether the
+    /// shown one is it — the toy then finishes that one, promoting
+    /// whatever waits. `request` narrows the match to one episode when
+    /// both sides name it: a resolution only closes its own ask.
+    public mutating func resolveAsk(session: String, request: String?) -> Bool {
+        func matches(_ notice: AlcoveNotice) -> Bool {
+            guard notice.kind == .ask, notice.session == session else { return false }
+            guard let request, let pinned = notice.ask?.request else { return true }
+            return pinned == request
+        }
+        if let pending, matches(pending) {
+            self.pending = nil
+            pendingAt = nil
+        }
+        return current.map(matches) ?? false
+    }
+
+    /// The ask escalated to the takeover tier. The capsule already
+    /// showing that ask grows in place; any other face steps aside — an
+    /// ask that was up keeps its place in the waiting slot, ambient news
+    /// is dropped (the card's rows still tell it). The takeover shows
+    /// now, past the gap and the cooldown: it is the loudest thing the
+    /// person allowed, and it holds until they act.
+    public mutating func takeOver(_ notice: AlcoveNotice, at now: Date) {
+        overlay = nil
+        if var shown = current, shown.kind == .ask, shown.session == notice.session {
+            shown.takeover = true
+            current = shown
+            return
+        }
+        if let shown = current, shown.kind == .ask {
+            pending = shown
+            pendingAt = now
+        }
+        var escalated = notice
+        escalated.takeover = true
+        current = escalated
+        currentShownAt = now
+        recent[escalated.key] = now
+    }
+
+    /// The takeover stood down (the asking pane came to the front): the
+    /// shown ask shrinks back to its capsule and keeps holding.
+    public mutating func releaseTakeover() {
+        guard var shown = current, shown.takeover else { return }
+        shown.takeover = false
+        current = shown
+    }
+
+    // MARK: Feedback
+
+    /// Whether key feedback may draw over the island now: nothing is
+    /// latched there. A shown or promoted ask keeps its face — its
+    /// buttons are why the island is open — and feedback goes to the
+    /// fallback pill instead.
+    public var acceptsOverlay: Bool {
+        guard let current else { return true }
+        return current.kind.life != nil
+    }
+
+    /// A key's answer: drawn at once over the current face, replacing
+    /// any feedback already up (a held volume key updates in place). No
+    /// cooldown, no line, no gap — the person just pressed the key.
+    /// False when the notice is not feedback or a latched ask holds the
+    /// island.
+    @discardableResult
+    public mutating func present(_ notice: AlcoveNotice) -> Bool {
+        guard notice.kind.isFeedback, acceptsOverlay else { return false }
+        overlay = notice
+        return true
+    }
+
+    /// The feedback's beat ended — the face under it shows again.
+    public mutating func endOverlay() {
+        overlay = nil
     }
 }
 

@@ -90,6 +90,7 @@ final class EventCoordinator {
             if let toast = delivery.toast { parts.append("hud “\(toast)”") }
             if let pulse = delivery.statusPulse { parts.append(pulse ? "pulse on" : "pulse off") }
             if delivery.chime == .start { parts.append("chime every \(Int(EventPolicy.chimeInterval)) s") }
+            if delivery.takeover { parts.append("notch takeover") }
             if delivery.chime == .stop, sounds.isChiming { parts.append("chime off") }
             // A delivery whose whole job is to take a banner away has
             // nothing else to name; the log said "event ask_resolved → ".
@@ -128,6 +129,16 @@ final class EventCoordinator {
         // capsules — its own policy and cooldown decide whether this one
         // shows.
         toys?.notch.noteEvent(event)
+        // The `takeover` tier's finale: the ask grows out of the notch
+        // and holds until it is acted on. A stage below it (or a
+        // watched pane) shrinks a card already up back to its capsule.
+        if event.kind == "escalation_stage" {
+            if delivery.takeover {
+                toys?.notch.noteTakeover(event)
+            } else {
+                toys?.notch.releaseTakeover()
+            }
+        }
     }
 
     /// The ask the event names is on screen: the user is already looking
@@ -164,6 +175,10 @@ final class EventCoordinator {
         case .stop: sounds.stopChime()
         case .unchanged: break
         }
+        // The pane coming forward is the person looking at the ask: the
+        // takeover card shrinks back to its capsule. Walking away again
+        // does not re-grow it — that waits for the next stage.
+        if !delivery.takeover { toys?.notch.releaseTakeover() }
     }
 
     private var asksStillOpen: Bool {
