@@ -115,6 +115,15 @@ struct MenuBarHidePlan: Equatable, Sendable {
     /// macOS's own « while it stands beside a hidden run — the Screen
     /// Bar's ear stops short of it. Quartz.
     var overflowControlFrame: CGRect?
+
+    /// Which items sit in which section, frames and titles aside — what
+    /// the plan log follows. A clock ticking its minute or jittering by
+    /// 3 pt is not news.
+    var sectionIDs: [MenuBarItemSection: Set<String>] {
+        [.shown: Set(shown.map(\.id)),
+         .hidden: Set(hidden.map(\.id)),
+         .alwaysHidden: Set(alwaysHidden.map(\.id))]
+    }
 }
 
 /// The hide machinery. Two mechanisms, one plan:
@@ -217,6 +226,8 @@ final class MenuBarItemHider {
     private var barCoveringShown = false
     /// The last plan — the card's "N hidden · M always-hidden" row.
     private(set) var lastPlan = MenuBarHidePlan()
+    /// The section membership the plan log last named.
+    private var loggedSections: [MenuBarItemSection: Set<String>]?
     /// The parked caps learned this geometry.
     private(set) var caps = MenuBarSpacerCaps()
     /// The lengths last handed to `setControlLength`, so a parked
@@ -403,6 +414,7 @@ final class MenuBarItemHider {
         pendingLength = nil
         assign(.hidden, length: MenuBarControlFrames.glyphLength)
         lastPlan = MenuBarHidePlan()
+        loggedSections = nil
         onPlan?(lastPlan)
     }
 
@@ -499,7 +511,6 @@ final class MenuBarItemHider {
                              protectedFrames: protectedFrames(),
                              obscuredFrames: obscuredFrames(),
                              coverShown: coverShown)
-        let changed = plan != lastPlan
         lastPlan = plan
         if let length = plan.hiddenControlLength { request(length) }
         // The plan lands with the utility before the shutters update:
@@ -508,12 +519,20 @@ final class MenuBarItemHider {
         // instead of lagging one behind.
         onPlan?(plan)
         updateShutters(plan: plan, row: row)
-        if changed {
+        // Debug, and only when an item changes section: logged on any
+        // difference it was ~150 persisted lines an hour of the clock's
+        // x and minute title. The plan named is the one that stands —
+        // under the concealer that is the utility's, not this pass's
+        // positional one.
+        let standing = externalPlan ?? plan
+        let sections = standing.sectionIDs
+        if sections != loggedSections {
+            loggedSections = sections
             let describe = { (r: CGRect?) -> String in
                 r.map { String(format: "%.0f–%.0f@%.0f", $0.minX, $0.maxX, $0.minY) } ?? "none"
             }
             let tag = { (i: MenuBarItem) in "\(i.id)@\(Int(i.bounds.minX))" }
-            Self.log.notice("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(tag).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(tag).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(tag).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
+            Self.log.debug("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(standing.shown.map(tag).joined(separator: " | "), privacy: .public); hidden \(standing.hidden.map(tag).joined(separator: " | "), privacy: .public); always \(standing.alwaysHidden.map(tag).joined(separator: " | "), privacy: .public); covers \(standing.hiddenCovers.count + standing.alwaysHiddenCovers.count, privacy: .public)")
         }
     }
 

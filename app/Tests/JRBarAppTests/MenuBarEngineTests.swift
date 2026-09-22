@@ -115,6 +115,26 @@ struct MenuBarEngineTests {
         #expect(h.passes == 3)
     }
 
+    @Test("the plan log's key is section membership — a clock's x jitter or minute tick is not news")
+    func planLogKey() {
+        func item(_ id: String, x: Double, title: String? = nil) -> MenuBarItem {
+            MenuBarItem(id: id, ownerPID: 500, ownerName: "App",
+                        bounds: CGRect(x: x, y: 0, width: 24, height: 24),
+                        title: title, windowID: 0)
+        }
+        var before = MenuBarHidePlan()
+        before.shown = [item("clock", x: 1355, title: "12:00"), item("Wi-Fi", x: 1300)]
+        before.hidden = [item("Shottr", x: 866)]
+        var jittered = before
+        jittered.shown = [item("clock", x: 1358, title: "12:01"), item("Wi-Fi", x: 1303)]
+        #expect(jittered != before, "the plan itself differs — the old trigger")
+        #expect(jittered.sectionIDs == before.sectionIDs)
+        var moved = before
+        moved.hidden = []
+        moved.alwaysHidden = [item("Shottr", x: 866)]
+        #expect(moved.sectionIDs != before.sectionIDs)
+    }
+
     // MARK: Trigger source
 
     @MainActor
