@@ -3,8 +3,9 @@ import JRBarCore
 
 /// W11's shelf utility facts: now-playing media plus the internal
 /// battery, alive only while the pinned card is up. Both sources are
-/// the same monitors the Alcove island runs — nothing here invents a
-/// capability macOS does not expose.
+/// the same feeds the island runs — one Now Playing helper, one power
+/// poll (`AlcovePowerFeed`) — so nothing here polls on its own or
+/// invents a capability macOS does not expose.
 ///
 /// Capability honesty (T48/AL04/AL05):
 /// * Transport buttons exist only while a media source is live; a dead
@@ -67,6 +68,10 @@ final class ShelfUtilityModel {
             self?.lyrics.note(media: media)
         }
         powerMonitor.start()
+        // The shared feed kept polling for the island and the ear while
+        // the card was folded: take its reading now, or the row would
+        // wait for the next transition showing the charge it left with.
+        power = powerMonitor.current
         weather.start()
         toggles.refresh()
     }

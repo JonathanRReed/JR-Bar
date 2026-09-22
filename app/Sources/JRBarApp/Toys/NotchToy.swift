@@ -129,8 +129,9 @@ final class NotchToy: Toy {
     @ObservationIgnored private var mediaToken: UUID?
     /// The shared Now Playing source — one helper for every surface.
     @ObservationIgnored private let mediaFeed: MediaFeed
-    /// The battery poller; exists only while the island is ours, shown,
-    /// and `capsuleNotifications` + `capsuleKinds.charging` are on.
+    /// The island's subscription to the shared power feed; exists only
+    /// while the island is ours, shown, `capsuleNotifications` +
+    /// `capsuleKinds.charging` are on, and no ear announces power.
     @ObservationIgnored private var powerMonitor: AlcovePowerMonitor?
     /// The mic/camera poller; exists only while the island is ours,
     /// shown, and the indicators switch is on.
@@ -1208,11 +1209,13 @@ final class NotchToy: Toy {
     }
 
     /// A battery transition the power monitor saw — `AlcovePower.notice`
-    /// shapes it; the same queue and gate as daemon events.
+    /// shapes it; the same queue and gate as daemon events. An ear that
+    /// speaks for power keeps the island quiet.
     private func notePowerTransition(from old: AlcovePowerState, to new: AlcovePowerState) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
-              s.capsuleNotifications, islandVisible, !islandExpanded else { return }
+              s.capsuleNotifications, islandVisible, !islandExpanded,
+              !earNoticesLive else { return }
         guard let notice = AlcovePower.notice(from: old, to: new,
                                               id: UUID().uuidString,
                                               kinds: s.capsuleKinds) else { return }
@@ -1616,11 +1619,23 @@ final class NotchToy: Toy {
 
     // MARK: Power
 
-    /// The battery poller lives exactly as long as the island is shown
-    /// with both capsule switches on; `reconcile`/`parkIsland` land here.
+    /// Whether the Screen Bar's ears announce device transitions now —
+    /// drawn, with `screen_bar_wing_notices` on. Then the ear is the one
+    /// announcer for power and the audio route: the island keeps quiet
+    /// about both rather than say a charger plug twice.
+    var earNoticesLive: Bool {
+        guard earsDrawn else { return false }
+        return SettingsDocument(core.settings?.document ?? .object([:]))
+            .bool("screen_bar_wing_notices") ?? true
+    }
+
+    /// The island's subscription to the shared power feed lives exactly
+    /// as long as the island is shown with both capsule switches on and
+    /// no ear speaking for it; `reconcile`/`parkIsland` land here.
     private func syncPowerMonitor() {
         let s = settings
         let want = islandVisible && s.capsuleNotifications && s.capsuleKinds.charging
+            && !earNoticesLive
         if want {
             if powerMonitor == nil {
                 let monitor = AlcovePowerMonitor()

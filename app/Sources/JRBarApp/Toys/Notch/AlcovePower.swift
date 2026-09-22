@@ -2,53 +2,112 @@ import AppKit
 import IOKit.ps
 import JRBarCore
 
-/// The battery half of the island's instant notifications: a 5 s poll
-/// over IOKit's power-source list (the same `pmset -g ps` reads),
-/// alive only while the island is shown and `capsuleKinds.charging` is
-/// on. The first reading is a baseline — plugging in, switching to
-/// battery, hitting full are the only transitions that ever reach the
-/// toy, and `AlcovePower.notice` decides what each is worth.
+/// The one IOKit power poll in the app. The island's charging capsule,
+/// the card's battery row and the Screen Bar's ear notice each used to
+/// run their own 5 s `IOPSCopyPowerSourcesInfo` timer over the same
+/// battery; they now subscribe here, and the timer runs only while at
+/// least one of them is listening. Changes fan out as (old, new) — old
+/// nil on the feed's very first reading, the baseline nobody announces.
+@MainActor
+final class AlcovePowerFeed {
+    static let shared = AlcovePowerFeed()
+    static let interval: TimeInterval = 5
+
+    /// The last reading, nil while nobody listens.
+    private(set) var latest: AlcovePowerState?
+    /// The read itself — IOKit in production; tests stage readings.
+    var read: @MainActor () -> AlcovePowerState = { AlcovePowerMonitor.read() }
+    /// Whether the poll timer should arm — tests drive `pollNow` by hand.
+    var schedulesTimer = true
+
+    private var subscribers: [UUID: @MainActor (AlcovePowerState?, AlcovePowerState) -> Void] = [:]
+    private var timer: Timer?
+
+    var subscriberCount: Int { subscribers.count }
+    var isPolling: Bool { timer != nil }
+
+    /// Listen for changes. The first subscriber starts the poll (its
+    /// first reading is the baseline); a later one joins it silently —
+    /// the state the machine is already in is not a transition.
+    func subscribe(_ handler: @escaping @MainActor (AlcovePowerState?, AlcovePowerState) -> Void) -> UUID {
+        let token = UUID()
+        subscribers[token] = handler
+        if latest == nil { pollNow() }
+        if timer == nil, schedulesTimer {
+            let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pollNow() }
+            }
+            timer.tolerance = 1
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        }
+        return token
+    }
+
+    /// Stop listening. The last one out stops the poll and forgets the
+    /// reading, so a later first subscriber takes a fresh baseline.
+    func unsubscribe(_ token: UUID) {
+        subscribers[token] = nil
+        guard subscribers.isEmpty else { return }
+        timer?.invalidate()
+        timer = nil
+        latest = nil
+    }
+
+    /// One reading: a change reaches every subscriber, nothing else does.
+    func pollNow() {
+        let state = read()
+        guard state != latest else { return }
+        let old = latest
+        latest = state
+        for handler in subscribers.values { handler(old, state) }
+    }
+}
+
+/// The battery half of the island's instant notifications — now a
+/// subscription to `AlcovePowerFeed` rather than a poller of its own.
+/// The API is the one every surface already uses: `start`, `stop`, and
+/// `onTransition` with a real change. The first reading is a baseline —
+/// plugging in, switching to battery, hitting full are the only
+/// transitions that ever reach a surface, and `AlcovePower.notice`
+/// decides what each is worth.
 @MainActor
 final class AlcovePowerMonitor {
-    static let interval: TimeInterval = 5
+    static let interval: TimeInterval = AlcovePowerFeed.interval
 
     /// (old, new) on a real change — old is never nil (the baseline
     /// stays silent) and the two never equal.
     var onTransition: (@MainActor (AlcovePowerState, AlcovePowerState) -> Void)?
 
-    private var timer: Timer?
-    private var last: AlcovePowerState?
+    private let feed: AlcovePowerFeed
+    private var token: UUID?
 
-    private(set) var running = false
+    var running: Bool { token != nil }
+
+    init(feed: AlcovePowerFeed? = nil) {
+        self.feed = feed ?? AlcovePowerFeed.shared
+    }
 
     func start() {
-        guard !running else { return }
-        running = true
-        poll()
-        let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.poll() }
+        guard token == nil else { return }
+        token = feed.subscribe { [weak self] old, new in
+            // The baseline never speaks: a capsule for the state the
+            // machine was already in isn't a transition.
+            guard let old else { return }
+            self?.onTransition?(old, new)
         }
-        timer.tolerance = 1
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     func stop() {
-        running = false
-        timer?.invalidate()
-        timer = nil
-        last = nil
+        guard let token else { return }
+        self.token = nil
+        feed.unsubscribe(token)
     }
 
-    private func poll() {
-        let state = Self.read()
-        guard state != last else { return }
-        let old = last
-        last = state
-        // The baseline never speaks: a capsule for the state the machine
-        // was already in isn't a transition.
-        if let old { onTransition?(old, state) }
-    }
+    /// The reading right now — the feed's while it polls, a direct read
+    /// otherwise — so a surface that was away (the card folded) never
+    /// comes back showing the charge it left with.
+    var current: AlcovePowerState { feed.latest ?? feed.read() }
 
     /// The internal battery's slice of `IOPSCopyPowerSourcesInfo` —
     /// `Type == "InternalBattery"`, AC vs battery from `Power Source
