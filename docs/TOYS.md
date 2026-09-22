@@ -142,7 +142,11 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   and each read costs ~0.5 ms. So the poll runs at just two rates:
   10 Hz — the sensor's own cadence — above the arming band
   (`activation + 12°`), and 120 Hz inside it, where a dense poll
-  timestamps each sensor edge to ±8 ms. The same queue re-reads
+  timestamps each sensor edge to ±8 ms. A shut lid (≤ 5° or clamshell)
+  and any pause hold the parked 10 Hz, at utility QoS with a 15 ms
+  leeway: the fold cannot draw there. A reopen steps back up when the
+  reconcile that lifts the pause restores the band, as the 0.5 s resume
+  quiet starts, so the band is back before the fold can draw. The same queue re-reads
   `AppleClamshellState` once a second and rides it out on each
   `Sample{angle, at, clamshell}` so no per-frame path ever touches IOKit.
   Missing device → `status = .unavailable("No lid-angle sensor on this Mac")`
