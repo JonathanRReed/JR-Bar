@@ -531,7 +531,11 @@ final class ScreenBarView: NSView {
 
     /// One track as a `colors` animation. The stops go through
     /// `ScreenBarBlend.keyframes` so a fade to or from black stays a
-    /// straight line of light.
+    /// straight line of light. Capped at 60 Hz, the frame clock's own
+    /// cap (the pipeline's `MAX_SAMPLE_RATE_HZ`): on a 120 Hz ProMotion
+    /// panel an uncapped animation re-renders both ~70-stop gradients
+    /// (the halo's through its mask, offscreen) twice as often, for
+    /// programs the presentation compiler keeps under 2 Hz of flashing.
     private func keyframeAnimation(track: LEDSKeyframeTrack, frames: [[ScreenBarBlend.Sample]]) -> CAKeyframeAnimation {
         let fades = ScreenBarBlend.keyframes(frames, keyTimes: track.keyTimes)
         let animation = CAKeyframeAnimation(keyPath: "colors")
@@ -541,6 +545,7 @@ final class ScreenBarView: NSView {
         animation.calculationMode = .linear
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
         animation.isAdditive = false
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         return animation
     }
 

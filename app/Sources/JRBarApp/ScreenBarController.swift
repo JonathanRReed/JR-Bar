@@ -124,14 +124,16 @@ final class ScreenBarController {
     /// The island frame the last scan saw — the watcher's dedup, so a
     /// poll that finds nothing new runs no layout.
     private var lastIslandScan: NSRect?
-    /// The island watch: a slow poll under the window notifications —
-    /// ordering the island out posts nothing we can hang a rescan on
-    /// reliably, so while the band is up a 4 Hz look at `NSApp.windows`
-    /// is the safety net that drops the coupling when the island parks.
+    /// The island watch: a slow safety net under the pushes. The island
+    /// posts its moves, resizes and orderings (`islandWindowChanged`),
+    /// the menu-bar utility's ear limits push through
+    /// `ScreenBarGeometry.earLimitsChanged`, and a handle click rescans
+    /// right after its toggle. What only the poll sees is a hover reveal
+    /// flipping the handle's ‹/›, so it runs at 1 Hz with a quarter
+    /// second of slack to ride other wakeups, not the 4 Hz it once did.
     private var islandWatch: Timer?
-    /// A settle pass after an island notification: the frame write posts
-    /// before the order-in lands, so the coupling re-reads once the run
-    /// loop turns.
+    private static let islandWatchInterval: TimeInterval = 1.0
+    /// The pending settle pass (`scheduleIslandRescan`).
     private var islandRescanWork: DispatchWorkItem?
     /// The daemon's last epoch anchor — kept so wake can re-lock: the
     /// strip's firmware clock runs through sleep while `CACurrentMediaTime`
@@ -190,9 +192,13 @@ final class ScreenBarController {
         // and the ordering notifications catch a show or a park that
         // never moves a point.
         for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
-                     NSWindow.didExposeNotification, NSWindow.didChangeOcclusionStateNotification] {
+                     NSWindow.didExposeNotification, NSWindow.didChangeOcclusionStateNotification,
+                     NotchIslandWindow.didChangeOrderingNotification] {
             center.addObserver(self, selector: #selector(islandWindowChanged(_:)), name: name, object: nil)
         }
+        // The flank limits change on the menu-bar utility's reconcile;
+        // the push beats waiting for the watch.
+        ScreenBarGeometry.earLimitsChanged = { [weak self] in self?.scheduleIslandRescan() }
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
@@ -315,6 +321,14 @@ final class ScreenBarController {
     @objc private func islandWindowChanged(_ note: Notification) {
         guard note.object is NotchIslandWindow else { return }
         islandFrameChanged()
+        scheduleIslandRescan()
+    }
+
+    /// A settle pass once the run loop turns: a frame write posts before
+    /// the order-in lands, the utility sets its two ear limits one after
+    /// the other, and a handle click flips the hidden run right after
+    /// the hit test answers. One debounced look covers all three.
+    private func scheduleIslandRescan() {
         islandRescanWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.islandFrameChanged() }
@@ -339,7 +353,8 @@ final class ScreenBarController {
 
     /// The hidden-run handle's state while the menu-bar concealer runs —
     /// nil hides it. Read live by the island watch so the utility's
-    /// reveal/hide flips relayout on the poll's cadence.
+    /// reveal/hide flips relayout on the poll's cadence; a click on the
+    /// handle rescans at once.
     var menuHandleProvider: (@MainActor () -> Bool?)?
 
     /// The handle's slice of the right ear as a screen-space hit test —
@@ -352,6 +367,9 @@ final class ScreenBarController {
         let hit = panel.convertToScreen(view.convert(rect, to: nil))
             .insetBy(dx: -2, dy: -3).contains(point)
         MenuBarCombinedItem.log.notice("menuHandle: point=\(point.x, privacy: .public),\(point.y, privacy: .public) rect=\(rect.debugDescription, privacy: .public) hit=\(hit)")
+        // A hit is followed straight away by the toggle; the rescan
+        // flips the glyph without waiting a whole watch period.
+        if hit { scheduleIslandRescan() }
         return hit
     }
 
@@ -363,9 +381,10 @@ final class ScreenBarController {
     /// hidden band has no silhouette to keep in step.
     private func syncIslandWatch() {
         if isShown, islandWatch == nil {
-            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: Self.islandWatchInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.islandFrameChanged() }
             }
+            timer.tolerance = Self.islandWatchInterval / 4
             RunLoop.main.add(timer, forMode: .common)
             islandWatch = timer
         } else if !isShown {

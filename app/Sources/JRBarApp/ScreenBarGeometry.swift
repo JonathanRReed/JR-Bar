@@ -18,8 +18,16 @@ extension ScreenBarGeometry {
     /// wing paving a real item hides it and swallows its clicks. nil
     /// while the flank is free. Written by `MenuBarUtility` on every
     /// reconcile, read by `ScreenBarController`'s reposition.
-    @MainActor static var earItemLimitLeft: CGFloat?
-    @MainActor static var earItemLimitRight: CGFloat?
+    @MainActor static var earItemLimitLeft: CGFloat? {
+        didSet { if earItemLimitLeft != oldValue { earLimitsChanged?() } }
+    }
+    @MainActor static var earItemLimitRight: CGFloat? {
+        didSet { if earItemLimitRight != oldValue { earLimitsChanged?() } }
+    }
+    /// Called whenever either limit changes, so the band re-sizes its
+    /// ears at once instead of on its slow safety poll. Set by
+    /// `ScreenBarController`.
+    @MainActor static var earLimitsChanged: (@MainActor () -> Void)?
 
     /// The island ‹ handle's live frame in screen coordinates while the
     /// concealer runs — the hidden run's affordance drawn on our own

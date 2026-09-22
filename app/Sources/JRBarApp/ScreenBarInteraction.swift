@@ -234,7 +234,9 @@ final class ScreenBarInteraction {
     }
 
     /// One-shot, re-armed at the cadence the pointer's distance earns:
-    /// 20 Hz within reach of the bar, 4 Hz far below it.
+    /// 20 Hz within reach of the bar, 4 Hz far below it. A fifth of the
+    /// interval as tolerance lets the far poll coalesce with other
+    /// wakeups; 10 ms near the bar is still under the hover delay.
     private func scheduleMovePoll(after interval: TimeInterval) {
         hoverTimer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
@@ -247,6 +249,7 @@ final class ScreenBarInteraction {
                 self.scheduleMovePoll(after: near ? Self.moveInterval : Self.farMoveInterval)
             }
         })
+        timer.tolerance = interval * 0.2
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer
     }

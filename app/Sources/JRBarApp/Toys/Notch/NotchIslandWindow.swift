@@ -337,6 +337,23 @@ final class NotchIslandWindow: NSPanel {
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
+    /// Posted after the island is ordered in or out. AppKit announces
+    /// nothing reliable for an `orderOut` or an `orderFrontRegardless`
+    /// that moves no point, and the Screen Bar couples to the island
+    /// only while it is on screen — without this, parking the island
+    /// waited on the bar's safety poll to drop the housing.
+    static let didChangeOrderingNotification = Notification.Name("JRBarNotchIslandDidChangeOrdering")
+
+    override func orderFrontRegardless() {
+        super.orderFrontRegardless()
+        NotificationCenter.default.post(name: Self.didChangeOrderingNotification, object: self)
+    }
+
+    override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        NotificationCenter.default.post(name: Self.didChangeOrderingNotification, object: self)
+    }
+
     /// The grown card's content height at `width`, measured off a probe
     /// hosting view — the window's frame is sized by the toy before the
     /// card is on screen, so the layout answers off-screen.
