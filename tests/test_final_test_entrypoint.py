@@ -50,13 +50,19 @@ def test_fresh_checkout_bootstraps_before_selecting_venv_python(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "final-test.sh").write_text((ROOT / "scripts/final-test.sh").read_text())
-    (tmp_path / ".gitignore").write_text(".venv/\n.jrbar-verification/\nfake-bin/\n")
+    (tmp_path / ".gitignore").write_text(
+        ".venv/\n.jrbar-verification/\nfake-bin/\nmake-calls.txt\n"
+    )
     tools = tmp_path / "fake-bin"
     tools.mkdir()
     for name, output in (("uname", "Darwin"), ("sw_vers", "Synthetic Mac shell fixture")):
         tool = tools / name
         tool.write_text(f"#!/bin/sh\nprintf '%s\\n' '{output}'\n")
         tool.chmod(0o755)
+    # The Swift suites run through make; record the target instead of building.
+    make = tools / "make"
+    make.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> make-calls.txt\n")
+    make.chmod(0o755)
     interpreter = "#!/bin/bash\nif [ \"$1 $2\" = '-m pip' ]; then echo fixture-package==1; exit 0; fi\n"
     interpreter += f"exec {shlex.quote(sys.executable)} \"$@\"\n"
     bootstrap = scripts / "bootstrap-dev.sh"
@@ -90,3 +96,14 @@ def test_fresh_checkout_bootstraps_before_selecting_venv_python(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     reports = list((tmp_path / ".jrbar-verification").glob("*/exit-code.txt"))
     assert len(reports) == 1 and reports[0].read_text().strip() == "0"
+    assert (tmp_path / "make-calls.txt").read_text().split("\n") == ["swift-test", ""]
+
+
+def test_final_command_runs_the_swift_suites_but_the_fast_gate_does_not():
+    makefile = (ROOT / "Makefile").read_text()
+    target = makefile.split("\nswift-test:\n", 1)[1].split("\n\n", 1)[0]
+    assert target.strip() == "cd app && swift test"
+    fast = makefile.split("\nfast:\n", 1)[1].split("\n\n", 1)[0]
+    assert "swift" not in fast
+    assert "make swift-test" in (ROOT / "scripts/final-test.sh").read_text()
+    assert "swift test" not in (ROOT / "scripts/verify_fast.py").read_text()

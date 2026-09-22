@@ -7,7 +7,7 @@ BOOTSTRAP=1
 ALLOW_DIRTY=0
 usage() {
     printf '%s\n' 'Usage: scripts/final-test.sh [--no-bootstrap] [--allow-dirty]' \
-        'Run the fast gate, full Mac suite, build, and clean-install checks.' \
+        'Run the fast gate, Swift tests, full Mac suite, build, and clean-install checks.' \
         'Logs, commit identity and the final JUnit report stay in .jrbar-verification/.' \
         'The result does not certify physical hardware or a signed installed release.'
 }
@@ -49,11 +49,12 @@ VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}
     export PYTHON
     "$PYTHON" -m pip freeze > "$REPORT_DIR/environment.txt"
     PYTEST_ADDOPTS= "$PYTHON" scripts/verify_fast.py
+    make swift-test
     junit_argument="$("$PYTHON" -c 'import shlex,sys; print(shlex.quote("--junitxml=" + sys.argv[1]))' "$REPORT_DIR/tests.xml")"
     PYTEST_ADDOPTS="$junit_argument" \
         JRBAR_VERIFY_MACOS_PACKAGE=0 ./scripts/verify.sh --no-bootstrap
     # Attribute success only to unchanged source bytes, not a moving checkout.
     test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
     test "$(git status --porcelain)" = "$SOURCE_STATUS"
-    echo 'Source, full Mac suite and package checks passed. Physical-device and signed-release checks remain separate.'
+    echo 'Source, Swift tests, full Mac suite and package checks passed. Physical-device and signed-release checks remain separate.'
 } 2>&1 | tee "$REPORT_DIR/run.log"

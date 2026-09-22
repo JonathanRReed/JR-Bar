@@ -1,4 +1,4 @@
-.PHONY: bootstrap fast fast-fix final-test format lint test test-portable package package-python clean-install install-pkg verify verify-portable release install-user clean
+.PHONY: bootstrap fast fast-fix final-test format lint test test-portable swift-test package package-python clean-install install-pkg verify verify-portable release install-user clean
 
 # The packaged app: build/macos-pkg/app/JR-Bar.app plus dist/JR-Bar-<version>.pkg,
 # dist/JR-Bar-<version>.zip and, with the Sparkle key in the keychain,
@@ -29,6 +29,12 @@ test: bootstrap
 
 test-portable: bootstrap
 	./scripts/verify.sh --no-bootstrap --portable --skip-build
+
+# The app's Swift suites (SwiftPM, Command Line Tools). final-test runs this
+# so a crashing suite cannot reach a package unnoticed; `make fast` stays
+# Python-only.
+swift-test:
+	cd app && swift test
 
 package:
 	./packaging/build_macos_pkg.sh
