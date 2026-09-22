@@ -762,6 +762,12 @@ final class MenuBarConcealer {
 /// session event tap, lifts concealment, replays the click at the
 /// same point (the pointer never moves), and lets concealment return
 /// a moment later. Replays carry a marker so the tap passes them.
+///
+/// The tap is active and sees every left click on the Mac, so it runs
+/// on a thread of its own. Serviced by the main run loop, every click
+/// system-wide waited on whatever JR-Bar's main thread was doing, and
+/// a long enough stall got the tap disabled. The callback reads only
+/// lock-guarded copies and hops to the main actor for `onBridge`.
 final class MenuBarSystemClickBridge: @unchecked Sendable {
     nonisolated static let replayMarker: Int64 = 0x4A52_4241_5231
     /// The lift a replay needs before the agent will act on it — 80 ms
@@ -773,9 +779,24 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     /// concealment returns.
     nonisolated static let liftWindow: TimeInterval = 0.45
 
+    /// The tap's thread as `stop` needs it: the source to take off its
+    /// run loop, the loop to stop, and a signal that the thread has
+    /// returned. Once it has, no callback can still hold the bridge's
+    /// unretained pointer.
+    private final class TapLoop: @unchecked Sendable {
+        let source: CFRunLoopSource
+        /// Written by the tap thread before `ready` fires; read after.
+        var runLoop: CFRunLoop?
+        let ready = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        init(source: CFRunLoopSource) { self.source = source }
+    }
+
     private let lock = NSLock()
+    /// The tap and its thread: written by `start`/`stop`, read by the
+    /// callback's re-enable, all under the lock.
     private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    private var loop: TapLoop?
     private var items: [MenuBarItem] = []
     private var concealing = false
     private var swallowUp = false
@@ -790,6 +811,10 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
         self.onBridge = onBridge
     }
 
+    /// A bridge dropped without `stop` must not leave a tap calling into
+    /// freed memory: the tap holds an unretained pointer to this object.
+    deinit { stop() }
+
     /// The listing's protected items and whether an assertion is live —
     /// the tap reads copies under the lock.
     func update(items: [MenuBarItem], concealing: Bool) {
@@ -800,7 +825,7 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     }
 
     func start() {
-        guard tap == nil else { return }
+        guard lock.withLock({ tap == nil }) else { return }
         let mask = (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
             | (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)
         let pointer = Unmanaged.passUnretained(self).toOpaque()
@@ -812,31 +837,53 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
                 let bridge = Unmanaged<MenuBarSystemClickBridge>.fromOpaque(info).takeUnretainedValue()
                 return bridge.handle(type: type, event: event)
             },
-            userInfo: pointer) else {
+            userInfo: pointer),
+            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
             MenuBarAssessmentBackend.log.error("click bridge: no event tap — system item clicks stay native")
             tapLive = false
             return
         }
-        self.tap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        self.source = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        lock.withLock { self.tap = tap }
+        let loop = TapLoop(source: source)
+        let thread = Thread {
+            let runLoop = CFRunLoopGetCurrent()
+            CFRunLoopAddSource(runLoop, loop.source, .commonModes)
+            loop.runLoop = runLoop
+            loop.ready.signal()
+            // Returns once `stop` takes the source off and stops the loop.
+            CFRunLoopRun()
+            loop.finished.signal()
+        }
+        thread.name = "JR-Bar click bridge"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        loop.ready.wait()
+        lock.withLock { self.loop = loop }
         CGEvent.tapEnable(tap: tap, enable: true)
         tapLive = true
     }
 
     func stop() {
         tapLive = false
+        let (tap, loop) = lock.withLock { () -> (CFMachPort?, TapLoop?) in
+            defer { self.tap = nil; self.loop = nil }
+            return (self.tap, self.loop)
+        }
         guard let tap else { return }
         CGEvent.tapEnable(tap: tap, enable: false)
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        self.tap = nil
-        source = nil
+        if let loop, let runLoop = loop.runLoop {
+            CFRunLoopRemoveSource(runLoop, loop.source, .commonModes)
+            CFRunLoopStop(runLoop)
+            // The callback never waits on the main thread, so the loop
+            // returns within one callback's length.
+            _ = loop.finished.wait(timeout: .now() + 1)
+        }
+        CFMachPortInvalidate(tap)
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap = lock.withLock({ tap }) { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.replayMarker {
