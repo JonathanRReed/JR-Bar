@@ -1,6 +1,7 @@
 import Foundation
 import IOKit
 import IOKit.hid
+import JRBarCore
 import Observation
 import QuartzCore
 
@@ -36,10 +37,12 @@ final class LidAngleSensor {
     var onSample: (@MainActor (Sample) -> Void)?
 
     /// The bottom of the arming band: readings at or below it mean the
-    /// fold is showing or about to, so the poll steps up to 120 Hz. The
-    /// toy sets it to `activation + margin`; above it idles at 10 Hz.
-    /// Reconcile sets it every pass — the queue hop only happens on a
-    /// real change, not 120 times a second.
+    /// fold is showing or about to, so the poll steps up to 120 Hz —
+    /// unless the lid is shut, which the pump keeps at 10 Hz however
+    /// low it reads. The toy sets it to `activation + margin`, or to
+    /// -infinity while nothing in the band could draw; above it idles
+    /// at 10 Hz. Reconcile sets it every pass — the queue hop only
+    /// happens on a real change, not 120 times a second.
     var armingAngle: Double = -.infinity {
         didSet {
             if armingAngle != oldValue { pump.setArmingAngle(armingAngle) }
@@ -81,15 +84,16 @@ final class LidAngleSensor {
 /// ~100 ms), so above the arming band polling at its own 10 Hz loses
 /// nothing. Inside the band the poll runs 120 Hz — a read costs ~0.5 ms
 /// and dense polls timestamp each sensor edge to ±8 ms, which is what
-/// the tracker's dead reckoning needs.
+/// the tracker's dead reckoning needs. A shut lid sits under the band
+/// but never arms it: see `rateClassFor`.
 ///
 /// The parked class is a background chore and is timed like one:
 /// utility QoS and a 15 ms leeway, so its ten wakes a second can
 /// coalesce with the system's — it runs whenever Fold is on, lid
-/// still or not. Only the armed class earns user-interactive QoS and a
-/// 2 ms leeway. Every sample is still published: the movement anchor's
-/// settle clock needs each one, and the jitter filter is what keeps a
-/// parked wobble off the tracker.
+/// still, shut or not. Only the armed class earns user-interactive QoS
+/// and a 2 ms leeway. Every sample is still published: the movement
+/// anchor's settle clock needs each one, and the jitter filter is what
+/// keeps a parked wobble off the tracker.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
@@ -140,7 +144,7 @@ final class SensorPump: @unchecked Sendable {
     func setArmingAngle(_ value: Double) {
         io.async {
             self.armingAngle = value
-            self.rateClass = self.rateClassFor(rawAngle: self.lastRaw)
+            self.rateClass = self.wantedRateClass
         }
     }
 
@@ -149,7 +153,7 @@ final class SensorPump: @unchecked Sendable {
             if on {
                 guard self.timer == nil else { return }
                 self.refreshDevices()
-                self.rateClass = self.rateClassFor(rawAngle: self.lastRaw)
+                self.rateClass = self.wantedRateClass
                 // No direct beat() here: the fresh timer's deadline is
                 // .now, so it fires the first sample itself.
                 self.scheduleTimer()
@@ -160,14 +164,30 @@ final class SensorPump: @unchecked Sendable {
         }
     }
 
-    // MARK: Queue side
-
     /// 10 Hz above the arming band — the sensor's own cadence — and
     /// 120 Hz inside it, where an edge's poll timestamp is the tracker's
-    /// edge time.
-    private func rateClassFor(rawAngle: Double?) -> Int {
-        if let angle = rawAngle, angle <= armingAngle { return 1 }
+    /// edge time. A shut lid stays parked however low it reads: at or
+    /// under `FoldPause.closedAngle`, or with the clamshell flag set,
+    /// the fold is paused and cannot draw. The band runs all the way
+    /// down to the hinge, so without that floor a lid shut on an awake
+    /// Mac (clamshell with an external display, or the daemon's
+    /// closed-lid keep-awake) would hold 120 Hz user-interactive reads
+    /// for as long as it stayed shut. Nothing is lost on the way back: the 10 Hz
+    /// beat sees a reopen within ~100 ms and steps up on that beat, and
+    /// the clamshell flag clears on the same once-a-second read that
+    /// lifts the toy's pause — both ahead of its half-second resume
+    /// quiet. Static and pure so the rule is testable with no HID.
+    static func rateClassFor(rawAngle: Double?, armingAngle: Double, clamshell: Bool?) -> Int {
+        if let angle = rawAngle, angle > FoldPause.closedAngle, angle <= armingAngle,
+           clamshell != true { return 1 }
         return 0
+    }
+
+    // MARK: Queue side
+
+    /// The class the queue-side facts ask for right now.
+    private var wantedRateClass: Int {
+        Self.rateClassFor(rawAngle: lastRaw, armingAngle: armingAngle, clamshell: clamshell)
     }
 
     private func scheduleTimer() {
@@ -200,7 +220,7 @@ final class SensorPump: @unchecked Sendable {
             beats = 0
             clamshell = ClamshellState.read()
         }
-        let next = rateClassFor(rawAngle: lastRaw)
+        let next = wantedRateClass
         if next != rateClass { rateClass = next }
         let sample = LidAngleSensor.Sample(angle: raw, at: now, clamshell: clamshell)
         DispatchQueue.main.async { [weak self] in

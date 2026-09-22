@@ -345,8 +345,13 @@ final class FoldToy: Toy {
         // it doesn't. Movement mode has no band: nothing consumes edge
         // timestamps any more (the slew tracker ticks on vsync dt), so
         // the poll stays at the sensor's own 10 Hz the whole time —
-        // the idle-power floor.
-        sensor.armingAngle = settings.anchor == .movement
+        // the idle-power floor. A pause parks the band the same way: a
+        // sleeping or mirrored screen, or no built-in one, cannot show
+        // a fold wherever the lid sits, and the pass that lifts the
+        // pause restores the band as the resume quiet starts. A shut
+        // lid the pump parks by itself, beat by beat, without waiting
+        // for a pass here.
+        sensor.armingAngle = (settings.anchor == .movement || pauseReason != nil)
             ? -.infinity : settings.activationAngle + 12
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
