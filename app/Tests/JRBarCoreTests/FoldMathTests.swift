@@ -127,6 +127,38 @@ struct FoldMathTests {
         #expect(!wobbleB)
     }
 
+    @Test("a lid parked on a steady 10 Hz 100↔101 flicker re-arms after a real move")
+    func jitterReArmsOnSteadyFlicker() {
+        // The live pump publishes every 100 ms whether the angle moved
+        // or not — rest is never a gap in the samples. After a real
+        // move the lid parks on the sensor's whole-degree flicker; that
+        // must stop at the deadband again, not stream into the tracker
+        // (and wake the fold's display link) for as long as it sits.
+        var filter = JitterFilter(tolerance: 1.5)
+        var t = 0.0
+        var move: [Bool] = []
+        for angle in stride(from: 110, through: 100, by: -1) {
+            move.append(filter.accept(Double(angle), at: t))
+            t += 0.1
+        }
+        #expect(move[0])
+        #expect(!move[1], "one degree is inside the deadband")
+        #expect(move[2...].allSatisfy { $0 }, "the move streams every edge")
+
+        var parked: [Bool] = []
+        for i in 0..<30 {
+            parked.append(filter.accept(i % 2 == 0 ? 101 : 100, at: t))
+            t += 0.1
+        }
+        #expect(parked[0...1].allSatisfy { $0 },
+                "rest has to hold a third of a second before it counts")
+        #expect(parked[4...].allSatisfy { !$0 },
+                "parked: the flicker is noise again, three seconds of it")
+
+        let next = filter.accept(98, at: t)
+        #expect(next, "a real move still breaks the re-armed deadband")
+    }
+
     @Test("a zero tolerance accepts every reading")
     func jitterZero() {
         var filter = JitterFilter(tolerance: 0)

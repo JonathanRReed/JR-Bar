@@ -43,13 +43,25 @@ public enum FoldMath {
 /// first reading always passes.
 public struct JitterFilter: Sendable {
     public var tolerance: Double
-    /// Quiet time that re-arms the deadband once motion started. One
-    /// sensor period is ~100 ms; a lid that has not moved for a third of
-    /// a second is parked.
+    /// Stillness that re-arms the deadband once motion started: readings
+    /// that stay inside the rest window of one spot for a third of a
+    /// second are a parked lid. Measured on the readings, not the gaps
+    /// between them — the pump publishes every period whether the angle
+    /// moved or not, so a gap-timed rest never came, and a lid parked on
+    /// a 100↔101 flicker streamed every wobble into the tracker for good.
     public static let restAfter: TimeInterval = 0.3
+    /// The widest wobble rest may hold — the sensor's whole-degree
+    /// flicker, with room — or the tolerance when that is tighter.
+    /// Capped rather than riding `tolerance` alone: a 5° window would
+    /// call a steady 10°/s close parked after three readings and bring
+    /// the stair-steps back.
+    public static let restWindow: Double = 1.5
     private var anchor: Double?
     private var streaming = false
-    private var lastAt: TimeInterval = 0
+    /// Where the lid sits while streaming, and since when — the rest
+    /// clock, restarted whenever a reading leaves the window.
+    private var restAngle: Double = 0
+    private var restAt: TimeInterval = 0
 
     public init(tolerance: Double) {
         self.tolerance = tolerance
@@ -61,7 +73,6 @@ public struct JitterFilter: Sendable {
     public mutating func accept(_ angle: Double, at: TimeInterval) -> Bool {
         guard let anchor, tolerance > 0, at.isFinite else {
             self.anchor = angle
-            lastAt = at
             return true
         }
         if !streaming {
@@ -69,15 +80,20 @@ public struct JitterFilter: Sendable {
             // Left the deadband: from here to rest, every edge is real
             // lid travel — no more re-anchoring to step over.
             streaming = true
-            lastAt = at
+            restAngle = angle
+            restAt = at
             return true
         }
-        if at - lastAt > Self.restAfter {
-            // Parked again: re-anchor on the reading it settled at.
-            streaming = false
-            self.anchor = angle
+        if abs(angle - restAngle) < min(tolerance, Self.restWindow) {
+            if at - restAt >= Self.restAfter {
+                // Parked again: re-anchor on the reading it settled at.
+                streaming = false
+                self.anchor = angle
+            }
+        } else {
+            restAngle = angle
+            restAt = at
         }
-        lastAt = at
         return true
     }
 
@@ -85,7 +101,6 @@ public struct JitterFilter: Sendable {
     public mutating func reset() {
         anchor = nil
         streaming = false
-        lastAt = 0
     }
 }
 
