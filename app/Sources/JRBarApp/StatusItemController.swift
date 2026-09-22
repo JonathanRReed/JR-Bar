@@ -314,7 +314,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// register a fresh one (inside the agent's suspend window, where the
     /// re-registration is adopted). The parked slot's saved position would
     /// re-park the fresh item, so its defaults key goes first.
-    func reseatStatusItem() {
+    func reseatStatusItem(desiredMidX: CGFloat?) {
         statusItem.button?.target = nil
         statusItem.button?.action = nil
         // Seed the fresh name at the item's *intended* slot, not the
@@ -322,9 +322,10 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         // parked item, and a parked window's screen frame is the
         // off-row park slot — seeding from it re-parks the recreation
         // (measured 2026-09-21: parked frames fed midX≈18, every
-        // re-seat landed at (7,970) again). The default target sits
-        // just right of the island, the slot a healthy layout gives us.
-        let midX: CGFloat? = nil
+        // re-seat landed at (7,970) again). The caller's target is the
+        // left end of the visible run; with none, the default sits
+        // just clear of the band, the slot a healthy layout gives us.
+        let midX = desiredMidX
         NSStatusBar.system.removeStatusItem(statusItem)
         reseatCount += 1
         // Re-seat names repeat across launches (reseatCount restarts at

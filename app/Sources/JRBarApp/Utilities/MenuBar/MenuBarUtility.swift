@@ -238,6 +238,16 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private var parkedReads = 0
     private static let iconReseatInterval: TimeInterval = 45
     private static let maxIconReseats = 6
+    /// The `Preferred Position` record is a sort key, not a measure —
+    /// the agent orders items by it and packs the visible run, so a
+    /// seed of `screenW − midX` lands short of `midX` by whatever the
+    /// run's own keys dictate (measured 2026-09-22: 300 → x 1062,
+    /// 420 → 916, 440 and up → the leftmost slot under the notch). The
+    /// bias is the correction learned from the last landing: target
+    /// minus landed, added to the next seed's centre so the search
+    /// walks toward the slot instead of repeating the miss.
+    @ObservationIgnored private var seatBias: CGFloat = 0
+    @ObservationIgnored private var lastSeatTarget: CGFloat?
     nonisolated static let adoptionGrace: TimeInterval = 2.5
     /// The first assertion waits for our own icon at most this long —
     /// a crowded bar can overlap it forever, which used to defer the
@@ -2061,6 +2071,36 @@ final class MenuBarUtility: Toy {
     /// edge), so the band's span is the test. Only counts when the
     /// configured style wants a real seat; a `.hidden` anchor belongs
     /// under the face.
+    /// Where the icon belongs: the left end of the *visible* run, just
+    /// left of the leftmost shown item that stands clear of the band —
+    /// Bartender's grammar, the icon as the boundary with the hidden
+    /// run behind it. nil when no shown item is listed on the main row
+    /// past the band, in which case the host's default (clear of the
+    /// face) is the seat.
+    private func visibleSeatTarget() -> CGFloat? {
+        let cover = ScreenBarGeometry.coveringScreenRect
+            ?? NSScreen.main?.auxiliaryTopRightArea.map {
+                CGRect(x: 0, y: 0, width: $0.minX + ScreenBarGeometry.wingContentMaxExtent, height: 1)
+            }
+        let ownWidth = host?.boundaryFrame?.width ?? 28
+        return Self.visibleSeatTarget(shown: lastPlan.shown,
+                                      rows: MenuBarItemLister.menuBarRows(),
+                                      ourPID: ProcessInfo.processInfo.processIdentifier,
+                                      clearOf: cover?.maxX ?? 0,
+                                      ownWidth: ownWidth)
+    }
+
+    nonisolated static func visibleSeatTarget(shown: [MenuBarItem], rows: [CGRect], ourPID: pid_t,
+                                              clearOf: CGFloat, ownWidth: CGFloat) -> CGFloat? {
+        let candidates = shown.filter { item in
+            item.ownerPID != ourPID && !item.isNativeOverflowControl
+                && item.bounds.minX >= clearOf
+                && rows.contains { $0.intersects(item.bounds) }
+        }
+        guard let first = candidates.min(by: { $0.bounds.minX < $1.bounds.minX }) else { return nil }
+        return first.bounds.minX - 4 - ownWidth / 2
+    }
+
     private func ownIconCovered() -> Bool {
         guard host?.anchorWantsVisibleSeat ?? false,
               let cover = ScreenBarGeometry.coveringScreenRect,
@@ -2149,8 +2189,17 @@ final class MenuBarUtility: Toy {
                 self.lastIconReseat = Date()
                 self.iconReseats += 1
                 self.iconReseatExhaustedLogged = false
-                MenuBarAssessmentBackend.log.notice("conceal: re-seating our status item inside the suspend window")
-                self.host?.reseatStatusItem()
+                let target = self.visibleSeatTarget()
+                if let target, let last = self.lastSeatTarget, abs(last - target) < 80,
+                   let landed = self.ownIconAXFrame()?.midX, landed > 0 {
+                    // The last seed aimed at (about) this target and the
+                    // key sorted it elsewhere — learn the miss.
+                    self.seatBias = max(-400, min(400, self.seatBias + (target - landed)))
+                }
+                self.lastSeatTarget = target
+                let desired = target.map { $0 + self.seatBias }
+                MenuBarAssessmentBackend.log.notice("conceal: re-seating our status item inside the suspend window — target \(target.map { String(format: "%.0f", $0) } ?? "default", privacy: .public) bias \(String(format: "%.0f", self.seatBias), privacy: .public)")
+                self.host?.reseatStatusItem(desiredMidX: desired)
             }
             if chevronParked {
                 // A suspend alone never re-places a parked surface —
@@ -3272,7 +3321,9 @@ protocol MenuBarBoundaryHost: AnyObject {
     /// Re-register the item — the agent adopts only at registration, so a
     /// ghosted item (AX answers a stale frame, nothing draws) comes back
     /// only through remove + recreate inside a suspend window.
-    func reseatStatusItem()
+    /// `desiredMidX` is the seat's centre in screen points; nil takes the
+    /// host's default (clear of the band's face).
+    func reseatStatusItem(desiredMidX: CGFloat?)
     var onBoundaryClick: (@MainActor () -> Void)? { get set }
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }

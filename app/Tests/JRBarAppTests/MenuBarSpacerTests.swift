@@ -1058,7 +1058,7 @@ struct MenuBarSpacerTests {
         func setAnchorSlim(_ slim: Bool) { slims.append(slim) }
         var anchorWantsVisibleSeat = true
         var reseats = 0
-        func reseatStatusItem() { reseats += 1 }
+        func reseatStatusItem(desiredMidX: CGFloat?) { reseats += 1 }
         var onBoundaryClick: (@MainActor () -> Void)?
         var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
         var hiddenCount = 0
@@ -1199,6 +1199,32 @@ struct MenuBarSpacerTests {
         #expect(StatusItemController.visibleSeatMidX(coveringRight: nil, notchEdge: nil,
                                                      screenW: 1512) == 871,
                 "notch-less screens keep the old guess — nothing covers an item there")
+    }
+
+    @Test("the seat target is just left of the leftmost shown item clear of the band — ours, the «, ghosts and stale left-standers never count")
+    func visibleSeatTargetIsLeftOfTheVisibleRun() {
+        let row = [CGRect(x: 0, y: 0, width: 1512, height: 24)]
+        // The live listing under the concealer: our anchor at 848 under
+        // the band (to 980), a stale hidden-run ghost at 905 (also under
+        // the band), the « at 1080, Wi-Fi at 1092 as the first shown
+        // item in the open, weather beyond it, and a parked item
+        // reporting an off-row frame.
+        let shown = [
+            item("ours", owner: "JR-Bar", x: 848, w: 28, pid: 999),
+            item("ghost", owner: "Ollama", x: 905),
+            item("overflow", owner: "MenuBarAgent", x: 1080, w: 12, overflow: true),
+            item("wifi", owner: "MenuBarAgent", x: 1092, w: 30),
+            item("weather", owner: "WeatherMenu", x: 1161, w: 60),
+            item("parked", owner: "Shottr", x: 7, y: 970),
+        ]
+        let target = MenuBarUtility.visibleSeatTarget(shown: shown, rows: row, ourPID: 999,
+                                                      clearOf: 980, ownWidth: 28)
+        #expect(target == 1074.0, "Wi-Fi's left edge less the gap and half our width")
+        // Nothing shown past the band: no target — the host's default
+        // seat (clear of the face) stands in.
+        let none = MenuBarUtility.visibleSeatTarget(shown: Array(shown.prefix(3)), rows: row,
+                                                    ourPID: 999, clearOf: 980, ownWidth: 28)
+        #expect(none == nil)
     }
 
     @Test("the pixel verdict: a slot with no lit pixels is parked — frames and flags all lie")
