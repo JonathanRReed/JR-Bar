@@ -146,10 +146,12 @@ struct MenuBarHidePlan: Equatable, Sendable {
 /// reordering items belongs to `MenuBarItemMover`, which only an
 /// explicit, user-initiated arrange gesture may ever invoke.
 ///
-/// Reconcile runs on a timer plus `didChangeScreenParameters`: items
-/// come and go as other apps add and remove theirs, and the controls'
-/// frames drift when the bar reflows, so each pass re-reads the cached
-/// listing, re-measures the controls, and re-applies the lengths.
+/// Reconcile runs after every AX scan, on a 1 Hz timer while a boundary
+/// stands or the listing is the live window list (`timerTick`), and on
+/// `didChangeScreenParameters`: items come and go as other apps add and
+/// remove theirs, and the controls' frames drift when the bar reflows,
+/// so each pass re-reads the cached listing, re-measures the controls,
+/// and re-applies the lengths.
 @MainActor
 final class MenuBarItemHider {
     static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
@@ -166,6 +168,11 @@ final class MenuBarItemHider {
     /// and the Quartz-space frames a cover must never span.
     var rowRect: @MainActor () -> CGRect = { MenuBarItemLister.menuBarRow() }
     var listItems: @MainActor () -> [MenuBarItem] = { MenuBarItemLister.list() }
+    /// Whether the listing loop keeps `listItems` fresh and reconciles
+    /// after each scan — true under Accessibility, where the list is
+    /// the AX scan's cache. The 1 Hz pass stands down then unless a
+    /// boundary is on the row (see `timerTick`).
+    var listingIsScanned: @MainActor () -> Bool = { MenuBarItemLister.axTrusted() }
     var controlFrames: @MainActor () -> MenuBarControlFrames = { MenuBarControlFrames() }
     /// The first guess at the fit edge — `fitInset` right of the notch
     /// on a notched display. nil means unknown: the controls stay
@@ -293,8 +300,9 @@ final class MenuBarItemHider {
         reloadFitEdge()
         let timer = Timer(timeInterval: 1.0, repeats: true,
                           block: { [weak self] _ in
-            MainActor.assumeIsolated { self?.reconcile() }
+            MainActor.assumeIsolated { self?.timerTick() }
         })
+        timer.tolerance = 0.25
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         observers.append(NotificationCenter.default.addObserver(
@@ -341,6 +349,20 @@ final class MenuBarItemHider {
                 try? await Task.sleep(nanoseconds: UInt64(Self.listingInterval * 1e9))
             }
         }
+        reconcile()
+    }
+
+    /// The 1 Hz pass, for what the listing loop cannot see. A boundary on
+    /// the row is the spacer engine's: the host item's frame drifts as
+    /// the bar reflows and is read live each pass. Without Accessibility
+    /// there is no loop and the window list is read per pass. Otherwise
+    /// — the concealer, whose plan has no boundary, with the grant — the
+    /// pass would re-plan the same cached listing the loop reconciled
+    /// after its last scan and run the whole `onPlan` pipeline for
+    /// nothing, two passes in three. Reveals, hides, settles and screen
+    /// changes still reconcile on their own.
+    func timerTick() {
+        guard controlFrames().hidden != nil || !listingIsScanned() else { return }
         reconcile()
     }
 

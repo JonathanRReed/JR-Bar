@@ -67,6 +67,54 @@ struct MenuBarEngineTests {
         #expect(handle == nil, "a self-exit must disarm the source and close both pipe ends")
     }
 
+    // MARK: Hider cadence
+
+    /// A hider on seams, counting the plans its passes emit.
+    @MainActor
+    private final class TickHarness {
+        let hider = MenuBarItemHider()
+        var passes = 0
+        var boundary: CGRect?
+        var scanned = true
+        init() {
+            let row = CGRect(x: 0, y: 0, width: 1512, height: 24)
+            hider.rowRect = { row }
+            hider.listItems = {
+                [MenuBarItem(id: "A", ownerPID: 500, ownerName: "App",
+                             bounds: CGRect(x: 1100, y: 0, width: 24, height: 24),
+                             title: nil, windowID: 0)]
+            }
+            hider.shuttersSuppressed = true
+            hider.guessedFitEdge = { nil }
+            hider.edgeStore = MenuBarMemoryFitEdgeStore()
+            hider.controlFrames = { [unowned self] in MenuBarControlFrames(hidden: self.boundary) }
+            hider.listingIsScanned = { [unowned self] in self.scanned }
+            hider.onPlan = { [unowned self] _ in self.passes += 1 }
+        }
+    }
+
+    @MainActor
+    @Test("the 1 Hz pass stands down when the scan loop owns the listing and no boundary stands")
+    func timerTickGate() {
+        let h = TickHarness()
+        // The concealer with Accessibility: the loop reconciles each scan.
+        h.hider.timerTick()
+        #expect(h.passes == 0)
+        // The spacer engine's boundary drifts with the bar: tracked.
+        h.boundary = CGRect(x: 1000, y: 0, width: 24, height: 24)
+        h.hider.timerTick()
+        #expect(h.passes == 1)
+        // No Accessibility: the window list is only read by these passes.
+        h.boundary = nil
+        h.scanned = false
+        h.hider.timerTick()
+        #expect(h.passes == 2)
+        // An explicit reconcile is never gated.
+        h.scanned = true
+        h.hider.reconcile()
+        #expect(h.passes == 3)
+    }
+
     // MARK: Trigger source
 
     @MainActor
