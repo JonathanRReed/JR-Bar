@@ -255,20 +255,24 @@ struct ScreenBarWingsView: View {
     /// grammar every Mac user reads — with the provider's mark inside.
     /// The reset countdown lives in the ear's text and tooltip: a second
     /// arc inside the ring read as a stray line over the mark, so it went.
+    /// Sized to the menu bar's own glyphs: an 18 pt ring inked ~20 pt
+    /// tall beside Wi-Fi's 11.5 and the battery's 13.5 (measured
+    /// 2026-09-22) and made the right ear read heavy. 16 pt keeps the
+    /// inner mark — Codex's `</>` included — legible at 8 pt.
     private func ring(_ fraction: Double, slot: ScreenBarWingSlot, tint: Color?) -> some View {
         ZStack {
             Circle()
-                .stroke(.white.opacity(0.22), lineWidth: 1.6)
+                .stroke(.white.opacity(0.22), lineWidth: 1.4)
             Circle()
                 .trim(from: 0, to: min(1, max(0, fraction)))
                 .stroke(tint ?? (slot.provider.map { ProviderStyle.style(for: $0).accent } ?? .white),
-                        style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                        style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             if let provider = slot.provider {
-                glyph(.style(for: provider), size: 8.5, tint: tint)
+                glyph(.style(for: provider), size: 8, tint: tint)
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: 16, height: 16)
     }
 
     /// The provider's bare glyph in its accent — no badge: the boxed
