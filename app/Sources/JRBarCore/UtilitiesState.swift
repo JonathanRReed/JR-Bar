@@ -23,6 +23,10 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
     /// The hoarder's capture dials — which sources stream in, whether full
     /// content is consented to, and the pause switch.
     public var dataHoarder: DataHoarderSettings
+    /// What the ⌘⇧K palette has been used for — the frecency behind its
+    /// Suggestions and its ranking. Per-Mac habit, so it rides the same
+    /// file as the rest of the page's remembered state.
+    public var commandUses: PaletteUsage = PaletteUsage()
 
     public init(enabled: Bool = true, menuBar: MenuBarSettings = MenuBarSettings(),
                 dock: DockSettings = DockSettings(),
@@ -37,7 +41,9 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
         self.dataHoarder = dataHoarder
     }
 
-    private enum CodingKeys: String, CodingKey { case enabled, menuBar, dock, agents, dataHoarderEnabled, dataHoarder }
+    private enum CodingKeys: String, CodingKey { case enabled, menuBar, dock, agents, dataHoarderEnabled, dataHoarder
+        case commandUses
+    }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -47,6 +53,7 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
         agents = (try? c.decodeIfPresent(AgentOrganizerSettings.self, forKey: .agents)) ?? AgentOrganizerSettings()
         dataHoarderEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .dataHoarderEnabled)) ?? false
         dataHoarder = (try? c.decodeIfPresent(DataHoarderSettings.self, forKey: .dataHoarder)) ?? DataHoarderSettings()
+        commandUses = (try? c.decodeIfPresent(PaletteUsage.self, forKey: .commandUses)) ?? PaletteUsage()
     }
 }
 
@@ -762,5 +769,101 @@ extension AgentOrganizerSettings {
             .filter { (tally[$0] ?? 0) > 0 }
             .sorted { $0.sortRank < $1.sortRank }
             .map { ($0, tally[$0] ?? 0) }
+    }
+}
+
+// MARK: - Palette frecency
+
+/// The ⌘⇧K palette's memory of what it was used for, Raycast's
+/// frecency: every run adds one to a command's score, and the score
+/// halves every `halfLife`, so something used daily outranks something
+/// used a lot last month without a separate "recent" list. Keys are
+/// the palette's stable row ids (`menubar.app.com.1password.1password`,
+/// `quiet.1h`) — never titles, so a renamed profile keeps its history.
+///
+/// Scores are stored already decayed to `lastUsed`; reading one decays
+/// the rest of the way to `now`. The table is capped at `limit` keys —
+/// the weakest go first — so a palette that saw a hundred ephemeral
+/// sessions never grows the file without bound.
+public struct PaletteUsage: Codable, Equatable, Sendable {
+    public struct Entry: Codable, Equatable, Sendable {
+        /// The decayed score as of `lastUsed`.
+        public var score: Double
+        /// Epoch seconds of the most recent run.
+        public var lastUsed: Double
+        /// Every run ever, undecayed — so a later tuning of `halfLife`
+        /// has the raw count to work from.
+        public var count: Int
+
+        public init(score: Double, lastUsed: Double, count: Int) {
+            self.score = score
+            self.lastUsed = lastUsed
+            self.count = count
+        }
+    }
+
+    public var entries: [String: Entry]
+
+    /// Four days: a command used every workday stays near the top
+    /// through a weekend; one used once a week ago sits at about a
+    /// third of a fresh run.
+    public static let halfLife: TimeInterval = 4 * 24 * 3600
+    /// The most keys the table keeps.
+    public static let limit = 200
+
+    public init(entries: [String: Entry] = [:]) {
+        self.entries = entries
+    }
+
+    /// The key's score decayed to `now`; zero for a key never used.
+    public func score(for key: String, at now: Date = Date()) -> Double {
+        guard let entry = entries[key] else { return 0 }
+        return Self.decayed(entry.score, from: entry.lastUsed, to: now.timeIntervalSince1970)
+    }
+
+    /// One run: decay what the key had to `now`, add one, and trim the
+    /// table back to `limit` by current score.
+    public mutating func record(_ key: String, at now: Date = Date()) {
+        guard !key.isEmpty else { return }
+        let t = now.timeIntervalSince1970
+        let previous = entries[key]
+        let carried = previous.map { Self.decayed($0.score, from: $0.lastUsed, to: t) } ?? 0
+        entries[key] = Entry(score: carried + 1, lastUsed: t, count: (previous?.count ?? 0) + 1)
+        guard entries.count > Self.limit else { return }
+        let kept = Set(ranked(at: t).prefix(Self.limit).map(\.key))
+        entries = entries.filter { kept.contains($0.key) }
+    }
+
+    /// The keys with the highest current score, best first — the
+    /// palette's Suggestions. `minimum` keeps a single run from a month
+    /// ago (≈ 0.005) off the list.
+    public func top(_ count: Int, at now: Date = Date(), minimum: Double = 0.25) -> [String] {
+        let strong = ranked(at: now.timeIntervalSince1970).filter { $0.score >= minimum }
+        return strong.prefix(count).map(\.key)
+    }
+
+    /// Every key with its score decayed to `t`, strongest first; equal
+    /// scores fall back to the key so the order never depends on the
+    /// dictionary's.
+    private func ranked(at t: Double) -> [(key: String, score: Double)] {
+        var scored: [(key: String, score: Double)] = []
+        scored.reserveCapacity(entries.count)
+        for (key, entry) in entries {
+            scored.append((key, Self.decayed(entry.score, from: entry.lastUsed, to: t)))
+        }
+        scored.sort { a, b in a.score != b.score ? a.score > b.score : a.key < b.key }
+        return scored
+    }
+
+    static func decayed(_ score: Double, from then: Double, to now: Double) -> Double {
+        let age = max(0, now - then)
+        return score * pow(0.5, age / halfLife)
+    }
+
+    private enum CodingKeys: String, CodingKey { case entries }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        entries = (try? c.decodeIfPresent([String: Entry].self, forKey: .entries)) ?? [:]
     }
 }
