@@ -292,8 +292,9 @@ final class MenuBarUtility: Toy {
         }
         // Zones where an on-row item is unreachable: the notch band
         // (Quartz x between the aux areas, the row's depth) and the
-        // stretch the front app's menus overdraw — the listing's cached
-        // menu edge from the last AX scan.
+        // stretch the menus on the bar overdraw — the lister's cached
+        // edge of the menu-bar owner's menus, re-read by every AX scan
+        // and whenever the menu bar changes hands.
         hider.obscuredFrames = { [weak self] in
             guard let self else { return [] }
             let settings = self.settings()

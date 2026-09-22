@@ -275,6 +275,12 @@ final class MenuBarItemHider {
     private var listingTask: Task<Void, Never>?
     /// How often the AX listing re-scans while the utility runs.
     nonisolated static let listingInterval: TimeInterval = 2.0
+    /// The menu-edge re-reads after an activation (`menuBarChangedHands`).
+    private var menuEdgeTask: Task<Void, Never>?
+    /// How long after an activation the menu edge is read a second
+    /// time: an app that just activated can still be building its
+    /// menus. The band's `AppMenuExtent` re-reads after the same beat.
+    nonisolated static let menuEdgeSettle: TimeInterval = 0.6
     /// The first guess at how far right of the notch's edge a spacer's
     /// left edge may land and still be drawn: the room macOS keeps for
     /// its own « plus its gaps. Measured on a notched MacBook Pro
@@ -333,10 +339,7 @@ final class MenuBarItemHider {
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.resetCaps()
-                self?.scheduleSettle()
-            }
+            MainActor.assumeIsolated { self?.menuBarChangedHands() }
         })
         // A launch or a quit changes who owns items: the next scan
         // walks every app; the ones between ask only known owners.
@@ -386,6 +389,8 @@ final class MenuBarItemHider {
         listingTask = nil
         settleTask?.cancel()
         settleTask = nil
+        menuEdgeTask?.cancel()
+        menuEdgeTask = nil
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -398,6 +403,7 @@ final class MenuBarItemHider {
         timer?.invalidate()
         listingTask?.cancel()
         settleTask?.cancel()
+        menuEdgeTask?.cancel()
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -489,6 +495,26 @@ final class MenuBarItemHider {
             try? await Task.sleep(nanoseconds: UInt64(Self.settleDelay * 1e9))
             guard !Task.isCancelled else { return }
             self?.reconcile()
+        }
+    }
+
+    /// Another app took the menu bar: forget the parked caps, settle,
+    /// and re-read the new owner's menu edge now and once more a beat
+    /// later. The icon's mirror, the concealer's reveal zone and the
+    /// obscured frames all start right of that edge; left to the 2 s
+    /// scan, a switch to an app whose menus run past the notch had the
+    /// zone over its "Window" and "Help" until the next one. A read
+    /// that moves the edge re-arms the settle, which is debounced, so
+    /// a read that lands first costs no extra pass.
+    private func menuBarChangedHands() {
+        resetCaps()
+        scheduleSettle()
+        menuEdgeTask?.cancel()
+        menuEdgeTask = Task { [weak self] in
+            if await MenuBarItemLister.refreshMenuEdge() { self?.scheduleSettle() }
+            try? await Task.sleep(nanoseconds: UInt64(Self.menuEdgeSettle * 1e9))
+            guard !Task.isCancelled else { return }
+            if await MenuBarItemLister.refreshMenuEdge() { self?.scheduleSettle() }
         }
     }
 

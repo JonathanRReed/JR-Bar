@@ -243,19 +243,67 @@ enum MenuBarItemLister {
     @MainActor
     private static var axScanInFlight = false
 
-    /// The front app's rightmost menu edge, refilled by each AX scan —
-    /// items left of it draw under menu text and are unreachable.
-    /// nil when the front app did not answer its AXMenuBar.
+    /// The right edge of the menus on the bar — the menu-bar owner's
+    /// (`menuBarOwnerApp`) — refilled by each AX scan and, when the
+    /// menu bar changes hands, by `refreshMenuEdge`. Items left of it
+    /// draw under menu text and are unreachable; the icon's mirror and
+    /// the concealer's reveal zone start right of it. nil when the
+    /// owner did not answer its AXMenuBar.
     @MainActor
     private(set) static var appMenuEdge: CGFloat?
+    /// Bumped by every read of the menu edge — a scan's or
+    /// `refreshMenuEdge`'s — so a slow read that lands after a newer
+    /// one, which saw a newer owner, is dropped.
+    @MainActor
+    private static var menuEdgeGeneration = 0
 
-    /// `AXIsProcessTrusted` is a `TCCAccessRequest` IPC — never call it
-    /// per reconcile pass or per event. The lister keeps its own cache;
-    /// `MenuBarUtility.probeAccessibility` holds the card's copy. At 3 s
-    /// the scan loop and the reconcile timer between them re-asked every
-    /// 3.0 s for as long as the utility ran (212 requests in ten minutes,
-    /// 2026-09-22). A grant that changes is rare, and a revoked one
-    /// already shows as an empty scan, so the listing follows within 10 s.
+    /// The app whose menus are on the bar. Not always the frontmost
+    /// app: an accessory app that activates — JR-Bar's own Settings or
+    /// Usage window, Raycast — becomes frontmost while the previous
+    /// regular app keeps the menu bar, and an accessory app's own
+    /// AXMenuBar items report 0×0 (JR-Bar's and Raycast's, probed
+    /// 2026-09-22), so reading it left the edge nil with the owner's
+    /// menus still on screen. The band's
+    /// `AppMenuExtent` asks the same question; one answer keeps the two
+    /// from disagreeing about whose menus they avoid.
+    @MainActor
+    static func menuBarOwnerApp() -> NSRunningApplication? {
+        let workspace = NSWorkspace.shared
+        return workspace.menuBarOwningApplication ?? workspace.frontmostApplication
+    }
+
+    /// Re-read only the menu edge — the listing's AX scan runs every
+    /// 2 s, and after an app switch the edge it left is the previous
+    /// owner's until the next one. Called when the menu bar changes
+    /// hands; a full item scan per activation is the energy pattern
+    /// this utility avoids, and one already in flight would drop the
+    /// request anyway. The AX read runs off the main actor. Returns
+    /// whether the edge moved.
+    @MainActor
+    @discardableResult
+    static func refreshMenuEdge() async -> Bool {
+        guard axTrusted() else { return false }
+        menuEdgeGeneration += 1
+        let token = menuEdgeGeneration
+        let ownerPID = menuBarOwnerApp()?.processIdentifier
+        let edge = await Task.detached(priority: .utility) {
+            ownerPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) }
+        }.value
+        guard token == menuEdgeGeneration, edge != appMenuEdge else { return false }
+        appMenuEdge = edge
+        return true
+    }
+
+    /// The Accessibility answer, cached for `trustCacheTTL`. Not for
+    /// TCC's sake: measured 2026-09-22, `AXIsProcessTrusted` sends one
+    /// `TCCAccessRequest` IPC on its first call only and answers
+    /// locally after that — the TCC line that recurred every 3 s (212
+    /// requests in ten minutes) was DockEnhance's
+    /// `CGPreflightScreenCaptureAccess`, not this. The cache stays
+    /// because it costs nothing: a grant that changes is rare, and a
+    /// revoked one already shows as an empty scan, so the listing
+    /// follows within 10 s. `MenuBarUtility.probeAccessibility` holds
+    /// the card's copy.
     @MainActor
     private static var trustCache: (at: Date, trusted: Bool)?
     nonisolated static let trustCacheTTL: TimeInterval = 10
@@ -308,13 +356,17 @@ enum MenuBarItemLister {
             return MenuBarAX.Target(pid: app.processIdentifier, name: name,
                                     bundleID: app.bundleIdentifier)
         }
-        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        menuEdgeGeneration += 1
+        let edgeToken = menuEdgeGeneration
+        let ownerPID = menuBarOwnerApp()?.processIdentifier
         let scanned = await Task.detached {
             (MenuBarAX.items(targets: targets, rows: rows),
-             frontPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) })
+             ownerPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) })
         }.value
         axItems = scanned.0
-        appMenuEdge = scanned.1
+        // An edge re-read that started after this scan (the menu bar
+        // changed hands mid-scan) saw the newer owner and stands.
+        if edgeToken == menuEdgeGeneration { appMenuEdge = scanned.1 }
         axGeneration += 1
         if walkAll {
             axOwnerPIDs = Set(scanned.0.map(\.ownerPID))
