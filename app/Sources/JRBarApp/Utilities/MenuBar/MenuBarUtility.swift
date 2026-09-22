@@ -254,6 +254,12 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private var preSeatAttempts = 0
     @ObservationIgnored private var lastPreSeat: Date = .distantPast
     @ObservationIgnored private var preSeatDone = false
+    /// The bisection's bracket over the sort key: the last key tried,
+    /// the largest known to land right of the target, the smallest
+    /// known to land under the band or in the overflow.
+    @ObservationIgnored private var lastSeatKey: CGFloat?
+    @ObservationIgnored private var seatKeyLow: CGFloat?
+    @ObservationIgnored private var seatKeyHigh: CGFloat?
     private static let maxPreSeatAttempts = 5
     /// Listings run about a second apart; a landing must be listed
     /// before the next aim reads it.
@@ -1256,6 +1262,9 @@ final class MenuBarUtility: Toy {
         preSeatAttempts = 0
         preSeatDone = false
         lastPreSeat = .distantPast
+        lastSeatKey = nil
+        seatKeyLow = nil
+        seatKeyHigh = nil
         hider.shuttersSuppressed = true
         // No affordance under the agent: the extra width pushed our slot
         // left into the notch dead zone and parked the item unseen. And
@@ -2140,23 +2149,39 @@ final class MenuBarUtility: Toy {
             preSeatDone = true
             return false
         }
-        // Seated: clear of the band, and at or just left of the target —
-        // a slot up to a neighbour's width left is the run's left end
-        // still (the key sorted us before the first shown item).
+        // Seated: clear of the band and left of the first item that
+        // stays shown. Anything between us and it is bound for
+        // concealment, and the agent packs the run rightward over a
+        // concealed slot — so the icon ends up flush against that item.
         let landed = own.midX
-        if !ownIconCovered(), landed <= target + 6, landed >= target - 48 {
+        let covered = ownIconCovered()
+        if !covered, landed <= target + 6 {
             preSeatDone = true
             MenuBarAssessmentBackend.log.notice("conceal: icon seated at \(String(format: "%.0f", landed), privacy: .public) (target \(String(format: "%.0f", target), privacy: .public)) after \(self.preSeatAttempts, privacy: .public) re-seats")
             return false
         }
-        if let last = lastSeatTarget, abs(last - target) < 80, landed > 0 {
-            seatBias = max(-400, min(400, seatBias + (target - landed)))
+        // The record is a sort key (larger sorts further left) and the
+        // landing is slot-quantised (measured 2026-09-22: 300 → 1062,
+        // 320 → 1030, 340 → 992 … 440+ → the leftmost slot), so the
+        // walk bisects the key between "landed under the band or in
+        // the notch overflow" (too large) and "landed right of the
+        // target" (too small).
+        let screenW = NSScreen.main?.frame.width ?? CGDisplayBounds(CGMainDisplayID()).width
+        if let lastKey = lastSeatKey {
+            if covered || landed <= target { seatKeyHigh = lastKey } else { seatKeyLow = lastKey }
         }
-        lastSeatTarget = target
+        let key: CGFloat
+        switch (seatKeyLow, seatKeyHigh) {
+        case (nil, nil): key = screenW - target
+        case (let lo?, nil): key = lo + 60
+        case (nil, let hi?): key = hi - 100
+        case (let lo?, let hi?): key = (lo + hi) / 2
+        }
+        lastSeatKey = key
         preSeatAttempts += 1
         lastPreSeat = Date()
-        MenuBarAssessmentBackend.log.notice("conceal: seat walk \(self.preSeatAttempts, privacy: .public)/\(Self.maxPreSeatAttempts, privacy: .public) — at \(String(format: "%.0f", landed), privacy: .public), target \(String(format: "%.0f", target), privacy: .public), bias \(String(format: "%.0f", self.seatBias), privacy: .public)")
-        host?.reseatStatusItem(desiredMidX: target + seatBias)
+        MenuBarAssessmentBackend.log.notice("conceal: seat walk \(self.preSeatAttempts, privacy: .public)/\(Self.maxPreSeatAttempts, privacy: .public) — at \(String(format: "%.0f", landed), privacy: .public)\(covered ? " (covered)" : "", privacy: .public), target \(String(format: "%.0f", target), privacy: .public), key \(String(format: "%.0f", key), privacy: .public)")
+        host?.reseatStatusItem(desiredMidX: screenW - key)
         return true
     }
 
