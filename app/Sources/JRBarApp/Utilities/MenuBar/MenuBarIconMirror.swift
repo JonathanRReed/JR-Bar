@@ -185,13 +185,55 @@ final class MenuBarIconMirror: NSPanel {
     /// left of the first drawn item, scanning from the right, whose gap
     /// to the left fits it — `trailingGap` to that item, `leadingGap` to
     /// whatever bounds the gap on the left (another item, or `clearOf`:
-    /// the notch's, our band's or the front app's menus' edge). Only
-    /// items reaching right of `clearOf` bound a gap, and overlapping
-    /// frames (a ghost stacked on its neighbour) count as one. nil when
-    /// no gap fits.
+    /// the notch's, our band's or the front app's menus' edge; `gaps`
+    /// says which items bound one). nil when no gap fits.
     nonisolated static func seatMinX(drawn: [CGRect], clearOf: CGFloat, width: CGFloat,
                                      trailingGap: CGFloat = itemGap,
                                      leadingGap: CGFloat = itemGap) -> CGFloat? {
+        let needed = width + trailingGap + leadingGap
+        for gap in gaps(drawn: drawn, clearOf: clearOf).reversed() where gap.right - gap.left >= needed {
+            return gap.right - trailingGap - width
+        }
+        return nil
+    }
+
+    /// Where the mirror stands, always. First the seat with macOS's
+    /// item gap each side; failing that, a gap the face fits flush
+    /// against both neighbours — touching them beats standing on one,
+    /// and a hole the agent leaves open after concealing a small app is
+    /// often just that wide; failing that, the seat that covers the
+    /// least of anything drawn. On a crowded bar every gap is narrower
+    /// than the face, so the face takes the widest gap's left edge and
+    /// overlaps the next item by only the width that gap lacks — the
+    /// leftmost of equal gaps, so the system's own items at the right
+    /// end are the last covered. The old last resort, one gap right of
+    /// `clearOf`, was sure to land on the first drawn item: a
+    /// status-bar-level panel there hides that app's icon and takes its
+    /// clicks. With no gap to weigh — nothing drawn right of `clearOf`:
+    /// an empty row, or no Accessibility and so no frames — the mirror
+    /// stands one item gap clear of it. `rowMaxX` keeps the panel on
+    /// the bar.
+    nonisolated static func seat(drawn: [CGRect], clearOf: CGFloat, width: CGFloat,
+                                 rowMaxX: CGFloat) -> CGFloat {
+        if let seat = seatMinX(drawn: drawn, clearOf: clearOf, width: width) { return seat }
+        if let seat = seatMinX(drawn: drawn, clearOf: clearOf, width: width,
+                               trailingGap: 0, leadingGap: 0) { return seat }
+        var widest: (left: CGFloat, right: CGFloat)?
+        for gap in gaps(drawn: drawn, clearOf: clearOf)
+        where widest.map({ gap.right - gap.left > $0.right - $0.left }) ?? true {
+            widest = gap
+        }
+        guard let widest else { return min(clearOf + itemGap, rowMaxX - width) }
+        return min(max(widest.left, widest.right - width), rowMaxX - width)
+    }
+
+    /// The open stretches of the row right of `clearOf`, left to right:
+    /// from `clearOf` or a run's right edge to the next run of drawn
+    /// items. Only items reaching right of `clearOf` bound a gap, and
+    /// overlapping frames (a ghost stacked on its neighbour) count as
+    /// one run. The stretch right of the last run is not a gap: the
+    /// clock ends it, and the icon never stands there.
+    nonisolated static func gaps(drawn: [CGRect], clearOf: CGFloat) -> [(left: CGFloat, right: CGFloat)] {
         var runs: [(minX: CGFloat, maxX: CGFloat)] = []
         for rect in drawn.filter({ $0.maxX > clearOf && $0.width > 0 })
             .sorted(by: { $0.minX < $1.minX }) {
@@ -207,11 +249,7 @@ final class MenuBarIconMirror: NSPanel {
             if run.minX > left { gaps.append((left, run.minX)) }
             left = max(left, run.maxX)
         }
-        let needed = width + trailingGap + leadingGap
-        for gap in gaps.reversed() where gap.right - gap.left >= needed {
-            return gap.right - trailingGap - width
-        }
-        return nil
+        return gaps
     }
 
     /// The panel's width: the face plus the ‹ zone while anything is

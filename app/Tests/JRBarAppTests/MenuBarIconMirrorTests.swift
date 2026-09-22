@@ -47,13 +47,51 @@ struct MenuBarIconMirrorTests {
         #expect(seat == 1060 - MenuBarIconMirror.itemGap - 40)
     }
 
-    @Test("nothing fits: no seat — the utility falls back to just clear of the band")
+    @Test("nothing fits: no seat — `seat` relaxes the gaps, then covers the least")
     func seatNothingFits() {
         // A crowded bar: items every 37 pt from the band's edge on.
         let crowded = stride(from: CGFloat(990), to: 1500, by: 37).map { rect($0, 30) }
         #expect(MenuBarIconMirror.seatMinX(drawn: crowded, clearOf: 980, width: 70) == nil)
         #expect(MenuBarIconMirror.seatMinX(drawn: [], clearOf: 980, width: 70) == nil,
                 "an empty listing bounds no gap")
+        #expect(MenuBarIconMirror.seat(drawn: [], clearOf: 980, width: 70, rowMaxX: 1512)
+                == 980 + MenuBarIconMirror.itemGap,
+                "nothing drawn to cover: one item gap clear of the band")
+    }
+
+    /// How much of `drawn` a panel at `seat`, `width` wide, stands on.
+    private func covered(_ drawn: [CGRect], seat: CGFloat, width: CGFloat) -> CGFloat {
+        drawn.reduce(0) { $0 + max(0, min($1.maxX, seat + width) - max($1.minX, seat)) }
+    }
+
+    @Test("a hole the agent left open: too narrow for both gaps, the face stands flush in it")
+    func seatInAHoleWithoutGaps() {
+        // A crowded bar with one small app concealed: its 22-pt slot
+        // left 1090–1131 open between ChatGPT and Wi-Fi. A 38-pt face
+        // needs 52 with both gaps; the strip right of the band (980 to
+        // the first item at 983) is narrower still.
+        let drawn = [rect(983, 30), rect(1020, 33), rect(1060, 30)] + todaysRun
+        #expect(MenuBarIconMirror.seatMinX(drawn: drawn, clearOf: 980, width: 38) == nil)
+        let seat = MenuBarIconMirror.seat(drawn: drawn, clearOf: 980, width: 38, rowMaxX: 1512)
+        #expect(seat == 1093, "flush left of Wi-Fi, touching it")
+        #expect(covered(drawn, seat: seat, width: 38) == 0, "clear of every drawn item")
+    }
+
+    @Test("a repacked crowded bar: the last resort covers the first item by only what the gap lacks")
+    func seatLeastOverlap() {
+        // The agent closed the concealed apps' slots: the run starts at
+        // 1017, 37 pt right of the band, every gap in it 7 pt.
+        let drawn = stride(from: CGFloat(1017), to: 1500, by: 37).map { rect($0, 30) }
+        #expect(MenuBarIconMirror.seatMinX(drawn: drawn, clearOf: 980, width: 38,
+                                           trailingGap: 0, leadingGap: 0) == nil)
+        let seat = MenuBarIconMirror.seat(drawn: drawn, clearOf: 980, width: 38, rowMaxX: 1512)
+        #expect(seat == 980, "the widest gap's left edge — never under the band")
+        let lacking: CGFloat = 38 - (1017 - 980)
+        #expect(covered(drawn, seat: seat, width: 38) == lacking,
+                "only the width the gap lacks — the old clear+6 stood 7 pt on the first item")
+        // Equal gaps: the leftmost, so the clock's end of the bar stays drawn.
+        let even = stride(from: CGFloat(987), to: 1500, by: 37).map { rect($0, 30) }
+        #expect(MenuBarIconMirror.seat(drawn: even, clearOf: 980, width: 38, rowMaxX: 1512) == 980)
     }
 
     @Test("items under the band never bound a gap; a straddler and stacked ghosts count as one run")
@@ -92,7 +130,9 @@ struct MenuBarIconMirrorTests {
         let seat = try #require(MenuBarIconMirror.seatMinX(drawn: crowded, clearOf: 600, width: 70))
         #expect(seat == 700 - MenuBarIconMirror.itemGap - 70, "menus to 600 leave it room")
         #expect(MenuBarIconMirror.seatMinX(drawn: crowded, clearOf: 650, width: 70) == nil,
-                "menus to 650 leave no gap — the utility falls back to just right of them")
+                "menus to 650 leave no gap that fits")
+        #expect(MenuBarIconMirror.seat(drawn: crowded, clearOf: 650, width: 70, rowMaxX: 1512) == 650,
+                "the last resort starts right of the menus, never on them")
     }
 
     // MARK: The frame

@@ -1252,7 +1252,9 @@ final class MenuBarUtility: Toy {
 
     /// The mirror's left edge for a `width`-wide panel: flush left of
     /// the first drawn item, from the right, with room to stand — the
-    /// right end of the blank run the concealed apps leave. Drawn is
+    /// right end of the blank run the concealed apps leave — or, on a
+    /// bar with no such room, `MenuBarIconMirror.seat`'s fallbacks,
+    /// which cover as little of any drawn item as they can. Drawn is
     /// every listed item on the main row that is not ours and not
     /// concealed, the native « included. While no assertion holds (a
     /// bridged click's lift, the start grace) the target counts as
@@ -1268,11 +1270,19 @@ final class MenuBarUtility: Toy {
                 && item.bounds.intersects(row)
                 && !(item.bundleID.map { concealed.contains($0) } ?? false)
         }.map(\.bounds)
-        let seat = MenuBarIconMirror.seatMinX(drawn: drawn, clearOf: clear, width: width)
-            ?? min(clear + 6, row.maxX - width)
+        let seat = MenuBarIconMirror.seat(drawn: drawn, clearOf: clear, width: width, rowMaxX: row.maxX)
         if seat != lastMirrorSeat {
             lastMirrorSeat = seat
-            MenuBarAssessmentBackend.log.debug("conceal: mirror seat \(String(format: "%.0f", seat), privacy: .public) w=\(String(format: "%.0f", width), privacy: .public) clear of \(String(format: "%.0f", clear), privacy: .public), \(drawn.count, privacy: .public) drawn")
+            let line = "conceal: mirror seat \(String(format: "%.0f", seat)) w=\(String(format: "%.0f", width)) clear of \(String(format: "%.0f", clear)), \(drawn.count) drawn"
+            // A seat on a drawn item hides that app's icon and takes its
+            // clicks: no gap on the row fits the face. Said at notice so
+            // a crowded bar's overlap shows in the log.
+            let covered = drawn.filter { $0.minX < seat + width && $0.maxX > seat }.count
+            if covered > 0 {
+                MenuBarAssessmentBackend.log.notice("\(line, privacy: .public) — stands on \(covered, privacy: .public), no gap fits")
+            } else {
+                MenuBarAssessmentBackend.log.debug("\(line, privacy: .public)")
+            }
         }
         return seat
     }
