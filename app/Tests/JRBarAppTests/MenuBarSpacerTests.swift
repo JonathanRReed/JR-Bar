@@ -550,13 +550,6 @@ struct MenuBarSpacerTests {
         #expect(state.sections == ["WeatherMenu": .alwaysHidden])
     }
 
-    @Test func appleExtrasNeverEnterTheAppConcealmentMap() {
-        let writes = MenuBarUtility.boundaryWrites(
-            shown: [("com.apple.Passwords.MenuBarExtra", CGRect(x: 880, y: 0, width: 24, height: 24))],
-            boundaryX: 1030, row: row, apps: [:], exempt: [], allowShownWrites: true)
-        #expect(writes.isEmpty)
-    }
-
     @Test("the control face is as wide as the control (less the bar's inset) and template")
     func controlFace() {
         let collapsed = MenuBarUtility.controlImage(symbol: "chevron.left", length: 24,
@@ -569,124 +562,10 @@ struct MenuBarSpacerTests {
         #expect(expanded?.size.height == collapsed?.size.height)
     }
 
-    // MARK: The boundary reconcile — position is membership
-
-    /// Under the concealer the ‹ mark is absolute: whatever stands
-    /// left of it is the hidden run whether a hand put it there or
-    /// macOS did — the ⌘-learn only sees drags, so this pass is what
-    /// parks items the release left behind the mark.
-    @Test("items left of the boundary mark hidden, stale hidden marks right of it clear under ⌘")
-    func boundaryWrites() {
-        let shown: [(id: String, frame: CGRect)] = [
-            ("a.behind", CGRect(x: 880, y: 0, width: 24, height: 24)),
-            ("b.front", CGRect(x: 1100, y: 0, width: 24, height: 24)),
-            ("c.stray", CGRect(x: 1060, y: 0, width: 24, height: 24)),
-        ]
-        let writes = MenuBarUtility.boundaryWrites(
-            shown: shown, boundaryX: 1030, row: row,
-            apps: ["c.stray": .hidden], exempt: [], allowShownWrites: true)
-        #expect(writes == ["a.behind": .hidden, "c.stray": .shown])
-    }
-
-    @Test("a .hidden right-stander stays without the hand — a Hide pick mid-park is not a Show")
-    func boundaryWritesNeedsHand() {
-        let shown: [(id: String, frame: CGRect)] = [
-            ("c.parked", CGRect(x: 1060, y: 0, width: 24, height: 24)),
-        ]
-        let writes = MenuBarUtility.boundaryWrites(
-            shown: shown, boundaryX: 1030, row: row,
-            apps: ["c.parked": .hidden], exempt: [], allowShownWrites: false)
-        #expect(writes.isEmpty)
-    }
-
-    @Test("a Show-released item behind the mark keeps its exemption")
-    func boundaryWritesExempt() {
-        let shown: [(id: String, frame: CGRect)] = [
-            ("a.shown", CGRect(x: 880, y: 0, width: 24, height: 24)),
-            ("b.other", CGRect(x: 900, y: 0, width: 24, height: 24)),
-        ]
-        let writes = MenuBarUtility.boundaryWrites(
-            shown: shown, boundaryX: 1030, row: row,
-            apps: ["a.shown": .shown], exempt: ["a.shown"], allowShownWrites: true)
-        #expect(writes == ["b.other": .hidden])
-    }
-
-    @Test("a saved Show choice survives an automatic menu bar relayout")
-    func explicitShownSurvivesRelayout() {
-        let items: [(id: String, frame: CGRect)] = [
-            ("a.shown", CGRect(x: 880, y: 0, width: 24, height: 24)),
-        ]
-        #expect(MenuBarUtility.boundaryWrites(
-            shown: items, boundaryX: 1030, row: row,
-            apps: ["a.shown": .shown], exempt: [], allowShownWrites: false).isEmpty)
-        #expect(MenuBarUtility.boundaryWrites(
-            shown: items, boundaryX: 1030, row: row,
-            apps: ["a.shown": .shown], exempt: [], allowShownWrites: true)
-                == ["a.shown": .hidden])
-    }
-
-    @Test("always-hidden outranks position; off-row frames never write")
-    func boundaryWritesSkips() {
-        let shown: [(id: String, frame: CGRect)] = [
-            ("a.locked", CGRect(x: 880, y: 0, width: 24, height: 24)),
-            ("b.offrow", CGRect(x: 880, y: 60, width: 24, height: 24)),
-        ]
-        let writes = MenuBarUtility.boundaryWrites(
-            shown: shown, boundaryX: 1030, row: row,
-            apps: ["a.locked": .alwaysHidden], exempt: [], allowShownWrites: true)
-        #expect(writes.isEmpty)
-    }
-
-    @Test("only unassigned third-party apps parked off row enter concealment")
-    func parkedAppWrites() {
-        let offRow = CGRect(x: 7, y: 970, width: 24, height: 24)
-        let onRow = CGRect(x: 880, y: 0, width: 24, height: 24)
-        let candidates: [(itemID: String, bundleID: String?, ownerName: String,
-                          frame: CGRect, isNativeOverflowControl: Bool)] = [
-            ("New", "com.example.new", "New", offRow, false),
-            ("ExplicitApp", "com.example.shown", "Shown", offRow, false),
-            ("ExplicitItem", "com.example.item-shown", "Item Shown", offRow, false),
-            ("Released", "com.example.released", "Released", offRow, false),
-            ("Apple", "com.apple.Passwords.MenuBarExtra", "Passwords", offRow, false),
-            ("Protected", "com.example.control", "Control Center", offRow, false),
-            ("Overflow", "com.example.overflow", "App", offRow, true),
-            ("Own", "com.jonathanreed.jrbar.helper", "Helper", offRow, false),
-            ("Bare", nil, "Bare Helper", offRow, false),
-            ("StillOnRow", "com.example.visible", "Visible", onRow, false),
-            ("ParkedSibling", "com.example.siblings", "Sibling", offRow, false),
-            ("ShownSibling", "com.example.siblings", "Sibling", onRow, false),
-        ]
-        let writes = MenuBarUtility.parkedAppWrites(
-            candidates: candidates, rows: [row],
-            apps: ["com.example.shown": .shown],
-            sections: ["ExplicitItem": .shown, "ShownSibling": .shown],
-            exempt: ["com.example.released"],
-            ownBundleID: "com.jonathanreed.jrbar")
-        #expect(writes == ["com.example.new": .hidden])
-        #expect(MenuBarUtility.parkedAppWrites(
-            candidates: candidates, rows: [row],
-            apps: ["com.example.new": .hidden, "com.example.shown": .shown],
-            sections: ["ExplicitItem": .shown, "ShownSibling": .shown],
-            exempt: ["com.example.released"],
-            ownBundleID: "com.jonathanreed.jrbar").isEmpty)
-
-        let alwaysCandidates: [(itemID: String, bundleID: String?, ownerName: String,
-                                frame: CGRect, isNativeOverflowControl: Bool)] = [
-            ("HiddenSibling", "com.example.mixed", "Mixed", offRow, false),
-            ("AlwaysSibling", "com.example.mixed", "Mixed", offRow, false),
-        ]
-        let alwaysSections = ["AlwaysSibling": MenuBarItemSection.alwaysHidden]
-        let expected = ["com.example.mixed": MenuBarItemSection.alwaysHidden]
-        #expect(MenuBarUtility.parkedAppWrites(
-            candidates: alwaysCandidates, rows: [row], apps: [:], sections: alwaysSections,
-            exempt: [], ownBundleID: "com.jonathanreed.jrbar") == expected)
-        #expect(MenuBarUtility.parkedAppWrites(
-            candidates: Array(alwaysCandidates.reversed()), rows: [row], apps: [:], sections: alwaysSections,
-            exempt: [], ownBundleID: "com.jonathanreed.jrbar") == expected)
-    }
+    // MARK: Show All — explicit, and it survives a restart
 
     @MainActor
-    @Test func showAllSurvivesRestartAndStillAllowsDeliberateDrags() throws {
+    @Test func showAllSurvivesRestart() throws {
         let utility = MenuBarUtility()
         var settings = MenuBarSettings(enabled: false)
         settings.concealedApps = ["com.example.one": .hidden, "com.example.two": .alwaysHidden]
@@ -701,18 +580,6 @@ struct MenuBarSpacerTests {
             from: JSONEncoder().encode(settings))
         #expect(restored.concealedApps == ["com.example.one": .shown, "com.example.two": .shown])
         #expect(restored.sections.isEmpty)
-        let offRow = CGRect(x: 7, y: 970, width: 24, height: 24)
-        #expect(MenuBarUtility.parkedAppWrites(
-            candidates: [("one", "com.example.one", "One", offRow, false),
-                         ("two", "com.example.two", "Two", offRow, false)],
-            rows: [row], apps: restored.concealedApps, sections: [:], exempt: [],
-            ownBundleID: "com.jonathanreed.jrbar").isEmpty)
-        let left = [(id: "com.example.one", frame: CGRect(x: 880, y: 0, width: 24, height: 24))]
-        #expect(MenuBarUtility.boundaryWrites(shown: left, boundaryX: 1030, row: row,
-            apps: restored.concealedApps, exempt: [], allowShownWrites: false).isEmpty)
-        #expect(MenuBarUtility.boundaryWrites(shown: left, boundaryX: 1030, row: row,
-            apps: restored.concealedApps, exempt: [], allowShownWrites: true)
-                == ["com.example.one": .hidden])
     }
 
     // MARK: Ghost triage — only a novel on-row move proves a live escapee

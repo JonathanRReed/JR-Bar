@@ -68,7 +68,7 @@ struct MenuBarUtilityControls: View {
 
             SettingLabel(title: "How it works",
                          subtitle: utility.concealing
-                            ? "Items left of the separator, including apps parked in macOS overflow, join the hidden run. Use Overrides to keep an app Shown or Always Hidden, or ⌘-drag it across the separator. Hidden apps keep running and remain accessible in the Item Bar."
+                            ? "Pick Hidden or Always for an app under Overrides and macOS hides it. The JR-Bar icon stands at the right end of the gap it leaves, with a ‹ that brings hidden items back. Hidden apps keep running and remain accessible in the Item Bar."
                             : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
             if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
