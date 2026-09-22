@@ -892,8 +892,11 @@ exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one
 generation) and a fresh one starts. The daemon drains those files at start
 and every 30 s, registering each payload's agent process from
 `ppid`/`ppid_start` (for a node-hosted CLI such as pi or Gemini the nearest
-`node` ancestor is the agent process). A replayed record is logged at its
-`queued_at_ms`; one older than 30 min does not wake the live monitor.
+`node` ancestor is the agent process); a line whose `ppid_start` is -1
+still replays but registers no process, since only the start time tells a
+later replay that the pid was not reused. A replayed record is logged at
+its `queued_at_ms`, capped at the drain time; one older than 30 min does
+not wake the live monitor.
 For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
 contracts require (`--emit-empty-json` forces it for any provider);
 otherwise it prints nothing.

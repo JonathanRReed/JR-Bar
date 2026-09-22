@@ -134,26 +134,38 @@ def request_from_pending_line(
     ppid = row.get("ppid")
     ppid_start = row.get("ppid_start")
     queued_at_ms = row.get("queued_at_ms")
+    # The shim writes -1 when it could not read its parent's start, which
+    # means the parent was already gone. The start is what stops a replay
+    # hours later from registering whatever process reused the pid, so a
+    # spooled line without one replays without its ppid too.
+    started = (
+        float(ppid_start)
+        if isinstance(ppid_start, (int, float))
+        and not isinstance(ppid_start, bool)
+        and ppid_start >= 0
+        else None
+    )
+    # Lines from a shim older than the stamp replay at drain time. A stamp
+    # from the future (a clock stepped back, or a corrupt line) is capped
+    # at the drain time: past year 9999 the stamp cannot be formatted, and
+    # a submit that raises is requeued every pass forever.
+    stamp = (
+        min(queued_at_ms, time.time() * 1000.0)
+        if isinstance(queued_at_ms, int) and not isinstance(queued_at_ms, bool) and queued_at_ms > 0
+        else None
+    )
     try:
         return HookIngressRequest(
             provider,
             log_path_for(provider),
             payload,
-            ppid=ppid if isinstance(ppid, int) and not isinstance(ppid, bool) and ppid > 1 else None,
-            # The shim writes -1 when it could not read its parent's start.
-            ppid_start=(
-                float(ppid_start)
-                if isinstance(ppid_start, (int, float))
-                and not isinstance(ppid_start, bool)
-                and ppid_start >= 0
+            ppid=(
+                ppid
+                if isinstance(ppid, int) and not isinstance(ppid, bool) and ppid > 1 and started is not None
                 else None
             ),
-            # Lines from a shim older than the stamp replay at drain time.
-            queued_at_epoch=(
-                queued_at_ms / 1000.0
-                if isinstance(queued_at_ms, int) and not isinstance(queued_at_ms, bool) and queued_at_ms > 0
-                else None
-            ),
+            ppid_start=started,
+            queued_at_epoch=None if stamp is None else stamp / 1000.0,
         )
     except ValueError:
         return None

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
 
+from jrbar.hook import hook_logged_at
 from jrbar.hook_ingress_protocol import HookIngressRequest
 from jrbar.hook_pending import (
     PENDING_SUFFIX,
@@ -37,15 +39,27 @@ def test_request_from_pending_line_carries_the_shim_fields() -> None:
     assert request_from_pending_line(_line(ppid=1)).ppid is None
     assert request_from_pending_line(_line(ppid_start="x")).ppid_start is None
     # The shim writes -1 when it could not read its parent's start time;
-    # that line is still a delivery, not a rejection.
-    assert request_from_pending_line(_line(ppid_start=-1.0)).ppid_start is None
+    # that line is still a delivery, not a rejection -- but without the
+    # start nothing can tell a replay the pid was not reused, so it
+    # registers no process.
+    unstarted = request_from_pending_line(_line(ppid_start=-1.0))
+    assert unstarted is not None
+    assert unstarted.ppid_start is None and unstarted.ppid is None
     # queued_at_ms (milliseconds) arrives as the request's epoch; lines from
     # an older shim, or with a nonsense stamp, simply have none.
-    assert request_from_pending_line(_line(queued_at_ms=1790078400250)).queued_at_epoch == 1790078400.25
+    assert request_from_pending_line(_line(queued_at_ms=1_700_000_000_250)).queued_at_epoch == 1_700_000_000.25
     assert request_from_pending_line(_line()).queued_at_epoch is None
     assert request_from_pending_line(_line(queued_at_ms=True)).queued_at_epoch is None
     assert request_from_pending_line(_line(queued_at_ms="soon")).queued_at_epoch is None
     assert request_from_pending_line(_line(queued_at_ms=-5)).queued_at_epoch is None
+    # A stamp from the future is capped at the drain time, however far out:
+    # past year 9999 it cannot be formatted, and a submit that raised would
+    # requeue the line every pass forever.
+    before = time.time()
+    for future in (int((before + 3600) * 1000), 10**17, 10**400):
+        epoch = request_from_pending_line(_line(queued_at_ms=future)).queued_at_epoch
+        assert before <= epoch <= time.time()
+        hook_logged_at(epoch)
 
 
 def test_drain_submits_in_file_order_and_removes_the_files__and_1_more(tmp_path: Path) -> None:
