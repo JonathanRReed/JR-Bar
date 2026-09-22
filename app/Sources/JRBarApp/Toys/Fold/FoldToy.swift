@@ -772,7 +772,17 @@ final class FoldToy: Toy {
             reconcile()
             return
         }
-        guard jitter.accept(angle, at: sample.at) else { return }
+        guard jitter.accept(angle, at: sample.at) else {
+            // Inside the band the machine still reads every raw sample:
+            // the gate edge, the band exit and the dwell clock ride
+            // reconcile, and a parked lid's deadband would otherwise
+            // starve them a third of a second after it stops — before
+            // the tracker lands, so the dwell never arms. Only the
+            // tracker is spared the wobble. Parked above the band
+            // (idle) the reading stops here.
+            if arming.phase != .idle { reconcile() }
+            return
+        }
         tracker.feed(angle)
         reconcile()
     }
@@ -784,10 +794,11 @@ final class FoldToy: Toy {
             _ = store?.state.fold
             _ = sensor.available
             // rawAngle is deliberately NOT tracked: every suppressed poll
-            // rewrites it, and a reconcile per 120 Hz sample is churn the
-            // machine does not need — accepted samples call reconcile
-            // themselves, and the card's own view observes rawAngle for
-            // the live reading.
+            // rewrites it, and a second, async reconcile per sample is
+            // churn the machine does not need — the sample path calls
+            // reconcile itself whenever a reading can matter (accepted,
+            // or inside the band), and the card's own view observes
+            // rawAngle for the live reading.
             _ = simulatedAngle
             _ = screenAsleep
             _ = displayVersion
