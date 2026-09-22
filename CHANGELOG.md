@@ -250,6 +250,15 @@ All notable changes to JR-Bar are documented here.
   black over the slot and nothing remained where the icon sits. Items
   our own process owns never clamp the ear now: the anchor is a
   surface the island face already owns and the ear's ‹ is its mark.
+- The icon now *shows* under the concealer, not just seats: the
+  assessment engine exempts menu-bar items by the asserting identity's
+  signature, not by process — so our allowlisted, adopted, on-row item
+  still composites nothing under our own assertion (the disclaimed
+  helper shares our Developer ID). The anchor keeps its notch niche
+  and a new mirror panel at the band's right edge — the left end of
+  the visible run — draws the button's live image and drives the same
+  clicks: left opens the panel, right/Option opens the hidden-items
+  menu. Everything left of it hidden, everything right shown.
 - The icon can vanish on purpose: a new "Hidden" icon style draws no
   glyph while keeping the click slot, tooltip and VoiceOver label —
   Ice's no-icon mode for a bar that carries only the ‹ affordance.
