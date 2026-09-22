@@ -484,6 +484,41 @@ enum DockEnhanceMath {
         return frames.count > 1 ? .ambiguous : .none
     }
 
+    /// A preview's agents: card id → the session that window exclusively
+    /// hosts, and every live session the app hosts at all (most urgent
+    /// first). Nothing for a folder, a bare tile, or an app no session
+    /// names as its host.
+    static func agentMap(windows: [DockPreviewWindow], bundleID: String?,
+                         marks: [DockAgentMark]) -> (cards: [Int: DockAgentMark], app: [DockAgentMark]) {
+        guard let bundleID else { return ([:], []) }
+        let hosted = marks.filter { $0.hosts.contains(bundleID) }
+        guard !hosted.isEmpty else { return ([:], []) }
+        let candidates = windows.map {
+            DockAgentMatch.Candidate(key: String($0.id), bundleID: bundleID, title: $0.title)
+        }
+        var cards: [Int: DockAgentMark] = [:]
+        for (key, mark) in DockAgentMatch.match(marks: hosted, candidates: candidates) {
+            if let id = Int(key) { cards[id] = mark }
+        }
+        let app = hosted.filter(\.isLive).enumerated()
+            .sorted { $0.element.urgency != $1.element.urgency
+                ? $0.element.urgency < $1.element.urgency : $0.offset < $1.offset }
+            .map(\.element)
+        return (cards, app)
+    }
+
+    /// Close-all's split: windows hosting a working or waiting agent are
+    /// kept — tidying terminals from the Dock must not end a run.
+    static func closable(_ windows: [DockPreviewWindow],
+                         agents: [Int: DockAgentMark]) -> (close: [DockPreviewWindow], keep: [DockPreviewWindow]) {
+        var close: [DockPreviewWindow] = []
+        var keep: [DockPreviewWindow] = []
+        for window in windows {
+            if agents[window.id]?.isLive == true { keep.append(window) } else { close.append(window) }
+        }
+        return (close, keep)
+    }
+
     static func matchRow(scFrame: CGRect, scTitle: String?,
                          rows: [(frame: CGRect?, title: String)],
                          scWindowID: CGWindowID? = nil,
@@ -912,6 +947,28 @@ final class DockPreviewContent {
     var compact = false
     /// The keyboard-walked card — arrows move it, Return raises it.
     var selectedWindowID: Int?
+    /// card id → the agent session that window exclusively hosts
+    /// (`DockAgentMatch`) — the card's mark, ring and status line.
+    var agents: [Int: DockAgentMark] = [:]
+    /// Every live session this app hosts, matched to a card or not — the
+    /// header's count, the ask rows and Quit's guard read it.
+    var appAgents: [DockAgentMark] = []
+    /// Session id → the daemon's verdict on an ask answered from here.
+    var askNotes: [String: String] = [:]
+    /// Asks with an answer in flight — their buttons disable.
+    var answering: Set<String> = []
+    /// A guarded close's first press: the card that rings and its line.
+    var armedWindowID: Int?
+    var armedNote: String?
+    /// The header's one-line note: a guarded Quit's first press, or the
+    /// windows Close all kept because an agent runs in them.
+    var headerNote: String?
+
+    /// The waiting sessions the ask rows offer, most urgent first,
+    /// capped so a busy terminal can't grow the panel into a list.
+    var askRows: [DockAgentMark] {
+        Array(appAgents.filter { $0.isWaiting && $0.ask != nil }.prefix(3))
+    }
 }
 
 // MARK: - Controller
@@ -1019,6 +1076,14 @@ final class DockEnhanceController {
     /// on show, released on hide, so the perl helper only lives while
     /// a media card is actually up.
     @ObservationIgnored private var mediaToken: UUID?
+    /// The daemon's live sessions as marks — wired by `DockUtility`.
+    @ObservationIgnored var agentMarks: @MainActor () -> [DockAgentMark] = { [] }
+    /// A preview ask row's Approve / Deny; returns the line to show.
+    @ObservationIgnored var answerAsk: @MainActor (CoreAsk, Bool) async -> String = { _, _ in
+        "The monitor is not answering"
+    }
+    /// × / Quit on a window or app hosting a live agent needs a second press.
+    @ObservationIgnored private var agentGuard = DockAgentGuard()
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1491,6 +1556,7 @@ final class DockEnhanceController {
             NSWorkspace.shared.open(url)
         }
         panel.actions.onDocumentDrop = { [weak self] url in self?.openDocumentInPreview(url) ?? false }
+        panel.actions.onAnswer = { [weak self] ask, approve in self?.answer(ask, approve: approve) }
         self.panel = panel
         return panel
     }
@@ -1513,6 +1579,7 @@ final class DockEnhanceController {
     /// `AXURL`/bundle id or a title match, else a bare "open me" card.
     /// A folder tile skips all of it and pops the directory's entries.
     private func fill(_ content: DockPreviewContent, for item: DockAXItem) {
+        defer { applyAgents(to: content) }
         let appURL = item.url
         content.folderURL = nil
         content.folderEntries = []
@@ -1520,6 +1587,12 @@ final class DockEnhanceController {
         content.calendarEvent = nil
         content.calendarNeedsAuth = false
         content.badge = item.badge
+        content.askNotes = [:]
+        content.answering = []
+        content.armedWindowID = nil
+        content.armedNote = nil
+        content.headerNote = nil
+        agentGuard.reset()
         if item.kind == .folder {
             content.folderURL = appURL
             content.appName = appURL?.lastPathComponent ?? item.title ?? "Folder"
@@ -1571,6 +1644,18 @@ final class DockEnhanceController {
             ?? appURL.map { DockIconResolver.icon(appURL: $0, pointSize: 64, scale: 2) }
         content.windows = running.map { AppleDockReader.windows(pid: $0.processIdentifier) } ?? []
         content.selectedWindowID = nil
+    }
+
+    /// Mark the cards whose windows host an agent session, and collect
+    /// every live session the previewed app hosts for the header count,
+    /// the ask rows and Quit's guard. Re-run whenever the card list
+    /// changes under the panel.
+    private func applyAgents(to content: DockPreviewContent) {
+        let mapped = DockEnhanceMath.agentMap(windows: content.windows,
+                                              bundleID: content.bundleID,
+                                              marks: agentMarks())
+        content.agents = mapped.cards
+        content.appAgents = mapped.app
     }
 
     /// A minimized-window tile: the Dock gives the tile the window's
@@ -1681,8 +1766,22 @@ final class DockEnhanceController {
     }
 
     /// The card's ×: close the window and drop its card; the panel
-    /// stays so a person can close several in a row.
+    /// stays so a person can close several in a row. A window hosting a
+    /// working or waiting agent needs the press twice — a mis-click on a
+    /// thumbnail must not end a mid-task session.
     private func close(_ window: DockPreviewWindow) {
+        let live = preview.agents[window.id].flatMap { $0.isLive ? $0 : nil }
+        let key = "close:\(window.id)"
+        guard agentGuard.confirm(key, guarded: live != nil, now: CACurrentMediaTime()) else {
+            if let live {
+                preview.armedWindowID = window.id
+                preview.armedNote = DockAgentGuard.note(for: live, again: "× again to close")
+                disarmLater(key)
+            }
+            return
+        }
+        preview.armedWindowID = nil
+        preview.armedNote = nil
         guard AppleDockReader.close(window) else { return }
         preview.windows.removeAll { $0.id == window.id }
         if preview.windows.isEmpty {
@@ -1743,6 +1842,7 @@ final class DockEnhanceController {
             guard let self, self.generation == generationAtNew,
                   let pid = self.preview.processIdentifier else { return }
             self.preview.windows = AppleDockReader.windows(pid: pid)
+            self.applyAgents(to: self.preview)
             self.reframe()
             // The refill's rows carry no thumbnails — re-attach so the
             // cards don't fall back to "No preview" until the next
@@ -1759,13 +1859,61 @@ final class DockEnhanceController {
         }
     }
 
-    /// The header's "Quit" — a plain terminate, never forced.
+    /// The header's "Quit" — a plain terminate, never forced. An app
+    /// hosting a working or waiting agent asks first: quitting Ghostty
+    /// ends every session in it.
     private func quitApp() {
+        let key = "quit:\(preview.processIdentifier ?? 0)"
+        let live = preview.appAgents.first(where: \.isLive)
+        guard agentGuard.confirm(key, guarded: live != nil, now: CACurrentMediaTime()) else {
+            if let live {
+                preview.headerNote = DockAgentGuard.note(
+                    for: live, again: "Quit again to quit \(preview.appName)")
+                disarmLater(key)
+                reframe()
+            }
+            return
+        }
         preview.processIdentifier
             .flatMap { NSRunningApplication(processIdentifier: $0) }?
             .terminate()
         tracker.reset()
         hidePreview()
+    }
+
+    /// A guarded verb's first press lapses with the guard's window —
+    /// the ring and the note go with it unless the press was repeated.
+    private func disarmLater(_ key: String) {
+        let generationAtArm = generation
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(DockAgentGuard.window))
+            guard let self, self.generation == generationAtArm,
+                  !self.agentGuard.isArmed(key, now: CACurrentMediaTime()) else { return }
+            if key.hasPrefix("close:") {
+                self.preview.armedWindowID = nil
+                self.preview.armedNote = nil
+            } else {
+                self.preview.headerNote = nil
+                self.reframe()
+            }
+        }
+    }
+
+    /// An ask row's Approve / Deny: the answer goes through the daemon
+    /// (which raises the session's terminal first) and its verdict stays
+    /// on the row while the panel is up.
+    private func answer(_ ask: CoreAsk, approve: Bool) {
+        guard let session = ask.session, !preview.answering.contains(session) else { return }
+        preview.answering.insert(session)
+        let generationAtAsk = generation
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let note = await self.answerAsk(ask, approve)
+            guard self.generation == generationAtAsk else { return }
+            self.preview.answering.remove(session)
+            self.preview.askNotes[session] = note
+            self.reframe()
+        }
     }
 
     /// DockDoor's minimise-all: every open window of the previewed app
@@ -1784,14 +1932,20 @@ final class DockEnhanceController {
     /// Close-all: every window of the previewed app closes in one verb
     /// — quit's gentler sibling, the app stays running windowless.
     /// Closed cards drop; the panel stays while windows remain so a
-    /// person can keep working the set.
+    /// person can keep working the set. Windows hosting a working or
+    /// waiting agent are skipped, and the header says so.
     private func closeAll() {
-        var kept: [DockPreviewWindow] = []
-        kept.reserveCapacity(preview.windows.count)
-        for window in preview.windows {
-            if !AppleDockReader.close(window) { kept.append(window) }
+        let split = DockEnhanceMath.closable(preview.windows, agents: preview.agents)
+        var keptIDs = Set(split.keep.map(\.id))
+        for window in split.close where !AppleDockReader.close(window) {
+            keptIDs.insert(window.id)
         }
-        preview.windows = kept
+        preview.windows = preview.windows.filter { keptIDs.contains($0.id) }
+        if !split.keep.isEmpty {
+            preview.headerNote = split.keep.count == 1
+                ? "Kept the window an agent is running in"
+                : "Kept \(split.keep.count) windows agents are running in"
+        }
         if preview.windows.isEmpty {
             tracker.reset()
             hidePreview()

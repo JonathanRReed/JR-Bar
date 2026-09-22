@@ -82,6 +82,8 @@ final class DockPreviewActions {
     /// drag-between-previews handoff. False means the drop fell
     /// through (a non-document, or an app that can't take it).
     var onDocumentDrop: (@MainActor (URL) -> Bool)?
+    /// An ask row's Approve (true) / Deny (false).
+    var onAnswer: (@MainActor (CoreAsk, Bool) -> Void)?
 }
 
 /// The Enhance preview's window: a borderless, nonactivating glass
@@ -229,6 +231,14 @@ struct DockPreviewView: View {
                                     .offset(x: 7, y: -5)
                             }
                         }
+                        // Beside the Dock's badge, the agent's: the most
+                        // urgent session this app hosts, as a mark.
+                        .overlay(alignment: .bottomTrailing) {
+                            if let agent = content.appAgents.first {
+                                DockAgentDot(mark: agent, size: 8)
+                                    .offset(x: 3, y: 3)
+                            }
+                        }
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
@@ -286,6 +296,20 @@ struct DockPreviewView: View {
                             actions.onNewWindow?()
                         }
                     }
+                }
+            }
+            if let note = content.headerNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if !content.askRows.isEmpty {
+                Divider()
+                ForEach(content.askRows) { mark in
+                    DockAskRow(mark: mark, note: content.askNotes[mark.sessionID],
+                               answering: content.answering.contains(mark.sessionID),
+                               actions: actions)
                 }
             }
             if let media = content.media {
@@ -352,7 +376,9 @@ struct DockPreviewView: View {
             } else if !content.windows.isEmpty {
                 Divider()
                 if content.compact {
-                    DockPreviewCompactList(windows: content.windows, actions: actions)
+                    DockPreviewCompactList(windows: content.windows, agents: content.agents,
+                                           armedWindowID: content.armedWindowID,
+                                           armedNote: content.armedNote, actions: actions)
                 } else {
                     // A strip that fits centres in the panel — one card
                     // left-anchored with dead glass beside it reads as a
@@ -413,6 +439,8 @@ struct DockPreviewView: View {
                             // caption. The Dock's own bubble makes three.
                             showsTitle: window.title != content.appName
                                 && window.title != appTitle.base,
+                            agent: content.agents[window.id],
+                            armedNote: content.armedWindowID == window.id ? content.armedNote : nil,
                             actions: actions)
         }
     }
@@ -470,14 +498,19 @@ struct DockPreviewView: View {
             return content.windows.isEmpty ? "Not running" : "Minimized window"
         }
         let minimized = content.windows.filter(\.minimized).count
+        let windows: String
         switch content.windows.count {
-        case 0: return "No open windows"
-        case 1: return minimized == 1 ? "1 window, minimized" : "1 window"
+        case 0: windows = "No open windows"
+        case 1: windows = minimized == 1 ? "1 window, minimized" : "1 window"
         default:
-            return minimized > 0
+            windows = minimized > 0
                 ? "\(content.windows.count) windows, \(minimized) minimized"
                 : "\(content.windows.count) windows"
         }
+        // "3 windows · 1 agent waiting" — the header answers which
+        // terminal wants you before any card is read.
+        guard let agents = DockAgentMatch.headerSummary(content.appAgents) else { return windows }
+        return "\(windows) · \(agents)"
     }
 }
 
@@ -492,6 +525,12 @@ struct DockPreviewCard: View {
     /// nil-equivalent title rows are suppressed — the header already
     /// names the app, and the Dock's own bubble does too.
     var showsTitle = true
+    /// The agent session this window hosts — its mark, its ring when it
+    /// waits on you, and what it is doing under the title.
+    var agent: DockAgentMark? = nil
+    /// A guarded close's first press: the card rings in the agent's
+    /// colour and this line replaces the title until it lapses.
+    var armedNote: String? = nil
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
@@ -557,7 +596,20 @@ struct DockPreviewCard: View {
                     .transition(.opacity)
                 }
             }
-            if showsTitle || window.minimized {
+            .overlay(alignment: .topTrailing) {
+                if let agent {
+                    DockAgentDot(mark: agent)
+                        .padding(6)
+                        .allowsHitTesting(false)
+                }
+            }
+            if let armedNote {
+                Text(armedNote)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: size.width)
+            } else if showsTitle || window.minimized {
                 HStack(spacing: 3) {
                     if window.minimized {
                         Image(systemName: "arrow.down.right.and.arrow.up.left")
@@ -573,6 +625,16 @@ struct DockPreviewCard: View {
                 }
                 .frame(maxWidth: size.width)
             }
+            if armedNote == nil, let agent {
+                // What the agent in this window is doing — the fact the
+                // panel's row would show, one quiet line.
+                Text(agent.statusLine)
+                    .font(.system(size: 9, weight: agent.isWaiting ? .semibold : .regular))
+                    .foregroundStyle(agent.isWaiting ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: size.width)
+            }
         }
         .padding(5)
         .background(
@@ -581,6 +643,16 @@ struct DockPreviewCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.accentColor, lineWidth: selected ? 2 : 0))
+        // A waiting agent's card is outlined in its provider's colour; a
+        // guarded close's first press thickens it.
+        .overlay {
+            if let agent, agent.isWaiting || armedNote != nil {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(agent.accent.opacity(0.9), lineWidth: armedNote != nil ? 3 : 1.5)
+                    .padding(selected ? 3 : 0)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         // Aero shake lives on continuous hover — a non-activating panel
@@ -653,13 +725,18 @@ struct DockPreviewCard: View {
 /// means no captures: nothing here ever flashes the recording dot.
 struct DockPreviewCompactList: View {
     let windows: [DockPreviewWindow]
+    var agents: [Int: DockAgentMark] = [:]
+    var armedWindowID: Int? = nil
+    var armedNote: String? = nil
     let actions: DockPreviewActions
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
             LazyVStack(spacing: 2) {
                 ForEach(windows) { window in
-                    DockPreviewCompactRow(window: window, actions: actions)
+                    DockPreviewCompactRow(window: window, agent: agents[window.id],
+                                          armedNote: armedWindowID == window.id ? armedNote : nil,
+                                          actions: actions)
                 }
             }
             .padding(2)
@@ -802,12 +879,17 @@ final class SwipeCatcherView: NSView {
 /// One row of the compact list — click raises, hover shows the verbs.
 private struct DockPreviewCompactRow: View {
     let window: DockPreviewWindow
+    var agent: DockAgentMark? = nil
+    var armedNote: String? = nil
     let actions: DockPreviewActions
     @ViewState private var hovering = false
 
     var body: some View {
         Button { actions.performWindowAction(window, actions.onPick) } label: {
             HStack(spacing: 6) {
+                if let agent {
+                    DockAgentDot(mark: agent, size: 7)
+                }
                 if window.minimized {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
                         .font(.system(size: 8))
@@ -818,8 +900,8 @@ private struct DockPreviewCompactRow: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.secondary)
                 }
-                Text(window.title)
-                    .font(.callout)
+                Text(armedNote ?? window.title)
+                    .font(armedNote == nil ? .callout : .callout.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -865,6 +947,56 @@ private struct DockPreviewCompactRow: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// A waiting agent this app hosts, answerable from the Dock: the mark,
+/// the session and what it asks, then Deny / Approve through the same
+/// `answer_ask` the panel sends (the daemon raises the terminal first).
+/// Where the daemon says the ask can't be answered from outside, the
+/// buttons disable and say where it can be; once answered, the row
+/// shows the daemon's verdict instead of guessing success.
+private struct DockAskRow: View {
+    let mark: DockAgentMark
+    let note: String?
+    let answering: Bool
+    let actions: DockPreviewActions
+
+    var body: some View {
+        HStack(spacing: 8) {
+            DockAgentDot(mark: mark)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(mark.label)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text(mark.statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: 260, alignment: .leading)
+            Spacer(minLength: 8)
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if let ask = mark.ask {
+                let answerable = ask.canAnswer && !ask.wantsTextReply
+                Button("Deny") { actions.onAnswer?(ask, false) }
+                    .controlSize(.small)
+                    .disabled(!answerable || answering)
+                Button("Approve") { actions.onAnswer?(ask, true) }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(mark.accent)
+                    .disabled(!answerable || answering)
+                    .help(answerable ? "Approve — \(mark.providerName) carries on"
+                                     : "Answer this one in the session's window")
+            }
+        }
+        .padding(.vertical, 2)
+        .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
     }
 }
 

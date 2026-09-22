@@ -54,7 +54,7 @@ struct DockAgentMark: Equatable, Identifiable {
     /// worker shares its parent's window (its label never titles one,
     /// its cwd would collide with the parent's). A remote row has no
     /// window on this Mac; a row with no host bundle has nowhere to look.
-    static func marks(from sessions: [CoreSession]) -> [DockAgentMark] {
+    static func marks(from sessions: [CoreSession], asks: [CoreAsk] = []) -> [DockAgentMark] {
         sessions.compactMap { session in
             guard !session.isRemote, !session.isSubagent else { return nil }
             let activity = SessionActivity.reduce(session)
@@ -72,7 +72,14 @@ struct DockAgentMark: Equatable, Identifiable {
                 cwdTail: session.cwd.map { SessionRow.tail(of: $0) },
                 activity: activity,
                 fact: SessionRow.activityFact(session: session, activity: activity),
-                ask: session.ask,
+                // The pinned ask carries the episode id an answer pins to;
+                // an embedded one learns its session here, as the panel's
+                // rows do, so Approve / Deny know whom they answer.
+                ask: asks.first { $0.session == session.id } ?? session.ask.map { ask in
+                    var ask = ask
+                    ask.session = session.id
+                    return ask
+                },
                 hosts: hosts,
                 tty: session.terminal?.tty)
         }
