@@ -176,7 +176,8 @@ final class ScreenBarController {
     }
 
     /// The frontmost app's menu titles: each ear yields to them as it
-    /// does to status items. Read only while ears can draw.
+    /// does to status items. Read only while a notched screen's ears can
+    /// draw (`updateAppMenuWatch`).
     private let appMenus = AppMenuExtent()
 
     init() {
@@ -322,6 +323,10 @@ final class ScreenBarController {
     }
 
     @objc private func screensChanged(_ note: Notification) {
+        // The preferred screen can change hands here (the lid closed
+        // onto an external, or opened again), so the reader starts or
+        // stops before the running one re-reads the titles that moved.
+        updateAppMenuWatch()
         appMenus.refresh()
         reposition()
     }
@@ -561,10 +566,20 @@ final class ScreenBarController {
         }
     }
 
-    /// The menu-title reader follows the ears: shown, wings on, and no
-    /// external capsule holding the flanks.
+    /// The menu-title reader follows the ears that can yield to it:
+    /// shown, wings on, no external capsule holding the flanks, and a
+    /// real notch on the band's screen. A notch-less screen's chips
+    /// carry themselves in their whole claim (`ScreenBarView`'s
+    /// `earRect` returns before it reads a limit), so the titles never
+    /// move a pixel there and each activation's two AX walks bought
+    /// nothing. The simulated notch has no safe-area depth either, so
+    /// it takes the same answer. A notched screen keeps the reader even
+    /// while no ear draws: content or the handle can arrive at any
+    /// moment, and a reader started then would leave the new ear over
+    /// the titles for a frame while its first walk is in flight.
     private func updateAppMenuWatch() {
-        if isShown && notchWingsEnabled && capsule == nil {
+        let notched = ScreenBarGeometry.preferredScreen().map(ScreenBarGeometry.hasNotch) ?? false
+        if isShown && notchWingsEnabled && capsule == nil && notched {
             appMenus.start()
         } else {
             appMenus.stop()
