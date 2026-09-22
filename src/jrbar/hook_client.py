@@ -7,10 +7,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .hook_ingress_protocol import (
+    HOOK_DECISION_WAIT_MS,
     MAX_HOOK_INGRESS_PAYLOAD_BYTES,
     HookIngressDisposition,
     HookIngressRequest,
     submit_hook_ingress,
+    submit_hook_ingress_for_decision,
 )
 
 
@@ -65,6 +67,56 @@ def run_hook_client(
     return 0
 
 
+def run_decide_hook_client(
+    provider: str,
+    log_path: Path,
+    payload_text: str,
+    *,
+    submit: Callable[
+        [HookIngressRequest], tuple[HookIngressDisposition, str | None]
+    ] = submit_hook_ingress_for_decision,
+    fallback: Callable[[str, Path, str], object] = _synchronous_fallback,
+) -> str | None:
+    """``run_hook_client`` for the decide lane: the verdict line to print,
+    or ``None`` for "print nothing" (the agent's own prompt carries on).
+
+    The same admission and the same fallback as every other hook; the only
+    addition is that an accepted frame waits for the daemon's verdict, as
+    the compiled shim's ``--decide`` does (hook/jrbar-hook.c). A daemon that
+    is down gets the payload through the synchronous fallback and no
+    verdict: nothing can be decided without it.
+    """
+    try:
+        request = HookIngressRequest(
+            provider,
+            str(Path(log_path).expanduser()),
+            payload_text,
+            decide_ms=HOOK_DECISION_WAIT_MS,
+        )
+    except (TypeError, ValueError):
+        return None
+    try:
+        from .process_registry import note_hook_payload
+
+        note_hook_payload(provider, payload_text)
+    except Exception:
+        pass
+    try:
+        disposition, verdict = submit(request)
+    except Exception:
+        disposition, verdict = HookIngressDisposition.UNAVAILABLE, None
+    if disposition in (
+        HookIngressDisposition.UNAVAILABLE,
+        HookIngressDisposition.SUBMISSION_AMBIGUOUS,
+    ):
+        try:
+            fallback(provider, Path(log_path).expanduser(), payload_text)
+        except Exception:
+            pass
+        return None
+    return verdict if disposition is HookIngressDisposition.ACCEPTED else None
+
+
 def _read_bounded_payload() -> str | None:
     try:
         payload = sys.stdin.buffer.read(MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1)
@@ -78,10 +130,19 @@ def _read_bounded_payload() -> str | None:
         return None
 
 
-def hook_client_main(provider: str, log_path: Path) -> int:
+def hook_client_main(provider: str, log_path: Path, *, decide: bool = False) -> int:
     try:
         payload_text = _read_bounded_payload()
         if payload_text is None:
+            return 0
+        if decide:
+            verdict = run_decide_hook_client(provider, Path(log_path).expanduser(), payload_text)
+            if verdict is not None:
+                try:
+                    sys.stdout.write(verdict + "\n")
+                    sys.stdout.flush()
+                except Exception:
+                    pass
             return 0
         return run_hook_client(provider, Path(log_path).expanduser(), payload_text)
     finally:
@@ -103,11 +164,11 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, IndexError):
         return 0
 
-    return hook_client_main(provider, log_path)
+    return hook_client_main(provider, log_path, decide="--decide" in args)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["hook_client_main", "main", "run_hook_client"]
+__all__ = ["hook_client_main", "main", "run_decide_hook_client", "run_hook_client"]

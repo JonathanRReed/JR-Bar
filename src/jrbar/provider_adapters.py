@@ -992,6 +992,25 @@ def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
     return _request_identifier(f"derived:{digest}")
 
 
+def _record_request_identifier(record: HookEvent) -> RequestIdentifier | None:
+    """The payload's own request id, else the derived turn-and-call one."""
+    request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))
+    if request_id is None:
+        request_id = _derived_request_identifier(record)
+    return request_id
+
+
+def hook_request_identity(record: object) -> str | None:
+    """The request id a request-shaped hook record is keyed on in canonical
+    state -- the same one ``minimize_hook_event`` writes. The decide lane
+    parks a PermissionRequest under it, so an answer reaches exactly the
+    request the card shows, and the matching PostToolUse releases it."""
+    if type(record) is not HookEvent:
+        return None
+    request_id = _record_request_identifier(record)
+    return None if request_id is None else request_id.value
+
+
 def _event_token(value: object) -> EventToken | None:
     if type(value) is not str:
         return None
@@ -1361,7 +1380,7 @@ def minimize_hook_event(
             parent_id = candidate_parent
     request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))
     if request_id is None and rule.request_state is not None:
-        request_id = _derived_request_identifier(record)
+        request_id = _record_request_identifier(record)
     sequence = _sequence(record.raw)
     token = _event_token(_first_raw_value(record.raw, _EVENT_ID_FIELDS))
     if token is None:

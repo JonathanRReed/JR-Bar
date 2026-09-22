@@ -10,13 +10,26 @@
  * and the daemon drains that file later (src/jrbar/hook_pending.py). The
  * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
  * can block an agent: everything after the payload is read is bounded by
- * HARD_BUDGET_MS and every failure path exits 0.
+ * HARD_BUDGET_MS -- by DECIDE_WAIT_MS for the verdict wait of --decide,
+ * below -- and every failure path exits 0.
  *
- *   jrbar-hook --provider <id> [--log <path>]
+ *   jrbar-hook --provider <id> [--log <path>] [--decide]
  *
  * For --provider cursor or gemini (or with --emit-empty-json) the shim
  * prints "{}" on stdout, as Cursor's and Gemini CLI's hook
  * contract requires; otherwise it prints nothing.
+ *
+ * --decide is the decide lane, installed only on Claude Code's and Codex's
+ * PermissionRequest hook. Delivery is unchanged and keeps its budget; the
+ * shim then stays on the socket for up to DECIDE_WAIT_MS while the daemon
+ * holds the request for an explicit Approve or Deny from any JR-Bar
+ * surface, and prints the verdict line the daemon sends: the provider's own
+ * {"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":...}}.
+ * A lapsed hold, a released request, a daemon that is down or a reply that
+ * does not look like a verdict all print nothing, which is the documented
+ * "no decision" for both agents: their own prompt carries on. The wait is
+ * bounded here, not by the daemon, and the installed hook timeout (60 s) is
+ * longer, so the agent never has to kill the shim.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -43,6 +56,13 @@
 /* Kept back from delivery for the spool's lock, so a frame the budget cut
  * short can still wait out another shim's append or rotation. */
 #define SPOOL_RESERVE_MS 10
+/* How long --decide waits for the verdict once the payload is in hand
+ * (src/jrbar/hook_ingress_protocol.py HOOK_DECISION_WAIT_MS). */
+#define DECIDE_WAIT_MS 50000
+/* The disposition line plus the verdict line; a reply that would not fit
+ * is not a verdict (MAX_HOOK_DECISION_BYTES). */
+#define MAX_REPLY_BYTES (64 + 64 * 1024)
+#define DECISION_PREFIX "{\"hookSpecificOutput\":"
 #define MAGIC "JRBARHOOK\x01"
 
 static uint64_t now_ms(void) {
@@ -85,12 +105,38 @@ static double parent_start_time(pid_t ppid) {
     return (double)info.pbi_start_tvsec + (double)info.pbi_start_tvusec / 1e6;
 }
 
+/* The verdict in a --decide reply, or 0 for "print nothing". The reply is
+ * the disposition line, then at most one more line: the whole line must be
+ * there, must follow an "accepted" disposition and must open a
+ * hookSpecificOutput document. Anything short of that is not a decision,
+ * and the agent's own prompt is the safe reading of a bad reply. */
+static size_t decide_verdict(const char *reply, size_t len, const char **verdict) {
+    const char *newline = memchr(reply, '\n', len);
+    if (!newline) return 0;
+    size_t head = (size_t)(newline - reply);
+    if (head != strlen("accepted") || memcmp(reply, "accepted", head) != 0) return 0;
+    const char *line = newline + 1;
+    size_t rest = len - head - 1;
+    size_t prefix = strlen(DECISION_PREFIX);
+    if (rest <= prefix || line[rest - 1] != '\n' || memcmp(line, DECISION_PREFIX, prefix) != 0) return 0;
+    if (memchr(line, '\n', rest - 1)) return 0;
+    *verdict = line;
+    return rest;
+}
+
 /* Send the whole frame and wait for the one-line reply. 0 once the whole
  * frame is sent, reply or not: the daemon may have queued it, so it is
  * never re-queued. -1 when the socket was unavailable; -2 when the budget
  * or an error cut the send short. A truncated frame never decodes (the
- * daemon records refused_invalid), so both failures are spooled. */
-static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_t deadline) {
+ * daemon records refused_invalid), so both failures are spooled.
+ *
+ * With `reply` (--decide) the read runs until the daemon closes the
+ * connection, the buffer is full or `decide_deadline` passes, and the bytes
+ * read land in `reply`/`*reply_len`. Only the send is held to `deadline`:
+ * the frame reaches the daemon inside the hook budget either way, and the
+ * wait after it is the decide lane's own bound. */
+static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_t deadline,
+                   char *reply, size_t reply_cap, size_t *reply_len, uint64_t decide_deadline) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof addr);
     addr.sun_family = AF_UNIX;
@@ -120,11 +166,24 @@ static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_
     }
     shutdown(fd, SHUT_WR);
     pfd.events = POLLIN;
+    if (reply) {
+        size_t got = 0;
+        while (got < reply_cap) {
+            left = (int64_t)decide_deadline - (int64_t)now_ms();
+            if (left <= 0 || poll(&pfd, 1, (int)left) <= 0) break;
+            ssize_t n = read(fd, reply + got, reply_cap - got);
+            if (n <= 0) break;
+            got += (size_t)n;
+        }
+        *reply_len = got;
+        close(fd);
+        return 0;
+    }
     left = (int64_t)deadline - (int64_t)now_ms();
     if (left > REPLY_TIMEOUT_MS) left = REPLY_TIMEOUT_MS;
     if (left > 0 && poll(&pfd, 1, (int)left) > 0) {
-        char reply[80];
-        (void)read(fd, reply, sizeof reply);
+        char ack[80];
+        (void)read(fd, ack, sizeof ack);
     }
     close(fd);
     return 0;
@@ -230,11 +289,12 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
 int main(int argc, char **argv) {
     uint64_t started = now_ms();
     const char *provider = NULL, *log = NULL;
-    int emit_empty = 0;
+    int emit_empty = 0, decide = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--provider") && i + 1 < argc) provider = argv[++i];
         else if (!strcmp(argv[i], "--log") && i + 1 < argc) log = argv[++i];
         else if (!strcmp(argv[i], "--emit-empty-json")) emit_empty = 1;
+        else if (!strcmp(argv[i], "--decide")) decide = 1;
     }
     if (!provider || !*provider || strlen(provider) > 32) return 0;
     for (const char *c = provider; *c; c++) if (!((*c >= 'a' && *c <= 'z') || *c == '_')) return 0;
@@ -255,7 +315,8 @@ int main(int argc, char **argv) {
      * spawned well before its payload arrived no time to wait out another
      * shim's append (200 shims spawned before any was fed). `started`
      * stays the event's queued time. */
-    uint64_t deadline = now_ms() + HARD_BUDGET_MS;
+    uint64_t received = now_ms();
+    uint64_t deadline = received + HARD_BUDGET_MS;
 
     char dir[2048];
     state_dir(dir, sizeof dir);
@@ -268,11 +329,13 @@ int main(int argc, char **argv) {
     char escaped_log[4096 * 6 + 1];
     json_escape(escaped_log, log, strlen(log) > 4096 ? 4096 : strlen(log));
     char header[8192];
+    char decide_field[32] = "";
+    if (decide) snprintf(decide_field, sizeof decide_field, ",\"decide_ms\":%d", DECIDE_WAIT_MS);
     int header_len = ppid_start >= 0
-        ? snprintf(header, sizeof header, "{\"version\":1,\"provider\":\"%s\",\"log_path\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f}",
-                   provider, escaped_log, (int)ppid, ppid_start)
-        : snprintf(header, sizeof header, "{\"version\":1,\"provider\":\"%s\",\"log_path\":\"%s\",\"ppid\":%d}",
-                   provider, escaped_log, (int)ppid);
+        ? snprintf(header, sizeof header, "{\"version\":1,\"provider\":\"%s\",\"log_path\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f%s}",
+                   provider, escaped_log, (int)ppid, ppid_start, decide_field)
+        : snprintf(header, sizeof header, "{\"version\":1,\"provider\":\"%s\",\"log_path\":\"%s\",\"ppid\":%d%s}",
+                   provider, escaped_log, (int)ppid, decide_field);
     if (header_len <= 0 || (size_t)header_len >= sizeof header) { if (cursor) puts("{}"); return 0; }
 
     size_t prefix = sizeof(MAGIC) - 1 + 8;
@@ -286,8 +349,17 @@ int main(int argc, char **argv) {
     memcpy(frame + prefix, header, (size_t)header_len);
     memcpy(frame + prefix + header_len, payload, len);
 
-    int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline - SPOOL_RESERVE_MS);
+    char *reply = decide ? malloc(MAX_REPLY_BYTES) : NULL;
+    size_t reply_len = 0;
+    int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline - SPOOL_RESERVE_MS,
+                         reply, reply ? MAX_REPLY_BYTES : 0, &reply_len, received + DECIDE_WAIT_MS);
     if (result < 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
+    if (reply) {
+        const char *verdict = NULL;
+        size_t verdict_len = decide_verdict(reply, reply_len, &verdict);
+        if (verdict_len) { fwrite(verdict, 1, verdict_len, stdout); fflush(stdout); }
+        free(reply);
+    }
     if (cursor) puts("{}");
     return 0;
 }

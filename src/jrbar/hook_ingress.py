@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import socket
 import threading
 import time
@@ -50,6 +51,11 @@ HOOK_INGRESS_CONNECTION_DEADLINE_SECONDS: Final = 5.0
 # every hook behind it).
 MAX_HOOK_INGRESS_CONNECTIONS: Final = 8
 HOOK_INGRESS_LISTEN_BACKLOG: Final = 32
+# A parked ``--decide`` connection hands its worker slot back before it
+# waits (answer_decisions.py bounds how many wait at once), so a burst of
+# PermissionRequests held for a click never starves ordinary hooks of the
+# eight slots above.
+HOOK_DECISION_SEND_TIMEOUT_SECONDS: Final = 1.0
 
 
 class HookIngressOutcome(str, Enum):
@@ -179,6 +185,32 @@ def register_shim_process(request: HookIngressRequest) -> None:
         pass
 
 
+_SOL_LOCAL: Final = 0
+_LOCAL_PEERPID: Final = 0x002
+
+
+def _peer_pid(connection: socket.socket) -> int | None:
+    """The hook process on the other end (macOS ``LOCAL_PEERPID``). A
+    parked decision watches it: the shim shuts its write side at once, so
+    the socket itself reads as hung up long before the process is gone."""
+    try:
+        raw = connection.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, 4)
+        pid = int.from_bytes(raw[:4], "little", signed=True)
+    except (OSError, ValueError, TypeError):
+        return None
+    return pid if pid > 1 else None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _bounded_increment(value: int, amount: int = 1) -> int:
     return min(MAX_HOOK_INGRESS_METRIC_COUNT, value + max(0, amount))
 
@@ -222,6 +254,7 @@ class HookIngressService:
         socket_path: Path | None = None,
         peer_uid_reader: Callable[[socket.socket], int] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        decision_broker: object | None = None,
     ) -> None:
         if not callable(process):
             raise ValueError("invalid hook ingress processor")
@@ -251,6 +284,10 @@ class HookIngressService:
         ).expanduser()
         self._peer_uid_reader = peer_uid_reader
         self._monotonic = monotonic
+        # ``None`` resolves to the daemon's one broker on first use, so
+        # constructing a service stays free of the decide lane's imports.
+        self._decision_broker = decision_broker
+        self._parked: set[object] = set()
 
         self._condition = threading.Condition()
         self._pending: deque[_AcceptedHook] = deque()
@@ -602,32 +639,110 @@ class HookIngressService:
             worker.start()
 
     def _serve_connection(self, connection: socket.socket) -> None:
+        parked = None
         try:
-            with connection:
-                self._handle_connection(connection)
+            try:
+                parked = self._handle_connection(connection)
+            finally:
+                # A parked decision waits outside the worker slots.
+                self._connection_slots.release()
+            if parked is not None:
+                self._await_decision(connection, parked)
         finally:
+            try:
+                connection.close()
+            except OSError:
+                pass
             with self._server_lock:
                 self._connections.discard(connection)
                 self._connection_workers.discard(threading.current_thread())
-            self._connection_slots.release()
 
-    def _handle_connection(self, connection: socket.socket) -> None:
+    def _broker(self):
+        if self._decision_broker is None:
+            from .answer_decisions import default_decision_broker
+
+            self._decision_broker = default_decision_broker()
+        return self._decision_broker
+
+    def _observe_for_decisions(self, request: HookIngressRequest) -> None:
+        """Every arriving hook may prove a parked prompt is gone."""
+        try:
+            self._broker().observe(request.provider, request.payload_text)
+        except Exception:
+            pass
+
+    def _park_decision(self, request: HookIngressRequest):
+        """A ``--decide`` request the lane can hold, parked BEFORE the payload
+        is queued, so the state that shows the ask already shows it as
+        answerable. ``None`` sends the ordinary reply: the shim then prints
+        nothing and the agent's own prompt carries on."""
+        if request.decide_ms is None:
+            return None
+        try:
+            from .answer_decisions import permission_facts
+
+            facts = permission_facts(request.provider, request.payload_text)
+            if facts is None:
+                return None
+            slot = self._broker().park(
+                facts,
+                wait_limit_seconds=request.decide_ms / 1000.0,
+                host_pid=request.ppid,
+            )
+        except Exception:
+            return None
+        if slot is not None:
+            with self._server_lock:
+                self._parked.add(slot)
+        return slot
+
+    def _unpark(self, slot) -> None:
+        with self._server_lock:
+            self._parked.discard(slot)
+        try:
+            self._broker().release_slot(slot)
+        except Exception:
+            pass
+
+    def _await_decision(self, connection: socket.socket, slot) -> None:
+        broker = self._broker()
+        delivered = False
+        peer = _peer_pid(connection)
+        try:
+            verdict = broker.wait(
+                slot,
+                alive=None if peer is None else (lambda: _pid_alive(peer)),
+            )
+            if verdict is not None:
+                from .hook_ingress_protocol import encode_hook_decision
+
+                connection.settimeout(HOOK_DECISION_SEND_TIMEOUT_SECONDS)
+                connection.sendall(encode_hook_decision(verdict))
+                delivered = True
+        except (OSError, ValueError):
+            delivered = False
+        finally:
+            with self._server_lock:
+                self._parked.discard(slot)
+            broker.delivered(slot, delivered)
+
+    def _handle_connection(self, connection: socket.socket):
         if not _same_uid_peer(connection, self._peer_uid_reader):
-            return
+            return None
         deadline = self._now() + HOOK_INGRESS_CONNECTION_DEADLINE_SECONDS
         chunks: list[bytes] = []
         total = 0
         while True:
             remaining = deadline - self._now()
             if remaining <= 0.0:
-                return
+                return None
             try:
                 connection.settimeout(
                     min(HOOK_INGRESS_READ_TIMEOUT_SECONDS, remaining)
                 )
                 chunk = connection.recv(65536)
             except (TimeoutError, OSError):
-                return
+                return None
             if not chunk:
                 break
             total += len(chunk)
@@ -637,27 +752,49 @@ class HookIngressService:
                     connection,
                     HookIngressDisposition.REFUSED_INVALID,
                 )
-                return
+                return None
             chunks.append(chunk)
         request = decode_hook_ingress_request(b"".join(chunks))
+        parked = None
         if request is None:
             self.refuse_invalid()
             disposition = HookIngressDisposition.REFUSED_INVALID
         else:
+            self._observe_for_decisions(request)
+            parked = self._park_decision(request)
             disposition = self.submit(request)
-        self._send_response(connection, disposition)
+            if parked is not None and disposition is not HookIngressDisposition.ACCEPTED:
+                self._unpark(parked)
+                parked = None
+        if not self._send_response(connection, disposition) and parked is not None:
+            # The hook went away before it heard the disposition: nobody is
+            # left to print a verdict.
+            self._unpark(parked)
+            parked = None
+        return parked
 
     @staticmethod
     def _send_response(
         connection: socket.socket,
         disposition: HookIngressDisposition,
-    ) -> None:
+    ) -> bool:
         try:
             connection.sendall(encode_hook_ingress_response(disposition))
         except OSError:
-            pass
+            return False
+        return True
 
     def _stop_server(self, deadline: float) -> bool:
+        with self._server_lock:
+            parked = tuple(self._parked)
+            self._parked.clear()
+        # Parked hooks fall through to the agents' own prompts before their
+        # connections close under them.
+        for slot in parked:
+            try:
+                self._broker().release_slot(slot)
+            except Exception:
+                pass
         with self._server_lock:
             self._server_running = False
             server = self._server_socket

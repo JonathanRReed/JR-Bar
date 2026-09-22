@@ -91,7 +91,9 @@ protocol 1. Timestamps are Unix epoch seconds.
  ],
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
-          "answerable":true,"replyable":false,"request":"request:v1:{…}"}],
+          "answerable":true,"replyable":false,"request":"request:v1:{…}",
+          "decision":{"hold_until":1788982845.0,"always":false,"decided":false},
+          "preview":"rm -rf build","risk":"destructive"}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
             {"id":"screen-bar","kind":"screen_bar","name":"Screen Bar","leds":8,"enabled":true,"brightness":100,"linked":true,"error":null}],
@@ -219,6 +221,22 @@ Vocabulary:
   daemon refuses `stale_request` when the live request has moved on;
   `asks` itself is ordered by `opened_at` so a provider re-emitting a
   pending prompt never shuffles a card out from under the pointer.
+- `ask.decision` is non-null while the decide lane holds the request: the
+  agent's own `PermissionRequest` hook ran as `jrbar-hook --decide` and is
+  waiting on JR-Bar for a verdict (see "The decide lane" under
+  `answer_ask`). Such an ask is `answerable` whatever hosts the session --
+  Ghostty, an IDE panel, a headless run -- because an answer is the hook's
+  own reply and nothing is typed. `hold_until` is the epoch at which the
+  hold lapses and the agent's own prompt carries on; `always` says an
+  Always allow can be sent (Claude, when its `permission_suggestions`
+  carry an allow rule); `decided` is true for the few seconds after an
+  answer, while the provider's events catch up. `preview` is one bounded
+  line of what the agent wants to run (the command, the file, the URL,
+  `server · tool` for MCP; token-shaped runs masked) and `risk` is
+  `"destructive"` when a shell command matches a pattern that loses work
+  if it runs by mistake (`rm -r`, `sudo`, a forced push, `reset --hard`,
+  `curl … | sh`, …) -- a mark, never a block. All three are `null` for an
+  ask the lane does not hold.
 - `pid` is the process registry's live pid for that session (absent when
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
@@ -747,7 +765,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | name | args | effect / result |
 | --- | --- | --- |
 | `open_session` | session, action? | The controller's `open_session` (terminal launch or provider URL, honouring the session-open preference). `{session, activated, origin}`. |
-| `answer_ask` | session, decision (`approve`/`deny`), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | Answers the session's live request **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- Ghostty, kitty, WezTerm, Alacritty have no such call) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is always `focused_tab_tty` (the terminal named the focused tab and it is this session's). See the refusals below. |
+| `answer_ask` | session, decision (`approve`/`deny`, or `always` for a held request that offers it), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | A request the decide lane holds (`ask.decision` non-null) is answered first, through the agent's own `PermissionRequest` hook: `{session, decision, answered, delivered, code: "sent", message, confirmation: "provider_pending", mechanism: "permission_hook"}` -- see "The decide lane" below. Anything else is answered **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- Ghostty, kitty, WezTerm, Alacritty have no such call) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is always `focused_tab_tty` (the terminal named the focused tab and it is this session's). See the refusals below. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
@@ -860,6 +878,45 @@ The same surface backs the panel's Approve/Deny, the notification actions and a
 Creator Micro session key, so a refusal reads identically wherever it happens;
 the panel shows the refusal's own sentence rather than an exception name.
 
+### The decide lane
+
+Claude Code and Codex run a `PermissionRequest` hook when they are about to
+ask for approval, and take the hook's stdout as the answer (both vendors'
+hook references, checked 2026-09-22). JR-Bar installs that one hook as
+`jrbar-hook … --decide` with a 60 s timeout (Codex's entry also carries
+`statusMessage = "Waiting for an answer in JR-Bar"`); every other event keeps
+the plain shim and its 250 ms budget. The daemon (`answer_decisions.py`)
+parks the request before it queues the payload and holds it for up to 45 s.
+`answer_ask` on a held request replies to the hook instead of typing, so it
+needs no frontmost window, no focused-tab proof and no Accessibility grant,
+and it works from every surface that sends `answer_ask` -- the panel, a
+banner action, the notch, a deck key or the Rail:
+
+| decision | verdict the hook prints |
+| --- | --- |
+| `approve` | `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` |
+| `deny` | `{"behavior":"deny","message":"The user denied this tool call from JR-Bar."}` -- plus `"interrupt":true` for Claude, which stops the turn the way Esc on its own prompt does. Codex takes no `interrupt`. |
+| `always` | Claude only, and only when `ask.decision.always`: `{"behavior":"allow","updatedPermissions":[…]}` with the request's own `addRules`/`allow` suggestions copied field by field. Mode changes and directory grants are never echoed. Anything else refuses `unsupported`. |
+
+Only an explicit `answer_ask` decides. The hold ends without a verdict --
+the shim prints nothing, which both agents read as "no decision", so their
+own prompt carries on -- when it lapses, when the agent ran the tool (the
+matching `PostToolUse`) or the turn moved on (`Stop`, `StopFailure`,
+`UserPromptSubmit`, `SessionEnd`, `Interrupt`), when the hook process is
+gone, when `open_session` opens the session to answer it there, or when the
+daemon stops. Claude Code shows its own prompt while the hook runs and takes
+whichever answer comes first, so a hold costs it nothing; Codex asks its
+hooks before it shows the prompt, so a Codex request is not held while its
+terminal is the frontmost app. `AskUserQuestion` and `ExitPlanMode` are never
+held: their answer is a choice or a plan, not a yes. At most 16 requests are
+held at once; past that they fall through.
+
+Refusals on a held request: `stale_request` (the card's `request` is not the
+live one), `stale_ask` ("That ask was already answered from JR-Bar.", "JR-Bar's
+hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …") and
+`unsupported` (an `always` with nothing to remember). A request the lane
+does not hold goes through the checks above unchanged.
+
 ### subscribe
 Optional; protocol 1 always sends everything. Reserved.
 
@@ -908,6 +965,19 @@ For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
 contracts require (`--emit-empty-json` forces it for any provider);
 otherwise it prints nothing.
 
+`--decide` (the decide lane, installed only on Claude's and Codex's
+`PermissionRequest`) adds `"decide_ms":50000` to the header. Delivery and
+spooling are unchanged and keep the 250 ms budget; the shim then keeps
+reading for up to 50 s after its payload arrived. The daemon replies with
+the disposition line and, when a click decides, one more line -- the
+verdict document -- and closes the connection; the shim prints that line
+only if it is whole, follows `accepted` and opens a
+`{"hookSpecificOutput":` document (64 KiB cap). A lapsed or released hold,
+a daemon that is down, or any other reply prints nothing. `python -m
+jrbar.hook_client --decide` does the same when no shim is built. A parked
+connection hands its worker slot back before it waits, so held requests
+never starve ordinary hooks of the ingress's eight connection slots.
+
 `install.hook_command_arguments` registers the shim when `JRBAR_HOOK_EXEC`
 names one (an empty value disables it), when a bundled copy sits beside a
 frozen executable, or when a source checkout has built
@@ -926,7 +996,10 @@ written. `jrbar hooks doctor` shows, per provider, the command registered
 today (read from JSON and TOML configs, folded YAML, the argv arrays
 embedded in handlers, and the Antigravity envelope) and the one an
 install would write, the shim path, whether the ingress and core sockets
-answer, and any queued payloads.
+answer, and any queued payloads; for Claude and Codex it also says whether
+the decide lane is installed (`decide=installed|missing|not_installed`).
+An install from before the lane existed keeps working and reads `missing`
+until Settings › Agents reinstalls the hooks.
 
 ### Pi and Gemini CLI
 

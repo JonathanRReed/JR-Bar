@@ -625,6 +625,17 @@ def _cmd_answer_ask(self, args):
     from .answer_local import raise_application, session_host
 
     status = _find_status(self, args.get("session"))
+    # The decide lane first: a PermissionRequest the agent's own hook is
+    # holding for JR-Bar is answered by replying to that hook, from any
+    # terminal, with nothing typed (answer_decisions.py). ``None`` is "not
+    # held here" and the keystroke path below takes it as before.
+    from .answer_decisions import answer_through_decision_lane
+
+    lane_reply = answer_through_decision_lane(
+        self, status, args, journal_for=_command_journal, on_main=on_main
+    )
+    if lane_reply is not None:
+        return lane_reply
     decision = str(args.get("decision") or "approve").lower()
     if decision not in ("approve", "deny"):
         raise CommandError("invalid_args", "decision must be approve or deny")
