@@ -53,6 +53,33 @@ import Testing
         #expect(cmd?.contains("killall Dock") == true)
     }
 
+    @Test func theDockFlipsLiveBeforeItEverRestarts() {
+        // System Events sets the running Dock in place; the killall
+        // path is the last resort only, so the chip no longer promises
+        // a restart.
+        let live = SystemToggle.dockAutoHide.liveApplyCommand(on: false)
+        #expect(live?.contains("dock preferences to set autohide to false") == true)
+        #expect(live?.contains("killall") == false)
+        #expect(SystemToggle.dockAutoHide.restarts == nil)
+        // Every other toggle's live path is its ordinary command.
+        #expect(SystemToggle.hiddenFiles.liveApplyCommand(on: true)
+                == SystemToggle.hiddenFiles.applyCommand(on: true))
+    }
+
+    // MARK: - The strip
+
+    @Test func aFreshStripIsTheOriginalEight() {
+        #expect(SystemToggle.defaultStrip == [.keepAwake, .darkMode, .desktopIcons, .hiddenFiles,
+                                              .mute, .screenSaver, .lock, .dockAutoHide])
+    }
+
+    @Test func aStoredStripKeepsCanonicalOrderAndDropsTheUnknown() {
+        #expect(SystemToggle.strip(fromStored: ["lock", "darkMode", "warpDrive", "lock"])
+                == [.darkMode, .lock])
+        // Hiding every chip is a choice, not a reset.
+        #expect(SystemToggle.strip(fromStored: []).isEmpty)
+    }
+
     @Test func lockIsThePublicDisplaySleep() {
         // CGSession is gone on macOS 27 — display sleep is the honest
         // verb (locks on wake where a password is required).

@@ -559,6 +559,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Turn on whatever the Utilities page has on — a parked utility
         // owns nothing until this lands.
         utilitiesStore.applySettings()
+        wireShell()
 
         // The first-run walkthrough: agents, permissions, menu bar.
         // `shouldPresentOnLaunch` gates the auto-show; Settings ›
@@ -1373,5 +1374,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.core?.retryNow()
         }
         socketWatcher?.start()
+    }
+}
+
+// MARK: - Shell wiring: the toggle strip, links, shortcuts
+
+extension AppDelegate {
+    /// The app-level pieces the system lane adds, wired once after the
+    /// stores exist: the toggle strip's view of the Dock utility's
+    /// preview hold.
+    fileprivate func wireShell() {
+        // A Dock chip flip while a preview holds the Dock out waits for
+        // the hold to let go — the hold's restore would undo it.
+        SystemTogglesStore.shared.state.dockHoldActive = { [weak self] in
+            self?.utilitiesStore?.dock.enhance.autohideHold.holding ?? false
+        }
     }
 }

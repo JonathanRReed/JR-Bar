@@ -61,14 +61,33 @@ public enum SystemToggle: String, CaseIterable, Codable, Sendable {
     }
 
     /// What flips besides the setting — Finder relaunches for the
-    /// desktop rows, the Dock for autohide. A restart is visible to
-    /// the user; the chip's copy says so instead of hiding it.
+    /// desktop rows. A restart is visible to the user; the chip's copy
+    /// says so instead of hiding it. The Dock is not on the list: it
+    /// flips live (`CoreDock`, else System Events), and only the last
+    /// resort `applyCommand` restarts it.
     public var restarts: String? {
         switch self {
         case .desktopIcons, .hiddenFiles: return "Finder"
-        case .dockAutoHide: return "Dock"
         default: return nil
         }
+    }
+
+    // MARK: - The strip
+
+    /// The chips a fresh strip shows, in order — the eight the card has
+    /// always drawn.
+    public static let defaultStrip: [SystemToggle] = [
+        .keepAwake, .darkMode, .desktopIcons, .hiddenFiles,
+        .mute, .screenSaver, .lock, .dockAutoHide,
+    ]
+
+    /// A stored strip back to chips: unknown names (a newer build's
+    /// chip, a typo) are dropped, duplicates collapse, and the order is
+    /// always the canonical one so the strip never shuffles. An empty
+    /// stored list stays empty — hiding every chip is a choice.
+    public static func strip(fromStored raw: [String]) -> [SystemToggle] {
+        let chosen = Set(raw.compactMap(SystemToggle.init(rawValue:)))
+        return allCases.filter(chosen.contains)
     }
 
     // MARK: - Reads (pure: the defaults key + the on-mapping)
@@ -116,6 +135,8 @@ public enum SystemToggle: String, CaseIterable, Codable, Sendable {
         case .hiddenFiles:
             return "defaults write com.apple.finder AppleShowAllFiles -bool \(on) && killall Finder"
         case .dockAutoHide:
+            // The last resort: `liveApplyCommand` and the app's CoreDock
+            // driver both flip the running Dock without a relaunch.
             return "defaults write com.apple.dock autohide -bool \(on) && killall Dock"
         case .screenSaver:
             // The engine's own launch — no API, but a stable bundle id
@@ -130,6 +151,20 @@ public enum SystemToggle: String, CaseIterable, Codable, Sendable {
             return "pmset displaysleepnow"
         case .keepAwake, .mute:
             return nil
+        }
+    }
+
+    /// The public flip that needs no relaunch, where one exists: System
+    /// Events' `dock preferences` sets the running Dock's autohide in
+    /// place (the same Automation grant the Dark chip uses). The app
+    /// tries its CoreDock driver before this and `applyCommand` after.
+    public func liveApplyCommand(on: Bool) -> String? {
+        switch self {
+        case .dockAutoHide:
+            return "osascript -e 'tell application \"System Events\" "
+                + "to tell dock preferences to set autohide to \(on)'"
+        default:
+            return applyCommand(on: on)
         }
     }
 }
