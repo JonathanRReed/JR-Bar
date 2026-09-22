@@ -249,8 +249,7 @@ final class MenuBarReveal {
 
     func pointerEnteredRow() {
         guard settings().revealOnHover else { return }
-        Self.log.notice("reveal: hover entered the blank stretch")
-        triggerReveal()
+        triggerReveal("hover entered the blank stretch")
     }
 
     func pointerDown(at point: NSPoint) {
@@ -259,14 +258,12 @@ final class MenuBarReveal {
         // that item's, a click on the far side of the bar is nobody's.
         if let zone = revealZone(), !zone.contains(point) { return }
         guard !itemFrames().contains(where: { $0.contains(point) }) else { return }
-        Self.log.notice("reveal: click on the blank stretch")
-        triggerReveal()
+        triggerReveal("click on the blank stretch")
     }
 
     func scrolled() {
         guard settings().revealOnScroll else { return }
-        Self.log.notice("reveal: scroll on the bar")
-        triggerReveal()
+        triggerReveal("scroll on the bar")
     }
 
     /// A click anywhere off the row while a reveal is out folds it —
@@ -286,8 +283,10 @@ final class MenuBarReveal {
     /// Any gesture: reveal once, then keep the timer fresh. A burst
     /// inside `revealThrottle` re-arms without re-firing `onReveal` —
     /// reveal and hide are transitions, and a scroll stream must not
-    /// turn into a reconcile storm.
-    func triggerReveal() {
+    /// turn into a reconcile storm. The notice names the gesture once
+    /// per reveal that fires: logged per event, a trackpad scroll wrote
+    /// 65 lines in one second (2026-09-22).
+    func triggerReveal(_ gesture: String = "gesture") {
         let now = Date()
         if revealed, now.timeIntervalSince(lastRevealAt) < Self.revealThrottle {
             armRehide(settings().rehideSeconds)
@@ -295,6 +294,7 @@ final class MenuBarReveal {
         }
         lastRevealAt = now
         revealed = true
+        Self.log.notice("reveal: \(gesture, privacy: .public)")
         onReveal()
         armRehide(settings().rehideSeconds)
     }
