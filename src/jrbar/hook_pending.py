@@ -6,7 +6,10 @@ under the state directory, rotating the file to ``<provider>.overflow.jsonl``
 once it reaches 16 MiB. The daemon drains those files when it starts and
 every ``PENDING_DRAIN_INTERVAL_SECONDS`` after that. A file is renamed before
 it is read so a shim appending at the same moment starts a fresh file
-instead of racing the reader.
+instead of racing the reader. Every shim appends under an ``flock`` on the
+file its path still names, and the drain takes that lock on the renamed
+file before it reads: an append already under way lands first, and a shim
+that locks later finds the file moved and reopens the pending path.
 
 A record queued inside ``PENDING_REPLAY_HORIZON_SECONDS`` replays as a live
 one, stamped when it is drained; one older than that keeps the time the
@@ -16,6 +19,7 @@ shim queued it and reaches the log without waking the live monitor
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import threading
@@ -42,6 +46,12 @@ DRAINING_INFIX: Final = ".draining-"
 REJECTED_SUFFIX: Final = ".rejected.jsonl"
 OVERFLOW_SUFFIX: Final = ".overflow.jsonl"
 MAX_REJECTED_FILE_BYTES: Final = 16 * 1024 * 1024
+# A shim holds its lock for one write. Waiting longer than this means one
+# was stopped mid-append, and the drain goes on without the lock rather
+# than hold up the daemon behind it.
+PENDING_LOCK_WAIT_SECONDS: Final = 1.0
+# Reopens of the pending path when a shim rotated it under a requeue.
+_APPEND_ATTEMPTS: Final = 8
 
 
 def pending_hook_files(state_dir: Path | None = None) -> list[Path]:
@@ -205,17 +215,74 @@ def _read_newest(path: Path, limit: int) -> tuple[str, int]:
     return tail[cut:].decode("utf-8", errors="replace"), start + cut
 
 
-def _append_lines(path: Path, lines: list[str]) -> bool:
-    """Append whole lines to ``path``; append-mode keeps pace with a shim
-    writing the same file at the same moment."""
-    if not lines:
-        return True
+def _lock(descriptor: int, operation: int) -> bool:
+    """Take ``operation`` on ``descriptor`` within ``PENDING_LOCK_WAIT_SECONDS``;
+    False when the wait ran out."""
+    deadline = time.monotonic() + PENDING_LOCK_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.001)
+
+
+def _names(path: Path, descriptor: int) -> bool:
+    """Whether ``path`` still names the file open on ``descriptor``."""
     try:
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write("".join(line if line.endswith("\n") else f"{line}\n" for line in lines))
-        return True
+        at, held = os.lstat(path), os.fstat(descriptor)
     except OSError:
         return False
+    return (at.st_dev, at.st_ino) == (held.st_dev, held.st_ino)
+
+
+def _settle(path: Path) -> None:
+    """Wait out every append already under way into ``path``, a spool file
+    this drain just renamed.
+
+    The rename moves the file out of the shim's way, but a shim that found
+    it just before still writes into it, and the unlink after the read lost
+    that line (19 of 200 shims racing a drain every 10 ms). The shim holds
+    the lock through its write, so taking it once waits that write out, and
+    a shim that locks after this finds its path names another file and
+    reopens it: nothing appends here any more. The lock is taken on the
+    renamed file, never the live one, so no shim waits on this process."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        _lock(descriptor, fcntl.LOCK_EX)
+    finally:
+        os.close(descriptor)
+
+
+def _append_lines(path: Path, lines: list[str]) -> bool:
+    """Append whole lines to ``path`` the way the shim appends: under the
+    lock, on the file ``path`` still names, so a shim rotating the spool at
+    that moment cannot carry them into the overflow generation, which is
+    never replayed."""
+    if not lines:
+        return True
+    data = "".join(line if line.endswith("\n") else f"{line}\n" for line in lines).encode("utf-8")
+    for attempt in range(_APPEND_ATTEMPTS):
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        except OSError:
+            return False
+        try:
+            # A shim rotated the file between the open and the lock: reopen.
+            # Past the attempts the lines go in without the lock, not away.
+            if _lock(descriptor, fcntl.LOCK_EX) and not _names(path, descriptor) and attempt + 1 < _APPEND_ATTEMPTS:
+                continue
+            view = memoryview(data)
+            while view:
+                view = view[os.write(descriptor, view) :]
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(descriptor)
+    return False
 
 
 def drain_pending_hooks(
@@ -251,6 +318,7 @@ def drain_pending_hooks(
         try:
             if not adopted:
                 path.rename(draining)
+                _settle(draining)
             text, head_bytes = _read_newest(draining, MAX_PENDING_FILE_BYTES)
         except OSError:
             continue

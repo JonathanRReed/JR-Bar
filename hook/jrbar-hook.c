@@ -9,8 +9,8 @@
  * appended to <state>/<provider>.pending.jsonl with the time it was queued
  * and the daemon drains that file later (src/jrbar/hook_pending.py). The
  * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
- * can block an agent: the whole run is bounded by HARD_BUDGET_MS and every
- * failure path exits 0.
+ * can block an agent: everything after the payload is read is bounded by
+ * HARD_BUDGET_MS and every failure path exits 0.
  *
  *   jrbar-hook --provider <id> [--log <path>]
  *
@@ -40,6 +40,9 @@
 #define MAX_SPOOL_BYTES (16 * 1024 * 1024)
 #define HARD_BUDGET_MS 250
 #define REPLY_TIMEOUT_MS 200
+/* Kept back from delivery for the spool's lock, so a frame the budget cut
+ * short can still wait out another shim's append or rotation. */
+#define SPOOL_RESERVE_MS 10
 #define MAGIC "JRBARHOOK\x01"
 
 static uint64_t now_ms(void) {
@@ -131,28 +134,71 @@ static int open_spool(const char *path) {
     return open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600);
 }
 
-/* An fd on the spool with room for `need` more bytes. At the cap the file
- * is renamed to `overflow` (one generation kept) and a fresh one opened:
- * the line is always written, because the newest events are the ones the
- * daemon's live state needs. The lock makes check-and-rename one step for
- * shims that hit the cap together, so only the one still holding the file
- * at `path` renames it; the rest find a new inode there and reopen. */
-static int open_spool_with_room(const char *path, const char *overflow, size_t need) {
-    int fd = open_spool(path);
-    struct stat st;
-    if (fd < 0 || fstat(fd, &st) != 0 || st.st_size == 0
-        || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) return fd;
-    if (flock(fd, LOCK_EX) == 0) {
-        struct stat at;
-        if (lstat(path, &at) == 0 && at.st_ino == st.st_ino && at.st_dev == st.st_dev)
-            (void)rename(path, overflow);
+/* Whether `path` still names the file `st` describes. */
+static int spool_still_at(const char *path, const struct stat *st) {
+    struct stat at;
+    return lstat(path, &at) == 0 && at.st_ino == st->st_ino && at.st_dev == st->st_dev;
+}
+
+/* Lock the spool without blocking past `deadline`; the first try is made
+ * even when the budget is spent. 0 once the lock is held and `path` still
+ * names the file, -1 when the file moved (the caller reopens: a lock on it
+ * would guard a file nothing appends to any more), -2 when the deadline
+ * passed. */
+static int lock_spool(int fd, const char *path, const struct stat *st, uint64_t deadline) {
+    for (;;) {
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0) return spool_still_at(path, st) ? 0 : -1;
+        if (errno != EWOULDBLOCK && errno != EINTR) return -2;
+        if (!spool_still_at(path, st)) return -1;
+        if (now_ms() >= deadline) return -2;
+        usleep(250);
     }
-    close(fd);
-    return open_spool(path);
+}
+
+/* An fd on the spool with room for `need` more bytes, holding the lock
+ * until it is closed. At the cap the file is renamed to `overflow` (one
+ * generation kept) and a fresh one opened: the line is always written,
+ * because the newest events are the ones the daemon's live state needs.
+ *
+ * Every appender holds the lock from its size check through its write, so
+ * checking for room, writing and rotating are one step and no line can
+ * follow the file into `overflow`, which is never replayed. Only the
+ * rotating shim used to lock: one that had found room just before another
+ * renamed the file wrote its line after the rename, into the overflow
+ * generation. A shared lock for appenders is not enough either: two that
+ * both found room overran the cap together, and a shim at the cap ran out
+ * its budget waiting for a moment with no appender inside (both measured
+ * with 200 concurrent shims around a rotation). Appends take microseconds,
+ * so taking turns costs nothing an agent can see.
+ *
+ * The daemon renames a file before it drains it and then takes the lock
+ * on the renamed file, so an append already under way lands before the
+ * read, and a shim that locks later finds the file moved and reopens
+ * `path`. A file only moves when a drain or a rotation made progress, so
+ * the shim reopens until its deadline; past it the line is appended
+ * without the lock to the file `path` names, past the cap if need be. Only
+ * then can a drain or rotation at that same moment still take it. */
+static int open_spool_with_room(const char *path, const char *overflow, size_t need, uint64_t deadline) {
+    for (;;) {
+        int fd = open_spool(path);
+        struct stat st;
+        if (fd < 0 || fstat(fd, &st) != 0) return fd;
+        int locked = lock_spool(fd, path, &st, deadline);
+        if (locked == -1) {
+            close(fd);
+            if (now_ms() < deadline) continue;
+            return open_spool(path);
+        }
+        /* The size is read under the lock: every earlier append has landed. */
+        if (locked == -2 || fstat(fd, &st) != 0 || st.st_size == 0
+            || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) return fd;
+        (void)rename(path, overflow);
+        close(fd);
+    }
 }
 
 static void queue_pending(const char *dir, const char *provider, pid_t ppid, double ppid_start,
-                          uint64_t queued_at_ms, const char *payload, size_t payload_len) {
+                          uint64_t queued_at_ms, const char *payload, size_t payload_len, uint64_t deadline) {
     char path[4096], overflow[4096];
     if ((size_t)snprintf(path, sizeof path, "%s/%s.pending.jsonl", dir, provider) >= sizeof path) return;
     if ((size_t)snprintf(overflow, sizeof overflow, "%s/%s.overflow.jsonl", dir, provider) >= sizeof overflow) return;
@@ -167,7 +213,7 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
                      "{\"provider\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f,\"queued_at_ms\":%llu,\"payload\":\"%s\"}\n",
                      provider, (int)ppid, ppid_start, (unsigned long long)queued_at_ms, escaped);
     if (n > 0 && (size_t)n < cap) {
-        int fd = open_spool_with_room(path, overflow, (size_t)n);
+        int fd = open_spool_with_room(path, overflow, (size_t)n, deadline);
         if (fd >= 0) { (void)write(fd, line, (size_t)n); close(fd); }
     }
     free(line);
@@ -176,7 +222,6 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
 
 int main(int argc, char **argv) {
     uint64_t started = now_ms();
-    uint64_t deadline = started + HARD_BUDGET_MS;
     const char *provider = NULL, *log = NULL;
     int emit_empty = 0;
     for (int i = 1; i < argc; i++) {
@@ -198,6 +243,12 @@ int main(int argc, char **argv) {
         }
     }
     if (!payload || len > MAX_PAYLOAD) { if (cursor) puts("{}"); return 0; }
+    /* The budget starts once the payload is in hand. The time an agent
+     * takes to write and close stdin is its own; counting it left a shim
+     * spawned well before its payload arrived no time to wait out another
+     * shim's append (200 shims spawned before any was fed). `started`
+     * stays the event's queued time. */
+    uint64_t deadline = now_ms() + HARD_BUDGET_MS;
 
     char dir[2048];
     state_dir(dir, sizeof dir);
@@ -228,8 +279,8 @@ int main(int argc, char **argv) {
     memcpy(frame + prefix, header, (size_t)header_len);
     memcpy(frame + prefix + header_len, payload, len);
 
-    int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline);
-    if (result < 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len);
+    int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline - SPOOL_RESERVE_MS);
+    if (result < 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
     if (cursor) puts("{}");
     return 0;
 }

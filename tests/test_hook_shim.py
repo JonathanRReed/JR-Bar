@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -207,6 +208,58 @@ def test_shim_rotates_a_full_spool_instead_of_growing_it(shim: Path, sock_dir: P
     assert _run(shim, sock_dir, "claude", "{}").returncode == 0
     assert len(pending.read_text().splitlines()) == 2
     assert overflow.stat().st_size == 16 * 1024 * 1024 - 64
+
+
+def test_shim_follows_the_spool_when_a_drain_moves_it_under_the_lock(shim: Path, sock_dir: Path) -> None:
+    """Every appender holds the spool's lock from its size check through its
+    write. A shim waiting on it while the daemon renames the file to drain
+    it must write to a fresh pending file, not follow the renamed one: that
+    file is read and unlinked, and a line landing in it after the read was
+    lost (19 of 200 shims racing a drain every 10 ms)."""
+    pending = sock_dir / "claude.pending.jsonl"
+    draining = sock_dir / "claude.pending.jsonl.draining-1-1"
+    pending.write_text("")
+    holder = os.open(pending, os.O_RDONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)  # another appender, mid-write
+    process = subprocess.Popen(
+        [str(shim), "--provider", "claude"],
+        stdin=subprocess.PIPE,
+        env=dict(os.environ, JRBAR_STATE_DIR=str(sock_dir)),
+    )
+    payload = '{"hook_event_name":"Stop","session_id":"moved"}'
+    try:
+        process.stdin.write(payload.encode())
+        process.stdin.close()
+        # No daemon listens, so the shim goes straight to the spool, where
+        # the held lock is the one thing it can be waiting on.
+        with pytest.raises(subprocess.TimeoutExpired):
+            process.wait(timeout=0.05)
+        pending.rename(draining)
+    finally:
+        os.close(holder)
+    assert process.wait(timeout=5) == 0
+    assert draining.read_text() == ""
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]
+
+
+def test_shim_waits_on_a_stuck_spool_lock_only_until_its_budget_runs_out(shim: Path, sock_dir: Path) -> None:
+    """A lock nobody releases (an appender stopped mid-write) holds the shim
+    for its 250 ms budget, not longer, and the line is still written."""
+    pending = sock_dir / "claude.pending.jsonl"
+    pending.write_text("")
+    holder = os.open(pending, os.O_RDONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    payload = '{"hook_event_name":"Stop","session_id":"stuck"}'
+    try:
+        started = time.monotonic()
+        assert _run(shim, sock_dir, "claude", payload).returncode == 0
+        elapsed = time.monotonic() - started
+    finally:
+        os.close(holder)
+    assert 0.2 <= elapsed < 2.0
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]
 
 
 def test_shim_spools_a_frame_the_budget_cut_short(shim: Path, sock_dir: Path) -> None:

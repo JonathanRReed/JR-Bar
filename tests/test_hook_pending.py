@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -257,6 +259,43 @@ def test_an_oversized_file_without_a_whole_line_in_reach_is_kept_as_overflow(tmp
     assert not pending.exists()
     overflow = tmp_path / "claude.overflow.jsonl"
     assert overflow.read_bytes() == b"x" * 10_000
+
+
+def test_the_drain_waits_out_an_append_already_under_way(tmp_path, monkeypatch) -> None:
+    """A shim that found the pending file just before the drain renamed it
+    still writes into the renamed file. The shim holds the spool's lock
+    through that write, and the drain takes it before it reads: the late
+    line is drained, not unlinked with the file."""
+    from jrbar import hook_pending
+
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    pending.write_text(_line(payload='{"n":1}') + "\n")
+    shim = os.open(pending, os.O_WRONLY | os.O_APPEND)
+    fcntl.flock(shim, fcntl.LOCK_EX)
+    locking = threading.Event()
+    real_lock = hook_pending._lock
+
+    def lock(descriptor: int, operation: int) -> bool:
+        locking.set()
+        return real_lock(descriptor, operation)
+
+    monkeypatch.setattr(hook_pending, "_lock", lock)
+    seen: list[str] = []
+    drain = threading.Thread(
+        target=drain_pending_hooks,
+        args=(lambda request: seen.append(request.payload_text),),
+        kwargs={"state_dir": tmp_path, "log_path_for": lambda provider: f"/logs/{provider}.jsonl"},
+    )
+    try:
+        drain.start()
+        assert locking.wait(5.0)
+        assert not pending.exists()  # renamed; the drain waits for the lock
+        os.write(shim, (_line(payload='{"n":2}') + "\n").encode())
+    finally:
+        os.close(shim)
+    drain.join(5.0)
+    assert seen == ['{"n":1}', '{"n":2}']
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_fresh_replay_is_stamped_on_arrival_and_only_history_keeps_its_queued_time(

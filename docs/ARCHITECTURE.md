@@ -44,9 +44,10 @@ daemon boundary, the hook path or packaging. The wire contract itself is
   actually runs. It reads stdin, sends one frame to the ingress socket,
   waits at most 200 ms for a disposition and exits 0. With no daemon
   listening it appends the payload to `<provider>.pending.jsonl` and the
-  daemon drains that file at start and every 30 s. Whole run capped at
-  250 ms; measured 6 ms wall per spawn, of which the shim's own work is
-  about 3 ms (the old Python hook client took 88 ms).
+  daemon drains that file at start and every 30 s. Everything after it
+  has read stdin is capped at 250 ms; measured 6 ms wall per spawn, of
+  which the shim's own work is about 3 ms (the old Python hook client took
+  88 ms).
 
 Session truth is the daemon's, built from four sources that agree or
 disagree in the open: hook events (with the hook's `ppid` and process

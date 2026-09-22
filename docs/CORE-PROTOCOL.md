@@ -879,8 +879,8 @@ JRBARHOOK\x01 + be32(header length) + be32(payload length)
   + <stdin bytes>
 ```
 
-It waits up to 200 ms for the disposition and exits 0; the whole run is
-capped at 250 ms. Measured on this Mac (2026-09-09, 100 invocations from a
+It waits up to 200 ms for the disposition and exits 0; everything after it
+has read stdin is capped at 250 ms. Measured on this Mac (2026-09-09, 100 invocations from a
 shell loop): 6.2 ms wall per invocation of which 3.3 ms is the bare
 fork/exec (`/usr/bin/true` in the same loop), so the shim's own work is
 about 3 ms; from Python's `subprocess.run` the median is 5.7 ms; the
@@ -889,7 +889,10 @@ the frame short, the shim appends
 `{"provider","ppid","ppid_start","queued_at_ms","payload"}` as one JSON
 line to `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and
 exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one
-generation) and a fresh one starts. The daemon drains those files once
+generation) and a fresh one starts. Every append and rotation holds an
+`flock` on the file its path still names, and the daemon takes that lock on
+a file it has renamed to drain, so no line lands in a file after it was
+rotated or read. The daemon drains those files once
 before it opens the ingress socket, so a startup backlog lands ahead of any
 live hook, and every 30 s after that, registering each payload's agent
 process from `ppid`/`ppid_start` (for a node-hosted CLI such as pi or
