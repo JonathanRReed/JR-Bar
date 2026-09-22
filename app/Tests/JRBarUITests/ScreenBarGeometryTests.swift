@@ -266,6 +266,40 @@ import Testing
         #expect(coupling.housing == CGRect(x: 0, y: 5, width: 380, height: 13))
     }
 
+    @Test func theNoticeLineClearsTheHousingOverTheIslandsCorners() {
+        // The bar's panel sits above the island's, so the housing's black
+        // — climbing up behind the island's bottom corners — draws over
+        // the island's foot. A notice sized for the housing keeps the
+        // whole 11.5 pt system line box between the bezel and the
+        // housing's top edge at every corner the Notch profile allows.
+        let font = NSFont.systemFont(ofSize: 11.5)
+        let lineBox = font.ascender - font.descender + font.leading
+        #expect(NotchIslandLayout.noticeLineRoom >= lineBox)
+        func housingTop(notice: CGSize, restingRadius: CGFloat) -> CGFloat {
+            let size = NSSize(width: notice.width + 4,
+                              height: ScreenBarGeometry.coupledWindowHeight(islandBottom: notice.height))
+            let island = Self.islandRect(width: notice.width, height: notice.height, in: size)
+            let coupling = ScreenBarGeometry.coupledBand(
+                in: size, island: island,
+                cornerRadius: NotchSilhouetteGeometry.radius(size: island.size, notchDepth: 32,
+                                                             restingRadius: restingRadius))
+            return size.height - coupling.housing.maxY
+        }
+        for rest in stride(from: CGFloat(0), through: 16, by: 1) {
+            let notice = NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32, underHousing: rest)
+            let top = housingTop(notice: notice, restingRadius: rest)
+            #expect(top - 32 >= NotchIslandLayout.noticeLineRoom, "corner \(rest)")
+            // The island measures the housing the bar draws.
+            let climb = NotchIslandLayout.housingClimb(size: notice, notchDepth: 32, restingRadius: rest)
+            #expect(abs(top - (notice.height - climb)) < 1e-9, "corner \(rest)")
+        }
+        // Negative control: the bare 22 pt lip at the standard 8 pt
+        // corner puts the housing's top edge 43.4 pt down, 11.4 under
+        // the bezel — through the line's caps.
+        let bare = NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32)
+        #expect(housingTop(notice: bare, restingRadius: 8) - 32 < lineBox)
+    }
+
     @Test func coupledIslandGrowsTheWindowTowardIt() {
         // A grown island (the expanded card's 380) widens the window to
         // its own edges and drops the strip's seat to its bottom edge;

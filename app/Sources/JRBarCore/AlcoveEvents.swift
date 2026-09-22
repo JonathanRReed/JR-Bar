@@ -523,20 +523,59 @@ extension NotchIslandLayout {
     /// slot — room for the glyph and one line of copy.
     public static let noticeShoulder: CGFloat = 50
     public static let noticeMinWidth: CGFloat = 240
-    /// How far below the notch the notice capsule reaches — one line's
-    /// worth of lip.
+    /// How far below the notch the bare notice capsule reaches — one
+    /// line's worth of lip.
     public static let noticeLip: CGFloat = 22
+    /// The clear room the notice line keeps between the bezel and a live
+    /// Screen Bar's housing: the 11.5 pt line box (13.5 pt) or the
+    /// kind's 11 pt glyph (14 pt), plus a point of air each side.
+    public static let noticeLineRoom: CGFloat = 16
+    /// The least black the Screen Bar's housing keeps above its strip —
+    /// `ScreenBarGeometry.coupledLip` is this, so the island measures
+    /// the same housing the bar draws.
+    public static let housingLip: CGFloat = 4
 
     /// The notice face: a one-line capsule — the kind's glyph and the
     /// "Claude · rename-the-fish needs you" line — a touch wider and
-    /// deeper than idle, still hung from the notch: the notch plus one
-    /// line's lip, with or without a live Screen Bar (its strip seats
-    /// under the lip, its tray ends at the bezel). The width is exactly
-    /// the slot plus its shoulders — never more: a minimum that could
-    /// outgrow notch-plus-wings would read as a panel, not the notch
-    /// speaking. Notch-less screens get the fixed floating pill.
-    public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat) -> CGSize {
-        CGSize(width: slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth,
-               height: notchDepth + noticeLip)
+    /// deeper than idle, still hung from the notch. Bare, it is the
+    /// notch plus one line's lip. Under a live Screen Bar's housing
+    /// (`restingRadius` is the island's resting corner) it is the notch,
+    /// the line's room and the housing's climb over the island's bottom
+    /// corners: a bare 22 pt lip left about half the line's cap height
+    /// under the bar's black at the standard 8 pt corner, nearly all of
+    /// it at a 16 pt one. The climb grows with the height, at most about
+    /// half a point a point, so stepping up a point at a time clears the
+    /// room in a few steps. The width is exactly the slot plus its
+    /// shoulders — never more: a minimum that could outgrow
+    /// notch-plus-wings would read as a panel, not the notch speaking.
+    /// Notch-less screens get the fixed floating pill.
+    public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat,
+                                  underHousing restingRadius: CGFloat? = nil) -> CGSize {
+        let width = slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth
+        guard notchDepth > 0, let restingRadius else {
+            return CGSize(width: width, height: notchDepth + noticeLip)
+        }
+        let room = notchDepth + noticeLineRoom
+        func climb(_ height: CGFloat) -> CGFloat {
+            housingClimb(size: CGSize(width: width, height: height),
+                         notchDepth: notchDepth, restingRadius: restingRadius)
+        }
+        var height = (room + climb(room)).rounded(.up)
+        while height - climb(height) < room { height += 1 }
+        return CGSize(width: width, height: height)
+    }
+
+    /// Points of a live Screen Bar's housing that lie over the foot of
+    /// an island of `size` (`ScreenBarGeometry.coupledBand`): the
+    /// housing runs up behind the island's bottom corners — the
+    /// silhouette's radius at that size — and never less than its
+    /// `housingLip`. The bar's panel is above the island's, so island
+    /// content inside that band is drawn over by solid black.
+    public static func housingClimb(size: CGSize, notchDepth: CGFloat,
+                                    restingRadius: CGFloat) -> CGFloat {
+        guard notchDepth > 0 else { return 0 }
+        let radius = NotchSilhouetteGeometry.radius(size: size, notchDepth: notchDepth,
+                                                    restingRadius: restingRadius)
+        return min(max(0, size.height), max(housingLip, radius))
     }
 }

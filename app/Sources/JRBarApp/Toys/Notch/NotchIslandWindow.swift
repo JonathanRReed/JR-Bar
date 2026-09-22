@@ -9,10 +9,12 @@ import SwiftUI
 /// screen-saver tier, and under the Screen Bar's `statusBar+2`, so the
 /// bar's tray and ears draw over the island's notch-deep top and its
 /// strip seats at the island's bottom edge. The tray ends at the bezel,
-/// so the island's own content starts right under the notch with no
-/// clearance; the bar's window is click-through, so hover and swipes
-/// still land. `sharingType = .none` keeps it out of Fold's desktop capture
-/// so a warped screen never shows the island twice;
+/// so content may start right under the notch; the strip's black
+/// housing climbs up behind the island's bottom corners, so content
+/// keeps above that climb (the notice's `noticeClimb`, the card's
+/// `islandBottomContentInset`). The bar's window is click-through, so
+/// hover and swipes still land. `sharingType = .none` keeps it out of
+/// Fold's desktop capture so a warped screen never shows the island twice;
 /// `JRBAR_CAPTURE_CARD` is a dev-only escape that lifts the exclusion
 /// so screenshots can see it (it ships unset).
 ///

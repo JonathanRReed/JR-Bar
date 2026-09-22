@@ -410,8 +410,9 @@ public enum ScreenBarGeometry {
 
     /// Black the housing keeps above the strip while a grown island's face
     /// is already behind it — the lip never shows; it only guarantees the
-    /// housing meets the island's own black.
-    public static let coupledLip: CGFloat = 4
+    /// housing meets the island's own black. The island's layout owns
+    /// the number: it keeps the notice line above this black.
+    public static let coupledLip: CGFloat = NotchIslandLayout.housingLip
     /// Black the housing keeps under the strip: one point seats the
     /// light inside the shared silhouette. Every point here is a point
     /// of app content the wrap covers under the menu bar.

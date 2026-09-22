@@ -294,22 +294,61 @@ struct AlcoveEventsTests {
         #expect(NotchIsland.idleContentWidth(s, media: nil) == base)
     }
 
-    @Test("a live Screen Bar owes the island no clearance: its strip seats under each face")
-    func noScreenBarClearance() {
+    @Test("a live Screen Bar's strip seats under each face; the notice keeps above its housing")
+    func screenBarClearance() {
         // The resting capsule is exactly the notch's depth — the band
         // hangs below it.
         #expect(NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
                                            leftShoulder: 34, rightShoulder: 12).height == 32)
-        // The notice is the notch plus one line's lip and nothing more:
-        // the bar's tray ends at the bezel (`wingEarDrop` is zero), so a
-        // line centred in the lip is clear of it, and the strip seats at
-        // the lip's bottom edge. 10 dead points used to push the line
-        // down past a strip that no longer crosses the island.
+        // Bare, the notice is the notch plus one line's lip.
         #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32).height
                 == 32 + NotchIslandLayout.noticeLip)
         #expect(NotchIslandLayout.noticeLip == 22)
+        // Under the bar the tray ends at the bezel (`wingEarDrop` is
+        // zero) and owes nothing above the line, but the strip's housing
+        // climbs over the island's bottom corners. At the standard 8 pt
+        // corner that is 32 + 16 of line room + the ~12.6 pt climb,
+        // rounded up: 61, where the bare 54 put the housing's top edge
+        // through the line's caps.
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
+                                             underHousing: 8).height == 61)
         // No notch, no band — a floating pill never grows.
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 0, notchDepth: 0, underHousing: 8)
+                == CGSize(width: 240, height: 22))
         #expect(NotchIslandLayout.floatingSize(contentWidth: 20).height == 24)
+    }
+
+    @Test("under a live Screen Bar the notice line's room clears the housing at every corner")
+    func noticeClearsTheHousing() {
+        // The room holds the 11.5 pt line box (13.5 pt) and the kind's
+        // 11 pt glyph (14 pt).
+        #expect(NotchIslandLayout.noticeLineRoom >= 14)
+        let room = NotchIslandLayout.noticeLineRoom
+        // Every corner the Notch profile's slider allows, on a 14"/16"
+        // MacBook Pro's 32 pt notch and a deeper one.
+        for depth: CGFloat in [32, 37.5] {
+            for rest in stride(from: CGFloat(0), through: 16, by: 1) {
+                let size = NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: depth,
+                                                        underHousing: rest)
+                let climb = NotchIslandLayout.housingClimb(size: size, notchDepth: depth,
+                                                           restingRadius: rest)
+                // The climb is the housing's: the silhouette's corner at
+                // this height, never under its lip.
+                #expect(climb >= NotchSilhouetteGeometry.radius(size: size, notchDepth: depth,
+                                                                restingRadius: rest))
+                #expect(climb >= NotchIslandLayout.housingLip)
+                #expect(size.height - climb - depth >= room, "corner \(rest), depth \(depth)")
+                // And no deeper than it has to be: a point shorter and
+                // the housing reaches the line.
+                let shorter = CGSize(width: size.width, height: size.height - 1)
+                let shorterClimb = NotchIslandLayout.housingClimb(size: shorter, notchDepth: depth,
+                                                                  restingRadius: rest)
+                #expect(shorter.height - shorterClimb - depth < room, "corner \(rest), depth \(depth)")
+            }
+        }
+        // No notch, no housing to climb.
+        #expect(NotchIslandLayout.housingClimb(size: CGSize(width: 240, height: 22),
+                                               notchDepth: 0, restingRadius: 8) == 0)
     }
 
     @Test("the new settings default on and decode tolerantly")

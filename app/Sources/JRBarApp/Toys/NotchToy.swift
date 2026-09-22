@@ -367,6 +367,29 @@ final class NotchToy: Toy {
         NotchIslandLayout.expandedTopInset(notchDepth: notchDepth)
     }
 
+    /// Points of the notice's foot the Screen Bar's housing draws over —
+    /// the view centres the line above them. Zero while no housing
+    /// couples under the island.
+    var noticeClimb: CGFloat {
+        _ = displayVersion
+        guard let screen = ScreenBarGeometry.preferredScreen(),
+              let corner = housingCorner(on: screen) else { return 0 }
+        let depth = ScreenBarGeometry.islandDepth(of: screen)
+        let size = NotchIslandLayout.noticeSize(
+            slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
+            notchDepth: depth, underHousing: corner)
+        return NotchIslandLayout.housingClimb(size: size, notchDepth: depth, restingRadius: corner)
+    }
+
+    /// The resting corner the Screen Bar's housing is measured with
+    /// while it couples under the island — only when the bar is up on a
+    /// real notch (a simulated one keeps the standalone band), nil
+    /// otherwise.
+    private func housingCorner(on screen: NSScreen) -> CGFloat? {
+        guard screenBarLive, ScreenBarGeometry.notchDepth(of: screen) > 0 else { return nil }
+        return notchCornerRadius
+    }
+
     /// The island's bottom corners take the notch profile's own radius —
     /// `screen_bar_notch_profile` + `screen_bar_notch_corner`, the same
     /// read the bar's tray silhouette makes, so island and tray match.
@@ -914,8 +937,8 @@ final class NotchToy: Toy {
         let size: CGSize
         switch face {
         case .notice:
-            size = NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0,
-                                                notchDepth: depth)
+            size = NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
+                                                underHousing: housingCorner(on: screen))
         case .expanded:
             let width = NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
             let content = island?.expandedCardHeight(width: width) ?? 0
@@ -1483,7 +1506,7 @@ final class NotchToy: Toy {
             _ = core.sessions
             _ = core.state?.usage
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
-            _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn
+            _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb
             _ = displayVersion
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
