@@ -27,11 +27,15 @@ struct MenuBarOverflowTests {
         panel.setFrame(intendedFrame, display: false)
         panel.contentView?.layoutSubtreeIfNeeded()
 
-        let glass = try #require(panel.contentView as? NSGlassEffectView)
+        // The glass rides inside `GlassBackdrop`'s rounded container, the
+        // window's content view, so the shadow follows the corners.
+        let container = try #require(panel.contentView)
+        let glass = try #require(container.subviews.first as? NSGlassEffectView)
         let hosted = try #require(glass.contentView)
         let expectedBounds = CGRect(origin: .zero, size: intendedFrame.size)
         #expect(panel.frame == intendedFrame)
-        #expect(glass.frame == expectedBounds)
+        #expect(container.frame == expectedBounds)
+        #expect(glass.frame == container.bounds)
         #expect(hosted.frame == glass.bounds,
                 "the real GeometryReader and ScrollView must fill the glass viewport")
     }
