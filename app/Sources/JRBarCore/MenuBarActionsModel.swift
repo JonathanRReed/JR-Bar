@@ -202,3 +202,92 @@ public struct MenuBarHotkeyBinding: Equatable, Codable, Sendable {
         self.enabled = enabled
     }
 }
+
+// MARK: - The layers over the curated map
+
+/// A bar-wide override laid over the curated map without rewriting it —
+/// Bartender 7's transient Focus Mode. "Hide all" and "Show all" used to
+/// write every app into `concealedApps`, so one Show all (a button, a
+/// hotkey, a rule pair) erased which apps you had chosen to hide. The
+/// overlay is the whole answer instead: the map stays yours, and
+/// restoring is dropping the overlay.
+public struct MenuBarOverlay: Equatable, Codable, Sendable {
+    public enum Kind: String, Codable, CaseIterable, Sendable {
+        /// Every app with an item tucked away — the quiet bar. Apps the
+        /// map already keeps always hidden stay in that deeper run.
+        case hideEverything
+        /// Nothing hidden — the bar as macOS would draw it.
+        case showEverything
+    }
+
+    public var kind: Kind
+    /// When the overlay went up, seconds since 1970 — whichever of a
+    /// manual overlay and a rule's came last wins.
+    public var sinceEpoch: Double
+    /// When it lapses on its own; nil holds until the next toggle.
+    public var untilEpoch: Double?
+
+    public init(kind: Kind, sinceEpoch: Double = Date().timeIntervalSince1970,
+                untilEpoch: Double? = nil) {
+        self.kind = kind
+        self.sinceEpoch = sinceEpoch
+        self.untilEpoch = untilEpoch
+    }
+
+    /// Whether the overlay still stands at `now`.
+    public func isLive(at now: Date = Date()) -> Bool {
+        untilEpoch.map { now.timeIntervalSince1970 < $0 } ?? true
+    }
+
+    private enum CodingKeys: String, CodingKey { case kind, sinceEpoch, untilEpoch }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        sinceEpoch = (try? c.decodeIfPresent(Double.self, forKey: .sinceEpoch)) ?? 0
+        untilEpoch = (try? c.decodeIfPresent(Double.self, forKey: .untilEpoch)) ?? nil
+    }
+
+    /// "Hide all" from wherever it came — the card, a hotkey, the
+    /// palette, a rule: set the quiet bar, or, over a "show everything",
+    /// drop it and give the curated bar back. Never a toggle, so a rule
+    /// that fires twice cannot undo itself.
+    public static func afterHideAll(_ current: MenuBarOverlay?, now: Date = Date(),
+                                    until: Date? = nil) -> MenuBarOverlay? {
+        if current?.kind == .showEverything, current?.isLive(at: now) == true { return nil }
+        return MenuBarOverlay(kind: .hideEverything, sinceEpoch: now.timeIntervalSince1970,
+                              untilEpoch: until?.timeIntervalSince1970)
+    }
+
+    /// "Show all": the mirror — over a quiet bar it restores the curated
+    /// bar, so the classic lock → hide / unlock → show pair ends where it
+    /// started instead of showing every app you tucked away.
+    public static func afterShowAll(_ current: MenuBarOverlay?, now: Date = Date(),
+                                    until: Date? = nil) -> MenuBarOverlay? {
+        if current?.kind == .hideEverything, current?.isLive(at: now) == true { return nil }
+        return MenuBarOverlay(kind: .showEverything, sinceEpoch: now.timeIntervalSince1970,
+                              untilEpoch: until?.timeIntervalSince1970)
+    }
+}
+
+/// Everything layered over the curated maps — the runtime overlay and
+/// the additions that ride with it — kept in one Codable value on
+/// `MenuBarSettings` so the file's shape changes in one place. Decoded
+/// tolerantly like the settings around it: a missing key reads as its
+/// default, an unknown one is ignored.
+public struct MenuBarCuration: Equatable, Codable, Sendable {
+    /// "Hide all" / "Show all" as they stand right now; nil is the
+    /// curated bar.
+    public var overlay: MenuBarOverlay?
+
+    public init(overlay: MenuBarOverlay? = nil) {
+        self.overlay = overlay
+    }
+
+    private enum CodingKeys: String, CodingKey { case overlay }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        overlay = (try? c.decodeIfPresent(MenuBarOverlay.self, forKey: .overlay)) ?? nil
+    }
+}

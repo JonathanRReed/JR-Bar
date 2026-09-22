@@ -258,7 +258,9 @@ final class MenuBarUtility: Toy {
             read: runningBundleIDRead ?? MenuBarUtility.readRunningBundleIDs,
             monotonic: monotonic
         )
-        hider.settings = { [weak self] in self?.settings() ?? MenuBarSettings() }
+        // The hider plans against the live map — the curated one with
+        // Hide all / Show all laid over it — never the stored copy.
+        hider.settings = { [weak self] in self?.liveSettings() ?? MenuBarSettings() }
         hider.onPlan = { [weak self] plan in
             guard let self else { return }
             if self.concealer != nil, !self.seedConcealedAppsIfNeeded(from: plan) {
@@ -568,50 +570,149 @@ final class MenuBarUtility: Toy {
         return sections[itemID] ?? .shown
     }
 
-    /// One-click relief for a crowded bar: hide every listed foreign
-    /// item at once — the write each item's picker would make.
-    /// Protected items (clock, Control Center) and our own family are
-    /// never touched.
-    func hideAllListed() {
-        let targets = listedItems.filter {
-            !MenuBarItemLister.isProtected($0) && !$0.ownerName.isEmpty
-                && !Self.isOwnFamily($0.bundleID)
+    // MARK: Hide all / Show all — the overlay over your curation
+
+    /// The overlay standing right now, if any.
+    var activeOverlay: MenuBarOverlay.Kind? {
+        settings().curation.overlay.flatMap { $0.isLive() ? $0.kind : nil }
+    }
+
+    /// The card's line while an overlay stands.
+    var overlayNote: String? {
+        MenuBarLayers.overlayNote(settings().curation.overlay)
+    }
+
+    /// The settings the engines converge to: the curated maps with the
+    /// standing overlay laid over them. Writes always go to `settings()`.
+    func liveSettings() -> MenuBarSettings {
+        let base = settings()
+        guard let overlay = activeOverlay else { return base }
+        return MenuBarLayers.live(base, overlay: overlay,
+                                  apps: overlay == .hideEverything ? overlayApps() : [],
+                                  itemIDs: overlay == .hideEverything ? overlayItemIDs() : [])
+    }
+
+    /// Every app with an item the agent can take — what the quiet bar
+    /// tucks away: the apps this run has seen on the bar, less ours, the
+    /// system's and Apple's extras (those cover in place instead).
+    private func overlayApps() -> Set<String> {
+        var ids = Set(knownItems.keys)
+        ids.formUnion(listedItems.compactMap(\.bundleID))
+        return ids.filter {
+            MenuBarConcealPlan.canConcealApp($0) && !Self.isOwnFamily($0)
+                && !MenuBarConcealPlan.systemItemOwners.contains($0)
         }
-        guard !targets.isEmpty else { return }
-        if concealer != nil {
-            update { draft in
-                for item in targets {
-                    if let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id) {
-                        draft.concealedApps[id] = .hidden
-                    } else {
-                        // The picker's routing: Apple extras and bare
-                        // helpers hide via the cover, not the agent.
-                        draft.sections[item.id] = .hidden
-                    }
-                }
-            }
-        } else {
-            update { draft in
-                for item in targets { draft.sections[item.id] = .hidden }
-            }
+    }
+
+    /// Every item the quiet bar covers in place: under the concealer only
+    /// what the agent cannot take (Apple extras, bare helpers); under the
+    /// spacer engine every listed foreign item. Protected items — the
+    /// clock, Control Center — never.
+    private func overlayItemIDs() -> Set<String> {
+        Set(Self.hideAllTargets(listedItems).filter { item in
+            concealer == nil || !(item.bundleID.map(MenuBarConcealPlan.canConcealApp) ?? false)
+        }.map(\.id))
+    }
+
+    /// The listed items "hide all" reaches: foreign, named, unprotected,
+    /// never the native overflow control and never our own family.
+    private static func hideAllTargets(_ items: [MenuBarItem]) -> [MenuBarItem] {
+        items.filter {
+            !MenuBarItemLister.isProtected($0) && !$0.ownerName.isEmpty
+                && !$0.isNativeOverflowControl && !isOwnFamily($0.bundleID)
+        }
+    }
+
+    /// One-click relief for a crowded bar — the quiet bar laid over your
+    /// curation, or, over a standing "show everything", your curated bar
+    /// back. The map itself is never touched: restoring is dropping the
+    /// overlay. `duration` lets it lapse on its own.
+    func hideAllListed(for duration: TimeInterval? = nil) {
+        update { draft in
+            draft.curation.overlay = MenuBarOverlay.afterHideAll(
+                draft.curation.overlay, until: duration.map { Date().addingTimeInterval($0) })
         }
         hider.reconcile()
     }
 
-    /// Bring every hidden item back and retain that choice across launches:
-    /// every app the map holds, and every listed app, reads an explicit
-    /// Shown. Per-item covers return to Auto.
-    func showAllListed() {
-        let listedApps = listedItems.compactMap { item -> String? in
-            guard let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id),
-                  !MenuBarItemLister.isProtected(item), !Self.isOwnFamily(id) else { return nil }
-            return id
-        }
+    /// Bring every hidden item back without forgetting what was hidden:
+    /// "show everything" over your curation, or, over a standing quiet
+    /// bar, your curated bar back. It survives a restart like any
+    /// setting and ends with the next Hide all, Restore, or its clock.
+    func showAllListed(for duration: TimeInterval? = nil) {
         update { draft in
-            draft.concealedApps = draft.concealedApps.mapValues { _ in .shown }
-            for id in listedApps { draft.concealedApps[id] = .shown }
-            draft.sections = [:]
+            draft.curation.overlay = MenuBarOverlay.afterShowAll(
+                draft.curation.overlay, until: duration.map { Date().addingTimeInterval($0) })
         }
+        hider.reconcile()
+    }
+
+    /// Drop the overlay — the curated bar, exactly as you left it.
+    func restoreCuratedBar() {
+        guard settings().curation.overlay != nil else { return }
+        update { $0.curation.overlay = nil }
+        hider.reconcile()
+    }
+
+    /// "Keep" — the standing overlay becomes your curation: every listed
+    /// app written Hidden (or every app written Shown and the covers
+    /// cleared), then the overlay drops. The old one-click rewrite, now
+    /// only ever on this explicit ask.
+    func keepOverlay() {
+        guard let kind = activeOverlay else { return }
+        let targets = Self.hideAllTargets(listedItems)
+        let concealing = concealer != nil
+        update { draft in
+            switch kind {
+            case .hideEverything:
+                for item in targets {
+                    if concealing, let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id) {
+                        if draft.concealedApps[id] != .alwaysHidden { draft.concealedApps[id] = .hidden }
+                    } else if draft.sections[item.id] != .alwaysHidden {
+                        // The picker's routing: Apple extras, bare helpers
+                        // and the spacer engine hide by covers.
+                        draft.sections[item.id] = .hidden
+                    }
+                }
+            case .showEverything:
+                // `.shown` is written, not deleted: the explicit marker
+                // records a deliberate pick.
+                draft.concealedApps = draft.concealedApps.mapValues { _ in .shown }
+                for id in targets.compactMap(\.bundleID) where MenuBarConcealPlan.canConcealApp(id) {
+                    draft.concealedApps[id] = .shown
+                }
+                draft.sections = [:]
+            }
+            draft.curation.overlay = nil
+        }
+        hider.reconcile()
+    }
+
+    /// A timed overlay's lapse — rearmed on every settings apply.
+    @ObservationIgnored private var overlayExpiry: Task<Void, Never>?
+
+    /// Arm (or drop) the clock that ends a timed overlay. An overlay
+    /// already past its time is cleared on the next turn — never inside
+    /// the apply that noticed it.
+    private func scheduleOverlayExpiry() {
+        overlayExpiry?.cancel()
+        overlayExpiry = nil
+        guard let overlay = settings().curation.overlay, let until = overlay.untilEpoch else { return }
+        let delay = max(0, until - Date().timeIntervalSince1970)
+        overlayExpiry = Task { @MainActor [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1e9)) }
+            guard !Task.isCancelled else { return }
+            self?.expireOverlayIfDue()
+        }
+    }
+
+    /// Clear a timed overlay whose clock has run out — the curated bar
+    /// comes back. An overlay still standing, or one without a clock, is
+    /// left alone.
+    func expireOverlayIfDue(now: Date = Date()) {
+        guard let overlay = settings().curation.overlay, overlay.untilEpoch != nil,
+              !overlay.isLive(at: now) else { return }
+        update { $0.curation.overlay = nil }
         hider.reconcile()
     }
 
@@ -828,6 +929,7 @@ final class MenuBarUtility: Toy {
         runningApps.invalidate()
         migrateSectionsIfNeeded()
         syncSpacing()
+        scheduleOverlayExpiry()
         let enabled = settings().enabled && settings().provider == .jrbar
         if enabled, !running {
             start()
@@ -970,6 +1072,8 @@ final class MenuBarUtility: Toy {
         // An update reveal's pending re-hide belongs to this run.
         updateHideTask?.cancel()
         updateHideTask = nil
+        overlayExpiry?.cancel()
+        overlayExpiry = nil
         failedHotkeyActions = []
         running = false
     }
@@ -1278,7 +1382,7 @@ final class MenuBarUtility: Toy {
     /// live reveal — our own family never, whatever a stale map says
     /// (the daemon's meter hid itself once).
     private func concealTarget() -> Set<String> {
-        MenuBarConcealPlan.concealed(apps: settings().concealedApps, revealed: hider.revealed)
+        MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed)
             .filter { !Self.isOwnFamily($0) }
     }
 
@@ -1771,7 +1875,7 @@ final class MenuBarUtility: Toy {
     /// drags or earn covers.
     private func isConcealedGhost(_ item: MenuBarItem) -> Bool {
         guard let id = item.bundleID,
-              let section = settings().concealedApps[id], section != .shown
+              let section = liveSettings().concealedApps[id], section != .shown
         else { return false }
         return liveConcealedItems[item.id] == nil
     }
@@ -1791,10 +1895,12 @@ final class MenuBarUtility: Toy {
         for id in knownItems.keys where seen[id] == nil && !running.contains(id) {
             knownItems[id] = nil
         }
-        let apps = settings().concealedApps
+        // The live maps — the curated ones with any overlay laid over.
+        let live = liveSettings()
+        let apps = live.concealedApps
         // The positional map, read only for items the agent cannot
         // target (no bundle identifier) — see the cover-fallback below.
-        let sections = settings().sections
+        let sections = live.sections
         var plan = MenuBarHidePlan()
         // Standing means on ANY display's bar — a secondary-screen item
         // is visible exactly like a main-row one.
@@ -2161,13 +2267,13 @@ final class MenuBarUtility: Toy {
             return
         }
         if let concealer, let id = item.bundleID,
-           MenuBarConcealPlan.concealed(apps: settings().concealedApps, revealed: hider.revealed).contains(id) {
+           MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed).contains(id) {
             // Concealed: only this app stands. The assertion's target
             // narrows by exactly this bundle — every other hidden app
             // stays concealed, so the bar never lifts — then the item
             // gets a beat to draw, the press lands on its fresh frame,
             // and the full target goes back up after the rehide window.
-            let target = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
+            let target = MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps,
                                                     revealed: hider.revealed)
             concealer.apply(concealed: target.subtracting([id]),
                             running: runningApps.snapshot())
@@ -2559,7 +2665,7 @@ final class MenuBarUtility: Toy {
             ScreenBarGeometry.earItemLimitRight = nil
             return
         }
-        let s = settings()
+        let s = liveSettings()
         let (left, right) = Self.earLimits(
             items: plan.shown + plan.hidden + plan.alwaysHidden,
             island: island, row: MenuBarItemLister.menuBarRow(),

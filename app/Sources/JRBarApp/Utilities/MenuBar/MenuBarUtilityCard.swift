@@ -86,16 +86,44 @@ struct MenuBarUtilityControls: View {
             }
 
             HStack(spacing: 8) {
-                Button("Hide all") { utility.hideAllListed() }
-                    .controlSize(.small)
-                    .help("Hide every listed menu bar item at once — same as setting each one's override to Hidden or Cover")
-                    .accessibilityLabel("Hide all menu bar items")
-                Button("Show all") { utility.showAllListed() }
-                    .controlSize(.small)
-                    .help("Bring every hidden item back")
-                    .accessibilityLabel("Show all menu bar items")
+                Menu("Hide all") {
+                    Button("For 5 minutes") { utility.hideAllListed(for: 5 * 60) }
+                    Button("For an hour") { utility.hideAllListed(for: 60 * 60) }
+                } primaryAction: {
+                    utility.hideAllListed()
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .help("Tuck every item away for now — your picks below stay as they are, and Restore brings them back")
+                .accessibilityLabel("Hide all menu bar items")
+                Menu("Show all") {
+                    Button("For 5 minutes") { utility.showAllListed(for: 5 * 60) }
+                    Button("For an hour") { utility.showAllListed(for: 60 * 60) }
+                } primaryAction: {
+                    utility.showAllListed()
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .help("Bring every hidden item back for now — nothing forgets what you hid")
+                .accessibilityLabel("Show all menu bar items")
+                if utility.activeOverlay != nil {
+                    Button("Restore") { utility.restoreCuratedBar() }
+                        .controlSize(.small)
+                        .help("Back to your own picks")
+                    Button("Keep") { utility.keepOverlay() }
+                        .controlSize(.small)
+                        .help(utility.activeOverlay == .hideEverything
+                              ? "Make it stick: every listed app becomes Hidden"
+                              : "Make it stick: every app becomes Shown and your hidden picks are cleared")
+                }
             }
             .padding(.top, 2)
+            if let note = utility.overlayNote {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if !hideable.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {

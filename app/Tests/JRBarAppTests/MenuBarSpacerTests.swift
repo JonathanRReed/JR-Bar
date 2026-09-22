@@ -562,8 +562,12 @@ struct MenuBarSpacerTests {
         #expect(expanded?.size.height == collapsed?.size.height)
     }
 
-    // MARK: Show All — explicit, and it survives a restart
+    // MARK: Show All — explicit, it survives a restart, and it forgets nothing
 
+    /// Show all used to write every app Shown, so one press (or one rule
+    /// pair) erased the curation. It is an overlay now: it survives a
+    /// restart like any setting, the live map shows everything, and the
+    /// curated map underneath is exactly what it was.
     @MainActor
     @Test func showAllSurvivesRestart() throws {
         let utility = MenuBarUtility()
@@ -578,8 +582,17 @@ struct MenuBarSpacerTests {
         utility.showAllListed()
         let restored = try JSONDecoder().decode(MenuBarSettings.self,
             from: JSONEncoder().encode(settings))
-        #expect(restored.concealedApps == ["com.example.one": .shown, "com.example.two": .shown])
-        #expect(restored.sections.isEmpty)
+        #expect(restored.curation.overlay?.kind == .showEverything)
+        #expect(restored.concealedApps == ["com.example.one": .hidden, "com.example.two": .alwaysHidden])
+        #expect(restored.sections == ["old-cover": .hidden])
+        settings = restored
+        #expect(utility.liveSettings().concealedApps == ["com.example.one": .shown, "com.example.two": .shown])
+        #expect(utility.liveSettings().sections.isEmpty)
+        // Restore is the curated bar, exactly.
+        utility.restoreCuratedBar()
+        #expect(settings.curation.overlay == nil)
+        #expect(utility.liveSettings().concealedApps == ["com.example.one": .hidden,
+                                                         "com.example.two": .alwaysHidden])
     }
 
     // MARK: Ghost triage — only a novel on-row move proves a live escapee
