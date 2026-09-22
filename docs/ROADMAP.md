@@ -42,6 +42,16 @@ what comes after, in rough order.
    the Swift side; a price table served by the daemon so the Usage Center's
    cost lines stop reading "no price table"; the Dial and Joystick mapping
    editor in Settings › Devices.
+7. **The 2026-09-21 audit's deferred parity work** (see
+   [audits/2026-09-21-systems-audit.md](audits/2026-09-21-systems-audit.md)):
+   live Dock thumbnails behind an opt-in (SCStream costs the persistent
+   recording indicator — stills were the deliberate choice, but the option
+   is parity with DockDoor); a widget extension target (the snapshot
+   writer and decoder already exist, the target needs an Xcode project);
+   pinch/squeeze on the island; inbound AirDrop progress capsules; system
+   notifications rendered *in* the island rather than as pills under it;
+   Dock preview keyboard walk without the pointer; token/cost history
+   beyond Claude and Codex transcripts.
 
 ## Deliberately not planned
 

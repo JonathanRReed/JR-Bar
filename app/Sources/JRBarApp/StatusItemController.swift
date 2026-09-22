@@ -530,7 +530,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                                   dot: style.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
                                   sessions: style == .agents || style == .orbit ? sessionDots : [],
                                   phase: phase)
-        let strip = style.isMeters || style == .agents || style == .orbit || style == .compactPercent
+        // `hidden` is a strip too: the spec's own width owns the item,
+        // which is how the invisible slot stays a thin 8 pt instead of
+        // the square styles' 22.
+        let strip = style.isMeters || style == .agents || style == .orbit
+            || style == .compactPercent || style == .hidden
         return StatusItemPlan(spec: spec,
                               label: style == .glyphLabel ? labelText : nil,
                               // The meter strip and the session strip size

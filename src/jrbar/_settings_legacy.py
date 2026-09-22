@@ -71,8 +71,10 @@ SETTINGS_SCHEMA_VERSION = 1
 #: ``meters``/``meters_percent`` (a usage column per provider),
 #: ``compact_percent`` (the tightest window's remaining percent beside its
 #: provider's mark), ``glyph`` alone, ``glyph_ring`` (the glyph inside a
-#: thin usage ring), ``glyph_label`` (the glyph beside a short text) and
-#: ``orbit`` (the mark in a usage ring with session dots below).
+#: thin usage ring), ``glyph_label`` (the glyph beside a short text),
+#: ``orbit`` (the mark in a usage ring with session dots below) and
+#: ``hidden`` (no icon at all -- a thin invisible slot, Ice's no-icon
+#: mode; the ‹ boundary and hotkeys still reveal).
 MENU_BAR_ICON_STYLES = (
     "agents",
     "meters",
@@ -82,6 +84,7 @@ MENU_BAR_ICON_STYLES = (
     "glyph_ring",
     "glyph_label",
     "orbit",
+    "hidden",
 )
 DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 # The consent generation the Claude plan-limits opt-in was granted under.

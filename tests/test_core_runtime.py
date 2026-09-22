@@ -503,6 +503,10 @@ def test_reset_settings_reaches_per_device_leaves__and_1_more(headless) -> None:
     # The compact readout is a first-class style too.
     reply = controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "compact_percent"})
     assert reply["value"] == "compact_percent" and controller.settings.menu_bar_icon_style == "compact_percent"
+    # So is the no-icon mode — a style only the app renders, but the
+    # document must carry it or a sync would normalize it away.
+    reply = controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "hidden"})
+    assert reply["value"] == "hidden" and controller.settings.menu_bar_icon_style == "hidden"
     # An unknown style falls back to the glyph rather than failing.
     assert controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "neon"})["value"] == "glyph"
     reply = controller._core_dispatch("set_setting", {"path": "quota_alert_thresholds", "value": [95, 80.5, 95]})

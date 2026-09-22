@@ -84,11 +84,46 @@ struct StatusIconRendererTests {
         #expect(StatusIconStyle(setting: "percent_left") == .compactPercent)
         #expect(StatusIconStyle(setting: "orbit") == .orbit)
         #expect(StatusIconStyle(setting: "fold") == .orbit, "the fold-style name resolves too")
+        #expect(StatusIconStyle(setting: "hidden") == .hidden)
+        #expect(StatusIconStyle(setting: "none") == .hidden)
+        #expect(StatusIconStyle(setting: "invisible") == .hidden)
         #expect(StatusIconStyle(setting: nil) == .agents, "no setting means the agent-first one")
         #expect(StatusIconStyle(setting: "banana") == .agents)
         #expect(StatusIconStyle.meters.isMeters && StatusIconStyle.metersPercent.isMeters)
         #expect(!StatusIconStyle.glyph.isMeters && !StatusIconStyle.agents.isMeters)
         #expect(!StatusIconStyle.orbit.isMeters && !StatusIconStyle.compactPercent.isMeters)
+        #expect(!StatusIconStyle.hidden.isMeters)
+    }
+
+    @Test("the hidden style is a thin invisible slot — named for VoiceOver, empty on screen")
+    func hiddenSlot() {
+        let spec = StatusIconSpec(style: .hidden)
+        let size = StatusIconRenderer.size(for: spec)
+        #expect(size.width == StatusIconRenderer.hiddenSlotWidth)
+        #expect(size.height == StatusIconRenderer.barHeight)
+        #expect(size.width < StatusIconRenderer.size.width, "no icon is thinner than a glyph")
+        let renderer = StatusIconRenderer()
+        let image = renderer.image(for: spec)
+        #expect(image.size == size)
+        #expect(image.isTemplate)
+        // Nothing may be drawn: a white-filled rep is unchanged by it.
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 36, pixelsHigh: 36,
+                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                   isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)!
+        memset(rep.bitmapData, 0xFF, rep.bytesPerRow * 36)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(x: 0, y: 0, width: 36, height: 36))
+        NSGraphicsContext.restoreGraphicsState()
+        #expect(Array(UnsafeBufferPointer(start: rep.bitmapData, count: rep.bytesPerRow * 36)).allSatisfy { $0 == 0xFF })
+        #expect(StatusIconRenderer.accessibilityLabel(spec) == "JR-Bar")
+        #expect(StatusIconRenderer.tooltip(spec, headline: "JR-Bar · Idle") == "JR-Bar · Idle")
+        // The spec drops meters and dots: a hidden icon shows nothing.
+        let noisy = StatusIconSpec(style: .hidden, meters: [
+            StatusMeter(id: "claude", name: "Claude", glyph: .text("C"), fraction: 0.5),
+        ], dot: .ask, sessions: [SessionDot(id: "s1", state: .ask)])
+        #expect(renderer.image(for: noisy).size == image.size)
     }
 }
 

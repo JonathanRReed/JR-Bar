@@ -17,6 +17,10 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     case glyphLabel = "glyph_label"
     /// The mark in a usage ring, working sessions as dots below.
     case orbit
+    /// Ice's no-icon mode: the item draws nothing — a thin invisible
+    /// slot that still clicks, still carries the tooltip and the ‹
+    /// boundary while a run is hidden.
+    case hidden
 
     /// Accepts the settings value in either spelling (`ring` / `glyph_ring`);
     /// anything unknown, and an absent value, is the default `agents`.
@@ -29,6 +33,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case "meters_percent", "meters+percent", "percent", "meters_pct": self = .metersPercent
         case "compact_percent", "compact", "percent_left", "remaining": self = .compactPercent
         case "orbit", "orbital", "fold", "unified", "device": self = .orbit
+        case "hidden", "none", "invisible", "off": self = .hidden
         default: self = .agents
         }
     }
@@ -47,6 +52,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case .glyphRing: return "Glyph with usage ring"
         case .glyphLabel: return "Glyph with label"
         case .orbit: return "Orbit"
+        case .hidden: return "No icon"
         }
     }
 
@@ -60,6 +66,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case .glyphRing: return "The mark inside a ring of your primary window."
         case .glyphLabel: return "The mark beside “1 ask · 2 working”."
         case .orbit: return "The mark in a usage ring, working sessions as dots below."
+        case .hidden: return "No icon at all — a thin invisible slot. A click, the hotkey, or the ‹ mark while items are hidden still opens the panel."
         }
     }
 }
@@ -315,10 +322,16 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// ring, its number and the dots all sit inside.
     public static let orbitSize = NSSize(width: 26, height: 22)
 
+    /// The hidden style's whole footprint: wide enough to click, thin
+    /// enough that "no icon" means what it says. Zero would unregister
+    /// the slot entirely and take the boundary's seat with it.
+    public static let hiddenSlotWidth: CGFloat = 8
+
     /// How wide the image for this spec is. The glyph styles are square;
     /// a meter or session strip grows with what it shows, so the status
     /// item has to ask before it sets its own length.
     public static func size(for spec: StatusIconSpec) -> NSSize {
+        if spec.style == .hidden { return NSSize(width: hiddenSlotWidth, height: barHeight) }
         if spec.style == .orbit { return orbitSize }
         if spec.style == .agents {
             // No sessions: the mark alone, square like the glyph styles.
@@ -462,6 +475,15 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// image whose glyph follows `labelColor` for the current appearance
     /// (the drawing handler runs at draw time, so it re-resolves).
     static func draw(_ spec: StatusIconSpec) -> NSImage {
+        if spec.style == .hidden {
+            // A genuinely empty image — the slot stays clickable and
+            // labelled, nothing is drawn into it.
+            let image = NSImage(size: NSSize(width: hiddenSlotWidth, height: barHeight),
+                                flipped: false) { _ in true }
+            image.isTemplate = true
+            image.accessibilityDescription = accessibilityLabel(spec)
+            return image
+        }
         if spec.style.isMeters { return drawMeters(spec) }
         if spec.style == .compactPercent { return drawCompact(spec) }
         if spec.style == .agents { return drawAgents(spec) }
