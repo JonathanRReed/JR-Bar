@@ -1259,20 +1259,96 @@ public struct CoreClosedLid: Codable, Hashable, Sendable {
     public var policy: String?
     public var holding: Bool?
     public var helperInstalled: Bool?
+    /// The lid as the daemon last read it; nil while it has no reading.
+    public var lidClosed: Bool?
+    /// The daemon asks for sleep when the hold drops with the lid shut.
+    public var sleepsOnRelease: Bool?
+    public var lastSleepAt: Double?
+    public var sleepError: String?
 
     enum CodingKeys: String, CodingKey {
         case policy, holding
         case helperInstalled = "helper_installed"
+        case lidClosed = "lid_closed"
+        case sleepsOnRelease = "sleeps_on_release"
+        case lastSleepAt = "last_sleep_at"
+        case sleepError = "sleep_error"
     }
+}
+
+/// The person's own keep-awake request (`state.power.hold.lease`): for a
+/// duration (`until` is its end), until the named sessions finish
+/// (`kind == "agents"`, `until` is the backstop), or until turned off
+/// (`kind == "indefinite"`, no `until`).
+public struct CoreAwakeLease: Codable, Hashable, Sendable {
+    public var kind: String?
+    public var startedAt: Double?
+    public var until: Double?
+    public var sessions: [String]?
+    public var display: Bool?
+    public var source: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, until, sessions, display, source
+        case startedAt = "started_at"
+    }
+
+    public var waitsOnAgents: Bool { kind == "agents" }
+
+    /// Seconds left on a duration lease; nil for the other two shapes,
+    /// whose end is not a countdown.
+    public func remaining(now: Double) -> Double? {
+        guard kind == "duration", let until else { return nil }
+        return max(0, until - now)
+    }
+}
+
+/// `state.power.hold`: why the Mac is (or is not) held awake. `state` is
+/// the chip's three words -- `off`, `agents` (the agents hold it; `agents`
+/// counts them), `manual` (a lease is in force). `suspended` names a yield
+/// that took the hold away (`thermal`, `battery`) while the demand stands.
+public struct CoreAwakeHold: Codable, Hashable, Sendable {
+    public var state: String?
+    public var agents: Int?
+    public var active: Bool?
+    public var display: Bool?
+    public var graceUntil: Double?
+    public var lease: CoreAwakeLease?
+    public var suspended: String?
+    public var thermal: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state, agents, active, display, lease, suspended, thermal
+        case graceUntil = "grace_until"
+    }
+
+    public var isManual: Bool { state == "manual" }
+    public var isHeldByAgents: Bool { state == "agents" }
+    public var isOff: Bool { state == nil || state == "off" }
+}
+
+/// The last time a hold let go for a reason worth reading
+/// (`state.power.last_release`): a lease ending on time or when its agents
+/// finished, a yield to heat or the battery floor, a closed-lid stretch,
+/// or a sleep the daemon asked for.
+public struct CorePowerRelease: Codable, Hashable, Sendable {
+    public var kind: String?
+    public var reason: String?
+    public var at: Double?
+    public var duration: Double?
 }
 
 public struct CorePower: Codable, Hashable, Sendable {
     public var keepAwake: Bool?
     public var closedLid: CoreClosedLid?
+    public var hold: CoreAwakeHold?
+    public var lastRelease: CorePowerRelease?
 
     enum CodingKeys: String, CodingKey {
         case keepAwake = "keep_awake"
         case closedLid = "closed_lid"
+        case hold
+        case lastRelease = "last_release"
     }
 }
 
