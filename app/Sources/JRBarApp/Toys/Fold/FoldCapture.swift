@@ -13,7 +13,8 @@ import ScreenCaptureKit
 /// `recheckAfter` re-asks TCC, `request` caches the answer it just got,
 /// and `invalidate` drops the cache — the toy calls that when a capture
 /// dies (a revoked grant is one way streams fail) and on re-activate,
-/// the moment a granted permission actually lands.
+/// the moment a granted permission actually lands. The Dock's
+/// thumbnail gate and the setup walkthrough share this one cache.
 @MainActor
 enum FoldCapturePermission {
     /// How long a cached preflight stays fresh.

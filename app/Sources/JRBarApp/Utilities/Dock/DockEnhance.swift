@@ -921,9 +921,10 @@ final class DockPreviewContent {
 /// pointer and compares it against a *cached* dock-list frame — the AX
 /// walk to the Dock process runs at most once a second while the
 /// pointer is away, and per-item hit-testing only while it is inside.
-/// The TCC probes (`AXIsProcessTrusted`, the Screen Recording
-/// preflight) are IPC round trips and are cached for
-/// `permissionTTL`, the same rule the Menu Bar utility follows.
+/// The TCC probes are cached: `AXIsProcessTrusted` for
+/// `permissionTTL`, the Screen Recording preflight — a tccd round
+/// trip on every call — through `FoldCapturePermission`'s shared
+/// 30 s cache (see `refreshPermissions`).
 @MainActor
 @Observable
 final class DockEnhanceController {
@@ -1081,7 +1082,7 @@ final class DockEnhanceController {
             // thumbnails on "No preview" with nothing for the user to
             // toggle. Requesting once registers JR-Bar and prompts only
             // while the answer is still undecided.
-            screenCaptureGranted = CGRequestScreenCaptureAccess()
+            screenCaptureGranted = FoldCapturePermission.request()
         }
         Self.log.notice("enhance start: accessibility \(self.accessibilityTrusted, privacy: .public), screen recording \(self.screenCaptureGranted, privacy: .public), dock list \(AppleDockReader.dockPID().flatMap { AppleDockReader.dockList(pid: $0) } != nil, privacy: .public)")
         switcher.start()
@@ -1112,13 +1113,21 @@ final class DockEnhanceController {
     }
 
     /// The card's appear hook and the tick's gate: re-read TCC only
-    /// when the cache is stale (or `force`).
+    /// when the cache is stale (or `force`). Accessibility and the
+    /// magnification flag ride the tick's TTL — neither costs an IPC
+    /// after the first call. The Screen Recording preflight costs one
+    /// every call (2026-09-22: a TCCAccessRequest line on the main
+    /// thread every 3.02 s for as long as the app ran), and nothing on
+    /// the tick needs it — only thumbnails and the card's row do. So
+    /// the tick takes the shared 30 s cache — dropped on re-activate,
+    /// when a new grant lands — and only `force` (start, the card
+    /// appearing) asks TCC outright.
     func refreshPermissions(force: Bool = false) {
         guard force || Date().timeIntervalSince(permissionsCheckedAt) > Self.permissionTTL else { return }
         permissionsCheckedAt = Date()
         let wasTrusted = accessibilityTrusted
         accessibilityTrusted = AXIsProcessTrusted()
-        screenCaptureGranted = CGPreflightScreenCaptureAccess()
+        screenCaptureGranted = force ? FoldCapturePermission.recheck() : FoldCapturePermission.granted
         magnificationOn = UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "magnification") ?? false
         if running, !wasTrusted, accessibilityTrusted {
             schedulePanelWarmup(layoutOnly: panel != nil)
@@ -1171,8 +1180,8 @@ final class DockEnhanceController {
     /// pointer already costs while resting on the Dock; the far band
     /// stays cheap.
     private func scheduleTick(after interval: TimeInterval) {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+        self.timer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.running else { return }
                 self.tick()
@@ -1183,6 +1192,10 @@ final class DockEnhanceController {
                 self.scheduleTick(after: near ? Self.pollInterval : Self.farPollInterval)
             }
         }
+        // A tenth of the period (5 ms near, 12.5 ms far) lets these
+        // wakes coalesce with the system's own; a hover never feels it.
+        timer.tolerance = interval / 10
+        self.timer = timer
     }
 
     private func tick() {

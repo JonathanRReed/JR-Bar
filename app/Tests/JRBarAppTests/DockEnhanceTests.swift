@@ -599,6 +599,11 @@ import Testing
         #expect(controller.accessibilityTrusted == first)
         #expect(DockEnhanceController.permissionTTL >= 1,
                 "a TCC probe is an IPC round trip; the tick must not pay it 20× a second")
+        // The Screen Recording answer is the shared 30 s cache's — the
+        // forced read seeded it, so the two can never disagree.
+        #expect(controller.screenCaptureGranted == FoldCapturePermission.granted)
+        #expect(FoldCapturePermission.recheckAfter >= 30,
+                "the preflight is a tccd round trip on every call")
     }
 
     // MARK: Dock hold-out
