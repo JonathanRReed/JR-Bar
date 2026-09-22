@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 /// One wing slot's content: a lobe of the notch itself — the selected
@@ -32,6 +33,10 @@ struct ScreenBarWingSlot: Equatable {
     /// rounded tile, Alcove's media-wing grammar: art on the left ear,
     /// the equalizer on the right. nil leaves the other marks to draw.
     var artworkData: Data?
+    /// How long this ear's ask has waited, as a ring that fills on its
+    /// own clock toward the loudest escalation stage. nil draws the bare
+    /// glyph. Only the asking session's ear carries one.
+    var askAge: ScreenBarAskAge?
     var tone: Tone = .neutral
 
     var textColor: Color {
@@ -54,6 +59,167 @@ struct ScreenBarWings: Equatable {
     subscript(side: ScreenBarWingSide) -> ScreenBarWingSlot? {
         get { side == .left ? left : right }
         set { if side == .left { left = newValue } else { right = newValue } }
+    }
+}
+
+/// An open ask's wait, read as the escalation ladder reads it: the ring
+/// is empty when the ask opens and full when the ladder reaches the
+/// loudest stage `escalation_tier` allows — the same seconds Settings ›
+/// Notifications › Escalation sets. It fills on its own clock, so the
+/// wings are not re-laid every tick; the ear redraws the arc alone.
+struct ScreenBarAskAge: Equatable {
+    /// When the ask opened — the daemon's `opened_at`.
+    var openedAt: Date
+    /// Seconds from open to a full ring.
+    var fullAfter: TimeInterval
+    /// Whose ask it is: the ring only lands on that provider's mark.
+    var provider: String
+
+    /// The ring's fill at `now`, 0…1.
+    func fraction(at now: Date) -> Double {
+        guard fullAfter > 0 else { return 1 }
+        return min(1, max(0, now.timeIntervalSince(openedAt) / fullAfter))
+    }
+
+    /// When the ring is full and the ear stops redrawing it.
+    var fullAt: Date { openedAt.addingTimeInterval(max(0, fullAfter)) }
+
+    /// The span a full ring stands for: the threshold of the loudest
+    /// stage the tier lets an ignored ask reach — the ramp for "light
+    /// only", the menu-bar pulse for "menu bar", the final stage for
+    /// chime and take-over. A ladder switched off still ages the ring,
+    /// on the final stage's patient clock. Absent timings are the
+    /// daemon's defaults (30 s, 120 s, 300 s).
+    static func span(tier: String?, ramp: Double?, menuBar: Double?, final: Double?) -> TimeInterval {
+        let ramp = max(1, ramp ?? 30)
+        let menuBar = max(1, menuBar ?? 120)
+        let final = max(1, final ?? 300)
+        switch EventPolicy.escalationCeiling(tier) {
+        case 1: return ramp
+        case 2: return menuBar
+        default: return final
+        }
+    }
+
+    /// The ring for `ask`, or nil when the daemon never dated it — an
+    /// undated ask has no age to show, and a guess would be a lie.
+    static func make(ask: CoreAsk?, provider: String, document: SettingsDocument) -> ScreenBarAskAge? {
+        guard let opened = ask?.openedAt else { return nil }
+        return ScreenBarAskAge(
+            openedAt: Date(timeIntervalSince1970: opened),
+            fullAfter: span(tier: document.string("escalation_tier"),
+                            ramp: document.double("escalation_ramp_seconds"),
+                            menuBar: document.double("escalation_menu_bar_seconds"),
+                            final: document.double("escalation_final_seconds")),
+            provider: provider)
+    }
+}
+
+/// When the ask-age ring redraws: about 120 steps across the whole span
+/// — under half a point of arc each on a 16 pt ring, so the fill reads
+/// as continuous — and none once it is full. Low-frequency mode (the
+/// display dimmed) takes quarter the steps.
+struct ScreenBarAskAgeSchedule: TimelineSchedule {
+    let age: ScreenBarAskAge
+
+    static let steps: Double = 120
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        let steps = mode == .lowFrequency ? Self.steps / 4 : Self.steps
+        let step = max(1, age.fullAfter / steps)
+        let end = age.fullAt
+        var next: Date? = startDate
+        return AnyIterator {
+            guard let current = next else { return nil }
+            let following = current.addingTimeInterval(step)
+            // One last entry lands exactly on full, then the ring rests.
+            if current >= end {
+                next = nil
+            } else {
+                next = following < end ? following : end
+            }
+            return current
+        }
+    }
+}
+
+/// What the ears add on top of the panel store's slots — facts only the
+/// Screen Bar draws: the ask-age ring on the asking session's mark, and
+/// the moon while a quiet is dimming the lights. The store's slots stay
+/// the one pick of who is on top; these only dress them.
+struct ScreenBarEarMarks: Equatable {
+    /// The quiet in force, as the ear shows it: a mark, and the words
+    /// the peek and VoiceOver read ("Paused until 14:30").
+    struct Quiet: Equatable {
+        var symbol: String
+        var text: String
+    }
+
+    var askAge: ScreenBarAskAge?
+    var quiet: Quiet?
+
+    /// The quiet modes that change the light. Mute stills only the
+    /// sounds — the band is as bright as ever, so it needs no moon.
+    static let lightQuietModes: Set<String> = ["pause", "dim", "asks_only", "dark"]
+
+    /// The moon for `mode` and its words, or nil for a quiet that leaves
+    /// the lights alone. A timed quiet names its end as a clock time —
+    /// the ear's words only move when the quiet does, never every minute.
+    static func quiet(mode: String?, word: String, until: Date?, calendar: Calendar = .current) -> Quiet? {
+        guard let mode, lightQuietModes.contains(mode) else { return nil }
+        guard let until else { return Quiet(symbol: "moon.fill", text: word) }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return Quiet(symbol: "moon.fill", text: "\(word) until \(formatter.string(from: until))")
+    }
+
+    /// `wings` dressed with these marks. The ring joins the left ear only
+    /// while that ear is the asking session's own mark (amber, its
+    /// provider's glyph). The moon takes a left ear that has nothing
+    /// louder to say — empty, or a working or finished session — and
+    /// never an ask, a failure, or the media ear, which is a live
+    /// activity of its own.
+    static func apply(_ marks: ScreenBarEarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
+        var dressed = wings
+        if let age = marks.askAge, var left = dressed.left, left.tone == .attention,
+           left.provider == age.provider, left.symbol == nil, left.artworkData == nil,
+           !left.visualizer, left.meter == nil {
+            left.askAge = age
+            dressed.left = left
+        }
+        if let quiet = marks.quiet {
+            let yields: Bool
+            if let left = dressed.left {
+                yields = left.tone == .neutral && left.artworkData == nil && !left.visualizer
+            } else {
+                yields = true
+            }
+            if yields {
+                dressed.left = ScreenBarWingSlot(text: quiet.text, symbol: quiet.symbol)
+            }
+        }
+        return dressed
+    }
+}
+
+extension PanelStore {
+    /// The ears' own marks for this moment: the longest-waiting ask's
+    /// age (the same row the left ear names — asks lead `rows`, oldest
+    /// first) and the light-changing quiet, if one is in force.
+    var screenBarEarMarks: ScreenBarEarMarks {
+        var marks = ScreenBarEarMarks()
+        let document = settingsDocument ?? SettingsDocument()
+        if let row = askRows.first {
+            marks.askAge = ScreenBarAskAge.make(ask: row.ask, provider: row.style.id, document: document)
+        }
+        if let quiet {
+            marks.quiet = ScreenBarEarMarks.quiet(mode: quiet.mode, word: Self.quietWord(quiet.mode),
+                                                  until: quiet.until)
+        }
+        return marks
     }
 }
 
@@ -198,6 +364,12 @@ struct ScreenBarWingsView: View {
                     .foregroundStyle(slot.textColor)
             } else if let meter = slot.meter {
                 ring(meter, slot: slot, tint: tint)
+            } else if let age = slot.askAge {
+                // The ask's wait: the quota ear's ring grammar, in the
+                // ask's amber, filling toward the loudest stage.
+                TimelineView(ScreenBarAskAgeSchedule(age: age)) { context in
+                    ring(age.fraction(at: context.date), slot: slot, tint: tint)
+                }
             } else if let provider = slot.provider {
                 glyph(.style(for: provider), size: 13, tint: tint)
             } else {

@@ -1068,6 +1068,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func coreDidChange() {
         screenBar?.updateAccessibility()
         screenBar?.wings = store?.screenBarWings ?? .empty
+        screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:

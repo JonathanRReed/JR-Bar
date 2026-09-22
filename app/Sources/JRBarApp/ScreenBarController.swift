@@ -75,13 +75,33 @@ final class ScreenBarController {
                 // minute is the same ear still dismissed; a different
                 // subject claiming the side is new information that
                 // revives it.
-                dismissedWings = dismissedWings.filter { side, slot in
-                    wings[side].map { Self.sameWingSubject($0, slot) } ?? false
-                }
-                dismissedWingRects = dismissedWingRects.filter { dismissedWings[$0.key] != nil }
+                reconcileDismissals()
                 pushWings()
             }
         }
+    }
+    /// The ears' own marks on top of `wings` — the ask-age ring and the
+    /// quiet moon — pushed beside the slots on each core change.
+    var earMarks = ScreenBarEarMarks() {
+        didSet {
+            guard earMarks != oldValue else { return }
+            reconcileDismissals()
+            pushWings()
+        }
+    }
+    /// The slots as the ears present them: the store's pick, dressed
+    /// with the ears' own marks. Dismissal and the draw both read this,
+    /// so a flick on the moon dismisses the moon.
+    private var markedWings: ScreenBarWings { ScreenBarEarMarks.apply(earMarks, to: wings) }
+
+    /// A dismissal survives only while the same subject still holds its
+    /// side; a different subject claiming it is news that revives it.
+    private func reconcileDismissals() {
+        let marked = markedWings
+        dismissedWings = dismissedWings.filter { side, slot in
+            marked[side].map { Self.sameWingSubject($0, slot) } ?? false
+        }
+        dismissedWingRects = dismissedWingRects.filter { dismissedWings[$0.key] != nil }
     }
     /// Sides the user flicked away, keyed by the slot that was dismissed.
     /// The dismissal lasts until a summon, a relaunch, or a *different
@@ -461,7 +481,7 @@ final class ScreenBarController {
     /// The base slots minus what the user flicked away, plus a live
     /// device notice — the wings the view and the geometry share.
     private var effectiveWings: ScreenBarWings {
-        var shown = wings
+        var shown = markedWings
         for (side, dismissed) in dismissedWings {
             if let slot = shown[side], Self.sameWingSubject(slot, dismissed) {
                 shown[side] = nil
@@ -505,7 +525,7 @@ final class ScreenBarController {
     /// own words churn. The lobe's rect survives as the ghost a
     /// summon swipe lands on.
     func dismissWing(_ side: ScreenBarWingSide) {
-        guard let slot = wings[side] else { return }
+        guard let slot = markedWings[side] else { return }
         NotchCardModel.wingGesturesUsed = true
         if let viewRect = side == .left ? view.leftWingRect : view.rightWingRect {
             dismissedWingRects[side] = panel.convertToScreen(view.convert(viewRect, to: nil))
