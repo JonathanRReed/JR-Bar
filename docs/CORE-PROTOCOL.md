@@ -443,11 +443,16 @@ end) and with every refresh.
   `floor * (Y / floor) ** 0.5`): hue, saturation and timing pass
   through untouched, near-black stays near-black, and `#000000` stays
   black — a dark beat never gains a resting glow the strip does not
-  have. Its one `brightness N` is the Screen Bar device's own policy
-  (`screen_bar_min_glow` floor included), not the strip's, whose N
-  starts from the display backlight the bar is already dimmed by. The
-  strip's drive bytes are never replayed on a display that has no die
-  to calibrate.
+  have. Its one `brightness N` is the Screen Bar device's own, never the
+  strip's. While the strip shows an ambient kind (agent, battery, studio,
+  quota runway) or a preview, that is the bar's ambient plan
+  (`screen_bar_min_glow` floor included), because the strip's ambient N
+  starts from the display backlight the bar is already dimmed by. While
+  the strip plays a signal (completion, failure, calendar, ...), it is
+  the bar's signal plan, which cuts through idle, sleep and night dims,
+  at the signal's own intensity (the strip's N over the strip's signal
+  plan). The strip's drive bytes are never replayed on a display that
+  has no die to calibrate.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when
   `linked` (the `link_screen_bar_to_hardware` setting) and a strip is

@@ -1780,6 +1780,87 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     controller._core_previews.pop("screen_bar", None)
 
 
+def test_linked_screen_bar_keeps_a_signals_cut_through(headless) -> None:
+    """A strip's ``brightness N`` is only the ambient scalar on the ambient
+    kinds. A signal (completion, failure, calendar...) renders at the SIGNAL
+    plan, which cuts through idle, sleep and night dims, times the style's
+    own intensity. Forcing the bar's idle-dimmed ambient code onto every
+    mirrored program played a completion at ~25% on the bar beside a
+    full-bright strip: linked, a signal plays at the bar's own signal plan
+    at the program's intensity, and only the ambient kinds take the bar's
+    ambient code."""
+    import time as _time
+
+    from jrbar._led_status_legacy import style_to_program
+    from jrbar.colors import lift_program_luminance
+    from jrbar.dot_role import apply_brightness_line
+    from jrbar.signals import PATTERN_BREATHE, SignalStyle
+    from jrbar.status_bar_legacy import (
+        LED_DISPLAY_AGENT,
+        LED_DISPLAY_COMPLETION,
+        StatusBarDevice,
+    )
+
+    controller = headless
+    pro, _dot = _pro_and_dot(controller)
+    controller._core_hardware_anchor[pro.device_id] = 1000.0
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+    # The bar is set dimmer than the strip, so the bar's own signal plan and
+    # the strip's N are different numbers.
+    virtual_entry = StatusBarDevice(
+        status_bar.VIRTUAL_DEVICE_ID, "Screen Bar", Path("/virtual"),
+        Path("/virtual/LEDS.LED"), True, "agent", brightness=200,
+    )
+    devices = controller.status_bar_devices()
+    controller.status_bar_devices = lambda *, remember=True: [*devices, virtual_entry]
+    # Idle: the ambient plan drops to 0.3; the signal plan does not.
+    controller.idle_dim_scale_factor = lambda: 0.3
+    ambient_code = controller._core_brightness_code(virtual_entry)
+    strip_signal = controller.effective_signal_brightness_for_device(pro)
+    bar_signal = controller.effective_signal_brightness_for_device(virtual_entry)
+    assert (strip_signal, bar_signal) == (255, 200)
+    assert ambient_code < 100
+
+    # A half-intensity completion, rendered the way the strip renders one.
+    nominal = style_to_program(SignalStyle("#00C853", PATTERN_BREATHE, 1.2, 0.5), strip_signal)
+    assert nominal.splitlines()[0] == "brightness 128"
+    pro_controller = controller.agent_led_controllers_by_device[pro.device_id]
+    pro_controller.last_program = pro_controller.last_nominal_program = nominal
+    controller.last_led_display_kind_by_device = {pro.device_id: LED_DISPLAY_COMPLETION}
+    controller.completion_sweep_until = _time.monotonic() + 30.0
+
+    # The bar's signal plan at the program's intensity: 200 * 128/255.
+    signal_code = 100
+    for call in (
+        ("#FF3A00 1.6s pulse\nrepeat", {"started_at": _time.monotonic(), "motion": None}),
+        None,
+    ):
+        controller.virtual_status_device._live_program_call = call
+        bar = controller._core_build_lights()["surfaces"]["screen_bar"]
+        assert bar["program"] == apply_brightness_line(lift_program_luminance(nominal), signal_code)
+        assert bar["brightness"] == pytest.approx(signal_code / 255.0)
+
+    # The same program under an ambient kind takes the bar's idle-dimmed code.
+    controller.last_led_display_kind_by_device = {pro.device_id: LED_DISPLAY_AGENT}
+    bar = controller._core_build_lights()["surfaces"]["screen_bar"]
+    assert bar["program"] == apply_brightness_line(lift_program_luminance(nominal), ambient_code)
+
+    # A strip preview plays at the strip's ambient brightness, whatever kind
+    # was recorded under it, so the bar takes its ambient code.
+    controller.last_led_display_kind_by_device = {pro.device_id: LED_DISPLAY_COMPLETION}
+    controller._core_previews["hardware"] = core_runtime._Preview(
+        "#00FF00 1s\nrepeat", _time.monotonic() + 30, _time.time(), (pro.device_id,)
+    )
+    bar = controller._core_build_lights()["surfaces"]["screen_bar"]
+    assert bar["brightness"] == pytest.approx(ambient_code / 255.0)
+    controller._core_previews.pop("hardware", None)
+
+    # A signal window that has passed is no longer a signal.
+    controller.last_led_display_kind_by_device = {pro.device_id: LED_DISPLAY_COMPLETION}
+    controller.completion_sweep_until = _time.monotonic() - 1.0
+    bar = controller._core_build_lights()["surfaces"]["screen_bar"]
+    assert bar["brightness"] == pytest.approx(ambient_code / 255.0)
+
 
 def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     """``link_screen_bar_to_hardware`` with only a Dot mounted: the bar
