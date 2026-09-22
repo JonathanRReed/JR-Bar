@@ -54,13 +54,18 @@ struct NotchHoverTests {
     func barArrivalUsesSlowFloor() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let start = ContinuousClock.now
         toy.bandHover(true, fromBar: true)
         #expect(!toy.islandHoverPeek, "the breath waits out the intent delay")
-        try await Task.sleep(for: .seconds(0.2))
+        // Measured, not slept: a 0.2 s sleep that overslept the floor
+        // under a busy suite saw the card already up. The grow's
+        // asyncAfter can land late but never early.
+        let at = try #require(await expansionTime(toy, from: start))
+        #expect(at > .milliseconds(260), "the menu-bar floor held (grew at \(at))")
+        // The breath only lands while the card is down, and a grow does
+        // not clear it — still up now means it came first, inside the
+        // bar's floor.
         #expect(toy.islandHoverPeek, "the breath landed inside the bar's floor")
-        #expect(!toy.islandExpanded, "the menu-bar floor has not landed yet")
-        try await Task.sleep(for: .seconds(0.25))
-        #expect(toy.islandExpanded)
     }
 
     /// A mutable answer a closure can read — `@unchecked Sendable` so
@@ -75,13 +80,19 @@ struct NotchHoverTests {
     /// timeout is a generous upper bound for a congested main queue: the
     /// arm is an `asyncAfter` whose deadline can slide under a parallel
     /// suite — what matters is it did not fire before the bar's floor.
+    /// Giving up takes one more poll past the timeout: a main thread held
+    /// longer than that by a busy machine (2026-09-22: a 4.7 s stall ran
+    /// this suite's 0.25 s tests to five seconds) wakes the poll ahead of
+    /// the grow that came due meanwhile, and the next poll sees it land.
     private func expansionTime(_ toy: NotchToy, from start: ContinuousClock.Instant,
                              timeout: Duration = .seconds(4)) async throws -> Duration? {
-        while ContinuousClock.now - start < timeout {
+        var timedOut = false
+        while true {
             if toy.islandExpanded { return ContinuousClock.now - start }
+            if timedOut { return nil }
+            timedOut = ContinuousClock.now - start >= timeout
             try await Task.sleep(for: .milliseconds(10))
         }
-        return nil
     }
 
     @Test("crossing from an ear onto the island keeps the arrival's deadline")
