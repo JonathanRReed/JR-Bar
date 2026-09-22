@@ -94,7 +94,7 @@ final class MenuBarBarPanel: NSPanel {
         glass.contentView = hosting
         super.init(contentRect: NSRect(x: 0, y: 0, width: 120, height: 26),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = glass
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

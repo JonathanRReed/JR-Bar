@@ -62,7 +62,7 @@ final class PanelController {
         }
 
         panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: PanelView.width, height: 200))
-        panel.contentView = backdrop
+        panel.contentView = GlassBackdrop.rounded(backdrop, cornerRadius: Self.cornerRadius)
         panel.onResignKey = { [weak self] in self?.close() }
 
         store.onClose = { [weak self] in self?.close() }
@@ -387,7 +387,7 @@ final class WhyDetailPanel: NSPanel {
             backdrop = effect
         }
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 120), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
+        contentView = GlassBackdrop.rounded(backdrop, cornerRadius: 10)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

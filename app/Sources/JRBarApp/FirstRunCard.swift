@@ -55,7 +55,7 @@ final class FirstRunCard: NSObject, NSWindowDelegate {
             glass.cornerRadius = PanelController.cornerRadius
             glass.style = .regular
             glass.contentView = hosting
-            panel.contentView = glass
+            panel.contentView = GlassBackdrop.rounded(glass, cornerRadius: PanelController.cornerRadius)
         } else {
             let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: FirstRunCardView.width, height: 200))
             effect.material = .popover

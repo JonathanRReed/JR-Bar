@@ -175,7 +175,7 @@ final class RailPanel: NSPanel {
             backdrop = effect
         }
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
+        contentView = GlassBackdrop.rounded(backdrop, cornerRadius: 12)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -232,7 +232,7 @@ final class RailLabelPanel: NSPanel {
             backdrop = effect
         }
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
+        contentView = GlassBackdrop.rounded(backdrop, cornerRadius: 9)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

@@ -945,7 +945,7 @@ final class DockSwitcherPanel: NSPanel {
         glass.contentView = hosting
         super.init(contentRect: NSRect(x: 0, y: 0, width: 420, height: 120),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = glass
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: 18)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

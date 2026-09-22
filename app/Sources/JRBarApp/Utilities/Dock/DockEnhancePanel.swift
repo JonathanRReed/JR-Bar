@@ -113,7 +113,7 @@ final class DockPreviewPanel: NSPanel {
         glass.contentView = hosting
         super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 96),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = glass
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
         actions.isActive = { [weak self] in self?.isVisible == true }
         isOpaque = false
         backgroundColor = .clear

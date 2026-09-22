@@ -112,7 +112,7 @@ final class NotchCardPanel: NSPanel {
         }
         super.init(contentRect: NSRect(x: 0, y: 0, width: 120, height: 26),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
+        contentView = GlassBackdrop.rounded(backdrop, cornerRadius: Self.cornerRadius)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

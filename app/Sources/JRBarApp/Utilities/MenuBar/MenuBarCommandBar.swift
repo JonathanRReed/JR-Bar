@@ -217,7 +217,7 @@ final class MenuBarCommandPalettePanel: NSPanel {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 60),
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
-        contentView = glass
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
         hosting.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             hosting.leadingAnchor.constraint(equalTo: glass.leadingAnchor),

@@ -387,7 +387,7 @@ final class MenuBarArrangeBanner: NSPanel {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10),
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
-        contentView = glass
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: 14),
             label.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -14),
