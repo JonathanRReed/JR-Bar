@@ -262,6 +262,23 @@ enum DockSwitcherList {
         return (lane + items.filter { !laneIDs.contains($0.id) }, 0)
     }
 
+    /// The live session a ⌘-verb on `item` would kill, if any: ⌘W on a
+    /// window hosting a working or waiting agent, ⌘Q on any window or
+    /// card of an app hosting one (quitting Ghostty ends every session
+    /// in it). Minimize, hide and full screen harm nothing.
+    static func guardMark(verb: String, item: SwitcherItem, marks: [DockAgentMark],
+                          bundleID: String?) -> DockAgentMark? {
+        switch verb {
+        case "w":
+            return item.agent.flatMap { $0.isLive ? $0 : nil }
+        case "q":
+            if let agent = item.agent, agent.isLive { return agent }
+            return appMark(bundleID: bundleID, marks: marks)
+        default:
+            return nil
+        }
+    }
+
     /// A drilled app's windows: the waiting agent's window first, so
     /// ⌘⇥ ↓ release lands on it, the rest in their recency.
     static func waitingFirst(_ items: [SwitcherItem]) -> [SwitcherItem] {
@@ -861,6 +878,7 @@ final class DockSwitcherController {
     func cmdCommit() {
         let item = model.selected
         let drilled = drilledApp != nil
+        agentGuard.reset()
         appMode = false
         drilledApp = nil
         tap.setCmdOpen(false)
@@ -903,6 +921,7 @@ final class DockSwitcherController {
 
     func commit() {
         guard let item = model.selected else { return cancel() }
+        agentGuard.reset()
         appMode = false
         drilledApp = nil
         tap.setOpen(false)
@@ -920,6 +939,7 @@ final class DockSwitcherController {
     }
 
     func cancel() {
+        agentGuard.reset()
         appMode = false
         drilledApp = nil
         tap.setOpen(false)
@@ -934,6 +954,16 @@ final class DockSwitcherController {
     func verb(_ char: String) {
         guard let item = model.selected else { return }
         let app = NSRunningApplication(processIdentifier: item.pid)
+        // ⌥⇥ ⌘W is the fastest way to kill an agent — a verb that would
+        // end a working or waiting session needs the same press twice.
+        let danger = DockSwitcherList.guardMark(verb: char, item: item, marks: agentMarks(),
+                                                bundleID: app?.bundleIdentifier)
+        let now = CACurrentMediaTime()
+        guard agentGuard.confirm("\(char):\(item.id)", guarded: danger != nil, now: now) else {
+            if let danger { arm(item: item, mark: danger, verb: char) }
+            return
+        }
+        panel?.disarm()
         switch char {
         case "q": app?.terminate()
         case "h": app?.hide()
@@ -958,6 +988,23 @@ final class DockSwitcherController {
         // later the strip rebuilds so the closed or quit row is gone.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             self?.rebuild()
+        }
+    }
+
+    /// The second-press guard for ⌘W / ⌘Q on a live agent's row.
+    private var agentGuard = DockAgentGuard()
+
+    /// First press on a guarded verb: ring the card in the provider's
+    /// colour and say what the second press does; the ring lapses with
+    /// the guard's window.
+    private func arm(item: SwitcherItem, mark: DockAgentMark, verb: String) {
+        let again = verb == "q" ? "⌘Q again to quit \(item.appName)" : "⌘W again to close"
+        panel?.arm(itemID: item.id, mark: mark,
+                   note: DockAgentGuard.note(for: mark, again: again))
+        let key = "\(verb):\(item.id)"
+        DispatchQueue.main.asyncAfter(deadline: .now() + DockAgentGuard.window) { [weak self] in
+            guard let self, !self.agentGuard.isArmed(key, now: CACurrentMediaTime()) else { return }
+            self.panel?.disarm()
         }
     }
 
@@ -1128,8 +1175,25 @@ final class DockSwitcherPanel: NSPanel {
     }
 
     func dismiss() {
+        disarm()
         alphaValue = 0
         orderOut(nil)
+    }
+
+    /// A guarded verb's first press: the card rings, the footer explains.
+    func arm(itemID: String, mark: DockAgentMark, note: String) {
+        model.armedID = itemID
+        model.armedAccent = mark.accent
+        model.armedNote = note
+        refit()
+    }
+
+    func disarm() {
+        guard model.armedID != nil else { return }
+        model.armedID = nil
+        model.armedAccent = nil
+        model.armedNote = nil
+        if isVisible { refit() }
     }
 }
 
@@ -1150,6 +1214,11 @@ final class DockSwitcherModel {
     /// The pointer entered a card — the controller moves the selection
     /// there once the pointer has really moved.
     var onHover: (Int) -> Void = { _ in }
+    /// A guarded verb's first press: which card rings, in whose colour,
+    /// and the footer line that says a second press goes through.
+    var armedID: String?
+    var armedAccent: Color?
+    var armedNote: String?
 }
 
 /// Hover selects only after the pointer has moved since the strip
@@ -1237,6 +1306,19 @@ struct DockSwitcherView: View {
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 8)
                     .padding(.horizontal, 12)
+                }
+                if let note = model.armedNote {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(model.armedAccent ?? .accentColor)
+                            .frame(width: 7, height: 7)
+                        Text(note)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .padding(.bottom, 8)
+                    .padding(.horizontal, 12)
+                    .transition(.opacity)
                 }
             }
             .onChange(of: model.selection) { _, _ in
@@ -1357,6 +1439,14 @@ struct DockSwitcherView: View {
             if let agent = item.agent {
                 DockAgentDot(mark: agent)
                     .padding(6)
+            }
+        }
+        // A guarded ⌘W/⌘Q's first press: the card rings in the agent's
+        // colour until the second press or the guard's window lapses.
+        .overlay {
+            if model.armedID == item.id {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(model.armedAccent ?? .accentColor, lineWidth: 3)
             }
         }
         .help(help(for: item))

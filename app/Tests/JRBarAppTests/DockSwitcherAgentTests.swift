@@ -124,6 +124,43 @@ struct DockSwitcherAgentTests {
         #expect(model.items.count == 4)
     }
 
+    @Test("⌘W guards a live agent's window, ⌘Q any window of an app hosting one")
+    func guardedVerbs() {
+        let working = mark("a", label: "Build")
+        let other = mark("b", label: "Tests", waiting: true)
+        let hosting = item("t", title: "Build", agent: working)
+        let plain = item("p", title: "zsh")
+        let marks = [working, other]
+        #expect(DockSwitcherList.guardMark(verb: "w", item: hosting, marks: marks, bundleID: Self.ghostty)?.label == "Build")
+        #expect(DockSwitcherList.guardMark(verb: "w", item: plain, marks: marks, bundleID: Self.ghostty) == nil,
+                "closing a bare shell window harms no agent")
+        #expect(DockSwitcherList.guardMark(verb: "q", item: plain, marks: marks, bundleID: Self.ghostty)?.label == "Tests",
+                "quitting Ghostty ends every session in it — the most urgent one names the guard")
+        #expect(DockSwitcherList.guardMark(verb: "q", item: plain, marks: marks, bundleID: "com.apple.Safari") == nil)
+        for verb in ["m", "h", "f"] {
+            #expect(DockSwitcherList.guardMark(verb: verb, item: hosting, marks: marks, bundleID: Self.ghostty) == nil)
+        }
+    }
+
+    @Test("a guarded verb needs the same press twice within the window")
+    func secondPress() {
+        var guardState = DockAgentGuard()
+        var presses: [Bool] = []
+        presses.append(guardState.confirm("w:1", guarded: true, now: 0))
+        #expect(guardState.isArmed("w:1", now: 1))
+        presses.append(guardState.confirm("w:1", guarded: true, now: 1.5))
+        #expect(!guardState.isArmed("w:1", now: 1.6), "the confirmed press disarms")
+        presses.append(guardState.confirm("w:1", guarded: true, now: 10))
+        presses.append(guardState.confirm("w:1", guarded: true, now: 12.5))
+        presses.append(guardState.confirm("q:1", guarded: true, now: 12.6))
+        presses.append(guardState.confirm("m:1", guarded: false, now: 12.7))
+        // arm, confirm, arm, too slow (re-arm), another verb (re-arm), unguarded runs.
+        #expect(presses == [false, true, false, false, false, true])
+        #expect(guardState.armedKey == nil)
+        #expect(DockAgentGuard.note(for: mark("z", label: "X", waiting: true), again: "⌘W again to close")
+                == "Claude is waiting on you here — ⌘W again to close")
+    }
+
     @Test("open honours the lane's start and clamps a bad one")
     func openSelection() {
         var model = SwitcherModel()

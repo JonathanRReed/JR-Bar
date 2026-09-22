@@ -248,6 +248,51 @@ enum DockAgentMatch {
     }
 }
 
+// MARK: - The second press (pure, tested)
+
+/// The guard on verbs that would kill a live agent: ⌘W or ⌘Q in the
+/// switcher, × or Quit on a preview, a ⌘-right-click quit. The first
+/// press only arms (the caller rings the card in the provider's colour
+/// and says what a second press will do); the same press again within
+/// `window` goes through. Anything else — another verb, another row, a
+/// pause — starts over, so a stray double-tap on the wrong card never
+/// confirms the first.
+struct DockAgentGuard {
+    static let window: TimeInterval = 2
+
+    private(set) var armedKey: String?
+    private var armedAt: TimeInterval = 0
+
+    /// True when the verb may run now. `guarded` false (nothing live
+    /// there) always runs and disarms.
+    mutating func confirm(_ key: String, guarded: Bool, now: TimeInterval) -> Bool {
+        guard guarded else {
+            armedKey = nil
+            return true
+        }
+        if armedKey == key, now - armedAt <= Self.window {
+            armedKey = nil
+            return true
+        }
+        armedKey = key
+        armedAt = now
+        return false
+    }
+
+    func isArmed(_ key: String, now: TimeInterval) -> Bool {
+        armedKey == key && now - armedAt <= Self.window
+    }
+
+    mutating func reset() { armedKey = nil }
+
+    /// The line the armed card shows: "Claude is waiting on you here —
+    /// ⌘W again to close".
+    static func note(for mark: DockAgentMark, again: String) -> String {
+        let state = mark.isWaiting ? "waiting on you" : "working"
+        return "\(mark.providerName) is \(state) here — \(again)"
+    }
+}
+
 // MARK: - The mark on screen
 
 /// The agent mark a card or switcher entry draws — a provider-coloured
