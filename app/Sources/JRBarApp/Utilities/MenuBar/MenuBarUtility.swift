@@ -2088,12 +2088,14 @@ final class MenuBarUtility: Toy {
             // be allowed to stay that way.
             let iconParked = await self.ownIconParked()
             self.parkedReads = iconParked ? self.parkedReads + 1 : 0
-            let parkedConfirmed = self.parkedReads >= 2
             // A face-covered anchor is the same wound as a parked one —
-            // the icon is invisible either way — so it earns the same
-            // re-seat, landing at the island-aware slot instead.
+            // the icon is invisible either way — so it counts as a
+            // confirmed park: it earns the same re-seat on the same
+            // pacing, landing at the band-aware slot instead. Geometry
+            // needs no second read; the band's frame is not a flicker.
             let covered = self.ownIconCovered()
-            let iconStale = self.ownIconStale() || parkedConfirmed || covered
+            let parkedConfirmed = self.parkedReads >= 2 || covered
+            let iconStale = self.ownIconStale() || parkedConfirmed
             MenuBarAssessmentBackend.log.notice("conceal: adoption check — iconStale=\(iconStale, privacy: .public) parked=\(iconParked, privacy: .public) covered=\(covered, privacy: .public) chevron=\(chevronParked, privacy: .public) drawn=\(String(describing: self.host?.boundaryFrame), privacy: .public) probe=\(String(describing: self.host?.boundaryWindowProbe), privacy: .public) ax=\(String(describing: self.ownIconAXFrame()), privacy: .public)")
             if iconStale {
                 if self.iconStaleSince == nil { self.iconStaleSince = Date() }

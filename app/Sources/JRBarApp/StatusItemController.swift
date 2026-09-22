@@ -333,6 +333,14 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         Self.seedPreferredPosition(
             for: "com.jonathanreed.jrbar.status-item-r\(reseatCount)",
             desiredMidX: midX, overwrite: true)
+        // The primary record put the item where a re-seat was needed —
+        // under the band's face or off the row — so it was never a
+        // placement the person chose. Move it to the seat this re-seat
+        // takes, so the next launch registers there directly instead of
+        // repeating the covered beat and the re-seat.
+        Self.seedPreferredPosition(
+            for: "com.jonathanreed.jrbar.status-item",
+            desiredMidX: midX, overwrite: true)
         // Born slim under the agent — a variable-length birth would
         // claim the icon's full width for a beat and could park before
         // the clamp lands.
