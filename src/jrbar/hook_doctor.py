@@ -30,6 +30,9 @@ from .providers import (
 )
 from .state_paths import default_state_dir
 
+#: Providers whose PermissionRequest hook can carry JR-Bar's verdict.
+DECIDE_LANE_PROVIDERS = frozenset({"claude", "codex"})
+
 
 def classify_command(arguments: list[str]) -> str:
     if not arguments:
@@ -164,6 +167,14 @@ def hook_doctor_report(home: Path | None = None) -> dict[str, Any]:
                 registered.extend(parts for parts in registered_commands(handler, "openclaw") if parts not in registered)
             entry["registered"] = sorted({classify_command(parts) for parts in registered}) or (["none"])
             entry["registered_commands"] = [" ".join(shlex.quote(p) for p in parts) for parts in registered[:3]]
+            if spec.provider in DECIDE_LANE_PROVIDERS:
+                # Whether Approve/Deny from JR-Bar can answer this agent in
+                # any terminal: its PermissionRequest hook runs --decide.
+                entry["decide"] = (
+                    "installed"
+                    if any("--decide" in parts for parts in registered)
+                    else "missing" if entry["installed"] else "not_installed"
+                )
         except Exception as exc:
             entry["installed"] = False
             entry["error"] = exc.__class__.__name__
@@ -217,9 +228,10 @@ def render_hook_doctor(report: dict[str, Any]) -> str:
     for entry in report["providers"]:
         state = "installed" if entry.get("installed") else "not installed"
         registered = ",".join(entry.get("registered", []))
+        decide = f" decide={entry['decide']}" if "decide" in entry else ""
         lines.append(
             f"  {entry['provider']:<12} {state:<14} runs={registered:<8} "
-            f"next install={entry.get('would_install')}"
+            f"next install={entry.get('would_install')}{decide}"
         )
         for command in entry.get("registered_commands", []):
             lines.append(f"      {command}")
