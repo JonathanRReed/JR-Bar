@@ -807,9 +807,16 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
                 let bridge = Unmanaged<MenuBarSystemClickBridge>.fromOpaque(info).takeUnretainedValue()
                 return bridge.handle(type: type, event: event)
             },
-            userInfo: pointer),
-            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            userInfo: pointer) else {
             MenuBarAssessmentBackend.log.error("click bridge: no event tap — system item clicks stay native")
+            tapLive = false
+            return
+        }
+        // An active tap nobody services holds every click until the
+        // system times it out — never leave one standing.
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            MenuBarAssessmentBackend.log.error("click bridge: no run loop source — system item clicks stay native")
             tapLive = false
             return
         }
