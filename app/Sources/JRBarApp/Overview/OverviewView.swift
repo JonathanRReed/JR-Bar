@@ -14,6 +14,9 @@ struct OverviewView: View {
     /// The row whose ask gets a free-text reply — the Reply… prompt's
     /// target. nil hides the sheet.
     @ViewState private var replyEntry: CoreRosterEntry?
+    /// The inspector's Advanced disclosure (static topology), closed
+    /// until opened and remembered once it is.
+    @AppStorage("overview.advancedExpanded") private var advancedExpanded = false
 
     var body: some View {
         NavigationSplitView {
@@ -101,7 +104,9 @@ struct OverviewView: View {
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
             Task { await store.loadTimeline(for: id) }
-            Task { await store.loadRadarIfNeeded() }
+            if let entry = store.selected {
+                Task { await store.loadRadarReport(for: entry) }
+            }
         }
     }
 
@@ -153,6 +158,17 @@ struct OverviewView: View {
                     ForEach(store.projects, id: \.self) { project in
                         Label(project, systemImage: "folder")
                             .tag(SidebarSelection(filter: OverviewFilter(preset: .thisProject, project: project), saved: nil, pane: .roster))
+                    }
+                }
+            }
+            let branches = store.branches
+            if !branches.isEmpty {
+                // Only when branches tell rows apart: one repository on
+                // two branches, or a linked worktree.
+                Section("Branches") {
+                    ForEach(branches, id: \.self) { branch in
+                        Label(branch, systemImage: "arrow.triangle.branch")
+                            .tag(SidebarSelection(filter: OverviewFilter(preset: .thisBranch, branch: branch), saved: nil, pane: .roster))
                     }
                 }
             }
@@ -364,10 +380,26 @@ struct OverviewView: View {
                     }
                     .width(min: 120, ideal: 180)
                     TableColumn("Project", value: \.projectSortKey) { entry in
-                        Text(OverviewFilter.projectName(of: entry.session.cwd) ?? "—")
-                            .foregroundStyle(.secondary).lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(OverviewFilter.projectName(of: entry.session.cwd) ?? "—")
+                                .foregroundStyle(.secondary).lineLimit(1)
+                            if let workspace = store.workspace(for: entry), let head = workspace.headLabel {
+                                // The branch (and a worktree mark) the run
+                                // works on: agents in worktrees of one repo
+                                // read apart without opening the inspector.
+                                if workspace.isLinkedWorktree {
+                                    Image(systemName: "square.split.2x1")
+                                        .font(.system(size: 8)).foregroundStyle(.tertiary)
+                                }
+                                Text(head).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                            }
+                        }
+                        .help(store.workspace(for: entry).map { workspace in
+                            "\(workspace.repositoryName) · \(workspace.headLabel ?? "no HEAD")"
+                                + (workspace.isLinkedWorktree ? " · linked worktree at \(workspace.root)" : "")
+                        } ?? (entry.session.cwd ?? ""))
                     }
-                    .width(min: 70, ideal: 90)
+                    .width(min: 70, ideal: 120)
                     TableColumn("Harness", value: \.session.provider) { entry in
                         HStack(spacing: 5) {
                             ProviderTile(style: ProviderStyle.style(for: entry.session.provider), size: 14)
@@ -741,7 +773,8 @@ struct OverviewView: View {
                         Text(coverage).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
                     timelineSection(for: entry)
-                    topologySection(for: entry)
+                    observedToolsSection(for: entry)
+                    advancedSection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -1117,16 +1150,67 @@ struct OverviewView: View {
         return formatter
     }()
 
-    // MARK: Topology
+    // MARK: Observed tools
 
-    /// S7.5 relationship lens: the selected run's one-hop neighborhood
-    /// in the newest imported Radar report. Every edge is labeled
-    /// "static" — a statically detected relationship, never an observed
-    /// call; it feeds nothing (T38).
+    /// The tools and MCP servers this run actually called, from the
+    /// transcript already loaded for the Timeline — observed, not static,
+    /// and it works for Claude Code and Codex, which no static analyzer
+    /// scans. Failures ride beside the counts.
     @ViewBuilder
-    private func topologySection(for entry: CoreRosterEntry) -> some View {
-        let edges = store.staticEdges(for: entry)
-        if !edges.isEmpty || store.radarReport != nil {
+    private func observedToolsSection(for entry: CoreRosterEntry) -> some View {
+        let map = store.observedTools
+        if store.timelineSessionID == entry.id, !map.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("Tools used")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    Text("observed")
+                        .font(.system(size: 8, weight: .medium))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.15), in: .capsule)
+                        .foregroundStyle(Color.accentColor)
+                    Spacer()
+                    Text("\(map.totalCalls) calls in the loaded transcript")
+                        .font(.system(size: 9)).foregroundStyle(.quaternary)
+                }
+                if !map.tools.isEmpty {
+                    Text(map.tools.prefix(10).map(Self.toolText).joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                ForEach(map.servers) { server in
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                        Text(server.name).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                        Text(server.tools.prefix(6).map(Self.toolText).joined(separator: " · "))
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+                    .help("MCP server \(server.name): \(server.calls) calls")
+                }
+            }
+        }
+    }
+
+    /// "Bash ×12 (2 failed)".
+    private static func toolText(_ tool: ObservedToolMap.Tool) -> String {
+        tool.failures > 0 ? "\(tool.name) ×\(tool.calls) (\(tool.failures) failed)" : "\(tool.name) ×\(tool.calls)"
+    }
+
+    // MARK: Advanced (static topology)
+
+    /// The Agentic Radar lens, behind a disclosure that stays closed
+    /// until opened: Radar scans agent frameworks (LangGraph, CrewAI…),
+    /// not Claude Code or Codex sessions, so it is a specialist's tool,
+    /// not a fact every row should carry. When open it shows only a
+    /// report imported for this row's repository — never the newest
+    /// report of another project. Every edge is labeled "static", never
+    /// an observed call; it feeds nothing (T38).
+    @ViewBuilder
+    private func advancedSection(for entry: CoreRosterEntry) -> some View {
+        DisclosureGroup(isExpanded: $advancedExpanded) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text("Static topology")
@@ -1139,8 +1223,10 @@ struct OverviewView: View {
                     Spacer()
                     Button("Import…") { importRadarReport() }
                         .controlSize(.mini)
+                        .help("Import an Agentic Radar JSON report — its edges are listed for the repository it names")
                 }
-                if let report = store.radarReport {
+                if let report = store.radarReport(for: entry) {
+                    let edges = report.edges
                     ForEach(Array(edges.prefix(12).enumerated()), id: \.offset) { _, edge in
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.right")
@@ -1154,13 +1240,22 @@ struct OverviewView: View {
                         }
                     }
                     if edges.isEmpty {
-                        Text("No static edges near this session's provider.")
+                        Text("The report for this repository has no edges.")
                             .font(.system(size: 10)).foregroundStyle(.quaternary)
                     }
                     Text("\(report.repository ?? "report") · \(report.nodes.count) nodes · \(report.edges.count) edges")
                         .font(.system(size: 9)).foregroundStyle(.quaternary)
+                } else {
+                    Text(store.radarReports.isEmpty
+                         ? "No Radar reports imported."
+                         : "No imported report names \(store.repositoryName(for: entry) ?? "this repository").")
+                        .font(.system(size: 10)).foregroundStyle(.quaternary)
                 }
             }
+            .padding(.top, 4)
+        } label: {
+            Text("Advanced")
+                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
         }
     }
 
@@ -1391,6 +1486,7 @@ private extension OverviewPreset {
         case .unreviewed: return "checkmark.circle.badge.questionmark"
         case .thisProject: return "folder"
         case .thisMac: return "desktopcomputer"
+        case .thisBranch: return "arrow.triangle.branch"
         case .all: return "globe"
         }
     }

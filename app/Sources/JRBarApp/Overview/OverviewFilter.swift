@@ -12,6 +12,10 @@ public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
     case thisProject
     case thisMac
     case all
+    /// One repository branch (or linked worktree): several agents working
+    /// in worktrees of one repo read by branch, the way AgentNotch
+    /// groups them. Needs the filter's `branch`.
+    case thisBranch
 
     public var label: String {
         switch self {
@@ -22,14 +26,16 @@ public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
         case .thisProject: return "This project"
         case .thisMac: return "This Mac"
         case .all: return "All connected"
+        case .thisBranch: return "This branch"
         }
     }
 
-    /// The cuts the sidebar's Views section offers — `thisProject` is
-    /// excluded: without a `project` it matches nothing, and the real
-    /// entry points are the per-project rows in the Projects section.
+    /// The cuts the sidebar's Views section offers — `thisProject` and
+    /// `thisBranch` are excluded: without a project or branch they match
+    /// nothing, and the real entry points are the per-project and
+    /// per-branch rows in their own sidebar sections.
     public static var sidebarPresets: [OverviewPreset] {
-        allCases.filter { $0 != .thisProject }
+        allCases.filter { $0 != .thisProject && $0 != .thisBranch }
     }
 
     /// Whether the preset alone decides the row — `thisProject` also
@@ -52,6 +58,8 @@ public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
             return entry.axes?.review == "unreviewed"
         case .thisProject:
             return true // decided by the filter's project below
+        case .thisBranch:
+            return true // decided by the filter's branch and the git lookup
         case .thisMac:
             return !session.remote
         case .all:
@@ -67,17 +75,27 @@ public struct OverviewFilter: Codable, Equatable, Hashable, Sendable {
     public var preset: OverviewPreset
     /// The project label (cwd tail) `thisProject` matches; nil otherwise.
     public var project: String?
+    /// The "repo · branch" key `thisBranch` matches (`GitWorkspace.branchKey`).
+    public var branch: String?
 
-    public init(preset: OverviewPreset, project: String? = nil) {
+    public init(preset: OverviewPreset, project: String? = nil, branch: String? = nil) {
         self.preset = preset
         self.project = project
+        self.branch = branch
     }
 
-    public func matches(_ entry: CoreRosterEntry) -> Bool {
+    /// `branchKey` resolves a row's cwd to its "repo · branch" key; the
+    /// store passes its cached git lookup, and a filter that is not about
+    /// branches never calls it.
+    public func matches(_ entry: CoreRosterEntry, branchKey: (String?) -> String? = { _ in nil }) -> Bool {
         guard preset.matches(entry) else { return false }
         if preset.needsProject {
             guard let project, !project.isEmpty else { return false }
             return OverviewFilter.projectName(of: entry.session.cwd) == project
+        }
+        if preset == .thisBranch {
+            guard let branch, !branch.isEmpty, !entry.session.remote else { return false }
+            return branchKey(entry.session.cwd) == branch
         }
         return true
     }

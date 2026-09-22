@@ -71,6 +71,66 @@ final class OverviewStore {
 
     func usage(for entry: CoreRosterEntry) -> SessionUsage? { sessionUsage.usage(for: entry.id) }
 
+    // MARK: Git (branch and worktree)
+
+    /// cwd → where it sits in git, for the Project column's branch and the
+    /// sidebar's Branches section. Read off the main thread after each
+    /// roster load; a cwd outside any repository simply has no entry.
+    private(set) var gitWorkspaces: [String: GitWorkspace] = [:]
+    /// Bumps when `gitWorkspaces` changes, so a branch cut re-filters.
+    private(set) var gitGeneration = 0
+    @ObservationIgnored private var gitLookedUp: Set<String> = []
+    @ObservationIgnored private var gitSweptAt = Date.distantPast
+    /// A branch can be switched under a running agent: forget the lookups
+    /// this often and read HEAD again.
+    static let gitRefreshInterval: TimeInterval = 60
+    /// The lookup, replaceable in tests.
+    @ObservationIgnored var gitResolver: @Sendable (String) -> GitWorkspace? = { GitWorkspace.resolve(cwd: $0) }
+
+    func workspace(for entry: CoreRosterEntry) -> GitWorkspace? {
+        guard !entry.session.remote, let cwd = entry.session.cwd else { return nil }
+        return gitWorkspaces[cwd]
+    }
+
+    func resolveGitWorkspaces(now: Date = Date()) {
+        if now.timeIntervalSince(gitSweptAt) >= Self.gitRefreshInterval {
+            gitLookedUp.removeAll()
+            gitSweptAt = now
+        }
+        let pending = Set(roster.filter { !$0.session.remote }.compactMap(\.session.cwd)).subtracting(gitLookedUp)
+        guard !pending.isEmpty else { return }
+        gitLookedUp.formUnion(pending)
+        let resolver = gitResolver
+        Task.detached(priority: .utility) { [weak self] in
+            var found: [String: GitWorkspace] = [:]
+            for cwd in pending { if let workspace = resolver(cwd) { found[cwd] = workspace } }
+            await self?.mergeGitWorkspaces(found, looked: pending)
+        }
+    }
+
+    func mergeGitWorkspaces(_ found: [String: GitWorkspace], looked: Set<String>) {
+        var next = gitWorkspaces
+        for cwd in looked { next[cwd] = found[cwd] }
+        guard next != gitWorkspaces else { return }
+        gitWorkspaces = next
+        gitGeneration &+= 1
+    }
+
+    /// The sidebar's Branches section: every "repo · branch" the roster's
+    /// rows sit on, offered only when branches actually tell rows apart —
+    /// one repository on two or more branches, or any linked worktree.
+    var branches: [String] {
+        let workspaces = roster.compactMap { workspace(for: $0) }
+        var keysByRepo: [String: Set<String>] = [:]
+        var linked = false
+        for workspace in workspaces {
+            keysByRepo[workspace.repositoryName, default: []].insert(workspace.branchKey)
+            linked = linked || workspace.isLinkedWorktree
+        }
+        guard linked || keysByRepo.values.contains(where: { $0.count > 1 }) else { return [] }
+        return keysByRepo.values.flatMap { $0 }.sorted()
+    }
+
     // MARK: Connections
 
     /// The live wiring the window reports — the core link, this Mac,
@@ -179,6 +239,8 @@ final class OverviewStore {
         /// The Model and Cost columns sort on usage read after the rows
         /// arrived; a new reading re-sorts.
         var usageGeneration: Int
+        /// A branch cut filters on git lookups that land after the rows.
+        var gitGeneration: Int
     }
     @ObservationIgnored private var derivedCache: (key: DerivedKey, value: DerivedResult)?
     /// Recompute count — a test hook proving the memo holds across
@@ -190,12 +252,15 @@ final class OverviewStore {
             roster: roster, filter: filter, search: search,
             sortDescription: sortOrder.map { "\($0.keyPath)|\($0.order)" }.joined(separator: ";"),
             workerFilter: workerFilter,
-            usageGeneration: sortsByUsage ? sessionUsage.generation : 0
+            usageGeneration: sortsByUsage ? sessionUsage.generation : 0,
+            gitGeneration: filter.preset == .thisBranch ? gitGeneration : 0
         )
         if let cached = derivedCache, cached.key == key { return cached.value }
         var result = DerivedResult()
+        let workspaces = gitWorkspaces
+        let branchKey: (String?) -> String? = { cwd in cwd.flatMap { workspaces[$0]?.branchKey } }
         result.rows = roster.filter { row in
-            filter.matches(row)
+            filter.matches(row, branchKey: branchKey)
                 && (workerFilter == nil || row.session.parent == workerFilter)
                 && (search.isEmpty || OverviewStore.matchesSearch(row, search))
         }
@@ -338,6 +403,7 @@ final class OverviewStore {
             coverageNote = document.coverage?["note"]?.stringValue
             loadedAt = Date()
             error = nil
+            resolveGitWorkspaces()
         } catch {
             self.error = Self.describe(error)
         }
@@ -693,6 +759,8 @@ final class OverviewStore {
             parts.append("saved view “\(saved)”")
         } else if filter.preset == .thisProject, let project = filter.project {
             parts.append("project \(project)")
+        } else if filter.preset == .thisBranch, let branch = filter.branch {
+            parts.append("branch \(branch)")
         } else {
             parts.append(filter.preset.label)
         }
@@ -940,54 +1008,74 @@ final class OverviewStore {
 
     // MARK: Topology (S7.5)
 
-    /// Imported Radar report summaries and the newest one's graph —
-    /// the static-topology lens behind the inspector. Imported edges
-    /// are `evidence: "static"` — labels, never live-call proof (T38).
+    /// Imported Radar report summaries, and the graphs loaded so far —
+    /// the static-topology lens, which now lives under the inspector's
+    /// Advanced disclosure. Imported edges are `evidence: "static"` —
+    /// labels, never live-call proof (T38).
     var radarReports: [CoreRadarSummary] = []
-    var radarReport: CoreRadarReport?
+    private(set) var radarGraphs: [String: CoreRadarReport] = [:]
     var radarLoaded = false
 
-    /// The newest report's graph, loaded once; the lens reads the
-    /// selected session's one-hop neighborhood from it.
+    /// The report summaries, loaded once; a graph is fetched only when a
+    /// selected row's repository has one.
     func loadRadarIfNeeded() async {
         guard !radarLoaded else { return }
         radarLoaded = true
         do {
             radarReports = try await core.listRadarReports()
-            if let newest = radarReports.first {
-                radarReport = try await core.radarReport(id: newest.id)
-            }
         } catch {
             // No reports is the common case — not an error surface.
             radarReports = []
         }
     }
 
-    /// The selected run's one-hop neighborhood: edges touching a node
-    /// named for the session's provider (or current tool). Evidence is
-    /// always "static" — the view labels it and nothing else consumes
-    /// it (T38).
-    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
-        guard let report = radarReport else { return [] }
-        var needles = [entry.session.provider.lowercased()]
-        if let tool = entry.session.tool?.lowercased() { needles.append(tool) }
-        return report.edges.filter { edge in
-            needles.contains {
-                edge.source.lowercased().contains($0)
-                    || edge.target.lowercased().contains($0)
-            }
+    /// The repository name a row's static topology is filed under: its
+    /// git repository when the lookup landed, else the cwd's folder.
+    func repositoryName(for entry: CoreRosterEntry) -> String? {
+        if let workspace = workspace(for: entry) { return workspace.repositoryName }
+        return entry.session.cwd.map { ($0 as NSString).lastPathComponent }
+    }
+
+    /// The imported report for this row's repository — never the newest
+    /// report of some other project, which is what the old lens showed.
+    func radarSummary(for entry: CoreRosterEntry) -> CoreRadarSummary? {
+        RadarReportMatch.pick(radarReports, repository: repositoryName(for: entry))
+    }
+
+    func radarReport(for entry: CoreRosterEntry) -> CoreRadarReport? {
+        radarSummary(for: entry).flatMap { radarGraphs[$0.id] }
+    }
+
+    func loadRadarReport(for entry: CoreRosterEntry) async {
+        await loadRadarIfNeeded()
+        guard let summary = radarSummary(for: entry), radarGraphs[summary.id] == nil else { return }
+        if let report = try? await core.radarReport(id: summary.id) {
+            radarGraphs[summary.id] = report
         }
+    }
+
+    /// The repository's static edges, first dozen. Evidence is always
+    /// "static" — the view labels it and nothing else consumes it (T38).
+    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
+        radarReport(for: entry)?.edges ?? []
     }
 
     func importRadarReport(path: String) async {
         do {
             _ = try await core.importRadarReport(path: path)
             radarLoaded = false
+            radarGraphs = [:]
             await loadRadarIfNeeded()
         } catch {
             self.error = Self.describe(error)
         }
     }
+
+    // MARK: Observed tools
+
+    /// The tools and MCP servers the selected run called, from its loaded
+    /// transcript — the observed half of the relationship lens.
+    var observedTools: ObservedToolMap { ObservedToolMap.build(from: timeline) }
 
     // MARK: Usage pane
 

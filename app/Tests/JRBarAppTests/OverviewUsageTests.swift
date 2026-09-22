@@ -44,6 +44,25 @@ import JRBarCore
         #expect(OverviewStore.exportArgs(ids: nil, view: nil) == ["scope": .string("all")])
     }
 
+    @Test("branches are offered when they tell rows apart, and a branch cut keeps only its rows")
+    func branchCut() {
+        let store = OverviewStore(core: CoreModel())
+        let main = CoreRosterEntry(session: CoreSession(id: "ov-main", provider: "claude", cwd: "/r/JR-Bar", mode: "working"))
+        let tree = CoreRosterEntry(session: CoreSession(id: "ov-tree", provider: "claude", cwd: "/r/JR-Bar/.claude/worktrees/a", mode: "working"))
+        store.roster = [main, tree]
+        #expect(store.branches.isEmpty)
+        store.mergeGitWorkspaces([
+            "/r/JR-Bar": GitWorkspace(root: "/r/JR-Bar", branch: "main"),
+            "/r/JR-Bar/.claude/worktrees/a": GitWorkspace(root: "/r/JR-Bar/.claude/worktrees/a", branch: "wave1/agentsui",
+                                                         isLinkedWorktree: true, mainRoot: "/r/JR-Bar"),
+        ], looked: ["/r/JR-Bar", "/r/JR-Bar/.claude/worktrees/a"])
+        #expect(store.branches == ["JR-Bar · main", "JR-Bar · wave1/agentsui"])
+
+        store.filter = OverviewFilter(preset: .thisBranch, branch: "JR-Bar · wave1/agentsui")
+        #expect(store.rows.map(\.id) == ["ov-tree"])
+        #expect(store.viewLabel == "branch JR-Bar · wave1/agentsui")
+    }
+
     @Test("a reading that lands re-sorts a usage column, and only a usage column")
     func generationInvalidatesOnlyUsageSorts() {
         let store = OverviewStore(core: CoreModel())
