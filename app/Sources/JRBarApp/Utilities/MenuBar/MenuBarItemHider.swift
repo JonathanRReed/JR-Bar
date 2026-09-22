@@ -519,11 +519,11 @@ final class MenuBarItemHider {
         // instead of lagging one behind.
         onPlan?(plan)
         updateShutters(plan: plan, row: row)
-        // Debug, and only when an item changes section: logged on any
-        // difference it was ~150 persisted lines an hour of the clock's
-        // x and minute title. The plan named is the one that stands —
-        // under the concealer that is the utility's, not this pass's
-        // positional one.
+        // Debug, and only when an item changes section: on every plan
+        // difference, the clock's x jitter and minute title alone made
+        // ~150 persisted lines an hour. The plan named is the one that
+        // stands — under the concealer that is the utility's, not this
+        // pass's positional one.
         let standing = externalPlan ?? plan
         let sections = standing.sectionIDs
         if sections != loggedSections {
