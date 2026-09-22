@@ -14,7 +14,9 @@ from AppKit import (
     NSBezierPath,
     NSColor,
     NSColorSpace,
+    NSCompositingOperationDestinationOut,
     NSCursor,
+    NSEvenOddWindingRule,
     NSFont,
     NSFontAttributeName,
     NSForegroundColorAttributeName,
@@ -1269,6 +1271,41 @@ def current_cg_context():
             return None
 
 
+def begin_silhouette_layer(cg_context) -> bool:
+    """Open a transparency layer the silhouette will be cut from once.
+
+    Clipping each fill to an antialiased path applies an edge pixel's
+    partial coverage once per fill. A light fill followed by a darkening
+    one (the glow, then the corner feather) keeps light the darkening
+    never covered, so the fillet edge carried a faint unfeathered rim.
+    Drawing unclipped into a layer and cutting it once leaves an edge
+    pixel as bright as the pixel just inside it, never brighter.
+    False when there is no CG context or no layer: the caller clips.
+    """
+    if cg_context is None:
+        return False
+    try:
+        Quartz.CGContextBeginTransparencyLayer(cg_context, None)
+    except Exception:
+        return False
+    return True
+
+
+def end_silhouette_layer(cg_context, silhouette, bounds) -> None:
+    """Erase everything outside ``silhouette`` in one pass, then composite."""
+    NSGraphicsContext.saveGraphicsState()
+    outside = NSBezierPath.bezierPathWithRect_(bounds)
+    outside.appendBezierPath_(silhouette)
+    outside.setWindingRule_(NSEvenOddWindingRule)
+    NSGraphicsContext.currentContext().setCompositingOperation_(
+        NSCompositingOperationDestinationOut
+    )
+    NSColor.blackColor().set()
+    outside.fill()
+    NSGraphicsContext.restoreGraphicsState()
+    Quartz.CGContextEndTransparencyLayer(cg_context)
+
+
 def _glow_runs(
     geometry_cache,
     paint_cache,
@@ -1816,9 +1853,13 @@ class VirtualLedView(NSView):
         cg_context = current_cg_context()
 
         # The LED row, the corner feather, and the rim all render inside
-        # the housing's clip so none of them can escape the silhouette.
+        # the housing's silhouette so none of them can escape it: drawn
+        # into one layer the silhouette is cut from once (see
+        # begin_silhouette_layer), or clipped when there is no layer.
         NSGraphicsContext.saveGraphicsState()
-        body.addClip()
+        layered = begin_silhouette_layer(cg_context)
+        if not layered:
+            body.addClip()
         self._fill_glow_row(
             cg_context,
             colors,
@@ -1884,6 +1925,8 @@ class VirtualLedView(NSView):
         # the tips, so they'd float on pure LED color.
         if self.has_notch and self.alcove_silhouette is None:
             self._draw_standing_gauges(cg_context, height, edge_inset=wing_offset + 6.0)
+        if layered:
+            end_silhouette_layer(cg_context, body, self.bounds())
         NSGraphicsContext.restoreGraphicsState()
 
     def _classic_status_colors(self, colors):

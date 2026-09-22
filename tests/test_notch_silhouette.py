@@ -276,47 +276,95 @@ def test_classic_draw_is_contained_and_feathers_to_black_at_the_corners() -> Non
     # background beyond the notch. Classic mode now feathers the light to
     # housing-black before the corners and paints nothing outside the
     # body silhouette.
+    #
+    # 2026-09-22, from CI: the draw used to be read back through
+    # NSImage.lockFocus, which renders at the main screen's scale -- 2x on
+    # a MacBook, 1x on GitHub's runner. At 1x the sampled pixel straddles
+    # the fillet's antialiased edge, and that edge still carried an
+    # unfeathered rim (the clip applied its partial coverage to the glow
+    # and to the feather separately). At 2x the same sample fell just
+    # outside the body and read transparent, so the rim passed here.
+    # Both scales are now rendered explicitly, and the outermost point is
+    # swept pixel by pixel instead of sampled once.
+    wing = 30.0
+    notch = 220.0
+    size = (notch + 2.0 * wing, 37.0)
+
+    for scale in (1.0, 2.0):
+        rep = _render_classic_body(size, notch=notch, scale=scale)
+
+        def luma_px(x_px: int, y_px: int) -> float:
+            color = rep.colorAtX_y_(x_px, y_px)
+            return (
+                color.redComponent() + color.greenComponent() + color.blueComponent()
+            )
+
+        def luma(x_pt: float, y_px: int) -> float:
+            return luma_px(int(x_pt * scale), y_px)
+
+        band_y = rep.pixelsHigh() - 3  # inside the LED band (rep y=0 is top)
+        center = luma(wing + notch / 2.0, band_y)
+        assert center > 1.0, (
+            f"the band itself must be lit (center luma {center} at {scale}x)"
+        )
+        # Deep into the body the band still runs at full strength...
+        assert luma(wing + 20.0, band_y) > 1.0
+        assert luma(wing + notch - 20.0, band_y) > 1.0
+        # ...but the outermost sliver has eased down to housing-black, so
+        # the corner fillets read as clean black rounding, not a bright
+        # hook -- in every pixel of that point, edge pixels included.
+        assert luma(wing + 1.0, band_y) < 0.2
+        assert luma(wing + notch - 1.0, band_y) < 0.2
+        left = range(int(wing * scale), int((wing + 1.0) * scale))
+        right = range(int((wing + notch - 1.0) * scale), int((wing + notch) * scale))
+        for x_px in (*left, *right):
+            for y_px in range(rep.pixelsHigh()):
+                value = luma_px(x_px, y_px)
+                assert value < 0.2, (
+                    f"corner pixel ({x_px}, {y_px}) at {scale}x has luma {value}"
+                )
+        # And the wings paint NOTHING: the window region beyond the body is
+        # fully transparent (premultiplied black) all the way to the edge.
+        for x_pt in (2.0, wing / 2.0, wing - 2.0):
+            assert luma(x_pt, band_y) == 0.0
+            assert luma(size[0] - x_pt, band_y) == 0.0
+
+
+def _render_classic_body(size, *, notch: float, scale: float):
+    """Draw a notch-display VirtualLedView into a bitmap of an exact scale.
+
+    Rendering into a bitmap of known pixel size keeps the result a
+    function of the draw alone, not of whichever screen the test host
+    has attached.
+    """
     import AppKit
 
     from jrbar import virtual_device as vd
 
-    wing = 30.0
-    notch = 220.0
-    view = vd.VirtualLedView.alloc().initWithFrame_(
-        ((0, 0), (notch + 2.0 * wing, 37.0))
-    )
+    view = vd.VirtualLedView.alloc().initWithFrame_(((0, 0), size))
     view.setHasNotch_(True)
     view.setNotchWidth_(notch)
     view.setPreviewWhiteBrightness_(255)
 
-    size = (notch + 2.0 * wing, 37.0)
-    image = AppKit.NSImage.alloc().initWithSize_(size)
-    image.lockFocus()
-    view.drawRect_(view.bounds())
-    rep = AppKit.NSBitmapImageRep.alloc().initWithFocusedViewRect_(
-        ((0, 0), size)
+    rep = AppKit.NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
+        None,
+        int(size[0] * scale),
+        int(size[1] * scale),
+        8,
+        4,
+        True,
+        False,
+        AppKit.NSDeviceRGBColorSpace,
+        0,
+        0,
     )
-    image.unlockFocus()
-
-    def luma(x_pt: float, y_px: int) -> float:
-        scale = rep.pixelsWide() / size[0]
-        color = rep.colorAtX_y_(int(x_pt * scale), y_px)
-        return (
-            color.redComponent() + color.greenComponent() + color.blueComponent()
-        )
-
-    band_y = rep.pixelsHigh() - 3  # inside the LED band (rep y=0 is top)
-    center = luma(wing + notch / 2.0, band_y)
-    assert center > 1.0, f"the band itself must be lit (center luma {center})"
-    # Deep into the body the band still runs at full strength...
-    assert luma(wing + 20.0, band_y) > 1.0
-    assert luma(wing + notch - 20.0, band_y) > 1.0
-    # ...but the outermost sliver has eased down to housing-black, so the
-    # corner fillets read as clean black rounding, not a bright hook.
-    assert luma(wing + 1.0, band_y) < 0.2
-    assert luma(wing + notch - 1.0, band_y) < 0.2
-    # And the wings paint NOTHING: the window region beyond the body is
-    # fully transparent (premultiplied black) all the way to the edge.
-    for x_pt in (2.0, wing / 2.0, wing - 2.0):
-        assert luma(x_pt, band_y) == 0.0
-        assert luma(size[0] - x_pt, band_y) == 0.0
+    rep.setSize_(size)
+    context = AppKit.NSGraphicsContext.graphicsContextWithBitmapImageRep_(rep)
+    AppKit.NSGraphicsContext.saveGraphicsState()
+    try:
+        AppKit.NSGraphicsContext.setCurrentContext_(context)
+        view.drawRect_(view.bounds())
+        context.flushGraphics()
+    finally:
+        AppKit.NSGraphicsContext.restoreGraphicsState()
+    return rep
