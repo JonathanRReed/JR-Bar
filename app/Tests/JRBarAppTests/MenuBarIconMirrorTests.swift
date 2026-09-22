@@ -107,6 +107,22 @@ struct MenuBarIconMirrorTests {
         #expect(mirror.panelWidth == 24, "a square style takes the item's square, not the glyph")
     }
 
+    @MainActor
+    @Test("a first face as wide as the starting panel, nothing hidden, is still laid out")
+    func sameSizeFirstFaceIsLaidOut() throws {
+        // The panel starts 30 pt wide; a 30-pt face with no ‹ only moves
+        // it, and a move never reaches `resizeSubviews`.
+        let mirror = MenuBarIconMirror()
+        let glyph = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        mirror.update(face: MenuBarIconFace(image: glyph, length: 30))
+        #expect(mirror.panelWidth == 30)
+        mirror.setFrame(NSRect(x: 1054, y: 951.5, width: mirror.panelWidth, height: 24), display: false)
+        let content = try #require(mirror.contentView)
+        let button = try #require(content.subviews.compactMap { $0 as? NSButton }.first)
+        #expect(button.frame == NSRect(x: 0, y: 0, width: 30, height: MenuBarIconMirror.itemHeight),
+                "a 0×0 button is an icon with nothing drawn")
+    }
+
     // MARK: Clicks
 
     @Test("a click's meaning: secondary is the menu anywhere; the ‹ zone toggles the run; the rest is the face")

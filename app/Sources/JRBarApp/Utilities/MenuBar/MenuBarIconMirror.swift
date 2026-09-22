@@ -126,7 +126,11 @@ final class MenuBarIconMirror: NSPanel {
     func show(row: CGRect, primaryMaxY: CGFloat, seat: (CGFloat) -> CGFloat) {
         let width = panelWidth
         let frame = Self.frame(seatMinX: seat(width), width: width, row: row, primaryMaxY: primaryMaxY)
-        if self.frame != frame { setFrame(frame, display: true) }
+        if self.frame != frame {
+            setFrame(frame, display: true)
+            // A move that keeps the size never reaches `resizeSubviews`.
+            content.layoutZones()
+        }
         if !isVisible { orderFrontRegardless() }
         let chevron = face.hiddenCount > 0 ? Self.chevronZone : 0
         publish(Self.faceFrame(in: frame, chevronWidth: chevron))
@@ -264,6 +268,11 @@ private final class MirrorContentView: NSView {
         chevron.setAccessibilityElement(false)
         addSubview(chevron)
         addSubview(faceButton)
+        // The zones get their frames here, not only on a resize: the
+        // panel's content rect is this same 30 pt, so a first face that
+        // is 30 pt wide with nothing hidden never resizes the view, and
+        // the button would stand 0×0 — an icon with nothing drawn.
+        layoutZones()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
