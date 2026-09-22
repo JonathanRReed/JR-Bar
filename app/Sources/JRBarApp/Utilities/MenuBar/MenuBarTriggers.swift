@@ -235,12 +235,7 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         // rides it. The event surfaces through a client delegate, not
         // NotificationCenter.
         let client = CWWiFiClient()
-        let delegate = WiFiEventDelegate { [weak self] in
-            MainActor.assumeIsolated {
-                self?.onEvent?(.wifiChanged)
-                self?.onEvent?(.wifiSSID(Self.currentSSID()))
-            }
-        }
+        let delegate = makeWiFiDelegate()
         client.delegate = delegate
         wifiClient = client
         wifiDelegate = delegate
@@ -273,6 +268,18 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     }
 
     isolated deinit { stop() }
+
+    /// The SSID-change forwarder. CoreWLAN calls it on its own private
+    /// thread, so it hops to the main actor — asserting isolation there
+    /// trapped on the first network change once any rule was on.
+    func makeWiFiDelegate() -> WiFiEventDelegate {
+        WiFiEventDelegate { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.onEvent?(.wifiChanged)
+                self?.onEvent?(.wifiSSID(MenuBarSystemTriggerSource.currentSSID()))
+            }
+        }
+    }
 
     /// One poll: a `.minute` tick when the wall-clock minute rolled,
     /// plus a `.onACPower` sample (only on machines with an internal
@@ -349,9 +356,10 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
 
 /// CoreWLAN events arrive on a client delegate, not NotificationCenter
 /// — one tiny forwarder per source. `ssidDidChange` fires with or
-/// without the Location grant; only reading the name needs it.
+/// without the Location grant; only reading the name needs it. The
+/// callback runs on CoreWLAN's thread, never the main one.
 final class WiFiEventDelegate: NSObject, CWEventDelegate {
-    let onChange: () -> Void
-    init(onChange: @escaping () -> Void) { self.onChange = onChange }
+    let onChange: @Sendable () -> Void
+    init(onChange: @escaping @Sendable () -> Void) { self.onChange = onChange }
     func ssidDidChangeForWiFiInterface(withName interfaceName: String) { onChange() }
 }

@@ -66,4 +66,29 @@ struct MenuBarEngineTests {
         #expect(losses == 1)
         #expect(handle == nil, "a self-exit must disarm the source and close both pipe ends")
     }
+
+    // MARK: Trigger source
+
+    @MainActor
+    @Test("an SSID change from CoreWLAN's thread hops to the main actor instead of trapping")
+    func wifiChangeHopsToMain() async {
+        let source = MenuBarSystemTriggerSource()
+        var events: [MenuBarTriggerEvent] = []
+        var onMain: [Bool] = []
+        source.onEvent = { event in
+            events.append(event)
+            onMain.append(Thread.isMainThread)
+        }
+        let delegate = source.makeWiFiDelegate()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                delegate.ssidDidChangeForWiFiInterface(withName: "en0")
+                done.resume()
+            }
+        }
+        await waitUntil { events.count >= 2 }
+        #expect(events.first == .wifiChanged)
+        #expect(events.count == 2)
+        #expect(onMain.allSatisfy { $0 })
+    }
 }
