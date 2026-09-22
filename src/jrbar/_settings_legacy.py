@@ -74,7 +74,7 @@ SETTINGS_SCHEMA_VERSION = 1
 #: thin usage ring), ``glyph_label`` (the glyph beside a short text),
 #: ``orbit`` (the mark in a usage ring with session dots below) and
 #: ``hidden`` (no icon at all -- a thin invisible slot, Ice's no-icon
-#: mode; the ‹ boundary and hotkeys still reveal).
+#: mode; the chevron boundary and hotkeys still reveal).
 MENU_BAR_ICON_STYLES = (
     "agents",
     "meters",

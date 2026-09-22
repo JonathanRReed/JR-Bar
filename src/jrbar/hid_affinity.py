@@ -66,7 +66,7 @@ def _bind() -> None:
         # First hidapi call on THIS thread: hid_init -> init_hid_manager
         # schedules the global manager on this run loop.
         hid.enumerate()
-    except BaseException as error:  # noqa: BLE001 -- surfaced to callers
+    except BaseException as error:  # surfaced to callers
         _error = error
         _ready.set()
         return
