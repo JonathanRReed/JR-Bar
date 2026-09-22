@@ -1165,15 +1165,61 @@ final class MenuBarUtility: Toy {
         refreshChevron()
         iconMirror = makeIconMirror()
         updateIconMirror()
+        menuHandleChanged()
     }
 
     /// The icon while the concealer runs — see `MenuBarIconMirror`.
     @ObservationIgnored private var iconMirror: MenuBarIconMirror?
     /// Whether the mirror carries the icon right now; the ear's ‹ reads
-    /// it.
-    @ObservationIgnored private var iconMirrored = false
+    /// it, so a flip tells the band at once.
+    @ObservationIgnored private var iconMirrored = false {
+        didSet { if iconMirrored != oldValue { menuHandleChanged() } }
+    }
     /// The last seat logged — the log speaks only when it moves.
     @ObservationIgnored private var lastMirrorSeat: CGFloat?
+    /// The hidden run's reveal state the band last heard about.
+    @ObservationIgnored private var handleRevealedSeen = false
+    /// A cover re-cut is queued for the next run-loop turn, or is the
+    /// pass now running (`recutCovers`).
+    @ObservationIgnored private var coverRecutQueued = false
+    @ObservationIgnored private var coverRecutRunning = false
+
+    /// The mirror's frame while it stands; nil while it is down.
+    private var standingMirrorFrame: NSRect? {
+        iconMirror.flatMap { $0.isVisible ? $0.frame : nil }
+    }
+
+    /// The ear's ‹ (`menuHandleRevealed`) may have changed: the mirror
+    /// took or gave back the icon, the hidden run flipped, the engine
+    /// came up or went down. The band otherwise saw these only on its
+    /// 1 Hz safety poll, and for up to about 1.25 s two ‹ marks stood —
+    /// the mirror's and the ear's — or none did. It rides the ear-limit
+    /// push, whose debounced rescan compares the handle too.
+    private func menuHandleChanged() {
+        ScreenBarGeometry.earLimitsChanged?()
+    }
+
+    /// The mirror moved, resized, came up or went down. The covers the
+    /// hider paints this pass were cut against its frame from before it
+    /// settled: `onPlan` builds the cover runs before `syncConcealer`
+    /// seats the mirror, and a face change re-seats it with no plan at
+    /// all. A merged run could then span the new seat, and a shutter at
+    /// the mirror's own level paint over the icon until the next scan.
+    /// One reconcile on the next run-loop turn re-cuts them around the
+    /// settled frame. Only one: a seat that moves again inside that pass
+    /// waits for the next pass of its own, so a re-cut never chains.
+    private func recutCovers() {
+        guard !coverRecutQueued, !coverRecutRunning else { return }
+        coverRecutQueued = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.coverRecutQueued = false
+            guard self.concealer != nil else { return }
+            self.coverRecutRunning = true
+            self.hider.reconcile()
+            self.coverRecutRunning = false
+        }
+    }
 
     /// The mirror, wired the way the real button is: the face's click is
     /// the panel, its right/Option click the item's full menu, the ‹ the
@@ -1216,9 +1262,11 @@ final class MenuBarUtility: Toy {
 
     /// Settle who draws the icon and, while the mirror does, where it
     /// stands. Runs on every plan pass and every engine change; the
-    /// window moves only when its frame does.
+    /// window moves only when its frame does, and a frame that changed
+    /// re-cuts the covers.
     private func updateIconMirror() {
         guard let concealer else { return }
+        let before = standingMirrorFrame
         // A target of apps that are not running conceals nothing — the
         // engine drops the assertion and macOS draws the real item.
         let mirrored = Self.mirrorsIcon(engineUp: true,
@@ -1229,13 +1277,14 @@ final class MenuBarUtility: Toy {
                                         activationFailing: concealer.activationFailing)
         iconMirrored = mirrored
         host?.setFaceMirrored(mirrored)
-        guard mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first else {
+        if mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first {
+            mirror.show(row: Self.primaryRow(), primaryMaxY: primary.frame.maxY) { width in
+                mirrorSeat(width: width)
+            }
+        } else {
             iconMirror?.hide()
-            return
         }
-        mirror.show(row: Self.primaryRow(), primaryMaxY: primary.frame.maxY) { width in
-            mirrorSeat(width: width)
-        }
+        if standingMirrorFrame != before { recutCovers() }
     }
 
     /// The menu bar's row on the Quartz origin display — the one the
@@ -1359,6 +1408,7 @@ final class MenuBarUtility: Toy {
         hider.shuttersSuppressed = false
         hider.externalPlan = nil
         self.concealer = nil
+        menuHandleChanged()
     }
 
     /// The bundle identifiers of every running app — the allowlist's
@@ -1819,7 +1869,9 @@ final class MenuBarUtility: Toy {
         // the items' Quartz ones — `coverRuns` reads only x, which the
         // two spaces share.
         if let island = ScreenBarGeometry.islandScreenRect { blockers.append(island) }
-        if let mirror = iconMirror, mirror.isVisible { blockers.append(mirror.frame) }
+        // The mirror's frame from before this pass seats it: a seat
+        // that then moves re-plans the covers (`recutCovers`).
+        if let mirror = standingMirrorFrame { blockers.append(mirror) }
         if let chevron = chevronScreenFrame() { blockers.append(chevron) }
         plan.hiddenCovers = MenuBarItemHider.coverRuns(covered: coverHidden, blockers: blockers)
         plan.alwaysHiddenCovers = MenuBarItemHider.coverRuns(covered: coverAlways, blockers: blockers)
@@ -2413,9 +2465,15 @@ final class MenuBarUtility: Toy {
     /// edge, right while the run is out); the host takes the counts and
     /// draws its own hint.
     private func refreshChevron() {
+        let revealed = hider.revealed.contains(.hidden)
         if let host {
             host.hiddenCount = lastPlan.hidden.count + lastPlan.alwaysHidden.count
-            host.hiddenRevealed = hider.revealed.contains(.hidden)
+            host.hiddenRevealed = revealed
+        }
+        // The ear's ‹ turns to › with the run: say so while it can stand.
+        if revealed != handleRevealedSeen {
+            handleRevealedSeen = revealed
+            if concealer != nil { menuHandleChanged() }
         }
         guard let chevron, let button = chevron.button else { return }
         Self.style(button, symbol: Self.chevronSymbol(revealed: hider.revealed.contains(.hidden)),
@@ -2569,8 +2627,7 @@ final class MenuBarUtility: Toy {
             let row = Self.primaryRow()
             var start = mirrorClearOf()
             if NSScreen.screens.first?.auxiliaryTopRightArea == nil { start = max(start, row.midX) }
-            let mirrorMinX = iconMirrored
-                ? iconMirror.flatMap { $0.isVisible ? $0.frame.minX : nil } : nil
+            let mirrorMinX = iconMirrored ? standingMirrorFrame?.minX : nil
             let shown = lastPlan.shown.filter {
                 $0.bounds.intersects(row) && Self.isForeignOwner($0.ownerName)
                     && !$0.isNativeOverflowControl
