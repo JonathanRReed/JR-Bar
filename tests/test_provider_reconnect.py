@@ -234,6 +234,7 @@ def test_codex_app_server_probe_keeps_transport_open_until_rate_limits_arrive(
     monkeypatch,
 ):
     import io
+    import shutil
     import subprocess
 
     lines = [
@@ -285,10 +286,23 @@ def test_codex_app_server_probe_keeps_transport_open_until_rate_limits_arrive(
             self.terminated = True
 
     process = FixtureProcess()
-    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: process)
+    command: list[str] = []
+
+    def popen(arguments, **_kwargs):
+        command.extend(arguments)
+        return process
+
+    # The probe resolves `codex` before it spawns anything, and a machine
+    # without one (GitHub's runner) returns None there. Resolve it to a
+    # fixture path so the transport is what this test exercises.
+    monkeypatch.setattr(
+        shutil, "which", lambda _executable, *, path=None: "/fixture/bin/codex"
+    )
+    monkeypatch.setattr(subprocess, "Popen", popen)
 
     probe = codex_app_server_probe(timeout_seconds=1.0)
 
+    assert command[0] == "/fixture/bin/codex"
     assert probe == {
         "authenticated": True,
         "plan": None,
