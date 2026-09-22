@@ -32,14 +32,22 @@ struct NotchBuddyView: View {
     /// is the right body for it.
     var docked = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// False while the panel is fully covered (a fullscreen Space, a
+    /// window over the floating pet): nothing on screen, nothing to draw.
+    @ViewState private var visible = true
 
     /// The window a hop plays across; `NotchBuddyToy.hopUntil` sets it.
     private static let hopDuration: TimeInterval = 1.1
 
     var body: some View {
         // Paused under Reduce Motion — every other timeline in the app
-        // is; this one redrew at display rate regardless.
-        TimelineView(.animation(paused: reduceMotion)) { context in
+        // is — and while the panel is covered. Otherwise capped: 30 a
+        // second while anything moves, a slow breath's worth asleep
+        // (`NotchBuddyToy.frameInterval`). The interval is read out
+        // here, off observable state, so the schedule changes the
+        // moment the fleet wakes or a beat starts.
+        TimelineView(.animation(minimumInterval: toy.frameInterval(scale: scale),
+                                paused: reduceMotion || !visible)) { context in
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
@@ -101,6 +109,7 @@ struct NotchBuddyView: View {
         .padding(.horizontal, 9 * scale)
         .padding(.vertical, 6 * scale)
         .fixedSize()
+        .background(WindowVisibilityReader { visible = $0 })
         .contentShape(Rectangle())
         // The tap's own point rides along: while an ask is open, only a
         // tap on the "!" badge overhead opens the session asking — a pat

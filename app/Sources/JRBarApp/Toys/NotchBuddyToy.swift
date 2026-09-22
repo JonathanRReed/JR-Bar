@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import JRBarLEDS
 import Observation
+import os
 import SwiftUI
 
 /// Notch Buddy (docs/TOYS.md): a tiny creature in the `NotchHUD` panel
@@ -241,6 +242,7 @@ final class NotchBuddyToy: Toy {
         isDragged = false
         dragTilt = 0
         landedAt = now
+        stayLively(from: now)
     }
 
     /// The carry was cut short (a toast took the panel): back to rest,
@@ -289,6 +291,7 @@ final class NotchBuddyToy: Toy {
             trickKind = BuddyTrick.Kind.allCases[trickOrdinal % BuddyTrick.Kind.allCases.count]
             trickOrdinal += 1
             trickStartedAt = now
+            stayLively(from: now)
         }
         if let point, askingSession != nil,
            Self.askBadgeZone(scale: scale).contains(point) {
@@ -301,6 +304,7 @@ final class NotchBuddyToy: Toy {
     func giveTreat(at now: Date = Date()) {
         store?.state.notchBuddy.care.feed(at: now)
         treatBurstAt = now
+        stayLively(from: now)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             hopUntil = now.addingTimeInterval(1.1)
         }
@@ -333,9 +337,9 @@ final class NotchBuddyToy: Toy {
     }
 
     /// Everything the HUD reads off the session list in one tick — the
-    /// pose, the badge counts, the tints and the hover line — so a tick
-    /// pays for a single pass over `core.sessions` and the pieces can
-    /// never disagree with each other.
+    /// pose, the badge counts, the tints and the hover line — built from
+    /// one cached `SessionDigest`, so the pieces can never disagree with
+    /// each other and a tick never walks the session list.
     struct BuddySummary {
         /// The pose: a live ask outranks a failure, a failure outranks
         /// work, work outranks sleep; three or more working is a
@@ -371,40 +375,165 @@ final class NotchBuddyToy: Toy {
         var statusLine = ""
     }
 
-    /// One pass over `core.sessions`: the mood, the counts, the tints
-    /// and the hover line all fall out of the same
-    /// `SessionActivity.reduce` calls. Also maintains the wave & slump
-    /// clocks the one-off effects play from — the view's tick is the
-    /// only clock that drives them.
-    func summary(at now: Date = Date()) -> BuddySummary {
-        var s = BuddySummary()
+    /// What the session list says, reduced once per change rather than
+    /// once per frame: the counts, the tints and the focus pick. The
+    /// view ticks up to 30 times a second and the list moves a few times
+    /// a minute, so the frame only pays for the parts that age with the
+    /// clock — the hop, the care mood, the wave and slump clocks.
+    struct SessionDigest: Equatable {
+        var working = 0
+        var waiting = 0
+        var failed = 0
+        var dominantProvider: String?
+        var workingProvider: String?
+        var providers: [String] = []
+        var focus: BuddyFocus?
+
+        /// Anything on the clock — work, an ask, a failure to own up to.
+        /// Nothing is asleep, and asleep only breathes.
+        var isAwake: Bool { working + waiting + failed > 0 }
+    }
+
+    /// One pass over the sessions: the counts, the tints and the focus
+    /// all fall out of the same `SessionActivity.reduce` calls. Pure, so
+    /// the tests can pin it without a document.
+    static func digest(of sessions: [CoreSession]) -> SessionDigest {
+        var d = SessionDigest()
         var tally: [String: Int] = [:]
         var soleProvider: String?
         var splitWork = false
-        for session in core.sessions {
+        for session in sessions {
             let activity = SessionActivity.reduce(session)
             switch activity {
             case .working:
-                s.working += 1
+                d.working += 1
                 tally[session.provider, default: 0] += 1
                 if let soleProvider, soleProvider != session.provider {
                     splitWork = true
                 } else if soleProvider == nil {
                     soleProvider = session.provider
                 }
-            case .waiting: s.waiting += 1
-            case .failed: s.failed += 1
+            case .waiting: d.waiting += 1
+            case .failed: d.failed += 1
             case .done, .ended, .idle: break
             }
             switch activity {
             case .working, .waiting, .failed:
                 let name = ProviderStyle.style(for: session.provider).name
-                if !s.providers.contains(name) { s.providers.append(name) }
+                if !d.providers.contains(name) { d.providers.append(name) }
             case .done, .ended, .idle: break
             }
         }
-        s.dominantProvider = tally.max { ($0.value, $0.key) < ($1.value, $1.key) }?.key
-        s.workingProvider = splitWork ? nil : soleProvider
+        d.dominantProvider = tally.max { ($0.value, $0.key) < ($1.value, $1.key) }?.key
+        d.workingProvider = splitWork ? nil : soleProvider
+        d.focus = BuddyFocus.pick(from: sessions)
+        return d
+    }
+
+    /// The last digest and whether a newer document has landed since.
+    /// The flag is set from the observation's `onChange`, which fires
+    /// inside `core.state`'s willSet — synchronously, so a summary read
+    /// right after a document (the tests do exactly that) can never see
+    /// the old list. A lock because `onChange` is `@Sendable`.
+    @ObservationIgnored private var cachedDigest = SessionDigest()
+    @ObservationIgnored private let digestStale = OSAllocatedUnfairLock(initialState: true)
+    /// Bumped after every document the digest has followed, outside any
+    /// render — the observable edge a view that only read the cache
+    /// re-renders on. The floating caption rides a 15 s timeline and
+    /// would otherwise sit on a stale name until its next tick.
+    private(set) var digestVersion = 0
+
+    /// The digest for this frame: the cache, or a fresh pass when a new
+    /// document landed. The pass re-arms the one-shot observation.
+    func sessionDigest() -> SessionDigest {
+        _ = digestVersion
+        if digestStale.withLock({ $0 }) { refreshDigest() }
+        return cachedDigest
+    }
+
+    private func refreshDigest() {
+        digestStale.withLock { $0 = false }
+        let stale = digestStale
+        cachedDigest = withObservationTracking {
+            Self.digest(of: core.sessions)
+        } onChange: { [weak self] in
+            stale.withLock { $0 = true }
+            // The re-read waits for the hop: onChange runs in the
+            // property's willSet, before the new document is stored.
+            Task { @MainActor [weak self] in self?.followDocument() }
+        }
+    }
+
+    /// A new document landed: re-read it and tell the views. A render
+    /// may already have re-read it lazily — then this only bumps.
+    private func followDocument() {
+        _ = sessionDigest()
+        digestVersion &+= 1
+    }
+
+    // MARK: Frame pacing
+
+    /// A one-shot beat — a hop, a trick, the treat's hearts, a crumb, a
+    /// landing — holds the timeline at the full rate until this passes.
+    /// Every one of them is over inside 1.1 s; the window pads it so the
+    /// last frame of the beat is never the slow one.
+    private(set) var livelyUntil: Date?
+    @ObservationIgnored private var livelyWork: DispatchWorkItem?
+    static let livelyWindow: TimeInterval = 1.4
+
+    private func stayLively(from now: Date = Date()) {
+        let end = now.addingTimeInterval(Self.livelyWindow)
+        if let current = livelyUntil, current >= end { return }
+        livelyUntil = end
+        livelyWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.livelyWork = nil
+                self.livelyUntil = nil
+            }
+        }
+        livelyWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.05, end.timeIntervalSinceNow),
+                                      execute: work)
+    }
+
+    /// The frame budget: 30 a second while anything moves, a slow
+    /// breath's worth while nothing does. Asleep, the buddy only
+    /// breathes and drifts its "z"s — 2 pt in a second at the notch's
+    /// 18 pt — so about four frames a second draws the same picture a
+    /// display-rate timeline did. A bigger floating buddy travels more
+    /// points per frame, so its resting rate grows with its size.
+    static let activeInterval: TimeInterval = 1.0 / 30.0
+    static let restingFPS: Double = 4
+
+    static func frameInterval(awake: Bool, lively: Bool, dragged: Bool, scale: Double) -> TimeInterval {
+        if awake || lively || dragged { return activeInterval }
+        let fps = restingFPS * max(1, min(3, scale.isFinite ? scale : 1))
+        return 1.0 / fps
+    }
+
+    /// The live interval the view's timeline asks for. Observable reads
+    /// only, so the schedule changes the moment the fleet wakes, a beat
+    /// starts or ends, or a carry begins.
+    func frameInterval(scale: Double) -> TimeInterval {
+        Self.frameInterval(awake: sessionDigest().isAwake, lively: livelyUntil != nil,
+                           dragged: isDragged, scale: scale)
+    }
+
+    /// The summary for one frame: the cached digest plus everything that
+    /// ages with the clock. Also maintains the wave & slump clocks the
+    /// one-off effects play from — the view's tick is the only clock
+    /// that drives them.
+    func summary(at now: Date = Date()) -> BuddySummary {
+        let d = sessionDigest()
+        var s = BuddySummary()
+        s.working = d.working
+        s.waiting = d.waiting
+        s.failed = d.failed
+        s.dominantProvider = d.dominantProvider
+        s.workingProvider = d.workingProvider
+        s.providers = d.providers
         if s.waiting > 0 { s.mood = .waving }
         else if s.failed > 0 { s.mood = .slumped }
         // Three or more working at once: busy is exciting, not calm.
@@ -423,7 +552,7 @@ final class NotchBuddyToy: Toy {
         }
         s.care = store?.state.notchBuddy.care.mood(at: now) ?? .content
         s.name = buddyName
-        s.focus = BuddyFocus.pick(from: core.sessions)
+        s.focus = d.focus
         var parts: [String] = []
         if s.working > 0 { parts.append("\(s.working) working") }
         if s.waiting > 0 { parts.append("\(s.waiting) waiting") }
@@ -618,6 +747,7 @@ final class NotchBuddyToy: Toy {
         guard event.kind == "completed" else { return }
         hopUntil = now.addingTimeInterval(1.1)
         crumbAt = now
+        stayLively(from: now)
         store?.state.notchBuddy.care.eat(at: now, count: 1)
     }
 
