@@ -338,16 +338,12 @@ final class MenuBarUtility: Toy {
             if self.concealer != nil {
                 // Under the agent there is no « to point at, and the
                 // icon is never a hover target: its click is the panel,
-                // and a 0.18 s hover reveal raced that click and popped
-                // the Item Bar under the hand reaching for it. Only the
-                // fallback chevron and the ear's ‹ answer a hover; the
-                // blank run left of the icon is the reveal zone.
-                var frames: [NSRect] = []
-                if let chevron = self.chevronScreenFrame() {
-                    frames.append(chevron.insetBy(dx: -16, dy: 0))
-                }
-                if let handle = ScreenBarGeometry.menuHandleScreenRect { frames.append(handle) }
-                return frames
+                // and a 0.18 s hover reveal on it would race that click.
+                // (Keyed to the old undrawn anchor, this frame sat over
+                // the ear's Codex mark and popped the Item Bar from
+                // there.) Only the ear's ‹ answers a hover, while it
+                // stands; the blank run left of the icon is the zone.
+                return [ScreenBarGeometry.menuHandleScreenRect].compactMap { $0 }
             }
             // controlFrames().hidden is Quartz; mouseLocation is AppKit.
             // Without the flip a hover on the « never registers — the
