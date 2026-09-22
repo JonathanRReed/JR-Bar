@@ -395,6 +395,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         return "isVis=\(w.isVisible) space=\(w.isOnActiveSpace) screen=\(w.screen != nil) alpha=\(w.alphaValue) num=\(num) cgwindows=\(bounds)"
     }
 
+    /// The face the item currently draws — read straight off the button
+    /// so the concealer's mirror shows whatever style is live, meters
+    /// and all.
+    var boundaryIconImage: NSImage? { statusItem.button?.image }
+
     /// The icon's own width — the part of the item that is not spacer.
     var boundaryGlyphLength: CGFloat {
         naturalWidth > 0 ? naturalWidth : NSStatusBar.system.thickness

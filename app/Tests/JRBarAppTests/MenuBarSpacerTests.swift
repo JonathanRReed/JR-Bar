@@ -1058,6 +1058,7 @@ struct MenuBarSpacerTests {
         func setAnchorSlim(_ slim: Bool) { slims.append(slim) }
         var anchorWantsVisibleSeat = true
         var reseats = 0
+        var boundaryIconImage: NSImage? { nil }
         func reseatStatusItem(desiredMidX: CGFloat?) { reseats += 1 }
         var onBoundaryClick: (@MainActor () -> Void)?
         var hiddenItemsMenu: (@MainActor () -> NSMenu?)?

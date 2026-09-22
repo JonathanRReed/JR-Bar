@@ -1290,9 +1290,38 @@ final class MenuBarUtility: Toy {
         }
         MenuBarAssessmentBackend.log.notice("conceal: engine up (MenuBarClientCore resolved)")
         // The agent draws no boundary of its own — stand the « toggle
-        // up so a hidden run still has a visible handle.
+        // up so a hidden run still has a visible handle. And because the
+        // agent will not draw the asserting identity's own item, the
+        // icon's pixels ride the mirror window at the run's left end.
         installChevron()
         refreshChevron()
+        let mirror = MenuBarIconMirror()
+        mirror.iconSource = { [weak self] in self?.host?.boundaryIconImage }
+        mirror.onPrimaryClick = { [weak self] in self?.host?.onBoundaryClick?() }
+        mirror.onSecondaryClick = { [weak self] in self?.host?.hiddenItemsMenu?() }
+        iconMirror = mirror
+        updateIconMirror()
+    }
+
+    /// The mirror shows while the assertion is up and the configured
+    /// style wants a seat — the band carries its pixels at the run's
+    /// left end. No band, no mirror: a notch-less screen keeps the real
+    /// item and its seat walk.
+    private var iconMirror: MenuBarIconMirror?
+    @ObservationIgnored private var mirrorActive = false
+
+    private func updateIconMirror() {
+        let wants = (concealer?.isConcealing ?? false)
+            && (host?.anchorWantsVisibleSeat ?? false)
+            && ScreenBarGeometry.bandScreenRect != nil
+        mirrorActive = wants
+        if wants {
+            iconMirror?.show(bandRight: { ScreenBarGeometry.bandScreenRect?.maxX },
+                             row: { MenuBarItemLister.menuBarRows().first },
+                             screen: { NSScreen.main })
+        } else {
+            iconMirror?.hide()
+        }
     }
 
     /// A workspace launch or terminate under the concealer: refresh
@@ -1311,6 +1340,9 @@ final class MenuBarUtility: Toy {
 
     func stopConcealer() {
         guard let concealer else { return }
+        mirrorActive = false
+        iconMirror?.hide()
+        iconMirror = nil
         runningApps.invalidate()
         // The drop lands now — a disable or quit must not leave the
         // run concealed for the drain; `releaseAll` invalidates the
@@ -2068,11 +2100,15 @@ final class MenuBarUtility: Toy {
         concealed = concealed.filter { !Self.isOwnFamily($0) }
         concealer.apply(concealed: concealed, running: runningApps.snapshot())
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
+        // The band may appear or morph between assertion changes — the
+        // pass cadence keeps the mirror's seat honest.
+        updateIconMirror()
     }
 
     private func concealerChanged() {
         clickBridge?.update(items: lastPlan.shown, concealing: concealer?.isConcealing ?? false)
         refreshChevron()
+        updateIconMirror()
         scheduleAdoptionCheck()
     }
 
@@ -2127,7 +2163,11 @@ final class MenuBarUtility: Toy {
     /// left end (or the walk has spent its attempts or its time), and
     /// from then on for the engine's life.
     private func preAssertionSeat(age: TimeInterval) -> Bool {
-        guard !preSeatDone, host?.anchorWantsVisibleSeat ?? false else { return false }
+        // With a band the mirror carries the icon's pixels and the
+        // anchor belongs under the face — the walk exists for the
+        // band-free bar, where the item itself must stand visible.
+        guard !preSeatDone, host?.anchorWantsVisibleSeat ?? false,
+              ScreenBarGeometry.bandScreenRect == nil else { return false }
         guard age < Self.preSeatTimeout, preSeatAttempts < Self.maxPreSeatAttempts else {
             preSeatDone = true
             MenuBarAssessmentBackend.log.notice("conceal: seat walk over after \(self.preSeatAttempts, privacy: .public) re-seats — asserting with the icon where it stands")
@@ -2197,7 +2237,11 @@ final class MenuBarUtility: Toy {
     }
 
     private func ownIconCovered() -> Bool {
-        guard host?.anchorWantsVisibleSeat ?? false,
+        // Under a band the anchor's niche IS under the face — the
+        // mirror carries its pixels — so "covered" is only a wound on a
+        // band-free bar.
+        guard ScreenBarGeometry.bandScreenRect == nil,
+              host?.anchorWantsVisibleSeat ?? false,
               let cover = ScreenBarGeometry.coveringScreenRect,
               let own = host?.boundaryFrame else { return false }
         guard MenuBarItemLister.menuBarRows().contains(where: { $0.intersects(own) })
@@ -3413,6 +3457,11 @@ protocol MenuBarBoundaryHost: AnyObject {
     /// style — a visible icon seats in the open extras run, so slim
     /// stays engaged only while the anchor wants no seat at all.
     func setAnchorSlim(_ slim: Bool)
+    /// The face the item currently draws — the mirror's pixels under
+    /// the concealer, where the agent never draws our own item (the
+    /// helper shares the app's signing identity, and the agent exempts
+    /// by identity, not by process — measured 2026-09-22).
+    var boundaryIconImage: NSImage? { get }
     /// Re-register the item — the agent adopts only at registration, so a
     /// ghosted item (AX answers a stale frame, nothing draws) comes back
     /// only through remove + recreate inside a suspend window.
