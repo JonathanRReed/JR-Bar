@@ -73,6 +73,11 @@ final class DockEnhancePreferences {
         get { read().excludedBundleIDs }
         set { write?({ var s = read(); s.excludedBundleIDs = newValue; return s }()) }
     }
+    /// Resting on a Dock icon opens a preview at all.
+    var hoverPreviews: Bool {
+        get { read().hoverPreviews }
+        set { write?({ var s = read(); s.hoverPreviews = newValue; return s }()) }
+    }
 
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
     static let defaultDelay: Double = DockEnhanceSettings.defaultDelay
@@ -1003,8 +1008,10 @@ final class DockEnhanceController {
     /// The hold that keeps an auto-hiding Dock out while the panel is
     /// up — injectable; the default resolves the CoreDock verbs.
     @ObservationIgnored let autohideHold: DockAutohideHold
-    /// ⌥⇥ — the utility's window switcher, DockDoor's other half.
-    @ObservationIgnored let switcher = DockSwitcherController()
+    /// ⌥⇥ — the utility's window switcher, DockDoor's other half. The
+    /// Dock utility owns its lifecycle (it runs with the previews parked
+    /// too); the watcher only borrows its key tap for the preview's keys.
+    @ObservationIgnored let switcher: DockSwitcherController
     /// The quick-quit watch: ⌘+right-click on a Dock tile. A global
     /// monitor (observe-only — the Dock's own menu still opens).
     @ObservationIgnored private var quickQuitMonitor: Any?
@@ -1018,9 +1025,11 @@ final class DockEnhanceController {
     /// `DockEnhancePreferences()` can't be a default value — callers
     /// pass nil and the main-actor body builds it.
     init(preferences: DockEnhancePreferences? = nil,
-         autohideHold: DockAutohideHold? = nil) {
+         autohideHold: DockAutohideHold? = nil,
+         switcher: DockSwitcherController? = nil) {
         self.preferences = preferences ?? DockEnhancePreferences()
         self.autohideHold = autohideHold ?? DockAutohideHold()
+        self.switcher = switcher ?? DockSwitcherController()
         watchers.onEscape = { [weak self] in
             self?.tracker.reset()
             self?.hidePreview()
@@ -1039,21 +1048,8 @@ final class DockEnhanceController {
         // The switcher's event tap eats the preview's keys while the
         // panel floats — the watchers only fire with the pointer on
         // the panel, the tap fires with it parked on the Dock too.
-        switcher.onPreviewKey = { [weak self] code in
+        self.switcher.onPreviewKey = { [weak self] code in
             self?.previewTapKey(code)
-        }
-        switcher.isAllowed = { [weak self] in
-            self?.preferences.read().windowSwitcher ?? true
-        }
-        switcher.isCmdAllowed = { [weak self] in
-            self?.preferences.read().appSwitcher ?? false
-        }
-        switcher.thumbsAllowed = { [weak self] in
-            guard let self, self.screenCaptureGranted else { return false }
-            return self.preferences.read().showThumbnails
-        }
-        switcher.offscreenAllowed = { [weak self] in
-            self?.preferences.read().includeOffscreenWindows ?? false
         }
     }
 
@@ -1087,8 +1083,6 @@ final class DockEnhanceController {
             screenCaptureGranted = FoldCapturePermission.request()
         }
         Self.log.notice("enhance start: accessibility \(self.accessibilityTrusted, privacy: .public), screen recording \(self.screenCaptureGranted, privacy: .public), dock list \(AppleDockReader.dockPID().flatMap { AppleDockReader.dockList(pid: $0) } != nil, privacy: .public)")
-        switcher.start()
-        switcher.syncSettings()
         quickQuitMonitor = NSEvent.addGlobalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
             guard event.modifierFlags.contains(.command) else { return }
             let force = event.modifierFlags.contains(.option)
@@ -1110,7 +1104,6 @@ final class DockEnhanceController {
         cachedList = nil
         if let quickQuitMonitor { NSEvent.removeMonitor(quickQuitMonitor) }
         quickQuitMonitor = nil
-        switcher.stop()
         hidePreview()
     }
 
@@ -1202,7 +1195,6 @@ final class DockEnhanceController {
 
     private func tick() {
         refreshPermissions()
-        switcher.syncSettings()
         let inPanel = pointerInPanel()
         guard accessibilityTrusted else {
             if tracker.shown != nil { tracker.reset(); hidePreview() }

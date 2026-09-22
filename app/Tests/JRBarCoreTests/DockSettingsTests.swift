@@ -58,4 +58,37 @@ struct DockSettingsTests {
         #expect(DockEnhanceSettings(previewDelay: -1).previewDelay == DockEnhanceSettings.delayRange.lowerBound)
         #expect(DockEnhanceSettings(previewDelay: .nan).previewDelay == DockEnhanceSettings.defaultDelay)
     }
+
+    @Test("the switcher pick and hover previews decode tolerantly and default to JR-Bar, on")
+    func switcherKeys() throws {
+        let s = try decode(DockSettings.self, #"{"switcherProvider": "altTab", "enhance": {"hoverPreviews": false}}"#)
+        #expect(s.switcherProvider == .altTab)
+        #expect(s.enhance.hoverPreviews == false)
+        let junk = try decode(DockSettings.self, #"{"switcherProvider": "nope", "enhance": {"hoverPreviews": "x"}}"#)
+        #expect(junk.switcherProvider == .jrbar)
+        #expect(junk.enhance.hoverPreviews == true)
+        var round = DockSettings()
+        round.switcherProvider = .contexts
+        round.enhance.hoverPreviews = false
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+    }
+
+    @Test("handing the previews to DockDoor keeps JR-Bar's switcher; the card off stops both")
+    func halvesAreIndependent() {
+        var s = DockSettings(enabled: true, provider: .dockDoor)
+        #expect(!s.previewsWanted)
+        #expect(s.switcherWanted, "⌥⇥ no longer parks with the previews")
+        s.provider = .jrbar
+        s.enhance.hoverPreviews = false
+        #expect(!s.previewsWanted && s.switcherWanted)
+        s.switcherProvider = .altTab
+        #expect(!s.switcherWanted, "a switcher counterpart parks our chords")
+        s.switcherProvider = .jrbar
+        s.enhance.windowSwitcher = false
+        #expect(!s.switcherWanted, "both chords off is no switcher")
+        s.enhance.appSwitcher = true
+        #expect(s.switcherWanted)
+        s.enabled = false
+        #expect(!s.previewsWanted && !s.switcherWanted)
+    }
 }

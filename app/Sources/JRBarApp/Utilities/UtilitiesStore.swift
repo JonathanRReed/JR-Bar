@@ -102,6 +102,9 @@ final class UtilitiesStore {
         dock.onSettingsChange = { [weak self] updated in
             self?.state.dock = updated
         }
+        // The Dock and the switcher mark the windows agents run in from
+        // the same live `state.sessions` the panel reads.
+        dock.sessions = { [weak self] in self?.core.state?.sessions ?? [] }
         agents.settings = { [weak self] in self?.state.agents ?? AgentOrganizerSettings() }
         agents.onSettingsChange = { [weak self] updated in
             self?.state.agents = updated

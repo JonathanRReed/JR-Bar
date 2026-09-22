@@ -28,8 +28,17 @@ final class DockUtility {
     let appleDock: AppleDockControl
     /// The hover watcher: the AX poll and the preview panel.
     let enhance: DockEnhanceController
+    /// ⌥⇥ / ⌘⇥ — owned here, not by the watcher, so the chords stay
+    /// live with the previews off or handed to DockDoor.
+    let switcher: DockSwitcherController
 
-    /// True while the watcher runs.
+    /// The daemon's live sessions — wired by `UtilitiesStore` to
+    /// `core.state.sessions`. The switcher and the previews read it to
+    /// mark the windows agents run in; nothing is fetched for it.
+    var sessions: @MainActor () -> [CoreSession] = { [] }
+
+    /// True while the card is on and applied — the watcher, the
+    /// switcher, or both run under it.
     private(set) var running = false
 
     // MARK: Provider — who renders
@@ -71,8 +80,8 @@ final class DockUtility {
         let name = providerName
         if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
         return probe.running
-            ? "\(name) is rendering the previews — ours is parked"
-            : "\(name) isn't running — ours stays parked"
+            ? "\(name) is rendering the previews — ours are parked"
+            : "\(name) isn't running — ours stay parked"
     }
 
     /// The picked counterpart's display name for the note.
@@ -87,6 +96,84 @@ final class DockUtility {
     /// The card's "Open" — launches the picked counterpart.
     func openExternal() { externalProbe?.open() }
 
+    // MARK: Switcher provider — who owns ⌥⇥
+
+    /// The switcher picker's write path.
+    var switcherProviderBinding: Binding<DockSwitcherProvider> {
+        Binding(get: { self.settings().switcherProvider },
+                set: { p in self.update { $0.switcherProvider = p } })
+    }
+
+    /// The picked switcher counterpart's probe — nil while JR-Bar owns
+    /// the chords.
+    private var switcherProbe: ExternalAppProbe? {
+        Self.probe(for: settings().switcherProvider)
+    }
+
+    static func probe(for provider: DockSwitcherProvider) -> ExternalAppProbe? {
+        switch provider {
+        case .jrbar: return nil
+        case .altTab: return ExternalProviders.altTab
+        case .witch: return ExternalProviders.witch
+        case .contexts: return ExternalProviders.contexts
+        }
+    }
+
+    static func displayName(_ provider: DockSwitcherProvider) -> String {
+        switch provider {
+        case .jrbar: return "JR-Bar"
+        case .altTab: return "AltTab"
+        case .witch: return "Witch"
+        case .contexts: return "Contexts"
+        }
+    }
+
+    /// The switcher counterpart's app URL — the card's "Open".
+    var switcherExternalURL: URL? {
+        _ = workspaceVersion
+        return switcherProbe?.url
+    }
+
+    func openSwitcherExternal() { switcherProbe?.open() }
+
+    /// What the card says while a counterpart owns the chords — or,
+    /// while ours does, which running rival may be bound to the same
+    /// chord. nil when there is nothing to say.
+    var switcherNote: String? {
+        _ = workspaceVersion
+        let current = settings()
+        if let probe = switcherProbe {
+            let name = Self.displayName(current.switcherProvider)
+            if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
+            return probe.running
+                ? "\(name) owns the switcher — ours is parked"
+                : "\(name) isn't running — ours stays parked"
+        }
+        guard current.switcherWanted else { return nil }
+        let running = Self.chordRivals.filter { $0.probe.running }.map(\.name)
+        return Self.conflictNote(running: running,
+                                 windowChord: current.enhance.windowSwitcher,
+                                 appChord: current.enhance.appSwitcher)
+    }
+
+    /// The switchers known to bind ⌥⇥ or ⌘⇥ themselves.
+    static let chordRivals: [(name: String, probe: ExternalAppProbe)] = [
+        ("AltTab", ExternalProviders.altTab),
+        ("DockDoor", ExternalProviders.dockDoor),
+        ("Witch", ExternalProviders.witch),
+        ("Contexts", ExternalProviders.contexts),
+    ]
+
+    /// "AltTab is running and may also take ⌥⇥" — the double-switcher
+    /// explanation, built from the rivals actually running.
+    static func conflictNote(running: [String], windowChord: Bool, appChord: Bool) -> String? {
+        guard let first = running.first, windowChord || appChord else { return nil }
+        let chord = windowChord && appChord ? "⌥⇥ or ⌘⇥" : (windowChord ? "⌥⇥" : "⌘⇥")
+        let who = running.count == 1 ? "\(first) is" : running.dropLast().joined(separator: ", ")
+            + " and \(running[running.count - 1]) are"
+        return "\(who) running and may also take \(chord)"
+    }
+
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
     /// `AppleDockControl()` can't be a default value — callers pass
@@ -97,10 +184,33 @@ final class DockUtility {
         let hold = autohideHold ?? DockAutohideHold()
         hold.onLog = { DockEnhanceController.log.notice("\($0, privacy: .public)") }
         let preferences = DockEnhancePreferences()
-        self.enhance = DockEnhanceController(preferences: preferences, autohideHold: hold)
+        let switcher = DockSwitcherController()
+        self.switcher = switcher
+        self.enhance = DockEnhanceController(preferences: preferences, autohideHold: hold,
+                                             switcher: switcher)
         preferences.read = { [weak self] in self?.settings().enhance ?? DockEnhanceSettings() }
         preferences.write = { [weak self] updated in
             self?.update { $0.enhance = updated }
+        }
+        // The chords read the settings live; the tap mirrors them on
+        // every apply (`reconcile`).
+        switcher.isAllowed = { [weak self] in
+            guard let settings = self?.settings() else { return false }
+            return settings.switcherWanted && settings.enhance.windowSwitcher
+        }
+        switcher.isCmdAllowed = { [weak self] in
+            guard let settings = self?.settings() else { return false }
+            return settings.switcherWanted && settings.enhance.appSwitcher
+        }
+        // Stills need the same Screen Recording grant the previews use —
+        // the shared 30 s cache, so a watcher that isn't running can't
+        // leave the answer stale.
+        switcher.thumbsAllowed = { [weak self] in
+            guard let self, FoldCapturePermission.granted else { return false }
+            return self.settings().enhance.showThumbnails
+        }
+        switcher.offscreenAllowed = { [weak self] in
+            self?.settings().enhance.includeOffscreenWindows ?? false
         }
         // Provider watch: a counterpart launching or quitting flips
         // the card's note live while ours is parked under it.
@@ -111,32 +221,37 @@ final class DockUtility {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.workspaceVersion += 1
-                    if self.settings().provider != .jrbar { self.applySettings() }
+                    let current = self.settings()
+                    if current.provider != .jrbar || current.switcherProvider != .jrbar {
+                        self.applySettings()
+                    }
                 }
             })
         }
     }
 
-    /// Turn the watcher on. No-op unless the card is on. Apple's Dock
-    /// is the stage, so any hide of ours still in place is undone
-    /// first.
+    /// Turn the card on. No-op unless the card is on. Apple's Dock is
+    /// the stage, so any hide of ours still in place is undone first;
+    /// then the watcher and the switcher each start if their own half
+    /// of the settings wants them.
     func start() {
         guard !running else { return }
-        guard settings().enabled, settings().provider == .jrbar else { return }
+        guard settings().enabled else { return }
         running = true
         appleDock.restore()
-        enhance.start()
+        reconcile()
     }
 
     func stop() {
         guard running else { return }
         enhance.stop()
+        switcher.stop()
         running = false
     }
 
     /// The caller's "settings changed" nudge: start on enable, stop on
-    /// disable; the watcher reads its knobs live, so nothing else needs
-    /// re-applying.
+    /// disable, and otherwise re-seat the two halves — a provider pick
+    /// or the hover-previews switch parks one without the other.
     func applySettings() {
         migrateLegacyEnhanceDefaults()
         // A preview hold the last life never released left `autohide`
@@ -147,11 +262,30 @@ final class DockUtility {
         // whether the watcher is running.
         appleDock.restore()
         let current = settings()
-        if current.enabled, current.provider == .jrbar, !running {
+        if current.enabled, !running {
             start()
-        } else if !(current.enabled && current.provider == .jrbar), running {
+        } else if !current.enabled, running {
             stop()
+        } else if running {
+            reconcile()
         }
+    }
+
+    /// Which halves run for these settings: the hover watcher when
+    /// JR-Bar renders the previews, and the key tap whenever either
+    /// the watcher (its preview keys ride the tap) or our own chords
+    /// want it.
+    static func halves(for settings: DockSettings) -> (watcher: Bool, tap: Bool) {
+        (settings.previewsWanted, settings.previewsWanted || settings.switcherWanted)
+    }
+
+    private func reconcile() {
+        let wanted = Self.halves(for: settings())
+        if wanted.watcher { enhance.start() } else { enhance.stop() }
+        if wanted.tap { switcher.start() } else { switcher.stop() }
+        // The tap can't read main-actor settings mid-callback; mirror
+        // the chord switches into it on every apply.
+        switcher.syncSettings()
     }
 
     /// True once the pre-schema `UserDefaults` knobs have been folded
@@ -207,4 +341,21 @@ final class DockUtility {
             get: { self.settings()[keyPath: keyPath] },
             set: { value in self.update { $0[keyPath: keyPath] = value } })
     }
+}
+
+/// The switchers the Dock card can hand ⌥⇥ to, or warn about when ours
+/// shares the chord with them.
+extension ExternalProviders {
+    /// Free (GPL-3): lwouis' AltTab.
+    static let altTab = ExternalAppProbe(
+        bundleIDs: ["com.lwouis.alt-tab-macos"],
+        appNames: ["AltTab.app"])
+    /// Paid: Many Tricks' Witch.
+    static let witch = ExternalAppProbe(
+        bundleIDs: ["com.manytricks.Witch"],
+        appNames: ["Witch.app"])
+    /// Paid: Contexts.
+    static let contexts = ExternalAppProbe(
+        bundleIDs: ["com.contextsformac.Contexts"],
+        appNames: ["Contexts.app"])
 }

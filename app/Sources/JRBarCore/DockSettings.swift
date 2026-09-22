@@ -27,16 +27,22 @@ public struct DockSettings: Codable, Equatable, Sendable {
     public var provider: DockProvider
     /// The hover-preview knobs.
     public var enhance: DockEnhanceSettings
+    /// Who owns the ⌥⇥ / ⌘⇥ chords — its own pick, so handing the
+    /// previews to DockDoor no longer takes JR-Bar's switcher with them.
+    public var switcherProvider: DockSwitcherProvider
 
     public init(enabled: Bool = false, provider: DockProvider = .jrbar,
-                enhance: DockEnhanceSettings = DockEnhanceSettings()) {
+                enhance: DockEnhanceSettings = DockEnhanceSettings(),
+                switcherProvider: DockSwitcherProvider = .jrbar) {
         self.enabled = enabled
         self.provider = provider
         self.enhance = enhance
+        self.switcherProvider = switcherProvider
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, enhance
+        case switcherProvider
     }
 
     public init(from decoder: any Decoder) throws {
@@ -44,7 +50,28 @@ public struct DockSettings: Codable, Equatable, Sendable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         provider = (try? c.decodeIfPresent(DockProvider.self, forKey: .provider)) ?? .jrbar
         enhance = (try? c.decodeIfPresent(DockEnhanceSettings.self, forKey: .enhance)) ?? DockEnhanceSettings()
+        switcherProvider = (try? c.decodeIfPresent(DockSwitcherProvider.self, forKey: .switcherProvider)) ?? .jrbar
     }
+
+    /// Whether JR-Bar's own hover watcher should run: the card on,
+    /// JR-Bar picked to render, and hover previews wanted.
+    public var previewsWanted: Bool {
+        enabled && provider == .jrbar && enhance.hoverPreviews
+    }
+
+    /// Whether JR-Bar's switcher chords should be live — independent of
+    /// who renders the previews.
+    public var switcherWanted: Bool {
+        enabled && switcherProvider == .jrbar && (enhance.windowSwitcher || enhance.appSwitcher)
+    }
+}
+
+/// Who answers ⌥⇥ and ⌘⇥: JR-Bar's own switcher, or an installed
+/// counterpart the card hands the chords to (AltTab, Witch, Contexts).
+/// A counterpart pick parks our chords — the tap still runs for the
+/// preview's keys when the watcher is up.
+public enum DockSwitcherProvider: String, Codable, CaseIterable, Sendable {
+    case jrbar, altTab, witch, contexts
 }
 
 /// The hover-preview knobs (docs/TOY-PARITY.md, "Dock — Enhance"):
@@ -89,6 +116,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Bundle ids that never earn a preview — DockDoor's app filters.
     /// A tile whose app is listed here rests and opens nothing.
     public var excludedBundleIDs: [String]
+    /// Resting on a Dock icon opens its preview. Off keeps the card on
+    /// for the switcher alone — ⌥⇥ without hover panels.
+    public var hoverPreviews: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -103,7 +133,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 compactListLimit: Int = DockEnhanceSettings.defaultCompactLimit,
                 windowSwitcher: Bool = true,
                 appSwitcher: Bool = false,
-                excludedBundleIDs: [String] = []) {
+                excludedBundleIDs: [String] = [],
+                hoverPreviews: Bool = true) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -113,6 +144,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.windowSwitcher = windowSwitcher
         self.appSwitcher = appSwitcher
         self.excludedBundleIDs = excludedBundleIDs
+        self.hoverPreviews = hoverPreviews
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -127,6 +159,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
+        case hoverPreviews
     }
 
     public init(from decoder: any Decoder) throws {
@@ -142,6 +175,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         windowSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .windowSwitcher)) ?? true
         appSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .appSwitcher)) ?? false
         excludedBundleIDs = (try? c.decodeIfPresent([String].self, forKey: .excludedBundleIDs)) ?? []
+        hoverPreviews = (try? c.decodeIfPresent(Bool.self, forKey: .hoverPreviews)) ?? true
     }
 }
 

@@ -22,7 +22,7 @@ extension DockUtility: Toy {
         if !enhance.accessibilityTrusted {
             return .needsPermission("Needs Accessibility")
         }
-        return enhance.running ? .on : .paused("Parked")
+        return enhance.running || switcher.running ? .on : .paused("Parked")
     }
 
     var controls: AnyView { AnyView(DockUtilityControls(utility: self)) }
@@ -43,7 +43,7 @@ struct DockUtilityControls: View {
                 Text("ActiveDock").tag(DockProvider.activeDock)
             } label: {
                 SettingLabel(title: "Render with",
-                             subtitle: "Hand the previews to an installed counterpart — DockDoor (free) or ActiveDock (paid). Ours parks while the pick stands.")
+                             subtitle: "Hand the previews to an installed counterpart — DockDoor (free) or ActiveDock (paid). Our previews park while the pick stands; the switcher is its own pick below.")
             }
             .pickerStyle(.menu)
             .fixedSize()
@@ -64,8 +64,10 @@ struct DockUtilityControls: View {
                 }
             }
 
-            SettingLabel(title: "Hover previews",
-                         subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window, hover it for × (close), – (minimize) and full screen; New, Hide and Quit sit in the header. Apps with no windows open nothing.")
+            Toggle(isOn: hoverPreviews) {
+                SettingLabel(title: "Hover previews",
+                             subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window, hover it for × (close), – (minimize) and full screen; New, Hide and Quit sit in the header. Apps with no windows open nothing. Off keeps the switcher below on its own.")
+            }
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: previewDelay, in: DockEnhancePreferences.delayRange)
@@ -92,14 +94,44 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Hold the Dock out",
                              subtitle: "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes.")
             }
+            Divider()
+                .padding(.vertical, 4)
+            Picker(selection: utility.switcherProviderBinding) {
+                ForEach(DockSwitcherProvider.allCases, id: \.self) { provider in
+                    Text(DockUtility.displayName(provider)).tag(provider)
+                }
+            } label: {
+                SettingLabel(title: "Switcher",
+                             subtitle: "Who answers ⌥⇥ and ⌘⇥ — its own pick, so DockDoor can draw the previews while JR-Bar keeps the switcher.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+
+            if let note = utility.switcherNote {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                        .foregroundStyle(.secondary)
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if utility.switcherExternalURL != nil {
+                        Spacer()
+                        Button("Open") { utility.openSwitcherExternal() }
+                            .controlSize(.small)
+                    }
+                }
+            }
             Toggle(isOn: switcher) {
                 SettingLabel(title: "⌥⇥ window switcher",
                              subtitle: "Option-Tab raises every app's windows in recency order; Tab walks, releasing Option commits, esc cancels.")
             }
+            .disabled(utility.settings().switcherProvider != .jrbar)
             Toggle(isOn: appSwitcher) {
                 SettingLabel(title: "⌘⇥ app switcher",
                              subtitle: "Replaces the system's Command-Tab with a centred app strip — Tab walks, releasing Command commits. Off leaves the OS chord alone.")
             }
+            .disabled(utility.settings().switcherProvider != .jrbar)
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: compactLimit, in: 0...12, step: 1)
@@ -187,6 +219,10 @@ struct DockUtilityControls: View {
     private var offscreen: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.includeOffscreenWindows },
                 set: { utility.enhance.preferences.includeOffscreenWindows = $0 })
+    }
+    private var hoverPreviews: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.hoverPreviews },
+                set: { utility.enhance.preferences.hoverPreviews = $0 })
     }
     private var holdOpen: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.holdDockOpen },

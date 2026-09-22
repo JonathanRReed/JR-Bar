@@ -552,8 +552,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
 
 /// ⌥⇥ raises a centered strip of every app's windows in recency
 /// order; Tab (or ⇧Tab) walks it, option lifting commits the pick,
-/// esc cancels. Owned by `DockEnhanceController` — it is the dock
-/// utility's other half, DockDoor's window switcher.
+/// esc cancels. Owned by `DockUtility` — the dock utility's other
+/// half, DockDoor's window switcher — so it keeps running while the
+/// hover previews are parked or handed to DockDoor; the preview
+/// watcher borrows its key tap.
 @MainActor
 final class DockSwitcherController {
     static let log = Logger(subsystem: "devin.jrbar", category: "switcher")
