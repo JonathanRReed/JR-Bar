@@ -82,6 +82,14 @@ final class LidAngleSensor {
 /// nothing. Inside the band the poll runs 120 Hz — a read costs ~0.5 ms
 /// and dense polls timestamp each sensor edge to ±8 ms, which is what
 /// the tracker's dead reckoning needs.
+///
+/// The parked class is a background chore and is timed like one:
+/// utility QoS and a 15 ms leeway, so its ten wakes a second can
+/// coalesce with the system's — it runs whenever Fold is on, lid
+/// still or not. Only the armed class earns user-interactive QoS and a
+/// 2 ms leeway. Every sample is still published: the movement anchor's
+/// settle clock needs each one, and the jitter filter is what keeps a
+/// parked wobble off the tracker.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
@@ -90,7 +98,8 @@ final class SensorPump: @unchecked Sendable {
     /// Queue-side state — only ever touched on `io`.
     private var armingAngle: Double = -.infinity
 
-    private let io = DispatchQueue(label: "devin.jrbar.fold.hid", qos: .userInteractive)
+    /// Utility, the parked class's QoS; the armed beat enforces its own.
+    private let io = DispatchQueue(label: "devin.jrbar.fold.hid", qos: .utility)
     private let manager: IOHIDManager
     /// Everything below is queue-side state — only ever touched on `io`.
     private var devices: [IOHIDDevice] = []
@@ -102,9 +111,7 @@ final class SensorPump: @unchecked Sendable {
             // Reschedule the live timer — a fresh one would fire a beat
             // ~immediately on top of this one, making the sample timing
             // irregular exactly where regularity matters.
-            let interval = Self.intervals[rateClass]
-            timer.schedule(deadline: .now() + interval, repeating: interval,
-                           leeway: .milliseconds(2))
+            arm(timer, deadline: .now() + Self.intervals[rateClass])
         }
     }
     /// The last angle read; the arming-band rate decision rides on it.
@@ -114,6 +121,7 @@ final class SensorPump: @unchecked Sendable {
     private var clamshell: Bool?
 
     private static let intervals = [1.0 / 10.0, 1.0 / 120.0]
+    private static let leewayMilliseconds = [15, 2]
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -164,11 +172,19 @@ final class SensorPump: @unchecked Sendable {
 
     private func scheduleTimer() {
         let timer = DispatchSource.makeTimerSource(queue: io)
-        timer.schedule(deadline: .now(), repeating: Self.intervals[rateClass],
-                       leeway: .milliseconds(2))
-        timer.setEventHandler { [weak self] in self?.beat() }
+        arm(timer, deadline: .now())
         timer.resume()
         self.timer = timer
+    }
+
+    /// Times `timer` for the current class. The QoS rides the handler,
+    /// enforced over the queue's, so a class change swaps it together
+    /// with the interval — from inside a beat it takes from the next one.
+    private func arm(_ timer: DispatchSourceTimer, deadline: DispatchTime) {
+        timer.schedule(deadline: deadline, repeating: Self.intervals[rateClass],
+                       leeway: .milliseconds(Self.leewayMilliseconds[rateClass]))
+        timer.setEventHandler(qos: rateClass == 1 ? .userInteractive : .utility,
+                              flags: .enforceQoS) { [weak self] in self?.beat() }
     }
 
     /// One poll: read the report, drop the once-a-second clamshell read
