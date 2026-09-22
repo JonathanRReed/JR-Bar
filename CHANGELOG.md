@@ -4,6 +4,95 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+- The menu-bar icon lives on the right again, flush left of Wi-Fi
+  like any other status item. Measured on the notarized build: under
+  the concealer macOS never draws JR-Bar's own item (the menu bar is
+  one composited window and the agent exempts by signing identity),
+  so the icon is a panel that seats itself in the rightmost stretch
+  the drawn items leave free — the holes concealed apps leave behind
+  it, clear of the notch, the Screen Bar and the front app's menus.
+  It wears the real face (meters, tint, label, escalation pulse,
+  tooltip, VoiceOver label), pushed on every redraw instead of
+  sampled every 1.5 s, and stays up through the short lifts a
+  Wi-Fi or clock click needs. Left click opens the panel under it,
+  right or ⌥ click opens the full JR-Bar menu, and a small ‹ beside it
+  opens the hidden run — so the band's ear no longer carries a second
+  ‹. The real item stays slim and blank, so it can never flash a
+  duplicate. Its old seat walk, re-seats, adoption checks, pixel-park
+  captures and the debug probe are gone: every re-seat had cost a
+  4 s lift of the whole concealment, and the Preferred Position key
+  they steered is one macOS 27 ignores for JR-Bar anyway. A one-time
+  migration clears the records the walk left behind. On a bar too
+  crowded for any gap, the icon takes the spot that covers least
+  instead of landing on the first item; if the assertion keeps failing
+  it hands the icon back to the real item, which macOS then draws; and
+  the menu edge it keeps clear of is read from the app that owns the
+  menu bar (not a JR-Bar window that happens to be key) on every app
+  switch.
+- Hiding under the concealer is by app, not by position: macOS
+  reorders items itself and a concealed item cannot be ⌘-dragged, so
+  the positional learn and the "left of ‹ hides" reconcile went with
+  the seat walk (they had auto-hidden whole runs whenever the walk
+  moved the invisible anchor). The Item Bar, the card and the icon's
+  menu pick sections.
+- The Screen Bar sits flush under the notch: the wrap ends at the
+  bezel with a one-point chin instead of hanging an 11 pt black tab
+  over app content, so the lit strip marks the wing's extent and the
+  ear marks centre on the menu bar's own glyph line. This reverses
+  the six-point ear drop below. The ear ring is sized to the menu
+  bar's glyphs, and both ears yield to the front app's menu titles
+  instead of painting over a "Window" menu that spills past the notch.
+- The Screen Bar's colours are the strip's colours: the LED blend is
+  normalised (it summed to 1.5× and clipped per channel, turning
+  Claude's orange into peach and halving the band's ends) and fades
+  to or from black are linear (Core Animation interpolated alpha and
+  colour separately, so a fade from off lit at t²). It plays at its
+  own brightness rather than the strip's: the bar is drawn on a
+  display that already dims with the room, so neither auto brightness
+  nor the lux/display auto-dim scales it again — idle, sleep, Focus,
+  the night schedule and the master dial still do, and Minimum glow
+  now matters while linked. Keyframes are capped at 60 Hz and the
+  island watch drops to 1 Hz behind push notifications.
+- The panel's glass has round corners all the way out: every glass
+  window drew its shadow from a rectangle, leaving a dark square
+  outline past the rounded corners.
+- Quieter and lighter: the Dock's Screen Recording check left its 3 s
+  tick (one TCC round-trip every 3 s, forever), the daemon asks Focus
+  for its status once per refresh burst instead of three times, the
+  1 Hz menu-bar reconcile stands down while the 2 s scan covers it,
+  each item's bundle ID is resolved once per scan instead of ~150
+  LaunchServices lookups a pass, the fold's jitter filter re-arms on
+  stillness so a lid resting between two readings stops waking the
+  60 Hz link, the lid sensor's parked poll runs at utility QoS (and a
+  shut lid on an awake Mac holds that parked 10 Hz instead of 120 Hz
+  user-interactive reads for as long as it stays shut), and the
+  per-frame fold, per-scroll reveal and per-jitter plan lines no
+  longer flood the log. Daemon output reaches the unified log in the
+  clear instead of as `<private>`.
+- Fixes: the asserter's exit handler no longer leaks a pipe and its
+  handle on every activation (every bridged system-item click made
+  one); the Wi-Fi trigger hops CoreWLAN's callback to the main actor
+  instead of trapping on the first SSID change; the click bridge
+  services its event tap on its own thread, so a busy main thread no
+  longer delays every click on the Mac; a quick disable/enable can no
+  longer start two concealers; Item Bar gestures open it instead of
+  toggling it shut every half second; a failed AX press on a tile
+  activates the app instead of posting a click that moved the pointer.
+- Hooks: the shim bounds its spool at 16 MiB (rotating the old
+  generation aside) and stamps each spooled line with the time it was
+  queued, so a long daemon outage no longer ends with the whole spool
+  quarantined and history older than 30 minutes keeps its real time;
+  a fresh replay is stamped on arrival, because the live monitor keeps
+  one watermark per provider and would drop an older stamp the moment
+  another session spoke. The daemon drains the backlog before it
+  opens hook ingress, appenders share a lock with the rotation and the
+  drain so no line lands in a file already moved aside, and a frame
+  the 250 ms budget cut short is spooled instead of dropped.
+- `swift test` runs to completion again: the notch HUD started its
+  Bluetooth watcher from `init`, and the one test that built it was
+  killed by TCC mid-suite. The watchers start from the app delegate
+  now, `make swift-test` joins the final-test gate, and the Ruff step
+  of `make fast` is green.
 - The shelf finally looks like a shelf: chips carry each file's real
   Finder icon and upgrade to a Quick Look thumbnail the moment one
   exists — no more wall of generic `doc` glyphs. Plain-text drops
@@ -53,13 +142,9 @@ All notable changes to JR-Bar are documented here.
 - The right wing is visible again: its ear had collapsed to zero width
   whenever JR-Bar's own status item stood on the row — the ‹ glyph was
   deliberately suppressed to avoid duplicating that item's mark, and
-  the suppression took the whole ear with it. The handle now draws on
-  the ear while the concealer runs regardless of where the status item
-  sits, and `wingEarDrop` is back to its shipped six points — a flush
-  black tray on a black bar read as no wing at all, so the ear lobes
-  hang below the bezel line again. The wing panel also rides a level
-  above the cover shutters, ending a same-level z-order race that let
-  covers paint over it.
+  the suppression took the whole ear with it. The wing panel also
+  rides a level above the cover shutters, ending a same-level z-order
+  race that let covers paint over it.
 - Items the agent cannot hold no longer flash uncovered: a resistant
   escapee (cmux, ChatGPT, Tailscale and friends re-stand through every
   re-assert) is now covered from a sticky proof — once an item has
@@ -69,18 +154,6 @@ All notable changes to JR-Bar are documented here.
   an already-invisible slot is free for our own furniture. The shutter
   logs its painted spans (`cover paint`) so cover behaviour is
   verifiable without screenshots, which cannot see the panels at all.
-- The ‹ boundary is Bartender's invariant again: whatever stands left
-  of it *is* hidden — whether a hand ⌘-dragged it there or macOS
-  re-stood it behind the mark when an assertion released. The ⌘-flip
-  learn only ever saw drags, so items macOS placed behind the caret
-  stood in the hidden zone forever, shown and un-parked — including
-  the stretch where the notch's right wing draws, which collapsed the
-  wing to a sliver behind them. A positional reconcile now maps live
-  on-row frames to sections every pass: left of ‹ hides, right of ‹
-  with a stale mark un-hides under ⌘, `alwaysHidden` outranks position
-  both ways, and a deliberate Show or Show All is exempt until its
-  item actually crosses in front — so the wing's flank clears and the
-  caret means what it shows.
 - Long channel-tagged app names lay out slim: the Dock preview header
   splits "T3 Code (Nightly)" into "T3 Code" plus a small channel chip
   (Nightly, Beta, Dev, Canary, Insiders, PTB, Technology Preview,
@@ -243,25 +316,11 @@ All notable changes to JR-Bar are documented here.
   hotkey registration is named on the card instead of silently
   dropped. Setup's permission rows now cover Reminders, Camera,
   System Audio, Bluetooth and Focus Status.
-- The menu-bar icon is visible again: the slim anchor seats on-row
-  beside the notch and, as a protected owner, was publishing itself
-  as the right flank's ear limit — the ear clamped to under a point
-  and died, taking the ‹ handle with it, so the island face painted
-  black over the slot and nothing remained where the icon sits. Items
-  our own process owns never clamp the ear now: the anchor is a
-  surface the island face already owns and the ear's ‹ is its mark.
-- The icon now *shows* under the concealer, not just seats: the
-  assessment engine exempts menu-bar items by the asserting identity's
-  signature, not by process — so our allowlisted, adopted, on-row item
-  still composites nothing under our own assertion (the disclaimed
-  helper shares our Developer ID). The anchor keeps its notch niche
-  and a new mirror panel at the band's right edge — the left end of
-  the visible run — draws the button's live image and drives the same
-  clicks: left opens the panel, right/Option opens the hidden-items
-  menu. Everything left of it hidden, everything right shown.
 - The icon can vanish on purpose: a new "Hidden" icon style draws no
   glyph while keeping the click slot, tooltip and VoiceOver label —
   Ice's no-icon mode for a bar that carries only the ‹ affordance.
+  Under the concealer it has no face at all; the Screen Bar ear's ‹
+  carries the hidden run and the panel hotkey opens the panel.
 
 ## 0.9.8 (unreleased)
 
