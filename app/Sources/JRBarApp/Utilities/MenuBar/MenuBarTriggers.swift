@@ -358,7 +358,7 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
 /// — one tiny forwarder per source. `ssidDidChange` fires with or
 /// without the Location grant; only reading the name needs it. The
 /// callback runs on CoreWLAN's thread, never the main one.
-final class WiFiEventDelegate: NSObject, CWEventDelegate {
+final class WiFiEventDelegate: NSObject, CWEventDelegate, Sendable {
     let onChange: @Sendable () -> Void
     init(onChange: @escaping @Sendable () -> Void) { self.onChange = onChange }
     func ssidDidChangeForWiFiInterface(withName interfaceName: String) { onChange() }
