@@ -263,9 +263,9 @@ enum MenuBarItemLister {
     /// regular app keeps the menu bar, and an accessory app's own
     /// AXMenuBar items report 0×0 (JR-Bar's and Raycast's, probed
     /// 2026-09-22), so reading it left the edge nil with the owner's
-    /// menus still on screen. The band's
-    /// `AppMenuExtent` asks the same question; one answer keeps the two
-    /// from disagreeing about whose menus they avoid.
+    /// menus still on screen. The band's `AppMenuExtent` asks the same
+    /// question; one answer keeps the two from disagreeing about whose
+    /// menus they avoid.
     @MainActor
     static func menuBarOwnerApp() -> NSRunningApplication? {
         let workspace = NSWorkspace.shared

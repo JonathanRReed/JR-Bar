@@ -6,8 +6,18 @@ import Foundation
 /// those on an assertion's allowlist — and the process holding the
 /// assertion can never exempt its own (measured 2026-09-21: a signed
 /// foreign process allowlisting com.jonathanreed.jrbar kept the icon
-/// drawn; the app's own identical assertion hid it). So the assertion
-/// lives here, in a helper with no menu-bar items of its own.
+/// drawn; the app's own identical assertion hid it). This helper was
+/// built to be that foreign holder: spawned disclaimed, with no
+/// menu-bar items of its own, it answers for itself.
+///
+/// It does not keep JR-Bar's icon drawn. On macOS 27.2 the agent tells
+/// the holder's items by signing identity, and this helper shares the
+/// app's Developer ID, so the app's item is hidden under its assertion
+/// too (measured 2026-09-22 with the notarized build) and the app's
+/// MenuBarIconMirror carries the icon. What the helper still gives is a
+/// separate holder whose death releases the assertion, as the app's
+/// in-process backend gets from dying with the app; it stays pending a
+/// decision to fall back to that backend.
 ///
 /// Wire protocol, one activation per process:
 ///   stdin  line 1: a JSON array of allowed bundle identifiers

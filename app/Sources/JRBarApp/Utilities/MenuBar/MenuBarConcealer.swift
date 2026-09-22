@@ -238,15 +238,24 @@ final class MenuBarAssessmentBackend: MenuBarConcealBackend {
 // MARK: - The helper-process backend
 
 /// The assessment backend that holds the assertion in `jrbar-asserter`.
-/// The agent never exempts items that share the asserting process's
-/// responsible identity — measured 2026-09-21: the app's own assertion
-/// hid its icon no matter the allowlist, and so did a helper we
-/// `Process`-spawned (a child answers "who asserts?" with its
-/// responsible process — us). A foreign holder allowlisting us kept the
-/// icon drawn. The helper is therefore spawned with
-/// `responsibility_spawnattrs_setdisclaim`: it answers for itself, and
-/// its own bundle (`jrbar-asserter.app`,
-/// `com.jonathanreed.jrbar.asserter`) carries the foreign identity.
+/// It was built to give the assertion a foreign identity. The agent
+/// never exempts items that share the asserting process's identity —
+/// measured 2026-09-21: the app's own assertion hid its icon no matter
+/// the allowlist, and so did a helper we `Process`-spawned (a child
+/// answers "who asserts?" with its responsible process — us), while a
+/// signed foreign process allowlisting us kept the icon drawn. So the
+/// helper is spawned with `responsibility_spawnattrs_setdisclaim` and
+/// answers for itself from its own bundle (`jrbar-asserter.app`,
+/// `com.jonathanreed.jrbar.asserter`).
+///
+/// That is not foreign enough. On macOS 27.2 the agent tells the
+/// holder's own items by signing identity, which the helper shares with
+/// the app, so JR-Bar's own item is never drawn under the concealer
+/// whichever backend holds the assertion (measured 2026-09-22 with the
+/// notarized build), and `MenuBarIconMirror` carries the icon. What the
+/// helper still gives is
+/// a separate holder whose death releases the assertion — the same
+/// release the in-process assertion gets from dying with the app.
 ///
 /// One process per activation: the token wraps the pid. Killing it
 /// releases the assertion (the agent restores a dead holder's bar), and
@@ -274,8 +283,10 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
     private let helperURL: URL
 
     /// A spawned helper — the pid is the whole handle. `kill(0)` is the
-    /// liveness probe (EPERM still means alive); SIGTERM ends the hold
-    /// exactly like the app's own quit path: stdin EOF, helper exits.
+    /// liveness probe (EPERM still means alive). Closing stdin is the
+    /// designed release (the helper exits on EOF); `terminate()` backs
+    /// it with SIGKILL because the helper inherits the app's ignored
+    /// SIGTERM, so SIGTERM never ends the hold.
     /// The exit source lives here so the token retaining this object
     /// keeps the watch armed; the exit itself disarms it (see `exited`).
     final class Spawned: @unchecked Sendable {
@@ -525,8 +536,12 @@ final class MenuBarConcealer {
     var onChange: (@MainActor () -> Void)?
 
     /// The shipped backend: the helper process when its binary rides in
-    /// the bundle, the in-process assertion otherwise (dev runs conceal
-    /// fine either way — the helper is what keeps the icon drawn).
+    /// the bundle, the in-process assertion otherwise. On macOS 27.2 the
+    /// two are equivalent: both conceal the same, under both macOS hides
+    /// our own item (the agent tells the holder's items by signing
+    /// identity, which the helper shares) so `MenuBarIconMirror` carries
+    /// the icon, and both release when JR-Bar dies. The helper stays
+    /// pending a decision to fall back to the in-process backend.
     nonisolated static func defaultBackend() -> any MenuBarConcealBackend {
         if let helper = MenuBarAsserterBackend.resolveHelperURL() {
             return MenuBarAsserterBackend(helperURL: helper)

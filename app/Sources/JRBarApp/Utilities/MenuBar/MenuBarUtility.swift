@@ -75,9 +75,11 @@ final class MenuBarUtility: Toy {
     /// Spacers parked, monitors up.
     private(set) var running = false
     /// Accessibility, re-polled at most every `accessibilityPollSeconds`
-    /// — `AXIsProcessTrusted` is a `TCCAccessRequest` IPC, so it must
-    /// never run per render, per event, or on the reconcile cadence.
-    /// Probed on a listing refresh, a tile click, and each start.
+    /// and probed on a listing refresh, a tile click, and each start —
+    /// never per render, per event, or on the reconcile cadence. That is
+    /// plain thrift; TCC does not need it: `AXIsProcessTrusted` sends
+    /// one `TCCAccessRequest` IPC on its first call only (measured
+    /// 2026-09-22; see `MenuBarItemLister.axTrusted`).
     private(set) var accessibilityGranted = false
     @ObservationIgnored private var accessibilityCheckedAt = Date.distantPast
     /// The minimum gap between TCC polls.
@@ -217,8 +219,9 @@ final class MenuBarUtility: Toy {
     /// age the engine.
     @ObservationIgnored var concealerStartedAt = Date.distantPast
     nonisolated static let adoptionGrace: TimeInterval = 2.5
-    /// How long the seed waits for our own item to list before it seeds
-    /// from the listing as it stands — a fresh install must never wedge.
+    /// How long the seed waits for our own item to list. Past it the
+    /// path just marks the map seeded — nothing is inferred from the
+    /// listing — so a fresh install never wedges.
     nonisolated static let adoptionTimeout: TimeInterval = 8
 
     /// The drop zone the boundary always claims while the utility is
@@ -1903,8 +1906,9 @@ final class MenuBarUtility: Toy {
     func seedConcealedAppsIfNeeded(from listing: MenuBarHidePlan) -> Bool {
         guard !settings().concealSeeded else { return true }
         // A fresh install whose own icon is parked at the first scan
-        // must not block the engine forever: past `adoptionTimeout`,
-        // seed from the listing as it stands.
+        // must not block the engine forever: past `adoptionTimeout` the
+        // path just marks the map seeded; nothing is inferred from the
+        // listing.
         let ownPresent = listing.shown.contains { !Self.isForeignOwner($0.ownerName) }
         guard ownPresent
                 || Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionTimeout
@@ -2560,13 +2564,13 @@ final class MenuBarUtility: Toy {
     /// island's span just suppresses the ear, which is the honest answer
     /// when the flank is already taken.
     ///
-    /// Items our own process owns never earn a limit: the anchor, the
-    /// meters slot, any extras item of ours is a surface the island
-    /// face already owns — the ear's ‹ IS that slot's mark, and letting
-    /// the anchor clamp the ear suppresses the very affordance it
-    /// stands for. That self-clamp is the blank-face bug: the slim
-    /// anchor lands beside the notch's edge, the ear yields to it, and
-    /// nothing visible remains where the icon sits.
+    /// Items our own process owns never earn a limit. Under the
+    /// concealer none of them is drawn: macOS hides our own item under
+    /// our own assertion, so the real item is slim and blank, and the
+    /// icon is the mirror, our own surface right of the band. An
+    /// undrawn slot of ours clamping an ear only took the ear off empty
+    /// bar — the blank-face bug: the slim item beside the notch's edge,
+    /// the ear yielding to it, and nothing visible where the icon sat.
     nonisolated static func earLimits(
         items: [MenuBarItem], island: CGRect, row: CGRect,
         concealedApps: [String: MenuBarItemSection],
