@@ -34,16 +34,18 @@ struct MenuBarItem: Equatable, Sendable {
     /// an item stacked under it from one on the row; never covered,
     /// never pressed.
     var isNativeOverflowControl: Bool = false
+    /// The owning app's bundle identifier — the concealer's key. nil
+    /// for a bare helper process, which the agent can never conceal.
+    /// Resolved once, when the listing is taken, from the workspace's
+    /// own snapshot: read through `owner` it was a fresh LaunchServices
+    /// lookup per access (26 µs), about 150 of them a reconcile pass.
+    var bundleID: String? = nil
 
     /// The owning app, for the tile's icon and the always-hidden tile's
-    /// raise.
+    /// raise — a LaunchServices lookup per read, so never on a pass.
     var owner: NSRunningApplication? {
         NSRunningApplication(processIdentifier: ownerPID)
     }
-
-    /// The owning app's bundle identifier — the concealer's key. nil
-    /// for a bare helper process, which the agent can never conceal.
-    var bundleID: String? { owner?.bundleIdentifier }
 }
 
 /// Enumerates the menu bar's items off the window list. The filter is a
@@ -108,7 +110,10 @@ enum MenuBarItemLister {
     /// Window-info dicts → the items, sorted left to right, identities
     /// assigned: `ownerName`, `ownerName·title` when the window has one,
     /// and a `#n` ordinal only when the same base fields more than one.
-    nonisolated static func items(from infos: [[String: Any]], ownPID: pid_t, rows: [CGRect]) -> [MenuBarItem] {
+    /// `bundleIDs` is the workspace snapshot the owners' identifiers
+    /// come from, keyed by pid.
+    nonisolated static func items(from infos: [[String: Any]], ownPID: pid_t, rows: [CGRect],
+                                  bundleIDs: [pid_t: String] = [:]) -> [MenuBarItem] {
         var items = infos.compactMap { item(from: $0, ownPID: ownPID, rows: rows) }
         items.sort {
             $0.bounds.minX == $1.bounds.minX ? $0.windowID < $1.windowID
@@ -128,7 +133,8 @@ enum MenuBarItemLister {
             return MenuBarItem(id: id, ownerPID: item.ownerPID, ownerName: item.ownerName,
                                bounds: item.bounds, title: item.title, windowID: item.windowID,
                                identifier: item.identifier, extrasIndex: item.extrasIndex,
-                               isNativeOverflowControl: item.isNativeOverflowControl)
+                               isNativeOverflowControl: item.isNativeOverflowControl,
+                               bundleID: bundleIDs[item.ownerPID])
         }
     }
 
@@ -317,7 +323,8 @@ enum MenuBarItemLister {
             guard !app.isTerminated,
                   let name = app.localizedName, !name.isEmpty else { return nil }
             if !walkAll, !axOwnerPIDs.contains(app.processIdentifier) { return nil }
-            return MenuBarAX.Target(pid: app.processIdentifier, name: name)
+            return MenuBarAX.Target(pid: app.processIdentifier, name: name,
+                                    bundleID: app.bundleIdentifier)
         }
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let scanned = await Task.detached {
@@ -340,8 +347,12 @@ enum MenuBarItemLister {
     @MainActor
     static func list() -> [MenuBarItem] {
         if axTrusted() { return axItems }
+        var bundleIDs: [pid_t: String] = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            if let id = app.bundleIdentifier { bundleIDs[app.processIdentifier] = id }
+        }
         return items(from: windowInfos(), ownPID: ProcessInfo.processInfo.processIdentifier,
-                     rows: menuBarRows())
+                     rows: menuBarRows(), bundleIDs: bundleIDs)
     }
 
 }

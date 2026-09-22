@@ -140,6 +140,21 @@ struct MenuBarTests {
         #expect(items.map(\.id) == ["Multi#0", "Multi#1", "Solo"])
     }
 
+    @Test("each item carries its owner's bundle identifier from the snapshot — nil for a bare helper")
+    func bundleIDsFromSnapshot() {
+        let infos = [
+            info(pid: 7, owner: "Multi", x: 200, windowID: 2),
+            info(pid: 7, owner: "Multi", x: 100, windowID: 1),
+            info(pid: 9, owner: "Helper", x: 300, windowID: 3),
+        ]
+        let items = MenuBarItemLister.items(from: infos, ownPID: ownPID, rows: [row],
+                                            bundleIDs: [7: "com.example.multi"])
+        #expect(items.map(\.bundleID) == ["com.example.multi", "com.example.multi", nil])
+        // A listing taken without a snapshot knows no identifiers.
+        #expect(MenuBarItemLister.items(from: infos, ownPID: ownPID, rows: [row])
+                    .allSatisfy { $0.bundleID == nil })
+    }
+
     @Test("the empty-space hit test sees protected windows but skips our own — the giant spacer would swallow every click")
     func rowItemBounds() {
         let infos = [

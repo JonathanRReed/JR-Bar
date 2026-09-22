@@ -22,10 +22,13 @@ import JRBarCore
 /// AX would otherwise hang the call site for seconds.
 enum MenuBarAX {
     /// One scannable process: pid plus the display name used for the
-    /// item's owner — both Sendable, so the scan runs off the actor.
+    /// item's owner and its bundle identifier, read off the workspace's
+    /// `NSRunningApplication` — all Sendable, so the scan runs off the
+    /// actor.
     struct Target: Sendable {
         let pid: pid_t
         let name: String
+        var bundleID: String? = nil
     }
 
     /// How long one app may take to answer an AX query before the scan
@@ -120,7 +123,8 @@ enum MenuBarAX {
                                windowID: 0,
                                identifier: string(element, "AXIdentifier"),
                                extrasIndex: index,
-                               isNativeOverflowControl: role(element) == "AXButton")
+                               isNativeOverflowControl: role(element) == "AXButton",
+                               bundleID: target.bundleID)
         }
     }
 
@@ -162,7 +166,8 @@ enum MenuBarAX {
             return MenuBarItem(id: id, ownerPID: item.ownerPID, ownerName: item.ownerName,
                                bounds: item.bounds, title: item.title, windowID: item.windowID,
                                identifier: item.identifier, extrasIndex: item.extrasIndex,
-                               isNativeOverflowControl: item.isNativeOverflowControl)
+                               isNativeOverflowControl: item.isNativeOverflowControl,
+                               bundleID: item.bundleID)
         }
     }
 
