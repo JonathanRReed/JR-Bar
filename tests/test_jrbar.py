@@ -3044,7 +3044,9 @@ for (const event of [
             key = f"{config}:pre_tool_use:0:0"
             config.write_text("[features]\nhooks = true\n")
 
-            with patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True), patch("jrbar.install.local_codex_hook_hashes", return_value={}):
+            # A Codex binary has to exist for the refresh to ask it at
+            # all; name one rather than inherit whichever this Mac has.
+            with patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True), patch("jrbar.install.local_codex_hook_hashes", return_value={}), patch("jrbar.install.codex_cli_path", return_value=Path("/usr/bin/codex")):
                 with patch(
                     "jrbar.install.resolve_codex_hook_hashes",
                     return_value={key: "sha256:new-current-hash"},

@@ -125,9 +125,13 @@ def test_codex_trust_refresh_failure_rolls_back_only_this_provider__and_1_more(t
     _private_file(sibling, sibling_original)
     _private_log(log)
 
+    # The refresh only reaches Codex when a Codex binary exists; without
+    # one it is CLI_NOT_FOUND and never raises. Name one, or this passes
+    # only on a Mac that happens to have Codex installed (CI has none).
     with (
         patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True),
         patch("jrbar.install.local_codex_hook_hashes", return_value={}),
+        patch("jrbar.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
         patch("jrbar.install.resolve_codex_hook_hashes", side_effect=OSError("trust refresh")),
         pytest.raises(OSError, match="trust refresh"),
     ):
