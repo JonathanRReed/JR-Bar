@@ -937,7 +937,9 @@ final class DockEnhanceController {
     private(set) var accessibilityTrusted = false
     private(set) var screenCaptureGranted = false
     @ObservationIgnored private var permissionsCheckedAt = Date.distantPast
-    /// The minimum gap between TCC polls.
+    /// The minimum gap between Accessibility and magnification
+    /// re-reads. Screen Recording keeps its own 30 s cache — see
+    /// `refreshPermissions`.
     nonisolated static let permissionTTL: TimeInterval = 3
 
     static let pollInterval: TimeInterval = 0.05

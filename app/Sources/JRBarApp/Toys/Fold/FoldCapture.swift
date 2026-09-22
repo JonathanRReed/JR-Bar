@@ -42,8 +42,10 @@ enum FoldCapturePermission {
     /// Drops the cache so the next `granted` read asks TCC again.
     static func invalidate() { checkedAt = -.infinity }
 
-    /// Request may prompt, so it only runs from a button — and it
-    /// caches the answer it just got, so the card flips at once.
+    /// Request may prompt, so it runs only from a button or the Dock's
+    /// `start` (once, to register JR-Bar in the pane while the answer
+    /// is undecided) — and it caches the answer it just got, so the
+    /// card flips at once.
     @discardableResult
     static func request() -> Bool {
         cached = CGRequestScreenCaptureAccess()
