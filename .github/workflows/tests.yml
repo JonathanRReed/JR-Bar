@@ -66,6 +66,26 @@ jobs:
         env:
           PYTHON: ${{ env.pythonLocation }}/bin/python
         run: ./scripts/bootstrap-dev.sh
+      - name: Runner facts the suite must not depend on
+        # Each of these has made a test pass on the owner's Mac and fail
+        # here: the main screen renders at 1x (a MacBook is 2x), the image
+        # turns Reduce Motion and Reduce Transparency on, and no Codex CLI
+        # is installed. Tests stub them; this prints what the runner has,
+        # read the way the app reads it, so the next CI-only failure
+        # starts from the facts. A diagnostic never fails the job.
+        continue-on-error: true
+        run: |
+          .venv/bin/python - <<'PY'
+          from AppKit import NSScreen, NSWorkspace
+          from jrbar.install import codex_cli_path
+
+          screen = NSScreen.mainScreen()
+          workspace = NSWorkspace.sharedWorkspace()
+          print("main screen scale:", screen.backingScaleFactor() if screen else None)
+          print("reduce motion:", workspace.accessibilityDisplayShouldReduceMotion())
+          print("reduce transparency:", workspace.accessibilityDisplayShouldReduceTransparency())
+          print("codex cli:", codex_cli_path())
+          PY
       - name: pytest tests
         run: .venv/bin/python -m pytest tests -q --durations=25
 
