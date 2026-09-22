@@ -1706,10 +1706,10 @@ private struct NotchControlsView: View {
             EmptyView()
         case .alcove:
             externalNote(installed: toy.alcoveURL != nil, name: "Alcove",
-                         link: URL(string: "https://alcove.app")!)
+                         link: URL(string: "https://tryalcove.com")!)
         case .boringNotch:
             externalNote(installed: toy.boringNotchURL != nil, name: "Boring Notch",
-                         link: URL(string: "https://github.com/TheBoringNotch/boring.notch")!)
+                         link: URL(string: "https://github.com/TheBoredTeam/boring.notch")!)
         }
     }
 
