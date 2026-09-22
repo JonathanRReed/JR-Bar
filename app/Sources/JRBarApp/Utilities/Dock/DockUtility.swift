@@ -212,6 +212,9 @@ final class DockUtility {
         switcher.offscreenAllowed = { [weak self] in
             self?.settings().enhance.includeOffscreenWindows ?? false
         }
+        switcher.agentMarks = { [weak self] in
+            DockAgentMark.marks(from: self?.sessions() ?? [])
+        }
         // Provider watch: a counterpart launching or quitting flips
         // the card's note live while ours is parked under it.
         let center = NSWorkspace.shared.notificationCenter

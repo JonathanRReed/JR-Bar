@@ -28,6 +28,11 @@ struct SwitcherItem: Identifiable {
     /// The Dock tile's `AXStatusLabel` — the unread count the ⌘⇥ card
     /// draws on the icon like Witch's strip. nil when there is none.
     var badge: String? = nil
+    /// The agent session this window hosts — set only when
+    /// `DockAgentMatch` found an exclusive pair (an app card takes the
+    /// most urgent session its app hosts). Drives the "needs you" lane,
+    /// the provider mark and the type-ahead's session search.
+    var agent: DockAgentMark? = nil
 }
 
 /// One window out of `CGWindowListCopyWindowInfo`, already filtered to
@@ -207,6 +212,63 @@ enum DockSwitcherList {
         return claimants.count == 1 ? claimants.first : nil
     }
 
+    // MARK: Agents
+
+    /// Stamp each window row with the agent session it exclusively
+    /// hosts. Only rows of a session's host app are candidates, so a
+    /// Safari tab titled like a session never claims it.
+    static func annotate(_ items: [SwitcherItem], marks: [DockAgentMark],
+                         bundleID: (pid_t) -> String?) -> [SwitcherItem] {
+        guard !marks.isEmpty else { return items }
+        let hosts = marks.reduce(into: Set<String>()) { $0.formUnion($1.hosts) }
+        let candidates = items.compactMap { item -> DockAgentMatch.Candidate? in
+            guard let bundle = bundleID(item.pid), hosts.contains(bundle) else { return nil }
+            return .init(key: item.id, bundleID: bundle, title: item.title)
+        }
+        let map = DockAgentMatch.match(marks: marks, candidates: candidates)
+        return items.map { item in
+            var item = item
+            item.agent = map[item.id]
+            return item
+        }
+    }
+
+    /// An app card's mark: the most urgent live session its app hosts —
+    /// no window match needed, the app is the whole card.
+    static func appMark(bundleID: String?, marks: [DockAgentMark]) -> DockAgentMark? {
+        guard let bundleID else { return nil }
+        return marks.filter { $0.hosts.contains(bundleID) && $0.isLive }
+            .min { $0.urgency < $1.urgency }
+    }
+
+    /// The "needs you" lane: windows whose agent waits on you lead the
+    /// strip, longest-waiting first, and the pick starts on the first of
+    /// them — ⌥⇥ once lands on the blocked agent. The frontmost window
+    /// never joins the lane (you are already there); with no lane the
+    /// strip is plain recency and the pick starts on the second window.
+    static func needsYouFirst(_ items: [SwitcherItem]) -> (items: [SwitcherItem], selection: Int) {
+        let plain = (items, items.count > 1 ? 1 : 0)
+        guard items.count > 1 else { return plain }
+        let lane = items.dropFirst().enumerated()
+            .filter { $0.element.agent?.isWaiting == true }
+            .sorted { lhs, rhs in
+                let a = lhs.element.agent?.ask?.openedAt ?? .infinity
+                let b = rhs.element.agent?.ask?.openedAt ?? .infinity
+                return a != b ? a < b : lhs.offset < rhs.offset
+            }
+            .map(\.element)
+        guard !lane.isEmpty else { return plain }
+        let laneIDs = Set(lane.map(\.id))
+        return (lane + items.filter { !laneIDs.contains($0.id) }, 0)
+    }
+
+    /// A drilled app's windows: the waiting agent's window first, so
+    /// ⌘⇥ ↓ release lands on it, the rest in their recency.
+    static func waitingFirst(_ items: [SwitcherItem]) -> [SwitcherItem] {
+        let waiting = items.filter { $0.agent?.isWaiting == true }
+        guard !waiting.isEmpty else { return items }
+        return waiting + items.filter { $0.agent?.isWaiting != true }
+    }
 }
 
 // MARK: - The model (pure, tested)
@@ -225,11 +287,14 @@ struct SwitcherModel {
     /// apps whose names carry them. Empty means every item shows.
     private(set) var query = ""
 
-    mutating func open(with items: [SwitcherItem]) {
+    /// `selection` overrides the second-window start — the "needs you"
+    /// lane opens on its first entry.
+    mutating func open(with items: [SwitcherItem], selection: Int? = nil) {
         allItems = items
         self.items = items
         query = ""
-        selection = items.count > 1 ? 1 : 0
+        let start = selection ?? (items.count > 1 ? 1 : 0)
+        self.selection = items.indices.contains(start) ? start : 0
     }
 
     /// A verb's aftermath: the list rebuilds under the strip (a closed
@@ -282,12 +347,26 @@ struct SwitcherModel {
 
     /// The item's rank under `query`: the window title at full score,
     /// the app name halved like the command bar's detail fallback so
-    /// a real title hit always beats an app-only one. nil = no match.
+    /// a real title hit always beats an app-only one. A window hosting
+    /// an agent is also found by what the agent is working on — the
+    /// session's label and its directory at full weight, the provider's
+    /// name at half — so "jrbar" or "codex" lands the terminal titled
+    /// "zsh". nil = no match.
     static func score(_ item: SwitcherItem, query: String) -> Int? {
         let title = MenuBarCommands.score(query, item.title)
         let app = MenuBarCommands.score(query, item.appName).map { $0 / 2 }
-        return [title, app].compactMap { $0 }.max()
+        var scores = [title, app]
+        if let agent = item.agent {
+            scores.append(MenuBarCommands.score(query, agent.label))
+            scores.append(agent.cwdTail.flatMap { MenuBarCommands.score(query, $0) })
+            scores.append(MenuBarCommands.score(query, agent.providerName).map { $0 / 2 })
+        }
+        return scores.compactMap { $0 }.max()
     }
+
+    /// The query prefix that narrows the strip to windows whose agent
+    /// waits on you — a lone "!" is the whole "needs you" lane.
+    static let waitingFilter: Character = "!"
 
     /// The filtered set, best score first — Witch's ranked type-ahead
     /// over the plain subsequence filter. Ties keep the incoming
@@ -295,7 +374,14 @@ struct SwitcherModel {
     /// first, so ranking never invents a new shuffle.
     static func ranked(_ items: [SwitcherItem], query: String) -> [SwitcherItem] {
         guard !query.isEmpty else { return items }
-        return items.enumerated()
+        var query = query
+        var pool = items
+        if query.first == waitingFilter {
+            query.removeFirst()
+            pool = items.filter { $0.agent?.isWaiting == true }
+        }
+        guard !query.isEmpty else { return pool }
+        return pool.enumerated()
             .compactMap { index, item in
                 score(item, query: query).map { (item, $0, index) }
             }
@@ -582,6 +668,9 @@ final class DockSwitcherController {
     /// The preview's off-screen switch: minimized and other-Space
     /// windows only attempt captures when it's on.
     var offscreenAllowed: () -> Bool = { false }
+    /// The daemon's live agent sessions, reduced to marks — the Dock
+    /// utility wires it to `state.sessions`. Empty means no lane.
+    var agentMarks: () -> [DockAgentMark] = { [] }
     /// The dock preview's keys while its panel floats — Esc closes,
     /// arrows walk the cards, Return raises. The tap eats them either
     /// way: the panel can't take key status, so a pass-through would
@@ -644,9 +733,11 @@ final class DockSwitcherController {
     }
 
     private func open() {
-        let items = buildItems()
-        guard !items.isEmpty else { return }
-        model.open(with: items)
+        let built = buildItems()
+        guard !built.isEmpty else { return }
+        // A waiting agent's window leads and takes the first pick.
+        let lane = DockSwitcherList.needsYouFirst(built)
+        model.open(with: lane.items, selection: lane.selection)
         appMode = false
         drilledApp = nil
         tap.setOpen(true)
@@ -662,7 +753,7 @@ final class DockSwitcherController {
         let rows = DockSwitcherList.onScreenRows()
         let apps = Dictionary(uniqueKeysWithValues:
             NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) })
-        return DockSwitcherList.order(
+        let items = DockSwitcherList.order(
             rows: rows,
             offRows: DockSwitcherList.offScreenRows(),
             windowsForApp: { pid in
@@ -672,6 +763,8 @@ final class DockSwitcherController {
             },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
+        return DockSwitcherList.annotate(items, marks: agentMarks(),
+                                         bundleID: { apps[$0]?.bundleIdentifier })
     }
 
     // MARK: ⌘⇥ — the app strip
@@ -725,6 +818,7 @@ final class DockSwitcherController {
                 }
             }
         }
+        let marks = agentMarks()
         return ordered.compactMap { pid -> SwitcherItem? in
             guard let app = byPID[pid] else { return nil }
             return SwitcherItem(id: "app\(pid)", pid: pid,
@@ -733,7 +827,9 @@ final class DockSwitcherController {
                                 title: app.localizedName ?? "App",
                                 minimized: false, onScreen: true,
                                 element: nil, windowID: nil,
-                                badge: app.bundleURL.flatMap { badges[$0.path] })
+                                badge: app.bundleURL.flatMap { badges[$0.path] },
+                                agent: DockSwitcherList.appMark(bundleID: app.bundleIdentifier,
+                                                                marks: marks))
         }
     }
 
@@ -742,7 +838,8 @@ final class DockSwitcherController {
     /// release commits the highlighted window through `cmdCommit`.
     func drill() {
         guard appMode, let app = model.selected else { return }
-        let items = buildItems().filter { $0.pid == app.pid }
+        // The waiting agent's window first — ↓ then release lands on it.
+        let items = DockSwitcherList.waitingFirst(buildItems().filter { $0.pid == app.pid })
         // No reachable windows: keep the app row — a blank strip is
         // worse than the card that was under the finger.
         guard !items.isEmpty else { return }
@@ -854,7 +951,7 @@ final class DockSwitcherController {
         if appMode {
             model.refresh(with: buildAppItems())
         } else if let drilledApp {
-            let rows = buildItems().filter { $0.pid == drilledApp }
+            let rows = DockSwitcherList.waitingFirst(buildItems().filter { $0.pid == drilledApp })
             if rows.isEmpty {
                 // The drilled app lost its last window under the panel —
                 // pop back to the strip rather than show a blank card.
@@ -865,7 +962,7 @@ final class DockSwitcherController {
                 model.refresh(with: rows)
             }
         } else {
-            model.refresh(with: buildItems())
+            model.refresh(with: DockSwitcherList.needsYouFirst(buildItems()).items)
         }
         panel?.present(model: model)
         loadThumbnails()
@@ -1077,9 +1174,13 @@ struct DockSwitcherView: View {
                     // The buffer's own label — a filtered strip should
                     // never read as dropped rows.
                     HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass")
+                        // A leading "!" is the waiting-agents filter —
+                        // named, so the narrowed strip explains itself.
+                        let waiting = model.query.first == SwitcherModel.waitingFilter
+                        let rest = waiting ? String(model.query.dropFirst()) : model.query
+                        Image(systemName: waiting ? "exclamationmark.bubble" : "magnifyingglass")
                             .font(.system(size: 9, weight: .medium))
-                        Text(model.query)
+                        Text(waiting && rest.isEmpty ? "Waiting on you" : rest)
                             .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
                         if model.items.isEmpty {
@@ -1130,6 +1231,19 @@ struct DockSwitcherView: View {
                 Text(item.minimized ? "Minimized" : (item.windowID == nil ? "Preview unavailable" : "Off screen"))
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
+            }
+            if let agent = item.agent {
+                // Which session this window holds and what it wants —
+                // the line the switcher exists to answer.
+                HStack(spacing: 5) {
+                    DockAgentDot(mark: agent, size: 7)
+                    Text("\(agent.label) — \(agent.statusLine)")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .font(.system(size: 10, weight: agent.isWaiting ? .semibold : .regular))
+                .foregroundStyle(agent.isWaiting ? .primary : .secondary)
+                .frame(maxWidth: 320)
             }
         }
     }
@@ -1185,7 +1299,30 @@ struct DockSwitcherView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
-        .help(item.minimized ? "\(item.appName) — \(item.title) (minimized)" : "\(item.appName) — \(item.title)")
+        // The "needs you" ring: a waiting agent's card is outlined in
+        // its provider's colour, inside the selection ring so both read.
+        .overlay {
+            if let agent = item.agent, agent.isWaiting {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(agent.accent.opacity(0.9), lineWidth: 1.5)
+                    .padding(selected ? 3 : 0)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if let agent = item.agent {
+                DockAgentDot(mark: agent)
+                    .padding(6)
+            }
+        }
+        .help(help(for: item))
+    }
+
+    private func help(for item: SwitcherItem) -> String {
+        var text = item.minimized ? "\(item.appName) — \(item.title) (minimized)" : "\(item.appName) — \(item.title)"
+        if let agent = item.agent {
+            text += "\n\(agent.providerName) · \(agent.label) — \(agent.statusLine)"
+        }
+        return text
     }
 }
 
