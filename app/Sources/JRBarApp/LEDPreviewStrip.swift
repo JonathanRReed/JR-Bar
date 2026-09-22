@@ -224,6 +224,22 @@ enum LightingPreviewPrograms {
         return "off 90ms cosine\n\(ripple)\noff 70ms none\n\(hex) 280ms cosine\n\(mixed(hex, "#FFFFFF", 0.18)) 240ms cosine\n\(hex) 200ms cosine\n\(hex) 1400ms none\noff 900ms cosine"
     }
 
+    /// Rainstick idle, sped up so it can be seen: the daemon's drip is
+    /// one pixel of the idle grey at 4 % luminance stepping every thirty
+    /// seconds (`rainstick_idle.py`); the preview steps every 1.2 s at a
+    /// brightness a settings row can show, walking the whole strip.
+    static func rainstick(ledCount: Int = 8, stepMs: Int = 1200) -> String {
+        let pixel = scaled("#8B93A7", 0.45)
+        let n = max(2, ledCount)
+        var lines = ["off"]
+        for index in 0..<n {
+            let previous = index == 0 ? "" : "\(index - 1):#000000 "
+            lines.append("\(previous)\(index):\(pixel) \(stepMs)ms none")
+        }
+        lines.append("repeat")
+        return lines.joined(separator: "\n")
+    }
+
     static func normalized(_ hex: String) -> String {
         RGB8(hex: hex)?.hex ?? "#8E8E93"
     }

@@ -1,4 +1,5 @@
 import AppKit
+import EventKit
 import JRBarCore
 import SwiftUI
 import UserNotifications
@@ -103,11 +104,22 @@ struct LightingPage: View {
             }
         }
 
-        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb, night and low power.") {
+        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb and low power. Effect Studio › Moments lists every cue the lights can play.") {
             SettingToggle(store, "Rainstick idle", subtitle: "A dim pixel drifts along the strip every thirty seconds while nothing else needs it.",
                           path: "rainstick_idle_enabled")
+            SettingToggle(store, "Also at night", subtitle: "The Night scene withholds the drip unless you allow it here.",
+                          path: "rainstick_night_enabled")
+                .disabled(!(store.document.bool("rainstick_idle_enabled") ?? false))
+            SettingRow("Rainstick preview", subtitle: "Shown twenty-five times faster and brighter than the strip plays it.") {
+                LEDStripPreview(program: LightingPreviewPrograms.rainstick(), style: .dots, dotSize: 9, spacing: 6)
+                    .frame(width: 168)
+                    .opacity((store.document.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
+                    .accessibilityLabel("Rainstick idle preview")
+            }
             SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
                           path: "milestone_odometer_enabled")
+            MilestoneStepsField(store: store)
+                .disabled(!(store.document.bool("milestone_odometer_enabled") ?? false))
         }
     }
 
@@ -123,6 +135,50 @@ struct LightingPage: View {
             if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
+    }
+}
+
+/// The milestone ladder as one comma-separated field. The daemon keeps
+/// positive whole counts, sorted, deduplicated, at most sixteen, and
+/// falls back to 10, 25, 50, 100 when nothing valid is left — the field
+/// shows that same normalisation the moment it commits, so what is typed
+/// is never silently different from what fires.
+struct MilestoneStepsField: View {
+    @Bindable var store: SettingsStore
+    @ViewState private var draft = ""
+    @FocusState private var focused: Bool
+
+    private var current: [Int] {
+        (store.document.array("milestone_odometer_steps") ?? []).compactMap(\.intValue)
+    }
+    private var currentText: String {
+        (current.isEmpty ? SettingsKey.defaultMilestoneSteps : current).map(String.init).joined(separator: ", ")
+    }
+
+    var body: some View {
+        Provided(store, "milestone_odometer_steps") {
+            LabeledContent {
+                TextField("", text: Binding(get: { focused ? draft : currentText }, set: { draft = $0 }),
+                          prompt: Text("10, 25, 50, 100"))
+                    .labelsHidden()
+                    .focused($focused)
+                    .onChange(of: focused) { _, now in
+                        if now { draft = currentText } else { commit() }
+                    }
+                    .onSubmit { commit() }
+                    .textFieldStyle(.roundedBorder)
+                    .monospacedDigit()
+                    .frame(width: 180)
+            } label: {
+                SettingLabel(title: "Milestones", subtitle: "Finished-session counts that earn the cue — up to sixteen.")
+            }
+        }
+    }
+
+    private func commit() {
+        let steps = SettingsKey.milestoneSteps(parsing: draft)
+        guard steps != current else { return }
+        store.set("milestone_odometer_steps", .array(steps.map { .number(Double($0)) }))
     }
 }
 
@@ -400,6 +456,8 @@ struct NotificationsPage: View {
                           path: "completion_sweep_enabled", default: true)
         }
 
+        CalendarGlowSection(store: store)
+
         SettingGroup("Escalation") {
             SettingPicker(store, "Loudest stage", subtitle: "How far an ignored ask may escalate.", path: "escalation_tier", options: [
                 ("light", "Light only"), ("menu_bar", "Menu bar"), ("chime", "Chime"), ("takeover", "Take over"),
@@ -453,6 +511,10 @@ struct NotificationsPage: View {
                           path: "battery_monitoring.low_battery_alert_enabled", default: true)
             SettingSlider(store, "Below", path: "battery_monitoring.low_battery_threshold_percent", in: 1...50, step: 1, default: 5) { "\(Int($0)) %" }
                 .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
+            SettingToggle(store, "Charging fill when idle", subtitle: "While plugged in and nothing is running, the strip fills to the charge level instead of the idle whisper. Agents always break through.",
+                          path: "battery_monitoring.charging_idle_enabled", default: true)
+            SettingToggle(store, "Show power changes", subtitle: "Plugging in or unplugging shows the charge on the lights for a few seconds.",
+                          path: "battery_monitoring.show_on_power_change", default: true)
         }
         .task { store.refreshNotificationPermission() }
     }
@@ -463,6 +525,71 @@ struct NotificationsPage: View {
         case true?: return "The sleep helper is installed; closed-lid holds are honoured." + (lid?.holding == true ? " Holding now." : "")
         case false?: return "Needs the privileged sleep helper, which is not installed. The monitor will offer to install it."
         default: return "Needs the privileged sleep helper; the monitor reports whether it is installed."
+        }
+    }
+}
+
+/// Settings › Notifications › Calendar & reminders: the daemon's two
+/// EventKit glows — a calm purple breathe before a timed event, and an
+/// amber glow when a Reminder comes due. Both read in the monitor; macOS
+/// asks for access the first time one is on, and a refused grant says
+/// so here instead of glowing never.
+struct CalendarGlowSection: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Calendar & reminders", note: "Read on this Mac only; the glow carries no title, just the moment. Why this light names the event while it plays.") {
+            SettingToggle(store, "Glow before events", subtitle: "A calm purple breathe before a timed event starts.",
+                          path: "calendar_alerts_enabled")
+            SettingSlider(store, "Lead time", subtitle: "How long before the start the glow begins.",
+                          path: "calendar_lead_minutes", in: 1...60, step: 1, default: 5, format: SettingsStore.minutes)
+                .disabled(!(store.document.bool("calendar_alerts_enabled") ?? false))
+            if store.document.bool("calendar_alerts_enabled") ?? false {
+                EventKitAccessNote(entity: .event)
+            }
+            SettingToggle(store, "Glow for due reminders", subtitle: "An amber glow when a Reminder with a time comes due.",
+                          path: "reminder_alerts_enabled")
+            if store.document.bool("reminder_alerts_enabled") ?? false {
+                EventKitAccessNote(entity: .reminder)
+            }
+        }
+    }
+}
+
+/// A warning under an EventKit glow when macOS has refused the grant —
+/// the glow would otherwise just never come. Nothing here asks: the
+/// first prompt belongs to the monitor turning the glow on, and a
+/// refusal only deep-links to the pane that can undo it.
+struct EventKitAccessNote: View {
+    let entity: EKEntityType
+
+    private var status: EKAuthorizationStatus { EKEventStore.authorizationStatus(for: entity) }
+
+    var body: some View {
+        if Self.isRefused(status) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(entity == .event
+                     ? "macOS has Calendar access turned off for JR-Bar — the glow cannot see your events until it is allowed."
+                     : "macOS has Reminders access turned off for JR-Bar — the glow cannot see your reminders until it is allowed.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Open Settings") {
+                    let pane = entity == .event ? "Privacy_Calendars" : "Privacy_Reminders"
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Denied and restricted are refusals; write-only calendar access is
+    /// one too, since a glow needs to read the event's start.
+    static func isRefused(_ status: EKAuthorizationStatus) -> Bool {
+        switch status {
+        case .denied, .restricted, .writeOnly: return true
+        default: return false
         }
     }
 }

@@ -564,6 +564,17 @@ struct DeviceCard: View {
                 }
                 .settingRowStyle()
             }
+            Provided(store, "\(device.prefix).blend_mode") {
+                Picker(selection: store.optionalString("\(device.prefix).blend_mode")) {
+                    Text("Same as Lighting").tag("")
+                    Divider()
+                    ForEach(LightingPage.blendModes, id: \.value) { Text($0.label).tag($0.value) }
+                } label: {
+                    SettingLabel(title: "Blend", subtitle: blendSubtitle)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
             SettingRow("Colour calibration", subtitle: calibrationSummary) {
                 Button("Calibrate…") { store.calibrating = device.id }
                     .disabled(!store.core.isLive)
@@ -588,6 +599,19 @@ struct DeviceCard: View {
 
     private var calibrationSummary: String {
         SettingsStore.calibrationSummary(document: store.document, prefix: device.prefix)
+    }
+
+    /// The per-device blend's note: what it does, and the case for it —
+    /// on eight discrete LEDs per-agent blocks read cleanly even while
+    /// the Screen Bar keeps Smooth, where they would turn to mud.
+    private var blendSubtitle: String {
+        let mode = store.document.string(SettingsPath("\(device.prefix).blend_mode"))
+        guard let mode, let entry = LightingPage.blendModes.first(where: { $0.value == mode }) else {
+            let global = store.document.string("colors.blend_mode") ?? "color_blend"
+            let label = LightingPage.blendModes.first { $0.value == global }?.label ?? global
+            return "Follows Settings › Lighting (\(label)). A strip can take its own — Everyone reads cleanly on eight LEDs while the band stays Smooth."
+        }
+        return entry.detail
     }
 }
 
