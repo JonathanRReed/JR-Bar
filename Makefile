@@ -30,9 +30,9 @@ test: bootstrap
 test-portable: bootstrap
 	./scripts/verify.sh --no-bootstrap --portable --skip-build
 
-# The app's Swift suites (SwiftPM, Command Line Tools). final-test runs this
-# so a crashing suite cannot reach a package unnoticed; `make fast` stays
-# Python-only.
+# The app's Swift suites (SwiftPM, Command Line Tools). final-test runs this,
+# so a crashing suite fails the final gate; `make package` and `make release`
+# do not, so run final-test before them. `make fast` stays Python-only.
 swift-test:
 	cd app && swift test
 
