@@ -49,10 +49,27 @@ final class OverviewStore {
     /// The roster is a query surface: the daemon may retain things no
     /// event names, so absent events this is the cadence.
     static let refreshInterval: TimeInterval = 15
+    /// Per-session model, tokens, cost and context. Its own store until
+    /// the app delegate hands it the panel's, so the two share reads.
+    var sessionUsage: SessionUsageStore
+    /// How many rows, from the top of the current cut, get their usage
+    /// read — the table's first screenful and then some, never the
+    /// whole two-thousand-row record.
+    static let usageRowBudget = 48
 
     init(core: CoreModel) {
         self.core = core
+        self.sessionUsage = SessionUsageStore(core: core)
     }
+
+    /// Reads usage for the rows the table leads with and the selection.
+    func refreshSessionUsage(force: Bool = false) {
+        var ids = rows.prefix(Self.usageRowBudget).map(\.id)
+        ids.append(contentsOf: selectedIDs)
+        sessionUsage.refresh(ids: ids, force: force)
+    }
+
+    func usage(for entry: CoreRosterEntry) -> SessionUsage? { sessionUsage.usage(for: entry.id) }
 
     // MARK: Connections
 
@@ -159,6 +176,9 @@ final class OverviewStore {
         var search: String
         var sortDescription: String
         var workerFilter: String?
+        /// The Model and Cost columns sort on usage read after the rows
+        /// arrived; a new reading re-sorts.
+        var usageGeneration: Int
     }
     @ObservationIgnored private var derivedCache: (key: DerivedKey, value: DerivedResult)?
     /// Recompute count — a test hook proving the memo holds across
@@ -169,7 +189,8 @@ final class OverviewStore {
         let key = DerivedKey(
             roster: roster, filter: filter, search: search,
             sortDescription: sortOrder.map { "\($0.keyPath)|\($0.order)" }.joined(separator: ";"),
-            workerFilter: workerFilter
+            workerFilter: workerFilter,
+            usageGeneration: sortsByUsage ? sessionUsage.generation : 0
         )
         if let cached = derivedCache, cached.key == key { return cached.value }
         var result = DerivedResult()
@@ -200,6 +221,13 @@ final class OverviewStore {
     /// applies to the whole filtered set so a column click never lies
     /// about the order the daemon sent.
     var rows: [CoreRosterEntry] { derived.rows }
+
+    /// A Model or Cost column click: those orders move when a reading
+    /// lands, every other order does not.
+    private var sortsByUsage: Bool {
+        let usageKeys: [AnyKeyPath] = [\CoreRosterEntry.modelSortKey, \CoreRosterEntry.costSortKey]
+        return sortOrder.contains { comparator in usageKeys.contains { $0 == comparator.keyPath as AnyKeyPath } }
+    }
 
     /// Distinct project labels present in the roster, for the sidebar's
     /// "This project" section. Sorted; same-named roots differ by their
@@ -258,6 +286,8 @@ final class OverviewStore {
     private func tick() {
         now = Date()
         guard core.isLive else { return }
+        // Per id at most every `SessionUsageStore.freshFor`.
+        refreshSessionUsage()
         // The roster is a query surface: rows move with each collector
         // snapshot, not just named events — reload on events and every
         // `refreshInterval` regardless.
@@ -362,6 +392,9 @@ final class OverviewStore {
         guard canCompare else { return }
         let pair = rows.filter { selectedIDs.contains($0.id) }.map(\.id)
         guard pair.count == 2 else { return }
+        // The sheet's Model/Tokens/Cost rows read both sides' usage; ask
+        // now so they fill while the comparison is computed.
+        sessionUsage.refresh(ids: pair, force: true)
         comparing = true
         Task {
             defer { comparing = false }
@@ -1074,9 +1107,11 @@ extension CoreRosterEntry {
     var labelSortKey: String { session.label ?? session.shortId ?? "" }
     var projectSortKey: String { OverviewFilter.projectName(of: session.cwd) ?? "" }
     var stateSortKey: Int { sortRankKey }
-    /// No model data exists on the wire; a constant key keeps the column
-    /// sortable without pretending an order it does not have.
-    var modelSortKey: String { "" }
+    /// The model `session_usage` read from the run's transcript ("Opus
+    /// 4.5"); a row nobody has read sorts first, as "".
+    var modelSortKey: String { SessionUsageIndex.shared.model(for: id) ?? "" }
+    /// The run's cost estimate; unread or unpriced sorts below any price.
+    var costSortKey: Double { SessionUsageIndex.shared.cost(for: id) ?? -1 }
     var activitySortKey: String { session.event ?? session.tool ?? "" }
     /// `since` is the row's last-event stamp (updated_at), not a start
     /// time — the column is "Quiet": how long since the session last

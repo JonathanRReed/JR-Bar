@@ -89,7 +89,7 @@ struct OverviewView: View {
             set: { if !$0 { store.comparison = nil } }
         )) {
             if let comparison = store.comparison {
-                CompareRunsSheet(comparison: comparison)
+                CompareRunsSheet(comparison: comparison, usage: store.sessionUsage)
             }
         }
         .sheet(item: $replyEntry) { entry in
@@ -376,13 +376,29 @@ struct OverviewView: View {
                         }
                     }
                     .width(min: 80, ideal: 100)
-                    TableColumn("Model", value: \.modelSortKey) { _ in
-                        // The roster does not track per-session model —
-                        // an honest blank, not a guess.
-                        Text("—").foregroundStyle(.tertiary)
-                            .help("Model is not reported for sessions")
+                    TableColumn("Model", value: \.modelSortKey) { entry in
+                        // The model the run's own transcript names; a row
+                        // not read (or a provider whose transcripts are
+                        // not read) is an honest blank, not a guess.
+                        if let usage = store.usage(for: entry), let model = usage.modelName {
+                            Text(model).foregroundStyle(.secondary).lineLimit(1)
+                                .help(usage.summary)
+                        } else {
+                            Text("—").foregroundStyle(.tertiary)
+                                .help(store.sessionUsage.gap(for: entry.id).map(SessionUsageDocument.gapText)
+                                      ?? "Not read yet")
+                        }
                     }
-                    .width(min: 44, ideal: 56)
+                    .width(min: 56, ideal: 76)
+                    TableColumn("Cost", value: \.costSortKey) { entry in
+                        if let usage = store.usage(for: entry), let cost = usage.costText {
+                            Text(cost).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                                .help("\(usage.summary)\nAPI-equivalent estimate from list prices, not an invoice")
+                        } else {
+                            Text("—").foregroundStyle(.tertiary)
+                        }
+                    }
+                    .width(min: 44, ideal: 58)
                     TableColumn("State", value: \.stateSortKey) { entry in
                         stateCell(entry)
                     }
@@ -763,16 +779,47 @@ struct OverviewView: View {
             if let tool = session.tool { fact("Tool", tool, evidence: .reported) }
             if session.workers > 0 { fact("Workers", "\(session.workers)", evidence: .reported) }
             if session.stale { fact("Stale", "yes", evidence: .reported) }
-            if let model = store.transcriptModel, store.timelineSessionID == entry.id {
+            if let usage = store.usage(for: entry) {
+                // `session_usage`: the run's own transcript, read for
+                // model and tokens — reported by the provider; the cost is
+                // the daemon's list-price arithmetic, so derived.
+                if let model = usage.modelName {
+                    fact("Model (transcript)", model, evidence: .reported)
+                }
+                if usage.models.count > 1 {
+                    fact("Models", usage.models.sorted { $0.value > $1.value }
+                        .map { "\(ModelName.display($0.key) ?? $0.key) \(UsageFormat.tokens($0.value))" }
+                        .joined(separator: ", "), evidence: .reported)
+                }
+                if usage.tokens.total > 0 {
+                    fact("Tokens", Self.tokensFact(usage), evidence: .reported)
+                }
+                if let cost = usage.costText {
+                    fact("Cost", cost + (usage.costEstimated ? " (stand-in rate)" : ""), evidence: .derived)
+                }
+                if let context = usage.contextText {
+                    fact("Context", context, evidence: usage.contextWindowSource == "reported" ? .reported : .derived)
+                }
+            } else if let model = store.transcriptModel, store.timelineSessionID == entry.id {
                 // The transcript's own word for the model — the label
                 // names the source so it never reads as a roster fact.
                 fact("Model (transcript)", model, evidence: .reported)
             } else {
-                fact("Model", "not reported", evidence: .unavailable)
+                fact("Model", store.sessionUsage.gap(for: entry.id).map(SessionUsageDocument.gapText) ?? "not read yet",
+                     evidence: .unavailable)
             }
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
+    }
+
+    /// "1.2M in 48 turns · 84% cached".
+    static func tokensFact(_ usage: SessionUsage) -> String {
+        var text = "\(UsageFormat.tokens(usage.tokens.total)) in \(usage.turns) turn\(usage.turns == 1 ? "" : "s")"
+        if let share = usage.tokens.cacheShare, share >= 0.01 {
+            text += " · \(Int((share * 100).rounded()))% cached"
+        }
+        return text
     }
 
     /// S7.3's evidence vocabulary: reported (the source said it), derived
@@ -1129,6 +1176,19 @@ struct OverviewView: View {
 /// cannot carry.
 private struct CompareRunsSheet: View {
     let comparison: CoreRunComparison
+    /// Both sides' `session_usage` — model, tokens, cost — which the
+    /// daemon's comparison names as untracked; read here, per side.
+    let usage: SessionUsageStore
+
+    private func usage(_ side: CoreRunSide) -> SessionUsage? { usage.usage(for: side.id) }
+
+    /// The comparison's gaps, minus the one this sheet fills: once both
+    /// sides' transcripts named their model, "model not tracked" is no
+    /// longer true of what is on screen.
+    private var gaps: [String] {
+        let modelsKnown = usage(comparison.a)?.model != nil && usage(comparison.b)?.model != nil
+        return comparison.gaps.filter { !(modelsKnown && $0 == "model_not_tracked") }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1161,7 +1221,20 @@ private struct CompareRunsSheet: View {
                 compareRow("Lifecycle") { $0.lifecycle ?? "—" }
                 compareRow("Outcome") { $0.axes?.outcome ?? "—" }
                 compareRow("Review") { $0.axes?.review ?? "—" }
-                compareRow("Model") { _ in "not tracked" }
+                compareRow("Model") { side in
+                    usage(side)?.modelName ?? "not read"
+                }
+                compareRow("Tokens") { side in
+                    guard let tokens = usage(side)?.tokens, tokens.total > 0 else { return "—" }
+                    let cached = tokens.cacheShare.map { " · \(Int(($0 * 100).rounded()))% cached" } ?? ""
+                    return UsageFormat.tokens(tokens.total) + cached
+                }
+                compareRow("Cost (est.)") { side in
+                    usage(side)?.costText ?? "—"
+                }
+                compareRow("Context") { side in
+                    usage(side)?.contextText ?? "—"
+                }
                 Divider().gridCellUnsizedAxes([.horizontal])
                 compareRow("Span") { side in
                     side.activity?.span?.durationS.map(Self.durationText) ?? "—"
@@ -1188,8 +1261,12 @@ private struct CompareRunsSheet: View {
                 }
             }
             .font(.system(size: 12))
-            ForEach(comparison.gaps, id: \.self) { gap in
+            ForEach(gaps, id: \.self) { gap in
                 Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(.orange)
+            }
+            if usage(comparison.a)?.estimatedCostUSD != nil || usage(comparison.b)?.estimatedCostUSD != nil {
+                Text("Costs are API-equivalent estimates from list prices — not invoices, and not a verdict on which model is better.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
         .padding(20)

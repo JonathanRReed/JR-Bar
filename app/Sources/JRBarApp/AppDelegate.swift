@@ -385,6 +385,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // Overview window (⌘O): the scoped roster workspace.
         let overviewStore = OverviewStore(core: core)
+        // One per-session usage reader for the panel and the Overview.
+        overviewStore.sessionUsage = store.sessionUsage
         // Data Hoarder honesty for the inspector's Source line: the
         // archive's own capture table answers "is this transcript
         // kept", and a missing transcript seeds an archive search by

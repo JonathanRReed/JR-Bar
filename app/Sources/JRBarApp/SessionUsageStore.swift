@@ -104,11 +104,15 @@ final class SessionUsageIndex: @unchecked Sendable {
     private var costs: [String: Double] = [:]
     private var models: [String: String] = [:]
 
+    /// Merges readings in: two stores (a window opened before the app
+    /// shared one) must add to the index, never erase each other's rows.
     func update(_ usage: [String: SessionUsage]) {
         lock.lock()
         defer { lock.unlock() }
-        costs = usage.compactMapValues(\.estimatedCostUSD)
-        models = usage.compactMapValues(\.modelName)
+        for (id, row) in usage {
+            costs[id] = row.estimatedCostUSD
+            models[id] = row.modelName
+        }
     }
 
     func cost(for id: String) -> Double? {
