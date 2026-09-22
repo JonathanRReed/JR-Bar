@@ -13,6 +13,11 @@ public struct ToysState: Codable, Equatable, Sendable {
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
     public var notch: NotchSettings
+    /// "Quiet the toys during Focus and calls": while JR-Bar is quiet, a
+    /// Focus is on or a call has the mic, confetti holds its burst (and
+    /// skips screens a fullscreen app owns) and the buddy keeps its
+    /// completion hop to itself. On by default — calm first.
+    public var hushDuringQuiet: Bool = true
 
     public init(fold: FoldSettings = FoldSettings(), aquarium: AquariumSettings = AquariumSettings(),
                 notchBuddy: NotchBuddySettings = NotchBuddySettings(), confetti: ConfettiSettings = ConfettiSettings(),
@@ -29,6 +34,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         /// The island toy shipped as `alcove`; the key is read but never
         /// written — a saved file always lands under `notch`.
         case legacyAlcove = "alcove"
+        case hushDuringQuiet
     }
 
     public init(from decoder: any Decoder) throws {
@@ -40,6 +46,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         notch = (try? c.decodeIfPresent(NotchSettings.self, forKey: .notch))
             ?? (try? c.decodeIfPresent(NotchSettings.self, forKey: .legacyAlcove))
             ?? NotchSettings()
+        hushDuringQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .hushDuringQuiet)) ?? true
         // `externalApps` was the Toys page's app list — the feature is
         // gone; an old file's key is now just an ignored unknown key.
     }
@@ -51,6 +58,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         try c.encode(notchBuddy, forKey: .notchBuddy)
         try c.encode(confetti, forKey: .confetti)
         try c.encode(notch, forKey: .notch)
+        try c.encode(hushDuringQuiet, forKey: .hushDuringQuiet)
     }
 }
 
@@ -574,6 +582,12 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     /// re-folded state can never burst twice. Bookkeeping the toy
     /// maintains, not a control.
     public var firedKeys: [String]
+    /// A burst the room held (see `ToysState.hushDuringQuiet`): played
+    /// smaller once the room clears, or let go.
+    public var whenHeld: ConfettiHeldBurst = .later
+    /// A soft synthesized pop and rustle with the burst. Off by default,
+    /// and silent while JR-Bar is quiet.
+    public var sound: Bool = false
 
     /// The ring's depth: an old key falls off long after the fact it
     /// guarded is history.
@@ -604,6 +618,7 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, landing, density, duration, palette, shapes, triggers, firedKeys
+        case whenHeld, sound
     }
 
     public init(from decoder: any Decoder) throws {
@@ -617,6 +632,8 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
         triggers = (try? c.decodeIfPresent(ConfettiTriggers.self, forKey: .triggers)) ?? ConfettiTriggers()
         let keys = (try? c.decodeIfPresent([String].self, forKey: .firedKeys)) ?? []
         firedKeys = Array(keys.filter { !$0.isEmpty }.suffix(Self.firedKeyLimit))
+        whenHeld = (try? c.decodeIfPresent(ConfettiHeldBurst.self, forKey: .whenHeld)) ?? .later
+        sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? false
     }
 }
 
@@ -637,6 +654,9 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
     public var codexBankedReset: Bool
     /// The last open ask resolved — nothing left waiting on you.
     public var allClear: Bool
+    /// A rare moment JR-Bar itself noticed: an Aquarium achievement or a
+    /// new tank level. Opt-in like every trigger after the first.
+    public var milestones: Bool = false
 
     public init(sessionCompleted: Bool = false, weeklyReset: Bool = true,
                 perProviderReset: Set<String> = [], codexBankedReset: Bool = false,
@@ -650,6 +670,7 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case sessionCompleted, weeklyReset, perProviderReset, codexBankedReset, allClear
+        case milestones
     }
 
     public init(from decoder: any Decoder) throws {
@@ -660,6 +681,7 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
             .map { $0.lowercased() })
         codexBankedReset = (try? c.decodeIfPresent(Bool.self, forKey: .codexBankedReset)) ?? false
         allClear = (try? c.decodeIfPresent(Bool.self, forKey: .allClear)) ?? false
+        milestones = (try? c.decodeIfPresent(Bool.self, forKey: .milestones)) ?? false
     }
 }
 

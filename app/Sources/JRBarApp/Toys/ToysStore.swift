@@ -121,4 +121,30 @@ final class ToysStore {
     func noteAlcoveCapsule(_ capsule: AlcoveCapsule?) {
         alcoveCapsule = capsule
     }
+
+    // MARK: The room
+
+    /// A call has the mic or the camera. Whoever senses presence feeds
+    /// it here (`noteCallPresence`); until something does it stays
+    /// false, and the toys go by the daemon's quiet and Focus alone.
+    private(set) var onCall = false
+
+    /// The presence edge — mic or camera in use by a call. A held burst
+    /// looks at the room again the moment it clears.
+    func noteCallPresence(_ onCall: Bool) {
+        guard self.onCall != onCall else { return }
+        self.onCall = onCall
+        confetti.roomChanged()
+    }
+
+    /// Why the toys are keeping it down right now, or nil when they may
+    /// play: nil whenever the page's switch is off. Read from the
+    /// daemon's `focus` — the same reading that quiets the lights — plus
+    /// call presence.
+    func hushReason(now: Date = Date()) -> ToysHush.Reason? {
+        guard state.hushDuringQuiet else { return nil }
+        let focus = core.state?.focus
+        return ToysHush.reason(mode: focus?.mode, source: focus?.source, until: focus?.until,
+                               onCall: onCall, now: now)
+    }
 }

@@ -52,6 +52,7 @@ final class AquariumToy: Toy {
         self.core = core
         self.store = store
         game = saveFile.load().game
+        knownLevel = game.tankLevel
         // A relaunched app starts with the tank closed: if the save
         // still believed the window open, earnings would never count
         // as "away". Reopening reports the summary either way.
@@ -377,10 +378,17 @@ final class AquariumToy: Toy {
         if notice?.id == id { notice = nil }
     }
 
+    /// The tank level the last `note` saw — a rise is a milestone.
+    @ObservationIgnored private var knownLevel = 0
+
     /// Effects worth surfacing: the away summary becomes the panel,
-    /// the rest fold into the toast line.
+    /// the rest fold into the toast line. An achievement or a new tank
+    /// level is a milestone, and asks Confetti for a burst — the toy
+    /// decides whether its Milestones trigger is on.
     private func note(_ effects: [AquariumGameEffect], now: Date) {
         var earned = 0
+        var milestone = game.tankLevel > knownLevel
+        knownLevel = max(knownLevel, game.tankLevel)
         for effect in effects {
             switch effect {
             case .pearlsEarned(let n): earned += n
@@ -394,6 +402,7 @@ final class AquariumToy: Toy {
             case .achievementUnlocked(let a):
                 notice = (UUID(), a.title, "+\(a.reward) pearls",
                           "checkmark.seal.fill", now)
+                milestone = true
             case .dailyGoalMet:
                 notice = (UUID(), "Daily goal met",
                           "+\(AquariumRules.dailyGoalReward) pearls",
@@ -413,6 +422,7 @@ final class AquariumToy: Toy {
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
         }
+        if milestone { store?.confetti.fire(reason: .milestone, at: now) }
     }
 
     private func label(for sessionID: String) -> String {
