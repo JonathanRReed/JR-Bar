@@ -155,31 +155,6 @@ struct MenuBarTests {
                     .allSatisfy { $0.bundleID == nil })
     }
 
-    @Test("the empty-space hit test sees protected windows but skips our own — the giant spacer would swallow every click")
-    func rowItemBounds() {
-        let infos = [
-            info(pid: ownPID, owner: "JR-Bar", x: 50, windowID: 1),
-            info(pid: 8, owner: "Control Center", x: 1450, windowID: 2),
-            info(pid: 9, owner: "SomeApp", x: 900, windowID: 3),
-            info(layer: 0, pid: 9, owner: "SomeApp", x: 400, windowID: 4),
-        ]
-        let bounds = MenuBarItemLister.rowItemBounds(from: infos, ownPID: ownPID, rows: [row])
-        // The JR-Bar window (x: 50) is ours — excluded. The protected
-        // clock still counts: a click on an item is not empty space.
-        #expect(bounds == [CGRect(x: 1450, y: 0, width: 24, height: 24),
-                           CGRect(x: 900, y: 0, width: 24, height: 24)])
-    }
-
-    @Test("a 10 000-point own spacer window cannot swallow the row's empty space")
-    func rowItemBoundsSkipsSpacer() {
-        let infos = [
-            info(pid: ownPID, owner: "JR-Bar", x: -8000, w: 10_000, windowID: 1),
-            info(pid: 9, owner: "SomeApp", x: 900, windowID: 2),
-        ]
-        let bounds = MenuBarItemLister.rowItemBounds(from: infos, ownPID: ownPID, rows: [row])
-        #expect(bounds == [CGRect(x: 900, y: 0, width: 24, height: 24)])
-    }
-
     // MARK: Zones — the physical section model
 
     @Test("an item's section is the zone its center sits in")

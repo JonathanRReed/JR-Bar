@@ -663,9 +663,7 @@ final class MenuBarItemHider {
     /// a screen capture, so it is cached rather than paid every pass.
     private var blendSample: (hex: String, at: Date)?
     private var blendProbeInFlight = false
-    /// The probe's pixel source — the same ScreenCaptureKit one-shot
-    /// the tiles use; nil falls back to the shared display filter.
-    var blendCapture: (@MainActor (CGRect) async -> CGImage?)?
+    /// The probe's pixel source — the shared display filter.
     private let blendFilterSource = DisplayFilterSource()
 
     /// Make the shutters match the plan and the reveal state.
@@ -722,11 +720,9 @@ final class MenuBarItemHider {
             return ""
         }
         blendProbeInFlight = true
-        let capture = blendCapture ?? { [blendFilterSource] rect in
-            await blendFilterSource.capture(rect)
-        }
+        let source = blendFilterSource
         Task { [weak self] in
-            let image = await capture(probe)
+            let image = await source.capture(probe)
             let hex = image.flatMap { MenuBarBarSampler.averageHex(of: $0) } ?? ""
             self?.blendSample = (hex, self?.now() ?? Date())
             self?.blendProbeInFlight = false

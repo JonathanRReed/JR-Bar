@@ -5,9 +5,9 @@ import Testing
 @testable import JRBarCore
 
 /// The macOS 27 engine's pure half: which apps an assertion conceals for
-/// a reveal state, the allowlist that does it, the one-time seed from
-/// the spacer plan, and the click bridge's hit test. The private API
-/// itself is exercised only by the app (a signed bundle).
+/// a reveal state, the allowlist that does it, and the click bridge's
+/// hit test. The private API itself is exercised only by the app (a
+/// signed bundle).
 @Suite("Menu Bar — concealer")
 struct MenuBarConcealerTests {
     private func item(_ id: String, owner: String = "App", x: Double = 1000,
@@ -38,18 +38,6 @@ struct MenuBarConcealerTests {
         // are MenuBarAgent extras, never ours to park.
         #expect(MenuBarConcealPlan.allowlist(running: running, concealed: running)
                 == MenuBarConcealPlan.systemItemOwners.sorted())
-    }
-
-    @Test("the seed takes the spacer plan's hidden apps, never ours, the system's, or a bundle-less helper")
-    func seed() {
-        let map = MenuBarConcealPlan.seed(
-            hidden: [(item("ChatGPT"), "com.openai.chat"),
-                     (item("Clock", owner: "MenuBarAgent"), "com.apple.controlcenter"),
-                     (item("Helper"), nil),
-                     (item("JR-Bar", owner: "JR-Bar"), "com.jonathanreed.jrbar")],
-            alwaysHidden: [(item("Shottr"), "cc.ffitch.shottr")],
-            own: "com.jonathanreed.jrbar")
-        #expect(map == ["com.openai.chat": .hidden, "cc.ffitch.shottr": .alwaysHidden])
     }
 
     @Test("a click bridges only on the system's clock, battery and Wi-Fi — never Control Center or an app")

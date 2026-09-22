@@ -166,28 +166,6 @@ enum MenuBarItemLister {
         }
     }
 
-    /// Every layer-25 window's frame in the row, minus our own. The
-    /// empty-space click's hit test asks this, not `items`: a click on
-    /// the clock is a click on an item. Our own windows are excluded
-    /// because the 10 000-point spacer's frame covers the whole row —
-    /// counting it would swallow every empty-space click, and a click
-    /// on our chevron is an own-app event the global monitor never
-    /// sees anyway.
-    nonisolated static func rowItemBounds(from infos: [[String: Any]], ownPID: pid_t,
-                                          rows: [CGRect]) -> [CGRect] {
-        infos.compactMap { info in
-            guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == statusWindowLayer,
-                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  pid != ownPID,
-                  let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
-                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
-                  !bounds.isEmpty, bounds.width >= minItemWidth,
-                  rows.contains(where: { bounds.minY < $0.maxY && bounds.maxY > $0.minY })
-            else { return nil }
-            return bounds
-        }
-    }
-
     /// The menu bar row in Quartz coordinates: the top of the main
     /// display, `NSStatusBar.system.thickness` deep — or the notch's
     /// depth where one reaches below it.
@@ -226,10 +204,10 @@ enum MenuBarItemLister {
         menuBarRows().contains { $0.intersects(bounds) }
     }
 
-    /// One window-list snapshot shared by `list` and `rowItemFrames`.
-    /// The call is a WindowServer round trip with TCC accounting on
-    /// the other end, so a burst of consumers inside `infosCacheTTL`
-    /// — a reconcile plus a click's hit test, say — pays it once.
+    /// One window-list snapshot shared by `list` and the open-menu
+    /// check. The call is a WindowServer round trip with TCC accounting
+    /// on the other end, so a burst of consumers inside `infosCacheTTL`
+    /// — a reconcile plus a rehide's menu check, say — pays it once.
     @MainActor
     private static var infosCache: (at: Date, infos: [[String: Any]])?
     /// How long a snapshot stays fresh. Shorter than the reconcile

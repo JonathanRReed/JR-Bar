@@ -73,26 +73,6 @@ enum MenuBarConcealPlan {
         running.union(systemItemOwners).subtracting(concealed).sorted()
     }
 
-    /// The first app map, taken once from the spacer model's plan: the
-    /// apps whose items sat left of the JR-Bar icon become hidden, the
-    /// always-hidden overrides carry over. Protected owners (the
-    /// system's items) and apps without a bundle identifier (a bare
-    /// helper process the agent can never conceal) are skipped.
-    nonisolated static func seed(hidden: [(item: MenuBarItem, bundleID: String?)],
-                                 alwaysHidden: [(item: MenuBarItem, bundleID: String?)],
-                                 own bundleID: String) -> [String: MenuBarItemSection] {
-        var map: [String: MenuBarItemSection] = [:]
-        for (item, id) in hidden {
-            guard let id, id != bundleID, !MenuBarItemLister.isProtected(item) else { continue }
-            map[id] = .hidden
-        }
-        for (item, id) in alwaysHidden {
-            guard let id, id != bundleID, !MenuBarItemLister.isProtected(item) else { continue }
-            map[id] = .alwaysHidden
-        }
-        return map
-    }
-
     /// The system items the agent bridges a click for: its own clock,
     /// battery and Wi-Fi ignore a press under any assertion (measured
     /// on 27.0); Control Center answers an Accessibility press without
@@ -531,7 +511,6 @@ final class MenuBarConcealer {
     private var suspendGeneration = 0
     /// The last set asked for — what a suspend restores.
     private(set) var target: Set<String> = []
-    private(set) var running: Set<String> = []
     /// Every bundle ID observed running this session — the allowlist's
     /// universe. Monotonic: a snapshot that drops a shown app for one
     /// pass never shrinks it, so a bad listing can't conceal a shown
@@ -543,13 +522,7 @@ final class MenuBarConcealer {
     private var seenOrder: [String] = []
     /// Beyond this many remembered bundle IDs, prune.
     nonisolated static let seenRunningCap = 512
-    /// The last failure, for the card. nil while the agent answers.
-    private(set) var lastError: String?
     var onChange: (@MainActor () -> Void)?
-
-    /// The assertion-free beat a newly registered item needs to be
-    /// adopted by the agent.
-    nonisolated static let adoptionBeat: TimeInterval = 0.35
 
     /// The shipped backend: the helper process when its binary rides in
     /// the bundle, the in-process assertion otherwise (dev runs conceal
@@ -590,7 +563,6 @@ final class MenuBarConcealer {
     /// items take clicks natively again.
     func apply(concealed: Set<String>, running: Set<String>) {
         target = concealed
-        self.running = running
         // The allowlist's universe only grows: anything the workspace
         // has ever shown us stays allowlisted until the cap, so the
         // agent always has the ID it needs to keep a shown app on the
@@ -662,7 +634,7 @@ final class MenuBarConcealer {
                 self.backend.invalidate(live.token)
                 MenuBarAssessmentBackend.log.notice("reassert: reswept \(live.concealed.count, privacy: .public) apps")
             } catch {
-                self.lastError = String(describing: error)
+                MenuBarAssessmentBackend.log.error("reassert: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -722,10 +694,8 @@ final class MenuBarConcealer {
             let old = live
             live = Live(concealed: concealed, allowlist: allowlist, token: token)
             if let old { backend.invalidate(old.token) }
-            lastError = nil
             MenuBarAssessmentBackend.log.notice("conceal: \(concealed.count, privacy: .public) apps hidden by the agent (\(concealed.sorted().joined(separator: ", "), privacy: .public)); allowlist \(allowlist.count, privacy: .public) apps, ours \(allowlist.contains(Bundle.main.bundleIdentifier ?? "-") ? "in" : "MISSING", privacy: .public)")
         } catch {
-            lastError = String(describing: error)
             MenuBarAssessmentBackend.log.error("conceal: \(String(describing: error), privacy: .public)")
         }
         onChange?()
