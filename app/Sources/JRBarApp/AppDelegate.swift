@@ -3,6 +3,7 @@ import Carbon
 import JRBarCore
 import JRBarUI
 import Observation
+import OSLog
 import ServiceManagement
 
 @MainActor
@@ -703,6 +704,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Core supervision
 
+    /// The daemon's stdout/stderr in the unified log. Public on purpose:
+    /// NSLog's arguments are private, so `log show` read every line —
+    /// the refresh-timing flight recorder, the errors — as `<private>`,
+    /// and the in-app log already shows the same text on this Mac.
+    nonisolated private static let coreLog = Logger(subsystem: "devin.jrbar", category: "core")
+
     private func attachSupervisor(_ supervisor: CoreSupervisor, describedAs description: String,
                                   core: CoreModel, store: PanelStore) {
         self.supervisor = supervisor
@@ -710,7 +717,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             Task { @MainActor [weak core] in
                 core?.appendLocalLog(level: stream == "stderr" ? "core" : (stream == "supervisor" ? "supervisor" : "core"), line)
             }
-            NSLog("JR-Bar core[%@]: %@", stream, line)
+            Self.coreLog.notice("\(stream, privacy: .public): \(line, privacy: .public)")
         }
         supervisor.onStateChange = { [weak self, weak core, weak store] state in
             Task { @MainActor [weak self, weak core, weak store] in
