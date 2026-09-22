@@ -159,6 +159,10 @@ static int lock_spool(int fd, const char *path, const struct stat *st, uint64_t 
  * until it is closed. At the cap the file is renamed to `overflow` (one
  * generation kept) and a fresh one opened: the line is always written,
  * because the newest events are the ones the daemon's live state needs.
+ * When the rename fails (a read-only state directory, a directory at
+ * `overflow`) the line goes on the end of the full file, past the cap:
+ * every retry would find the same full file and fail the same way, and a
+ * shim that retried spun until the agent's own hook timeout killed it.
  *
  * Every appender holds the lock from its size check through its write, so
  * checking for room, writing and rotating are one step and no line can
@@ -184,16 +188,19 @@ static int open_spool_with_room(const char *path, const char *overflow, size_t n
         struct stat st;
         if (fd < 0 || fstat(fd, &st) != 0) return fd;
         int locked = lock_spool(fd, path, &st, deadline);
-        if (locked == -1) {
-            close(fd);
-            if (now_ms() < deadline) continue;
-            return open_spool(path);
+        if (locked == -2) return fd;
+        if (locked == 0) {
+            /* The size is read under the lock: every earlier append has landed. */
+            if (fstat(fd, &st) != 0 || st.st_size == 0
+                || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) return fd;
+            /* ENOENT is a drain that took the file after the lock was
+             * checked; there is a fresh one to open. */
+            if (rename(path, overflow) != 0 && errno != ENOENT) return fd;
         }
-        /* The size is read under the lock: every earlier append has landed. */
-        if (locked == -2 || fstat(fd, &st) != 0 || st.st_size == 0
-            || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) return fd;
-        (void)rename(path, overflow);
+        /* The file moved or was rotated. Every pass that goes round again
+         * comes through here, so the loop ends at the deadline. */
         close(fd);
+        if (now_ms() >= deadline) return open_spool(path);
     }
 }
 

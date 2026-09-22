@@ -210,6 +210,50 @@ def test_shim_rotates_a_full_spool_instead_of_growing_it(shim: Path, sock_dir: P
     assert overflow.stat().st_size == 16 * 1024 * 1024 - 64
 
 
+def test_shim_appends_past_the_cap_when_the_spool_cannot_rotate(shim: Path, sock_dir: Path) -> None:
+    """A rename that fails leaves the full file at the pending path, so a
+    shim that retried would find it at the cap every pass and spin until the
+    agent's own hook timeout killed it (still spinning after 3 s with the
+    state directory read-only). The line goes on the end of the full file
+    instead, within the budget."""
+    pending = sock_dir / "claude.pending.jsonl"
+    overflow = sock_dir / "claude.overflow.jsonl"
+    full = 16 * 1024 * 1024 - 10
+
+    def fill() -> None:
+        with open(pending, "wb") as handle:
+            handle.seek(full - 1)  # sparse: the size is what counts
+            handle.write(b"\n")
+
+    def spool_quickly(payload: str) -> None:
+        started = time.monotonic()
+        assert _run(shim, sock_dir, "claude", payload).returncode == 0
+        assert time.monotonic() - started < 2.0
+        assert pending.stat().st_size > full
+        with open(pending, "rb") as handle:
+            handle.seek(full)
+            assert json.loads(handle.read())["payload"] == payload
+
+    # --- scenario: the overflow path is a directory the file cannot replace
+    fill()
+    overflow.mkdir()
+    (overflow / "keep").write_text("")
+    spool_quickly('{"hook_event_name":"Stop","session_id":"overflow-is-a-directory"}')
+    assert (overflow / "keep").exists()
+    shutil.rmtree(overflow)
+
+    # --- scenario: the state directory is read-only (root renames regardless)
+    if os.geteuid() == 0:
+        return
+    fill()
+    sock_dir.chmod(0o555)
+    try:
+        spool_quickly('{"hook_event_name":"Stop","session_id":"read-only-state"}')
+    finally:
+        sock_dir.chmod(0o700)
+    assert not overflow.exists()
+
+
 def test_shim_follows_the_spool_when_a_drain_moves_it_under_the_lock(shim: Path, sock_dir: Path) -> None:
     """Every appender holds the spool's lock from its size check through its
     write. A shim waiting on it while the daemon renames the file to drain
