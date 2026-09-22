@@ -197,6 +197,52 @@ All notable changes to JR-Bar are documented here.
   frame — a picture of empty bar — so concealed tiles rendered as
   blank dark squares. Ghosts are now uncapturable and tile the
   owner app's icon, the same answer parked items always gave.
+- Usage Center's meter strip stopped filtering: a preferred-provider
+  list used to *replace* the metered set, so picking only Gemini
+  blanked Claude and Codex entirely. Preferred providers order first
+  now and every other metered provider follows. Provider rows also
+  carry their account instance end to end — two Devin accounts are
+  two rows with their own consents and credentials, and a "+"
+  popover adds an account in place (slug normalised, optional label)
+  wherever the provider can actually read a second account. The
+  meters refresh the moment the menu opens instead of waiting out
+  the long cadence, and quota alerts default to off the way the
+  daemon, the toggle and the schema always read them.
+- The Dock enhancer's side-dock magnification anchors on the edge's
+  own axis — a left or right Dock magnifies along the strip instead
+  of drifting off it — and the ⌥⇥ switcher rides fullscreen spaces
+  now. Fold's Metal renderer stopped retiring for good on one bad
+  init: a failure parks the fold for a thirty-second cooldown and
+  the next arm retries, and re-enabling the toy clears the flag
+  outright. Confetti rains on every screen, not just the favourite.
+- Aquarium's "while you were away" panel finally reports something
+  real: the away feedings counter was unreachable — feeding needs
+  the window open — so it's gone, and in its place the snail does
+  its rounds while the tank is closed, sweeping every drop past
+  `snailCollectAfter` into the away summary on reopen. Draw passes
+  no longer mutate or save the game mid-render: the Canvas records
+  pending events and one drain applies them after the pass. And the
+  off chip says what off means — "Watching quietly", since session
+  watching stays armed to feed that summary.
+- The notch island shows the mic and camera live dots now, fed by a
+  shared sensor monitor, and the docked Buddy wears its character
+  instead of a bare dot — the roster, tricks and care states read
+  in place without undocking.
+- The lid-hold watchdog stops multiplying: each daemon lifetime used
+  to leave a detached renewal loop behind (~20 had accumulated), and
+  now a pidfile plus a same-marker command-line check lets a fresh
+  watchdog retire its predecessor — a superseded one exits on its
+  own next poll, `release()` removes the marker and pidfile, and a
+  marker-signature sweep reaps the pidfile-less generation already
+  out there.
+- Menu-bar parity pass: the toggle-reveal action toggles (it used to
+  only ever reveal), a dedicated always-hidden reveal gesture exists,
+  the re-hide clock can stand down entirely in click-to-dismiss
+  mode, custom item spacing binds straight to the daemon setting,
+  items carry a context menu with section moves, and a refused
+  hotkey registration is named on the card instead of silently
+  dropped. Setup's permission rows now cover Reminders, Camera,
+  System Audio, Bluetooth and Focus Status.
 
 ## 0.9.8 (unreleased)
 
