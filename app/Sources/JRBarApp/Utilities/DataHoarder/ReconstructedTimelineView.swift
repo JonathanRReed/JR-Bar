@@ -2,7 +2,7 @@ import SwiftUI
 import JRBarCore
 
 /// Mutable UI state for `ReconstructedTimelineView`, owned by whoever mounts
-/// it (the archive model today, an Overview store later) so the kind filter
+/// it (the archive model, the Overview store, a History row) so the kind filter
 /// and disclosure survive redraws. It is an `@Observable` object rather than
 /// `@State` because this toolchain lacks the SwiftUIMacros plugin — `@State`
 /// is a macro in the macOS 27 SDK and cannot expand here.
@@ -12,13 +12,21 @@ final class ReconstructedTimelineViewState {
     var gapsExpanded = false
 }
 
-/// A rebuilt session timeline — the archived-record twin of the Overview's
-/// live transcript rows. Takes a `SessionReconstruction` (produced off-main)
-/// and stays provider-agnostic so any pane can mount it: the Data Hoarder
-/// detail today, the Overview later.
+/// The one session timeline every pane mounts: the Data Hoarder's archived
+/// records, the Overview inspector's live transcript
+/// (`SessionReconstructor.reconstruction(from:running:)`), and History's
+/// expanded rows. It takes a `SessionReconstruction` (produced off-main)
+/// and stays provider-agnostic, so a fix to how a tool call or a failure
+/// reads lands everywhere at once.
 struct ReconstructedTimelineView: View {
     let reconstruction: SessionReconstruction
     @Bindable var viewState: ReconstructedTimelineViewState
+    /// Inside a pane that already scrolls (the Overview inspector): the
+    /// rows lay out inline instead of in a scroll view of their own.
+    var embedded = false
+    /// Where the rows came from, when it is worth a word ("archived
+    /// copy"); nil says nothing.
+    var sourceNote: String? = nil
 
     enum KindFilter: String, CaseIterable {
         case all = "All"
@@ -34,6 +42,11 @@ struct ReconstructedTimelineView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let sourceNote {
+                Label(sourceNote, systemImage: "archivebox")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
             storyCard
             if !reconstruction.gaps.isEmpty || reconstruction.redactedLines > 0 {
                 gapsDisclosure
@@ -63,7 +76,7 @@ struct ReconstructedTimelineView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         } else {
-            Text("No failures in the captured portion")
+            Text("No failures in these rows")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
         }
@@ -79,7 +92,7 @@ struct ReconstructedTimelineView: View {
         if let summary = story.lastErrorSummary, !summary.isEmpty {
             parts.append("Then \(summary)")
         } else if story.errorCount > 0 {
-            parts.append("\(story.errorCount) \(story.errorCount == 1 ? "error" : "errors") in the captured portion")
+            parts.append("\(story.errorCount) \(story.errorCount == 1 ? "error" : "errors") in these rows")
         }
         if story.diedMidTurn {
             parts.append("The session ended mid-turn")
@@ -87,7 +100,7 @@ struct ReconstructedTimelineView: View {
         if !story.failedToolNames.isEmpty {
             parts.append("Failed tools: \(story.failedToolNames.joined(separator: ", "))")
         }
-        guard !parts.isEmpty else { return "The captured portion shows a failure." }
+        guard !parts.isEmpty else { return "These rows show a failure." }
         return parts.joined(separator: ". ") + "."
     }
 
@@ -102,7 +115,7 @@ struct ReconstructedTimelineView: View {
                 if reconstruction.redactedLines > 0 {
                     Text("· \(reconstruction.redactedLines) \(reconstruction.redactedLines == 1 ? "line" : "lines") stored with text withheld (metadata-only capture)")
                 }
-                Text("· \(reconstruction.totalLines) transcript \(reconstruction.totalLines == 1 ? "line" : "lines") read")
+                Text("· \(reconstruction.totalLines) transcript \(reconstruction.totalLines == 1 ? "row" : "rows") read")
             }
             .font(.system(size: 10))
             .foregroundStyle(.secondary)
@@ -136,9 +149,16 @@ struct ReconstructedTimelineView: View {
         if gap.hasPrefix("transcript_too_large:") {
             return "transcript too large to rebuild (\(gap.dropFirst("transcript_too_large:".count)) bytes)"
         }
+        if gap.hasPrefix("timeline_item_cap:") {
+            return "transcript exceeds the item cap — earliest rows omitted"
+        }
         switch gap {
         case "unsupported_provider":
             return "this provider's transcript format is not read yet"
+        case "transcript_not_found":
+            return "no transcript found for this session"
+        case "transcript_unreadable":
+            return "the transcript file could not be read"
         default:
             return gap.hasPrefix("gap:") ? "capture gap: \(gap.dropFirst(4))" : gap
         }
@@ -212,6 +232,10 @@ struct ReconstructedTimelineView: View {
                     if firstErrorSeq != nil {
                         Button {
                             if let seq = firstErrorSeq {
+                                // A kind filter can leave the error row
+                                // unrendered — scrollTo needs a live
+                                // target, so switch first.
+                                if kind != .all && kind != .errors { kind = .errors }
                                 withAnimation { proxy.scrollTo(seq, anchor: .top) }
                             }
                         } label: {
@@ -220,18 +244,25 @@ struct ReconstructedTimelineView: View {
                         }
                         .buttonStyle(.plain).foregroundStyle(.red)
                     }
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 5) {
-                            ForEach(filteredItems, id: \.seq) { item in
-                                row(item).id(item.seq)
-                            }
+                    if embedded {
+                        rows
+                    } else {
+                        ScrollView {
+                            rows.padding(.bottom, 4)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 4)
                     }
                 }
             }
         }
+    }
+
+    private var rows: some View {
+        LazyVStack(alignment: .leading, spacing: 5) {
+            ForEach(filteredItems, id: \.seq) { item in
+                row(item).id(item.seq)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Rows

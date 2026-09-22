@@ -940,14 +940,40 @@ final class OverviewStore {
     // MARK: Timeline kind filter + facts
 
     /// The inspector's kind chips: All / Messages / Tools / Errors —
-    /// a display cut over `timeline`, never a second fetch.
-    enum TimelineKindFilter: String, CaseIterable {
-        case all = "All"
-        case messages = "Messages"
-        case tools = "Tools"
-        case errors = "Errors"
+    /// a display cut over `timeline`, never a second fetch. The chips
+    /// are the shared timeline view's; its state object is the one source
+    /// of truth, so a chip click and this property never disagree.
+    typealias TimelineKindFilter = ReconstructedTimelineView.KindFilter
+    let timelineViewState = ReconstructedTimelineViewState()
+    var timelineKind: TimelineKindFilter {
+        get { timelineViewState.kind }
+        set { timelineViewState.kind = newValue }
     }
-    var timelineKind: TimelineKindFilter = .all
+
+    /// The loaded transcript as the shared timeline view draws it. A
+    /// running session's last row is mid-turn by definition, so its story
+    /// never calls that a death. Memoized on what it is built from.
+    var timelineReconstruction: SessionReconstruction {
+        let running = selected.map { entry -> Bool in
+            let activity = SessionActivity.reduce(entry.session)
+            return activity == .working || activity == .waiting || activity == .idle
+        } ?? false
+        let key = TimelineReconstructionKey(
+            session: timelineSessionID, count: timeline.count, first: timeline.first?.seq,
+            last: timeline.last?.seq, gaps: timelinePage?.gaps ?? [], running: running)
+        if let cached = timelineReconstructionCache, cached.key == key { return cached.value }
+        let value = SessionReconstructor.reconstruction(from: timeline, gaps: key.gaps, running: running)
+        timelineReconstructionCache = (key, value)
+        return value
+    }
+    private struct TimelineReconstructionKey: Equatable {
+        var session: String?
+        var count: Int
+        var first, last: Int?
+        var gaps: [String]
+        var running: Bool
+    }
+    @ObservationIgnored private var timelineReconstructionCache: (key: TimelineReconstructionKey, value: SessionReconstruction)?
 
     var filteredTimeline: [CoreTimelineItem] {
         switch timelineKind {

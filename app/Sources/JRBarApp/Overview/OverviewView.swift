@@ -979,60 +979,11 @@ struct OverviewView: View {
             }
             if store.timelineSessionID == entry.id {
                 if let page = store.timelinePage {
-                    let counts = store.timelineKindCounts
-                    if !store.timeline.isEmpty {
-                        HStack(spacing: 5) {
-                            ForEach(OverviewStore.TimelineKindFilter.allCases, id: \.self) { kind in
-                                let label: String = switch kind {
-                                case .all: "All \(store.timeline.count)"
-                                case .messages: "Messages \(counts.messages)"
-                                case .tools: "Tools \(counts.tools)"
-                                case .errors: "Errors \(counts.errors)"
-                                }
-                                Button {
-                                    store.timelineKind = kind
-                                } label: {
-                                    Text(label)
-                                        .font(.system(size: 9, weight: store.timelineKind == kind ? .semibold : .regular))
-                                        .padding(.horizontal, 6).padding(.vertical, 2)
-                                        .background(
-                                            Capsule().fill(store.timelineKind == kind
-                                                ? Color.accentColor.opacity(0.18) : .primary.opacity(0.06)))
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(kind == .errors && counts.errors > 0 ? .red : .secondary)
-                                .accessibilityLabel("Show \(kind.rawValue.lowercased()) timeline rows")
-                            }
-                        }
-                    }
-                    ScrollViewReader { proxy in
-                        if store.firstErrorSeq != nil {
-                            Button {
-                                if let seq = store.firstErrorSeq {
-                                    // A kind filter can leave the error
-                                    // row unrendered — scrollTo needs a
-                                    // live target, so switch first.
-                                    if store.timelineKind != .all && store.timelineKind != .errors {
-                                        store.timelineKind = .errors
-                                    }
-                                    withAnimation { proxy.scrollTo(seq, anchor: .top) }
-                                }
-                            } label: {
-                                Label("Jump to error", systemImage: "arrow.down.to.line")
-                                    .font(.system(size: 10))
-                            }
-                            .buttonStyle(.plain).foregroundStyle(.red)
-                        }
-                        LazyVStack(alignment: .leading, spacing: 5) {
-                            ForEach(store.filteredTimeline) { item in
-                                timelineRow(item).id(item.seq)
-                            }
-                        }
-                    }
-                    ForEach(page.gaps, id: \.self) { gap in
-                        Text(Self.gapText(gap))
-                            .font(.system(size: 10)).foregroundStyle(.orange)
-                    }
+                    // The one timeline view History and the Data Hoarder
+                    // mount too: the story card, the honest gaps, the
+                    // kind chips, jump to error and the rows.
+                    ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
+                                              viewState: store.timelineViewState, embedded: true)
                     if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
                         Button {
                             store.onOpenArchive?(OverviewStore.archiveSearchTerm(for: entry))
@@ -1083,72 +1034,6 @@ struct OverviewView: View {
         .task { await store.probeArchive(file: file) }
     }
 
-    private func timelineRow(_ item: CoreTimelineItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(item.at.map { Self.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.quaternary)
-                .frame(width: 40, alignment: .leading)
-            Image(systemName: Self.timelineSymbol(item))
-                .font(.system(size: 9))
-                .foregroundStyle(Self.timelineTint(item))
-                .frame(width: 12)
-            VStack(alignment: .leading, spacing: 1) {
-                if let name = item.name, item.kind != "message" {
-                    Text(name + (item.isError == true ? " · failed" : ""))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(item.isError == true ? Color.red : Color.secondary)
-                }
-                if let text = item.text {
-                    Text(text).font(.system(size: 11)).lineLimit(4).textSelection(.enabled)
-                }
-            }
-            if item.sidechain == true {
-                Text("subagent")
-                    .font(.system(size: 8, weight: .medium))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(Color.purple.opacity(0.15), in: .capsule)
-                    .foregroundStyle(.purple)
-            }
-        }
-        .padding(.leading, item.sidechain == true ? 10 : 0)
-        .accessibilityElement(children: .combine)
-    }
-
-    private static func timelineSymbol(_ item: CoreTimelineItem) -> String {
-        switch item.kind {
-        case "message": item.role == "user" ? "person" : "sparkle"
-        case "tool_use": "wrench.and.screwdriver"
-        case "tool_result": item.isError == true ? "xmark.octagon" : "checkmark.circle"
-        case "turn_end": "flag.checkered"
-        default: "circle"
-        }
-    }
-
-    private static func timelineTint(_ item: CoreTimelineItem) -> Color {
-        if item.isError == true { return .red }
-        switch item.kind {
-        case "tool_use": return .accentColor
-        case "tool_result": return .green
-        case "turn_end": return .secondary
-        default: return .secondary
-        }
-    }
-
-    private static func gapText(_ gap: String) -> String {
-        switch gap {
-        case "transcript_not_found": "No transcript found for this session."
-        case "unsupported_provider": "This provider's transcript format is not read yet."
-        case "transcript_unreadable": "The transcript file could not be read."
-        default: gap.hasPrefix("timeline_item_cap") ? "Transcript exceeds the item cap — earliest rows omitted." : gap
-        }
-    }
-
-    private static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
 
     // MARK: Observed tools
 

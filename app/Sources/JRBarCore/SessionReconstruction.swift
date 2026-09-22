@@ -520,11 +520,43 @@ public enum SessionReconstructor {
         return items
     }
 
+    // MARK: Live timelines
+
+    /// The daemon's `session_timeline` items as a reconstruction, so the
+    /// Overview inspector, History's expanded rows and the Data Hoarder
+    /// archive render one timeline through one view instead of three.
+    /// `running` withholds the mid-turn verdict: a session that is still
+    /// working ends mid-turn by definition, and calling that a death would
+    /// paint every live run as a failure. Unknown kinds are skipped, the
+    /// way the transcript projection skips unknown rows.
+    public static func reconstruction(from timeline: [CoreTimelineItem], gaps: [String] = [],
+                                      running: Bool) -> SessionReconstruction {
+        let items: [ReconstructedItem] = timeline.compactMap { item in
+            let kind: ReconstructedItem.Kind
+            switch item.kind {
+            case "message": kind = .message
+            case "tool_use": kind = .toolUse
+            case "tool_result": kind = .toolResult
+            case "turn_end": kind = .turnEnd
+            default: return nil
+            }
+            return ReconstructedItem(
+                seq: item.seq, at: item.at, kind: kind, uuid: item.uuid,
+                parentUUID: item.parentUuid, role: item.role, name: item.name,
+                toolUseID: item.toolUseId, isError: item.isError ?? false,
+                sidechain: item.sidechain ?? false, untrusted: item.untrusted ?? false,
+                text: item.text, model: item.model)
+        }
+        return SessionReconstruction(
+            items: items, story: story(for: items, running: running), gaps: gaps,
+            totalLines: timeline.count, redactedLines: 0)
+    }
+
     // MARK: Failure story
 
-    private static func story(for items: [ReconstructedItem]) -> FailureStory {
+    static func story(for items: [ReconstructedItem], running: Bool = false) -> FailureStory {
         let errorItems = items.filter(\.isError)
-        let diedMidTurn = !items.isEmpty && items.last?.kind != .turnEnd
+        let diedMidTurn = !running && !items.isEmpty && items.last?.kind != .turnEnd
         var lastErrorSummary: String? = nil
         if let last = errorItems.last {
             switch last.kind {
