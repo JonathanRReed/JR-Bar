@@ -484,9 +484,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let notch = toysStore?.state.notch ?? NotchSettings()
             return notch.enabled && notch.provider == .jrbar && notch.soundEffects
         }
-        // The tap reads the gates live — one sync now that the real
-        // closures are in, then on every notch reconcile.
-        events.hud.syncMediaTap()
+        // The tap and the announcement watchers start only now that the
+        // real gates are in; the tap then re-syncs on every notch reconcile.
+        events.hud.startSystemWatchers()
         toysStore.notch.onMediaGateChanged = { [weak events] in
             events?.hud.syncMediaTap()
         }

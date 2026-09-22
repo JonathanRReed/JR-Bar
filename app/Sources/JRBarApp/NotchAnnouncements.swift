@@ -20,7 +20,7 @@ final class NotchAnnouncements {
     private let bluetooth = BluetoothWatcher()
     private let capsLock = CapsLockWatcher()
     private let displays = DisplayWatcher()
-    private var started = false
+    private(set) var started = false
 
     func start() {
         guard !started else { return }

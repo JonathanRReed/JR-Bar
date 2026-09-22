@@ -58,19 +58,27 @@ final class NotchHUD {
         mediaKeys.onLevel = { [weak self] key, value, muted in
             self?.showMeter(for: key, value: value, muted: muted)
         }
-        // The tap's license is the capsule's — installed only while the
-        // notch wants capsules, so a disabled notch leaves no event tap
-        // sitting on the session's system-defined stream.
-        syncMediaTap()
         announcements.isAllowed = { [weak self] in self?.alertsAllowed() ?? true }
         announcements.announce = { [weak self] text, symbol in self?.show(text, symbol: symbol) }
+    }
+
+    /// Everything that reaches outside the process — the media-key tap,
+    /// the Focus, Bluetooth, Caps Lock and display watchers — starts
+    /// here, never in init: the delegate calls it once the real notch
+    /// gates are wired, and a HUD built anywhere else touches nothing.
+    /// IOBluetooth's connect registration is a TCC ask that kills a
+    /// process with no Bluetooth usage string — `swift test`'s helper
+    /// is one, and a coordinator built in a test took the suite down.
+    func startSystemWatchers() {
+        syncMediaTap()
         announcements.start()
     }
 
     /// The tap exists only while the notch can draw capsules —
     /// `mediaHUDAllowed` is the union gate (the consuming tap's
-    /// `replaceHUDWanted` implies it). Called at init, once more after
-    /// the delegate wires the real gate, and on every notch-settings
+    /// `replaceHUDWanted` implies it), so a disabled notch leaves no
+    /// event tap sitting on the session's system-defined stream.
+    /// Called from `startSystemWatchers`, then on every notch-settings
     /// reconcile so a flip takes without waiting for the next press.
     func syncMediaTap() {
         if mediaHUDAllowed() { mediaKeys.start() } else { mediaKeys.stop() }

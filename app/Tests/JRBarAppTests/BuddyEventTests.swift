@@ -87,6 +87,15 @@ struct BuddyEventTests {
         #expect(fixture.store.state.notchBuddy.care.crumbsEaten == 1)
     }
 
+    @Test("building the coordinator starts no system watchers — the delegate does")
+    func coordinatorInitTouchesNothingOutside() {
+        // IOBluetooth's connect registration inside the test helper is a
+        // TCC privacy abort that takes the whole suite with it; the
+        // watchers wait for the delegate's startSystemWatchers().
+        let coordinator = EventCoordinator(core: CoreModel(), hudAnchor: { nil })
+        #expect(!coordinator.hud.announcements.started)
+    }
+
     @Test("CoreModel delivers a duplicate completion ID to Buddy once")
     func duplicateCompletionCreditsOneCrumb() {
         let fixture = fixture(enabled: true)
