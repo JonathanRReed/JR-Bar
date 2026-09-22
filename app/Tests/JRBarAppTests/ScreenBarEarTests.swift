@@ -141,6 +141,40 @@ struct ScreenBarEarTests {
         #expect(tray.minY == view.bounds.height - 32, "the tray ends where the hardware ends")
     }
 
+    @Test func aMenuTitleAtTheBezelCollapsesTheRightEar() {
+        // An app whose menus spill right of the notch puts a title right
+        // at the bezel's edge: the ear (and the handle it carries) has no
+        // room and does not draw over "Window".
+        let view = makeView()
+        view.wings = ScreenBarWings(
+            left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.menuHandleRevealed = false
+        view.rightEarLimit = 342.5 + 4
+        #expect(view.rightWingRect == nil)
+        #expect(view.menuHandleRect == nil)
+        // With room back the ear returns.
+        view.rightEarLimit = nil
+        #expect(view.rightWingRect != nil)
+    }
+
+    @Test func theLeftEarYieldsToTheLastMenuTitle() throws {
+        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
+        view.wingGeometry = ScreenBarWingGeometry(
+            notchWidth: 185, notchDepth: 32, bandSpan: 500,
+            leftExtent: 60, rightExtent: 0)
+        view.wings = ScreenBarWings(
+            left: ScreenBarWingSlot(text: "Working", provider: "claude"), right: nil)
+        // The bezel's left edge is x 157.5; a title ending 20 pt short
+        // of it leaves a 20 pt cap — no room for the mark, still an ear.
+        view.leftEarLimit = 157.5 - 20
+        let capped = try #require(view.leftWingRect)
+        #expect(capped.width == 20)
+        #expect(capped.maxX == 157.5)
+        // Closer than the narrowest ear: the ear collapses.
+        view.leftEarLimit = 157.5 - 8
+        #expect(view.leftWingRect == nil)
+    }
+
     @Test func aContentSlotWidensPastTheHandle() {
         let view = makeView()
         var wings = ScreenBarWings()

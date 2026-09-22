@@ -50,13 +50,14 @@ final class ScreenBarView: NSView {
         didSet { if wingGeometry != oldValue { relayout() } }
     }
     /// The x (view coordinates) the right ear may not reach past —
-    /// the nearest status item's edge on the notch's right flank.
-    /// nil is no limit.
+    /// the nearest status item's or spilled menu title's edge on the
+    /// notch's right flank. nil is no limit.
     var rightEarLimit: CGFloat? {
         didSet { if rightEarLimit != oldValue { relayout() } }
     }
     /// The x (view coordinates) the left ear may not reach past — the
-    /// nearest status item's edge on the left flank. nil is no limit.
+    /// nearest status item's or menu title's edge on the left flank.
+    /// nil is no limit.
     var leftEarLimit: CGFloat? {
         didSet { if leftEarLimit != oldValue { relayout() } }
     }
@@ -283,8 +284,9 @@ final class ScreenBarView: NSView {
             // outer cap past the mark's span.
             let handleW: CGFloat = (side == .right && menuHandleRevealed != nil) ? Self.handleWidth : 0
             var width = min(claim.width, (hasContent ? Self.earWidth : 0) + handleW)
-            // Each ear yields to the nearest status item on its flank:
-            // a wing that paves a real item hides it and eats its clicks.
+            // Each ear yields to the nearest status item or menu title
+            // on its flank: a wing that paves one hides it and eats its
+            // clicks.
             switch side {
             case .right:
                 if let limit = rightEarLimit { width = min(width, limit - claim.minX) }

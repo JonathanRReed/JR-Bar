@@ -47,6 +47,7 @@ final class ScreenBarController {
             guard notchWingsEnabled != oldValue else { return }
             reposition()
             updateNoticeMonitors()
+            updateAppMenuWatch()
         }
     }
     /// `screen_bar_wing_notices` (absent = on): the device transitions —
@@ -170,8 +171,13 @@ final class ScreenBarController {
             guard capsule != oldValue else { return }
             reposition()
             updateNoticeMonitors()
+            updateAppMenuWatch()
         }
     }
+
+    /// The frontmost app's menu titles: each ear yields to them as it
+    /// does to status items. Read only while ears can draw.
+    private let appMenus = AppMenuExtent()
 
     init() {
         let screen = ScreenBarGeometry.preferredScreen()
@@ -199,6 +205,7 @@ final class ScreenBarController {
         // The flank limits change on the menu-bar utility's reconcile;
         // the push beats waiting for the watch.
         ScreenBarGeometry.earLimitsChanged = { [weak self] in self?.scheduleIslandRescan() }
+        appMenus.onChange = { [weak self] in self?.reposition() }
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
@@ -285,6 +292,7 @@ final class ScreenBarController {
             }
         }
         updateNoticeMonitors()
+        updateAppMenuWatch()
         syncIslandWatch()
         present()
     }
@@ -293,6 +301,7 @@ final class ScreenBarController {
         isShown = false
         ScreenBarGeometry.menuHandleScreenRect = nil
         updateNoticeMonitors()
+        updateAppMenuWatch()
         syncIslandWatch()
         if reduceMotion {
             panel.alphaValue = 1
@@ -312,7 +321,10 @@ final class ScreenBarController {
         updateClock()
     }
 
-    @objc private func screensChanged(_ note: Notification) { reposition() }
+    @objc private func screensChanged(_ note: Notification) {
+        appMenus.refresh()
+        reposition()
+    }
 
     /// The island moved, resized, or crossed the visible threshold —
     /// re-read its frame and reseat the band. Filtered to the island's
@@ -549,6 +561,16 @@ final class ScreenBarController {
         }
     }
 
+    /// The menu-title reader follows the ears: shown, wings on, and no
+    /// external capsule holding the flanks.
+    private func updateAppMenuWatch() {
+        if isShown && notchWingsEnabled && capsule == nil {
+            appMenus.start()
+        } else {
+            appMenus.stop()
+        }
+    }
+
     /// Resolves the profile (and the custom slider) into the corner the
     /// tray draws — the bezel's own radius on this Mac.
     private func syncNotchCorner() {
@@ -590,17 +612,21 @@ final class ScreenBarController {
         view.wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
                                                   bandSpan: view.bandSpan,
                                                   leftExtent: extents.left, rightExtent: extents.right)
-        // Each ear stops short of the nearest status item on its flank —
-        // the « a hidden run keeps beside the notch, our own chevron,
-        // whatever macOS parks there. A drawn wing paving a real item
-        // hides it and swallows its clicks (screen x → view x). The gap
+        // Each ear stops short of the nearest status item or app menu
+        // title on its flank — the « a hidden run keeps beside the notch,
+        // our own chevron, whatever macOS parks there, a long menu bar's
+        // last titles. A drawn wing paving a real item hides it and
+        // swallows its clicks (screen x → view x). The gap
         // is a real 8 pt: transient indicators macOS drops in the flank
         // — the mic pill, a voice-recording mark — are never in the
         // listing, and a 2 pt seam reads as overlap when one lands.
-        view.rightEarLimit = lastEarAvoidRight.flatMap { limit in
+        let limits = ScreenBarGeometry.earLimits(itemLeft: lastEarAvoidLeft, itemRight: lastEarAvoidRight,
+                                                 menuTitles: appMenus.titles, screen: screen.frame,
+                                                 notchMidX: frame.midX)
+        view.rightEarLimit = limits.right.flatMap { limit in
             limit > frame.midX ? limit - frame.minX - 8 : nil
         }
-        view.leftEarLimit = lastEarAvoidLeft.flatMap { limit in
+        view.leftEarLimit = limits.left.flatMap { limit in
             limit < frame.midX ? limit - frame.minX + 8 : nil
         }
         view.menuHandleRevealed = menuHandleProvider?()

@@ -339,6 +339,40 @@ import Testing
         #expect(coupling.housing.minY >= 0, "the window holds the housing")
     }
 
+    // MARK: Ear limits (status items and app menu titles)
+
+    @Test func menuTitlesLimitTheEarsLikeStatusItems() {
+        // A 1512 pt screen, notch 663.5…848.5. The app's menus run to
+        // 640 on the left and spill past the notch from 852.
+        let titles = [CGRect(x: 0, y: 949, width: 40, height: 33),
+                      CGRect(x: 590, y: 949, width: 50, height: 33),
+                      CGRect(x: 852, y: 949, width: 60, height: 33),
+                      CGRect(x: 912, y: 949, width: 44, height: 33)]
+        let limits = ScreenBarGeometry.earLimits(itemLeft: nil, itemRight: 1100, menuTitles: titles,
+                                                 screen: Self.screen, notchMidX: 756)
+        #expect(limits.left == 640, "the last title left of the notch")
+        #expect(limits.right == 852, "the first spilled title beats the farther status item")
+    }
+
+    @Test func theNearerOfItemAndTitleWinsEachFlank() {
+        let titles = [CGRect(x: 300, y: 949, width: 50, height: 33)]
+        let limits = ScreenBarGeometry.earLimits(itemLeft: 620, itemRight: 900, menuTitles: titles,
+                                                 screen: Self.screen, notchMidX: 756)
+        #expect(limits.left == 620, "a status item nearer the notch than the menus keeps the limit")
+        #expect(limits.right == 900)
+        let none = ScreenBarGeometry.earLimits(itemLeft: nil, itemRight: nil, menuTitles: [],
+                                               screen: Self.screen, notchMidX: 756)
+        #expect(none.left == nil && none.right == nil)
+    }
+
+    @Test func titlesOnAnotherScreenDoNotLimitTheEars() {
+        // An external above the built-in: same x range, different y.
+        let external = [CGRect(x: 600, y: 2000, width: 60, height: 24)]
+        let limits = ScreenBarGeometry.earLimits(itemLeft: nil, itemRight: nil, menuTitles: external,
+                                                 screen: Self.screen, notchMidX: 756)
+        #expect(limits.left == nil && limits.right == nil)
+    }
+
     @Test func notchlessSlotsFlankTheBand() {
         // No notch: the window is the 260 pt fallback plus a fixed claim
         // per populated side, and the chips hug the band's ends.

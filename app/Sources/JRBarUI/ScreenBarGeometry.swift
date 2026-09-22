@@ -375,6 +375,30 @@ public enum ScreenBarGeometry {
         }
     }
 
+    /// The x each ear may not reach past, in screen x: the status-item
+    /// limits (`earItemLimitLeft`/`Right`) merged with the frontmost
+    /// app's menu titles, the one thing on the flanks the item listing
+    /// never sees. On each side the edge nearest the notch wins. Menus
+    /// normally end left of the notch, where a long menu bar's last
+    /// titles run under the left ear; an app with more menus than fit
+    /// continues them right of the notch, and the right ear meets the
+    /// first spilled title at the bezel and collapses. `menuTitles` are
+    /// screen rects; a title counts only on `screen`, and only its x is
+    /// read — side by its centre against `notchMidX`.
+    public static func earLimits(itemLeft: CGFloat?, itemRight: CGFloat?, menuTitles: [CGRect],
+                                 screen: CGRect, notchMidX: CGFloat) -> (left: CGFloat?, right: CGFloat?) {
+        var left = itemLeft
+        var right = itemRight
+        for title in menuTitles where title.width > 0 && screen.contains(CGPoint(x: title.midX, y: title.midY)) {
+            if title.midX < notchMidX {
+                left = max(left ?? title.maxX, title.maxX)
+            } else {
+                right = min(right ?? title.minX, title.minX)
+            }
+        }
+        return (left, right)
+    }
+
     /// `screen_bar_runtime._window_height_for_notch_depth`.
     public static func windowHeight(notchDepth: CGFloat) -> CGFloat {
         max(max(0, notchDepth) + ScreenBarDesign.bandHeight, ScreenBarDesign.bandHeight + ScreenBarDesign.glowHeight + 2.0)
