@@ -154,7 +154,8 @@ final class FoldToy: Toy {
     /// The last diagnostic line logged — the log only speaks when the
     /// machine's state actually changes, so a parked fold stays silent.
     @ObservationIgnored private var lastDiag = ""
-    /// The last line logged at notice — see `noteDiag`.
+    /// The last notice line's dedup key, angles left out — see
+    /// `noteDiag`.
     @ObservationIgnored private var lastNoticeDiag = ""
 
     init(core: CoreModel, store: ToysStore) {
@@ -492,29 +493,36 @@ final class FoldToy: Toy {
     /// (2026-09-22: 655 of them in 30 min, gate shut, nothing on
     /// screen). `log stream --level debug` still shows every frame;
     /// the notice lines dedup against each other, so a change a tick
-    /// saw first still reaches them on the next reconcile.
+    /// saw first still reaches them on the next reconcile. They also
+    /// leave the angles out of that dedup: an angle that moves while
+    /// nothing else does is a wobble the filter held back, or a glide
+    /// with the delta at 0 and nothing on screen — and a lid parked in
+    /// the band reconciles on every 120 Hz sample.
     private func noteDiag(stage: String) {
         let raw = gateAngle.map { String(format: "%.0f", $0) } ?? "nil"
         let render = renderAngle.map { String(format: "%.1f", $0) } ?? "nil"
         // Dedup on the state only — the stage prefix differs between the
         // reconcile and tick passes, and comparing it would print both
         // sides of every unchanged frame.
-        let state = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
+        let head = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
             + "paused=\(paused) pause=\(pauseReason ?? "-") "
-            + "raw=\(raw) render=\(render) target=\(String(format: "%.3f", targetDelta)) "
+        let angles = "raw=\(raw) render=\(render) "
+        let tail = "target=\(String(format: "%.3f", targetDelta)) "
             + "disp=\(String(format: "%.3f", displayedDelta)) "
             + "arm=\(arming.phase) gate=\(arming.foldGateOpen) "
             + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
             + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
             + "link=\(tickLink != nil)"
+        let state = head + angles + tail
         if stage == "tick" {
             guard state != lastDiag else { return }
             lastDiag = state
             FoldLog.log.debug("\(stage, privacy: .public) \(state, privacy: .public)")
         } else {
-            guard state != lastNoticeDiag else { return }
+            let key = head + tail
+            guard key != lastNoticeDiag else { return }
             lastDiag = state
-            lastNoticeDiag = state
+            lastNoticeDiag = key
             FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
         }
     }
