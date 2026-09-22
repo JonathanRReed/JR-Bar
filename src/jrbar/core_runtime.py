@@ -2770,6 +2770,63 @@ def _cmd_compare_sessions(self, args):
     )
 
 
+@command("session_usage", main_thread=False)
+def _cmd_session_usage(self, args):
+    """Per-session model, tokens, cost and context (the panel's rows).
+
+    ``ids`` are roster row ids; each resolves its status's provider,
+    ``session_id`` and cwd the way ``session_timeline`` does, then the
+    session's own transcript is read incrementally (session_usage.py).
+    Off the main run loop for the same reason as the timeline: it is file
+    I/O. A remote row, an unknown id, a provider without a transcript
+    reader, and a transcript that is not on disk each come back as a named
+    gap rather than a zero. ``since`` (epoch) adds ``tokens_since`` per
+    session -- the Usage Center's "who is burning this window".
+    """
+    from .session_usage import SESSION_USAGE_MAX_IDS, session_usage_document
+
+    raw_ids = args.get("ids")
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise CommandError("invalid_value", "ids must be a nonempty list of session ids")
+    ids = [value for value in raw_ids if isinstance(value, str) and value][:SESSION_USAGE_MAX_IDS]
+    if not ids:
+        raise CommandError("invalid_value", "ids must be a nonempty list of session ids")
+    since = args.get("since")
+    since = float(since) if isinstance(since, (int, float)) and not isinstance(since, bool) else None
+    snapshot = getattr(self, "last_snapshot", None)
+    statuses = {
+        getattr(status, "agent_id", None): status
+        for status in [
+            *getattr(snapshot, "statuses", ()),
+            *getattr(snapshot, "stale_statuses", ()),
+        ]
+    }
+    requests: list[tuple[str, str | None, str | None, str | None]] = []
+    remote: dict[str, str] = {}
+    for agent_id in ids:
+        if agent_id.startswith("remote:"):
+            # The transcript lives on the peer; nothing local can read it.
+            remote[agent_id] = "remote"
+            continue
+        status = statuses.get(agent_id)
+        if status is None:
+            requests.append((agent_id, None, None, None))
+            continue
+        session_id = getattr(status, "session_id", None)
+        cwd = getattr(status, "cwd", None)
+        requests.append((
+            agent_id,
+            getattr(status, "provider", None),
+            str(session_id) if session_id else None,
+            str(cwd) if cwd else None,
+        ))
+    document = session_usage_document(requests, since=since)
+    document["gaps"].update(remote)
+    return document
+
+
 @command("import_radar_report", main_thread=False)
 def _cmd_import_radar_report(self, args):
     """Store a bounded, version-checked Radar report (S7.5/T38).
