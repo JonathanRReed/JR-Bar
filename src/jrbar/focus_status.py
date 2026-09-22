@@ -10,6 +10,7 @@ from __future__ import annotations
 import platform
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -17,6 +18,15 @@ from typing import Final
 
 _INTENTS_FRAMEWORK: Final = "/System/Library/Frameworks/Intents.framework"
 _UNSET_CENTER: Final = object()
+# Each INFocusStatusCenter read is a pair of synchronous TCC round trips on
+# the caller's thread, and the daemon's refresh asks 2-4 times per burst
+# every ~15 s: 1,011 TCCAccessRequest lines in 21 min, all on its main
+# thread (2026-09-22). A short cache folds a burst into one read and keeps
+# Follow Focus at the refresh cadence. Authorization changes only in System
+# Settings, so it lives longer; wake, activation and a request's answer
+# forget both (``invalidate``).
+FOCUS_OBSERVATION_TTL_SECONDS: Final = 3.0
+FOCUS_AUTHORIZATION_TTL_SECONDS: Final = 60.0
 
 
 class FocusAuthorization(str, Enum):
@@ -129,6 +139,7 @@ class MacOSFocusStatusClient:
         *,
         center: object = _UNSET_CENTER,
         bridge_loader: Callable[[], object | None] = _load_focus_status_center,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if not callable(bridge_loader):
             raise TypeError("Focus bridge loader must be callable")
@@ -136,6 +147,10 @@ class MacOSFocusStatusClient:
         self._center = None if center is _UNSET_CENTER else center
         self._loaded = center is not _UNSET_CENTER
         self._load_lock = threading.Lock()
+        self._monotonic = monotonic
+        self._cache_lock = threading.Lock()
+        self._observation: tuple[float, FocusStatusObservation] | None = None
+        self._authorization: tuple[float, FocusAuthorization] | None = None
 
     def _center_for_use(self) -> object | None:
         with self._load_lock:
@@ -147,17 +162,43 @@ class MacOSFocusStatusClient:
                 self._loaded = True
             return self._center
 
+    def invalidate(self) -> None:
+        """Forget the cached reads, so the next ``observe`` asks the system."""
+        with self._cache_lock:
+            self._observation = None
+            self._authorization = None
+
     def observe(self) -> FocusStatusObservation:
         """Read authorization and coarse status without requesting permission."""
+        with self._cache_lock:
+            now = self._monotonic()
+            cached = self._observation
+            if cached is not None and now - cached[0] < FOCUS_OBSERVATION_TTL_SECONDS:
+                return cached[1]
+            observation = self._read(now)
+            self._observation = (now, observation)
+            return observation
+
+    def _authorization_at(self, center: object, now: float) -> FocusAuthorization | None:
+        cached = self._authorization
+        if cached is not None and now - cached[0] < FOCUS_AUTHORIZATION_TTL_SECONDS:
+            return cached[1]
+        try:
+            authorization = _authorization(center.authorizationStatus())
+        except Exception:
+            return None
+        self._authorization = (now, authorization)
+        return authorization
+
+    def _read(self, now: float) -> FocusStatusObservation:
         center = self._center_for_use()
         if center is None:
             return FocusStatusObservation(
                 FocusAuthorization.UNAVAILABLE,
                 FocusActivity.UNAVAILABLE,
             )
-        try:
-            authorization = _authorization(center.authorizationStatus())
-        except Exception:
+        authorization = self._authorization_at(center, now)
+        if authorization is None:
             return FocusStatusObservation(
                 FocusAuthorization.UNAVAILABLE,
                 FocusActivity.UNAVAILABLE,
@@ -192,6 +233,8 @@ class MacOSFocusStatusClient:
             return False
 
         def completed(raw: object) -> None:
+            # The answer may have changed what both caches hold.
+            self.invalidate()
             try:
                 completion(_authorization(raw))
             except Exception:
@@ -205,6 +248,8 @@ class MacOSFocusStatusClient:
 
 
 __all__ = [
+    "FOCUS_AUTHORIZATION_TTL_SECONDS",
+    "FOCUS_OBSERVATION_TTL_SECONDS",
     "FocusActivity",
     "FocusAuthorization",
     "FocusStatusObservation",

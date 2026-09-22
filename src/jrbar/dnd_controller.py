@@ -43,6 +43,8 @@ class _TimerLike(Protocol):
 
 
 class _FocusClient(Protocol):
+    # A client may also offer ``invalidate()`` to drop cached reads; the
+    # controller calls it where the system state can have moved under it.
     def observe(self) -> FocusStatusObservation: ...
 
     def request_authorization(
@@ -700,21 +702,36 @@ class DndController:
             authorization,
             FocusActivity.UNAVAILABLE,
         )
+        self._invalidate_focus_reads()
         self.refresh()
 
+    def _invalidate_focus_reads(self) -> None:
+        """Make the next refresh ask the system, not the client's cache: a
+        wake or an activation is where a Focus or permission change made
+        elsewhere shows up."""
+        invalidate = getattr(self._focus_client, "invalidate", None)
+        if callable(invalidate):
+            try:
+                invalidate()
+            except Exception:
+                pass
+
     def handle_wake(self) -> DndChangeResult:
+        self._invalidate_focus_reads()
         return self.refresh()
 
     def handle_sleep(self) -> DndChangeResult:
         return self.refresh()
 
     def handle_screen_wake(self) -> DndChangeResult:
+        self._invalidate_focus_reads()
         return self.refresh()
 
     def handle_screen_sleep(self) -> DndChangeResult:
         return self.refresh()
 
     def handle_activation(self) -> DndChangeResult:
+        self._invalidate_focus_reads()
         return self.refresh()
 
     def handle_clock_change(self) -> DndChangeResult:

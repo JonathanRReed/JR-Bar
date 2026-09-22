@@ -8,6 +8,8 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from jrbar.focus_status import (
+    FOCUS_AUTHORIZATION_TTL_SECONDS,
+    FOCUS_OBSERVATION_TTL_SECONDS,
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
@@ -33,10 +35,12 @@ class _Center:
     ) -> None:
         self.authorization = authorization
         self.focused = focused
+        self.authorization_reads = 0
         self.focus_reads = 0
         self.request_count = 0
 
     def authorizationStatus(self) -> object:
+        self.authorization_reads += 1
         if isinstance(self.authorization, BaseException):
             raise self.authorization
         return self.authorization
@@ -308,3 +312,71 @@ def test_explicit_request_refuses_selector_failures__and_1_more() -> None:
         raise_from_completion
     )
 
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_refresh_burst_reads_the_system_once_and_authorization_lives_longer() -> None:
+    """Each read is a pair of TCC round trips on the caller's thread; the
+    daemon's refresh burst asked 2-4 times every ~15 s."""
+    center = _Center(authorization=3, focused=True)
+    clock = _Clock()
+    client = MacOSFocusStatusClient(center=center, monotonic=clock)
+
+    for _ in range(4):
+        assert client.observe().activity is FocusActivity.ACTIVE
+    assert (center.authorization_reads, center.focus_reads) == (1, 1)
+
+    # Past the short TTL the activity is read again; authorization is not.
+    center.focused = False
+    clock.now += FOCUS_OBSERVATION_TTL_SECONDS
+    assert client.observe().activity is FocusActivity.INACTIVE
+    assert (center.authorization_reads, center.focus_reads) == (1, 2)
+
+    # Past the long TTL a revoked permission shows up.
+    center.authorization = 2
+    clock.now += FOCUS_AUTHORIZATION_TTL_SECONDS
+    assert client.observe() == FocusStatusObservation(
+        FocusAuthorization.DENIED,
+        FocusActivity.UNAVAILABLE,
+    )
+    assert (center.authorization_reads, center.focus_reads) == (2, 2)
+
+
+def test_invalidate_and_an_authorization_answer_force_a_fresh_read() -> None:
+    center = _Center(authorization=0, focused=True)
+    clock = _Clock()
+    client = MacOSFocusStatusClient(center=center, monotonic=clock)
+    assert client.observe().authorization is FocusAuthorization.NOT_DETERMINED
+
+    # The answer arrives inside both TTLs and still wins.
+    center.authorization = 3
+    answers: list[FocusAuthorization] = []
+    assert client.request_authorization(answers.append)
+    assert answers == [FocusAuthorization.AUTHORIZED]
+    assert client.observe() == FocusStatusObservation(
+        FocusAuthorization.AUTHORIZED,
+        FocusActivity.ACTIVE,
+    )
+    assert center.authorization_reads == 2
+
+    center.focused = False
+    client.invalidate()
+    assert client.observe().activity is FocusActivity.INACTIVE
+    assert (center.authorization_reads, center.focus_reads) == (3, 2)
+
+
+def test_a_failed_authorization_read_is_not_kept_for_the_long_ttl() -> None:
+    center = _Center(authorization=RuntimeError("tccd busy"))
+    clock = _Clock()
+    client = MacOSFocusStatusClient(center=center, monotonic=clock)
+    assert client.observe().authorization is FocusAuthorization.UNAVAILABLE
+
+    center.authorization = 3
+    clock.now += FOCUS_OBSERVATION_TTL_SECONDS
+    assert client.observe().authorization is FocusAuthorization.AUTHORIZED

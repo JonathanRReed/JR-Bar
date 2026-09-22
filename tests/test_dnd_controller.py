@@ -702,3 +702,45 @@ def test_invalid_inputs_are_refused_before_save() -> None:
     with pytest.raises(ValueError):
         harness.controller.set_follow_focus(1)  # type: ignore[arg-type]
     assert harness.saved == []
+
+
+def test_wake_activation_and_an_authorization_answer_drop_cached_focus_reads() -> None:
+    """The Focus client caches its TCC-backed reads; the controller forgets
+    them where a change made elsewhere shows up, and only there."""
+
+    class _CachingFocusClient(_FocusClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.invalidations: list[int] = []
+
+        def invalidate(self) -> None:
+            self.invalidations.append(self.observe_count)
+
+    focus = _CachingFocusClient()
+    harness = _Harness(focus=focus)
+    harness.controller.start()
+
+    for entrypoint in (
+        "handle_sleep",
+        "handle_screen_sleep",
+        "handle_clock_change",
+        "handle_timezone_change",
+        "handle_environment_refresh",
+    ):
+        getattr(harness.controller, entrypoint)()
+    assert focus.invalidations == []
+
+    for entrypoint in ("handle_wake", "handle_screen_wake", "handle_activation"):
+        getattr(harness.controller, entrypoint)()
+    # Each one forgets before its own read.
+    assert focus.invalidations == [6, 7, 8]
+
+    harness.controller.request_focus_authorization()
+    focus.completions[-1](FocusAuthorization.AUTHORIZED)
+    assert focus.invalidations == [6, 7, 8, 9]
+    assert focus.observe_count == 10
+
+    # A client without invalidate() keeps working as before.
+    plain = _Harness()
+    plain.controller.start()
+    assert plain.controller.handle_wake().applied
