@@ -565,6 +565,27 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("with hover reveal off the poll idles and reads no zone, items or hot frames")
+    func hoverPollIdlesWhenOff() async {
+        let h = RevealHarness()
+        var reads = 0
+        h.reveal.revealZone = { reads += 1; return nil }
+        h.reveal.itemFrames = { reads += 1; return [] }
+        h.reveal.hotFrames = { reads += 1; return [] }
+        h.reveal.settings = { MenuBarSettings(enabled: true, revealOnHover: false) }
+        h.point = NSPoint(x: 400, y: 965)   // on the row
+        #expect(h.reveal.hoverTick() == MenuBarReveal.idlePollInterval)
+        #expect(reads == 0)
+        #expect(h.reveals == 0)
+        // Switched back on: the next tick polls at the near cadence, and
+        // a pointer already in the zone counts as an entry.
+        h.reveal.settings = { MenuBarSettings(enabled: true, revealOnHover: true) }
+        #expect(h.reveal.hoverTick() == MenuBarReveal.hoverPollInterval)
+        #expect(reads > 0)
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
     @Test("a deliberate hide cancels the clock — a stale fire lands no second onHide")
     func cancelReveal() async {
         let h = RevealHarness()

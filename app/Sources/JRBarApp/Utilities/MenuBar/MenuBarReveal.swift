@@ -14,7 +14,8 @@ import OSLog
 ///
 /// Hover is a poll timer, not an event tap: a global `mouseMoved`
 /// monitor delivers ~125 events a second and every delivery costs a
-/// `TCCAccessRequest` round trip — that was the tccd flood. One global
+/// `TCCAccessRequest` round trip — that was the tccd flood. With hover
+/// reveal switched off the poll idles and reads nothing. One global
 /// monitor covers the discrete gestures (click, scroll); local
 /// monitors are gone entirely, so a click on our own chevron or Item
 /// Bar can never be mistaken for an empty-space gesture.
@@ -90,6 +91,10 @@ final class MenuBarReveal {
     /// CPU from idling).
     nonisolated static let hoverPollInterval: TimeInterval = 0.1
     nonisolated static let farPollInterval: TimeInterval = 0.33
+    /// With hover reveal off nothing reads the pointer: the poll only
+    /// checks, this often, whether the setting has come back on — the
+    /// utility tells the reveal nothing when a toggle flips.
+    nonisolated static let idlePollInterval: TimeInterval = 1.0
     /// How far below the row "far" starts.
     nonisolated static let nearReach: CGFloat = 120
     /// A gesture burst this close together is one reveal, not many —
@@ -126,19 +131,32 @@ final class MenuBarReveal {
         scheduleHoverPoll(after: Self.hoverPollInterval)
     }
 
-    /// One-shot, re-armed at the cadence the pointer's distance earns.
+    /// One-shot, re-armed at the cadence the last poll earned.
     private func scheduleHoverPoll(after interval: TimeInterval) {
         hoverTimer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.pollHover()
-                let near = (self.row().map { $0.minY - Self.nearReach } ?? 0) <= self.mouseLocation().y
-                self.scheduleHoverPoll(after: near ? Self.hoverPollInterval : Self.farPollInterval)
+                self.scheduleHoverPoll(after: self.hoverTick())
             }
         })
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer
+    }
+
+    /// One poll, and the wait it earns: fast near the bar, slower far
+    /// below it — and with hover reveal off, none of the zone, item or
+    /// hot-frame reads at all, only the idle check for the setting.
+    /// Entry is re-learned from scratch when it comes back on.
+    func hoverTick() -> TimeInterval {
+        guard settings().revealOnHover else {
+            hoverInside = false
+            hoverDwellDeadline = nil
+            return Self.idlePollInterval
+        }
+        pollHover()
+        let near = (row().map { $0.minY - Self.nearReach } ?? 0) <= mouseLocation().y
+        return near ? Self.hoverPollInterval : Self.farPollInterval
     }
 
     func stop() {
