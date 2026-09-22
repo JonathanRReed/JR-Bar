@@ -950,10 +950,9 @@ struct MenuBarSpacerTests {
         utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
         utility.hider.now = Self.fastClock()
         utility.installChevron()
-        // The item stays registered — visibility, not existence, is the
-        // engine's call: a remove/install cycle is what parked its
-        // surface under the island on macOS 26.
-        #expect(utility.chevron != nil, "the host stands in for the chevron")
+        // One status item of ours: with a host the chevron is never
+        // registered, not even hidden.
+        #expect(utility.chevron == nil, "the host stands in for the chevron")
         settle(utility.hider)
         // The icon's right edge is 1123: 1123 − 902 = 221 of length,
         // less the 39-point icon = 182 of spacer.
@@ -966,6 +965,20 @@ struct MenuBarSpacerTests {
         #expect(host.hiddenRevealed)
         utility.removeChevron()
         #expect(host.hiddenCount == 0)
+    }
+
+    @MainActor
+    @Test("a host arriving takes the fallback chevron down — one status item of ours")
+    func hostRetiresTheChevron() {
+        let utility = MenuBarUtility()
+        utility.settings = { MenuBarSettings(enabled: true) }
+        utility.installChevron()
+        #expect(utility.chevron != nil, "no host: the chevron is the boundary")
+        let host = FakeHost()
+        utility.host = host
+        utility.installChevron()
+        #expect(utility.chevron == nil)
+        utility.removeChevron()
     }
 
     @Test("the host folds the icon at the right end of its spacer, ‹ mark drawn inside it")

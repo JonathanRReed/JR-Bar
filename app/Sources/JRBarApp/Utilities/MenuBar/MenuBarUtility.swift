@@ -908,17 +908,9 @@ final class MenuBarUtility: Toy {
                     self.startConcealer()
                     self.hider.reconcile()
                 } else {
-                    // The spacer's own boundary stands in — the chevron
-                    // folds. Registration already happened at start();
-                    // only its visibility changes.
-                    self.chevron?.isVisible = false
                     MenuBarAssessmentBackend.log.notice("conceal: build is not notarized — the agent would hide our own icon; spacer engine stands in")
                 }
             }
-        } else if host != nil {
-            // No agent at all — the spacer is the engine outright and
-            // the standalone chevron would double the host's boundary.
-            chevron?.isVisible = false
         }
         hider.start()
         reveal.start()
@@ -1309,10 +1301,6 @@ final class MenuBarUtility: Toy {
         hider.shuttersSuppressed = false
         hider.externalPlan = nil
         self.concealer = nil
-        // Back to the spacer engine: the host's boundary is the stretch
-        // again, and a standalone chevron would double it — without a
-        // host it stays the separator, same as install.
-        chevron?.isVisible = host == nil
     }
 
     /// The bundle identifiers of every running app — the allowlist's
@@ -1987,7 +1975,7 @@ final class MenuBarUtility: Toy {
             NSRect(x: $0.bounds.minX, y: height - $0.bounds.maxY,
                    width: $0.bounds.width, height: $0.bounds.height)
         }
-        // The standalone chevron under the concealer: its own button
+        // The standalone chevron (no host): its own button
         // action is the toggle — a click there must not ALSO land as a
         // blank-stretch reveal or a hide click double-fires. The same
         // for the extra items (spacers, agent, combined): their own
@@ -2135,31 +2123,21 @@ final class MenuBarUtility: Toy {
     }
 
     /// The boundary. With a host — the app's own status item — the
-    /// boundary is the host's spacer and the chevron item hides; without
-    /// one (tests, a build that never wired it) the separate chevron
-    /// stands in. The concealer changes the rule: the agent leaves no
-    /// blank stretch to read as the boundary, so the visible «/› toggle
-    /// stays on the row next to it — Ice's divider.
-    ///
-    /// Two rules keep its surface alive under the agent: it registers
-    /// *visible* — a born-hidden item's surface parks where it was born
-    /// and never re-composites — and it never re-registers for an
-    /// engine switch; `isVisible` flips are the only hide. The create-
-    /// hidden/show-later cycle earlier builds ran on every switch is
-    /// what stranded it under the island. Safe to call any time.
+    /// boundary is the host's spacer (and, under the concealer, the
+    /// mirror's ‹); without one (tests, a build that never wired it) the
+    /// separate chevron stands in. With a host the chevron does not exist
+    /// at all: JR-Bar registers one status item, and a registered-but-
+    /// hidden second one still read frames into the hot zones, the cover
+    /// blockers and the ear limits. A host arriving while it stands
+    /// takes it down. Safe to call any time.
     func installChevron() {
-        // Register once, born visible — the only state the agent
-        // reliably adopts; hiding for the spacer engine is applied
-        // where that choice lands, never here at birth.
-        installChevronItem()
-        // Any host boundary doubles the affordance; everywhere else the
-        // chevron stands on the row — under the concealer it is the
-        // separator the person ⌘-drags items across (the island's ‹ is
-        // a click affordance, never a drag anchor — it is not in the
-        // item flow). It registers before the first assertion so the
-        // agent adopts it born-visible, and our own items are protected
-        // so the plan can never park it.
-        chevron?.isVisible = host == nil
+        if host == nil {
+            // Registered once, born visible — a born-hidden item's
+            // surface parks where it was born and never re-composites.
+            installChevronItem()
+        } else {
+            removeChevronItem()
+        }
         // Under the agent the hider never sizes the control — and no
         // affordance is claimed: the width pushed our slot into the
         // notch dead zone and parked the item. Under the spacer engine
