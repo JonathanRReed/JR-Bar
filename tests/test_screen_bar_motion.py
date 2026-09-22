@@ -2021,8 +2021,16 @@ def test_announcer_pill_entrance_springs_from_its_top_anchor(monkeypatch) -> Non
     """The pill used to teleport: frame set, orderFrontRegardless, done.
     Its entrance is now a top-anchored spring + fade (wired 2026-08-26,
     Dynamic Island grammar), and Reduce Motion keeps the instant show."""
+    from jrbar.accessibility_display import AccessibilityDisplayPreferences
     from jrbar.virtual_device import AnnouncerPill
 
+    # Both halves pin the setting instead of reading this Mac's: GitHub's
+    # runner image turns Reduce Motion on, and there the motion half saw
+    # the instant show and no layer at all.
+    monkeypatch.setattr(
+        "jrbar.accessibility_display.read_accessibility_display_preferences",
+        lambda: AccessibilityDisplayPreferences(reduce_motion=False),
+    )
     pill = AnnouncerPill()
     pill._ensure_window()
     pill._animate_entrance()
@@ -2038,10 +2046,11 @@ def test_announcer_pill_entrance_springs_from_its_top_anchor(monkeypatch) -> Non
     layer.removeAllAnimations()
     monkeypatch.setattr(
         "jrbar.accessibility_display.read_accessibility_display_preferences",
-        lambda: type("P", (), {"reduce_motion": True})(),
+        lambda: AccessibilityDisplayPreferences(reduce_motion=True),
     )
     pill._animate_entrance()
     assert layer.animationForKey_("jrbar.pill.entrance") is None
+    assert layer.animationForKey_("jrbar.pill.fade") is None
     pill.close()
 
 
