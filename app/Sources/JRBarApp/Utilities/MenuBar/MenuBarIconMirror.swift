@@ -380,6 +380,9 @@ private final class MirrorContentView: NSView {
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityLabel() -> String? { axLabel }
+    /// A leaf: an `NSButton` answers AX through its cell, so hiding the
+    /// face button alone still listed a second, identical button.
+    override func accessibilityChildren() -> [Any]? { [] }
 
     override func accessibilityPerformPress() -> Bool {
         onClick?(.face, faceButton)
