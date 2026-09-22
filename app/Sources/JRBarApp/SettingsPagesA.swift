@@ -24,15 +24,15 @@ struct GeneralPage: View {
             Toggle(isOn: $store.panelHotkeyEnabled) {
                 SettingLabel(title: "Panel hotkey",
                              subtitle: store.panelHotkeyRegistrationFailed
-                                ? "⌃⌥J is taken by another app."
-                                : "Press ⌃⌥J in any app to show or hide the panel.")
+                                ? "\(store.panelHotkeyLabel) is taken — rebind it on Shortcuts."
+                                : "Press \(store.panelHotkeyLabel) in any app to show or hide the panel.")
             }
             .settingRowStyle()
             Toggle(isOn: $store.shelfHotkeyEnabled) {
                 SettingLabel(title: "Shelf hotkey",
                              subtitle: store.shelfHotkeyRegistrationFailed
-                                ? "⌃⌥D is taken by another app."
-                                : "Press ⌃⌥D in any app to open or fold the notch's shelf.")
+                                ? "\(store.shelfHotkeyLabel) is taken — rebind it on Shortcuts."
+                                : "Press \(store.shelfHotkeyLabel) in any app to open or fold the notch's shelf.")
             }
             .settingRowStyle()
         }

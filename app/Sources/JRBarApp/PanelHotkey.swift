@@ -1,120 +1,106 @@
 import AppKit
 import Carbon
 
-/// The optional ⌃⌥J global hotkey (Settings › General, "Summon the panel
-/// with ⌃⌥J"). Carbon's `RegisterEventHotKey` is the one system service
-/// that delivers a key to an accessory app that owns no menu bar menus
-/// and is usually not even active; there is no SwiftUI equivalent.
+/// One of JR-Bar's summon keys — the panel's ⌃⌥J (Settings › General,
+/// "Summon the panel") and the shelf's ⌃⌥D — held in the app's one
+/// `HotkeyCenter`. Carbon's `RegisterEventHotKey`, behind the center,
+/// is the one system service that delivers a key to an accessory app
+/// that owns no menu bar menus and is usually not even active; there is
+/// no SwiftUI equivalent.
 ///
-/// App-local on purpose: the key lives in UserDefaults, not the daemon's
-/// settings document, because it is this app's panel it summons.
+/// App-local on purpose: the switch and the chord live in UserDefaults,
+/// not the daemon's settings document, because it is this app's panel
+/// it summons. The chord is read at every registration, so a rebind on
+/// Settings › Shortcuts lands with one `setEnabled(true)`.
 @MainActor
 final class PanelHotkey {
     static let defaultsKey = "panelHotkeyEnabled"
 
-    /// The panel hot-key's signature, 'jrbr' — what identifies ours in
-    /// the shared Carbon registry. The shelf's is 'jrbs'.
-    private let signature: OSType
-    private let keyCode: UInt32
-    private let modifiers: UInt32
-    /// Carbon ids namespaced per signature — the panel is 1, shelf 1.
-    private let hotKeyID: UInt32
+    /// The registry ids — also the keys their chords persist under.
+    nonisolated static let panelID = "panel"
+    nonisolated static let shelfID = "shelf"
+    nonisolated static let panelDefault = HotkeyChord(keyCode: UInt32(kVK_ANSI_J),
+                                                      modifiers: UInt32(controlKey | optionKey))
+    nonisolated static let shelfDefault = HotkeyChord(keyCode: UInt32(kVK_ANSI_D),
+                                                      modifiers: UInt32(controlKey | optionKey))
+
+    let id: String
+    let title: String
+    let defaultChord: HotkeyChord
+    var center: HotkeyCenter
+    /// The chord each registration uses: the rebind persisted for `id`,
+    /// the default when there is none, nil when it was cleared.
+    /// Injectable so a test never reads the real defaults.
+    var chordSource: @MainActor () -> HotkeyChord?
 
     var onPress: (@MainActor () -> Void)?
 
-    /// `RegisterEventHotKey` said no — another app owns the key. The
+    /// The key could not be registered — another app owns it, or
+    /// another JR-Bar shortcut does (`conflictOwner` names which). The
     /// Settings toggle reads this to say so instead of pretending the
     /// key works.
     private(set) var registrationFailed = false
+    private(set) var conflictOwner: String?
 
-    private var hotKey: EventHotKeyRef?
-    private var handler: EventHandlerRef?
-
-    /// ⌃⌥J for the panel by default; the shelf's summon takes its own
-    /// signature and key (⌃⌥D — "drop") through the same registry.
-    init(signature: OSType = OSType(0x6A726272),
-         keyCode: UInt32 = UInt32(kVK_ANSI_J),
-         modifiers: UInt32 = UInt32(controlKey | optionKey),
-         hotKeyID: UInt32 = 1) {
-        self.signature = signature
-        self.keyCode = keyCode
-        self.modifiers = modifiers
-        self.hotKeyID = hotKeyID
+    init(id: String, title: String, defaultChord: HotkeyChord, center: HotkeyCenter = .shared) {
+        self.id = id
+        self.title = title
+        self.defaultChord = defaultChord
+        self.center = center
+        self.chordSource = { HotkeyChordDefaults.chord(for: id, fallback: defaultChord) }
     }
+
+    /// The Carbon signature named each key before the registry did:
+    /// 'jrbr' is the panel, 'jrbs' the shelf. The key code and
+    /// modifiers are the default a rebind replaces.
+    convenience init(signature: OSType = OSType(0x6A726272),
+                     keyCode: UInt32 = UInt32(kVK_ANSI_J),
+                     modifiers: UInt32 = UInt32(controlKey | optionKey),
+                     hotKeyID: UInt32 = 1) {
+        let isShelf = signature == OSType(0x6A726273)
+        self.init(id: isShelf ? Self.shelfID : Self.panelID,
+                  title: isShelf ? "Open the shelf" : "Show the panel",
+                  defaultChord: HotkeyChord(keyCode: keyCode, modifiers: modifiers))
+    }
+
+    /// The chord a registration would use now.
+    var chord: HotkeyChord? { chordSource() }
 
     func setEnabled(_ enabled: Bool) {
         if enabled { register() } else { unregister() }
     }
 
     private func register() {
-        unregister()
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let status = InstallEventHandler(GetEventDispatcherTarget(), Self.handlerUPP, 1, &eventType,
-                                         Unmanaged.passUnretained(self).toOpaque(), &handler)
-        guard status == noErr else {
-            registrationFailed = true
+        registrationFailed = false
+        conflictOwner = nil
+        guard let chord else {
+            // Cleared on Settings › Shortcuts: switched on, but no key.
+            center.unregister(id)
             return
         }
-        let id = EventHotKeyID(signature: signature, id: hotKeyID)
-        let keyStatus = RegisterEventHotKey(keyCode, modifiers, id,
-                                            GetEventDispatcherTarget(), 0, &hotKey)
-        if keyStatus != noErr {
-            // The key is taken (or registration otherwise failed): drop the
-            // handler we just installed and remember the refusal.
-            unregister()
+        let outcome = center.register(id, title: title, chord: chord) { [weak self] in
+            self?.onPress?()
+        }
+        switch outcome {
+        case .registered:
+            break
+        case .refused:
             registrationFailed = true
+        case .conflict(let holder):
+            registrationFailed = true
+            conflictOwner = holder.title
         }
     }
 
     func unregister() {
-        if let hotKey {
-            UnregisterEventHotKey(hotKey)
-            self.hotKey = nil
-        }
-        if let handler {
-            RemoveEventHandler(handler)
-            self.handler = nil
-        }
+        center.unregister(id)
         registrationFailed = false
+        conflictOwner = nil
     }
 
-    // Unregistering is the whole point of teardown: a live Carbon handler
-    // holds a dangling self pointer once the object is gone.
+    // Unregistering is the whole point of teardown: the registry would
+    // otherwise keep firing a closure whose owner is gone.
     isolated deinit {
-        unregister()
-    }
-
-    /// Is this (signature, id) the pair we registered? Two PanelHotkeys
-    /// share the dispatcher — the claim check is what keeps ⌃⌥J and ⌃⌥D
-    /// from firing each other's press.
-    nonisolated func owns(_ id: EventHotKeyID) -> Bool {
-        id.signature == signature && id.id == hotKeyID
-    }
-
-    /// The pressed key's (signature, id) as Carbon stamped it on the
-    /// event — nil when the event isn't carrying one.
-    nonisolated static func hotKeyID(from event: EventRef) -> EventHotKeyID? {
-        var id = EventHotKeyID()
-        let status = GetEventParameter(event,
-                                       EventParamName(kEventParamDirectObject),
-                                       EventParamType(typeEventHotKeyID),
-                                       nil,
-                                       MemoryLayout<EventHotKeyID>.size,
-                                       nil,
-                                       &id)
-        return status == noErr ? id : nil
-    }
-
-    private static let handlerUPP: EventHandlerUPP = { _, event, userData in
-        guard let userData, let event else { return OSStatus(eventNotHandledErr) }
-        let hotkey = Unmanaged<PanelHotkey>.fromOpaque(userData).takeUnretainedValue()
-        // Carbon fans a hot-key press out to every handler on the
-        // dispatcher: claim only the pair this instance registered and
-        // let anything else continue down the chain — answering `noErr`
-        // on a foreign event would swallow the other hotkey's press.
-        guard let pressed = hotKeyID(from: event), hotkey.owns(pressed)
-        else { return OSStatus(eventNotHandledErr) }
-        MainActor.assumeIsolated { hotkey.onPress?() }
-        return noErr
+        center.unregister(id)
     }
 }

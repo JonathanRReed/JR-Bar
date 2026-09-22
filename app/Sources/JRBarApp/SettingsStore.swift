@@ -14,7 +14,7 @@ import UserNotifications
 @Observable
 final class SettingsStore {
     enum Page: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, usage, devices, utilities, lighting, toys, notifications, remote, advanced
+        case general, agents, usage, devices, utilities, lighting, toys, notifications, shortcuts, remote, advanced
 
         var id: String { rawValue }
 
@@ -28,6 +28,7 @@ final class SettingsStore {
             case .lighting: return "Lighting"
             case .toys: return "Toys"
             case .notifications: return "Notifications & Focus"
+            case .shortcuts: return "Shortcuts"
             case .remote: return "Remote"
             case .advanced: return "Advanced"
             }
@@ -43,6 +44,7 @@ final class SettingsStore {
             case .lighting: return "paintpalette.fill"
             case .toys: return "party.popper.fill"
             case .notifications: return "bell.badge.fill"
+            case .shortcuts: return "command"
             case .remote: return "antenna.radiowaves.left.and.right"
             case .advanced: return "wrench.and.screwdriver.fill"
             }
@@ -61,6 +63,7 @@ final class SettingsStore {
             // palette's pink — Lighting already owns that one.
             case .toys: return Color(red: 0.93, green: 0.30, blue: 0.62)
             case .notifications: return Color(nsColor: .systemRed)
+            case .shortcuts: return Color(nsColor: .systemBlue)
             case .remote: return Color(nsColor: .systemTeal)
             case .advanced: return Color(nsColor: .systemGray)
             }
@@ -163,6 +166,62 @@ final class SettingsStore {
     }
     var onShelfHotkeyChange: (@MainActor (Bool) -> Void)?
     var shelfHotkeyRegistrationFailed = false
+
+    /// Bumped on every chord write so views re-read the defaults-backed
+    /// chords below.
+    private var hotkeyChordVersion = 0
+
+    /// The panel's and the shelf's chords — the persisted rebind, the
+    /// shipped ⌃⌥J / ⌃⌥D, or nil once cleared on Settings › Shortcuts.
+    var panelHotkeyChord: HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: PanelHotkey.panelID, fallback: PanelHotkey.panelDefault)
+    }
+
+    var shelfHotkeyChord: HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: PanelHotkey.shelfID, fallback: PanelHotkey.shelfDefault)
+    }
+
+    /// The keys as General's rows name them: "⌃⌥J", or a plain phrase
+    /// once no key is bound.
+    var panelHotkeyLabel: String { panelHotkeyChord?.displayString ?? "the panel shortcut" }
+    var shelfHotkeyLabel: String { shelfHotkeyChord?.displayString ?? "the shelf shortcut" }
+
+    /// The recorder's write for any shortcut Settings lists, by its
+    /// registry id. Recording a key switches its shortcut on — the
+    /// person just asked for it — and re-registers through the hook the
+    /// delegate already wired; nil unbinds.
+    func setShortcut(_ chord: HotkeyChord?, for id: String) {
+        switch id {
+        case PanelHotkey.panelID:
+            HotkeyChordDefaults.set(chord, for: id)
+            hotkeyChordVersion += 1
+            if chord != nil, !panelHotkeyEnabled {
+                panelHotkeyEnabled = true
+            } else {
+                onPanelHotkeyChange?(panelHotkeyEnabled)
+            }
+        case PanelHotkey.shelfID:
+            HotkeyChordDefaults.set(chord, for: id)
+            hotkeyChordVersion += 1
+            if chord != nil, !shelfHotkeyEnabled {
+                shelfHotkeyEnabled = true
+            } else {
+                onShelfHotkeyChange?(shelfHotkeyEnabled)
+            }
+        default:
+            if let action = MenuBarHotkeyAction.allCases.first(where: { MenuBarHotkeys.registryID(for: $0) == id }) {
+                utilities?.menuBar.setHotkeyChord(chord, for: action)
+            } else {
+                onSetActionShortcut?(chord, id)
+            }
+        }
+    }
+
+    /// Where an app-action shortcut's write goes — the delegate's
+    /// `AppHotkeys`, which persists it and re-registers.
+    var onSetActionShortcut: (@MainActor (HotkeyChord?, String) -> Void)?
 
     /// macOS's answer to the notification permission, asked by the
     /// Notifications page on appear: the banner toggle can read on while
