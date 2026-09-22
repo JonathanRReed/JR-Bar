@@ -73,9 +73,11 @@ final class ScreenBarWingsModel {
     /// The right ear's full bounds — mark zone plus the handle slice —
     /// for the hover wash. nil when no right ear draws.
     var rightEar: CGRect?
-    /// The hidden-run handle's slice of the right ear while the
-    /// menu-bar concealer runs — a control drawn in our own surface,
-    /// so it can never park the way a status item does.
+    /// The hidden-run handle's slice of the right ear — a control drawn
+    /// in our own surface, so it can never park the way a status item
+    /// does. The ‹ is the fallback affordance while the menu-bar
+    /// concealer runs and no mirror carries the icon (the Hidden style,
+    /// or an empty target); nil otherwise.
     var rightHandle: CGRect?
     var rightHandleRevealed = false
     /// The shared body — the ears are its visible ends, the stretch

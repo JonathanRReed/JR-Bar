@@ -125,12 +125,14 @@ final class ScreenBarController {
     /// The island frame the last scan saw — the watcher's dedup, so a
     /// poll that finds nothing new runs no layout.
     private var lastIslandScan: NSRect?
-    /// The island watch: a slow safety net under the pushes. The island
+    /// The island watch: a pure safety net under the pushes. The island
     /// posts its moves, resizes and orderings (`islandWindowChanged`),
-    /// the menu-bar utility's ear limits push through
-    /// `ScreenBarGeometry.earLimitsChanged`, and a handle click rescans
-    /// right after its toggle. What only the poll sees is a hover reveal
-    /// flipping the handle's ‹/›, so it runs at 1 Hz with a quarter
+    /// the menu-bar utility pushes its ear limits and every flip of the
+    /// ear's ‹ handle (a reveal or rehide, the mirror taking the icon or
+    /// handing it back) through `ScreenBarGeometry.earLimitsChanged`,
+    /// and a handle click rescans right after its toggle. No change
+    /// reaches the band through the poll alone any more; it only bounds
+    /// a missed push to a second, so it runs at 1 Hz with a quarter
     /// second of slack to ride other wakeups, not the 4 Hz it once did.
     private var islandWatch: Timer?
     private static let islandWatchInterval: TimeInterval = 1.0
@@ -203,8 +205,9 @@ final class ScreenBarController {
                      NotchIslandWindow.didChangeOrderingNotification] {
             center.addObserver(self, selector: #selector(islandWindowChanged(_:)), name: name, object: nil)
         }
-        // The flank limits change on the menu-bar utility's reconcile;
-        // the push beats waiting for the watch.
+        // The flank limits change on the menu-bar utility's reconcile,
+        // and the ‹ handle flips with its reveal and its mirror; the
+        // utility pushes both here, which beats waiting for the watch.
         ScreenBarGeometry.earLimitsChanged = { [weak self] in self?.scheduleIslandRescan() }
         appMenus.onChange = { [weak self] in self?.reposition() }
         let workspace = NSWorkspace.shared.notificationCenter
@@ -343,8 +346,9 @@ final class ScreenBarController {
 
     /// A settle pass once the run loop turns: a frame write posts before
     /// the order-in lands, the utility sets its two ear limits one after
-    /// the other, and a handle click flips the hidden run right after
-    /// the hit test answers. One debounced look covers all three.
+    /// the other (and pushes a handle flip on the same route), and a
+    /// handle click flips the hidden run right after the hit test
+    /// answers. One debounced look covers them all.
     private func scheduleIslandRescan() {
         islandRescanWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -368,17 +372,22 @@ final class ScreenBarController {
         reposition()
     }
 
-    /// The hidden-run handle's state while the menu-bar concealer runs —
-    /// nil hides it. Read live by the island watch so the utility's
-    /// reveal/hide flips relayout on the poll's cadence; a click on the
-    /// handle rescans at once.
+    /// The hidden-run handle's state: the ear's ‹ is the fallback
+    /// affordance while the menu-bar concealer runs and no mirror
+    /// carries the icon (the Hidden style, or an empty target); nil
+    /// otherwise, which hides it. Every rescan compares it against what
+    /// the view last drew, and the utility pushes each flip through
+    /// `ScreenBarGeometry.earLimitsChanged`; a click on the handle
+    /// rescans at once.
     var menuHandleProvider: (@MainActor () -> Bool?)?
 
     /// The handle's slice of the right ear as a screen-space hit test —
     /// a click inside it toggles the hidden run, it is not the wing's.
     func menuHandle(atScreenPoint point: NSPoint) -> Bool {
         guard isShown, panel.isVisible, let rect = view.menuHandleRect else {
-            MenuBarCombinedItem.log.notice("menuHandle: dead — shown=\(self.isShown) visible=\(self.panel.isVisible) rect=\(self.view.menuHandleRect == nil ? "nil" : "set")")
+            // Debug, not notice: every band click asks, and no handle is
+            // the normal state while the mirror carries the icon.
+            MenuBarCombinedItem.log.debug("menuHandle: dead — shown=\(self.isShown) visible=\(self.panel.isVisible) rect=\(self.view.menuHandleRect == nil ? "nil" : "set")")
             return false
         }
         let hit = panel.convertToScreen(view.convert(rect, to: nil))

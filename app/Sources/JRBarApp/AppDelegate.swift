@@ -337,7 +337,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return true
         }
         // The hidden-run ‹ lives in the island's own surface — a status
-        // item kept parking under our own window, this one cannot.
+        // item kept parking under our own window, this one cannot. It is
+        // the fallback affordance while the concealer runs and no mirror
+        // carries the icon (the Hidden style, or an empty target); the
+        // provider answers nil otherwise.
         screenBar.menuHandleProvider = { [weak self] in
             self?.utilitiesStore?.menuBar.menuHandleRevealed
         }

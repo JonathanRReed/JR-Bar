@@ -24,16 +24,19 @@ extension ScreenBarGeometry {
     @MainActor static var earItemLimitRight: CGFloat? {
         didSet { if earItemLimitRight != oldValue { earLimitsChanged?() } }
     }
-    /// Called whenever either limit changes, so the band re-sizes its
-    /// ears at once instead of on its slow safety poll. Set by
+    /// Called whenever either limit changes, and by `MenuBarUtility`
+    /// whenever the ear's ‹ handle flips, so the band re-sizes its ears
+    /// at once instead of on its slow safety poll. Set by
     /// `ScreenBarController`.
     @MainActor static var earLimitsChanged: (@MainActor () -> Void)?
 
-    /// The island ‹ handle's live frame in screen coordinates while the
-    /// concealer runs — the hidden run's affordance drawn on our own
-    /// surface. `MenuBarReveal` adds it to its hot frames so hovering the
-    /// glyph reveals the run exactly like Bartender's chevron. nil while
-    /// the handle is not drawn. Written by `ScreenBarController`.
+    /// The island ‹ handle's live frame in screen coordinates — the
+    /// hidden run's fallback affordance drawn on our own surface while
+    /// the concealer runs and no mirror carries the icon (the Hidden
+    /// style, or an empty target). `MenuBarReveal` adds it to its hot
+    /// frames so hovering the glyph reveals the run exactly like
+    /// Bartender's chevron. nil whenever the handle is not drawn.
+    /// Written by `ScreenBarController`.
     @MainActor static var menuHandleScreenRect: NSRect?
 
     /// The notch island's live frame in screen coordinates while it is

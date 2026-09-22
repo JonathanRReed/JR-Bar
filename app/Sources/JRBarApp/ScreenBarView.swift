@@ -69,10 +69,12 @@ final class ScreenBarView: NSView {
     /// draws but the glyph stays out of a space it would clip.
     static let markMinWidth: CGFloat = 22
     /// The hidden-run handle — the concealed items' ‹ — drawn inside
-    /// the island's own surface as the right ear's outer cap while the
-    /// menu-bar concealer runs. A status item can park its surface
-    /// under the island and never re-composite; the island's own glyph
-    /// cannot. nil hides it.
+    /// the island's own surface as the right ear's outer cap. It is the
+    /// fallback affordance while the menu-bar concealer runs and no
+    /// mirror carries the icon (the Hidden style, or an empty target);
+    /// nil otherwise, which hides it. A status item can park its
+    /// surface under the island and never re-composite; the island's
+    /// own glyph cannot.
     var menuHandleRevealed: Bool? {
         didSet { if menuHandleRevealed != oldValue { relayout() } }
     }
