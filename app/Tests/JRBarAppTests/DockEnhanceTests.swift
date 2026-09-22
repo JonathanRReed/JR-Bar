@@ -805,7 +805,7 @@ extension DockEnhanceTests {
     func swipeAccumulates() {
         var acc = DockEnhanceMath.SwipeAccumulator()
         // Natural scrolling: fingers down → +deltaY is a down-flick.
-        var flicks = [acc.note(deltaY: 20, inverted: true, now: 0),
+        let flicks = [acc.note(deltaY: 20, inverted: true, now: 0),
                       acc.note(deltaY: 20, inverted: true, now: 0.1),
                       acc.note(deltaY: 20, inverted: true, now: 0.2)]
         #expect(flicks == [nil, nil, .down])

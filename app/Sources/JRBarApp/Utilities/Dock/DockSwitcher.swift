@@ -563,19 +563,26 @@ final class SwitcherKeyTap: @unchecked Sendable {
                     // (stock ⌘⇥ semantics) — and they never leak to the
                     // front app: the tap owns the keyboard while the
                     // strip is up, so a bare pass-through would fire
-                    // ⌘Q on the app being switched *away from*.
+                    // ⌘Q on the app being switched *away from*. The
+                    // letter is the one the layout types under ⌘.
                     if flags.contains(.maskCommand) {
-                        if let char = Self.charForKeycode[code], Self.verbKeys.contains(char) {
+                        if let char = keyboard.character(for: code, command: true)?.lowercased(),
+                           Self.verbKeys.contains(char) {
                             return swallow { self.onVerb(char) }
                         }
                         return nil
                     }
-                    // Type-ahead: bare characters filter the strip;
-                    // modified keys pass through untouched.
+                    // Type-ahead: what the key prints on the user's own
+                    // layout, shift included ("!" is the waiting
+                    // filter); option is the held chord, not a letter.
                     if !flags.contains(.maskControl),
-                       let char = Self.charForKeycode[code] {
+                       let char = keyboard.character(for: code, shift: flags.contains(.maskShift)) {
                         return swallow { self.onType(char) }
                     }
+                    // Anything else — ⌥↑, a function key, a control
+                    // chord — is still the strip's: nothing typed while
+                    // switching may land in the app being left.
+                    return nil
                 }
             }
             // The dock preview floats but can't take key status — while
@@ -616,17 +623,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// share. Type-ahead keeps every other key.
     nonisolated static let verbKeys: Set<String> = ["q", "w", "m", "h", "f"]
 
-    /// Keycode → character for the type-ahead — letters, digits and
-    /// space. The US layout is the only one the buffer pretends to
-    /// spell; everything else is a no-match, not a wrong letter.
-    nonisolated static let charForKeycode: [Int64: String] = [
-        0: "a", 11: "b", 8: "c", 2: "d", 14: "e", 3: "f", 5: "g", 4: "h",
-        34: "i", 38: "j", 40: "k", 37: "l", 46: "m", 45: "n", 31: "o",
-        35: "p", 12: "q", 15: "r", 1: "s", 17: "t", 32: "u", 9: "v",
-        13: "w", 7: "x", 16: "y", 6: "z",
-        18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7",
-        28: "8", 25: "9", 29: "0", 49: " ",
-    ]
+    /// Keycode → character through the user's keyboard layout —
+    /// injectable so a test can type through Dvorak or AZERTY.
+    var keyboard: DockKeyboardLayout = .shared
 
     private func swallow(_ action: @escaping @MainActor () -> Void) -> Unmanaged<CGEvent>? {
         DispatchQueue.main.async { Task { @MainActor in action() } }
@@ -713,6 +712,9 @@ final class DockSwitcherController {
         }
         tap.onVerb = { [weak self] char in self?.verb(char) }
         tap.onPreviewKey = { [weak self] code in self?.onPreviewKey?(code) }
+        // The layout the type-ahead spells through — read now on the
+        // main thread and again on every input-source switch.
+        tap.keyboard.startWatching()
         tap.start()
     }
 
@@ -742,6 +744,7 @@ final class DockSwitcherController {
         drilledApp = nil
         tap.setOpen(true)
         if panel == nil { panel = DockSwitcherPanel(controller: self) }
+        hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
         loadThumbnails()
     }
@@ -789,6 +792,7 @@ final class DockSwitcherController {
         drilledApp = nil
         tap.setCmdOpen(true)
         if panel == nil { panel = DockSwitcherPanel(controller: self) }
+        hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
         loadThumbnails()
     }
@@ -845,8 +849,8 @@ final class DockSwitcherController {
         guard !items.isEmpty else { return }
         drilledApp = app.pid
         appMode = false
-        model.open(with: items)
-        model.select(index: 0)
+        model.open(with: items, selection: 0)
+        hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
         loadThumbnails()
     }
@@ -875,6 +879,19 @@ final class DockSwitcherController {
 
     func advance(by step: Int) {
         model.advance(by: step)
+        panel?.present(model: model)
+    }
+
+    /// The pointer's gate for hover-selects — re-armed on every open.
+    private var hoverGate = SwitcherHoverGate()
+
+    /// The pointer entered a card: that card becomes the pick, so the
+    /// zoom pane, the ring and ⌥'s release all agree. The keyboard takes
+    /// over again on the next Tab, from here.
+    func hover(index: Int) {
+        guard panel?.isVisible == true, hoverGate.allows(NSEvent.mouseLocation),
+              index != model.selection else { return }
+        model.select(index: index)
         panel?.present(model: model)
     }
 
@@ -1034,6 +1051,9 @@ final class DockSwitcherPanel: NSPanel {
         model.onPick = { [weak controller] index in
             controller?.pick(index: index)
         }
+        model.onHover = { [weak controller] index in
+            controller?.hover(index: index)
+        }
         hosting = NSHostingView(rootView: DockSwitcherView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
@@ -1127,20 +1147,45 @@ final class DockSwitcherModel {
     /// AltTab's card: the window's own pixels over its app icon.
     var thumbnails: [String: NSImage] = [:]
     var onPick: (Int) -> Void = { _ in }
+    /// The pointer entered a card — the controller moves the selection
+    /// there once the pointer has really moved.
+    var onHover: (Int) -> Void = { _ in }
+}
+
+/// Hover selects only after the pointer has moved since the strip
+/// opened: a pointer that merely rests where the strip appears must not
+/// steal the first pick (the "needs you" lane's, or the second window).
+/// Once it has moved, every card it enters takes the selection until
+/// the next open.
+struct SwitcherHoverGate {
+    private var origin: CGPoint?
+    private var moved = false
+    /// Points of travel that count as a real move, not sensor jitter.
+    static let slop: CGFloat = 3
+
+    mutating func open(at point: CGPoint) {
+        origin = point
+        moved = false
+    }
+
+    mutating func allows(_ point: CGPoint) -> Bool {
+        if moved { return true }
+        guard let origin else { return true }
+        if hypot(point.x - origin.x, point.y - origin.y) > Self.slop { moved = true }
+        return moved
+    }
 }
 
 struct DockSwitcherView: View {
     let model: DockSwitcherModel
-    /// The card the pointer rests on — AltTab's hover zoom reads it.
-    /// A filtered-out or gone card clears the zoom on the next frame.
-    @ViewState private var hoveredID: String?
 
-    /// The card the preview pane reads: the hovered one while the
-    /// pointer rests on the strip, the keyboard's selection otherwise
-    /// — AltTab's layout, where the big look belongs to whichever
-    /// candidate is about to commit.
+    /// The card the preview pane reads: the selection, always. Hover
+    /// moves the selection itself (AltTab's behaviour), so the big look,
+    /// the ring and what releasing ⌥ commits are one card — the pane
+    /// once followed the pointer while the release committed the
+    /// keyboard's pick.
     private var zoomed: SwitcherItem? {
-        model.items.first { $0.id == hoveredID } ?? model.items[safe: model.selection]
+        model.items[safe: model.selection]
     }
 
     var body: some View {
@@ -1164,7 +1209,7 @@ struct DockSwitcherView: View {
                                 .id(item.id)
                                 .onTapGesture { model.onPick(index) }
                                 .onHover { inside in
-                                    hoveredID = inside ? item.id : (hoveredID == item.id ? nil : hoveredID)
+                                    if inside { model.onHover(index) }
                                 }
                         }
                     }

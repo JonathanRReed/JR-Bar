@@ -103,7 +103,7 @@ import Testing
         let row = window(id: 12, title: "Released")
         content?.windows = [row]
         actions.onPick = { _ in callCount += 1 }
-        weak var releasedContent = content
+        weak let releasedContent = content
         content = nil
 
         #expect(releasedContent == nil)
