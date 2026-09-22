@@ -157,8 +157,12 @@ enum ScreenBarBlend {
     /// different colours goes in twice at the same key time — the first
     /// copy ends the fade out in the old colour, the second starts the
     /// fade in with the new one — and the jump between them happens at
-    /// alpha 0, where it cannot show. A column dark on both sides of a
-    /// segment borrows from the band instead (`spatiallyFilled`).
+    /// alpha 0, where it cannot show. A column dark in its frame and in
+    /// both neighbouring frames borrows from the band instead
+    /// (`spatiallyFilled`). One dark across a segment but lit a frame
+    /// further out keeps that frame's RGB at alpha 0 throughout: the
+    /// column itself never shows it, but the 4 pt falloff beside a lit
+    /// neighbour can carry a trace of its hue.
     static func keyframes(_ frames: [[Sample]], keyTimes: [Double]) -> (frames: [[Sample]], keyTimes: [Double]) {
         precondition(frames.count == keyTimes.count)
         guard frames.count > 1 else { return (frames.map(spatiallyFilled), keyTimes) }
