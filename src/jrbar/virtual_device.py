@@ -1271,7 +1271,14 @@ def current_cg_context():
             return None
 
 
-def begin_silhouette_layer(cg_context) -> bool:
+def _silhouette_layer_rect(silhouette):
+    """The silhouette's bounds plus a point, so the layer's own edge
+    never lands on the silhouette's and cuts it a second time."""
+    (x, y), (width, height) = silhouette.bounds()
+    return ((x - 1.0, y - 1.0), (width + 2.0, height + 2.0))
+
+
+def begin_silhouette_layer(cg_context, silhouette) -> bool:
     """Open a transparency layer the silhouette will be cut from once.
 
     Clipping each fill to an antialiased path applies an edge pixel's
@@ -1279,22 +1286,26 @@ def begin_silhouette_layer(cg_context) -> bool:
     one (the glow, then the corner feather) keeps light the darkening
     never covered, so the fillet edge carried a faint unfeathered rim.
     Drawing unclipped into a layer and cutting it once leaves an edge
-    pixel as bright as the pixel just inside it, never brighter.
+    pixel as bright as the pixel just inside it, never brighter. The
+    layer spans the silhouette, not the view, so a wide window pays
+    for the body alone.
     False when there is no CG context or no layer: the caller clips.
     """
     if cg_context is None:
         return False
     try:
-        Quartz.CGContextBeginTransparencyLayer(cg_context, None)
+        Quartz.CGContextBeginTransparencyLayerWithRect(
+            cg_context, _silhouette_layer_rect(silhouette), None
+        )
     except Exception:
         return False
     return True
 
 
-def end_silhouette_layer(cg_context, silhouette, bounds) -> None:
+def end_silhouette_layer(cg_context, silhouette) -> None:
     """Erase everything outside ``silhouette`` in one pass, then composite."""
     NSGraphicsContext.saveGraphicsState()
-    outside = NSBezierPath.bezierPathWithRect_(bounds)
+    outside = NSBezierPath.bezierPathWithRect_(_silhouette_layer_rect(silhouette))
     outside.appendBezierPath_(silhouette)
     outside.setWindingRule_(NSEvenOddWindingRule)
     NSGraphicsContext.currentContext().setCompositingOperation_(
@@ -1857,7 +1868,7 @@ class VirtualLedView(NSView):
         # into one layer the silhouette is cut from once (see
         # begin_silhouette_layer), or clipped when there is no layer.
         NSGraphicsContext.saveGraphicsState()
-        layered = begin_silhouette_layer(cg_context)
+        layered = begin_silhouette_layer(cg_context, body)
         if not layered:
             body.addClip()
         self._fill_glow_row(
@@ -1926,7 +1937,7 @@ class VirtualLedView(NSView):
         if self.has_notch and self.alcove_silhouette is None:
             self._draw_standing_gauges(cg_context, height, edge_inset=wing_offset + 6.0)
         if layered:
-            end_silhouette_layer(cg_context, body, self.bounds())
+            end_silhouette_layer(cg_context, body)
         NSGraphicsContext.restoreGraphicsState()
 
     def _classic_status_colors(self, colors):
