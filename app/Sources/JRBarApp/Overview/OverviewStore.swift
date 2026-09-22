@@ -659,14 +659,68 @@ final class OverviewStore {
     /// Fetch the export for preview (S7.4: preview, then destination).
     /// The same bytes the sheet shows are what Save writes — the preview
     /// is the artifact, not a sketch of one.
-    func prepareExport() async {
+    ///
+    /// By default the bundle is what the window shows: two or more
+    /// selected rows export as themselves, otherwise the rows the current
+    /// cut keeps (preset or saved view, project, workers, search). The
+    /// daemon narrows its roster and activity to those ids and names the
+    /// slice in the bundle's gaps. `everything` is the old whole-fleet
+    /// export, still one menu item away.
+    func prepareExport(everything: Bool = false) async {
+        let args = everything ? Self.exportArgs(ids: nil, view: nil) : exportScope.args
         do {
-            let json = try await core.exportAudit(scope: "all", format: "json")
-            let markdown = try await core.exportAudit(scope: "all", format: "markdown")
+            let json = try await exportAudit(args: args, format: "json")
+            let markdown = try await exportAudit(args: args, format: "markdown")
             exportPreview = (json.document, markdown.text ?? "")
         } catch {
             self.error = Self.describe(error)
         }
+    }
+
+    /// The ids and the view's name an on-screen export carries.
+    var exportScope: (args: [String: JSONValue], label: String) {
+        let selected = rows.filter { selectedIDs.contains($0.id) }
+        let slice = selected.count >= 2 ? selected : rows
+        let label = selected.count >= 2 ? "\(selected.count) selected rows of \(viewLabel)" : viewLabel
+        return (Self.exportArgs(ids: slice.map(\.id), view: label), label)
+    }
+
+    /// "Failed · JR-Bar/app · search “auth”" — the cut, in the sidebar's
+    /// words, for the export's scope line.
+    var viewLabel: String {
+        var parts: [String] = []
+        if let saved = activeSavedFilter {
+            parts.append("saved view “\(saved)”")
+        } else if filter.preset == .thisProject, let project = filter.project {
+            parts.append("project \(project)")
+        } else {
+            parts.append(filter.preset.label)
+        }
+        if let parent = workerFilter {
+            let name = roster.first { $0.id == parent }.map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
+            parts.append("workers of \(name)")
+        }
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty { parts.append("search “\(query)”") }
+        return parts.joined(separator: " · ")
+    }
+
+    nonisolated static func exportArgs(ids: [String]?, view: String?) -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["scope": .string("all")]
+        if let ids { args["ids"] = .array(ids.map(JSONValue.string)) }
+        if let view { args["view"] = .string(view) }
+        return args
+    }
+
+    private func exportAudit(args: [String: JSONValue], format: String) async throws -> (document: JSONValue, text: String?) {
+        var args = args
+        args["format"] = .string(format)
+        let reply = try await core.send("audit_export", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "audit_export failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "audit_export: missing result")
+        }
+        return (result["document"] ?? .object([:]), result["text"]?.stringValue)
     }
 
     /// Write the previewed document to the user-picked URL. Writing the

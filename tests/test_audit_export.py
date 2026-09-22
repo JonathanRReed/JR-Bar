@@ -185,3 +185,29 @@ def test_audit_export_writes_to_a_chosen_path(tmp_path):
         controller, {"format": "markdown", "path": str(md_target)}
     )
     assert md_target.read_text().startswith("# JR-Bar audit export")
+
+
+def test_audit_export_narrows_to_the_rows_on_screen():
+    # The Overview's preset, project, search and selection are app-side
+    # cuts; the app sends the ids it shows and a name for the view.
+    one = _status("codex:session:one")
+    two = _status("codex:session:two")
+    ledger_entries = (
+        ActivityEntry(kind=ActivityKind.COMPLETED, occurred_at_epoch=NOW - 5, label="one done",
+                      provider="codex", subject_id="codex:session:one"),
+        ActivityEntry(kind=ActivityKind.COMPLETED, occurred_at_epoch=NOW - 4, label="two done",
+                      provider="codex", subject_id="codex:session:two"),
+    )
+    controller = _controller(one, two, ledger_entries=ledger_entries)
+    reply = core_runtime._cmd_audit_export(
+        controller,
+        {"scope": "all", "ids": ["codex:session:two"], "view": "Failed · search auth", "format": "markdown"},
+    )
+    doc = reply["document"]
+    assert [row["id"] for row in doc["sessions"]] == ["codex:session:two"]
+    assert [row["session"] for row in doc["activity"]] == ["codex:session:two"]
+    assert any(
+        "Exported the 1 sessions in Failed · search auth" in gap and "retains 2" in gap
+        for gap in doc["gaps"]
+    )
+    assert "Failed · search auth" in reply["text"]

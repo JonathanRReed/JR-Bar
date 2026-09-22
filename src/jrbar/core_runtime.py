@@ -2582,6 +2582,24 @@ def _cmd_audit_export(self, args):
     rows = history_rows(ledger, since=since, limit=2000)
 
     gaps: list[str] = []
+    # ``ids`` narrows the bundle to the rows a surface is showing (the
+    # Overview's preset, project, search and selection are app-side cuts
+    # the roster scopes cannot express); ``view`` names that cut so the
+    # export says what it is a slice of.
+    view_ids = args.get("ids")
+    if isinstance(view_ids, list):
+        wanted = {value for value in view_ids if isinstance(value, str)}
+        retained = len(roster.get("sessions") or [])
+        roster = {
+            **roster,
+            "sessions": [row for row in roster.get("sessions") or [] if row.get("id") in wanted],
+        }
+        rows = [row for row in rows if row.get("session") in wanted]
+        view = str(args.get("view") or "the current view")[:200]
+        gaps.append(
+            f"Exported the {len(roster['sessions'])} sessions in {view}; "
+            f"the roster retains {retained}."
+        )
     if getattr(self, "last_snapshot", None) is None:
         gaps.append("No collector snapshot yet — session coverage is empty, not quiet.")
     retained = int((getattr(ledger, "entries", ()) and len(ledger.entries)) or 0)

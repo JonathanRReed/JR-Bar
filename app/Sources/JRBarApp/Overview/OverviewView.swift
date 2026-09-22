@@ -54,12 +54,15 @@ struct OverviewView: View {
                 .accessibilityLabel("Completion actions")
             }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await store.prepareExport() }
+                Menu {
+                    // What is on screen first: the export matches the view
+                    // it was asked from, not the whole fleet.
+                    Button("Export \(store.exportScope.label)…") { Task { await store.prepareExport() } }
+                    Button("Export everything on record…") { Task { await store.prepareExport(everything: true) } }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
-                .help("Export audit bundle")
+                .help("Export an audit bundle of this view (or everything on record)")
                 .accessibilityLabel("Export audit bundle")
             }
             ToolbarItem(placement: .primaryAction) {

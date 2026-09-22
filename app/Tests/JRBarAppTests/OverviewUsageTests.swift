@@ -26,6 +26,24 @@ import JRBarCore
         #expect(store.rows.map(\.id) == ["ov-dear", "ov-cheap", "ov-unread"])
     }
 
+    @Test("the export carries the rows on screen and names the cut; two selected rows export as themselves")
+    func exportFollowsTheView() {
+        let store = OverviewStore(core: CoreModel())
+        store.roster = [Self.entry("ov-a"), Self.entry("ov-b"), Self.entry("ov-c")]
+        store.filter = OverviewFilter(preset: .working)
+        store.search = "ov-"
+        let scope = store.exportScope
+        #expect(scope.label == "Working · search “ov-”")
+        #expect(scope.args["ids"] == .array(["ov-a", "ov-b", "ov-c"].map(JSONValue.string)))
+        #expect(scope.args["view"] == .string("Working · search “ov-”"))
+
+        store.selectionChanged(to: ["ov-a", "ov-c"])
+        #expect(store.exportScope.args["ids"] == .array(["ov-a", "ov-c"].map(JSONValue.string)))
+        #expect(store.exportScope.label.hasPrefix("2 selected rows of Working"))
+
+        #expect(OverviewStore.exportArgs(ids: nil, view: nil) == ["scope": .string("all")])
+    }
+
     @Test("a reading that lands re-sorts a usage column, and only a usage column")
     func generationInvalidatesOnlyUsageSorts() {
         let store = OverviewStore(core: CoreModel())
