@@ -2403,6 +2403,21 @@ def _cmd_quiet(self, args):
     return {"until": until if until is not None else time.time() + max(60.0, seconds), "mode": mode.value}
 
 
+@command("hold_awake")
+def _cmd_hold_awake(self, args):
+    """The person's keep-awake lease (jrbar.core_power.hold_awake)."""
+    from . import core_power
+
+    return core_power.hold_awake(self, args)
+
+
+@command("release_awake")
+def _cmd_release_awake(self, args):
+    from . import core_power
+
+    return core_power.release_awake(self, args)
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
@@ -2415,6 +2430,17 @@ def _cmd_list_history(self, args):
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     ledger = on_main(lambda: self.ensure_activity_ledger())
     rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+    # The power log's rows ("let go: Mac too hot", "put the Mac to sleep")
+    # sit beside the sessions' in the one History list.
+    from . import core_power
+
+    rows = core_power.merge_history(
+        self,
+        rows,
+        since=float(since) if isinstance(since, (int, float)) else None,
+        limit=limit,
+        last_seen=float(ledger.last_seen_epoch or 0.0),
+    )
     return {"rows": rows, "total": len(ledger.entries), "last_seen": ledger.last_seen_epoch}
 
 
@@ -3797,6 +3823,24 @@ def build_headless_controller_class() -> type:
         def _dnd_projection_changed(self, projection) -> None:
             objc.super(JRCoreHeadlessController, self)._dnd_projection_changed(projection)
             self._core_publish_state()
+
+        # -- power: the lease, the thermal governor, sleep on release -----------
+
+        def sync_keep_awake(self, mode) -> None:
+            """The legacy sync, told first what the holds yield to (the
+            sessions a lease waits on, the battery floor, heat, the lid) and
+            followed by the power events it recorded (jrbar.core_power)."""
+            from . import core_power
+
+            try:
+                core_power.before_keep_awake_sync(self)
+            except Exception:
+                legacy.log_status_bar(f"core: power environment failed: {traceback.format_exc(limit=3)}")
+            objc.super(JRCoreHeadlessController, self).sync_keep_awake(mode)
+            try:
+                core_power.after_keep_awake_sync(self)
+            except Exception:
+                legacy.log_status_bar(f"core: power events failed: {traceback.format_exc(limit=3)}")
 
         def sync_virtual_status_device(self, *args, **kwargs) -> None:
             objc.super(JRCoreHeadlessController, self).sync_virtual_status_device(*args, **kwargs)
@@ -5733,6 +5777,12 @@ def build_headless_controller_class() -> type:
                         ]
             except Exception:
                 legacy.log_status_bar(f"core: peers projection failed: {traceback.format_exc(limit=6)}")
+            try:
+                from . import core_power
+
+                core_power.augment_power_document(self, document)
+            except Exception:
+                legacy.log_status_bar(f"core: power projection failed: {traceback.format_exc(limit=6)}")
             return document
 
         def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:

@@ -312,6 +312,32 @@ Vocabulary:
   period never surfaces as an end time.
 - `escalation.stage`: `none`, `ramp`, `menu_bar`, `final` (0…3);
   `since` is when the oldest unanswered ask started blocking.
+- `power` says why the Mac is (or is not) held awake. `keep_awake` is true
+  while anybody wants it awake -- the agents (working, or in the grace
+  after) or the person's lease -- and nothing has made the holds yield.
+  `hold` is the one keep-awake hold: `state` is `off`, `agents` (the
+  agents hold it; `agents` counts the main sessions working) or `manual`
+  (a lease is in force; `lease` is `{kind: duration|agents|indefinite,
+  started_at, until, sessions[], display, source}`, `until` being the
+  countdown's end for `duration` and the backstop for `agents`); `active`
+  is whether the assertion is actually held right now; `display` whether
+  the screen is held too; `grace_until` the end of the post-work grace
+  while the agents' hold is in it; `suspended` names a yield that took the
+  hold away while the demand stands -- `thermal` (the thermal state
+  reached `serious` with the lid shut or `critical` with it open, released
+  until five cool minutes pass) or `battery` (the low-battery floor);
+  `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
+  `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
+  has none), `sleeps_on_release` (the daemon asks for sleep -- an
+  unprivileged `pmset sleepnow` -- when the closed-lid hold drops with the
+  lid shut and `AppleClamshellCausesSleep` says no external display is
+  keeping clamshell mode; heat and the battery floor release even the
+  `always` policy), `last_sleep_at` and `sleep_error`. `last_release` is
+  the newest release worth reading, `{kind, reason, at, duration}`: `kind`
+  `lease_ended` (`reason` `expired`/`finished`), `suspended`
+  (`thermal`/`battery`), `lid_hold_ended` (`duration` the held stretch)
+  or `slept`; a lease the person cancelled is not one. The same log backs
+  the `power` rows in `list_history` and the `power` event.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was
@@ -604,6 +630,12 @@ celebration preferences, so the Usage Center can pulse the card and the
 Confetti toy can fire on the weekly one); `peer_arrived` / `peer_departed`
 (`label` is the machine name; the reachable-set diff after the first
 applied refresh, never on daemon start).
+`power` goes out once per power-log entry worth a line: `power` is the
+entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
+`detail` its reason (`expired`, `finished`, `thermal`, `battery`,
+`agents_idle`, `policy`), `label` History's words for it ("Keep awake let
+go", "Put the Mac to sleep") and `duration` the held stretch where there
+is one.
 
 ### settings
 Full settings document, sent on connect and after every change from any
@@ -768,6 +800,8 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
+| `hold_awake` | exactly one of `seconds` (> 0), `until` (epoch), `until_agents_idle: true` (+ optional `sessions[]`), `indefinite: true`; `display` (default false); `source` (a short word, default `app`) | The person's keep-awake lease, the one hold every surface shares (the notch chip, a deck key, a CLI verb). It replaces any earlier lease, lasts at most 24 h (an agents lease: until none of its sessions is working or waiting on the person, backstop 12 h; without `sessions` it waits on every main session running now), holds the display too with `display: true` (the screen will not lock), outranks the agent-only switches (`agent_keep_awake_enabled`, `keep_awake_on_battery`) and survives a daemon restart. It yields -- never ends -- to heat and to the low-battery floor (`state.power.hold.suspended`). `seconds: 0` ends it, like `quiet`. `{lease, hold}`; `refused` "No agent is working right now." for an agents lease with nothing to wait on, `invalid_args` otherwise. |
+| `release_awake` | | Ends the person's lease (the agent hold keeps its own switch). `{ended, hold}`; `ended: false` when no lease was in force. |
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
 | `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape plus `schema` (record contract version), `pinned` (open ask), `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`), and `axes`: `{outcome, review, freshness}` — `outcome` is `none`/`succeeded`/`failed`/`unreported`/`unknown` (what the provider reported, separate from `lifecycle`), `review` is `pending`/`unreviewed`/`reviewed` (Clear Agents acknowledgement is the review receipt), `freshness` is `live`/`delayed`/`unknown` (is the source still delivering). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `session_timeline` | id? or session+provider, cwd?, limit (default 100, max 500), before? | A session's provider transcript as bounded, paginated items — the Overview inspector's Timeline (S7.2). `id` is a roster row id and resolves the status's provider/`session_id`/cwd itself (`not_found` for an unknown id); an ended session whose status aged out is still inspectable via `session` (the provider uuid) + `provider` + optional `cwd`. Items are `{seq, at, kind, role?, name?, text?, tool_use_id?, is_error?, sidechain?, model?, uuid?, parent_uuid?, origin:"transcript", recorded_at:null, untrusted?}` — `kind` is `message`/`tool_use`/`tool_result`/`turn_end`; `tool_use`/`tool_result` pair on `tool_use_id`; `at` is the row's own stamp (occurrence) and `recorded_at` stays null because per-row ingestion time was never kept. `untrusted` marks tool output and assistant text — content, never a command. `before` is the seq of the oldest item the caller holds; the reply is `{schema, events[], has_more, next_before, total, source{provider, file}, gaps[]}` where `gaps` names `transcript_not_found`, `transcript_unreadable`, `transcript_too_large:N`, `timeline_item_cap:N`, or `unsupported_provider` (providers without a transcript reader answer that, not an empty success). Supported: `claude` (`~/.claude/projects/**/*.jsonl`) and `codex` (`~/.codex/sessions/**/*.jsonl`), matched by uuid-in-filename. Reads are bounded (64 MB file cap, 5000-item cap, 600-char text, secret-run redaction). `invalid_value` without a provider. |

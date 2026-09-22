@@ -624,6 +624,7 @@ class KeepAwakeController:
         #: Why a demanded hold is yielding right now, or None.
         self.suspension: str | None = None
         self._process_display: bool | None = None
+        self._grace_epoch: tuple[float, float] | None = None
 
     def set_enabled(self, enabled: bool) -> None:
         if self.enabled == enabled:
@@ -827,10 +828,19 @@ class KeepAwakeController:
         """``state.power.hold``: why the Mac is (or is not) held awake."""
         state = self.hold_state()
         grace_until = None
-        if state == HOLD_STATE_AGENTS and self.grace_until_monotonic is not None:
+        deadline = self.grace_until_monotonic
+        if state == HOLD_STATE_AGENTS and deadline is not None:
             current = time.monotonic() if now_monotonic is None else now_monotonic
-            if current < self.grace_until_monotonic:
-                grace_until = self.wall_clock() + (self.grace_until_monotonic - current)
+            if current < deadline:
+                # Converted once per grace window: re-deriving the epoch on
+                # every build jitters it by microseconds, and a state
+                # document that never compares equal is broadcast on every
+                # refresh for nothing.
+                cached = self._grace_epoch
+                if cached is None or cached[0] != deadline:
+                    cached = (deadline, round(self.wall_clock() + (deadline - current), 3))
+                    self._grace_epoch = cached
+                grace_until = cached[1]
         return {
             "state": state,
             "agents": self.working_count if state == HOLD_STATE_AGENTS else 0,
