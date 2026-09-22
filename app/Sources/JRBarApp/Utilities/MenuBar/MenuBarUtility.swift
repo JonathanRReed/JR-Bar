@@ -248,6 +248,19 @@ final class MenuBarUtility: Toy {
     /// walks toward the slot instead of repeating the miss.
     @ObservationIgnored private var seatBias: CGFloat = 0
     @ObservationIgnored private var lastSeatTarget: CGFloat?
+    /// The pre-assertion seat walk: attempts spent, when the last one
+    /// registered, and whether the walk is over (seated, exhausted, or
+    /// out of time) — a finished walk never holds the assertion again.
+    @ObservationIgnored private var preSeatAttempts = 0
+    @ObservationIgnored private var lastPreSeat: Date = .distantPast
+    @ObservationIgnored private var preSeatDone = false
+    private static let maxPreSeatAttempts = 5
+    /// Listings run about a second apart; a landing must be listed
+    /// before the next aim reads it.
+    private static let preSeatPace: TimeInterval = 1.6
+    /// The walk's own budget past the engine start, after which the
+    /// assertion goes up with the icon wherever it stands.
+    private static let preSeatTimeout: TimeInterval = 20
     nonisolated static let adoptionGrace: TimeInterval = 2.5
     /// The first assertion waits for our own icon at most this long —
     /// a crowded bar can overlap it forever, which used to defer the
@@ -1240,6 +1253,9 @@ final class MenuBarUtility: Toy {
         iconReseats = 0
         lastIconReseat = .distantPast
         iconReseatExhaustedLogged = false
+        preSeatAttempts = 0
+        preSeatDone = false
+        lastPreSeat = .distantPast
         hider.shuttersSuppressed = true
         // No affordance under the agent: the extra width pushed our slot
         // left into the notch dead zone and parked the item unseen. And
@@ -2013,6 +2029,12 @@ final class MenuBarUtility: Toy {
         // first assertion at launch left JR-Bar's own icon parked
         // unseen (measured 2026-09-16).
         let age = Date().timeIntervalSince(concealerStartedAt)
+        // Before the first assertion the agent adopts a registration at
+        // once — the one window where a re-seat lands where its key
+        // sorts it (under an assertion a re-registered item ghosts on a
+        // neighbour, measured 2026-09-22). Walk the icon to the left
+        // end of the run that stays visible, then assert.
+        if !concealer.isConcealing, preAssertionSeat(age: age) { return }
         // Hard deadline: a crowded bar can keep our icon overlapping a
         // neighbour forever, which made the first assertion wait forever
         // (nothing ever hid). Past the deadline the assertion goes up
@@ -2088,6 +2110,54 @@ final class MenuBarUtility: Toy {
                                       ourPID: ProcessInfo.processInfo.processIdentifier,
                                       clearOf: cover?.maxX ?? 0,
                                       ownWidth: ownWidth)
+    }
+
+    /// One step of the pre-assertion seat walk. Returns true while the
+    /// assertion must wait: a re-seat just went out, or its landing has
+    /// not been listed yet. False once the icon stands at the run's
+    /// left end (or the walk has spent its attempts or its time), and
+    /// from then on for the engine's life.
+    private func preAssertionSeat(age: TimeInterval) -> Bool {
+        guard !preSeatDone, host?.anchorWantsVisibleSeat ?? false else { return false }
+        guard age < Self.preSeatTimeout, preSeatAttempts < Self.maxPreSeatAttempts else {
+            preSeatDone = true
+            MenuBarAssessmentBackend.log.notice("conceal: seat walk over after \(self.preSeatAttempts, privacy: .public) re-seats — asserting with the icon where it stands")
+            return false
+        }
+        // A landing lists a beat after registration — hold, don't aim
+        // at a frame the last re-seat is still moving.
+        guard Date().timeIntervalSince(lastPreSeat) >= Self.preSeatPace else { return true }
+        guard let own = host?.boundaryFrame, let target = visibleSeatTarget() else {
+            // No target: nothing shown past the band to seat beside.
+            // Covered under the band is still a wound worth one default
+            // re-seat; otherwise the icon is fine where it is.
+            if ownIconCovered(), preSeatAttempts == 0 {
+                preSeatAttempts += 1
+                lastPreSeat = Date()
+                host?.reseatStatusItem(desiredMidX: nil)
+                return true
+            }
+            preSeatDone = true
+            return false
+        }
+        // Seated: clear of the band, and at or just left of the target —
+        // a slot up to a neighbour's width left is the run's left end
+        // still (the key sorted us before the first shown item).
+        let landed = own.midX
+        if !ownIconCovered(), landed <= target + 6, landed >= target - 48 {
+            preSeatDone = true
+            MenuBarAssessmentBackend.log.notice("conceal: icon seated at \(String(format: "%.0f", landed), privacy: .public) (target \(String(format: "%.0f", target), privacy: .public)) after \(self.preSeatAttempts, privacy: .public) re-seats")
+            return false
+        }
+        if let last = lastSeatTarget, abs(last - target) < 80, landed > 0 {
+            seatBias = max(-400, min(400, seatBias + (target - landed)))
+        }
+        lastSeatTarget = target
+        preSeatAttempts += 1
+        lastPreSeat = Date()
+        MenuBarAssessmentBackend.log.notice("conceal: seat walk \(self.preSeatAttempts, privacy: .public)/\(Self.maxPreSeatAttempts, privacy: .public) — at \(String(format: "%.0f", landed), privacy: .public), target \(String(format: "%.0f", target), privacy: .public), bias \(String(format: "%.0f", self.seatBias), privacy: .public)")
+        host?.reseatStatusItem(desiredMidX: target + seatBias)
+        return true
     }
 
     nonisolated static func visibleSeatTarget(shown: [MenuBarItem], rows: [CGRect], ourPID: pid_t,
