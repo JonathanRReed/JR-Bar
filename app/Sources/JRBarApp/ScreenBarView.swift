@@ -446,13 +446,14 @@ final class ScreenBarView: NSView {
         lastStops = []
         bandIsLit = planIsLit(plan)
         let locations = ScreenBarBlend.columnLocations(bandWidth: width).map { NSNumber(value: Double($0)) }
-        func colors(_ codes: [RGB8]) -> [CGColor] {
-            ScreenBarBlend.columnSamples(colors: codes.map(\.rgb), bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha).map(cgColor(for:))
+        func samples(_ codes: [RGB8]) -> [ScreenBarBlend.Sample] {
+            ScreenBarBlend.columnSamples(colors: codes.map(\.rgb), bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha)
         }
         // Reduce Motion keeps the colour and drops the motion: the layers
         // hold the program's brightest frame and no animation goes on.
         let reduced = Self.reduceMotion
-        let restColors = colors(Self.stillCodes(for: plan, reduced: reduced))
+        let restColors = ScreenBarBlend.spatiallyFilled(samples(Self.stillCodes(for: plan, reduced: reduced)))
+            .map(cgColor(for:))
         let layerAnchor = bandLayer.convertTime(anchor, from: nil)
 
         CATransaction.begin()
@@ -464,7 +465,7 @@ final class ScreenBarView: NSView {
             layer.colors = restColors
         }
         if !reduced, let lead = plan.lead, layerAnchor + Double(lead.durationMs) / 1000.0 > CACurrentMediaTime() {
-            let animation = Self.keyframeAnimation(track: lead, colors: lead.frames.map(colors))
+            let animation = keyframeAnimation(track: lead, frames: lead.frames.map(samples))
             animation.beginTime = layerAnchor
             animation.repeatCount = 1
             animation.fillMode = .removed
@@ -473,7 +474,7 @@ final class ScreenBarView: NSView {
             if Self.haloEnabled, let copy = animation.copy() as? CAKeyframeAnimation { haloLayer.add(copy, forKey: Self.leadKey) }
         }
         if !reduced, let loop = plan.loop {
-            let animation = Self.keyframeAnimation(track: loop, colors: loop.frames.map(colors))
+            let animation = keyframeAnimation(track: loop, frames: loop.frames.map(samples))
             animation.beginTime = layerAnchor + Double(plan.loopStartMs) / 1000.0
             animation.repeatCount = .infinity
             animation.fillMode = .forwards
@@ -528,10 +529,14 @@ final class ScreenBarView: NSView {
         CATransaction.commit()
     }
 
-    private static func keyframeAnimation(track: LEDSKeyframeTrack, colors: [[CGColor]]) -> CAKeyframeAnimation {
+    /// One track as a `colors` animation. The stops go through
+    /// `ScreenBarBlend.keyframes` so a fade to or from black stays a
+    /// straight line of light.
+    private func keyframeAnimation(track: LEDSKeyframeTrack, frames: [[ScreenBarBlend.Sample]]) -> CAKeyframeAnimation {
+        let fades = ScreenBarBlend.keyframes(frames, keyTimes: track.keyTimes)
         let animation = CAKeyframeAnimation(keyPath: "colors")
-        animation.values = colors
-        animation.keyTimes = track.keyTimes.map { NSNumber(value: $0) }
+        animation.values = fades.frames.map { $0.map(cgColor(for:)) }
+        animation.keyTimes = fades.keyTimes.map { NSNumber(value: $0) }
         animation.duration = Double(track.durationMs) / 1000.0
         animation.calculationMode = .linear
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
