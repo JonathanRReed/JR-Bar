@@ -529,15 +529,14 @@ extension NotchIslandLayout {
 
     /// The notice face: a one-line capsule — the kind's glyph and the
     /// "Claude · rename-the-fish needs you" line — a touch wider and
-    /// deeper than idle, still hung from the notch. `ledClearance`
-    /// keeps the line below a live Screen Bar's band (the idle face
-    /// needs none — it tucks inside the notch). The width is exactly
+    /// deeper than idle, still hung from the notch: the notch plus one
+    /// line's lip, with or without a live Screen Bar (its strip seats
+    /// under the lip, its tray ends at the bezel). The width is exactly
     /// the slot plus its shoulders — never more: a minimum that could
     /// outgrow notch-plus-wings would read as a panel, not the notch
     /// speaking. Notch-less screens get the fixed floating pill.
-    public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat,
-                                  ledClearance: CGFloat = 0) -> CGSize {
+    public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat) -> CGSize {
         CGSize(width: slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth,
-               height: notchDepth + noticeLip + ledClearance)
+               height: notchDepth + noticeLip)
     }
 }

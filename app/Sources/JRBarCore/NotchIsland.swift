@@ -324,15 +324,6 @@ public enum NotchIslandLayout {
         return ((left.maxX + right.minX) / 2, width)
     }
 
-    /// Points of dead space the island keeps under the notch while the
-    /// Screen Bar is live, on the faces that drop below it (the notice
-    /// capsule and the expanded card): the LED band ends ~7 pt below
-    /// the notch (4 pt of band, its seat, and the halo bleed) and the
-    /// island's window sits one level under the bar, so content clears
-    /// the strip. The idle face needs none — it tucks into the notch's
-    /// own depth, ending flush with the hardware's bottom edge.
-    public static let ledBandClearance: CGFloat = 10
-
     /// Points the expanded card reaches past each side of the notch
     /// slot — modest symmetric wings, so the grown card reads as the
     /// notch itself swelling (Alcove-style), never a detached wide
@@ -352,10 +343,12 @@ public enum NotchIslandLayout {
     }
 
     /// How far below the window's top the expanded card's content
-    /// starts — past the notch's own depth, its inset and a live band's
-    /// clearance. Notch-less floats get just the inset.
-    public static func expandedTopInset(notchDepth: CGFloat, ledClearance: CGFloat) -> CGFloat {
-        notchDepth > 0 ? notchDepth + expandedNotchInset + ledClearance : expandedNotchInset
+    /// starts — past the notch's own depth and its inset. A live Screen
+    /// Bar owes nothing more: its strip seats at the card's bottom edge
+    /// and its tray ends at the bezel. Notch-less floats get just the
+    /// inset.
+    public static func expandedTopInset(notchDepth: CGFloat) -> CGFloat {
+        notchDepth > 0 ? notchDepth + expandedNotchInset : expandedNotchInset
     }
 
     /// Air around a shoulder's content.

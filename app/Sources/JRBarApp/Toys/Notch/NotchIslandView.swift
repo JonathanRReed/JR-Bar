@@ -379,8 +379,8 @@ struct NotchIslandView: View {
     /// The event capsule — Alcove's instant notification, one line:
     /// the kind's glyph in its colour (the provider's accent for a
     /// quota reset) and "Claude · rename-the-fish needs you" — title
-    /// and subtitle joined into a single truncating line that sits low,
-    /// centred under the notch inside the notice frame the toy sized.
+    /// and subtitle joined into a single truncating line, centred in the
+    /// lip under the notch inside the notice frame the toy sized.
     private func noticeCapsule(_ notice: AlcoveNotice) -> some View {
         HStack(spacing: 7) {
             Image(systemName: notice.kind.symbol)
@@ -393,11 +393,11 @@ struct NotchIslandView: View {
                 .truncationMode(.middle)
         }
         .padding(.horizontal, 14)
-        // The line lives in the lip below the notch — pushed past the
-        // LED band's clearance exactly like the expanded card's top
-        // inset, so the bar's strip never crosses it.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.top, toy.notchDepth + toy.ledClearance)
+        // The line lives in the lip below the notch, centred in it: the
+        // bar's tray ends at the bezel above and its strip seats at the
+        // lip's bottom edge, so neither crosses the line.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.top, toy.notchDepth)
         // A tap on the capsule puts it away — it never re-opens it.
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }

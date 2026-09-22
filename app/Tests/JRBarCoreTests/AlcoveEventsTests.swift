@@ -294,16 +294,20 @@ struct AlcoveEventsTests {
         #expect(NotchIsland.idleContentWidth(s, media: nil) == base)
     }
 
-    @Test("a live Screen Bar's band drops the notice face; idle tucks into the notch")
-    func ledClearance() {
-        let c = NotchIslandLayout.ledBandClearance
+    @Test("a live Screen Bar owes the island no clearance: its strip seats under each face")
+    func noScreenBarClearance() {
         // The resting capsule is exactly the notch's depth — the band
-        // hangs below it, so no clearance is owed.
+        // hangs below it.
         #expect(NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
                                            leftShoulder: 34, rightShoulder: 12).height == 32)
-        #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
-                                             ledClearance: c).height
-                == 32 + NotchIslandLayout.noticeLip + c)
+        // The notice is the notch plus one line's lip and nothing more:
+        // the bar's tray ends at the bezel (`wingEarDrop` is zero), so a
+        // line centred in the lip is clear of it, and the strip seats at
+        // the lip's bottom edge. 10 dead points used to push the line
+        // down past a strip that no longer crosses the island.
+        #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32).height
+                == 32 + NotchIslandLayout.noticeLip)
+        #expect(NotchIslandLayout.noticeLip == 22)
         // No notch, no band — a floating pill never grows.
         #expect(NotchIslandLayout.floatingSize(contentWidth: 20).height == 24)
     }

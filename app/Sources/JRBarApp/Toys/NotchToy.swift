@@ -361,12 +361,10 @@ final class NotchToy: Toy {
         return NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
     }
 
-    /// The grown card's top pad — past the notch's own depth, its inset
-    /// and a live band's clearance, so the card's content starts clear
-    /// of both.
+    /// The grown card's top pad — past the notch's own depth and its
+    /// inset, so the card's content starts clear of the bezel.
     var cardTopPad: CGFloat {
-        NotchIslandLayout.expandedTopInset(notchDepth: notchDepth,
-                                           ledClearance: ledClearance)
+        NotchIslandLayout.expandedTopInset(notchDepth: notchDepth)
     }
 
     /// The island's bottom corners take the notch profile's own radius —
@@ -385,18 +383,6 @@ final class NotchToy: Toy {
         _ = displayVersion
         guard let screen = ScreenBarGeometry.preferredScreen() else { return 0 }
         return ScreenBarGeometry.islandDepth(of: screen)
-    }
-
-    /// Points of dead space the island keeps under the notch while the
-    /// Screen Bar's band is live: the island's window sits one level
-    /// under the bar, so the LED strip draws across the island's top
-    /// dead zone and the island's own content starts below it — neither
-    /// covers the other. The flag is the daemon's
-    /// `virtual_status_device_enabled`, which the delegate keeps in
-    /// step with the Screen Bar's visibility.
-    var ledClearance: CGFloat {
-        guard screenBarLive, notchDepth > 0 else { return 0 }
-        return NotchIslandLayout.ledBandClearance
     }
 
     /// Whether the Screen Bar's band is on screen — wired by the
@@ -929,15 +915,12 @@ final class NotchToy: Toy {
         switch face {
         case .notice:
             size = NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0,
-                                                notchDepth: depth,
-                                                ledClearance: ledClearance)
+                                                notchDepth: depth)
         case .expanded:
             let width = NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
             let content = island?.expandedCardHeight(width: width) ?? 0
             size = CGSize(width: width,
-                          height: NotchIslandLayout.expandedTopInset(
-                              notchDepth: depth, ledClearance: ledClearance)
-                              + content)
+                          height: NotchIslandLayout.expandedTopInset(notchDepth: depth) + content)
         case .idle:
             // Notched: each shoulder carries its own content, the slot
             // stays the notch. Notch-less: the floating pill wraps the
@@ -1500,7 +1483,7 @@ final class NotchToy: Toy {
             _ = core.sessions
             _ = core.state?.usage
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
-            _ = screenBarShown()          // PanelStore.screenBarShown → ledClearance, earsDrawn
+            _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn
             _ = displayVersion
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in

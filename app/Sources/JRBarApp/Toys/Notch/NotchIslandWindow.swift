@@ -6,12 +6,12 @@ import SwiftUI
 /// The island's panel: a borderless, non-activating panel pinned to the
 /// screen's top edge over the notch, at `statusBar` level — high enough
 /// to own the notch, short of pop-ups and the Fold overlay's
-/// screen-saver tier, and one step under the Screen Bar's `statusBar+1`
-/// so when both are up the bar's LED strip draws across the island's
-/// dead top zone instead of the island's black face covering it (the
-/// layout's `ledClearance` keeps the island's own content below the
-/// band; the bar's window is click-through, so hover and swipes still
-/// land). `sharingType = .none` keeps it out of Fold's desktop capture
+/// screen-saver tier, and under the Screen Bar's `statusBar+2`, so the
+/// bar's tray and ears draw over the island's notch-deep top and its
+/// strip seats at the island's bottom edge. The tray ends at the bezel,
+/// so the island's own content starts right under the notch with no
+/// clearance; the bar's window is click-through, so hover and swipes
+/// still land. `sharingType = .none` keeps it out of Fold's desktop capture
 /// so a warped screen never shows the island twice;
 /// `JRBAR_CAPTURE_CARD` is a dev-only escape that lifts the exclusion
 /// so screenshots can see it (it ships unset).

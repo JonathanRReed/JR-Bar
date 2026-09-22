@@ -355,14 +355,15 @@ struct NotchIslandTests {
         #expect(ticks > 10 && ticks < 600)
     }
 
-    @Test("the grown card's content clears the notch, its inset and a live band")
+    @Test("the grown card's content clears the notch and its inset, band or no band")
     func expandedTopInset() {
-        #expect(NotchIslandLayout.expandedTopInset(notchDepth: 32, ledClearance: 0)
+        // The Screen Bar's tray ends at the bezel and its strip seats at
+        // the card's foot, so the content starts just under the notch.
+        #expect(NotchIslandLayout.expandedTopInset(notchDepth: 32)
                 == 32 + NotchIslandLayout.expandedNotchInset)
-        #expect(NotchIslandLayout.expandedTopInset(notchDepth: 32, ledClearance: 12)
-                == 32 + NotchIslandLayout.expandedNotchInset + 12)
+        #expect(NotchIslandLayout.expandedTopInset(notchDepth: 32) == 36)
         // Notch-less: just the inset — the window already floats.
-        #expect(NotchIslandLayout.expandedTopInset(notchDepth: 0, ledClearance: 0)
+        #expect(NotchIslandLayout.expandedTopInset(notchDepth: 0)
                 == NotchIslandLayout.expandedNotchInset)
     }
 }
