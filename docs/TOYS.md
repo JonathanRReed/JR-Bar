@@ -589,15 +589,19 @@ band only while the toy is off or an external provider owns the notch,
 driven by the band's peek and pin as before. There is never both: the
 band's hover arms nothing while the island is drawn, and its
 pin/dismiss route to the toy's expand and fold. The window
-(`NotchIslandWindow`) is a non-activating panel at
-`statusBar` level — one step under the Screen Bar's `statusBar + 1`,
-so while the band is up its LED strip draws across the island's dead
-top zone instead of the island's black face covering it; the layout
-adds `ledBandClearance` under the notch so the island's own content
-sits below the band, and the bar's click-through window never steals a
-hover. `sharingType = .none` so Fold's desktop capture never sees it
-(the `JRBAR_CAPTURE_CARD` env var is a dev-only escape so screenshots
-can), and its frame is always exactly the drawn shape — nothing
+(`NotchIslandWindow`) is a non-activating panel at `statusBar` level,
+under the Screen Bar's `statusBar + 2`, so the bar's tray and ears draw
+over the island's notch-deep top. The tray ends at the bezel, so the
+island's content may start right under the notch, and the LED strip
+seats at the island's bottom edge. The strip's black housing climbs up
+behind the island's bottom corners, so content keeps above that climb:
+the notice sizes itself with `NotchIslandLayout.noticeSize(…,
+underHousing:)` and centres above `NotchIslandLayout.housingClimb`
+(`NotchToy.noticeClimb`), and the card reserves
+`NotchCardView.islandBottomContentInset`. The bar's click-through
+window never steals a hover. `sharingType = .none` so Fold's desktop
+capture never sees it (the `JRBAR_CAPTURE_CARD` env var is a dev-only
+escape so screenshots can), and its frame is always exactly the drawn shape — nothing
 invisible swallows a menu-bar click; while Fold's overlay is up, the
 island lets clicks fall through it.
 
