@@ -8,9 +8,10 @@ every ``PENDING_DRAIN_INTERVAL_SECONDS`` after that. A file is renamed before
 it is read so a shim appending at the same moment starts a fresh file
 instead of racing the reader.
 
-A replayed record keeps the time the shim queued it; one older than
-``PENDING_REPLAY_HORIZON_SECONDS`` still reaches the log but does not wake
-the live monitor (hook_ingress).
+A record queued inside ``PENDING_REPLAY_HORIZON_SECONDS`` replays as a live
+one, stamped when it is drained; one older than that keeps the time the
+shim queued it and reaches the log without waking the live monitor
+(hook_ingress).
 """
 
 from __future__ import annotations

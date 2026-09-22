@@ -3487,6 +3487,20 @@ def build_headless_controller_class() -> type:
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
             legacy.log_status_bar("core: launching headless")
+            # The backlog the shim spooled while the daemon was down drains
+            # once here, before the ingress socket opens. A fresh replay is
+            # stamped when it is drained (hook_ingress._replay_arguments),
+            # so the order it reaches the monitor in is the order it counts
+            # in: drained after the session's own first live hook, a spooled
+            # prompt would land on top of the Stop that followed it. The
+            # thread that drains on the interval starts further down.
+            self._core_pending_drainer = PendingHookDrainer(
+                self._core_submit_pending, log=legacy.log_status_bar
+            )
+            try:
+                self._core_pending_drainer.drain_now()
+            except Exception as exc:
+                legacy.log_status_bar(f"hook_pending drain failed: {exc}")
             self.start_event_server()
             self.start_cloud_ingest_server()
             self.replay_debug_logs()
@@ -3518,9 +3532,6 @@ def build_headless_controller_class() -> type:
 
             self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
             self._core_deck_probe_now()
-            self._core_pending_drainer = PendingHookDrainer(
-                self._core_submit_pending, log=legacy.log_status_bar
-            )
             self._core_pending_drainer.start()
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
             if os.environ.get("JRBAR_SUPERVISED") == "1":

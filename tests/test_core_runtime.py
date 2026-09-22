@@ -173,14 +173,22 @@ class _FakeServer:
 
 class _FakeDrainer:
     instances: ClassVar[list] = []
+    # Launch steps in the order they ran: "drain" for the synchronous pass,
+    # "start" for the interval thread; a test adds its own marks.
+    order: ClassVar[list[str]] = []
 
     def __init__(self, submit, **kwargs) -> None:
         self.submit = submit
         self.started = False
         _FakeDrainer.instances.append(self)
 
+    def drain_now(self) -> int:
+        _FakeDrainer.order.append("drain")
+        return 0
+
     def start(self) -> None:
         self.started = True
+        _FakeDrainer.order.append("start")
 
     def stop(self, timeout_seconds: float = 1.0) -> None:
         self.started = False
@@ -213,6 +221,7 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(core_runtime, "default_state_dir", lambda *_: tmp_path / "state")
     _TimerAPI.calls.clear()
     _FakeDrainer.instances.clear()
+    _FakeDrainer.order.clear()
 
     controller_class = core_runtime.build_headless_controller_class()
     assert controller_class.headless is True
@@ -243,7 +252,12 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def test_headless_launch_skips_every_appkit_surface_and_serves__and_2_more(headless) -> None:
     # --- scenario: headless_launch_skips_every_appkit_surface_and_serves
     controller = headless
+    controller.start_event_server.side_effect = lambda: _FakeDrainer.order.append("ingress")
     controller.applicationDidFinishLaunching_(None)
+    # The spooled backlog drains before the ingress socket opens, so no
+    # live hook can overtake it; the interval thread starts after.
+    assert _FakeDrainer.order == ["drain", "ingress", "start"]
+    assert len(_FakeDrainer.instances) == 1
     assert controller.status_item is None
     controller.virtual_status_device.show.assert_not_called()
     controller.virtual_status_device.hide.assert_called()

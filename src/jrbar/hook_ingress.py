@@ -140,18 +140,23 @@ class AppOwnedHookIngressProcessor:
 
 
 def _replay_arguments(request: HookIngressRequest) -> dict[str, object]:
-    """A payload the shim spooled keeps the time it was queued, and one
-    older than the replay horizon is written without the refresh hint:
-    drained hours later it is history for the log, not a live turn."""
+    """A payload the shim spooled inside the replay horizon is stamped on
+    arrival, like a live one; only one older than the horizon keeps the
+    time it was queued, and is written without the refresh hint: drained
+    hours later it is history for the log, not a live turn.
+
+    The arrival stamp is what lets a fresh replay reach live state. The
+    monitor keeps one watermark per provider source, shared by every
+    session, and skips any batch older than it. Stamped with its queued
+    time, session A's spooled prompt was older than the live hook session
+    B had just sent, so it was logged, skipped, and never read again; A
+    never appeared."""
     queued_at = request.queued_at_epoch
-    if queued_at is None:
+    if queued_at is None or time.time() - queued_at <= PENDING_REPLAY_HORIZON_SECONDS:
         return {}
     from .hook import hook_logged_at
 
-    return {
-        "logged_at": hook_logged_at(queued_at),
-        "refresh": time.time() - queued_at <= PENDING_REPLAY_HORIZON_SECONDS,
-    }
+    return {"logged_at": hook_logged_at(queued_at), "refresh": False}
 
 
 def register_shim_process(request: HookIngressRequest) -> None:

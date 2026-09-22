@@ -259,7 +259,7 @@ def test_an_oversized_file_without_a_whole_line_in_reach_is_kept_as_overflow(tmp
     assert overflow.read_bytes() == b"x" * 10_000
 
 
-def test_a_spooled_payload_replays_with_its_queued_time_and_wakes_the_monitor_only_while_fresh(
+def test_a_fresh_replay_is_stamped_on_arrival_and_only_history_keeps_its_queued_time(
     monkeypatch,
 ) -> None:
     import time
@@ -285,11 +285,52 @@ def test_a_spooled_payload_replays_with_its_queued_time_and_wakes_the_monitor_on
     processor(request(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0))
 
     live, fresh, stale = calls
-    # A live delivery is stamped on arrival and always refreshes.
+    # A live delivery, and a replay inside the horizon, are stamped on
+    # arrival and refresh: the monitor's watermark is per provider source,
+    # so a queued stamp older than another session's live hook is skipped.
     assert set(live) == {"refresh_hint_handler"}
-    assert fresh["logged_at"] == hook.hook_logged_at(now - 60.0) and fresh["refresh"] is True
+    assert set(fresh) == {"refresh_hint_handler"}
+    # Past the horizon the record is history: its queued time, no refresh.
     assert stale["logged_at"] == hook.hook_logged_at(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0)
     assert stale["refresh"] is False
     for bad in (True, float("nan"), float("inf"), 0.0, -1.0, "1790078400"):
         with pytest.raises(ValueError):
             request(bad)  # type: ignore[arg-type]
+
+
+def test_a_fresh_replay_reaches_live_state_after_another_sessions_live_hook(tmp_path) -> None:
+    """The live monitor keeps one watermark per provider source, shared by
+    every session, and skips a batch older than it. Replays stamped with
+    their queued time broke that: on a restart session B's first live hook
+    moved the watermark to now, every line of session A's spooled backlog
+    was older, and A never appeared. Inside the horizon a replay is stamped
+    on arrival, so A lands; past it the record is history and stays out."""
+    from jrbar._collector_legacy import LiveAgentMonitor
+    from jrbar.hook_ingress import AppOwnedHookIngressProcessor
+    from jrbar.hook_pending import PENDING_REPLAY_HORIZON_SECONDS
+
+    log = tmp_path / "claude.jsonl"
+    monitor = LiveAgentMonitor()
+    processor = AppOwnedHookIngressProcessor(lambda hint: monitor.reconcile_refresh_hint(hint, log_path=log))
+    now = time.time()
+
+    def submit(session: str, event: dict, queued_at: float | None = None) -> None:
+        payload = {"session_id": session, "cwd": f"/tmp/{session}", **event}
+        processor(HookIngressRequest("claude", str(log), json.dumps(payload), queued_at_epoch=queued_at))
+
+    submit("B", {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    # A's prompt and permission ask, spooled five minutes ago, drain after.
+    submit("A", {"hook_event_name": "UserPromptSubmit", "prompt": "go"}, now - 300.0)
+    submit(
+        "A",
+        {"hook_event_name": "Notification", "message": "Claude needs your permission to use Bash"},
+        now - 299.0,
+    )
+    # C's prompt from before the horizon is history for the log only.
+    submit("C", {"hook_event_name": "UserPromptSubmit", "prompt": "old"}, now - PENDING_REPLAY_HORIZON_SECONDS - 60.0)
+    # B's next live hook rereads the log past C's line; C stays out.
+    submit("B", {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}})
+
+    sessions = {status.session_id for status in monitor.snapshot().statuses}
+    assert sessions == {"A", "B"}
+    assert '"C"' in log.read_text()

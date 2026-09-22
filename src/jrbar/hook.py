@@ -208,10 +208,10 @@ def process_hook_payload(
 ) -> HookProcessingOutcome:
     """Normalize and persist one payload without owning process stdio.
 
-    ``logged_at`` stamps a replayed payload with the time it was queued
-    instead of the time it was drained. ``refresh=False`` writes the record
-    without the refresh hint: a replay older than the horizon is history
-    for the log, not a live turn for the monitor to wake on.
+    ``logged_at`` stamps a replay older than the horizon with the time it
+    was queued instead of the time it was drained, and ``refresh=False``
+    writes it without the refresh hint: it is history for the log, not a
+    live turn for the monitor to wake on.
     """
     actual_provider, actual_log_path, line = routed_hook_payload(
         provider,
