@@ -1056,6 +1056,7 @@ struct MenuBarSpacerTests {
         func setBoundarySpacer(_ length: CGFloat) { spacers.append(length) }
         var slims: [Bool] = []
         func setAnchorSlim(_ slim: Bool) { slims.append(slim) }
+        var anchorWantsVisibleSeat = true
         var reseats = 0
         func reseatStatusItem() { reseats += 1 }
         var onBoundaryClick: (@MainActor () -> Void)?
@@ -1180,6 +1181,23 @@ struct MenuBarSpacerTests {
             concealedApps: [:], sections: [:], revealed: [], chevron: nil,
             ourPID: 500)
         #expect(r2 == 824)
+    }
+
+    @Test("the icon's default seat clears the island's right edge — the notch-relative target parked it under the face")
+    func visibleSeatClearsIsland() {
+        // The live wound: a seed of screenW/2 + 115 landed the item at
+        // x≈871 on a 1512 screen — "just right of the notch" — but the
+        // island window reaches 980, so the face painted black over it.
+        // The seat is the island edge plus margin, or the notch edge
+        // plus the wings' maximum claim before the island lays out.
+        #expect(StatusItemController.visibleSeatMidX(islandRight: 980, notchEdge: 848,
+                                                     screenW: 1512) == 1010)
+        #expect(StatusItemController.visibleSeatMidX(islandRight: nil, notchEdge: 848,
+                                                     screenW: 1512)
+                == 848 + ScreenBarGeometry.wingContentMaxExtent + 30)
+        #expect(StatusItemController.visibleSeatMidX(islandRight: nil, notchEdge: nil,
+                                                     screenW: 1512) == 871,
+                "notch-less screens keep the old guess — nothing covers an item there")
     }
 
     @Test("the pixel verdict: a slot with no lit pixels is parked — frames and flags all lie")

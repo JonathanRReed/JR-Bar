@@ -1233,12 +1233,11 @@ final class MenuBarUtility: Toy {
         hider.shuttersSuppressed = true
         // No affordance under the agent: the extra width pushed our slot
         // left into the notch dead zone and parked the item unseen. And
-        // slim the anchor itself: the niche right of the island is only
-        // ~34 pt — a 39 pt item cannot hold it (every registration was
-        // born parked, measured 2026-09-21); the island face is the
-        // visible icon anyway, so the item's job here is the slot.
+        // slim the anchor only when the icon draws nothing — a visible
+        // style seats in the open extras run at its natural width, while
+        // the hidden style keeps the free niche under the island face.
         host?.setBoundarySpacer(0)
-        host?.setAnchorSlim(true)
+        host?.setAnchorSlim(!(host?.anchorWantsVisibleSeat ?? false))
         let bridge = MenuBarSystemClickBridge { [weak self] point in
             self?.bridgeClick(at: point)
         }
@@ -2054,6 +2053,22 @@ final class MenuBarUtility: Toy {
         }
     }
 
+    /// Whether the island face covers our own item's slot: the anchor
+    /// seated inside the island's span answers AX and reports on-row,
+    /// but the face paints black over it — the icon composites nothing
+    /// the person can see. Only counts when the configured style wants
+    /// a real seat; a `.hidden` anchor belongs under the face.
+    private func ownIconCovered() -> Bool {
+        guard host?.anchorWantsVisibleSeat ?? false,
+              let island = ScreenBarGeometry.islandScreenRect,
+              let own = host?.boundaryFrame else { return false }
+        guard MenuBarItemLister.menuBarRows().contains(where: { $0.intersects(own) })
+        else { return false }
+        // The island spans the row's height wherever it stands, so the
+        // x axis decides: a centre under the face is a covered icon.
+        return own.midX < island.maxX - 2 && own.midX > island.minX + 2
+    }
+
     private func scheduleAdoptionCheck(after delay: TimeInterval = 1.5) {
         adoptionCheck?.cancel()
         adoptionCheck = Task { [weak self] in
@@ -2071,8 +2086,12 @@ final class MenuBarUtility: Toy {
             let iconParked = await self.ownIconParked()
             self.parkedReads = iconParked ? self.parkedReads + 1 : 0
             let parkedConfirmed = self.parkedReads >= 2
-            let iconStale = self.ownIconStale() || parkedConfirmed
-            MenuBarAssessmentBackend.log.notice("conceal: adoption check — iconStale=\(iconStale, privacy: .public) parked=\(iconParked, privacy: .public) chevron=\(chevronParked, privacy: .public) drawn=\(String(describing: self.host?.boundaryFrame), privacy: .public) probe=\(String(describing: self.host?.boundaryWindowProbe), privacy: .public) ax=\(String(describing: self.ownIconAXFrame()), privacy: .public)")
+            // A face-covered anchor is the same wound as a parked one —
+            // the icon is invisible either way — so it earns the same
+            // re-seat, landing at the island-aware slot instead.
+            let covered = self.ownIconCovered()
+            let iconStale = self.ownIconStale() || parkedConfirmed || covered
+            MenuBarAssessmentBackend.log.notice("conceal: adoption check — iconStale=\(iconStale, privacy: .public) parked=\(iconParked, privacy: .public) covered=\(covered, privacy: .public) chevron=\(chevronParked, privacy: .public) drawn=\(String(describing: self.host?.boundaryFrame), privacy: .public) probe=\(String(describing: self.host?.boundaryWindowProbe), privacy: .public) ax=\(String(describing: self.ownIconAXFrame()), privacy: .public)")
             if iconStale {
                 if self.iconStaleSince == nil { self.iconStaleSince = Date() }
             } else {
@@ -3237,10 +3256,13 @@ protocol MenuBarBoundaryHost: AnyObject {
     var boundaryGlyphLength: CGFloat { get }
     /// Claim `length` points of blank bar left of the icon (0 folds).
     func setBoundarySpacer(_ length: CGFloat)
-    /// Under the agent the island face is the icon's visible surface;
-    /// the item itself is a pure anchor and must fit the notch-adjacent
-    /// niche (~34 pt between the island edge and the next item) or it
-    /// parks off-row. Slim clamps the slot to `anchorSlimLength`.
+    /// Whether the configured icon style wants a real seat in the
+    /// visible extras run — every style but `.hidden`, which draws
+    /// nothing and keeps the free niche under the island face.
+    var anchorWantsVisibleSeat: Bool { get }
+    /// The niche seat under the island face is only for the hidden
+    /// style — a visible icon seats in the open extras run, so slim
+    /// stays engaged only while the anchor wants no seat at all.
     func setAnchorSlim(_ slim: Bool)
     /// Re-register the item — the agent adopts only at registration, so a
     /// ghosted item (AX answers a stale frame, nothing draws) comes back

@@ -238,19 +238,54 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// and an item registered in the same run loop turn reads cfprefsd
     /// before the seed lands there — measured 2026-09-21: every in-process
     /// seeded re-seat still parked until the write was forced down.
-    nonisolated static func seedPreferredPosition(for name: String,
-                                                  desiredMidX: CGFloat? = nil,
-                                                  overwrite: Bool = false) {
+    static func seedPreferredPosition(for name: String,
+                                      desiredMidX: CGFloat? = nil,
+                                      overwrite: Bool = false) {
         let key = "NSStatusItem Preferred Position \(name)"
         if !overwrite, UserDefaults.standard.object(forKey: key) != nil { return }
         let screenW = NSScreen.main?.frame.width
             ?? CGDisplayBounds(CGMainDisplayID()).width
-        // Default target: just right of the island — the slot the icon
-        // occupies in a healthy layout on notched screens.
-        let midX = desiredMidX ?? (screenW / 2 + 115)
+        let midX = desiredMidX ?? visibleSeatMidX(screenW: screenW)
         UserDefaults.standard.set(Float(screenW - midX), forKey: key)
         UserDefaults.standard.synchronize()
     }
+
+    /// The seat the icon wants when nothing says otherwise: the first
+    /// slot clear of the island face's right edge — the leftmost
+    /// position of the *visible* extras run. The island window overhangs
+    /// the physical notch by the wings' claim (up to
+    /// `wingContentMaxExtent`, measured 132 pt live), so the old target
+    /// of "just right of the notch" (screenW/2 + 115 → x≈871) seated the
+    /// item under the island's right wing where the face paints black
+    /// over it — the invisible-icon wound of 2026-09-22. The live
+    /// window frame wins once the island is up; before layout the
+    /// notch's right edge plus the wings' maximum claim is the estimate,
+    /// and on a notch-less screen it falls back to the old centre-right
+    /// guess — no island is covering anything there anyway.
+    static func visibleSeatMidX(screenW: CGFloat) -> CGFloat {
+        visibleSeatMidX(islandRight: ScreenBarGeometry.islandScreenRect?.maxX,
+                        notchEdge: NSScreen.main?.auxiliaryTopRightArea?.minX,
+                        screenW: screenW)
+    }
+
+    /// The seat's pure math: the island's live right edge wins, the
+    /// notch edge plus the wings' maximum claim is the pre-layout
+    /// estimate, and a notch-less screen keeps the old centre-right
+    /// guess — nothing covers an item there.
+    nonisolated static func visibleSeatMidX(islandRight: CGFloat?,
+                                            notchEdge: CGFloat?,
+                                            screenW: CGFloat) -> CGFloat {
+        if let islandRight { return islandRight + visibleSeatMargin }
+        if let notchEdge {
+            return notchEdge + ScreenBarGeometry.wingContentMaxExtent + visibleSeatMargin
+        }
+        return screenW / 2 + 115
+    }
+
+    /// How far past the island's right edge the icon's centre sits —
+    /// half the widest style plus a gap, so even a full-width meters
+    /// strip lands entirely clear of the face.
+    nonisolated static let visibleSeatMargin: CGFloat = 30
 
     private func wireStatusItem() {
         // Where the item sits is the person's to choose (Command-drag);
@@ -364,13 +399,17 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         refold()
     }
 
-    /// Under the agent the island face carries the visible icon and the
-    /// item is a pure boundary anchor — the notch-adjacent niche it must
-    /// hold is ~34 pt (measured 2026-09-21: the island's right edge at
-    /// 848.5 against Now Playing at 883), so a 39 pt slot can never keep
-    /// it and every registration was born parked. Slim clamps the slot
-    /// narrow enough to hold the niche.
+    /// Under the agent a `.hidden` icon asks for no bar seat at all —
+    /// the slim clamp holds its slot to `anchorSlimLength` inside the
+    /// notch-adjacent niche under the island face. A visible style seats
+    /// in the open extras run instead, where its natural width has room.
     private var anchorSlim = false
+
+    /// The seat contract: `.hidden` draws nothing and keeps the free
+    /// niche under the island; every other style is a real icon and
+    /// belongs in the visible extras run — the utility reads this to
+    /// decide slimming and whether a face-covered anchor needs reseating.
+    var anchorWantsVisibleSeat: Bool { iconStyle != .hidden }
     nonisolated static let anchorSlimLength: CGFloat = 28
 
     func setAnchorSlim(_ slim: Bool) {
