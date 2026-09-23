@@ -777,6 +777,18 @@ struct SessionContextMenu: View {
                 Button(PanelStore.morningLabel(verb: "Snooze until", target: store.morningTarget)) {
                     store.snooze(row, seconds: PanelStore.secondsUntilMorning())
                 }
+            } else if PanelStore.canQuietRun(row) {
+                // A run you have already seen stops claiming the light and
+                // the banners; the daemon lets a real ask through anyway,
+                // so it still reaches you the moment it needs you.
+                Menu("Quiet This Run") {
+                    Button("For 15 Minutes") { store.quietRun(row, seconds: 900) }
+                    Button("For 1 Hour") { store.quietRun(row, seconds: 3600) }
+                    Button(PanelStore.morningLabel(verb: "Until", target: store.morningTarget)) {
+                        store.quietRun(row, seconds: PanelStore.secondsUntilMorning())
+                    }
+                }
+                .help("Its lights and banners go quiet; an ask still gets through")
             }
             if let cwd = row.cwd, !cwd.isEmpty {
                 Divider()

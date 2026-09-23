@@ -48,3 +48,21 @@ struct AskAgeRingTests {
         #expect(bare.tone == .neutral)
     }
 }
+
+/// "Quiet This Run": the mailbox snooze offered on a run you have seen.
+@Suite("Quiet a working run")
+@MainActor
+struct QuietRunTests {
+    private func row(_ mode: String, lifecycle: String = "active", ask: CoreAsk? = nil, id: String = "claude:session:q") -> SessionRow {
+        SessionRow(session: CoreSession(id: id, provider: "claude", mode: mode, lifecycle: lifecycle, ask: ask), pinnedAsk: nil)
+    }
+
+    @Test("working and idle runs can be quieted; asks, finished and remote rows cannot")
+    func offers() {
+        #expect(PanelStore.canQuietRun(row("working")))
+        #expect(PanelStore.canQuietRun(row("idle")))
+        #expect(!PanelStore.canQuietRun(row("completed", lifecycle: "completed")))
+        #expect(!PanelStore.canQuietRun(row("waiting", ask: CoreAsk(session: "claude:session:q", kind: "permission"))))
+        #expect(!PanelStore.canQuietRun(row("working", id: "remote:studio:claude:session:q")))
+    }
+}

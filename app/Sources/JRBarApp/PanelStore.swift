@@ -1505,6 +1505,21 @@ final class PanelStore {
     /// `snooze {session, seconds}` — the daemon resolves the session's
     /// family work key, so one snooze covers every session in the family.
     /// `seconds: 0` lifts it.
+    /// A live local run that is neither asking nor finished can be quieted
+    /// ("quiet this run until it needs me"): working or idle.
+    nonisolated static func canQuietRun(_ row: SessionRow) -> Bool {
+        !row.isRemote && row.ask == nil && (row.activity == .working || row.activity == .idle)
+    }
+
+    /// The same mailbox snooze, said the way it lands on a working run:
+    /// quiet until it needs you.
+    func quietRun(_ row: SessionRow, seconds: Int) {
+        guard Self.canQuietRun(row), seconds > 0 else { return }
+        core.snooze(session: row.id, seconds: seconds)
+        let until = Date().addingTimeInterval(TimeInterval(seconds))
+        show(toast: "\(row.label) is quiet until \(Self.clockTime(until)) unless it asks")
+    }
+
     func snooze(_ row: SessionRow, seconds: Int) {
         core.snooze(session: row.id, seconds: seconds)
         if seconds > 0 {
