@@ -34,6 +34,21 @@ enum ScreenBarNotices {
                                  symbol: "exclamationmark.triangle.fill", tone: .alert)
     }
 
+    /// How long a newly live monitor's device lists keep moving the
+    /// baseline without speaking. The daemon publishes its first state
+    /// before its device scan lands — the scan runs on a worker, and a
+    /// sleeping card reader can hold its /Volumes stat for seconds — so
+    /// a strip plugged in all along would otherwise "connect" on every
+    /// monitor start.
+    static let hardwareSettle: TimeInterval = 10
+
+    /// Whether a device list read at `now` still belongs to the baseline
+    /// of a monitor that went live at `liveSince` (nil: not live yet).
+    static func hardwareSettling(liveSince: Date?, now: Date) -> Bool {
+        guard let liveSince else { return true }
+        return now.timeIntervalSince(liveSince) < hardwareSettle
+    }
+
     /// A strip or Dot arriving or leaving → a right-wing slot: the
     /// device's own glyph, filled as it arrives, hollow and amber as it
     /// goes. An unplugged Pro used to just go dark with no word why.

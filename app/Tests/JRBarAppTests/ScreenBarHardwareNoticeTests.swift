@@ -29,6 +29,22 @@ struct ScreenBarHardwareNoticeTests {
         #expect(result.recent.isEmpty)
     }
 
+    @Test func aFreshMonitorsFirstSecondsAreStillTheBaseline() {
+        // The daemon's first state goes out before its device scan lands:
+        // a strip there all along shows up a moment later, and must not
+        // read as plugged in on every monitor start.
+        let live = Self.now
+        #expect(ScreenBarNotices.hardwareSettling(liveSince: live, now: live))
+        #expect(ScreenBarNotices.hardwareSettling(liveSince: live, now: live.addingTimeInterval(3)))
+        #expect(!ScreenBarNotices.hardwareSettling(liveSince: live,
+                                                   now: live.addingTimeInterval(ScreenBarNotices.hardwareSettle)))
+        #expect(!ScreenBarNotices.hardwareSettling(liveSince: live, now: live.addingTimeInterval(60)))
+        #expect(ScreenBarNotices.hardwareSettling(liveSince: nil, now: live), "not live yet is all baseline")
+        // A settle long enough for a slow card reader, short enough that
+        // a real plug a few seconds on still speaks.
+        #expect((5...15).contains(ScreenBarNotices.hardwareSettle))
+    }
+
     @Test func anUnplugIsAHollowAmberMark() throws {
         let result = ScreenBarNotices.hardware(from: [Self.pro(true)], to: [Self.pro(false)], recent: [:], now: Self.now)
         let slot = try #require(result.slot)

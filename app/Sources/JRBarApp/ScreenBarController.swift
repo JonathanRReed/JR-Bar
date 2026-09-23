@@ -177,18 +177,28 @@ final class ScreenBarController {
     /// Devices that already spoke inside the cooldown
     /// (`ScreenBarNotices.hardware`).
     private var recentDeviceNotices: [String: Date] = [:]
+    /// When the monitor's device list went live — the start of its settle
+    /// window; nil while the monitor is away.
+    private var hardwareLiveSince: Date?
     /// The monitor's device rows while it is live, nil while it is not.
     /// A monitor going away is not every strip unplugging, so the next
     /// live list is a fresh baseline rather than a burst of arrivals.
     /// A strip or Dot coming or going holds the right ear for a beat —
     /// only while the ears and their notices are up; otherwise the list
-    /// just moves the baseline.
+    /// just moves the baseline. So does every list inside the monitor's
+    /// first seconds live (`ScreenBarNotices.hardwareSettle`): its device
+    /// scan lands after its first state, and a strip that was there all
+    /// along is not an arrival.
     var hardware: [CoreDevice]? {
         didSet {
-            guard let hardware, hardware != oldValue else { return }
+            guard let hardware else { hardwareLiveSince = nil; return }
+            guard hardware != oldValue else { return }
+            let now = Date()
+            if oldValue == nil { hardwareLiveSince = now }
             if Self.stripLeft(from: oldValue, to: hardware) { crossfadeNextProgram() }
-            let result = ScreenBarNotices.hardware(from: oldValue, to: hardware,
-                                                   recent: recentDeviceNotices, now: Date())
+            let settling = ScreenBarNotices.hardwareSettling(liveSince: hardwareLiveSince, now: now)
+            let result = ScreenBarNotices.hardware(from: settling ? nil : oldValue, to: hardware,
+                                                   recent: recentDeviceNotices, now: now)
             recentDeviceNotices = result.recent
             if noticeMonitorsRunning, let slot = result.slot { presentWingNotice(.right, slot: slot) }
         }
