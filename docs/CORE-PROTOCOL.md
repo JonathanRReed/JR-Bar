@@ -939,10 +939,10 @@ they fall through.
 
 Refusals on a held request: `stale_request` (the card's `request` is not the
 live one), `stale_ask` ("That ask was already answered from JR-Bar.", "JR-Bar's
-hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …") and
+hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …"),
 `unsupported` (an `always` with nothing to remember, an `answer` on an ask
-with no `choices` or with nothing held), `invalid_args` (`answers` that do
-not pick from the offered options for every question). A request the lane
+with no `choices` or with nothing held) and `invalid_args` (`answers` that
+do not pick from the offered options for every question). A request the lane
 does not hold goes through the checks above unchanged.
 
 ### subscribe
