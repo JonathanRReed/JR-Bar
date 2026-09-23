@@ -14,11 +14,14 @@ struct DataHoarderSourcesTests {
 
         #expect(sources.map(\.id) == [
             "codex-sessions", "codex-archived-sessions", "claude-projects",
+            "pi-sessions", "gemini-chats", "grok-sessions",
             ArchiveSource.cliProxyAPILogs,
         ])
         #expect(sources.map(\.root.path) == [
             "/tmp/codex-home/sessions", "/tmp/codex-home/archived_sessions",
-            "/tmp/claude-home/projects", "/tmp/proxy-logs",
+            "/tmp/claude-home/projects",
+            "/Users/example/.pi/agent/sessions", "/Users/example/.gemini/tmp", "/Users/example/.grok/sessions",
+            "/tmp/proxy-logs",
         ])
         #expect(sources.dropLast().allSatisfy { $0.extensions == ["jsonl"] })
         #expect(sources.last?.extensions == ["log"])
@@ -26,7 +29,9 @@ struct DataHoarderSourcesTests {
         let fallback = ArchiveSource.defaults(home: home, environment: [:])
         #expect(fallback.map(\.root.path) == [
             "/Users/example/.codex/sessions", "/Users/example/.codex/archived_sessions",
-            "/Users/example/.claude/projects", "/Users/example/.cli-proxy-api/logs",
+            "/Users/example/.claude/projects",
+            "/Users/example/.pi/agent/sessions", "/Users/example/.gemini/tmp", "/Users/example/.grok/sessions",
+            "/Users/example/.cli-proxy-api/logs",
         ])
 
         let tilde = ArchiveSource.defaults(
@@ -36,6 +41,7 @@ struct DataHoarderSourcesTests {
             "/Users/example/.alternate-codex/sessions",
             "/Users/example/.alternate-codex/archived_sessions",
             "/Users/example/.alternate-claude/projects",
+            "/Users/example/.pi/agent/sessions", "/Users/example/.gemini/tmp", "/Users/example/.grok/sessions",
             "/Users/example/.cli-proxy-api/logs",
         ])
     }

@@ -2,10 +2,18 @@ import AppKit
 import SwiftUI
 
 /// A standard titled window for the event Replay surface.
+///
+/// History now owns the event journal (its Events tab: the same list with
+/// category chips, search and click-through to the session), so when the
+/// app wires `redirect` every way into Event Replay lands there instead —
+/// one view of the journal, not two. The standalone window stays as the
+/// fallback when nothing is wired.
 @MainActor
 final class ReplayWindowController: NSObject, NSWindowDelegate {
     private let store: ReplayStore
     private var window: NSWindow?
+    /// Opens the journal where it lives now (History's Events tab).
+    var redirect: (@MainActor () -> Void)?
 
     init(store: ReplayStore) {
         self.store = store
@@ -13,6 +21,10 @@ final class ReplayWindowController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        if let redirect {
+            redirect()
+            return
+        }
         let window = self.window ?? makeWindow()
         self.window = window
         store.isOpen = true

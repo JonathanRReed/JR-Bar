@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -389,9 +390,13 @@ final class DataHoarderModel {
                     SessionReconstructor.reconstruct(segments: payloads, provider: provider,
                                                      epochFallback: epochFallback)
                 }.value
+                // The proxy's requests for the same session sit between
+                // the turns: retries and refusals the transcript never
+                // records.
+                let requests = await Self.proxyRequests(in: archive, records: related)
                 guard !Task.isCancelled, revision == detailRevision,
                       selectedID == id, requestedTrash == showTrash else { return }
-                reconstruction = rebuilt
+                reconstruction = rebuilt.withProxyRequests(requests)
             } catch {
                 guard !Task.isCancelled, revision == detailRevision else { return }
                 detailError = "Timeline unavailable: \(error.localizedDescription)"
@@ -572,6 +577,52 @@ final class DataHoarderModel {
                 error = nil
             } catch { self.error = error.localizedDescription }
         }
+    }
+
+    /// The selected transcript as a readable Markdown file — its
+    /// facts, what happened, the gaps and every rebuilt row, the proxy's
+    /// requests included — for a PR description or a postmortem. Written
+    /// from the timeline already rebuilt for the detail pane, so the file
+    /// says what the pane showed.
+    var canExportMarkdown: Bool {
+        detailKind == .transcript && reconstruction != nil && selected != nil && !busy
+    }
+
+    func exportMarkdown() {
+        guard canExportMarkdown, let record = selected, let reconstruction else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export as Markdown"
+        panel.message = "A readable copy of the rebuilt timeline. The archived file itself is unchanged."
+        panel.nameFieldStringValue = ((record.name as NSString).deletingPathExtension) + ".md"
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Data(Self.markdown(for: record, reconstruction: reconstruction).utf8).write(to: url, options: .atomic)
+            message = "Exported \(url.lastPathComponent)."
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// The Markdown for one archived record: the catalog's facts over the
+    /// shared renderer.
+    nonisolated static func markdown(for record: ArchiveRecord, reconstruction: SessionReconstruction,
+                                     generatedAt: Date = Date()) -> String {
+        let when = DateFormatter()
+        when.dateFormat = "yyyy-MM-dd HH:mm"
+        var facts: [SessionMarkdown.Fact] = []
+        if let provider = record.provider { facts.append(.init("Provider", SessionLabel.providerName(provider))) }
+        if let session = record.sessionID { facts.append(.init("Session", session)) }
+        if let project = record.project { facts.append(.init("Project", project)) }
+        if let model = record.model { facts.append(.init("Model", ModelName.display(model) ?? model)) }
+        if let started = record.startedAt { facts.append(.init("Started", when.string(from: started))) }
+        if let last = record.lastActivityAt { facts.append(.init("Last activity", when.string(from: last))) }
+        facts.append(.init("Archived file", record.name))
+        facts.append(.init("Capture", record.captureState.rawValue))
+        return SessionMarkdown.render(
+            title: record.title ?? record.name, facts: facts, reconstruction: reconstruction,
+            notes: ["From the Data Hoarder archive's hash-verified copy."], generatedAt: generatedAt)
     }
 
     func chooseArchiveExport() {
@@ -908,5 +959,84 @@ final class DataHoarderModel {
         if sourceInventories.contains(where: { $0.id == sourceID }) {
             selectedSources = [sourceID]
         }
+    }
+
+    // MARK: Archived timelines for other windows
+
+    /// The archived copy of a session's transcript, rebuilt — what the
+    /// Overview inspector shows when the live transcript was cleaned up or
+    /// moved. The newest Claude/Codex record filed under the session's id
+    /// wins; segment reads are hash-verified like every other archive read,
+    /// and the rebuild runs off-main. Nil when the archive never kept it.
+    nonisolated static func archivedTimeline(in archive: DataHoarderArchive,
+                                             sessionID: String) async -> (SessionReconstruction, ArchiveRecord)? {
+        guard !sessionID.isEmpty,
+              let records = try? await archive.relatedRecords(sessionID: sessionID),
+              let record = newestTranscript(in: records),
+              let provider = record.provider,
+              let payloads = try? await archive.segmentData(id: record.id) else { return nil }
+        let startedAt = record.startedAt
+        let rebuilt = await Task.detached(priority: .userInitiated) {
+            SessionReconstructor.reconstruct(segments: payloads, provider: provider, epochFallback: startedAt)
+        }.value
+        return (rebuilt.withProxyRequests(await proxyRequests(in: archive, records: records)), record)
+    }
+
+    /// The CLIProxyAPI requests a session's saved records include, parsed
+    /// off-main from hash-verified segments — the newest
+    /// `SessionProxyEvidence.requestLimit`, since a long session behind a
+    /// proxy logs one file per request. A record that no longer parses
+    /// is left out, never guessed at.
+    nonisolated static func proxyRequests(in archive: DataHoarderArchive,
+                                          records: [ArchiveRecord]) async -> [CLIProxyRequest] {
+        let proxied = records
+            .filter { $0.provider == "cliproxy" }
+            .sorted { ($0.lastActivityAt ?? $0.importedAt) > ($1.lastActivityAt ?? $1.importedAt) }
+            .prefix(SessionProxyEvidence.requestLimit)
+        guard !proxied.isEmpty else { return [] }
+        var logs: [Data] = []
+        for record in proxied {
+            guard !Task.isCancelled, let payloads = try? await archive.segmentData(id: record.id) else { continue }
+            var data = Data()
+            for payload in payloads { data.append(payload) }
+            logs.append(data)
+        }
+        let captured = logs
+        return await Task.detached(priority: .userInitiated) {
+            captured.compactMap(CLIProxyLogParser.parse)
+        }.value
+    }
+
+    /// History's transcript search: session uuid → the best readable
+    /// snippet, from full-text hits in Claude and Codex transcripts only
+    /// (a metadata hit on a folder name says nothing about what was said).
+    nonisolated static func transcriptHits(in archive: DataHoarderArchive, query: String,
+                                           limit: Int = 100) async -> [String: String] {
+        let filter = ArchiveSearchFilter(providers: ["claude", "codex"])
+        guard let results = try? await archive.search(query: query, filter: filter, limit: limit) else { return [:] }
+        var hits: [String: String] = [:]
+        for result in results where result.rank != nil {
+            guard let session = result.record.sessionID, !session.isEmpty, hits[session] == nil else { continue }
+            hits[session] = result.snippets.first.map(TranscriptSnippet.readable) ?? ""
+        }
+        return hits
+    }
+
+    /// The proxy's requests for one session id, for a timeline built
+    /// elsewhere (the Overview's live transcript).
+    nonisolated static func proxyRequests(in archive: DataHoarderArchive,
+                                          sessionID: String) async -> [CLIProxyRequest] {
+        guard !sessionID.isEmpty,
+              let records = try? await archive.relatedRecords(sessionID: sessionID) else { return [] }
+        return await proxyRequests(in: archive, records: records)
+    }
+
+    /// The transcript record a session's timeline should come from: a
+    /// Claude or Codex record (never a CLIProxyAPI request log), newest
+    /// activity first.
+    nonisolated static func newestTranscript(in records: [ArchiveRecord]) -> ArchiveRecord? {
+        records
+            .filter { $0.provider == "claude" || $0.provider == "codex" }
+            .max { ($0.lastActivityAt ?? $0.importedAt) < ($1.lastActivityAt ?? $1.importedAt) }
     }
 }

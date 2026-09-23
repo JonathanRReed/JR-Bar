@@ -28,7 +28,9 @@ import Testing
                 "file": "/t/a.jsonl",
             ],
             "interruptions": ["asked": 1, "blocked": 0, "completed": 1],
-            "artifacts": NSNull(), "model": NSNull(),
+            "artifacts": ["files": [["path": "src/app.py", "edits": 4], ["path": "README.md", "edits": 1]],
+                          "total": 2, "truncated": false],
+            "model": NSNull(),
             "gaps": [],
         ],
         "b": [
@@ -48,6 +50,22 @@ import Testing
     private func decode() throws -> CoreRunComparison {
         let data = try JSONSerialization.data(withJSONObject: Self.document)
         return try JSONDecoder().decode(CoreRunComparison.self, from: data)
+    }
+
+    @Test func filesTouchedDecodeAndDiffByPath() throws {
+        let doc = try decode()
+        let artifacts = try #require(doc.a.artifacts)
+        #expect(artifacts.files.map(\.path) == ["src/app.py", "README.md"])
+        #expect(artifacts.files.first?.edits == 4)
+        #expect(artifacts.total == 2 && !artifacts.truncated)
+        // No transcript read on side b: unknown, not empty.
+        #expect(doc.b.artifacts == nil)
+
+        let other = CoreRunArtifacts(files: [.init(path: "README.md"), .init(path: "docs/new.md", edits: 2)])
+        let diff = RunFileDiff(a: artifacts, b: other)
+        #expect(diff.both == ["README.md"])
+        #expect(diff.onlyA == ["src/app.py"])
+        #expect(diff.onlyB == ["docs/new.md"])
     }
 
     @Test func sidesAndSharedFactsDecode() throws {

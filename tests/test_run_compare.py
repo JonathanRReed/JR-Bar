@@ -89,7 +89,11 @@ def test_compare_aggregates_transcripts(tmp_path, monkeypatch):
     assert doc["shared"]["workspace"] is True
     assert doc["shared"]["model"] is None  # not tracked — never equal
     assert "not_a_controlled_benchmark" in doc["warnings"]
-    assert "artifacts_not_tracked" in doc["gaps"]
+    # Both transcripts were read and neither run edited a file: the
+    # inventory is known and empty, so the gap is gone.
+    assert a["artifacts"] == {"files": [], "total": 0, "truncated": False}
+    assert "artifacts_not_tracked" not in doc["gaps"]
+    assert "model_not_tracked" in doc["gaps"]
 
 
 def test_compare_missing_transcript_names_the_gap(tmp_path, monkeypatch):
@@ -106,6 +110,77 @@ def test_compare_missing_transcript_names_the_gap(tmp_path, monkeypatch):
     assert "unsupported_provider" in doc["b"]["gaps"]
     assert "different_providers" in doc["warnings"]
     assert "different_workspaces" in doc["warnings"]
+    assert doc["a"]["artifacts"] is None
+    assert "artifacts_not_tracked" in doc["gaps"]
+
+
+def test_files_touched_reads_claude_edit_tools(tmp_path, monkeypatch):
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    rows = _claude_rows()
+    rows.append({"type": "assistant", "uuid": "a3", "timestamp": "2026-09-13T10:01:00Z",
+                 "message": {"role": "assistant", "content": [
+                     {"type": "tool_use", "id": "t2", "name": "Edit",
+                      "input": {"file_path": "/tmp/work/src/app.py", "old_string": "a", "new_string": "b"}},
+                     {"type": "tool_use", "id": "t3", "name": "MultiEdit",
+                      "input": {"file_path": "/tmp/work/src/app.py", "edits": [{}, {}, {}]}},
+                     {"type": "tool_use", "id": "t4", "name": "Write",
+                      "input": {"file_path": str(tmp_path / "notes.md"), "content": "x"}},
+                     {"type": "tool_use", "id": "t5", "name": "Read",
+                      "input": {"file_path": "/tmp/work/README.md"}},
+                     {"type": "tool_use", "id": "t6", "name": "NotebookEdit",
+                      "input": {"notebook_path": "/elsewhere/n.ipynb"}},
+                 ]}})
+    # A session id of its own: transcript lookups are cached per id.
+    sid = "cccccccc-1111-2222-3333-444444444444"
+    _write(tmp_path / ".claude" / "projects" / "-tmp-work" / f"{sid}.jsonl", rows)
+    doc = compare_runs(
+        row_a={"id": "a", "provider": "claude", "cwd": "/tmp/work", "label": "A"},
+        row_b={"id": "b", "provider": "claude", "cwd": "/tmp/work", "label": "B"},
+        status_a=_status("a", session_id=sid),
+        status_b=_status("b", session_id="dddddddd-1111-2222-3333-444444444444"),
+        ledger_entries=[], id_a="a", id_b="b",
+    )
+    assert doc["a"]["artifacts"] == {
+        "files": [
+            {"path": "src/app.py", "edits": 4},
+            {"path": "/elsewhere/n.ipynb", "edits": 1},
+            {"path": "~/notes.md", "edits": 1},
+        ],
+        "total": 3,
+        "truncated": False,
+    }
+    # Side b's transcript is missing: its inventory is unknown, not empty.
+    assert doc["b"]["artifacts"] is None
+    assert "artifacts_not_tracked" in doc["gaps"]
+
+
+def test_files_touched_reads_codex_patch_headers(tmp_path):
+    from jrbar.run_compare import files_touched
+
+    patch = "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-x\n+y\n*** Add File: docs/new.md\n+hi\n*** End Patch"
+    rows = [
+        {"type": "response_item", "payload": {"type": "function_call", "name": "apply_patch",
+                                              "arguments": json.dumps({"input": patch})}},
+        {"type": "response_item", "payload": {"type": "custom_tool_call", "name": "apply_patch",
+                                              "input": "*** Begin Patch\n*** Update File: /w/src/a.rs\n*** End Patch"}},
+        {"type": "response_item", "payload": {"type": "function_call", "name": "shell",
+                                              "arguments": json.dumps({"command": ["bash", "-lc", "apply_patch <<'EOF'\n*** Delete File: old.txt\n*** End Patch\nEOF"]})}},
+        {"type": "response_item", "payload": {"type": "message", "role": "assistant",
+                                              "content": [{"type": "output_text", "text": "*** Update File: not-a-call.txt"}]}},
+    ]
+    path = tmp_path / "rollout.jsonl"
+    _write(path, rows)
+    result = files_touched("codex", path, "/w")
+    assert result == {
+        "files": [
+            {"path": "src/a.rs", "edits": 2},
+            {"path": "docs/new.md", "edits": 1},
+            {"path": "old.txt", "edits": 1},
+        ],
+        "total": 3,
+        "truncated": False,
+    }
+    assert files_touched("grok", path, "/w") is None
 
 
 def test_command_not_found_for_unknown_id():

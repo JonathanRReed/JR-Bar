@@ -582,6 +582,10 @@ public enum AgentGrouping: String, Codable, CaseIterable, Sendable {
     case provider
     /// No sections — one list in precedence order.
     case flat
+    /// One section per repository the sessions work in — several agents
+    /// in worktrees of one repo read as one project; ordered like
+    /// `provider`, by the best rank inside.
+    case project
 }
 
 /// One section of the Agent Overview card's list: a grouping key (the
@@ -632,6 +636,9 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
 
     public static let rowLimitRange: ClosedRange<Int> = 3...20
     public static let defaultRowLimit = 8
+    /// Provider id → how loud its agents may be (`AgentAlertRule`); a
+    /// provider with no entry follows the global notification settings.
+    public var alertRules: [String: AgentAlertRule] = [:]
 
     public init(enabled: Bool = true, grouping: AgentGrouping = .state,
                 showRemote: Bool = true, showEnded: Bool = true, showIdle: Bool = false,
@@ -653,6 +660,7 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, grouping, showRemote, showEnded, showIdle, showElapsed, quietWhenPaneFrontmost, rowLimit
+        case alertRules
     }
 
     public init(from decoder: any Decoder) throws {
@@ -666,6 +674,7 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
         quietWhenPaneFrontmost = (try? c.decodeIfPresent(Bool.self, forKey: .quietWhenPaneFrontmost)) ?? true
         rowLimit = Self.clampedRowLimit(
             (try? c.decodeIfPresent(Int.self, forKey: .rowLimit)) ?? Self.defaultRowLimit)
+        alertRules = (try? c.decodeIfPresent([String: AgentAlertRule].self, forKey: .alertRules)) ?? [:]
     }
 }
 
@@ -727,7 +736,8 @@ extension AgentOrganizerSettings {
     /// Group order follows the precedence of what's inside, so a
     /// provider whose top row is waiting leads one whose top row is
     /// done; inside a group the list order stands.
-    public func grouped(_ sessions: [CoreSession], asks: [CoreAsk]) -> [AgentSessionGroup] {
+    public func grouped(_ sessions: [CoreSession], asks: [CoreAsk],
+                        project: (CoreSession) -> String? = { AgentProject.name(of: $0.cwd) }) -> [AgentSessionGroup] {
         let pinned = Self.pinnedAsks(asks)
         let rows = filtered(sessions, asks: asks)
         guard !rows.isEmpty else { return [] }
@@ -746,6 +756,20 @@ extension AgentOrganizerSettings {
                     guard let members = byActivity[activity], !members.isEmpty else { return nil }
                     return AgentSessionGroup(key: activity.rawValue, title: activity.word, sessions: members)
                 }
+        case .project:
+            var byProject: [String: [CoreSession]] = [:]
+            for session in rows {
+                byProject[project(session) ?? "", default: []].append(session)
+            }
+            return byProject.map { name, members in
+                AgentSessionGroup(key: "project:\(name)", title: name.isEmpty ? "No folder" : name, sessions: members)
+            }
+            .sorted { a, b in
+                let ra = a.sessions.map { Self.rank(of: $0, pinnedAsk: pinned[$0.id]) }.min() ?? .max
+                let rb = b.sessions.map { Self.rank(of: $0, pinnedAsk: pinned[$0.id]) }.min() ?? .max
+                if ra != rb { return ra < rb }
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
         case .provider:
             var byProvider: [String: [CoreSession]] = [:]
             for session in rows {

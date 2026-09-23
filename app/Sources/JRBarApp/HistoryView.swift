@@ -2,11 +2,34 @@ import JRBarCore
 import SwiftUI
 
 /// The History window: an away banner, a filter bar, and the rows grouped
-/// by day with a monospaced elapsed column.
+/// by day with a monospaced elapsed column — each row able to open its
+/// session's timeline in place — and, one tab over, the daemon's event
+/// journal (Event Replay's list, now filterable and clickable).
 struct HistoryView: View {
     @Bindable var store: HistoryStore
 
     var body: some View {
+        Group {
+            switch store.mode {
+            case .activity: activity
+            case .events: EventLogView(store: store)
+            }
+        }
+        .frame(minWidth: 560, minHeight: 360)
+        .font(.system(size: 13))
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("View", selection: $store.mode) {
+                    ForEach(HistoryStore.Mode.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .help("Activity: what happened to sessions · Events: the monitor's event journal for this run")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var activity: some View {
         VStack(spacing: 0) {
             if let away = store.away {
                 AwayBanner(summary: away, store: store)
@@ -53,8 +76,6 @@ struct HistoryView: View {
                 }
             }
         }
-        .frame(minWidth: 560, minHeight: 360)
-        .font(.system(size: 13))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -126,7 +147,8 @@ struct HistoryFilterBar: View {
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.system(size: 12))
-                    TextField("Search sessions, details…", text: $store.filter.text)
+                    TextField(store.canSearchTranscripts ? "Search sessions, details, transcripts…" : "Search sessions, details…",
+                              text: $store.filter.text)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                     if !store.filter.text.isEmpty {
@@ -146,6 +168,18 @@ struct HistoryFilterBar: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                if let day = store.filter.day {
+                    // A day the Overview's heatmap sent here: one chip,
+                    // and clicking it lets every day back in.
+                    FilterChip(selected: true, accent: .accentColor) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar").font(.system(size: 9, weight: .bold))
+                            Text(HistoryDayParse.title(day))
+                            Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        }
+                    } action: { store.filter.day = nil }
+                    .help("Showing one day — click to show every day")
+                }
                 ForEach(store.providers, id: \.self) { provider in
                     let style = ProviderStyle.style(for: provider, document: store.document)
                     FilterChip(selected: store.filter.providers.contains(provider), accent: style.accent) {
@@ -265,8 +299,70 @@ struct HistoryRowView: View {
     /// Only a session still live in the daemon's state can be opened; an
     /// ended row keeps its history but loses the affordance.
     private var openable: Bool { store.isLiveSession(row.session) }
+    /// The row can open its session's transcript timeline in place.
+    private var expandable: Bool { store.canExpand(row) }
+    private var expanded: Bool { store.expandedID == row.id }
 
     var body: some View {
+        VStack(spacing: 0) {
+            header
+            if expanded {
+                timeline
+                    .padding(.leading, 78)
+                    .padding(.trailing, 20)
+                    .padding(.vertical, 6)
+                    .transition(.opacity)
+            }
+            if !isLast {
+                Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 78).padding(.trailing, 16)
+            }
+        }
+    }
+
+    /// The row's session timeline — the same view the Overview inspector
+    /// and the Data Hoarder mount — capped in height with its own scroll,
+    /// so one long run never pushes the rest of the day out of reach.
+    @ViewBuilder
+    private var timeline: some View {
+        if let reconstruction = store.timeline(for: row) {
+            VStack(alignment: .leading, spacing: 6) {
+                ReconstructedTimelineView(reconstruction: reconstruction, viewState: store.expandedViewState,
+                                          landOnFailure: row.kind == "failed")
+                    .frame(height: 280)
+                if let session = row.session, store.onRevealSession != nil {
+                    Button("Open in Overview") { store.onRevealSession?(session) }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                        .help("The session's inspector: model, tokens, cost, the full timeline with older pages")
+                }
+            }
+        } else if store.isLoadingTimeline(row) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Reading the transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    /// The snippet with the index's « » markers turned into emphasis.
+    static func marked(_ snippet: String) -> AttributedString {
+        var out = AttributedString()
+        var emphasised = false
+        var run = ""
+        func flush() {
+            var piece = AttributedString(run)
+            if emphasised { piece.inlinePresentationIntent = .stronglyEmphasized; piece.foregroundColor = .primary }
+            out.append(piece)
+            run = ""
+        }
+        for character in snippet {
+            if character == "«" { flush(); emphasised = true } else if character == "»" { flush(); emphasised = false } else { run.append(character) }
+        }
+        flush()
+        return out
+    }
+
+    private var header: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 10) {
                 Text(HistoryStore.clock(row.date))
@@ -286,7 +382,16 @@ struct HistoryRowView: View {
                             Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Newer than your last visit here")
                         }
                     }
-                    if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle {
+                    if let snippet = store.transcriptSnippet(for: row) {
+                        // Found in what was said, not in the row's own
+                        // words: the archive's snippet, matches marked.
+                        HStack(spacing: 4) {
+                            Image(systemName: "text.magnifyingglass").font(.system(size: 9))
+                            Text(Self.marked(snippet)).lineLimit(1).truncationMode(.tail)
+                        }
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .help("Said in the archived transcript")
+                    } else if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle {
                         Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     } else {
                         Text(style.name).font(.system(size: 11)).foregroundStyle(.tertiary)
@@ -300,29 +405,228 @@ struct HistoryRowView: View {
                 Image(systemName: "arrow.up.forward.square")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
                     .opacity(hovering && openable ? 1 : 0)
+                if expandable {
+                    Button {
+                        store.toggleExpanded(row)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                            .foregroundStyle(expanded ? .secondary : .tertiary)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(expanded ? "Close the timeline (←)" : "Show what the session did (→ or Space)")
+                    .accessibilityLabel(expanded ? "Hide timeline" : "Show timeline")
+                } else {
+                    Color.clear.frame(width: 16, height: 16)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(selected ? Color.accentColor.opacity(0.12)
-                                   : (hovering && openable ? Color.primary.opacity(0.05) : Color.clear))
+                                   : (hovering && (openable || expandable) ? Color.primary.opacity(0.05) : Color.clear))
             )
             .padding(.horizontal, 8)
-            if !isLast {
-                Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 78).padding(.trailing, 16)
-            }
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        // A row whose session is gone from the daemon has nothing to open.
-        .onTapGesture { if openable { store.open(row) } }
+        // A live session opens in its terminal; an ended one that kept a
+        // transcript opens its timeline in place instead of doing nothing.
+        .onTapGesture {
+            if openable { store.open(row) } else if expandable { store.toggleExpanded(row) }
+        }
         .help(openable
               ? "Open the session"
-              : "Ended; the session is gone from the daemon so there is nothing to open")
+              : (expandable ? "Ended — click to see what it did"
+                            : "Ended; the session is gone from the daemon so there is nothing to open"))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))")
     }
+}
+
+/// The daemon's event journal for this run — Event Replay's list, folded
+/// into History: category chips (asks, runs, failures, escalation, quota,
+/// devices), a search, and click-through to the session in the Overview.
+/// It stays read-only and says so: nothing here re-fires an event, and the
+/// live attention count is its own labeled fact, never implied by a row.
+struct EventLogView: View {
+    @Bindable var store: HistoryStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            banner
+            chips
+            Divider()
+            if store.replay.events.isEmpty {
+                OverviewEmptyState(
+                    symbol: "clock.arrow.circlepath",
+                    title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : "Monitor not connected",
+                    text: store.isLive
+                        ? "The journal holds the events the monitor published since it started."
+                        : "The event journal lives in the monitor. It appears when the socket is live.")
+            } else if store.events.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                    Button("Clear filter") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).font(.system(size: 12))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(store.events) { event in
+                    EventLogRow(event: event, store: store)
+                }
+                .listStyle(.inset)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    Task { await store.replay.load() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .help("Re-read the journal")
+                .disabled(!store.isLive || store.replay.loading)
+            }
+        }
+    }
+
+    private var banner: some View {
+        HStack(spacing: 10) {
+            Label("Events", systemImage: "clock.arrow.circlepath")
+                .font(.system(size: 10, weight: .bold))
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Color.secondary.opacity(0.14), in: .capsule)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Events: historical, read only")
+            Text("This run's journal · \(store.replay.retained) retained" +
+                 (store.replay.dropped > 0 ? " · \(store.replay.dropped) dropped" : "") +
+                 (store.replay.resyncRequired ? " · resync required" : ""))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            if store.replay.liveAttention > 0 {
+                Label("\(store.replay.liveAttention) need you now — live", systemImage: "exclamationmark.bubble")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.orange)
+            }
+            if let error = store.replay.error {
+                Text(error).font(.system(size: 10)).foregroundStyle(.red).lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var chips: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.system(size: 12))
+                TextField("Search events…", text: $store.eventFilter.text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.primary.opacity(0.06)))
+            .frame(maxWidth: 220)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(store.eventCategories) { category in
+                        FilterChip(selected: store.eventFilter.categories.contains(category),
+                                   accent: EventLogStyle.color(category)) {
+                            HStack(spacing: 4) {
+                                Image(systemName: EventLogStyle.symbol(category)).font(.system(size: 9, weight: .bold))
+                                Text("\(category.word) \(store.eventCount(category))").monospacedDigit()
+                            }
+                        } action: { store.toggleEventCategory(category) }
+                    }
+                    if !store.eventFilter.isEmpty {
+                        Button("Clear") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).font(.system(size: 11))
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+}
+
+struct EventLogRow: View {
+    let event: CoreEvent
+    @Bindable var store: HistoryStore
+
+    private var category: EventLogCategory { EventLogCategory.of(event.kind) }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(event.at.map { EventLogStyle.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 64, alignment: .leading)
+            Image(systemName: EventLogStyle.symbol(category))
+                .font(.system(size: 10))
+                .foregroundStyle(EventLogStyle.color(category))
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(LightLog.text(for: event))
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                if let detail = event.detail ?? event.message, !detail.isEmpty, detail != event.label {
+                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer()
+            Text(event.kind).font(.system(size: 9, design: .monospaced)).foregroundStyle(.quaternary).lineLimit(1)
+            if store.canReveal(event) {
+                Button {
+                    store.reveal(event)
+                } label: {
+                    Image(systemName: "arrow.up.forward.square").font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Show this session in the Overview")
+                .accessibilityLabel("Show in Overview")
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+enum EventLogStyle {
+    static func symbol(_ category: EventLogCategory) -> String {
+        switch category {
+        case .asks: return "questionmark.bubble"
+        case .runs: return "checkmark.circle"
+        case .failures: return "xmark.octagon"
+        case .escalation: return "bell.badge"
+        case .quota: return "gauge.with.dots.needle.67percent"
+        case .devices: return "cable.connector"
+        case .other: return "circle"
+        }
+    }
+
+    static func color(_ category: EventLogCategory) -> Color {
+        switch category {
+        case .asks: return .orange
+        case .runs: return .green
+        case .failures: return .red
+        case .escalation: return .orange
+        case .quota: return .purple
+        case .devices: return .blue
+        case .other: return .secondary
+        }
+    }
+
+    static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter
+    }()
 }
 
 struct KindBadge: View {

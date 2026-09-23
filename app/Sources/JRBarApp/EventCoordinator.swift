@@ -21,6 +21,10 @@ final class EventCoordinator {
     /// The Agent utility's "quiet while the ask's pane is in front"
     /// setting, wired by the delegate; on by default.
     var quietWhenPaneFrontmost: @MainActor () -> Bool = { true }
+    /// The Agent utility's per-provider alert rules, applied to what
+    /// `EventPolicy` decided before anything plays; wired by the delegate,
+    /// a pass-through until then.
+    var deliveryRules: @MainActor (EventDelivery, CoreEvent) -> EventDelivery = { delivery, _ in delivery }
     /// The frontmost-app read, injectable so tests can stage the pane.
     var frontmostApp: @MainActor () -> (bundleID: String?, pid: Int32?) = {
         let app = NSWorkspace.shared.frontmostApplication
@@ -90,8 +94,8 @@ final class EventCoordinator {
 
     func handle(_ event: CoreEvent) {
         let settings = core.settings.map { SettingsDocument($0.document) }
-        let delivery = EventPolicy.delivery(for: event, state: core.state, settings: settings,
-                                            askingFrontmost: askingPaneFrontmost(sessionID: event.session))
+        let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
+                                                          askingFrontmost: askingPaneFrontmost(sessionID: event.session)), event)
         if event.kind == "escalation_stage" { lastEscalation = event }
         apply(delivery, for: event)
         var summary = "event \(event.kind)"
@@ -178,8 +182,8 @@ final class EventCoordinator {
     private func reapplyEscalationNoise() {
         guard let event = lastEscalation, asksStillOpen else { return }
         let settings = core.settings.map { SettingsDocument($0.document) }
-        let delivery = EventPolicy.delivery(for: event, state: core.state, settings: settings,
-                                            askingFrontmost: askingPaneFrontmost(sessionID: event.session))
+        let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
+                                                          askingFrontmost: askingPaneFrontmost(sessionID: event.session)), event)
         if let pulse = delivery.statusPulse, pulse != isPulsing {
             isPulsing = pulse
             onStatusPulse?(pulse)

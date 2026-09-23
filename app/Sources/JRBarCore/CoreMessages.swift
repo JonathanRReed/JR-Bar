@@ -620,7 +620,8 @@ public struct CoreTimelinePage: Codable, Hashable, Sendable {
 /// One side of a `compare_sessions` document: the roster row's axes,
 /// the transcript aggregate, and the ledger's interruption counts.
 /// `activity` is nil with a named gap when no transcript exists;
-/// `artifacts`/`model` are always nil — neither is tracked (S7.3).
+/// `artifacts` is the files the run's edit tools named once its
+/// transcript was read (nil otherwise); `model` is always nil.
 public struct CoreRunSide: Codable, Hashable, Sendable {
     public var id: String
     public var label: String?
@@ -632,11 +633,12 @@ public struct CoreRunSide: Codable, Hashable, Sendable {
     public var remote: Bool
     public var activity: CoreRunActivity?
     public var interruptions: CoreRunInterruptions
+    public var artifacts: CoreRunArtifacts?
     public var gaps: [String]
 
     enum CodingKeys: String, CodingKey {
         case id, label, provider, cwd, lifecycle, mode, axes, remote
-        case activity, interruptions, gaps
+        case activity, interruptions, artifacts, gaps
     }
 
     public init(from decoder: Decoder) throws {
@@ -652,6 +654,7 @@ public struct CoreRunSide: Codable, Hashable, Sendable {
         activity = try? c.decodeIfPresent(CoreRunActivity.self, forKey: .activity)
         interruptions = (try? c.decodeIfPresent(CoreRunInterruptions.self, forKey: .interruptions))
             ?? CoreRunInterruptions()
+        artifacts = try? c.decodeIfPresent(CoreRunArtifacts.self, forKey: .artifacts)
         gaps = (try? c.decodeIfPresent([String].self, forKey: .gaps)) ?? []
     }
 }

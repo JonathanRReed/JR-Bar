@@ -6,23 +6,36 @@ transcript-derived activity (message/tool counts, tool failures and
 retries, span), and the activity ledger's interruption rows (asks,
 blocks, completions observed for that agent id).
 
+Each side's ``artifacts`` is the files its edit tools named, read from
+each tool call's own input in the transcript (Claude Edit/Write/
+MultiEdit/NotebookEdit ``file_path``; Codex ``*** Add/Update/Delete
+File:`` patch headers) -- what the run asked to change, not a diff of
+the working tree; ``None`` with ``artifacts_not_tracked`` when a
+transcript was not read.
+
 What it deliberately does not do: model attribution (the roster does
 not track per-session model — ``shared.model`` is ``None``, not a
-guess), artifact inventories (no per-session file tracking exists —
-named as a gap), and benchmark claims — the document carries
+guess) and benchmark claims — the document carries
 ``not_a_controlled_benchmark`` in ``warnings`` because uncontrolled
 speed/cost numbers are not a fair model comparison.
 """
 
 from __future__ import annotations
 
+import json
+import re
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from pathlib import Path
 from typing import Any, Final
 
-from .session_timeline import find_transcript, timeline_items
+from .session_timeline import TIMELINE_MAX_BYTES, _iter_lines, find_transcript, timeline_items
 
 COMPARE_SCHEMA: Final = 1
+FILES_TOUCHED_MAX: Final = 200
+_CLAUDE_EDIT_TOOLS: Final = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+_CODEX_CALL_TYPES: Final = frozenset({"function_call", "custom_tool_call", "local_shell_call"})
+_PATCH_HEADER: Final = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$", re.MULTILINE)
 
 
 def _epoch(value: Any) -> float | None:
@@ -101,6 +114,102 @@ def _timeline_aggregate(
     return aggregate, None
 
 
+def _strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+
+
+def _claude_edits(row: dict[str, Any]) -> Iterator[tuple[str, int]]:
+    if row.get("type") != "assistant":
+        return
+    message = row.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        if block.get("name") not in _CLAUDE_EDIT_TOOLS:
+            continue
+        data = block.get("input")
+        if not isinstance(data, dict):
+            continue
+        path = data.get("file_path") or data.get("notebook_path")
+        if isinstance(path, str) and path.strip():
+            edits = data.get("edits")
+            yield path.strip(), len(edits) if isinstance(edits, list) and edits else 1
+
+
+def _codex_edits(row: dict[str, Any]) -> Iterator[tuple[str, int]]:
+    payload = row.get("payload")
+    if not isinstance(payload, dict) or payload.get("type") not in _CODEX_CALL_TYPES:
+        return
+    for text in _strings({key: payload.get(key) for key in ("arguments", "input", "action")}):
+        candidates = [text]
+        if text.lstrip().startswith(("{", "[")):
+            try:
+                candidates = list(_strings(json.loads(text)))
+            except ValueError:
+                pass
+        for candidate in candidates:
+            for match in _PATCH_HEADER.finditer(candidate):
+                yield match.group(1), 1
+
+
+def _display_path(raw: str, cwd: str | None) -> str:
+    """Relative to the run's folder when inside it; the home folder as ~."""
+    path = raw.strip()
+    if cwd:
+        root = cwd.rstrip("/") + "/"
+        if path.startswith(root):
+            return path[len(root):]
+    home = str(Path.home())
+    if path == home or path.startswith(home + "/"):
+        return "~" + path[len(home):]
+    return path
+
+
+def files_touched(provider: str | None, path: Path, cwd: str | None) -> dict[str, Any] | None:
+    """The files a run's edit tools named, most-edited first, capped at
+    ``FILES_TOUCHED_MAX``; ``None`` for a transcript too large to read or
+    a provider whose edit calls are not read."""
+    if provider not in ("claude", "codex"):
+        return None
+    try:
+        if path.stat().st_size > TIMELINE_MAX_BYTES:
+            return None
+    except OSError:
+        return None
+    reader = _claude_edits if provider == "claude" else _codex_edits
+    marker = '"tool_use"' if provider == "claude" else '"payload"'
+    counts: dict[str, int] = {}
+    for line in _iter_lines(path):
+        if marker not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        for raw, edits in reader(row):
+            key = _display_path(raw, cwd)
+            if key:
+                counts[key] = counts.get(key, 0) + edits
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {
+        "files": [{"path": name, "edits": edits} for name, edits in ordered[:FILES_TOUCHED_MAX]],
+        "total": len(ordered),
+        "truncated": len(ordered) > FILES_TOUCHED_MAX,
+    }
+
+
 def _interruptions(
     ledger_entries: Iterable[Any],
     agent_id: str,
@@ -134,6 +243,7 @@ def run_side(
     session_id = getattr(status, "session_id", None)
     cwd = row.get("cwd") or getattr(status, "cwd", None)
     activity, gap = _timeline_aggregate(provider, session_id, cwd)
+    artifacts = files_touched(provider, Path(activity["file"]), cwd) if activity else None
     gaps: list[str] = [gap] if gap else []
     if roster_row is None:
         gaps.append("not_in_roster")
@@ -148,9 +258,10 @@ def run_side(
         "remote": bool(row.get("remote")),
         "activity": activity,
         "interruptions": _interruptions(ledger_entries, agent_id),
-        # No per-session artifact or model tracking exists — reported
-        # as absent, never fabricated (S7.3).
-        "artifacts": None,
+        # What the run's edit tools named; absent, never fabricated,
+        # when its transcript was not read (S7.3).
+        "artifacts": artifacts,
+        # The roster tracks no per-session model (session_usage does).
         "model": None,
         "gaps": gaps,
     }
@@ -194,10 +305,7 @@ def compare_runs(
         },
         "warnings": warnings,
         "gaps": [
-            gap
-            for gap in (
-                "artifacts_not_tracked",
-                "model_not_tracked",
-            )
+            *(["artifacts_not_tracked"] if side_a["artifacts"] is None or side_b["artifacts"] is None else []),
+            "model_not_tracked",
         ],
     }

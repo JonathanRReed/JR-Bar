@@ -433,6 +433,14 @@ struct ProviderUsageCard: View {
                 .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
+                // The verdict first, as a word you can read across the
+                // room; the sentence after it says why.
+                Text(forecast.verdictWord())
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Self.verdictTint(forecast).opacity(0.15), in: Capsule())
+                    .foregroundStyle(Self.verdictTint(forecast))
                 Text(forecast.headline(now: store.now))
                     .font(.callout.weight(forecast.isCritical ? .medium : .regular))
                     .foregroundStyle(forecast.isCritical ? .primary : .secondary)
@@ -441,9 +449,59 @@ struct ProviderUsageCard: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                burnersList(window: window)
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Amber for a run-out, red for used up, the provider's accent for a
+    /// reset that comes first, grey for "no pace" states.
+    static func verdictTint(_ forecast: UsageForecast) -> Color {
+        switch forecast.verdict {
+        case .exhausted: return .red
+        case .runsOut: return .orange
+        case .comfortable: return forecast.heldIdle ? .secondary : .green
+        case .unknown, .guarded, .unmeasured: return .secondary
+        }
+    }
+
+    /// "Burning this window": this Mac's sessions of the provider ranked by
+    /// what they spent since the headline window opened — the share is of
+    /// what this Mac can see, never of the provider's percentage.
+    @ViewBuilder
+    private func burnersList(window: CoreUsageWindow) -> some View {
+        let burners = store.burners(for: provider)
+        if !burners.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Burning the \(window.shortName) window here")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
+                ForEach(burners) { burner in
+                    HStack(spacing: 6) {
+                        Text(burner.label)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 150, alignment: .leading)
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.primary.opacity(0.07))
+                                Capsule().fill(style.accent.opacity(0.6))
+                                    .frame(width: max(2, proxy.size.width * burner.share))
+                            }
+                        }
+                        .frame(width: 70, height: 4)
+                        Text("\(Int((burner.share * 100).rounded()))% · \(UsageFormat.tokens(burner.tokens))")
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .help("\(burner.label): \(UsageFormat.tokens(burner.tokens)) tokens since the \(window.longName) window opened — \(Int((burner.share * 100).rounded()))% of what this Mac's \(style.name) sessions spent in it")
+                }
+            }
+        }
     }
 
     /// Verdicts that mean "no number to show" rather than a pace: the
@@ -468,7 +526,11 @@ struct ProviderUsageCard: View {
         case .none: parts.append("A pace needs two readings a minute apart")
         }
         if let rate = forecast.rateText { parts.append("burning \(rate)") }
-        if let hint = PanelStore.paceHint(forecast.pace) { parts.append(hint) }
+        if let hint = PanelStore.paceHint(forecast.pace), !forecast.heldIdle { parts.append(hint) }
+        if let working = forecast.workingAgents, working > 0 {
+            parts.append("\(working) agent\(working == 1 ? "" : "s") working here")
+        }
+        if let room = SessionAwarePace.roomText(forecast, now: store.now.timeIntervalSince1970) { parts.append(room) }
         return parts.joined(separator: " · ")
     }
 
@@ -508,6 +570,15 @@ struct ProviderUsageCard: View {
                 .frame(height: 150)
             if scanning { ScanningNote() }
             costRow(history)
+            if !history.models.isEmpty {
+                UsageModelBreakdown(history: history, metric: store.metric, accent: style.accent)
+            }
+            if history.hours.contains(where: { $0.totalTokens > 0 }) {
+                UsagePunchCardView(history: history, accent: style.accent, window: primary, now: store.now)
+            }
+            if !history.activeDaysNewestFirst.isEmpty {
+                UsageDailyTable(history: history)
+            }
         } else if store.isLoading(provider) || scanning || history == nil {
             UsageSkeleton(scanning: scanning)
         } else {
@@ -878,11 +949,24 @@ struct QuotaRing: View {
     /// track with a dashed edge, never as an arc of zero.
     private var fraction: Double? { window.usedPct.map { min(1, max(0, $0 / 100)) } }
     private var color: Color { UsageColors.level(window.usedPct, accent: accent) }
+    /// Where the window lands at reset at this pace, as a fraction of the
+    /// ring — past 1 when it would run out first.
+    private var projected: Double? { forecast.projectedAtReset(now: now.timeIntervalSince1970).map { $0 / 100 } }
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
                 Circle().stroke(Color.primary.opacity(0.08), lineWidth: 7)
+                if let fraction, let projected, projected > fraction + 0.005 {
+                    // The ghost arc: where this window stands at the reset
+                    // if the pace holds — amber when it would not make it.
+                    Circle()
+                        .trim(from: fraction, to: min(1, projected))
+                        .stroke((projected > 1 ? Color.orange : color).opacity(0.3),
+                                style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(reduced ? .easeOut(duration: 0.15) : .spring(response: 0.6, dampingFraction: 0.8), value: projected)
+                }
                 if let fraction {
                     Circle()
                         .trim(from: 0, to: fraction)
@@ -919,7 +1003,9 @@ struct QuotaRing: View {
             }
         }
         .frame(width: 96)
-        .help(window.isUnknown ? "\(window.longName) window: the provider reports it without a number" : "\(window.longName) window: \(window.spokenPercent)")
+        .help(window.isUnknown ? "\(window.longName) window: the provider reports it without a number"
+              : "\(window.longName) window: \(window.spokenPercent)"
+                + (projected.map { " · at this pace \(Int(($0 * 100).rounded()))% by the reset" } ?? ""))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.longName) window \(window.spokenPercent), \(PanelStore.countdown(to: window.resetsAt, now: now) ?? "")")
     }
@@ -1095,6 +1181,191 @@ struct UsageChart: View {
         }
         .accessibilityLabel("\(metric == .tokens ? "Tokens" : "Cost") over the last \(range.days) days")
     }
+}
+
+/// "By model": the range's tokens (or dollars) split by the model each
+/// record ran on — why a week cost twice the last one, in one glance. The
+/// bars share one scale so a model's length is its share of the range.
+struct UsageModelBreakdown: View {
+    let history: UsageHistory
+    let metric: UsageCenterStore.Metric
+    let accent: Color
+
+    static let shown = 6
+
+    /// Each model's share of the range, by the metric the card leads with.
+    static func shares(_ models: [UsageHistoryModel], metric: UsageCenterStore.Metric) -> [(model: UsageHistoryModel, share: Double)] {
+        let value: (UsageHistoryModel) -> Double = { metric == .cost ? $0.costUsd : Double($0.tokens) }
+        let total = models.reduce(0) { $0 + value($1) }
+        guard total > 0 else { return models.map { ($0, 0) } }
+        return models
+            .sorted { value($0) != value($1) ? value($0) > value($1) : $0.model < $1.model }
+            .map { ($0, value($0) / total) }
+    }
+
+    var body: some View {
+        let rows = Self.shares(history.models, metric: metric)
+        VStack(alignment: .leading, spacing: 5) {
+            Text("By model").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(rows.prefix(Self.shown), id: \.model.id) { row in
+                HStack(spacing: 8) {
+                    Text(row.model.displayName)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .frame(width: 130, alignment: .leading)
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.07))
+                            Capsule().fill(accent.opacity(0.65))
+                                .frame(width: max(2, proxy.size.width * row.share))
+                        }
+                    }
+                    .frame(height: 5)
+                    Text("\(Int((row.share * 100).rounded()))%")
+                        .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                    Text(UsageFormat.tokens(row.model.tokens))
+                        .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .trailing)
+                    Text(row.model.priced ? (row.model.estimated ? "≈ " : "") + UsageFormat.cost(row.model.costUsd, currency: history.pricing?.currency ?? "USD") : "no price")
+                        .font(.caption2).monospacedDigit().foregroundStyle(row.model.priced ? .secondary : .tertiary)
+                        .frame(width: 64, alignment: .trailing)
+                }
+                .help("\(row.model.displayName) (\(row.model.model)): \(UsageFormat.tokens(row.model.tokens)) tokens in \(row.model.records) records"
+                      + (row.model.estimated ? " · priced at a stand-in rate" : "")
+                      + (row.model.priced ? "" : " · no price table — its dollars are not counted"))
+            }
+            if rows.count > Self.shown {
+                Text("and \(rows.count - Self.shown) more")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.top, 4)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// "When you burn it": the last week's hours as a weekday × hour punch
+/// card, with the headline window's current span outlined — the rhythm
+/// to plan a long run around the next reset by. Dots, not bars: each is
+/// one real hour of the week, sized by its share of the busiest hour.
+struct UsagePunchCardView: View {
+    let history: UsageHistory
+    let accent: Color
+    /// The window whose span is outlined (the card's headline window).
+    let window: CoreUsageWindow?
+    let now: Date
+
+    static let dot: CGFloat = 9
+
+    private var card: UsagePunchCard { UsagePunchCard.build(hours: history.hours) }
+
+    /// The cells the headline window has covered so far.
+    private var windowCells: Set<UsagePunchCard.Cell> {
+        guard let window, let resetsAt = window.resetsAt,
+              let span = UsageWindowLabel.windowSpan(id: window.key, name: window.name), span <= 24 * 3600 else { return [] }
+        return UsagePunchCard.cells(from: resetsAt - span, to: min(resetsAt, now.timeIntervalSince1970))
+    }
+
+    var body: some View {
+        let card = card
+        let outlined = windowCells
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("When you burn it").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if let window, !outlined.isEmpty {
+                    Text("· outlined: the current \(window.shortName) window")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            Grid(alignment: .center, horizontalSpacing: 2, verticalSpacing: 2) {
+                ForEach(0..<7, id: \.self) { weekday in
+                    GridRow {
+                        Text(card.weekdayLabels[weekday])
+                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .frame(width: 26, alignment: .trailing)
+                        ForEach(0..<24, id: \.self) { hour in
+                            let intensity = card.intensity(weekday, hour)
+                            ZStack {
+                                Circle().fill(Color.primary.opacity(0.05))
+                                if intensity > 0 {
+                                    Circle().fill(accent.opacity(0.35 + 0.6 * intensity))
+                                        .scaleEffect(0.35 + 0.65 * intensity)
+                                }
+                                if outlined.contains(UsagePunchCard.Cell(weekday: weekday, hour: hour)) {
+                                    Circle().strokeBorder(accent.opacity(0.8), lineWidth: 1)
+                                }
+                            }
+                            .frame(width: Self.dot, height: Self.dot)
+                            .help("\(card.weekdayLabels[weekday]) \(String(format: "%02d:00", hour)) · \(UsageFormat.tokens(card.cells[weekday][hour])) tokens")
+                        }
+                    }
+                }
+                GridRow {
+                    Text("").frame(width: 26)
+                    ForEach(0..<24, id: \.self) { hour in
+                        Text(hour % 6 == 0 ? "\(hour)" : "")
+                            .font(.system(size: 7)).foregroundStyle(.quaternary)
+                            .frame(width: Self.dot)
+                    }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Tokens by weekday and hour over the last week; busiest hour \(UsageFormat.tokens(card.peak)) tokens")
+        }
+        .padding(.top, 4)
+    }
+}
+
+/// "By day": ccusage's daily report — every day in the range that carried
+/// anything, newest first, with input, output, cache reads and the cost.
+/// Closed until opened; the chart above is the at-a-glance view.
+struct UsageDailyTable: View {
+    let history: UsageHistory
+    @ViewState private var open = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $open) {
+            Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 3) {
+                GridRow {
+                    Text("Day").gridColumnAlignment(.leading)
+                    Text("Input")
+                    Text("Output")
+                    Text("Cache reads")
+                    Text("Total")
+                    Text("Cost")
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                ForEach(history.activeDaysNewestFirst) { day in
+                    GridRow {
+                        Text(day.day.map { Self.dayTitle.string(from: $0) } ?? day.date)
+                            .gridColumnAlignment(.leading)
+                        Text(UsageFormat.tokens(day.tokensIn))
+                        Text(UsageFormat.tokens(day.tokensOut))
+                        Text(UsageFormat.tokens(day.cacheRead))
+                        Text(UsageFormat.tokens(day.totalTokens)).fontWeight(.medium)
+                        Text((history.costsApproximate ? "≈ " : "") + UsageFormat.cost(day.costUsd, currency: history.pricing?.currency ?? "USD"))
+                    }
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 4)
+            .textSelection(.enabled)
+        } label: {
+            Text("By day · \(history.activeDaysNewestFirst.count) active day\(history.activeDaysNewestFirst.count == 1 ? "" : "s")")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private static let dayTitle: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE d MMM"
+        return formatter
+    }()
 }
 
 /// The scan is still running behind a graph that is already drawn.

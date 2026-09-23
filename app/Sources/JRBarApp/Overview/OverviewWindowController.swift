@@ -15,6 +15,13 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
+    /// Opens on one session: History's event rows and timelines point
+    /// here for the inspector's model, cost and full timeline.
+    func show(selecting id: String) {
+        store.reveal(id)
+        show()
+    }
+
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window

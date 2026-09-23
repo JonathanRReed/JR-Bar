@@ -39,6 +39,13 @@ final class OverviewStore {
     /// set by the "+N workers" affordance on a parent row, cleared by
     /// the banner's × or any sidebar pick.
     var workerFilter: String?
+    /// A day the Usage pane's heatmap sent the roster to (local
+    /// midnight), with the provider row it was clicked on; rows whose
+    /// last activity fell on that day are listed. Cleared by the banner's
+    /// × or any sidebar pick.
+    var dayFilter: (day: Date, provider: String?)?
+    /// Opens History on one day — the same click, one window over.
+    var onOpenHistoryDay: ((Date) -> Void)?
     var savedFilters: [SavedOverviewFilter] = OverviewSavedFilters.load()
     /// The selected saved view's name while it is applied; an edit to the
     /// live filter clears the highlight without deleting the definition.
@@ -49,9 +56,86 @@ final class OverviewStore {
     /// The roster is a query surface: the daemon may retain things no
     /// event names, so absent events this is the cadence.
     static let refreshInterval: TimeInterval = 15
+    /// Per-session model, tokens, cost and context. Its own store until
+    /// the app delegate hands it the panel's, so the two share reads.
+    var sessionUsage: SessionUsageStore
+    /// How many rows, from the top of the current cut, get their usage
+    /// read — the table's first screenful and then some, never the
+    /// whole two-thousand-row record.
+    static let usageRowBudget = 48
 
     init(core: CoreModel) {
         self.core = core
+        self.sessionUsage = SessionUsageStore(core: core)
+    }
+
+    /// Reads usage for the rows the table leads with and the selection.
+    func refreshSessionUsage(force: Bool = false) {
+        var ids = rows.prefix(Self.usageRowBudget).map(\.id)
+        ids.append(contentsOf: selectedIDs)
+        sessionUsage.refresh(ids: ids, force: force)
+    }
+
+    func usage(for entry: CoreRosterEntry) -> SessionUsage? { sessionUsage.usage(for: entry.id) }
+
+    // MARK: Git (branch and worktree)
+
+    /// cwd → where it sits in git, for the Project column's branch and the
+    /// sidebar's Branches section. Read off the main thread after each
+    /// roster load; a cwd outside any repository simply has no entry.
+    private(set) var gitWorkspaces: [String: GitWorkspace] = [:]
+    /// Bumps when `gitWorkspaces` changes, so a branch cut re-filters.
+    private(set) var gitGeneration = 0
+    @ObservationIgnored private var gitLookedUp: Set<String> = []
+    @ObservationIgnored private var gitSweptAt = Date.distantPast
+    /// A branch can be switched under a running agent: forget the lookups
+    /// this often and read HEAD again.
+    static let gitRefreshInterval: TimeInterval = 60
+    /// The lookup, replaceable in tests.
+    @ObservationIgnored var gitResolver: @Sendable (String) -> GitWorkspace? = { GitWorkspace.resolve(cwd: $0) }
+
+    func workspace(for entry: CoreRosterEntry) -> GitWorkspace? {
+        guard !entry.session.remote, let cwd = entry.session.cwd else { return nil }
+        return gitWorkspaces[cwd]
+    }
+
+    func resolveGitWorkspaces(now: Date = Date()) {
+        if now.timeIntervalSince(gitSweptAt) >= Self.gitRefreshInterval {
+            gitLookedUp.removeAll()
+            gitSweptAt = now
+        }
+        let pending = Set(roster.filter { !$0.session.remote }.compactMap(\.session.cwd)).subtracting(gitLookedUp)
+        guard !pending.isEmpty else { return }
+        gitLookedUp.formUnion(pending)
+        let resolver = gitResolver
+        Task.detached(priority: .utility) { [weak self] in
+            var found: [String: GitWorkspace] = [:]
+            for cwd in pending { if let workspace = resolver(cwd) { found[cwd] = workspace } }
+            await self?.mergeGitWorkspaces(found, looked: pending)
+        }
+    }
+
+    func mergeGitWorkspaces(_ found: [String: GitWorkspace], looked: Set<String>) {
+        var next = gitWorkspaces
+        for cwd in looked { next[cwd] = found[cwd] }
+        guard next != gitWorkspaces else { return }
+        gitWorkspaces = next
+        gitGeneration &+= 1
+    }
+
+    /// The sidebar's Branches section: every "repo · branch" the roster's
+    /// rows sit on, offered only when branches actually tell rows apart —
+    /// one repository on two or more branches, or any linked worktree.
+    var branches: [String] {
+        let workspaces = roster.compactMap { workspace(for: $0) }
+        var keysByRepo: [String: Set<String>] = [:]
+        var linked = false
+        for workspace in workspaces {
+            keysByRepo[workspace.repositoryName, default: []].insert(workspace.branchKey)
+            linked = linked || workspace.isLinkedWorktree
+        }
+        guard linked || keysByRepo.values.contains(where: { $0.count > 1 }) else { return [] }
+        return keysByRepo.values.flatMap { $0 }.sorted()
     }
 
     // MARK: Connections
@@ -85,6 +169,7 @@ final class OverviewStore {
             peers: core.state?.peers ?? [], devices: core.state?.devices ?? [],
             providers: core.state?.usage?.providers ?? [],
             deck: core.state?.deck?.device,
+            hoarder: hoarderHealth,
             minute: Int(now.timeIntervalSince1970 / 60)
         )
         if let cached = linksCache, cached.key == key { return cached.value }
@@ -96,7 +181,8 @@ final class OverviewStore {
             stateAge: key.stateAge, stateStale: key.stateStale,
             localName: Host.current().localizedName ?? "This Mac",
             localSessions: key.localSessions, peers: key.peers,
-            devices: key.devices, providers: key.providers, deck: key.deck
+            devices: key.devices, providers: key.providers, deck: key.deck,
+            hoarder: key.hoarder
         ), now: now)
         linksCache = (key, value)
         return value
@@ -120,6 +206,7 @@ final class OverviewStore {
         var devices: [CoreDevice]
         var providers: [CoreProviderUsage]
         var deck: DeckDevice?
+        var hoarder: OverviewLinkage.HoarderHealth?
         var minute: Int
     }
     @ObservationIgnored private var linksCache: (key: LinksKey, value: [OverviewLink])?
@@ -159,6 +246,13 @@ final class OverviewStore {
         var search: String
         var sortDescription: String
         var workerFilter: String?
+        /// The Model and Cost columns sort on usage read after the rows
+        /// arrived; a new reading re-sorts.
+        var usageGeneration: Int
+        /// A branch cut filters on git lookups that land after the rows.
+        var gitGeneration: Int
+        var day: Date?
+        var dayProvider: String?
     }
     @ObservationIgnored private var derivedCache: (key: DerivedKey, value: DerivedResult)?
     /// Recompute count — a test hook proving the memo holds across
@@ -169,12 +263,19 @@ final class OverviewStore {
         let key = DerivedKey(
             roster: roster, filter: filter, search: search,
             sortDescription: sortOrder.map { "\($0.keyPath)|\($0.order)" }.joined(separator: ";"),
-            workerFilter: workerFilter
+            workerFilter: workerFilter,
+            usageGeneration: sortsByUsage ? sessionUsage.generation : 0,
+            gitGeneration: filter.preset == .thisBranch ? gitGeneration : 0,
+            day: dayFilter?.day, dayProvider: dayFilter?.provider
         )
         if let cached = derivedCache, cached.key == key { return cached.value }
         var result = DerivedResult()
+        let workspaces = gitWorkspaces
+        let branchKey: (String?) -> String? = { cwd in cwd.flatMap { workspaces[$0]?.branchKey } }
+        let day = dayFilter
         result.rows = roster.filter { row in
-            filter.matches(row)
+            (day.map { Self.activeOn($0.day, provider: $0.provider, row) } ?? true)
+                && filter.matches(row, branchKey: branchKey)
                 && (workerFilter == nil || row.session.parent == workerFilter)
                 && (search.isEmpty || OverviewStore.matchesSearch(row, search))
         }
@@ -200,6 +301,13 @@ final class OverviewStore {
     /// applies to the whole filtered set so a column click never lies
     /// about the order the daemon sent.
     var rows: [CoreRosterEntry] { derived.rows }
+
+    /// A Model or Cost column click: those orders move when a reading
+    /// lands, every other order does not.
+    private var sortsByUsage: Bool {
+        let usageKeys: [AnyKeyPath] = [\CoreRosterEntry.modelSortKey, \CoreRosterEntry.costSortKey]
+        return sortOrder.contains { comparator in usageKeys.contains { $0 == comparator.keyPath as AnyKeyPath } }
+    }
 
     /// Distinct project labels present in the roster, for the sidebar's
     /// "This project" section. Sorted; same-named roots differ by their
@@ -257,7 +365,10 @@ final class OverviewStore {
 
     private func tick() {
         now = Date()
+        probeHoarderIfDue()
         guard core.isLive else { return }
+        // Per id at most every `SessionUsageStore.freshFor`.
+        refreshSessionUsage()
         // The roster is a query surface: rows move with each collector
         // snapshot, not just named events — reload on events and every
         // `refreshInterval` regardless.
@@ -308,9 +419,102 @@ final class OverviewStore {
             coverageNote = document.coverage?["note"]?.stringValue
             loadedAt = Date()
             error = nil
+            resolveGitWorkspaces()
+            if let pending = pendingReveal, roster.contains(where: { $0.id == pending }) {
+                select(pending)
+            }
         } catch {
             self.error = Self.describe(error)
         }
+    }
+
+    // MARK: Live tail
+
+    /// A working run's present moment for the timeline's last row — the
+    /// panel's own hook fact ("running Bash", "compacting"); nil while it
+    /// is not working or the hook has said nothing honest.
+    nonisolated static func liveTail(for entry: CoreRosterEntry) -> String? {
+        let activity = SessionActivity.reduce(entry.session)
+        guard activity == .working, !entry.session.isRemote else { return nil }
+        return SessionRow.activityFact(session: entry.session, activity: activity)
+    }
+
+    // MARK: Archive capture health
+
+    /// The Data Hoarder's capture health for the connections strip — set
+    /// by the app delegate; answers nil while the utility is off, which
+    /// draws no archive chip.
+    var hoarderProbe: (() async -> OverviewLinkage.HoarderHealth?)?
+    private(set) var hoarderHealth: OverviewLinkage.HoarderHealth?
+    @ObservationIgnored private var hoarderProbedAt = Date.distantPast
+    @ObservationIgnored private var hoarderProbing = false
+    /// A capture is slow-moving; the strip asks this often.
+    static let hoarderProbeInterval: TimeInterval = 30
+
+    func probeHoarderIfDue(force: Bool = false) {
+        guard let hoarderProbe, !hoarderProbing,
+              force || now.timeIntervalSince(hoarderProbedAt) >= Self.hoarderProbeInterval else { return }
+        hoarderProbing = true
+        hoarderProbedAt = now
+        Task { [weak self] in
+            let health = await hoarderProbe()
+            guard let self else { return }
+            self.hoarderProbing = false
+            if self.hoarderHealth != health { self.hoarderHealth = health }
+        }
+    }
+
+    // MARK: A day from the heatmap
+
+    /// The heatmap's cell click: every row whose last activity fell on
+    /// that day (and, from a provider's row, that provider's), in the
+    /// roster pane.
+    func showDay(_ iso: String, provider: String?) {
+        guard let day = HistoryDayParse.date(iso) else { return }
+        pane = .roster
+        workerFilter = nil
+        activeSavedFilter = nil
+        filter = OverviewFilter(preset: .all)
+        search = ""
+        dayFilter = (day, provider == "all" ? nil : provider)
+    }
+
+    /// A row's last activity (`since`, the roster's last-event stamp)
+    /// fell on `day`, for `provider` when one is named.
+    nonisolated static func activeOn(_ day: Date, provider: String?, _ entry: CoreRosterEntry,
+                                     calendar: Calendar = .current) -> Bool {
+        guard let since = entry.session.since else { return false }
+        if let provider, entry.session.provider != provider { return false }
+        return calendar.isDate(Date(timeIntervalSince1970: since), inSameDayAs: day)
+    }
+
+    // MARK: Reveal
+
+    /// A session another window pointed at; selected as soon as the
+    /// roster that holds it has loaded.
+    @ObservationIgnored private var pendingReveal: String?
+
+    /// Show every row and select `id` — now if the roster already holds
+    /// it, else when the next load lands.
+    func reveal(_ id: String) {
+        pane = .roster
+        workerFilter = nil
+        dayFilter = nil
+        activeSavedFilter = nil
+        filter = OverviewFilter(preset: .all)
+        search = ""
+        selectedLinkID = nil
+        if roster.contains(where: { $0.id == id }) {
+            select(id)
+        } else {
+            pendingReveal = id
+        }
+    }
+
+    private func select(_ id: String) {
+        pendingReveal = nil
+        selectedID = id
+        selectedIDs = [id]
     }
 
     // MARK: Actions
@@ -362,15 +566,45 @@ final class OverviewStore {
         guard canCompare else { return }
         let pair = rows.filter { selectedIDs.contains($0.id) }.map(\.id)
         guard pair.count == 2 else { return }
+        compare(pair[0], pair[1])
+    }
+
+    private func compare(_ a: String, _ b: String) {
+        // The sheet's Model/Tokens/Cost rows read both sides' usage; ask
+        // now so they fill while the comparison is computed.
+        sessionUsage.refresh(ids: [a, b], force: true)
         comparing = true
         Task {
             defer { comparing = false }
             do {
-                comparison = try await core.compareRuns(pair[0], pair[1])
+                comparison = try await core.compareRuns(a, b)
             } catch {
                 self.error = Self.describe(error)
             }
         }
+    }
+
+    /// The run the common question compares against: the newest run in
+    /// the same folder that had already finished (done, ended or failed)
+    /// before this one last spoke — "was this attempt better than the
+    /// last one here?" without hunting for two rows.
+    func previousRun(for entry: CoreRosterEntry) -> CoreRosterEntry? {
+        guard !entry.session.remote, let cwd = entry.session.cwd, !cwd.isEmpty else { return nil }
+        let before = entry.session.since ?? .greatestFiniteMagnitude
+        return roster
+            .filter { candidate in
+                guard candidate.id != entry.id, !candidate.session.remote, candidate.session.kind == entry.session.kind,
+                      candidate.session.cwd == cwd else { return false }
+                let activity = SessionActivity.reduce(candidate.session)
+                return (activity == .done || activity == .ended || activity == .failed)
+                    && (candidate.session.since ?? 0) < before
+            }
+            .max { ($0.session.since ?? 0) < ($1.session.since ?? 0) }
+    }
+
+    func compareWithPreviousRun(_ entry: CoreRosterEntry) {
+        guard let previous = previousRun(for: entry) else { return }
+        compare(entry.id, previous.id)
     }
 
     // MARK: Actions on rows
@@ -626,14 +860,133 @@ final class OverviewStore {
     /// Fetch the export for preview (S7.4: preview, then destination).
     /// The same bytes the sheet shows are what Save writes — the preview
     /// is the artifact, not a sketch of one.
-    func prepareExport() async {
+    ///
+    /// By default the bundle is what the window shows: two or more
+    /// selected rows export as themselves, otherwise the rows the current
+    /// cut keeps (preset or saved view, project, workers, search). The
+    /// daemon narrows its roster and activity to those ids and names the
+    /// slice in the bundle's gaps. `everything` is the old whole-fleet
+    /// export, still one menu item away.
+    func prepareExport(everything: Bool = false) async {
+        let args = everything ? Self.exportArgs(ids: nil, view: nil) : exportScope.args
         do {
-            let json = try await core.exportAudit(scope: "all", format: "json")
-            let markdown = try await core.exportAudit(scope: "all", format: "markdown")
+            let json = try await exportAudit(args: args, format: "json")
+            let markdown = try await exportAudit(args: args, format: "markdown")
             exportPreview = (json.document, markdown.text ?? "")
         } catch {
             self.error = Self.describe(error)
         }
+    }
+
+    /// The ids and the view's name an on-screen export carries.
+    var exportScope: (args: [String: JSONValue], label: String) {
+        let selected = rows.filter { selectedIDs.contains($0.id) }
+        let slice = selected.count >= 2 ? selected : rows
+        let label = selected.count >= 2 ? "\(selected.count) selected rows of \(viewLabel)" : viewLabel
+        return (Self.exportArgs(ids: slice.map(\.id), view: label), label)
+    }
+
+    /// "Failed · JR-Bar/app · search “auth”" — the cut, in the sidebar's
+    /// words, for the export's scope line.
+    var viewLabel: String {
+        var parts: [String] = []
+        if let saved = activeSavedFilter {
+            parts.append("saved view “\(saved)”")
+        } else if filter.preset == .thisProject, let project = filter.project {
+            parts.append("project \(project)")
+        } else if filter.preset == .thisBranch, let branch = filter.branch {
+            parts.append("branch \(branch)")
+        } else {
+            parts.append(filter.preset.label)
+        }
+        if let parent = workerFilter {
+            let name = roster.first { $0.id == parent }.map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
+            parts.append("workers of \(name)")
+        }
+        if let day = dayFilter {
+            parts.append("active \(HistoryDayParse.title(day.day))" + (day.provider.map { " · \(SessionLabel.providerName($0))" } ?? ""))
+        }
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty { parts.append("search “\(query)”") }
+        return parts.joined(separator: " · ")
+    }
+
+    nonisolated static func exportArgs(ids: [String]?, view: String?) -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["scope": .string("all")]
+        if let ids { args["ids"] = .array(ids.map(JSONValue.string)) }
+        if let view { args["view"] = .string(view) }
+        return args
+    }
+
+    private func exportAudit(args: [String: JSONValue], format: String) async throws -> (document: JSONValue, text: String?) {
+        var args = args
+        args["format"] = .string(format)
+        let reply = try await core.send("audit_export", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "audit_export failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "audit_export: missing result")
+        }
+        return (result["document"] ?? .object([:]), result["text"]?.stringValue)
+    }
+
+    // MARK: Export this run
+
+    /// One run's Markdown, previewed before a destination is chosen: the
+    /// roster's and the transcript's facts over the timeline the
+    /// inspector shows (the archived copy when the live one is gone).
+    var runExportPreview: (name: String, markdown: String)?
+
+    func prepareRunExport(_ entry: CoreRosterEntry, generatedAt: Date = Date()) {
+        guard let markdown = runMarkdown(for: entry, generatedAt: generatedAt) else { return }
+        let base = (entry.session.label ?? entry.session.shortId ?? "session")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+            .joined(separator: "-").lowercased()
+        runExportPreview = ((base.isEmpty ? "session" : String(base.prefix(60))) + ".md", markdown)
+    }
+
+    /// The Markdown for a row whose timeline is loaded; nil otherwise.
+    func runMarkdown(for entry: CoreRosterEntry, generatedAt: Date = Date()) -> String? {
+        guard timelineSessionID == entry.id, let page = timelinePage, !entry.session.remote else { return nil }
+        let session = entry.session
+        let reconstruction: SessionReconstruction
+        var notes: [String] = []
+        if let archived = archivedTimeline, archived.id == entry.id {
+            reconstruction = archived.reconstruction
+            notes.append("From the Data Hoarder's archived copy (\(archived.record.name)); the live transcript is gone.")
+        } else {
+            reconstruction = timelineReconstruction
+            if page.hasMore {
+                notes.append("Only the rows loaded in the inspector are here; Load earlier there to include older ones.")
+            }
+        }
+        let when = DateFormatter()
+        when.dateFormat = "yyyy-MM-dd HH:mm"
+        var facts: [SessionMarkdown.Fact] = [.init("Provider", SessionLabel.providerName(session.provider))]
+        facts.append(.init("State", SessionActivity.reduce(session).word))
+        if let cwd = session.cwd { facts.append(.init("Folder", cwd)) }
+        if let head = workspace(for: entry)?.headLabel { facts.append(.init("Branch", head)) }
+        if let since = session.since { facts.append(.init("Last activity", when.string(from: Date(timeIntervalSince1970: since)))) }
+        if let usage = usage(for: entry) {
+            if let model = usage.modelName { facts.append(.init("Model", model)) }
+            if usage.tokens.total > 0 {
+                facts.append(.init("Tokens", "\(UsageFormat.tokens(usage.tokens.total)) in \(usage.turns) turn\(usage.turns == 1 ? "" : "s")"))
+            }
+            if let cost = usage.costText {
+                facts.append(.init("Cost", cost + " (API-equivalent estimate\(usage.costEstimated ? ", stand-in rate" : ""))"))
+            }
+            if let context = usage.contextText { facts.append(.init("Context", context)) }
+        } else if let model = transcriptModel {
+            facts.append(.init("Model", ModelName.display(model) ?? model))
+        }
+        facts.append(.init("Session", entry.id))
+        return SessionMarkdown.render(
+            title: SessionLabel.display(label: session.label, shortId: session.shortId, id: entry.id, provider: session.provider),
+            facts: facts, reconstruction: reconstruction, notes: notes, generatedAt: generatedAt)
+    }
+
+    func saveRunExport(to url: URL) throws {
+        guard let preview = runExportPreview else { return }
+        try Data(preview.markdown.utf8).write(to: url, options: .atomic)
     }
 
     /// Write the previewed document to the user-picked URL. Writing the
@@ -675,6 +1028,7 @@ final class OverviewStore {
         timelineLoading = true
         defer { timelineLoading = false }
         let fallback = timelineFallback(for: id)
+        archivedTimeline = nil
         do {
             let page = try await core.sessionTimeline(
                 id: id, provider: fallback.provider,
@@ -682,6 +1036,11 @@ final class OverviewStore {
             guard timelineSessionID == id else { return }
             timeline = page.events
             timelinePage = page
+            if page.gaps.contains("transcript_not_found") {
+                await loadArchivedTimeline(for: id)
+            } else {
+                await loadProxyEvidence(for: id)
+            }
         } catch {
             guard timelineSessionID == id else { return }
             timelinePage = CoreTimelinePage(gaps: [Self.describe(error)])
@@ -785,14 +1144,44 @@ final class OverviewStore {
     // MARK: Timeline kind filter + facts
 
     /// The inspector's kind chips: All / Messages / Tools / Errors —
-    /// a display cut over `timeline`, never a second fetch.
-    enum TimelineKindFilter: String, CaseIterable {
-        case all = "All"
-        case messages = "Messages"
-        case tools = "Tools"
-        case errors = "Errors"
+    /// a display cut over `timeline`, never a second fetch. The chips
+    /// are the shared timeline view's; its state object is the one source
+    /// of truth, so a chip click and this property never disagree.
+    typealias TimelineKindFilter = ReconstructedTimelineView.KindFilter
+    let timelineViewState = ReconstructedTimelineViewState()
+    var timelineKind: TimelineKindFilter {
+        get { timelineViewState.kind }
+        set { timelineViewState.kind = newValue }
     }
-    var timelineKind: TimelineKindFilter = .all
+
+    /// The loaded transcript as the shared timeline view draws it. A
+    /// running session's last row is mid-turn by definition, so its story
+    /// never calls that a death. Memoized on what it is built from.
+    var timelineReconstruction: SessionReconstruction {
+        let running = selected.map { entry -> Bool in
+            let activity = SessionActivity.reduce(entry.session)
+            return activity == .working || activity == .waiting || activity == .idle
+        } ?? false
+        let requests = proxyEvidence?.id == timelineSessionID ? proxyEvidence?.requests ?? [] : []
+        let key = TimelineReconstructionKey(
+            session: timelineSessionID, count: timeline.count, first: timeline.first?.seq,
+            last: timeline.last?.seq, gaps: timelinePage?.gaps ?? [], running: running,
+            requests: requests.count)
+        if let cached = timelineReconstructionCache, cached.key == key { return cached.value }
+        let value = SessionReconstructor.reconstruction(from: timeline, gaps: key.gaps, running: running)
+            .withProxyRequests(requests)
+        timelineReconstructionCache = (key, value)
+        return value
+    }
+    private struct TimelineReconstructionKey: Equatable {
+        var session: String?
+        var count: Int
+        var first, last: Int?
+        var gaps: [String]
+        var running: Bool
+        var requests: Int
+    }
+    @ObservationIgnored private var timelineReconstructionCache: (key: TimelineReconstructionKey, value: SessionReconstruction)?
 
     var filteredTimeline: [CoreTimelineItem] {
         switch timelineKind {
@@ -800,6 +1189,9 @@ final class OverviewStore {
         case .messages: return timeline.filter { $0.kind == "message" }
         case .tools: return timeline.filter { $0.kind == "tool_use" || $0.kind == "tool_result" }
         case .errors: return timeline.filter { $0.isError == true }
+        // Proxy requests ride on the reconstruction, never on the
+        // transcript's own items.
+        case .requests: return []
         }
     }
 
@@ -843,6 +1235,39 @@ final class OverviewStore {
         archiveStates[file] = await archiveProbe(file)
     }
 
+    /// Rebuilds a session's archived transcript by its uuid — set by the
+    /// app delegate to the Data Hoarder's reader; nil hides the fallback.
+    var archiveTimeline: ((String) async -> (SessionReconstruction, ArchiveRecord)?)?
+    /// The CLIProxyAPI requests the archive holds under a session uuid —
+    /// set by the app delegate; nil leaves the live timeline as it is.
+    var archiveProxyEvidence: ((String) async -> [CLIProxyRequest])?
+    /// The proxy evidence for the timeline on screen, keyed by row id.
+    private(set) var proxyEvidence: (id: String, requests: [CLIProxyRequest])?
+
+    /// The proxy's side of the selected run, when the archive kept it:
+    /// the live timeline interleaves those requests between its turns.
+    func loadProxyEvidence(for id: String) async {
+        guard let archiveProxyEvidence,
+              let entry = rows.first(where: { $0.id == id }) ?? roster.first(where: { $0.id == id }) else { return }
+        let requests = await archiveProxyEvidence(Self.archiveSearchTerm(for: entry))
+        guard timelineSessionID == id else { return }
+        proxyEvidence = (id, requests)
+    }
+    /// The archived copy standing in for a transcript that is gone: the
+    /// row it belongs to, the rebuilt timeline and the record it came from.
+    private(set) var archivedTimeline: (id: String, reconstruction: SessionReconstruction, record: ArchiveRecord)?
+
+    /// An ended session whose transcript was cleaned up or moved still has
+    /// a story when the Data Hoarder kept it: rebuild that copy and show it
+    /// in the same timeline view, labelled as the archive's.
+    func loadArchivedTimeline(for id: String) async {
+        guard let archiveTimeline,
+              let entry = rows.first(where: { $0.id == id }) ?? roster.first(where: { $0.id == id }) else { return }
+        let sessionID = Self.archiveSearchTerm(for: entry)
+        guard let found = await archiveTimeline(sessionID), timelineSessionID == id else { return }
+        archivedTimeline = (id, found.0, found.1)
+    }
+
     /// The term "Search archive for this session" seeds the hoarder
     /// with: the session's uuid tail — transcripts are filed under it,
     /// so a path/name/content search finds the same session's records.
@@ -853,54 +1278,74 @@ final class OverviewStore {
 
     // MARK: Topology (S7.5)
 
-    /// Imported Radar report summaries and the newest one's graph —
-    /// the static-topology lens behind the inspector. Imported edges
-    /// are `evidence: "static"` — labels, never live-call proof (T38).
+    /// Imported Radar report summaries, and the graphs loaded so far —
+    /// the static-topology lens, which now lives under the inspector's
+    /// Advanced disclosure. Imported edges are `evidence: "static"` —
+    /// labels, never live-call proof (T38).
     var radarReports: [CoreRadarSummary] = []
-    var radarReport: CoreRadarReport?
+    private(set) var radarGraphs: [String: CoreRadarReport] = [:]
     var radarLoaded = false
 
-    /// The newest report's graph, loaded once; the lens reads the
-    /// selected session's one-hop neighborhood from it.
+    /// The report summaries, loaded once; a graph is fetched only when a
+    /// selected row's repository has one.
     func loadRadarIfNeeded() async {
         guard !radarLoaded else { return }
         radarLoaded = true
         do {
             radarReports = try await core.listRadarReports()
-            if let newest = radarReports.first {
-                radarReport = try await core.radarReport(id: newest.id)
-            }
         } catch {
             // No reports is the common case — not an error surface.
             radarReports = []
         }
     }
 
-    /// The selected run's one-hop neighborhood: edges touching a node
-    /// named for the session's provider (or current tool). Evidence is
-    /// always "static" — the view labels it and nothing else consumes
-    /// it (T38).
-    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
-        guard let report = radarReport else { return [] }
-        var needles = [entry.session.provider.lowercased()]
-        if let tool = entry.session.tool?.lowercased() { needles.append(tool) }
-        return report.edges.filter { edge in
-            needles.contains {
-                edge.source.lowercased().contains($0)
-                    || edge.target.lowercased().contains($0)
-            }
+    /// The repository name a row's static topology is filed under: its
+    /// git repository when the lookup landed, else the cwd's folder.
+    func repositoryName(for entry: CoreRosterEntry) -> String? {
+        if let workspace = workspace(for: entry) { return workspace.repositoryName }
+        return entry.session.cwd.map { ($0 as NSString).lastPathComponent }
+    }
+
+    /// The imported report for this row's repository — never the newest
+    /// report of some other project, which is what the old lens showed.
+    func radarSummary(for entry: CoreRosterEntry) -> CoreRadarSummary? {
+        RadarReportMatch.pick(radarReports, repository: repositoryName(for: entry))
+    }
+
+    func radarReport(for entry: CoreRosterEntry) -> CoreRadarReport? {
+        radarSummary(for: entry).flatMap { radarGraphs[$0.id] }
+    }
+
+    func loadRadarReport(for entry: CoreRosterEntry) async {
+        await loadRadarIfNeeded()
+        guard let summary = radarSummary(for: entry), radarGraphs[summary.id] == nil else { return }
+        if let report = try? await core.radarReport(id: summary.id) {
+            radarGraphs[summary.id] = report
         }
+    }
+
+    /// The repository's static edges, first dozen. Evidence is always
+    /// "static" — the view labels it and nothing else consumes it (T38).
+    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
+        radarReport(for: entry)?.edges ?? []
     }
 
     func importRadarReport(path: String) async {
         do {
             _ = try await core.importRadarReport(path: path)
             radarLoaded = false
+            radarGraphs = [:]
             await loadRadarIfNeeded()
         } catch {
             self.error = Self.describe(error)
         }
     }
+
+    // MARK: Observed tools
+
+    /// The tools and MCP servers the selected run called, from its loaded
+    /// transcript — the observed half of the relationship lens.
+    var observedTools: ObservedToolMap { ObservedToolMap.build(from: timeline) }
 
     // MARK: Usage pane
 
@@ -1074,9 +1519,11 @@ extension CoreRosterEntry {
     var labelSortKey: String { session.label ?? session.shortId ?? "" }
     var projectSortKey: String { OverviewFilter.projectName(of: session.cwd) ?? "" }
     var stateSortKey: Int { sortRankKey }
-    /// No model data exists on the wire; a constant key keeps the column
-    /// sortable without pretending an order it does not have.
-    var modelSortKey: String { "" }
+    /// The model `session_usage` read from the run's transcript ("Opus
+    /// 4.5"); a row nobody has read sorts first, as "".
+    var modelSortKey: String { SessionUsageIndex.shared.model(for: id) ?? "" }
+    /// The run's cost estimate; unread or unpriced sorts below any price.
+    var costSortKey: Double { SessionUsageIndex.shared.cost(for: id) ?? -1 }
     var activitySortKey: String { session.event ?? session.tool ?? "" }
     /// `since` is the row's last-event stamp (updated_at), not a start
     /// time — the column is "Quiet": how long since the session last

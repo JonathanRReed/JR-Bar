@@ -35,6 +35,10 @@ struct SessionRow: Identifiable, Equatable {
     /// Where the session was launched from (`origin.label`: "VS Code",
     /// "cloud ingest"), shown as the subtitle's quiet "via …" tail.
     let originLabel: String?
+    /// The run's model, tokens, cost and context from its own transcript
+    /// (`session_usage`), once read; nil until then and for providers
+    /// whose transcripts are not read.
+    var usage: SessionUsage?
 
     init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil) {
         id = session.id
@@ -113,6 +117,11 @@ struct SessionRow: Identifiable, Equatable {
         if let originLabel {
             parts.append("via \(originLabel)")
         }
+        if let usage, usage.tokens.total > 0 {
+            // The cost on hover: the row itself only has room for the
+            // model name and the context hairline.
+            parts.append(usage.summary)
+        }
         if activity == .ended {
             parts.append("Went away without confirming it finished — the agent may have been closed or killed")
         }
@@ -150,6 +159,27 @@ struct SessionRow: Identifiable, Equatable {
     var isDismissible: Bool {
         guard ask == nil, !isRemote else { return false }
         return stale || activity == .idle || activity == .working || activity == .ended
+    }
+
+    /// Type-to-find: every word of `query` appears somewhere the row
+    /// shows or knows — label, provider, model, folder, the hook's last
+    /// word, the ask, the launcher, the peer. Case and diacritics ignored.
+    func matches(_ query: String) -> Bool {
+        let haystack = [label, style.name, style.id, usage?.modelName, usage?.model, cwd, activityFact,
+                        ask?.summary, ask?.kind, originLabel, remoteMachine, activity.word]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        let words = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: \.isWhitespace)
+        return !words.isEmpty && words.allSatisfy { haystack.contains($0) }
+    }
+
+    /// How full a still-running session's context window is. A finished,
+    /// ended, failed or stale run's context is history, not a warning.
+    var liveContextFraction: Double? {
+        guard !activity.isClearable, activity != .failed, !stale else { return nil }
+        return usage?.contextFraction
     }
 
     /// The family mailbox's snooze still covers this session.
@@ -218,6 +248,9 @@ final class PanelStore {
     }
 
     let core: CoreModel
+    /// Per-session model, tokens, cost and context — shared with the
+    /// Overview, which the app delegate hands it to.
+    let sessionUsage: SessionUsageStore
 
     // Fallback (file feeds) and app-owned state.
     var fallbackState: AgentAggregateState = .idle
@@ -287,6 +320,7 @@ final class PanelStore {
     init(core: CoreModel, draftsDefaults: UserDefaults = .standard,
          mediaFeed: MediaFeed = .shared, screenBarShown: Bool = true) {
         self.core = core
+        self.sessionUsage = SessionUsageStore(core: core)
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -299,6 +333,41 @@ final class PanelStore {
             }
         }
         syncMediaReader()
+        observeEvents()
+    }
+
+    // MARK: The light log
+
+    /// The last events the daemon published, oldest first, kept for the
+    /// "Why this light" popover's log. History's Events tab has the whole
+    /// journal; this is the handful that explains the light on screen.
+    @ObservationIgnored private(set) var recentEvents: [CoreEvent] = []
+    static let recentEventLimit = 48
+
+    /// "How it got here" under the popover's "what it is doing now".
+    var lightLog: [LightLogEntry] { LightLog.entries(from: recentEvents, limit: 4) }
+
+    /// One observation per frame, like the Replay store's: two events in
+    /// the same turn can coalesce to the last one, which a four-line log
+    /// can afford — the journal in History is the complete record.
+    private func observeEvents() {
+        withObservationTracking {
+            _ = core.lastEvent?.id
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.noteEvent(self.core.lastEvent)
+                self.observeEvents()
+            }
+        }
+    }
+
+    func noteEvent(_ event: CoreEvent?) {
+        guard let event, recentEvents.last?.id != event.id else { return }
+        recentEvents.append(event)
+        if recentEvents.count > Self.recentEventLimit {
+            recentEvents.removeFirst(recentEvents.count - Self.recentEventLimit)
+        }
     }
 
     isolated deinit {
@@ -336,11 +405,23 @@ final class PanelStore {
         now = Date()
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.now = Date() }
+            Task { @MainActor [weak self] in
+                self?.now = Date()
+                // Throttled per id inside the store: each row is asked
+                // about at most every `SessionUsageStore.freshFor`.
+                self?.refreshSessionUsage()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
         refreshSparklines()
+        refreshSessionUsage()
+    }
+
+    /// Reads model/tokens/cost/context for the local rows on screen.
+    func refreshSessionUsage(force: Bool = false) {
+        guard core.isLive else { return }
+        sessionUsage.refresh(ids: core.sessions.filter { !$0.isRemote }.map(\.id), force: force)
     }
 
     func panelDidClose() {
@@ -348,6 +429,7 @@ final class PanelStore {
         animationsArmed = false
         selectedID = nil
         selectionByKeyboard = false
+        findQuery = ""
         clock?.invalidate()
         clock = nil
     }
@@ -358,7 +440,7 @@ final class PanelStore {
     /// usage providers take a row each ("setup needed"), so they count
     /// toward the section's height.
     var layoutContent: PanelLayout.Content {
-        PanelLayout.Content(asks: askRows.count, sessions: plainRows.count, hasWhyRow: lightExplanation != nil,
+        PanelLayout.Content(asks: visibleAskRows.count, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
                             usageProviders: usage.count + windowlessUsage.count, hasHiddenFooter: hiddenCount > 0)
     }
 
@@ -500,7 +582,12 @@ final class PanelStore {
         // answer: it is counted in the header and it is what the light is
         // about, so it gets a row of its own rather than disappearing.
         let orphans = (core.state?.orphanAsks ?? []).map { SessionRow(orphanAsk: $0, document: document) }
-        let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id], document: document) } + orphans
+        let usage = sessionUsage.usage
+        let rows = core.sessions.map { session in
+            var row = SessionRow(session: session, pinnedAsk: pinned[session.id], document: document)
+            row.usage = usage[session.id]
+            return row
+        } + orphans
         func rank(_ row: SessionRow) -> Int {
             row.ask != nil ? 0 : row.activity.sortRank
         }
@@ -559,15 +646,9 @@ final class PanelStore {
     /// side with nothing to say is nil and collapses rather than holding
     /// space open beside the notch.
     var screenBarWings: ScreenBarWings {
-        var left: ScreenBarWingSlot?
-        if let pick = focusPick {
-            var text = pick.ask != nil ? "Needs you" : pick.activity.word
-            if pick.ask != nil, askRows.count > 1 { text += " ·\(askRows.count)" }
-            left = ScreenBarWingSlot(
-                text: text, provider: pick.style.id,
-                tone: pick.activity == .failed ? .alert
-                    : pick.ask != nil || pick.activity == .waiting ? .attention
-                    : .neutral)
+        var left: ScreenBarWingSlot? = focusPick.map {
+            Self.activitySlot(for: $0, askCount: askRows.count, now: Date().timeIntervalSince1970,
+                              finalSeconds: escalationFinalSeconds)
         }
         // The media wing — Alcove's grammar: album art on the left
         // ear, the live equalizer on the right. The activity slot owns
@@ -600,8 +681,222 @@ final class PanelStore {
         return ScreenBarWings(left: left, right: right)
     }
 
+    /// The left ear's activity slot for the focus pick: its provider's
+    /// mark and state word, the open-ask count when there is more than
+    /// one. An ask's mark rings with its age — the ring fills toward the
+    /// escalation's final stage, so how long an agent has waited reads
+    /// without a word; the peek's text says minutes only, so a ticking
+    /// clock never re-lays the ears.
+    static func activitySlot(for pick: SessionRow, askCount: Int, now: Double,
+                             finalSeconds: Double) -> ScreenBarWingSlot {
+        var text = pick.ask != nil ? "Needs you" : pick.activity.word
+        if pick.ask != nil, askCount > 1 { text += " ·\(askCount)" }
+        let opened = pick.ask.flatMap { $0.openedAt ?? pick.since?.timeIntervalSince1970 }
+        if let opened, let waited = askWaitWords(opened: opened, now: now) { text += " · \(waited)" }
+        return ScreenBarWingSlot(
+            text: text, provider: pick.style.id,
+            meter: opened.map { askAgeFraction(opened: $0, now: now, finalSeconds: finalSeconds) },
+            tone: pick.activity == .failed ? .alert
+                : pick.ask != nil || pick.activity == .waiting ? .attention
+                : .neutral)
+    }
+
+    /// When an unanswered ask reaches the escalation's last stage
+    /// (Settings › Notifications, 300 s by default) — where the ask-age
+    /// ring closes.
+    var escalationFinalSeconds: Double {
+        let configured = settingsDocument?.double("escalation_final_seconds") ?? 300
+        return configured > 0 ? configured : 300
+    }
+
+    /// When the focus pick's ask opened — the moment the left ear's ring
+    /// counts from; nil while the focus has no open ask.
+    var focusAskOpened: Double? {
+        focusPick.flatMap { pick in pick.ask.flatMap { $0.openedAt ?? pick.since?.timeIntervalSince1970 } }
+    }
+
+    /// The epoch at which the left ear next changes on its own, for the
+    /// delegate's one-shot re-push: the daemon sends no frame while only
+    /// the clock moves, so without it the ring would wait for unrelated
+    /// activity. Nil without an open ask in focus.
+    func nextAskAgeTick(now: Double = Date().timeIntervalSince1970) -> Double? {
+        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds)
+    }
+
+    /// The next boundary the ear shows: the ring's next twelfth of
+    /// `finalSeconds` while it is filling, or the wait's next whole minute
+    /// (the peek's "· N min"), whichever comes first. The words keep
+    /// counting past an hour, so a full ring still ticks once a minute;
+    /// nil only when there is no ask to count.
+    nonisolated static func nextAskAgeTick(opened: Double?, now: Double, finalSeconds: Double) -> Double? {
+        guard let opened else { return nil }
+        let waited = max(0, now - opened)
+        let minute = opened + ((waited / 60).rounded(.down) + 1) * 60
+        guard finalSeconds > 0, waited < finalSeconds else { return minute }
+        // The same arithmetic `askAgeFraction` steps on, so the tick lands
+        // on the twelfth that changes the fill.
+        let twelfth = opened + ((waited / finalSeconds * 12).rounded(.down) + 1) * finalSeconds / 12
+        return min(twelfth, minute)
+    }
+
+    /// The ask-age ring's fill: the share of the way to the final stage,
+    /// in twelfths — a step every 25 s at the default, so the ear moves
+    /// visibly without re-laying on every lighting frame. Full from the
+    /// final stage on. The delegate re-pushes the wings at each step
+    /// (`nextAskAgeTick`), since no daemon frame marks one.
+    nonisolated static func askAgeFraction(opened: Double, now: Double, finalSeconds: Double) -> Double {
+        guard finalSeconds > 0 else { return 1 }
+        let share = max(0, now - opened) / finalSeconds
+        return min(1, (share * 12).rounded(.down) / 12)
+    }
+
+    /// "4 min" once an ask has waited a minute; nil before.
+    nonisolated static func askWaitWords(opened: Double, now: Double) -> String? {
+        let minutes = Int(max(0, now - opened) / 60)
+        guard minutes >= 1 else { return nil }
+        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+    }
+
+    // MARK: The awake hold
+
+    /// The daemon's hold on sleep, as the footer's mark says it — why
+    /// the Mac is awake and when it lets go; nil while nothing holds it.
+    var awakeHold: (symbol: String, text: String)? {
+        Self.awakeHold(power: core.state?.power,
+                       working: rows.filter { $0.activity == .working && !$0.isRemote }.count)
+    }
+
+    /// Amphetamine's lesson: the hold is state worth a glance. A closed
+    /// lid held open outranks the plain keep-awake, since it is the one
+    /// that keeps a shut laptop running.
+    nonisolated static func awakeHold(power: CorePower?, working: Int) -> (symbol: String, text: String)? {
+        guard let power else { return nil }
+        let agents = working == 1 ? "1 agent works" : "\(working) agents work"
+        if power.closedLid?.holding == true {
+            return ("laptopcomputer", working > 0
+                ? "Running with the lid closed while \(agents); it sleeps once they stop"
+                : "Running with the lid closed; it sleeps once the agents stop")
+        }
+        guard power.keepAwake == true else { return nil }
+        return ("cup.and.saucer.fill", working > 0
+            ? "Keeping this Mac awake while \(agents); it lets go a few minutes after they stop"
+            : "Keeping this Mac awake; it lets go a few minutes after the agents stop")
+    }
+
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
+
+    // MARK: Notify when done
+
+    /// Sessions the user asked to hear about when they end — one banner
+    /// each, the long refactor pinging without turning completion banners
+    /// on for every run and sub-agent. In memory: a watch is for this run
+    /// of this session, and it is spent when it fires.
+    private(set) var doneWatches: Set<String> = []
+
+    func isWatchedForDone(_ row: SessionRow) -> Bool { doneWatches.contains(row.id) }
+
+    // MARK: Reaching a peer
+
+    /// The host a remote row's machine answers on (`state.peers`), for
+    /// "Open Screen Sharing to …"; nil when the peer never named one.
+    func screenSharingHost(for row: SessionRow) -> String? {
+        guard row.isRemote, let machine = row.remoteMachine else { return nil }
+        let peer = core.state?.peers?.first { $0.machine == machine }
+        return Self.screenSharingHost(peerHost: peer?.host, machine: machine)
+    }
+
+    /// The peer's published host (its Tailscale name), else the machine
+    /// name itself when it is a plausible host name; never a string with
+    /// characters a `vnc://` URL would have to smuggle.
+    nonisolated static func screenSharingHost(peerHost: String?, machine: String) -> String? {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        for candidate in [peerHost, machine] {
+            guard let text = candidate?.trimmingCharacters(in: .whitespaces), !text.isEmpty,
+                  text.unicodeScalars.allSatisfy(allowed.contains) else { continue }
+            return text
+        }
+        return nil
+    }
+
+    /// Screen Sharing to the peer: macOS's own client asks for the
+    /// credentials; JR-Bar sends nothing and runs nothing there.
+    func openScreenSharing(host: String) {
+        guard let url = URL(string: "vnc://\(host)") else { return }
+        NSWorkspace.shared.open(url)
+        onClose?()
+    }
+
+    func toggleDoneWatch(_ row: SessionRow) {
+        guard !row.isRemote else { return }
+        if doneWatches.remove(row.id) == nil {
+            doneWatches.insert(row.id)
+            show(toast: "Will tell you when \(row.label) is done")
+        } else {
+            show(toast: "Won't ping for \(row.label)")
+        }
+    }
+
+    /// A run-ending event for a watched session spends the watch; true
+    /// means the caller should make sure a banner lands.
+    func consumeDoneWatch(for event: CoreEvent) -> Bool {
+        guard AgentAlertRules.doneKinds.contains(event.kind), let session = event.session else { return false }
+        return doneWatches.remove(session) != nil
+    }
+
+    // MARK: Type to find
+
+    /// What the user typed while the panel was open — Raycast's defining
+    /// gesture: start typing and the list narrows. Only the panel's own
+    /// list narrows; the Screen Bar, the icon and the header counts keep
+    /// reading every row.
+    private(set) var findQuery = ""
+
+    /// The rows the panel draws: every row, or the ones the query finds.
+    var visibleRows: [SessionRow] {
+        let query = findQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return rows }
+        return rows.filter { $0.matches(query) }
+    }
+    var visibleAskRows: [SessionRow] { visibleRows.filter { $0.ask != nil } }
+    var visiblePlainRows: [SessionRow] { visibleRows.filter { $0.ask == nil } }
+
+    /// Typing lands here: the query grows, and the first match becomes the
+    /// keyboard selection so Return opens it straight away.
+    func find(_ query: String) {
+        findQuery = String(query.prefix(64))
+        selectionByKeyboard = true
+        selectedID = visibleRows.first?.id
+    }
+
+    func appendFind(_ text: String) { find(findQuery + text) }
+
+    /// ⌫ takes one character back; true when there was one to take.
+    @discardableResult
+    func deleteFindCharacter() -> Bool {
+        guard !findQuery.isEmpty else { return false }
+        find(String(findQuery.dropLast()))
+        if findQuery.isEmpty { selectedID = nil }
+        return true
+    }
+
+    /// Esc clears a query before it closes the panel.
+    @discardableResult
+    func clearFind() -> Bool {
+        guard !findQuery.isEmpty else { return false }
+        findQuery = ""
+        selectedID = nil
+        selectionByKeyboard = false
+        return true
+    }
+
+    /// A key the find field takes: printable, no ⌘/⌃/⌥, and not a space
+    /// opening a query (space alone is nothing to find).
+    nonisolated static func isFindCharacter(_ text: String?, query: String) -> Bool {
+        guard let text, text.count == 1, let scalar = text.unicodeScalars.first else { return false }
+        if scalar == " " { return !query.isEmpty }
+        return CharacterSet.alphanumerics.union(.punctuationCharacters).union(.symbols).contains(scalar)
+    }
     /// What "Clear finished" acknowledges: finished runs, ended ones and
     /// anything the daemon has marked stale — the same rows
     /// `clear_completed {sessions: "all"}` clears daemon-side.
@@ -1217,11 +1512,14 @@ final class PanelStore {
     /// With two or more asks open, the selected card is the target — the
     /// shortcuts never answer a card the user is not looking at.
     var selectedAsk: SessionRow? {
-        askRows.first { $0.id == selectedID }
+        visibleAskRows.first { $0.id == selectedID }
     }
 
+    /// Only asks the list is showing: a query that filtered a card out
+    /// must not let ⌘↩ answer it unseen.
     var keyboardAsk: SessionRow? {
         if let selectedAsk { return selectedAsk }
+        let askRows = visibleAskRows
         return askRows.first { $0.ask?.canAnswer == true && !($0.isRemote) } ?? askRows.first
     }
 
@@ -1238,6 +1536,21 @@ final class PanelStore {
     /// `snooze {session, seconds}` — the daemon resolves the session's
     /// family work key, so one snooze covers every session in the family.
     /// `seconds: 0` lifts it.
+    /// A live local run that is neither asking nor finished can be quieted
+    /// ("quiet this run until it needs me"): working or idle.
+    nonisolated static func canQuietRun(_ row: SessionRow) -> Bool {
+        !row.isRemote && row.ask == nil && (row.activity == .working || row.activity == .idle)
+    }
+
+    /// The same mailbox snooze, said the way it lands on a working run:
+    /// quiet until it needs you.
+    func quietRun(_ row: SessionRow, seconds: Int) {
+        guard Self.canQuietRun(row), seconds > 0 else { return }
+        core.snooze(session: row.id, seconds: seconds)
+        let until = Date().addingTimeInterval(TimeInterval(seconds))
+        show(toast: "\(row.label) is quiet until \(Self.clockTime(until)) unless it asks")
+    }
+
     func snooze(_ row: SessionRow, seconds: Int) {
         core.snooze(session: row.id, seconds: seconds)
         if seconds > 0 {
@@ -1385,7 +1698,7 @@ final class PanelStore {
     // MARK: Keyboard
 
     func moveSelection(by delta: Int) {
-        let rows = rows
+        let rows = visibleRows
         guard !rows.isEmpty else { return }
         selectionByKeyboard = true
         let current = rows.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : rows.count)
@@ -1394,7 +1707,7 @@ final class PanelStore {
     }
 
     func activateSelection() {
-        guard let row = rows.first(where: { $0.id == selectedID }) else { return }
+        guard let row = visibleRows.first(where: { $0.id == selectedID }) else { return }
         open(row)
     }
 

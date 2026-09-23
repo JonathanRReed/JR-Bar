@@ -2777,6 +2777,24 @@ def _cmd_audit_export(self, args):
     rows = history_rows(ledger, since=since, limit=2000)
 
     gaps: list[str] = []
+    # ``ids`` narrows the bundle to the rows a surface is showing (the
+    # Overview's preset, project, search and selection are app-side cuts
+    # the roster scopes cannot express); ``view`` names that cut so the
+    # export says what it is a slice of.
+    view_ids = args.get("ids")
+    if isinstance(view_ids, list):
+        wanted = {value for value in view_ids if isinstance(value, str)}
+        retained = len(roster.get("sessions") or [])
+        roster = {
+            **roster,
+            "sessions": [row for row in roster.get("sessions") or [] if row.get("id") in wanted],
+        }
+        rows = [row for row in rows if row.get("session") in wanted]
+        view = str(args.get("view") or "the current view")[:200]
+        gaps.append(
+            f"Exported the {len(roster['sessions'])} sessions in {view}; "
+            f"the roster retains {retained}."
+        )
     if getattr(self, "last_snapshot", None) is None:
         gaps.append("No collector snapshot yet — session coverage is empty, not quiet.")
     retained = int((getattr(ledger, "entries", ()) and len(ledger.entries)) or 0)
@@ -2963,6 +2981,63 @@ def _cmd_compare_sessions(self, args):
         ledger_entries=ledger_entries,
         id_a=id_a, id_b=id_b,
     )
+
+
+@command("session_usage", main_thread=False)
+def _cmd_session_usage(self, args):
+    """Per-session model, tokens, cost and context (the panel's rows).
+
+    ``ids`` are roster row ids; each resolves its status's provider,
+    ``session_id`` and cwd the way ``session_timeline`` does, then the
+    session's own transcript is read incrementally (session_usage.py).
+    Off the main run loop for the same reason as the timeline: it is file
+    I/O. A remote row, an unknown id, a provider without a transcript
+    reader, and a transcript that is not on disk each come back as a named
+    gap rather than a zero. ``since`` (epoch) adds ``tokens_since`` per
+    session -- the Usage Center's "who is burning this window".
+    """
+    from .session_usage import SESSION_USAGE_MAX_IDS, session_usage_document
+
+    raw_ids = args.get("ids")
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise CommandError("invalid_value", "ids must be a nonempty list of session ids")
+    ids = [value for value in raw_ids if isinstance(value, str) and value][:SESSION_USAGE_MAX_IDS]
+    if not ids:
+        raise CommandError("invalid_value", "ids must be a nonempty list of session ids")
+    since = args.get("since")
+    since = float(since) if isinstance(since, (int, float)) and not isinstance(since, bool) else None
+    snapshot = getattr(self, "last_snapshot", None)
+    statuses = {
+        getattr(status, "agent_id", None): status
+        for status in [
+            *getattr(snapshot, "statuses", ()),
+            *getattr(snapshot, "stale_statuses", ()),
+        ]
+    }
+    requests: list[tuple[str, str | None, str | None, str | None]] = []
+    remote: dict[str, str] = {}
+    for agent_id in ids:
+        if agent_id.startswith("remote:"):
+            # The transcript lives on the peer; nothing local can read it.
+            remote[agent_id] = "remote"
+            continue
+        status = statuses.get(agent_id)
+        if status is None:
+            requests.append((agent_id, None, None, None))
+            continue
+        session_id = getattr(status, "session_id", None)
+        cwd = getattr(status, "cwd", None)
+        requests.append((
+            agent_id,
+            getattr(status, "provider", None),
+            str(session_id) if session_id else None,
+            str(cwd) if cwd else None,
+        ))
+    document = session_usage_document(requests, since=since)
+    document["gaps"].update(remote)
+    return document
 
 
 @command("import_radar_report", main_thread=False)

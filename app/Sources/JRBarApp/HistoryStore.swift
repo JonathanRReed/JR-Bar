@@ -3,22 +3,47 @@ import JRBarCore
 import Observation
 
 /// The History window's state: the daemon's rows, the filter, the away
-/// summary, and the undo window for the last clear.
+/// summary, and the undo window for the last clear — plus the two views
+/// of the past that used to live elsewhere: a row's own session timeline
+/// (the shared timeline view, opened in place) and the daemon's event
+/// journal (what the Event Replay window showed on its own).
 @MainActor
 @Observable
 final class HistoryStore {
     let core: CoreModel
 
+    /// Activity is the ledger of what happened to sessions; Events is the
+    /// daemon's live event journal for this run — Event Replay, folded in.
+    enum Mode: String, CaseIterable, Identifiable {
+        case activity = "Activity"
+        case events = "Events"
+        var id: String { rawValue }
+    }
+
     /// The daemon's settings document, for provider colour overrides.
     var document: SettingsDocument? { core.settings.map { SettingsDocument($0.document) } }
     var rows: [CoreHistoryRow] = []
-    var filter = HistoryFilter()
+    var filter = HistoryFilter() {
+        didSet { if filter.text != oldValue.text { searchTranscripts() } }
+    }
     var loading = false
     var error: String?
     var loadedAt: Date?
     var now = Date()
     var selectedID: String?
     var onClose: (@MainActor () -> Void)?
+    /// Reveals a session in the Overview (its inspector, timeline and
+    /// usage); an event row's click-through.
+    var onRevealSession: (@MainActor (String) -> Void)?
+
+    var mode: Mode = .activity {
+        didSet { syncReplay() }
+    }
+    /// The journal reader — the same store Event Replay used, so its
+    /// coverage (`retained`/`dropped`) and live throttle come along.
+    let replay: ReplayStore
+    var eventFilter = EventLogFilter()
+    private var windowOpen = false
 
     @ObservationIgnored private var clock: Timer?
     @ObservationIgnored private var refreshWork: DispatchWorkItem?
@@ -29,11 +54,157 @@ final class HistoryStore {
 
     init(core: CoreModel) {
         self.core = core
+        self.replay = ReplayStore(core: core)
+    }
+
+    /// The journal reloads on live frames only while someone is looking
+    /// at it.
+    private func syncReplay() {
+        let watching = windowOpen && mode == .events
+        replay.isOpen = watching
+        if watching { Task { await replay.load() } }
+    }
+
+    // MARK: Events (the journal)
+
+    /// The journal, filtered, newest first.
+    var events: [CoreEvent] { eventFilter.apply(replay.events) }
+
+    /// Categories present in the journal, in the chips' order.
+    var eventCategories: [EventLogCategory] {
+        let present = Set(replay.events.filter { !EventLogFilter.hiddenKinds.contains($0.kind) }.map { EventLogCategory.of($0.kind) })
+        return EventLogCategory.allCases.filter(present.contains)
+    }
+
+    func eventCount(_ category: EventLogCategory) -> Int {
+        replay.events.filter { !EventLogFilter.hiddenKinds.contains($0.kind) && EventLogCategory.of($0.kind) == category }.count
+    }
+
+    func toggleEventCategory(_ category: EventLogCategory) {
+        if eventFilter.categories.contains(category) { eventFilter.categories.remove(category) } else { eventFilter.categories.insert(category) }
+    }
+
+    /// An event about a local session opens that session in the Overview.
+    func canReveal(_ event: CoreEvent) -> Bool {
+        guard let session = event.session, !session.isEmpty else { return false }
+        return onRevealSession != nil
+    }
+
+    func reveal(_ event: CoreEvent) {
+        guard let session = event.session, !session.isEmpty else { return }
+        onRevealSession?(session)
+    }
+
+    // MARK: Row timelines
+
+    /// The row whose session timeline is open under it, if any.
+    var expandedID: String?
+    /// The shared timeline view's chip/disclosure state for the open row.
+    let expandedViewState = ReconstructedTimelineViewState()
+    private(set) var expandedTimelines: [String: SessionReconstruction] = [:]
+    private(set) var expandedLoading: Set<String> = []
+
+    func canExpand(_ row: CoreHistoryRow) -> Bool { HistoryTimelineRequest.canExpand(row) }
+
+    func toggleExpanded(_ row: CoreHistoryRow) {
+        guard canExpand(row) else { return }
+        if expandedID == row.id {
+            expandedID = nil
+            return
+        }
+        expandedID = row.id
+        selectedID = row.id
+        expandedViewState.kind = .all
+        loadTimeline(for: row)
+    }
+
+    /// The newest page of the row's transcript, through the same
+    /// `session_timeline` the Overview reads; an ended session that aged
+    /// out of the roster still resolves by provider and uuid.
+    func loadTimeline(for row: CoreHistoryRow, force: Bool = false) {
+        guard let session = row.session, core.isLive, !expandedLoading.contains(row.id) else { return }
+        if !force, expandedTimelines[row.id] != nil { return }
+        expandedLoading.insert(row.id)
+        let running = isLiveSession(session)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.expandedLoading.remove(row.id) }
+            do {
+                let page = try await self.core.sessionTimeline(
+                    id: session, limit: 150, provider: HistoryTimelineRequest.provider(of: row),
+                    session: HistoryTimelineRequest.sessionUUID(from: session))
+                self.expandedTimelines[row.id] = SessionReconstructor.reconstruction(
+                    from: page.events, gaps: page.gaps, running: running)
+            } catch {
+                self.expandedTimelines[row.id] = SessionReconstructor.reconstruction(
+                    from: [], gaps: [(error as? CoreReplyError)?.message ?? error.localizedDescription], running: running)
+            }
+        }
+    }
+
+    /// → / Space open the selected row's timeline, ← closes it.
+    func expandSelected(_ open: Bool) {
+        guard let row = displayed.first(where: { $0.id == selectedID }) else { return }
+        if open, expandedID != row.id { toggleExpanded(row) }
+        if !open, expandedID == row.id { expandedID = nil }
+    }
+
+    func timeline(for row: CoreHistoryRow) -> SessionReconstruction? { expandedTimelines[row.id] }
+    func isLoadingTimeline(_ row: CoreHistoryRow) -> Bool { expandedLoading.contains(row.id) }
+
+    // MARK: Transcript search
+
+    /// The Data Hoarder's full-text index: session uuid → the best
+    /// snippet for a query. Set by the app delegate while the archive is
+    /// on; nil searches the rows' own words only.
+    var archiveSearch: ((String) async -> [String: String])?
+    /// Whether the archive is on to be searched — the field's placeholder
+    /// only promises transcripts when it is.
+    var archiveSearchAvailable: (() -> Bool)?
+    var canSearchTranscripts: Bool { archiveSearch != nil && (archiveSearchAvailable?() ?? false) }
+    /// Sessions whose archived transcript said the text, for the query
+    /// they answered — so "which run touched the auth middleware?" finds
+    /// the run even though no row's label says so.
+    private(set) var transcriptHits: (query: String, snippets: [String: String]) = ("", [:])
+    @ObservationIgnored private(set) var transcriptSearch: Task<Void, Never>?
+    /// Shorter queries match too much of a transcript to mean anything.
+    static let transcriptQueryMinimum = 3
+
+    private var trimmedQuery: String { filter.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Debounced so typing does not run a query per key; a stale answer
+    /// (the text moved on) is dropped.
+    func searchTranscripts(debounce: Duration = .milliseconds(300)) {
+        transcriptSearch?.cancel()
+        let query = trimmedQuery
+        guard query.count >= Self.transcriptQueryMinimum, let archiveSearch else {
+            transcriptHits = ("", [:])
+            return
+        }
+        transcriptSearch = Task { [weak self] in
+            if debounce > .zero { try? await Task.sleep(for: debounce) }
+            guard !Task.isCancelled else { return }
+            let snippets = await archiveSearch(query)
+            guard !Task.isCancelled, let self, self.trimmedQuery == query else { return }
+            self.transcriptHits = (query, snippets)
+        }
+    }
+
+    /// The session uuids the current text found in transcripts.
+    private var liveTranscriptHits: Set<String> {
+        transcriptHits.query == trimmedQuery && !trimmedQuery.isEmpty ? Set(transcriptHits.snippets.keys) : []
+    }
+
+    /// The snippet for a row the text found only in its transcript.
+    func transcriptSnippet(for row: CoreHistoryRow) -> String? {
+        guard !filter.matchesOwnWords(row), transcriptHits.query == trimmedQuery,
+              let uuid = HistoryTimelineRequest.sessionUUID(from: row.session) else { return nil }
+        return transcriptHits.snippets[uuid]
     }
 
     // MARK: Derived
 
-    var filtered: [CoreHistoryRow] { filter.apply(rows) }
+    var filtered: [CoreHistoryRow] { filter.apply(rows, transcriptHits: liveTranscriptHits) }
     var days: [HistoryDay] { HistoryGrouping.days(filtered, now: now) }
     var away: AwaySummary? { AwaySummary.make(from: rows) }
     var providers: [String] {
@@ -55,6 +226,8 @@ final class HistoryStore {
 
     func windowDidOpen() {
         now = Date()
+        windowOpen = true
+        syncReplay()
         lastEventID = core.lastEvent?.id
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -84,6 +257,8 @@ final class HistoryStore {
     }
 
     func windowDidClose() {
+        windowOpen = false
+        syncReplay()
         clock?.invalidate()
         clock = nil
         // The window was open and read: advance the daemon's `last_seen`

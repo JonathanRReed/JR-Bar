@@ -73,16 +73,21 @@ public struct FailureStory: Sendable, Equatable {
     public let diedMidTurn: Bool      // last activity has no closing turn_end
     public let lastUserIntent: String?// bounded last user message
     public let failedToolNames: [String]
+    /// How long the turn that first failed had run when it failed: from
+    /// the last thing you said before the first error to that error. Nil
+    /// without a dated error, or with no message of yours before it.
+    public let failingTurnSeconds: Double?
 
     public init(failed: Bool, errorCount: Int, lastErrorSummary: String?,
                 diedMidTurn: Bool, lastUserIntent: String?,
-                failedToolNames: [String]) {
+                failedToolNames: [String], failingTurnSeconds: Double? = nil) {
         self.failed = failed
         self.errorCount = errorCount
         self.lastErrorSummary = lastErrorSummary
         self.diedMidTurn = diedMidTurn
         self.lastUserIntent = lastUserIntent
         self.failedToolNames = failedToolNames
+        self.failingTurnSeconds = failingTurnSeconds
     }
 }
 
@@ -95,14 +100,33 @@ public struct SessionReconstruction: Sendable, Equatable {
     public let gaps: [String]
     public let totalLines: Int
     public let redactedLines: Int
+    /// The CLIProxyAPI requests logged under the same session id, in time
+    /// order — evidence the timeline interleaves with `items`
+    /// (`SessionProxyEvidence`); empty when no proxy carried the session.
+    public let proxyRequests: [CLIProxyRequest]
 
     public init(items: [ReconstructedItem], story: FailureStory,
-                gaps: [String], totalLines: Int, redactedLines: Int) {
+                gaps: [String], totalLines: Int, redactedLines: Int,
+                proxyRequests: [CLIProxyRequest] = []) {
         self.items = items
         self.story = story
         self.gaps = gaps
         self.totalLines = totalLines
         self.redactedLines = redactedLines
+        self.proxyRequests = proxyRequests
+    }
+
+    /// The same rebuild with the proxy's requests attached (sorted and
+    /// capped by `SessionProxyEvidence.sorted`).
+    public func withProxyRequests(_ requests: [CLIProxyRequest]) -> SessionReconstruction {
+        SessionReconstruction(items: items, story: story, gaps: gaps, totalLines: totalLines,
+                              redactedLines: redactedLines,
+                              proxyRequests: SessionProxyEvidence.sorted(requests))
+    }
+
+    /// `items` with the proxy's requests placed between them by time.
+    public var entries: [SessionProxyEvidence.Entry] {
+        SessionProxyEvidence.interleave(items, requests: proxyRequests)
     }
 }
 
@@ -520,11 +544,43 @@ public enum SessionReconstructor {
         return items
     }
 
+    // MARK: Live timelines
+
+    /// The daemon's `session_timeline` items as a reconstruction, so the
+    /// Overview inspector, History's expanded rows and the Data Hoarder
+    /// archive render one timeline through one view instead of three.
+    /// `running` withholds the mid-turn verdict: a session that is still
+    /// working ends mid-turn by definition, and calling that a death would
+    /// paint every live run as a failure. Unknown kinds are skipped, the
+    /// way the transcript projection skips unknown rows.
+    public static func reconstruction(from timeline: [CoreTimelineItem], gaps: [String] = [],
+                                      running: Bool) -> SessionReconstruction {
+        let items: [ReconstructedItem] = timeline.compactMap { item in
+            let kind: ReconstructedItem.Kind
+            switch item.kind {
+            case "message": kind = .message
+            case "tool_use": kind = .toolUse
+            case "tool_result": kind = .toolResult
+            case "turn_end": kind = .turnEnd
+            default: return nil
+            }
+            return ReconstructedItem(
+                seq: item.seq, at: item.at, kind: kind, uuid: item.uuid,
+                parentUUID: item.parentUuid, role: item.role, name: item.name,
+                toolUseID: item.toolUseId, isError: item.isError ?? false,
+                sidechain: item.sidechain ?? false, untrusted: item.untrusted ?? false,
+                text: item.text, model: item.model)
+        }
+        return SessionReconstruction(
+            items: items, story: story(for: items, running: running), gaps: gaps,
+            totalLines: timeline.count, redactedLines: 0)
+    }
+
     // MARK: Failure story
 
-    private static func story(for items: [ReconstructedItem]) -> FailureStory {
+    static func story(for items: [ReconstructedItem], running: Bool = false) -> FailureStory {
         let errorItems = items.filter(\.isError)
-        let diedMidTurn = !items.isEmpty && items.last?.kind != .turnEnd
+        let diedMidTurn = !running && !items.isEmpty && items.last?.kind != .turnEnd
         var lastErrorSummary: String? = nil
         if let last = errorItems.last {
             switch last.kind {
@@ -556,7 +612,18 @@ public enum SessionReconstructor {
             lastErrorSummary: lastErrorSummary,
             diedMidTurn: diedMidTurn,
             lastUserIntent: lastUserIntent,
-            failedToolNames: failedToolNames)
+            failedToolNames: failedToolNames,
+            failingTurnSeconds: failingTurnSeconds(items))
+    }
+
+    /// The first dated error's distance from the last user message before
+    /// it — the failing turn's running time when it failed.
+    static func failingTurnSeconds(_ items: [ReconstructedItem]) -> Double? {
+        guard let index = items.firstIndex(where: { $0.isError && $0.at != nil }),
+              let failedAt = items[index].at,
+              let asked = items[..<index].last(where: { $0.kind == .message && $0.role == "user" && $0.at != nil })?.at,
+              failedAt >= asked else { return nil }
+        return failedAt - asked
     }
 
     /// A failed tool_result's name lives on its paired tool_use row.

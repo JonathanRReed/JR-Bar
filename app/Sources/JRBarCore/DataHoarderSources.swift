@@ -42,6 +42,18 @@ public struct ArchiveSource: Sendable, Identifiable {
             ArchiveSource(id: "claude-projects", name: "Claude Code projects",
                           root: claudeHome.appendingPathComponent("projects", isDirectory: true),
                           extensions: ["jsonl"]),
+            // The other agents on this Mac keep JSONL sessions too; they
+            // archive and search like any file, filed as "other" until a
+            // transcript reader exists for them.
+            ArchiveSource(id: "pi-sessions", name: "pi sessions",
+                          root: home.appendingPathComponent(".pi/agent/sessions", isDirectory: true),
+                          extensions: ["jsonl"]),
+            ArchiveSource(id: "gemini-chats", name: "Gemini CLI chats",
+                          root: home.appendingPathComponent(".gemini/tmp", isDirectory: true),
+                          extensions: ["jsonl"]),
+            ArchiveSource(id: "grok-sessions", name: "Grok sessions",
+                          root: home.appendingPathComponent(".grok/sessions", isDirectory: true),
+                          extensions: ["jsonl"]),
             ArchiveSource(id: ArchiveSource.cliProxyAPILogs, name: "CLIProxyAPI logs",
                           root: cliProxyLogs, extensions: ["log"]),
         ]

@@ -24,6 +24,9 @@ struct DataHoarderView: View {
                 Menu("Export", systemImage: "square.and.arrow.up") {
                     Button("Selected File…") { model.exportSelected() }
                         .disabled(model.selected == nil)
+                    Button("Selected Session as Markdown…") { model.exportMarkdown() }
+                        .disabled(!model.canExportMarkdown)
+                        .help("A readable copy of the rebuilt timeline, for a PR or a postmortem")
                     Button("Entire Archive…") { model.chooseArchiveExport() }
                 }
                 .disabled(model.busy)
@@ -684,7 +687,7 @@ struct DataHoarderView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let reconstruction = model.reconstruction {
             ReconstructedTimelineView(reconstruction: reconstruction,
-                                      viewState: model.timelineViewState)
+                                      viewState: model.timelineViewState, landOnFailure: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Text(model.detailError ?? "Nothing to rebuild — the stored segments produced no rows.")

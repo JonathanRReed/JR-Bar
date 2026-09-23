@@ -83,6 +83,47 @@ final class AgentUtility: Toy {
     /// row reads it live; the seat matches the other utilities anyway.
     func applySettings() {}
 
+    // MARK: Alert rules — the card's own job
+
+    /// The providers the rules table offers: every one with hooks
+    /// installed or a session on record, plus any that already carry a
+    /// rule, in the settings' provider order.
+    var alertProviders: [String] {
+        var present = Set(settings().alertRules.keys)
+        present.formUnion(core.sessions.filter { !$0.isRemote }.map(\.provider))
+        if let hooks = core.state?.health?["hooks"]?.objectValue {
+            present.formUnion(hooks.compactMap { provider, state in state.stringValue == "missing" ? nil : provider })
+        }
+        let known = SettingsKey.providers.filter(present.contains)
+        return known + present.subtracting(known).sorted()
+    }
+
+    func alertRule(for provider: String) -> AgentAlertRule {
+        settings().alertRules[provider] ?? .followGlobal
+    }
+
+    /// Writes one provider's rule; a rule edited back to "follow the
+    /// global settings" is removed rather than stored as a no-op.
+    func setAlertRule(_ rule: AgentAlertRule, for provider: String) {
+        update { settings in
+            if rule.isDefault {
+                settings.alertRules.removeValue(forKey: provider)
+            } else {
+                settings.alertRules[provider] = rule
+            }
+        }
+    }
+
+    func bindRule<T>(_ provider: String, _ keyPath: WritableKeyPath<AgentAlertRule, T>) -> Binding<T> {
+        Binding(
+            get: { self.alertRule(for: provider)[keyPath: keyPath] },
+            set: { value in
+                var rule = self.alertRule(for: provider)
+                rule[keyPath: keyPath] = value
+                self.setAlertRule(rule, for: provider)
+            })
+    }
+
     // MARK: The list
 
     /// The daemon's settings document, for provider colour overrides —
@@ -132,11 +173,25 @@ final class AgentUtility: Toy {
         }
         let pinned = AgentOrganizerSettings.pinnedAsks(core.asks)
         let document = document
-        result += settings().grouped(capped, asks: core.asks).map { group in
+        result += settings().grouped(capped, asks: core.asks, project: projectName).map { group in
             (group.key, group.title,
              group.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id], document: document) })
         }
         return result
+    }
+
+    /// The repository a session works in: git's own answer (a linked
+    /// worktree names its main repository), read once per folder from
+    /// the `.git` files — no git process — and the folder heuristic when
+    /// the folder is not in a repository.
+    @ObservationIgnored private var repositories: [String: GitWorkspace?] = [:]
+
+    private func projectName(_ session: CoreSession) -> String? {
+        guard !session.isRemote, let cwd = session.cwd, !cwd.isEmpty else { return AgentProject.name(of: session.cwd) }
+        if repositories[cwd] == nil {
+            repositories[cwd] = .some(GitWorkspace.resolve(cwd: cwd))
+        }
+        return AgentProject.name(of: cwd, workspace: repositories[cwd] ?? nil)
     }
 
     /// "1 waiting on you · 2 working" — the organizer's counts over the

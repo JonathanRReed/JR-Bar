@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 /// A standard titled window for the activity history (⌘Y from the panel).
@@ -24,15 +25,38 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
         installKeyMonitor()
     }
 
+    /// History on its Events tab — what the Event Replay window was; the
+    /// status menu's Event Replay item lands here.
+    func showEvents() {
+        store.mode = .events
+        show()
+    }
+
+    /// History on one day — the Overview heatmap's "that day in History".
+    func show(day: Date) {
+        store.mode = .activity
+        store.filter = HistoryFilter(day: day)
+        show()
+    }
+
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.window else { return event }
             // Typing in the search field keeps its arrows and Return.
             if event.window?.firstResponder is NSTextView { return event }
+            // The Events tab is a native list: it owns its own keys.
+            guard self.store.mode == .activity else { return event }
             switch event.keyCode {
             case 125: self.store.moveSelection(by: 1); return nil   // Down
             case 126: self.store.moveSelection(by: -1); return nil  // Up
+            case 124, 49:                                           // Right / Space: open the timeline
+                guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
+                self.store.expandSelected(true)
+                return nil
+            case 123:                                               // Left: close it
+                self.store.expandSelected(false)
+                return nil
             case 36, 76:                                            // Return / keypad Enter
                 guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
                 self.store.openSelected()

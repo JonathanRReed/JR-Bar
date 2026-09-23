@@ -133,7 +133,8 @@ final class DeckRailController {
             content = RailLabelView(title: "Open Control Center", subtitle: store.banks.title, provider: nil, number: "…")
         } else {
             let slot = store.slots[safe: cell] ?? DeckSlot(index: cell)
-            content = RailLabelView(title: slot.title, subtitle: slot.subtitle, provider: slot.provider, number: "\(cell + 1)")
+            content = RailLabelView(title: slot.title, subtitle: slot.subtitle, provider: slot.provider, number: "\(cell + 1)",
+                                    detail: store.askDetail(for: slot))
         }
         label.present(content, beside: onScreen, edge: geometry.edge, screen: panel.screen ?? screen)
     }
@@ -417,6 +418,9 @@ struct RailLabelView: View {
     let subtitle: String
     let provider: String?
     let number: String
+    /// What an asking key's session is asking — the card's own words, so
+    /// the rail answers "what does it want?" without opening anything.
+    var detail: String? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -428,6 +432,15 @@ struct RailLabelView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(SessionActivity.waiting.tint)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 220, alignment: .leading)
+                        .padding(.top, 2)
+                }
             }
             Text(number)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))

@@ -167,6 +167,8 @@ final class UsageCenterStore {
         // Expired pulses go away so the overlay is not kept alive for nothing.
         resetPulses = resetPulses.filter { now.timeIntervalSince($0.value) < 3 }
         focusPulses = focusPulses.filter { now.timeIntervalSince($0.value) < 3 }
+        // Throttled per provider inside `loadBurners`.
+        for provider in providers where !provider.isSignedOut { loadBurners(for: provider) }
     }
 
     /// Watches the daemon's events and connection: a `quota_reset` triggers
@@ -430,6 +432,16 @@ final class UsageCenterStore {
     }
 
     func forecast(for provider: CoreProviderUsage, window: CoreUsageWindow) -> UsageForecast {
+        Self.forecast(for: provider, window: window, core: core, now: now)
+    }
+
+    /// The forecast every usage surface reads: the window's own daemon
+    /// forecast (else the provider's, else a local fit), then made aware
+    /// of what is running — a pace with no agent working here holds
+    /// instead of promising a run-out, and the working count rides along
+    /// for "room for one more".
+    static func forecast(for provider: CoreProviderUsage, window: CoreUsageWindow,
+                         core: CoreModel, now: Date) -> UsageForecast {
         // A window's own `forecast` wins. The provider-level one is about
         // the daemon's 5h-convention primary; other windows only get its
         // pace word.
@@ -437,7 +449,69 @@ final class UsageCenterStore {
         let daemon = window.forecast
             ?? (primary ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
         let samples = core.usageSamples.samples(provider: provider.identity, window: window.name)
-        return UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
+        let forecast = UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
+        guard core.isLive else { return forecast }
+        return SessionAwarePace.adjust(forecast, working: workingAgents(provider: provider.id, core: core))
+    }
+
+    /// This Mac's sessions of `provider` that are working right now.
+    static func workingAgents(provider: String, core: CoreModel) -> Int {
+        core.sessions.filter { $0.provider == provider && !$0.isRemote && SessionActivity.reduce($0) == .working }.count
+    }
+
+    // MARK: Who is burning the window
+
+    /// Provider identity → this Mac's sessions ranked by the tokens they
+    /// spent since the card's headline window opened.
+    private(set) var burners: [String: [WindowBurner]] = [:]
+    @ObservationIgnored private var burnersFetchedAt: [String: Date] = [:]
+    nonisolated static let burnersInterval: TimeInterval = 30
+
+    /// True when the daemon's reply budget ran out before every session's
+    /// transcript was read: the ranking would be missing someone.
+    nonisolated static func burnersStillReading(_ gaps: [String: String]) -> Bool {
+        gaps.values.contains("reading")
+    }
+
+    func burners(for provider: CoreProviderUsage) -> [WindowBurner] { burners[provider.identity] ?? [] }
+
+    /// Asks `session_usage` for the provider's local sessions with the
+    /// headline window's start as `since`, at most every
+    /// `burnersInterval`. The share is of the tokens those sessions spent
+    /// — what this Mac can see — not of the provider's percentage.
+    /// A reply still `reading` a session keeps the ranking it had (one
+    /// missing that session would misstate every share) and asks again
+    /// soon; a failed one waits the interval like an answer.
+    func loadBurners(for provider: CoreProviderUsage, force: Bool = false) {
+        guard core.isLive, let window = Self.featuredWindow(of: provider),
+              let resetsAt = window.resetsAt,
+              let span = UsageWindowLabel.windowSpan(id: window.key, name: window.name) else { return }
+        let identity = provider.identity
+        if !force, let at = burnersFetchedAt[identity], now.timeIntervalSince(at) < Self.burnersInterval { return }
+        let sessions = core.sessions.filter { $0.provider == provider.id && !$0.isRemote }
+        guard !sessions.isEmpty else {
+            burners[identity] = []
+            return
+        }
+        burnersFetchedAt[identity] = now
+        let since = resetsAt - span
+        let labels = Dictionary(sessions.map { ($0.id, $0.displayLabel) }, uniquingKeysWith: { first, _ in first })
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let document = try await self.core.sessionUsage(ids: Array(labels.keys.prefix(SessionUsageStore.batchLimit)), since: since)
+                if Self.burnersStillReading(document.gaps) {
+                    self.burnersFetchedAt[identity] = self.now.addingTimeInterval(SessionUsageStore.readingRetry - Self.burnersInterval)
+                    return
+                }
+                self.burners[identity] = WindowBurner.rank(document.sessions.compactMap { id, usage in
+                    usage.tokensSince.map { (id: id, label: labels[id] ?? id, tokens: $0) }
+                })
+            } catch {
+                // The send's stamp stands, so the one-second clock does not
+                // resend while the daemon is still working on this one.
+            }
+        }
     }
 
     /// The window the card leads with: `primaryWindow`, the same

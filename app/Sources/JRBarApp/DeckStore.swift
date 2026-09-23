@@ -127,6 +127,21 @@ final class DeckStore {
     }
     /// The daemon may write to the pad.
     var canWriteDevice: Bool { device?.isUsable == true }
+    /// What an asking key's session is asking, for the rail's pill: the
+    /// ask card's summary, one line, bounded; nil for any other key.
+    func askDetail(for slot: DeckSlot) -> String? {
+        guard slot.state == .inputRequired, let session = slot.session else { return nil }
+        let ask = core.asks.first { $0.session == session } ?? core.sessions.first { $0.id == session }?.ask
+        return Self.askLine(ask?.summary)
+    }
+
+    nonisolated static func askLine(_ summary: String?, limit: Int = 90) -> String? {
+        guard let summary else { return nil }
+        let line = summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        guard !line.isEmpty else { return nil }
+        return line.count <= limit ? line : String(line.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
     /// The rail should be on screen: the core is live and an edge is chosen.
     var railShown: Bool { isLive && railEdge.isShown }
 

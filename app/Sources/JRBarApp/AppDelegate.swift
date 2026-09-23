@@ -409,10 +409,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyStore = historyStore
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+        // History's search also reads what was said, when the Data
+        // Hoarder keeps transcripts.
+        historyStore.archiveSearch = { [weak utilitiesStore] query in
+            guard let hoarder = utilitiesStore?.dataHoarder, hoarder.model.enabled else { return [:] }
+            return await DataHoarderModel.transcriptHits(in: hoarder.model.archive, query: query)
+        }
+        historyStore.archiveSearchAvailable = { [weak utilitiesStore] in
+            utilitiesStore?.dataHoarder.model.enabled ?? false
+        }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
         // Overview window (⌘O): the scoped roster workspace.
         let overviewStore = OverviewStore(core: core)
+        // One per-session usage reader for the panel and the Overview.
+        overviewStore.sessionUsage = store.sessionUsage
+        // The Usage heatmap's day click, one window over.
+        overviewStore.onOpenHistoryDay = { [weak historyWindow] day in historyWindow?.show(day: day) }
         // Data Hoarder honesty for the inspector's Source line: the
         // archive's own capture table answers "is this transcript
         // kept", and a missing transcript seeds an archive search by
@@ -420,6 +433,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         overviewStore.archiveProbe = { [weak utilitiesStore] path in
             guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
             return try? await archive.captureState(path: path)
+        }
+        // The archived fallbacks read only while the Data Hoarder is on,
+        // like History's archive search: switched off, it is not asked.
+        overviewStore.archiveTimeline = { [weak utilitiesStore] sessionID in
+            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
+            return await DataHoarderModel.archivedTimeline(in: model.archive, sessionID: sessionID)
+        }
+        overviewStore.hoarderProbe = { [weak utilitiesStore] in
+            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
+            let settings = model.captureSettings
+            return OverviewLinkage.HoarderHealth(
+                paused: settings.paused, sources: settings.enabledSources.count,
+                watching: await model.capture.activeSourceIDs.count, fullContent: settings.fullContent,
+                archive: (try? await model.archive.captureHealth()) ?? ArchiveCaptureHealth())
+        }
+        overviewStore.archiveProxyEvidence = { [weak utilitiesStore] sessionID in
+            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return [] }
+            return await DataHoarderModel.proxyRequests(in: model.archive, sessionID: sessionID)
         }
         overviewStore.onOpenArchive = { [weak utilitiesStore] term in
             guard let hoarder = utilitiesStore?.dataHoarder else { return }
@@ -454,6 +485,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let replayWindow = ReplayWindowController(store: replayStore)
         self.replayWindow = replayWindow
         statusItem.onOpenReplay = { [weak replayWindow] in replayWindow?.show() }
+        // History owns the journal now (its Events tab), and its rows point
+        // at the Overview's inspector for a session's full story.
+        replayWindow.redirect = { [weak historyWindow] in historyWindow?.showEvents() }
+        historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
         // Usage Center (⌘U) and Effect Studio windows.
         let usageStore = UsageCenterStore(core: core)
@@ -548,6 +583,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // session's pane already in front earns silence, not noise.
         events.quietWhenPaneFrontmost = { [weak utilitiesStore] in
             utilitiesStore?.agents.settings().quietWhenPaneFrontmost ?? true
+        }
+        // The Agent Overview card's per-provider alert rules: how loud
+        // each provider's asks, finishes, failures and escalation may be.
+        events.deliveryRules = { [weak utilitiesStore, weak core, weak store] delivery, event in
+            var delivery = delivery
+            if let rules = utilitiesStore?.agents.settings().alertRules, !rules.isEmpty {
+                delivery = AgentAlertRules.apply(delivery, to: event, state: core?.state, rules: rules,
+                                                 currentStage: core?.state?.escalation?.stageNumber)
+            }
+            // A panel row's "Notify when done" is the explicit ask: it
+            // banners that one ending whatever the switches say.
+            if store?.consumeDoneWatch(for: event) == true {
+                delivery = AgentAlertRules.notifyWhenDone(delivery, event: event, state: core?.state)
+            }
+            return delivery
         }
         // The HUD panel is the Notch Buddy's home: it lives there between
         // toasts and steps aside while one is up.
@@ -1186,6 +1236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
         screenBar?.hardware = core?.isLive == true ? core?.devices : nil
         screenBar?.nowPlaying = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
+        rearmAskAgeTick()
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:
@@ -1219,6 +1270,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshScreenBarGlow()
         refreshScreenBarGeometry()
         reconcileScreenBarSetting()
+    }
+
+    /// The left ear's ask-age ring steps with the clock, and the daemon
+    /// sends nothing while only the clock moves: one sleeping task re-pushes
+    /// the wings at the next step and re-arms. It exists only while the
+    /// focus has an open ask, and a frame that leaves the next step where
+    /// it was keeps the task it has.
+    private var askAgeTick: Task<Void, Never>?
+    private var askAgeTickAt: Double?
+
+    private func rearmAskAgeTick() {
+        let next = store?.nextAskAgeTick()
+        guard next != askAgeTickAt || askAgeTick == nil || next == nil else { return }
+        askAgeTick?.cancel()
+        askAgeTick = nil
+        askAgeTickAt = next
+        guard let next else { return }
+        // A hair past the boundary, so the fill has certainly stepped.
+        let delay = max(0, next - Date().timeIntervalSince1970) + 0.05
+        askAgeTick = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.askAgeTick = nil
+            self.screenBar?.wings = self.store?.screenBarWings ?? .empty
+            self.rearmAskAgeTick()
+        }
     }
 
     /// `screen_bar_follow_alcove` (default on) while the bar is shown.

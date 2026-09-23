@@ -349,23 +349,23 @@ struct SessionsSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SectionLabel(text: "Sessions", trailing: store.rows.isEmpty ? nil : "\(store.rows.count)")
-            if store.rows.isEmpty {
+            SectionLabel(text: "Sessions", trailing: sessionsTrailing)
+            if store.visibleRows.isEmpty {
                 SessionsEmptyState(store: store)
             } else {
                 ScrollView(.vertical) {
                     VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
-                        ForEach(store.askRows) { row in
+                        ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
-                        ForEach(store.plainRows) { row in
+                        ForEach(store.visiblePlainRows) { row in
                             SessionRowView(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
                     .padding(.bottom, CGFloat(PanelLayout.listBottomPadding))
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.rows.map(\.id))
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRows.map(\.id))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.sessionsHeight))
@@ -384,6 +384,14 @@ struct SessionsSection: View {
         .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.hiddenCount > 0)
+    }
+
+    /// "3" — or, while a find query narrows the list, "“opus” · 2 of 5".
+    private var sessionsTrailing: String? {
+        if !store.findQuery.isEmpty {
+            return "“\(store.findQuery)” · \(store.visibleRows.count) of \(store.rows.count)"
+        }
+        return store.rows.isEmpty ? nil : "\(store.rows.count)"
     }
 }
 
@@ -510,16 +518,25 @@ struct SessionsEmptyState: View {
 
     private var live: Bool { store.isLive }
 
+    /// A find query narrowed every row away — a different state from an
+    /// empty roster, and it says how to get the rows back.
+    private var finding: Bool { !store.findQuery.isEmpty && !store.rows.isEmpty }
+
     private var symbol: String {
-        live ? "moon.stars" : "antenna.radiowaves.left.and.right.slash"
+        if finding { return "magnifyingglass" }
+        return live ? "moon.stars" : "antenna.radiowaves.left.and.right.slash"
     }
 
     private var headline: String {
+        if finding { return "Nothing matches “\(store.findQuery)”" }
         if live { return store.hiddenCount > 0 ? "All clear" : "No agents right now" }
         return store.coreMayBeStarting ? "Starting…" : "Monitor not connected"
     }
 
     private var detail: String {
+        if finding {
+            return "Searched labels, models, folders and asks across \(store.rows.count) session\(store.rows.count == 1 ? "" : "s"). ⌫ edits, Esc clears."
+        }
         if live {
             if let stale = store.staleDetail {
                 return "\(stale); showing what it last sent."
@@ -560,7 +577,7 @@ struct SessionsEmptyState: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            if live && !store.missingHooks.isEmpty {
+            if live && !finding && !store.missingHooks.isEmpty {
                 // The one thing this state needs is a way forward.
                 Button("Set up agents…") { store.openSettings(page: .agents) }
                     .buttonStyle(PillButtonStyle(prominent: false))
@@ -613,6 +630,13 @@ struct SessionRowView: View {
                             Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
+                        if store.isWatchedForDone(row) {
+                            Image(systemName: "bell")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .help("You'll get a banner when this run ends")
+                                .accessibilityLabel("Notify when done is on")
+                        }
                         if let quiet = store.quietFeedText(for: row) {
                             // The provider's hook feed stopped arriving
                             // while the row still claims to be live: the
@@ -623,7 +647,11 @@ struct SessionRowView: View {
                         }
                     }
                     HStack(spacing: 4) {
-                        Text(row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        // The model the run is on ("Opus 4.5") once its
+                        // transcript was read — the tile already names the
+                        // provider, so the model is the better use of the
+                        // words.
+                        Text(row.usage?.modelName ?? row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                         if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
@@ -647,6 +675,15 @@ struct SessionRowView: View {
                         }
                     }
                     .font(.system(size: 11))
+                }
+                .overlay(alignment: .bottomLeading) {
+                    // How full the run's context window is: a hairline under
+                    // the words, below the text so nothing moves when it
+                    // arrives. Only a live run's context is worth a mark.
+                    if let fraction = row.liveContextFraction {
+                        ContextHairline(fraction: fraction, accent: row.style.accent)
+                            .offset(y: 5)
+                    }
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
@@ -705,6 +742,11 @@ struct SessionContextMenu: View {
     var body: some View {
         if row.isRemote {
             Text(row.remoteMachine.map { "Runs on \($0)" } ?? "Runs on a peer Mac")
+            if let host = store.screenSharingHost(for: row) {
+                // Reaching the peer is the local verb a remote row can
+                // have: Screen Sharing to it — nothing runs on the peer.
+                Button("Open Screen Sharing to \(row.remoteMachine ?? host)") { store.openScreenSharing(host: host) }
+            }
             if row.activity.isClearable || row.stale {
                 Divider()
                 Button("Clear") { store.clear(row) }
@@ -718,6 +760,13 @@ struct SessionContextMenu: View {
                 Divider()
             }
             Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+            if !row.activity.isClearable, row.activity != .failed {
+                // One banner when this run ends — without turning
+                // completion banners on for every run and sub-agent.
+                Button(store.isWatchedForDone(row) ? "Stop Notifying When Done" : "Notify When Done") {
+                    store.toggleDoneWatch(row)
+                }
+            }
             if row.isSnoozed(now: store.now) {
                 Button("Unsnooze") { store.snooze(row, seconds: 0) }
             } else if row.ask != nil || row.activity == .waiting {
@@ -728,6 +777,18 @@ struct SessionContextMenu: View {
                 Button(PanelStore.morningLabel(verb: "Snooze until", target: store.morningTarget)) {
                     store.snooze(row, seconds: PanelStore.secondsUntilMorning())
                 }
+            } else if PanelStore.canQuietRun(row) {
+                // A run you have already seen stops claiming the light and
+                // the banners; the daemon lets a real ask through anyway,
+                // so it still reaches you the moment it needs you.
+                Menu("Quiet This Run") {
+                    Button("For 15 Minutes") { store.quietRun(row, seconds: 900) }
+                    Button("For 1 Hour") { store.quietRun(row, seconds: 3600) }
+                    Button(PanelStore.morningLabel(verb: "Until", target: store.morningTarget)) {
+                        store.quietRun(row, seconds: PanelStore.secondsUntilMorning())
+                    }
+                }
+                .help("Its lights and banners go quiet; an ask still gets through")
             }
             if let cwd = row.cwd, !cwd.isEmpty {
                 Divider()
@@ -1020,6 +1081,11 @@ struct UsageRow: View {
 
     private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
     private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
+    /// The leading window's session-aware forecast — the Usage Center's
+    /// own, so the row and the card never disagree about "holding".
+    private var paceForecast: UsageForecast? {
+        windows.primary.map { UsageCenterStore.forecast(for: usage, window: $0, core: store.core, now: store.now) }
+    }
 
     var body: some View {
         let (primary, secondary) = windows
@@ -1055,9 +1121,15 @@ struct UsageRow: View {
                             .lineLimit(1)
                             .help(incident)
                     }
-                    if let hint = PanelStore.paceHint(usage.forecast?.pace,
-                                                    exhaustsAt: usage.forecast?.exhaustsAt,
-                                                    resetsAt: primary?.resetsAt, now: store.now) {
+                    if paceForecast?.heldIdle == true {
+                        // Nothing of this provider is working here: the
+                        // last slope is history, not a run-out.
+                        Text("holding")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                            .help(paceForecast.map { $0.headline(now: store.now) } ?? "")
+                    } else if let hint = PanelStore.paceHint(usage.forecast?.pace,
+                                                           exhaustsAt: usage.forecast?.exhaustsAt,
+                                                           resetsAt: primary?.resetsAt, now: store.now) {
                         Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
                     }
                     Spacer(minLength: 4)
@@ -1120,8 +1192,15 @@ struct UsageRow: View {
         var parts: [String] = []
         if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
         if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
-        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970 {
+        let forecast = paceForecast
+        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970,
+           forecast?.heldIdle != true {
             parts.append("runs out \(UsageForecast.relative(to: exhaustsAt, now: store.now))")
+        }
+        // The decision the panel is opened for: is there room for one
+        // more agent before the reset, at what each one burns now?
+        if let forecast, let room = SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) {
+            parts.append(room ? "room for +1" : "no room for +1")
         }
         if parts.isEmpty {
             if let action = usage.action, !action.isEmpty { return action }
@@ -1234,6 +1313,44 @@ struct QuotaBar: View {
         if used >= 95 { return .red }
         if used >= 80 { return .orange }
         return accent
+    }
+}
+
+/// A session's context fill as one continuous hairline: the provider's
+/// accent at rest, amber past 80 %, red past 95 % — the same thresholds
+/// the quota bars use, so "nearly full" reads the same everywhere.
+struct ContextHairline: View {
+    let fraction: Double
+    let accent: Color
+
+    static let height: CGFloat = 1.5
+
+    nonisolated static func level(_ fraction: Double) -> ContextLevel {
+        if fraction >= 0.95 { return .critical }
+        if fraction >= 0.80 { return .warning }
+        return .calm
+    }
+
+    enum ContextLevel { case calm, warning, critical }
+
+    private var fill: Color {
+        switch Self.level(fraction) {
+        case .critical: return .red
+        case .warning: return .orange
+        case .calm: return accent.opacity(0.55)
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.06))
+                Capsule().fill(fill)
+                    .frame(width: max(2, proxy.size.width * CGFloat(min(1, max(0, fraction)))))
+            }
+        }
+        .frame(height: Self.height)
+        .accessibilityLabel("Context \(Int((fraction * 100).rounded())) percent full")
     }
 }
 
@@ -1459,6 +1576,16 @@ struct PanelFooter: View {
                   ?? "Quiet the lights and sounds for a while")
             .accessibilityLabel(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
             Spacer()
+            if let hold = store.awakeHold {
+                // The hold on sleep is a mark, not a sentence: the words
+                // live in the tooltip, and a click opens the Power rows.
+                Button { store.openSettings(page: .notifications) } label: {
+                    Image(systemName: hold.symbol).font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
+                .help(hold.text)
+                .accessibilityLabel(hold.text)
+            }
             // While a quiet is in effect its label needs the room the
             // shortcut hints take; the shortcuts themselves still work
             // and the .help texts keep naming them.

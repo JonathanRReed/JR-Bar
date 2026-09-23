@@ -14,6 +14,9 @@ struct OverviewView: View {
     /// The row whose ask gets a free-text reply — the Reply… prompt's
     /// target. nil hides the sheet.
     @ViewState private var replyEntry: CoreRosterEntry?
+    /// The inspector's Advanced disclosure (static topology), closed
+    /// until opened and remembered once it is.
+    @AppStorage("overview.advancedExpanded") private var advancedExpanded = false
 
     var body: some View {
         NavigationSplitView {
@@ -54,12 +57,15 @@ struct OverviewView: View {
                 .accessibilityLabel("Completion actions")
             }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await store.prepareExport() }
+                Menu {
+                    // What is on screen first: the export matches the view
+                    // it was asked from, not the whole fleet.
+                    Button("Export \(store.exportScope.label)…") { Task { await store.prepareExport() } }
+                    Button("Export everything on record…") { Task { await store.prepareExport(everything: true) } }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
-                .help("Export audit bundle")
+                .help("Export an audit bundle of this view (or everything on record)")
                 .accessibilityLabel("Export audit bundle")
             }
             ToolbarItem(placement: .primaryAction) {
@@ -85,11 +91,17 @@ struct OverviewView: View {
             ExportPreviewSheet(store: store)
         }
         .sheet(isPresented: Binding(
+            get: { store.runExportPreview != nil },
+            set: { if !$0 { store.runExportPreview = nil } }
+        )) {
+            RunExportSheet(store: store)
+        }
+        .sheet(isPresented: Binding(
             get: { store.comparison != nil },
             set: { if !$0 { store.comparison = nil } }
         )) {
             if let comparison = store.comparison {
-                CompareRunsSheet(comparison: comparison)
+                CompareRunsSheet(comparison: comparison, usage: store.sessionUsage)
             }
         }
         .sheet(item: $replyEntry) { entry in
@@ -98,7 +110,9 @@ struct OverviewView: View {
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
             Task { await store.loadTimeline(for: id) }
-            Task { await store.loadRadarIfNeeded() }
+            if let entry = store.selected {
+                Task { await store.loadRadarReport(for: entry) }
+            }
         }
     }
 
@@ -118,6 +132,7 @@ struct OverviewView: View {
                 } else {
                     store.pane = .roster
                     store.workerFilter = nil
+                    store.dayFilter = nil
                     // A saved view is applied as a definition: the filter
                     // it stored, the highlight on its name, and a cleared
                     // search — same semantics as `apply(_:)`, never a
@@ -150,6 +165,17 @@ struct OverviewView: View {
                     ForEach(store.projects, id: \.self) { project in
                         Label(project, systemImage: "folder")
                             .tag(SidebarSelection(filter: OverviewFilter(preset: .thisProject, project: project), saved: nil, pane: .roster))
+                    }
+                }
+            }
+            let branches = store.branches
+            if !branches.isEmpty {
+                // Only when branches tell rows apart: one repository on
+                // two branches, or a linked worktree.
+                Section("Branches") {
+                    ForEach(branches, id: \.self) { branch in
+                        Label(branch, systemImage: "arrow.triangle.branch")
+                            .tag(SidebarSelection(filter: OverviewFilter(preset: .thisBranch, branch: branch), saved: nil, pane: .roster))
                     }
                 }
             }
@@ -245,6 +271,26 @@ struct OverviewView: View {
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Dismiss status")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .accessibilityElement(children: .combine)
+            }
+            if let day = store.dayFilter {
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar").foregroundStyle(.secondary)
+                    Text("Last active \(HistoryDayParse.title(day.day))" + (day.provider.map { " · \(ProviderStyle.style(for: $0).name)" } ?? ""))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    if store.onOpenHistoryDay != nil {
+                        Button("That day in History") { store.onOpenHistoryDay?(day.day) }
+                            .buttonStyle(.link).font(.system(size: 11))
+                            .help("Every started, finished, asked and failed row of that day")
+                    }
+                    Button { store.dayFilter = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .accessibilityLabel("Show every day")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 5)
                 .accessibilityElement(children: .combine)
@@ -361,10 +407,26 @@ struct OverviewView: View {
                     }
                     .width(min: 120, ideal: 180)
                     TableColumn("Project", value: \.projectSortKey) { entry in
-                        Text(OverviewFilter.projectName(of: entry.session.cwd) ?? "—")
-                            .foregroundStyle(.secondary).lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(OverviewFilter.projectName(of: entry.session.cwd) ?? "—")
+                                .foregroundStyle(.secondary).lineLimit(1)
+                            if let workspace = store.workspace(for: entry), let head = workspace.headLabel {
+                                // The branch (and a worktree mark) the run
+                                // works on: agents in worktrees of one repo
+                                // read apart without opening the inspector.
+                                if workspace.isLinkedWorktree {
+                                    Image(systemName: "square.split.2x1")
+                                        .font(.system(size: 8)).foregroundStyle(.tertiary)
+                                }
+                                Text(head).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                            }
+                        }
+                        .help(store.workspace(for: entry).map { workspace in
+                            "\(workspace.repositoryName) · \(workspace.headLabel ?? "no HEAD")"
+                                + (workspace.isLinkedWorktree ? " · linked worktree at \(workspace.root)" : "")
+                        } ?? (entry.session.cwd ?? ""))
                     }
-                    .width(min: 70, ideal: 90)
+                    .width(min: 70, ideal: 120)
                     TableColumn("Harness", value: \.session.provider) { entry in
                         HStack(spacing: 5) {
                             ProviderTile(style: ProviderStyle.style(for: entry.session.provider), size: 14)
@@ -376,13 +438,29 @@ struct OverviewView: View {
                         }
                     }
                     .width(min: 80, ideal: 100)
-                    TableColumn("Model", value: \.modelSortKey) { _ in
-                        // The roster does not track per-session model —
-                        // an honest blank, not a guess.
-                        Text("—").foregroundStyle(.tertiary)
-                            .help("Model is not reported for sessions")
+                    TableColumn("Model", value: \.modelSortKey) { entry in
+                        // The model the run's own transcript names; a row
+                        // not read (or a provider whose transcripts are
+                        // not read) is an honest blank, not a guess.
+                        if let usage = store.usage(for: entry), let model = usage.modelName {
+                            Text(model).foregroundStyle(.secondary).lineLimit(1)
+                                .help(usage.summary)
+                        } else {
+                            Text("—").foregroundStyle(.tertiary)
+                                .help(store.sessionUsage.gap(for: entry.id).map(SessionUsageDocument.gapText)
+                                      ?? "Not read yet")
+                        }
                     }
-                    .width(min: 44, ideal: 56)
+                    .width(min: 56, ideal: 76)
+                    TableColumn("Cost", value: \.costSortKey) { entry in
+                        if let usage = store.usage(for: entry), let cost = usage.costText {
+                            Text(cost).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                                .help("\(usage.summary)\nAPI-equivalent estimate from list prices, not an invoice")
+                        } else {
+                            Text("—").foregroundStyle(.tertiary)
+                        }
+                    }
+                    .width(min: 44, ideal: 58)
                     TableColumn("State", value: \.stateSortKey) { entry in
                         stateCell(entry)
                     }
@@ -722,7 +800,19 @@ struct OverviewView: View {
                         Text(coverage).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
                     timelineSection(for: entry)
-                    topologySection(for: entry)
+                    observedToolsSection(for: entry)
+                    if let previous = store.previousRun(for: entry) {
+                        Button {
+                            store.compareWithPreviousRun(entry)
+                        } label: {
+                            Label("Compare with the previous run here", systemImage: "arrow.left.arrow.right")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.link)
+                        .disabled(store.comparing)
+                        .help("Side by side with \(previous.session.label ?? previous.session.shortId ?? "the last finished run") in the same folder")
+                    }
+                    advancedSection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -763,16 +853,47 @@ struct OverviewView: View {
             if let tool = session.tool { fact("Tool", tool, evidence: .reported) }
             if session.workers > 0 { fact("Workers", "\(session.workers)", evidence: .reported) }
             if session.stale { fact("Stale", "yes", evidence: .reported) }
-            if let model = store.transcriptModel, store.timelineSessionID == entry.id {
+            if let usage = store.usage(for: entry) {
+                // `session_usage`: the run's own transcript, read for
+                // model and tokens — reported by the provider; the cost is
+                // the daemon's list-price arithmetic, so derived.
+                if let model = usage.modelName {
+                    fact("Model (transcript)", model, evidence: .reported)
+                }
+                if usage.models.count > 1 {
+                    fact("Models", usage.models.sorted { $0.value > $1.value }
+                        .map { "\(ModelName.display($0.key) ?? $0.key) \(UsageFormat.tokens($0.value))" }
+                        .joined(separator: ", "), evidence: .reported)
+                }
+                if usage.tokens.total > 0 {
+                    fact("Tokens", Self.tokensFact(usage), evidence: .reported)
+                }
+                if let cost = usage.costText {
+                    fact("Cost", cost + (usage.costEstimated ? " (stand-in rate)" : ""), evidence: .derived)
+                }
+                if let context = usage.contextText {
+                    fact("Context", context, evidence: usage.contextWindowSource == "reported" ? .reported : .derived)
+                }
+            } else if let model = store.transcriptModel, store.timelineSessionID == entry.id {
                 // The transcript's own word for the model — the label
                 // names the source so it never reads as a roster fact.
                 fact("Model (transcript)", model, evidence: .reported)
             } else {
-                fact("Model", "not reported", evidence: .unavailable)
+                fact("Model", store.sessionUsage.gap(for: entry.id).map(SessionUsageDocument.gapText) ?? "not read yet",
+                     evidence: .unavailable)
             }
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
+    }
+
+    /// "1.2M in 48 turns · 84% cached".
+    static func tokensFact(_ usage: SessionUsage) -> String {
+        var text = "\(UsageFormat.tokens(usage.tokens.total)) in \(usage.turns) turn\(usage.turns == 1 ? "" : "s")"
+        if let share = usage.tokens.cacheShare, share >= 0.01 {
+            text += " · \(Int((share * 100).rounded()))% cached"
+        }
+        return text
     }
 
     /// S7.3's evidence vocabulary: reported (the source said it), derived
@@ -889,6 +1010,15 @@ struct OverviewView: View {
                 .disabled(store.timelineLoading || store.timelinePage == nil)
                 .help("Reload the newest page")
                 .accessibilityLabel("Refresh timeline")
+                Button {
+                    store.prepareRunExport(entry)
+                } label: {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 9))
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                .disabled(store.timelinePage == nil || store.timelineSessionID != entry.id)
+                .help("Export this run as Markdown: its facts, what happened and the timeline")
+                .accessibilityLabel("Export this run as Markdown")
                 if let page = store.timelinePage, store.timelineSessionID == entry.id, page.hasMore {
                     Button("Load earlier") { Task { await store.loadEarlierTimeline() } }
                         .controlSize(.mini)
@@ -896,59 +1026,20 @@ struct OverviewView: View {
             }
             if store.timelineSessionID == entry.id {
                 if let page = store.timelinePage {
-                    let counts = store.timelineKindCounts
-                    if !store.timeline.isEmpty {
-                        HStack(spacing: 5) {
-                            ForEach(OverviewStore.TimelineKindFilter.allCases, id: \.self) { kind in
-                                let label: String = switch kind {
-                                case .all: "All \(store.timeline.count)"
-                                case .messages: "Messages \(counts.messages)"
-                                case .tools: "Tools \(counts.tools)"
-                                case .errors: "Errors \(counts.errors)"
-                                }
-                                Button {
-                                    store.timelineKind = kind
-                                } label: {
-                                    Text(label)
-                                        .font(.system(size: 9, weight: store.timelineKind == kind ? .semibold : .regular))
-                                        .padding(.horizontal, 6).padding(.vertical, 2)
-                                        .background(
-                                            Capsule().fill(store.timelineKind == kind
-                                                ? Color.accentColor.opacity(0.18) : .primary.opacity(0.06)))
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(kind == .errors && counts.errors > 0 ? .red : .secondary)
-                                .accessibilityLabel("Show \(kind.rawValue.lowercased()) timeline rows")
-                            }
-                        }
-                    }
-                    ScrollViewReader { proxy in
-                        if store.firstErrorSeq != nil {
-                            Button {
-                                if let seq = store.firstErrorSeq {
-                                    // A kind filter can leave the error
-                                    // row unrendered — scrollTo needs a
-                                    // live target, so switch first.
-                                    if store.timelineKind != .all && store.timelineKind != .errors {
-                                        store.timelineKind = .errors
-                                    }
-                                    withAnimation { proxy.scrollTo(seq, anchor: .top) }
-                                }
-                            } label: {
-                                Label("Jump to error", systemImage: "arrow.down.to.line")
-                                    .font(.system(size: 10))
-                            }
-                            .buttonStyle(.plain).foregroundStyle(.red)
-                        }
-                        LazyVStack(alignment: .leading, spacing: 5) {
-                            ForEach(store.filteredTimeline) { item in
-                                timelineRow(item).id(item.seq)
-                            }
-                        }
-                    }
-                    ForEach(page.gaps, id: \.self) { gap in
-                        Text(Self.gapText(gap))
-                            .font(.system(size: 10)).foregroundStyle(.orange)
+                    // The one timeline view History and the Data Hoarder
+                    // mount too: the story card, the honest gaps, the
+                    // kind chips, jump to error and the rows.
+                    if let archived = store.archivedTimeline, archived.id == entry.id {
+                        // The live transcript is gone but the Data Hoarder
+                        // kept it: the same view, labelled as the archive's.
+                        ReconstructedTimelineView(
+                            reconstruction: archived.reconstruction,
+                            viewState: store.timelineViewState, embedded: true,
+                            sourceNote: "Archived copy · \(archived.record.name) — the live transcript is gone")
+                    } else {
+                        ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
+                                                  viewState: store.timelineViewState, embedded: true,
+                                                  liveTail: OverviewStore.liveTail(for: entry))
                     }
                     if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
                         Button {
@@ -1000,83 +1091,68 @@ struct OverviewView: View {
         .task { await store.probeArchive(file: file) }
     }
 
-    private func timelineRow(_ item: CoreTimelineItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(item.at.map { Self.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.quaternary)
-                .frame(width: 40, alignment: .leading)
-            Image(systemName: Self.timelineSymbol(item))
-                .font(.system(size: 9))
-                .foregroundStyle(Self.timelineTint(item))
-                .frame(width: 12)
-            VStack(alignment: .leading, spacing: 1) {
-                if let name = item.name, item.kind != "message" {
-                    Text(name + (item.isError == true ? " · failed" : ""))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(item.isError == true ? Color.red : Color.secondary)
-                }
-                if let text = item.text {
-                    Text(text).font(.system(size: 11)).lineLimit(4).textSelection(.enabled)
-                }
-            }
-            if item.sidechain == true {
-                Text("subagent")
-                    .font(.system(size: 8, weight: .medium))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(Color.purple.opacity(0.15), in: .capsule)
-                    .foregroundStyle(.purple)
-            }
-        }
-        .padding(.leading, item.sidechain == true ? 10 : 0)
-        .accessibilityElement(children: .combine)
-    }
 
-    private static func timelineSymbol(_ item: CoreTimelineItem) -> String {
-        switch item.kind {
-        case "message": item.role == "user" ? "person" : "sparkle"
-        case "tool_use": "wrench.and.screwdriver"
-        case "tool_result": item.isError == true ? "xmark.octagon" : "checkmark.circle"
-        case "turn_end": "flag.checkered"
-        default: "circle"
-        }
-    }
+    // MARK: Observed tools
 
-    private static func timelineTint(_ item: CoreTimelineItem) -> Color {
-        if item.isError == true { return .red }
-        switch item.kind {
-        case "tool_use": return .accentColor
-        case "tool_result": return .green
-        case "turn_end": return .secondary
-        default: return .secondary
-        }
-    }
-
-    private static func gapText(_ gap: String) -> String {
-        switch gap {
-        case "transcript_not_found": "No transcript found for this session."
-        case "unsupported_provider": "This provider's transcript format is not read yet."
-        case "transcript_unreadable": "The transcript file could not be read."
-        default: gap.hasPrefix("timeline_item_cap") ? "Transcript exceeds the item cap — earliest rows omitted." : gap
-        }
-    }
-
-    private static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
-
-    // MARK: Topology
-
-    /// S7.5 relationship lens: the selected run's one-hop neighborhood
-    /// in the newest imported Radar report. Every edge is labeled
-    /// "static" — a statically detected relationship, never an observed
-    /// call; it feeds nothing (T38).
+    /// The tools and MCP servers this run actually called, from the
+    /// transcript already loaded for the Timeline — observed, not static,
+    /// and it works for Claude Code and Codex, which no static analyzer
+    /// scans. Failures ride beside the counts.
     @ViewBuilder
-    private func topologySection(for entry: CoreRosterEntry) -> some View {
-        let edges = store.staticEdges(for: entry)
-        if !edges.isEmpty || store.radarReport != nil {
+    private func observedToolsSection(for entry: CoreRosterEntry) -> some View {
+        let map = store.observedTools
+        if store.timelineSessionID == entry.id, !map.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("Tools used")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    Text("observed")
+                        .font(.system(size: 8, weight: .medium))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.15), in: .capsule)
+                        .foregroundStyle(Color.accentColor)
+                    Spacer()
+                    Text("\(map.totalCalls) calls in the loaded transcript")
+                        .font(.system(size: 9)).foregroundStyle(.quaternary)
+                }
+                if !map.tools.isEmpty {
+                    Text(map.tools.prefix(10).map(Self.toolText).joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                ForEach(map.servers) { server in
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                        Text(server.name).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                        Text(server.tools.prefix(6).map(Self.toolText).joined(separator: " · "))
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+                    .help("MCP server \(server.name): \(server.calls) calls")
+                }
+            }
+        }
+    }
+
+    /// "Bash ×12 (2 failed)".
+    private static func toolText(_ tool: ObservedToolMap.Tool) -> String {
+        tool.failures > 0 ? "\(tool.name) ×\(tool.calls) (\(tool.failures) failed)" : "\(tool.name) ×\(tool.calls)"
+    }
+
+    // MARK: Advanced (static topology)
+
+    /// The Agentic Radar lens, behind a disclosure that stays closed
+    /// until opened: Radar scans agent frameworks (LangGraph, CrewAI…),
+    /// not Claude Code or Codex sessions, so it is a specialist's tool,
+    /// not a fact every row should carry. When open it shows only a
+    /// report imported for this row's repository — never the newest
+    /// report of another project. Every edge is labeled "static", never
+    /// an observed call; it feeds nothing (T38).
+    @ViewBuilder
+    private func advancedSection(for entry: CoreRosterEntry) -> some View {
+        DisclosureGroup(isExpanded: $advancedExpanded) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text("Static topology")
@@ -1089,8 +1165,10 @@ struct OverviewView: View {
                     Spacer()
                     Button("Import…") { importRadarReport() }
                         .controlSize(.mini)
+                        .help("Import an Agentic Radar JSON report — its edges are listed for the repository it names")
                 }
-                if let report = store.radarReport {
+                if let report = store.radarReport(for: entry) {
+                    let edges = report.edges
                     ForEach(Array(edges.prefix(12).enumerated()), id: \.offset) { _, edge in
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.right")
@@ -1104,13 +1182,22 @@ struct OverviewView: View {
                         }
                     }
                     if edges.isEmpty {
-                        Text("No static edges near this session's provider.")
+                        Text("The report for this repository has no edges.")
                             .font(.system(size: 10)).foregroundStyle(.quaternary)
                     }
                     Text("\(report.repository ?? "report") · \(report.nodes.count) nodes · \(report.edges.count) edges")
                         .font(.system(size: 9)).foregroundStyle(.quaternary)
+                } else {
+                    Text(store.radarReports.isEmpty
+                         ? "No Radar reports imported."
+                         : "No imported report names \(store.repositoryName(for: entry) ?? "this repository").")
+                        .font(.system(size: 10)).foregroundStyle(.quaternary)
                 }
             }
+            .padding(.top, 4)
+        } label: {
+            Text("Advanced")
+                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
         }
     }
 
@@ -1129,6 +1216,19 @@ struct OverviewView: View {
 /// cannot carry.
 private struct CompareRunsSheet: View {
     let comparison: CoreRunComparison
+    /// Both sides' `session_usage` — model, tokens, cost — which the
+    /// daemon's comparison names as untracked; read here, per side.
+    let usage: SessionUsageStore
+
+    private func usage(_ side: CoreRunSide) -> SessionUsage? { usage.usage(for: side.id) }
+
+    /// The comparison's gaps, minus the one this sheet fills: once both
+    /// sides' transcripts named their model, "model not tracked" is no
+    /// longer true of what is on screen.
+    private var gaps: [String] {
+        let modelsKnown = usage(comparison.a)?.model != nil && usage(comparison.b)?.model != nil
+        return comparison.gaps.filter { !(modelsKnown && $0 == "model_not_tracked") }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1161,7 +1261,20 @@ private struct CompareRunsSheet: View {
                 compareRow("Lifecycle") { $0.lifecycle ?? "—" }
                 compareRow("Outcome") { $0.axes?.outcome ?? "—" }
                 compareRow("Review") { $0.axes?.review ?? "—" }
-                compareRow("Model") { _ in "not tracked" }
+                compareRow("Model") { side in
+                    usage(side)?.modelName ?? "not read"
+                }
+                compareRow("Tokens") { side in
+                    guard let tokens = usage(side)?.tokens, tokens.total > 0 else { return "—" }
+                    let cached = tokens.cacheShare.map { " · \(Int(($0 * 100).rounded()))% cached" } ?? ""
+                    return UsageFormat.tokens(tokens.total) + cached
+                }
+                compareRow("Cost (est.)") { side in
+                    usage(side)?.costText ?? "—"
+                }
+                compareRow("Context") { side in
+                    usage(side)?.contextText ?? "—"
+                }
                 Divider().gridCellUnsizedAxes([.horizontal])
                 compareRow("Span") { side in
                     side.activity?.span?.durationS.map(Self.durationText) ?? "—"
@@ -1179,6 +1292,12 @@ private struct CompareRunsSheet: View {
                     side.activity.map { "\($0.retriedTools)" } ?? "—"
                 }
                 compareRow("Asked you") { "\($0.interruptions.asked)" }
+                compareRow("Files changed") { side in
+                    guard let artifacts = side.artifacts else { return "—" }
+                    let edits = artifacts.files.reduce(0) { $0 + $1.edits }
+                    return artifacts.total == 0 ? "none"
+                        : "\(artifacts.total) · \(edits) edit\(edits == 1 ? "" : "s")\(artifacts.truncated ? "+" : "")"
+                }
                 compareRow("Top tools") { side in
                     side.activity.map { activity in
                         activity.tools.prefix(3)
@@ -1188,12 +1307,55 @@ private struct CompareRunsSheet: View {
                 }
             }
             .font(.system(size: 12))
-            ForEach(comparison.gaps, id: \.self) { gap in
+            if let a = comparison.a.artifacts, let b = comparison.b.artifacts, a.total + b.total > 0 {
+                filesSection(RunFileDiff(a: a, b: b))
+            }
+            ForEach(gaps, id: \.self) { gap in
                 Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(.orange)
+            }
+            if usage(comparison.a)?.estimatedCostUSD != nil || usage(comparison.b)?.estimatedCostUSD != nil {
+                Text("Costs are API-equivalent estimates from list prices — not invoices, and not a verdict on which model is better.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
         .padding(20)
         .frame(minWidth: 560)
+    }
+
+    /// The files each run's edits named: those both touched, then each
+    /// side's own — the "what did it actually change" the counts cannot say.
+    private func filesSection(_ diff: RunFileDiff) -> some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 4) {
+            if !diff.both.isEmpty {
+                GridRow {
+                    Text("Both").foregroundStyle(.tertiary).frame(width: 90, alignment: .leading)
+                    fileList(diff.both).gridCellColumns(2)
+                }
+            }
+            GridRow {
+                Text("Only here").foregroundStyle(.tertiary).frame(width: 90, alignment: .leading)
+                fileList(diff.onlyA)
+                fileList(diff.onlyB)
+            }
+        }
+        .font(.system(size: 11))
+    }
+
+    private func fileList(_ paths: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if paths.isEmpty {
+                Text("—").foregroundStyle(.quaternary)
+            }
+            ForEach(paths.prefix(8), id: \.self) { path in
+                Text(path).font(.system(size: 10, design: .monospaced))
+                    .lineLimit(1).truncationMode(.head).textSelection(.enabled)
+                    .help(path)
+            }
+            if paths.count > 8 {
+                Text("+\(paths.count - 8) more").font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func sideHeader(_ side: CoreRunSide) -> some View {
@@ -1221,7 +1383,7 @@ private struct CompareRunsSheet: View {
 
     private static func gapText(_ gap: String) -> String {
         switch gap {
-        case "artifacts_not_tracked": "Artifacts are not tracked per session — nothing to compare."
+        case "artifacts_not_tracked": "Files changed are unknown for a run whose transcript was not read."
         case "model_not_tracked": "Model is not tracked per session — differences are unknown, not equal."
         default: gap
         }
@@ -1302,6 +1464,54 @@ private struct ExportPreviewSheet: View {
     }
 }
 
+/// "Export this run": the Markdown previewed, then saved as-is.
+private struct RunExportSheet: View {
+    @Bindable var store: OverviewStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Export this run").font(.system(size: 15, weight: .semibold))
+            if let preview = store.runExportPreview {
+                ScrollView {
+                    Text(preview.markdown)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 260)
+                .padding(8)
+                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+            }
+            HStack {
+                Text("What you see is what is saved.").font(.system(size: 11)).foregroundStyle(.tertiary)
+                Spacer()
+                Button("Cancel") { store.runExportPreview = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save Markdown…") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 560, height: 480)
+    }
+
+    private func save() {
+        guard let preview = store.runExportPreview else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = preview.name
+        panel.allowedContentTypes = [.plainText]
+        panel.message = "The previewed run is written as-is."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.saveRunExport(to: url)
+            store.runExportPreview = nil
+        } catch {
+            store.error = OverviewStore.describe(error)
+        }
+    }
+}
+
 private extension OverviewPreset {
     var symbol: String {
         switch self {
@@ -1311,6 +1521,7 @@ private extension OverviewPreset {
         case .unreviewed: return "checkmark.circle.badge.questionmark"
         case .thisProject: return "folder"
         case .thisMac: return "desktopcomputer"
+        case .thisBranch: return "arrow.triangle.branch"
         case .all: return "globe"
         }
     }
