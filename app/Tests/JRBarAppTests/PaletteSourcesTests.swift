@@ -110,6 +110,35 @@ struct PaletteSourcesTests {
         #expect(log.calls == ["clear:claude:d", "copy:claude:d"])
     }
 
+    @Test("roster verbs appear only when they would do something; a dead daemon gets one honest row")
+    func agentCommands() {
+        let log = Log()
+        let verbs = AgentPaletteRows.CommandVerbs(
+            restart: { log.calls.append("restart") }, openPanel: { log.calls.append("panel") },
+            clearFinished: { log.calls.append("clear") }, undoClear: { log.calls.append("undo") })
+        let quiet = AgentPaletteRows.commandItems(
+            .init(live: true, connection: "", canRestart: true, completed: 0, undoable: nil), verbs: verbs)
+        #expect(quiet.isEmpty)
+        let busy = AgentPaletteRows.commandItems(
+            .init(live: true, connection: "", canRestart: true, completed: 3, undoable: 2), verbs: verbs)
+        #expect(busy.map(\.id) == ["agents.clearFinished", "agents.undoClear"])
+        #expect(busy[0].subtitle == "3 done, ended or stale")
+        #expect(busy[1].subtitle == "Puts back the 2 sessions just cleared")
+        _ = busy[0].primary?.run()
+        _ = busy[1].primary?.run()
+        let offline = AgentPaletteRows.commandItems(
+            .init(live: false, connection: "Monitor not connected: refused", canRestart: true,
+                  completed: 3, undoable: nil), verbs: verbs)
+        #expect(offline.map(\.id) == ["agents.offline"])
+        #expect(offline[0].subtitle == "Monitor not connected: refused")
+        #expect(offline[0].actions.map(\.id) == ["restart", "panel"])
+        _ = offline[0].primary?.run()
+        let unsupervised = AgentPaletteRows.commandItems(
+            .init(live: false, connection: "", canRestart: false, completed: 0, undoable: nil), verbs: verbs)
+        #expect(unsupervised[0].actions.map(\.id) == ["panel"], "no restart the app cannot make")
+        #expect(log.calls == ["clear", "undo", "restart"])
+    }
+
     // MARK: Quiet
 
     @Test("quiet presets run the remembered mode on Return, every other mode one ⌘K away")

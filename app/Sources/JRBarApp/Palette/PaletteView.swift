@@ -264,9 +264,7 @@ struct PaletteRowView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 40)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(selected ? Color.primary.opacity(0.1) : .clear))
+        .background(PaletteSelection(selected: selected, cornerRadius: 9))
         .padding(.horizontal, 8)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
@@ -289,6 +287,30 @@ struct PaletteRowView: View {
             return "Return to \(primary.title.lowercased()). Command K for all actions."
         }
         return item.opensActions ? "Return for the actions." : ""
+    }
+}
+
+/// The selected row's highlight: a neutral wash, Raycast's rather than
+/// the accent, so the tags keep their colours. With Increase Contrast
+/// on it deepens and gains an edge, so the selection never rests on a
+/// 10 % tint alone.
+struct PaletteSelection: View {
+    let selected: Bool
+    let cornerRadius: CGFloat
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if selected {
+            if contrast == .increased {
+                shape.fill(Color.primary.opacity(0.2))
+                    .overlay(shape.strokeBorder(Color.primary.opacity(0.55), lineWidth: 1))
+            } else {
+                shape.fill(Color.primary.opacity(0.1))
+            }
+        } else {
+            Color.clear
+        }
     }
 }
 
@@ -432,9 +454,7 @@ struct PaletteActionPanel: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Color.primary.opacity(0.1) : .clear))
+        .background(PaletteSelection(selected: selected, cornerRadius: 7))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)

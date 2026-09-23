@@ -169,6 +169,75 @@ enum AgentPaletteRows {
         ]
     }
 
+    /// The roster-wide verbs the panel's footer holds, offered only when
+    /// they would do something — and, while the daemon is away, one
+    /// honest row saying so instead of an empty Sessions section.
+    struct Commands {
+        var live: Bool
+        /// The panel header's connection line.
+        var connection: String
+        /// The app supervises the daemon, so a restart is ours to make.
+        var canRestart: Bool
+        var completed: Int
+        /// Rows the standing undo would put back, while it stands.
+        var undoable: Int?
+    }
+
+    struct CommandVerbs {
+        var restart: @MainActor () -> Void
+        var openPanel: @MainActor () -> Void
+        var clearFinished: @MainActor () -> Void
+        var undoClear: @MainActor () -> Void
+    }
+
+    @MainActor
+    static func commandItems(_ state: Commands, verbs: CommandVerbs) -> [PaletteItem] {
+        guard state.live else {
+            var actions: [PaletteAction] = []
+            if state.canRestart {
+                actions.append(PaletteAction(id: "restart", title: "Restart Monitor",
+                                             symbol: "arrow.clockwise") {
+                    verbs.restart()
+                    return nil
+                })
+            }
+            actions.append(PaletteAction(id: "panel", title: "Open JR-Bar Panel", symbol: "menubar.dock.rectangle") {
+                verbs.openPanel()
+                return nil
+            })
+            return [PaletteItem(
+                id: "agents.offline", title: "Monitor Not Connected", subtitle: state.connection,
+                keywords: ["daemon", "core", "restart", "sessions"],
+                icon: .symbol("bolt.horizontal.circle.fill", .red), kind: "JR-Bar", section: .sessions,
+                actions: actions)]
+        }
+        var items: [PaletteItem] = []
+        if state.completed > 0 {
+            items.append(PaletteItem(
+                id: "agents.clearFinished", title: "Clear Finished Sessions",
+                subtitle: "\(state.completed) done, ended or stale",
+                keywords: ["acknowledge", "tidy", "completed"],
+                icon: .symbol("checkmark.circle.fill", .green), kind: "Command", section: .sessions,
+                actions: [PaletteAction(id: "clear", title: "Clear Finished", symbol: "checkmark.circle") {
+                    verbs.clearFinished()
+                    return nil
+                }]))
+        }
+        if let undoable = state.undoable {
+            items.append(PaletteItem(
+                id: "agents.undoClear", title: "Undo Clear",
+                subtitle: undoable == 1 ? "Puts back the session just cleared"
+                    : "Puts back the \(undoable) sessions just cleared",
+                keywords: ["restore", "uncleared"],
+                icon: .symbol("arrow.uturn.backward.circle.fill", .blue), kind: "Command", section: .sessions,
+                actions: [PaletteAction(id: "undo", title: "Undo Clear", symbol: "arrow.uturn.backward") {
+                    verbs.undoClear()
+                    return nil
+                }]))
+        }
+        return items
+    }
+
     static func tone(for activity: SessionActivity) -> PaletteTag.Tone {
         switch activity {
         case .waiting: return .attention

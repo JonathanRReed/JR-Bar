@@ -29,7 +29,7 @@ enum PaletteWiring {
                         hoarder: DataHoarderUtility,
                         windows: Windows) -> [any PaletteSource] {
         [
-            agents(panel: panel),
+            agents(panel: panel, openPanel: windows.panel),
             quiet(panel: panel),
             lights(panel: panel, effects: effects),
             controlCenter(toggles: toggles),
@@ -43,18 +43,36 @@ enum PaletteWiring {
     /// Asks and sessions, through the panel's own verbs — `approve` and
     /// `deny` re-check `canAnswer`, remote rows and a pending answer,
     /// and pin the request, exactly as the panel's buttons do.
-    static func agents(panel: PanelStore) -> PaletteClosureSource {
-        PaletteClosureSource {
-            AgentPaletteRows.items(rows: panel.rows, now: Date(), verbs: AgentPaletteVerbs(
-                open: { panel.open($0) },
-                approve: { panel.approve($0) },
-                deny: { panel.deny($0) },
-                snooze: { panel.snooze($0, seconds: $1) },
-                copyPath: { panel.copyPath($0) },
-                reveal: { panel.reveal($0) },
-                dismiss: { panel.dismiss($0) },
-                clear: { panel.clear($0) }))
+    static func agents(panel: PanelStore, openPanel: @escaping @MainActor () -> Void) -> PaletteClosureSource {
+        PaletteClosureSource(build: { agentItems(panel: panel, openPanel: openPanel) })
+    }
+
+    static func agentItems(panel: PanelStore, openPanel: @escaping @MainActor () -> Void) -> [PaletteItem] {
+        let now = Date()
+        let rows = AgentPaletteRows.items(rows: panel.rows, now: now, verbs: AgentPaletteVerbs(
+            open: { panel.open($0) },
+            approve: { panel.approve($0) },
+            deny: { panel.deny($0) },
+            snooze: { panel.snooze($0, seconds: $1) },
+            copyPath: { panel.copyPath($0) },
+            reveal: { panel.reveal($0) },
+            dismiss: { panel.dismiss($0) },
+            clear: { panel.clear($0) }))
+        // The panel's own `canUndoClear` reads a clock that only ticks
+        // while the panel is open; the palette asks the real one.
+        let undoable = panel.undoOffer.flatMap { offer in
+            now.timeIntervalSince(offer.at) < EventPolicy.undoWindow ? offer.cleared : nil
         }
+        let state = AgentPaletteRows.Commands(
+            live: panel.core.isLive, connection: panel.connectionDescription,
+            canRestart: panel.supervisorState != nil, completed: panel.completedCount,
+            undoable: undoable)
+        let commands = AgentPaletteRows.commandItems(state, verbs: AgentPaletteRows.CommandVerbs(
+            restart: { panel.restartCore() },
+            openPanel: openPanel,
+            clearFinished: { panel.clearCompleted() },
+            undoClear: { panel.undoClear() }))
+        return rows + commands
     }
 
     /// The panel's quiet presets; picking a mode remembers it, as the
