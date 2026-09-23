@@ -182,6 +182,24 @@ def test_heat_suspends_the_hold_and_is_published(powered, monkeypatch: pytest.Mo
     assert hold["state"] == "manual"
 
 
+def test_the_lid_reading_lapses_when_nothing_observes_the_lid(powered) -> None:
+    controller = powered
+    controller._set_lid_observation_active(True)
+    controller.last_lid_closed = True
+    assert controller._core_build_state()["power"]["closed_lid"]["lid_closed"] is True
+    assert controller._core_dot_beacon_facts().lid_closed is True
+    # The hold drops and the poll stops: the lid may open unseen, so the
+    # shut reading must not outlive the observation that made it.
+    controller._set_lid_observation_active(False)
+    assert controller._core_build_state()["power"]["closed_lid"]["lid_closed"] is None
+    assert controller._core_dot_beacon_facts().lid_closed is False
+    assert core_power.lid_closed(controller) is None
+    # Watched again, the poll's reading counts again.
+    controller._set_lid_observation_active(True)
+    controller.last_lid_closed = False
+    assert controller._core_build_state()["power"]["closed_lid"]["lid_closed"] is False
+
+
 def test_the_grace_epoch_is_stable_across_builds(powered) -> None:
     controller = powered
     controller.sync_keep_awake(AgentMode.WORKING)

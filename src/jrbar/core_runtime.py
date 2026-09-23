@@ -4261,7 +4261,7 @@ def build_headless_controller_class() -> type:
                 # an ``extend`` Dot into the asks beacon (jrbar.dot_role).
                 on_call=core_power.on_call(self),
                 in_meeting=core_power.in_meeting(self),
-                lid_closed=getattr(self, "last_lid_closed", None) is True,
+                lid_closed=core_power.lid_closed(self) is True,
             )
 
         def _core_dot_plan(self, controller=None, program: str | None = None):
@@ -4275,6 +4275,7 @@ def build_headless_controller_class() -> type:
             ``controller`` is optional because the ``lights`` frame wants the
             role and the ``why`` without wanting a brightness line.
             """
+            from . import core_power
             from ._led_status_legacy import (
                 normalize_brightness,
                 scale_nominal_brightness,
@@ -4305,7 +4306,7 @@ def build_headless_controller_class() -> type:
                 brightness = min(existing, device)
                 # A shut lid makes an ``extend`` Dot the asks beacon, which is
                 # never scaled down (see below).
-                if role == DotRole.EXTEND.value and getattr(self, "last_lid_closed", None) is not True:
+                if role == DotRole.EXTEND.value and core_power.lid_closed(self) is not True:
                     # Exactly one place applies ``linked_dot_scale``, and it
                     # applies it to LIGHT. A code-domain multiply looks like a
                     # ratio and is not one: the write boundary then decodes

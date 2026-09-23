@@ -119,6 +119,20 @@ def attach(controller: Any) -> PowerLog | None:
     return log
 
 
+def lid_closed(controller: Any) -> bool | None:
+    """The lid reading, or None when nothing is watching the lid.
+
+    The lid is polled only while something needs it (a closed-lid policy, a
+    keep-awake hold, a lid animation), and the poll's last answer outlives
+    it. A lid shut while agents ran and opened after they finished would
+    otherwise read shut until the next hold: the Dot stuck as the asks
+    beacon, ``closed_lid.lid_closed`` still true."""
+    if getattr(controller, "_lid_observation_active", None) is False:
+        return None
+    reading = getattr(controller, "last_lid_closed", None)
+    return reading if isinstance(reading, bool) else None
+
+
 def observe_environment(controller: Any) -> None:
     """Tell the keep-awake hold what it yields to, before each sync."""
     keep = getattr(controller, "keep_awake", None)
@@ -128,7 +142,9 @@ def observe_environment(controller: Any) -> None:
     snapshot = getattr(controller, "last_snapshot", None)
     pending, working = session_facts(snapshot)
     battery = getattr(getattr(controller, "_production_battery_observation", None), "snapshot", None)
-    lid_closed = getattr(controller, "last_lid_closed", None)
+    # The raw reading: the hold consults the lid only while it holds, and
+    # a hold keeps the lid poll running.
+    lid = getattr(controller, "last_lid_closed", None)
     observe(
         # No snapshot yet (a restarted daemon whose first refresh failed) is
         # no observation at all: a restored agents lease must not read the
@@ -137,7 +153,7 @@ def observe_environment(controller: Any) -> None:
         working_count=working,
         battery_floor=battery_yields_hold(battery, getattr(controller, "settings", None)),
         thermal_state=keep_awake_module.read_thermal_state(),
-        lid_closed=lid_closed if isinstance(lid_closed, bool) else None,
+        lid_closed=lid if isinstance(lid, bool) else None,
     )
 
 
@@ -311,8 +327,7 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
     # must not flap the flag and re-broadcast the state.
     controller._core_adapter_short = bool(isinstance(runway, dict) and runway.get("adapter_short"))
     if isinstance(closed_lid, dict):
-        lid_closed = getattr(controller, "last_lid_closed", None)
-        closed_lid["lid_closed"] = lid_closed if isinstance(lid_closed, bool) else None
+        closed_lid["lid_closed"] = lid_closed(controller)
         closed_lid["sleeps_on_release"] = bool(getattr(lid, "sleeper", None) is not None)
         closed_lid["last_sleep_at"] = getattr(lid, "last_sleep_epoch", None)
         closed_lid["sleep_error"] = getattr(lid, "last_sleep_error", None)

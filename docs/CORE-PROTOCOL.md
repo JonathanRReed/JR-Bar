@@ -328,7 +328,9 @@ Vocabulary:
   until five cool minutes pass) or `battery` (the low-battery floor);
   `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
   `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
-  has none), `sleeps_on_release` (the daemon asks for sleep -- an
+  has none or while nothing watches the lid -- the lid is polled only
+  under a closed-lid policy, a hold or a lid animation, and a reading the
+  poll no longer keeps is not reported), `sleeps_on_release` (the daemon asks for sleep -- an
   unprivileged `pmset sleepnow` -- when the closed-lid hold drops with the
   lid shut and `AppleClamshellCausesSleep` says no external display is
   keeping clamshell mode; heat and the battery floor release even the
