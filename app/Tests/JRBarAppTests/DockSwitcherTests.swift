@@ -282,6 +282,19 @@ struct DockSwitcherTests {
         #expect(ranked.map(\.title) == ["Docs"])
     }
 
+    @Test("a hung app is skipped for a while, then asked again; an answer clears it")
+    func axBackoff() {
+        var backoff = DockAXBackoff()
+        #expect(!backoff.skips(7, now: 0))
+        backoff.note(7, unresponsive: true, now: 100)
+        #expect(backoff.skips(7, now: 105), "no second half-second wait on the next ⌥⇥")
+        #expect(!backoff.skips(8, now: 105), "only the app that hung")
+        #expect(!backoff.skips(7, now: 100 + DockAXBackoff.backoff + 0.1), "a busy moment isn't exile")
+        backoff.note(7, unresponsive: true, now: 200)
+        backoff.note(7, unresponsive: false, now: 201)
+        #expect(!backoff.skips(7, now: 202))
+    }
+
     // MARK: Minimized-window tiles
 
     @Test("a minimized tile's owner needs a sole claimant — no guessing")

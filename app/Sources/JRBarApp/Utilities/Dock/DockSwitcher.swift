@@ -50,6 +50,24 @@ struct SwitcherWindowRow {
     var onScreen: Bool = true
 }
 
+/// The switcher's memory of apps that didn't answer Accessibility: one
+/// hung app cost every ⌥⇥ its half-second AX timeout. An app that times
+/// out is skipped for `backoff` — its windows still list from the window
+/// server, just without an AX handle (a commit activates the app) — and
+/// asked again after, so a busy moment isn't a permanent exile.
+struct DockAXBackoff {
+    static let backoff: TimeInterval = 10
+    private(set) var until: [pid_t: TimeInterval] = [:]
+
+    func skips(_ pid: pid_t, now: TimeInterval) -> Bool {
+        (until[pid] ?? 0) > now
+    }
+
+    mutating func note(_ pid: pid_t, unresponsive: Bool, now: TimeInterval) {
+        if unresponsive { until[pid] = now + Self.backoff } else { until[pid] = nil }
+    }
+}
+
 enum DockSwitcherList {
     /// The z-order `CGWindowList` reports (front to back) cut to
     /// normal windows of regular apps — the switcher's recency.
@@ -1269,7 +1287,16 @@ final class DockSwitcherController {
             windowsForApp: { pid in
                 guard apps[pid] != nil, pid != ProcessInfo.processInfo.processIdentifier
                 else { return [] }
-                return AppleDockReader.windows(pid: pid)
+                // A hung app's rows still list from the window server;
+                // only the AX wait is skipped for a while.
+                let now = ProcessInfo.processInfo.systemUptime
+                guard !axBackoff.skips(pid, now: now) else { return [] }
+                let reading = AppleDockReader.windowsReading(pid: pid)
+                axBackoff.note(pid, unresponsive: reading.unresponsive, now: now)
+                if reading.unresponsive {
+                    Self.log.notice("switcher: pid \(pid, privacy: .public) didn't answer AX — skipped for \(DockAXBackoff.backoff, privacy: .public) s")
+                }
+                return reading.windows
             },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
@@ -1446,6 +1473,8 @@ final class DockSwitcherController {
 
     /// The pointer's gate for hover-selects — re-armed on every open.
     private var hoverGate = SwitcherHoverGate()
+    /// Apps that didn't answer AX lately — skipped instead of waited on.
+    private var axBackoff = DockAXBackoff()
 
     /// The pointer entered a card: that card becomes the pick, so the
     /// zoom pane, the ring and ⌥'s release all agree. The keyboard takes

@@ -960,11 +960,21 @@ enum AppleDockReader {
 
     @MainActor
     static func windows(pid: pid_t) -> [DockPreviewWindow] {
+        windowsReading(pid: pid).windows
+    }
+
+    /// `windows(pid:)` plus whether the app failed to answer inside the
+    /// half-second timeout — a hung app, which the switcher then stops
+    /// asking for a while instead of paying the wait on every open.
+    @MainActor
+    static func windowsReading(pid: pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool) {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
         var value: AnyObject?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-              let elements = value as? [AXUIElement] else { return [] }
+        let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        guard status == .success, let elements = value as? [AXUIElement] else {
+            return ([], status == .cannotComplete)
+        }
         rowStamp &+= 1
         let stamp = rowStamp << 20
         let windows: [DockPreviewWindow] = elements.enumerated().compactMap { index, element in
@@ -990,7 +1000,7 @@ enum AppleDockReader {
                 documentURL: documentURL(of: element),
                 element: element, windowID: DockWindowIdentity.windowID(of: element))
         }
-        return uniqueWindowsByIdentity(windows)
+        return (uniqueWindowsByIdentity(windows), false)
     }
 
     /// Click a preview card: un-minimize if needed, raise the window,
