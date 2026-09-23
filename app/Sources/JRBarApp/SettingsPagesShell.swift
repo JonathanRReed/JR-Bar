@@ -72,7 +72,7 @@ struct SoundsPage: View {
             .settingRowStyle()
             Toggle(isOn: $store.soundPreferences.quietOnCalls) {
                 SettingLabel(title: "Quiet while the microphone is live",
-                             subtitle: "On a call, recording or dictating, the sounds wait; the lights and banners still land.")
+                             subtitle: "On a call, recording or dictating, the sounds stay quiet; the lights and banners still land. Music in your headphones doesn't count.")
             }
             .settingRowStyle()
         }

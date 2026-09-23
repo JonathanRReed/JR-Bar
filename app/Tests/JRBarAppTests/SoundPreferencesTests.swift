@@ -80,6 +80,26 @@ import Testing
         #expect(held == [EventPolicy.completionSound])
     }
 
+    @Test func onlyAnotherAppsMicrophoneInputIsACall() {
+        typealias Client = MicrophoneCapture.Client
+        let own: pid_t = 100
+        // Music through AirPods: output only.
+        #expect(!MicrophoneCapture.isLive([Client(pid: 200, runningInput: false, microphoneDevices: 0)], ownPID: own))
+        // JR-Bar's own notch visualizer taps output in this process.
+        #expect(!MicrophoneCapture.isLive([Client(pid: own, runningInput: true, microphoneDevices: 1)], ownPID: own))
+        // Another app's tap on system audio runs input from no device.
+        #expect(!MicrophoneCapture.isLive([Client(pid: 300, runningInput: true, microphoneDevices: 0)], ownPID: own))
+        // A call.
+        #expect(MicrophoneCapture.isLive([Client(pid: 200, runningInput: false, microphoneDevices: 0),
+                                          Client(pid: 400, runningInput: true, microphoneDevices: 1)], ownPID: own))
+        #expect(!MicrophoneCapture.isLive([], ownPID: own))
+    }
+
+    @Test func theReaderNeverCountsThisProcess() {
+        let clients = MicrophoneCapture.clients(skipping: getpid())
+        #expect(clients.filter { $0.pid == getpid() }.allSatisfy { $0.microphoneDevices == 0 })
+    }
+
     @Test func theMenusOfferTheSystemsSoundsOnce() {
         let available = SoundPlayer.availableSounds()
         #expect(available.system.contains("Glass"))
@@ -87,3 +107,4 @@ import Testing
         #expect(Set(available.custom).isDisjoint(with: available.system))
     }
 }
+

@@ -59,9 +59,9 @@ struct SoundPreferences: Equatable, Sendable {
     var choices: [SoundRole: String] = [:]
     var volume: Double = 1
     var useAlertDevice = false
-    /// Hold every event sound while the microphone is live — a call, a
-    /// recording, dictation. Lights and banners still land. On unless
-    /// the person turns it off.
+    /// Hold every event sound while another app captures from a
+    /// microphone — a call, a recording, dictation (`MicrophoneCapture`).
+    /// Lights and banners still land. On unless the person turns it off.
     var quietOnCalls = true
 
     nonisolated static func choiceKey(_ role: SoundRole) -> String { "sound.choice.\(role.rawValue)" }
@@ -131,9 +131,11 @@ final class SoundPlayer {
     var onMissing: ((String) -> Void)?
     /// Read at every play, so a Settings change lands on the next sound.
     var preferences: () -> SoundPreferences = { SoundPreferences.load() }
-    /// Whether the microphone is live — read only when a sound is about
-    /// to play and the person keeps sounds quiet on calls; no poll.
-    var microphoneLive: () -> Bool = { NotchSensorMonitor.microphoneInUse() }
+    /// Whether another app is capturing from a microphone — read only
+    /// when a sound is about to play and the person keeps sounds quiet
+    /// on calls; no poll. Input-specific, so music playing through
+    /// AirPods (one device, both directions) never reads as a call.
+    var microphoneLive: () -> Bool = { MicrophoneCapture.isLive() }
     /// Told when a sound is held for a live microphone.
     var onHeldForCall: ((String) -> Void)?
     private lazy var alertDevice = AlertDevicePlayer()
