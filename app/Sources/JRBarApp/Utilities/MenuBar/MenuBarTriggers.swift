@@ -37,7 +37,8 @@ enum MenuBarTriggerEvent: Equatable, Sendable {
     /// The readable SSID right now (nil = none or unreadable). A
     /// sample like `onACPower` — the engine edges it.
     case wifiSSID(String?)
-    /// Default-input-running sample — the mic is live somewhere.
+    /// Live-microphone sample — another app is capturing from a mic
+    /// (`MicrophoneCapture`), not merely a headset playing.
     case micInUse(Bool)
     /// Focus-mode sample — true while any Focus is on.
     case focusOn(Bool)
@@ -470,24 +471,14 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         CWWiFiClient.shared().interface()?.ssid()
     }
 
-    /// Whether anything holds the default input running — a CoreAudio
-    /// read, no mic permission needed (running-state isn't capture).
+    /// Whether another app is capturing from a microphone — the same
+    /// per-process read the sounds and the notch's dot make
+    /// (`MicrophoneCapture`). The default input's `IsRunningSomewhere`
+    /// was device-wide, so AirPods only playing music fired "the
+    /// microphone goes live". CoreAudio reads, no mic permission needed
+    /// (running state isn't capture).
     nonisolated static func microphoneInUse() -> Bool {
-        var deviceID = AudioDeviceID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
-        ) == noErr, deviceID != kAudioObjectUnknown else { return false }
-        var running: UInt32 = 0
-        size = UInt32(MemoryLayout<UInt32>.size)
-        address.mSelector = kAudioDevicePropertyDeviceIsRunningSomewhere
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &running) == noErr
-        else { return false }
-        return running != 0
+        MicrophoneCapture.isLive()
     }
 
     /// The card's ask for the Focus grant — only ever called from the

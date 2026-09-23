@@ -21,6 +21,33 @@ struct NotchSensorMonitorTests {
                     + (snapshot.microphoneInUse ? 1 : 0))
     }
 
+    @Test("the dot and the card's names count the same processes")
+    func namesFollowTheDot() {
+        typealias Client = MicrophoneCapture.Client
+        let own: pid_t = 100
+        let clients = [
+            Client(pid: own, runningInput: true, microphoneDevices: 1),   // JR-Bar's own tap
+            Client(pid: 200, runningInput: true, microphoneDevices: 1),   // the call
+            Client(pid: 300, runningInput: true, microphoneDevices: 0),   // a visualizer's tap
+            Client(pid: 400, runningInput: false, microphoneDevices: 0),  // music through AirPods
+        ]
+        #expect(MicrophoneCapture.capturing(clients, ownPID: own) == [200])
+        #expect(MicrophoneCapture.isLive(clients, ownPID: own))
+        // A headset that is only playing, beside a tap, is no call and
+        // names nobody — the device-wide read called this a live mic.
+        let quiet = Array(clients.dropFirst(2))
+        #expect(MicrophoneCapture.capturing(quiet, ownPID: own).isEmpty)
+        #expect(!MicrophoneCapture.isLive(quiet, ownPID: own))
+    }
+
+    @Test("the live names never include this process")
+    func ownProcessNeverNamed() {
+        // Read-only against the real audio system: whatever else is
+        // capturing, JR-Bar's own tap is not a microphone.
+        #expect(!NotchSensorMonitor.microphoneClientPIDs().contains(getpid()))
+        #expect(!MicrophoneCapture.capturingPIDs().contains(getpid()))
+    }
+
     @Test("start polls now, stop releases the timer and reports quiet")
     func lifecycle() {
         let monitor = NotchSensorMonitor()

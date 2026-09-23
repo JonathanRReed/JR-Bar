@@ -1,14 +1,16 @@
 import Foundation
 
 /// One reading of the machine's capture hardware — the island's
-/// honest LEDs. `microphoneInUse` is CoreAudio's "the default input
-/// device is running somewhere"; `cameraInUse` is the CoreMediaIO
-/// twin, `DeviceIsRunningSomewhere` over the camera list. Both are
-/// observations of system state only — asking the question never
-/// opens a mic or a lens and never sees a frame or a sample, so the
-/// dots can never become the thing they warn about.
+/// honest LEDs, and the call fact the daemon's presence report carries.
+/// `microphoneInUse` is CoreAudio's per-process answer: another app is
+/// running input from a real input device (a headset that is only
+/// playing music is not a call, and neither is a visualizer's tap);
+/// `cameraInUse` is CoreMediaIO's `DeviceIsRunningSomewhere` over the
+/// camera list. Both are observations of system state only — asking
+/// the question never opens a mic or a lens and never sees a frame or
+/// a sample, so the dots can never become the thing they warn about.
 public struct NotchSensorState: Equatable, Sendable {
-    /// macOS's orange dot: some microphone is capturing.
+    /// macOS's orange dot: another app is capturing from a microphone.
     public var microphoneInUse = false
     /// macOS's green dot: some camera is rolling.
     public var cameraInUse = false

@@ -14,7 +14,9 @@ import Foundation
 /// input device, or only an aggregate built on a tap, and is skipped.
 ///
 /// A handful of HAL reads, no microphone permission (running state is
-/// not capture), no poll: callers ask at the moment it matters.
+/// not capture), no poll of its own: callers ask at the moment it
+/// matters, and the notch's sensor monitor listens on each process's
+/// `IsRunningInput` (`processObjects`) to know when to ask again.
 enum MicrophoneCapture {
     /// One CoreAudio client, as far as the decision needs it.
     struct Client: Equatable, Sendable {
@@ -29,7 +31,18 @@ enum MicrophoneCapture {
 
     /// The decision, pure: another process capturing from a real input.
     nonisolated static func isLive(_ clients: [Client], ownPID: pid_t) -> Bool {
-        clients.contains { $0.pid != ownPID && $0.runningInput && $0.microphoneDevices > 0 }
+        clients.contains { counts($0, ownPID: ownPID) }
+    }
+
+    /// Who is capturing, pure: the same rule as `isLive`, so the names
+    /// the card lists are exactly the processes that lit the dot — never
+    /// a visualizer's tap or a headset that is only playing.
+    nonisolated static func capturing(_ clients: [Client], ownPID: pid_t) -> [pid_t] {
+        clients.filter { counts($0, ownPID: ownPID) }.map(\.pid)
+    }
+
+    private nonisolated static func counts(_ client: Client, ownPID: pid_t) -> Bool {
+        client.pid != ownPID && client.runningInput && client.microphoneDevices > 0
     }
 
     /// The decision over the Mac's clients right now. Any read that
@@ -39,12 +52,27 @@ enum MicrophoneCapture {
         isLive(clients(skipping: getpid()), ownPID: getpid())
     }
 
+    /// The processes capturing right now, JR-Bar never among them.
+    nonisolated static func capturingPIDs() -> [pid_t] {
+        capturing(clients(skipping: getpid()), ownPID: getpid())
+    }
+
+    /// Every CoreAudio process object, for a listener on each one's
+    /// `IsRunningInput`; empty when the system refuses the read.
+    nonisolated static func processObjects() -> [AudioObjectID] {
+        objects(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList)
+    }
+
+    /// A process object's pid, nil when unreadable.
+    nonisolated static func pid(of process: AudioObjectID) -> pid_t? {
+        uint32(process, kAudioProcessPropertyPID).map { pid_t(bitPattern: $0) }
+    }
+
     /// Every CoreAudio client, with devices read only for the ones that
     /// run input and are not `skipping` — the rest cannot count anyway.
     nonisolated static func clients(skipping ownPID: pid_t) -> [Client] {
-        objects(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList).compactMap { process in
-            guard let raw = uint32(process, kAudioProcessPropertyPID) else { return nil }
-            let pid = pid_t(bitPattern: raw)
+        processObjects().compactMap { process in
+            guard let pid = pid(of: process) else { return nil }
             let runningInput = uint32(process, kAudioProcessPropertyIsRunningInput) == 1
             guard runningInput, pid != ownPID else {
                 return Client(pid: pid, runningInput: runningInput, microphoneDevices: 0)
