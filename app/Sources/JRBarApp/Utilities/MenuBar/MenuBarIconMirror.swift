@@ -29,6 +29,9 @@ struct MenuBarIconFace {
     /// The hidden run, for the ‹ beside the face.
     var hiddenCount = 0
     var hiddenRevealed = false
+    /// What the ‹ says under the pointer — the utility names the
+    /// keyboard's way in when the hotkey is on.
+    var chevronToolTip: String?
     /// The extras that ride the face as segments of its one compound
     /// face — the agent dot, the combined system readout. Under our own
     /// assertion macOS draws none of JR-Bar's status items, so an extra
@@ -396,6 +399,7 @@ private final class MirrorContentView: NSView {
             }
             faceButton.layer?.opacity = 1
         }
+        if chevron.toolTip != face.chevronToolTip { chevron.toolTip = face.chevronToolTip }
         let shows = face.hiddenCount > 0
         if shows != showsChevron {
             showsChevron = shows

@@ -108,3 +108,33 @@ struct MenuBarBarKeysTests {
         #expect(model.rowWidths(liveWidths: [:]).count == items.count, "no filter, no chip")
     }
 }
+
+/// The keyboard's way in, named where the pointer already goes: the ‹'s
+/// tooltip and the icon menu's Open Item Bar row.
+@Suite("Menu Bar — naming the keyboard's way in")
+struct MenuBarKeyboardHintTests {
+    private let toggle = MenuBarHotkeyBinding(action: .toggleReveal, keyCode: UInt32(kVK_ANSI_B),
+                                              modifiers: UInt32(cmdKey | optionKey), enabled: true)
+
+    @Test("the ‹ says what a click does, and names the hotkey when it is on")
+    func tooltip() {
+        #expect(MenuBarUtility.chevronToolTip(hiddenCount: 0, toggleHotkey: toggle, style: .bar) == nil)
+        #expect(MenuBarUtility.chevronToolTip(hiddenCount: 1, toggleHotkey: nil, style: .bar)
+                == "1 hidden item — click for the Item Bar")
+        let named = MenuBarUtility.chevronToolTip(hiddenCount: 3, toggleHotkey: toggle, style: .bar)
+        #expect(named?.hasPrefix("3 hidden items — click for the Item Bar. ⌥⌘B opens it for the keyboard") == true)
+        #expect(MenuBarUtility.chevronToolTip(hiddenCount: 2, toggleHotkey: toggle, style: .inline)
+                == "2 hidden items — click to bring them back. ⌥⌘B does the same.")
+    }
+
+    @Test("a letter or digit hotkey becomes the menu row's key equivalent; an arrow does not")
+    func keyEquivalent() {
+        #expect(MenuBarUtility.menuKeyEquivalent(for: toggle) == "b")
+        var arrow = toggle
+        arrow.keyCode = UInt32(kVK_RightArrow)
+        #expect(MenuBarUtility.menuKeyEquivalent(for: arrow) == nil)
+        var digit = toggle
+        digit.keyCode = UInt32(kVK_ANSI_7)
+        #expect(MenuBarUtility.menuKeyEquivalent(for: digit) == "7")
+    }
+}

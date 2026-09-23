@@ -965,6 +965,8 @@ final class MenuBarUtility: Toy {
         guard let index = list.firstIndex(where: { $0.action == action }) else { return }
         list[index].enabled = enabled
         update { $0.hotkeyBindings = list }
+        // The ‹'s tooltip names the toggle hotkey while it is on.
+        faceChanged()
     }
 
     /// The ⌘⇧K palette — also the card's "Command bar" button.
@@ -1355,7 +1357,35 @@ final class MenuBarUtility: Toy {
             face.length = 0
         }
         face.accessories = extrasAccessories()
+        face.chevronToolTip = Self.chevronToolTip(
+            hiddenCount: face.hiddenCount,
+            toggleHotkey: resolvedHotkeyBindings().first { $0.action == .toggleReveal && $0.enabled },
+            style: settings().revealStyle)
         return face
+    }
+
+    /// A binding's key as a menu key equivalent — a letter or a digit;
+    /// nil for a key a menu cannot draw as one.
+    nonisolated static func menuKeyEquivalent(for binding: MenuBarHotkeyBinding) -> String? {
+        let name = MenuBarHotkeys.keyName(for: binding.keyCode)
+        guard name.count == 1, let scalar = name.unicodeScalars.first,
+              CharacterSet.alphanumerics.contains(scalar) else { return nil }
+        return name.lowercased()
+    }
+
+    /// The ‹'s tooltip: what a click does, and — when the toggle hotkey
+    /// is on — that the same keys open the Item Bar for the keyboard.
+    /// Pure so a test pins the copy.
+    nonisolated static func chevronToolTip(hiddenCount: Int, toggleHotkey: MenuBarHotkeyBinding?,
+                                           style: MenuBarSettings.RevealStyle) -> String? {
+        guard hiddenCount > 0 else { return nil }
+        let items = "\(hiddenCount) hidden item\(hiddenCount == 1 ? "" : "s")"
+        let click = style == .bar ? "click for the Item Bar" : "click to bring them back"
+        guard let hotkey = toggleHotkey else { return "\(items) — \(click)" }
+        let keys = style == .bar
+            ? "\(hotkey.displayString) opens it for the keyboard: arrows, type to filter, Return"
+            : "\(hotkey.displayString) does the same"
+        return "\(items) — \(click). \(keys)."
     }
 
     /// Push the current segments to the mirror when they changed.
@@ -3128,6 +3158,14 @@ final class MenuBarUtility: Toy {
                     action: #selector(MenuBarChevronActions.menuOpenBar(_:)),
                     keyEquivalent: "")
                 menuItem.target = chevronActions
+                // The row names the toggle hotkey when it is on — the
+                // keyboard's own way to the same bar.
+                if settings().revealStyle == .bar,
+                   let hotkey = resolvedHotkeyBindings().first(where: { $0.action == .toggleReveal && $0.enabled }),
+                   let key = Self.menuKeyEquivalent(for: hotkey) {
+                    menuItem.keyEquivalent = key
+                    menuItem.keyEquivalentModifierMask = MenuBarHotkeyBinding.eventModifiers(hotkey.modifiers)
+                }
                 menu.addItem(menuItem)
             case .item(let id, _):
                 let menuItem = NSMenuItem(
