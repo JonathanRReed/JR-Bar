@@ -428,6 +428,22 @@ def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- write health --------------------------------------------------------------------------
+
+
+def augment_device_health(document: dict[str, Any]) -> None:
+    """``state.devices[].write_health`` for every device with a volume:
+    the last write's latency, how many programs the safety compiler had to
+    change, how many never reached the device and why (jrbar.write_health)."""
+    from . import write_health
+
+    for device in document.get("devices") or ():
+        if isinstance(device, dict) and isinstance(device.get("path"), str):
+            health = write_health.health_document(device["path"])
+            if health is not None:
+                device["write_health"] = health
+
+
 # --- colour vision ---------------------------------------------------------------------------
 
 _MAX_CANDIDATE_COLORS = 64
@@ -536,6 +552,7 @@ def list_focuses(_controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "MAX_BURN_PROGRAM_CHARACTERS",
+    "augment_device_health",
     "augment_lights_cues",
     "burn_init",
     "calibration_profile",

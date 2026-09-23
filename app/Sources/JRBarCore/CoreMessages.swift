@@ -846,10 +846,13 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     /// write time.
     public var lastWrite: Double?
     public var error: String?
+    /// How the writes are going (`state.devices[].write_health`), nil
+    /// before the first one: the card can say why the strip looks wrong.
+    public var writeHealth: CoreWriteHealth?
 
     public init(id: String, kind: String, name: String? = nil, path: String? = nil, leds: Int? = nil,
                 connected: Bool? = nil, enabled: Bool? = nil, brightness: Double? = nil, linked: Bool? = nil,
-                lastWrite: Double? = nil, error: String? = nil) {
+                lastWrite: Double? = nil, error: String? = nil, writeHealth: CoreWriteHealth? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
@@ -861,6 +864,7 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
         self.linked = linked
         self.lastWrite = lastWrite
         self.error = error
+        self.writeHealth = writeHealth
     }
 
     public var brightnessFraction: Double? {
@@ -874,6 +878,7 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, kind, name, path, leds, connected, enabled, brightness, linked, error
         case lastWrite = "last_write"
+        case writeHealth = "write_health"
     }
 
     public init(from decoder: Decoder) throws {
@@ -889,6 +894,28 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
         linked = try c.decodeIfPresent(Bool.self, forKey: .linked)
         lastWrite = try c.decodeIfPresent(Double.self, forKey: .lastWrite)
         error = try c.decodeIfPresent(String.self, forKey: .error)
+        // Tolerant: a malformed health line must never cost the device row.
+        writeHealth = try? c.decodeIfPresent(CoreWriteHealth.self, forKey: .writeHealth)
+    }
+}
+
+/// `state.devices[].write_health`: the last write's latency, how many
+/// programs the safety compiler had to change, and how many never reached
+/// the device -- with the last refusal's reason. Counts since the daemon
+/// started.
+public struct CoreWriteHealth: Codable, Hashable, Sendable {
+    public var latencyMs: Int?
+    public var writes: Int?
+    public var transformed: Int?
+    public var refused: Int?
+    public var lastRefusal: String?
+    public var lastRefusalAt: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case writes, transformed, refused
+        case latencyMs = "latency_ms"
+        case lastRefusal = "last_refusal"
+        case lastRefusalAt = "last_refusal_at"
     }
 }
 

@@ -109,6 +109,24 @@ struct PowerCodecTests {
         #expect(event.detail == "50 finished")
     }
 
+    @Test("a device's write health decodes, and a malformed one costs nothing")
+    func writeHealth() throws {
+        let state = try Self.state("""
+        {"t":"state","v":1,"generation":8,"aggregate":{},"sessions":[],"asks":[],
+         "devices":[{"id":"pro","kind":"pro","path":"/Volumes/SidePulse","connected":true,
+                     "write_health":{"latency_ms":31,"writes":12,"transformed":2,"refused":1,
+                                     "last_refusal":"LED program failed the presentation safety gate.",
+                                     "last_refusal_at":1000}},
+                    {"id":"dot","kind":"dot","connected":true,"write_health":{"writes":"many"}}]}
+        """)
+        let health = try #require(state.devices.first?.writeHealth)
+        #expect(health.latencyMs == 31)
+        #expect(health.refused == 1)
+        #expect(health.lastRefusal?.hasPrefix("LED program") == true)
+        #expect(state.devices.count == 2)
+        #expect(state.devices.last?.writeHealth == nil)
+    }
+
     @Test("a call decodes, and the quiet it caused reads as sounds off")
     func presence() throws {
         let state = try Self.state("""

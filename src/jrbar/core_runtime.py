@@ -280,6 +280,11 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("power", "battery", "draw_watts"),
         ("power", "battery", "temperature_c"),
         ("power", "battery", "runway", "minutes_left"),
+        # A device's write health moves with every write; a refusal is
+        # what earns a broadcast.
+        ("devices", "*", "write_health", "latency_ms"),
+        ("devices", "*", "write_health", "writes"),
+        ("devices", "*", "write_health", "transformed"),
     ),
     "lights": (
         ("now",),
@@ -5921,6 +5926,12 @@ def build_headless_controller_class() -> type:
                 core_power.augment_presence_document(self, document, now=wall_now)
             except Exception:
                 legacy.log_status_bar(f"core: power projection failed: {traceback.format_exc(limit=6)}")
+            try:
+                from . import core_lights
+
+                core_lights.augment_device_health(document)
+            except Exception:
+                legacy.log_status_bar(f"core: write health failed: {traceback.format_exc(limit=3)}")
             return document
 
         def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:
