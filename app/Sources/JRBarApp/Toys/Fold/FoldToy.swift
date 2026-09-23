@@ -914,7 +914,58 @@ final class FoldToy: Toy {
             })
     }
 
+    // MARK: Try it
+
+    /// True while the card's "Try it" demo plays.
+    private(set) var tryingIt = false
+    @ObservationIgnored private var tryTimer: Timer?
+
+    /// Foldy's one-click demo: a scripted close and reopen fed through
+    /// the simulate path at 60 Hz — the same tracker and chase the hinge
+    /// drives — then the fold goes back to the sensor. A drag on the
+    /// Simulate slider takes over from it.
+    func tryIt() {
+        guard !tryingIt else { return }
+        let activation = settings.activationAngle
+        let start = FoldTryIt.startAngle(current: measuredAngle, activation: activation)
+        let began = CACurrentMediaTime()
+        tryingIt = true
+        simulateBinding.wrappedValue = start
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let elapsed = CACurrentMediaTime() - began
+                if let angle = FoldTryIt.angle(at: elapsed, start: start, activation: activation) {
+                    self.simulateBinding.wrappedValue = angle
+                } else {
+                    self.stopTrying()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        tryTimer = timer
+    }
+
+    private func stopTrying() {
+        tryTimer?.invalidate()
+        tryTimer = nil
+        guard tryingIt else { return }
+        tryingIt = false
+        endSimulate()
+    }
+
+    /// The angle the card's lid glyph draws — the simulation while one
+    /// plays, else the sensor.
+    var glyphAngle: Double? { measuredAngle }
+
     func endSimulate() {
+        if tryingIt {
+            // A hand on the slider ends the demo; the slider's own
+            // release lands here again and hands the lid back.
+            tryTimer?.invalidate()
+            tryTimer = nil
+            tryingIt = false
+        }
         simulatedAngle = nil
         // The tracker's glide belongs to the real lid — a drag that
         // just jumped the angle 40° must not carry over.
@@ -1036,6 +1087,47 @@ final class FoldToy: Toy {
 
     var controls: AnyView {
         AnyView(FoldControlsView(toy: self))
+    }
+}
+
+/// The lid seen from the side: the deck, the hinge, the lid at the
+/// measured angle, and a tick where the fold starts (in "Set angle"
+/// mode) — so where the fold begins reads at a glance, and the glyph
+/// tilts along while the sensor or a demo moves it.
+struct FoldLidGlyph: View {
+    let angle: Double?
+    let activation: Double?
+
+    /// The lid's far end for an opening `degrees` (0 shut on the deck,
+    /// 90 upright, past that leaning back), from a hinge at `hinge`.
+    static func lidEnd(hinge: CGPoint, length: Double, degrees: Double) -> CGPoint {
+        let radians = min(180, max(0, degrees)) * .pi / 180
+        return CGPoint(x: hinge.x + length * cos(radians), y: hinge.y - length * sin(radians))
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let hinge = CGPoint(x: size.width * 0.38, y: size.height - 3)
+            let lidLength = Double(size.height) - 6
+            var deck = Path()
+            deck.move(to: hinge)
+            deck.addLine(to: CGPoint(x: size.width - 2, y: hinge.y))
+            context.stroke(deck, with: .color(.secondary), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            if let activation {
+                let tick = Self.lidEnd(hinge: hinge, length: lidLength + 3, degrees: activation)
+                context.fill(Path(ellipseIn: CGRect(x: tick.x - 1.5, y: tick.y - 1.5, width: 3, height: 3)),
+                             with: .color(.accentColor))
+            }
+            if let angle {
+                var lid = Path()
+                lid.move(to: hinge)
+                lid.addLine(to: Self.lidEnd(hinge: hinge, length: lidLength, degrees: angle))
+                context.stroke(lid, with: .color(.primary.opacity(0.8)),
+                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            }
+        }
+        .frame(width: 44, height: 26)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1182,9 +1274,25 @@ private struct FoldControlsView: View {
             }
 
             LabeledContent {
-                Text(toy.angleText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button(toy.tryingIt ? "Folding…" : "Try it") { toy.tryIt() }
+                        .controlSize(.small)
+                        .disabled(toy.tryingIt || !toy.isOn || toy.settings.provider != .jrbar)
+                        .help("Plays one close and reopen through the fold, no lid needed.")
+                }
+            } label: {
+                SettingLabel(title: "Try it", subtitle: "One scripted close and reopen, the fold's own motion.")
+            }
+
+            LabeledContent {
+                HStack(spacing: 8) {
+                    FoldLidGlyph(angle: toy.glyphAngle,
+                                 activation: toy.settings.anchor == .angle
+                                     ? toy.settings.activationAngle : nil)
+                    Text(toy.angleText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             } label: {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
             }
