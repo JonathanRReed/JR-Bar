@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-@Suite("state.power decodes")
+@Suite("state.power and state.presence decode")
 struct PowerCodecTests {
     static func state(_ json: String) throws -> CoreState {
         guard case .state(let state) = try CoreCodec.decode(frame: Data(json.utf8)) else {
@@ -55,5 +55,59 @@ struct PowerCodecTests {
         #expect(state.power?.hold == nil)
         #expect(state.power?.closedLid?.lidClosed == nil)
         #expect(CoreAwakeHold().isOff)
+        #expect(state.presence == nil)
+    }
+
+    @Test("a call decodes, and the quiet it caused reads as sounds off")
+    func presence() throws {
+        let state = try Self.state("""
+        {"t":"state","v":1,"generation":3,"aggregate":{},"sessions":[],"asks":[],"devices":[],
+         "focus":{"mode":"off","source":"call","until":null,"banner_allowed":true,"audible_allowed":false,
+                  "summary":"DND: On a call, sounds off"},
+         "presence":{"on_call":true,"mic":true,"camera":false,"screen_shared":false,"since":1000,
+                     "in_meeting":false,"meeting_until":null,"away":false,"fresh":true,
+                     "quiet":"sounds","escalation_ceiling":1,"celebrations_held":true}}
+        """)
+        let presence = try #require(state.presence)
+        #expect(presence.isOnCall)
+        #expect(presence.holdsCelebrations)
+        #expect(presence.escalationCeiling == 1)
+        #expect(presence.quiet == "sounds")
+        #expect(presence.since == 1000)
+        #expect(state.focus?.source == "call")
+        #expect(state.focus?.soundsAllowed == false)
+        #expect(state.focus?.bannerAllowed == true)
+        #expect(CoreFocus(mode: "dim").soundsAllowed)
+
+        // A malformed presence is "no report", never a lost state.
+        let odd = try Self.state("""
+        {"t":"state","v":1,"generation":4,"aggregate":{},"sessions":[],"asks":[],"devices":[],"presence":{"on_call":"yes"}}
+        """)
+        #expect(odd.generation == 4)
+        #expect(odd.presence == nil)
+    }
+
+    @Test("the hold_awake and presence arguments say exactly what the daemon parses")
+    func requestArguments() {
+        #expect(CoreAwakeRequest(.seconds(3600), source: "chip").arguments == [
+            "seconds": .number(3600), "display": .bool(false), "source": .string("chip"),
+        ])
+        #expect(CoreAwakeRequest(.until(5000), display: true).arguments == [
+            "until": .number(5000), "display": .bool(true), "source": .string("app"),
+        ])
+        #expect(CoreAwakeRequest(.untilAgentsFinish(sessions: ["claude:a"])).arguments == [
+            "until_agents_idle": .bool(true), "sessions": .array([.string("claude:a")]),
+            "display": .bool(false), "source": .string("app"),
+        ])
+        #expect(CoreAwakeRequest(.untilAgentsFinish(sessions: nil)).arguments["sessions"] == nil)
+        #expect(CoreAwakeRequest(.indefinite).arguments["indefinite"] == .bool(true))
+
+        let report = CorePresenceReport(mic: true, locked: false, idleSeconds: -3, meetingUntil: 9000)
+        #expect(report.sensingCall)
+        #expect(report.arguments == [
+            "mic": .bool(true), "camera": .bool(false), "screen_shared": .bool(false),
+            "locked": .bool(false), "idle_seconds": .number(0), "meeting_until": .number(9000),
+        ])
+        #expect(!CorePresenceReport().sensingCall)
     }
 }

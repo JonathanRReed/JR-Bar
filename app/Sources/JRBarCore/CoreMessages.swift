@@ -1352,10 +1352,134 @@ public struct CorePower: Codable, Hashable, Sendable {
     }
 }
 
+/// The `hold_awake` command's arguments: exactly one shape -- a duration,
+/// until a time, until the agents finish, or until turned off -- plus
+/// whether the screen is held too and which surface asked.
+public struct CoreAwakeRequest: Hashable, Sendable {
+    public enum Shape: Hashable, Sendable {
+        case seconds(Double)
+        case until(Double)
+        /// Every main session running now, or the named ones.
+        case untilAgentsFinish(sessions: [String]?)
+        case indefinite
+    }
+
+    public var shape: Shape
+    public var display: Bool
+    public var source: String
+
+    public init(_ shape: Shape, display: Bool = false, source: String = "app") {
+        self.shape = shape
+        self.display = display
+        self.source = source
+    }
+
+    public var arguments: [String: JSONValue] {
+        var args: [String: JSONValue] = ["display": .bool(display), "source": .string(source)]
+        switch shape {
+        case .seconds(let seconds): args["seconds"] = .number(seconds)
+        case .until(let epoch): args["until"] = .number(epoch)
+        case .untilAgentsFinish(let sessions):
+            args["until_agents_idle"] = .bool(true)
+            if let sessions { args["sessions"] = .array(sessions.map(JSONValue.string)) }
+        case .indefinite: args["indefinite"] = .bool(true)
+        }
+        return args
+    }
+}
+
+/// The `presence` command's arguments: what the app senses right now. The
+/// daemon treats a report as current for three minutes, so a sender renews
+/// it at least every minute while a sensor is live.
+public struct CorePresenceReport: Hashable, Sendable {
+    public var mic: Bool
+    public var camera: Bool
+    public var screenShared: Bool
+    public var locked: Bool?
+    public var idleSeconds: Double?
+    /// INFocusStatusCenter's `isFocused`, from the app's own grant.
+    public var focus: Bool?
+    /// When a calendar meeting in progress ends.
+    public var meetingUntil: Double?
+
+    public init(mic: Bool = false, camera: Bool = false, screenShared: Bool = false,
+                locked: Bool? = nil, idleSeconds: Double? = nil, focus: Bool? = nil, meetingUntil: Double? = nil) {
+        self.mic = mic
+        self.camera = camera
+        self.screenShared = screenShared
+        self.locked = locked
+        self.idleSeconds = idleSeconds
+        self.focus = focus
+        self.meetingUntil = meetingUntil
+    }
+
+    public var sensingCall: Bool { mic || camera || screenShared }
+
+    public var arguments: [String: JSONValue] {
+        var args: [String: JSONValue] = [
+            "mic": .bool(mic), "camera": .bool(camera), "screen_shared": .bool(screenShared),
+        ]
+        if let locked { args["locked"] = .bool(locked) }
+        if let idleSeconds { args["idle_seconds"] = .number(max(0, idleSeconds)) }
+        if let focus { args["focus"] = .bool(focus) }
+        if let meetingUntil { args["meeting_until"] = .number(meetingUntil) }
+        return args
+    }
+}
+
+/// `state.presence`: the one presence fact every surface reads the same
+/// way. `onCall` is a live microphone, camera or screen share the app
+/// reported (and renewed); `quiet` is what the daemon did about it
+/// (`sounds`, a quiet mode word, or `off`); `escalationCeiling` is the
+/// stage the ladder holds at (1 on a call); `celebrationsHeld` asks
+/// Confetti and every other celebration to hold its burst.
+public struct CorePresence: Codable, Hashable, Sendable {
+    public var onCall: Bool?
+    public var mic: Bool?
+    public var camera: Bool?
+    public var screenShared: Bool?
+    public var since: Double?
+    public var inMeeting: Bool?
+    public var meetingUntil: Double?
+    public var away: Bool?
+    public var fresh: Bool?
+    public var quiet: String?
+    public var escalationCeiling: Int?
+    public var celebrationsHeld: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case mic, camera, since, away, fresh, quiet
+        case onCall = "on_call"
+        case screenShared = "screen_shared"
+        case inMeeting = "in_meeting"
+        case meetingUntil = "meeting_until"
+        case escalationCeiling = "escalation_ceiling"
+        case celebrationsHeld = "celebrations_held"
+    }
+
+    public var isOnCall: Bool { onCall == true }
+    public var holdsCelebrations: Bool { celebrationsHeld == true }
+}
+
 public struct CoreFocus: Codable, Hashable, Sendable {
     public var mode: String?
     public var source: String?
     public var until: Double?
+    /// The quiet policy's own effect axes. A call's default quiet
+    /// (`source == "call"`) leaves `mode` at `off` and takes only the
+    /// sounds, so `audibleAllowed == false` is how a reader learns it.
+    public var bannerAllowed: Bool?
+    public var audibleAllowed: Bool?
+    public var summary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mode, source, until, summary
+        case bannerAllowed = "banner_allowed"
+        case audibleAllowed = "audible_allowed"
+    }
+
+    /// False only when the daemon says sounds are off right now.
+    public var soundsAllowed: Bool { audibleAllowed != false }
 }
 
 public struct CoreEscalation: Codable, Hashable, Sendable {
@@ -1438,12 +1562,15 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// `peers`: the remote-peers fleet as of the last refresh — absent
     /// while the feature is off, one row per discovered peer otherwise.
     public var peers: [CorePeer]?
+    /// `presence`: on a call, in a meeting, away; nil from an older daemon.
+    public var presence: CorePresence?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
-                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil) {
+                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil,
+                presence: CorePresence? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -1461,6 +1588,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.catalogGeneration = catalogGeneration
         self.unseenCompletions = unseenCompletions
         self.peers = peers
+        self.presence = presence
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1470,6 +1598,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         case catalogGeneration = "catalog_generation"
         case unseenCompletions = "unseen_completions"
         case peers
+        case presence
     }
 
     public init(from decoder: Decoder) throws {
@@ -1507,6 +1636,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         catalogGeneration = try? c.decodeIfPresent(Int.self, forKey: .catalogGeneration)
         unseenCompletions = (try? c.decodeIfPresent([String].self, forKey: .unseenCompletions)) ?? []
         peers = tolerantRows(CorePeer.self, try c.decodeIfPresent([JSONValue].self, forKey: .peers))
+        // A malformed presence reads as "no report", never a lost state.
+        presence = try? c.decodeIfPresent(CorePresence.self, forKey: .presence)
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
