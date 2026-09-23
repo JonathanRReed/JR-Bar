@@ -100,6 +100,8 @@ struct AquariumView: View {
     /// the tank. Drives the inspector strip — the tap already hit-tests
     /// via `hoverProbe.boxes`, selection just keeps the last hit.
     @ViewState private var selectedID: String?
+    /// The selected resident's logbook, fetched when it's tapped.
+    @ViewState private var residentLog: (id: String, log: AquariumResidentLog)?
     /// The shop popover's open flag.
     @ViewState private var showShop = false
 
@@ -327,6 +329,11 @@ struct AquariumView: View {
                     inspectorStrip(selected)
                 }
                 .transition(.opacity)
+                .task(id: selected.isResident ? selected.id : nil) {
+                    guard selected.isResident, let toy else { return }
+                    let log = await toy.residentLog(for: selected.id)
+                    residentLog = (selected.id, log)
+                }
             }
 
             // The idle game's chrome (docs/TOYS.md): a pearl count &
@@ -5481,11 +5488,26 @@ struct AquariumView: View {
                 Text(fish.label)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
-                Text(fish.plan?.evidence ?? fish.state.rawValue)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if fish.isResident {
+                    // The logbook: the session it remembers, not a plan.
+                    let log = residentLog?.id == fish.id ? residentLog?.log : nil
+                    Text(log?.swam ?? "A resident")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    if let record = log?.record {
+                        Text(record)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(fish.plan?.evidence ?? fish.state.rawValue)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 // Where it's working and what that means — the station
                 // the evidence line above put it at.
                 if let cue = fish.cue, cue.isFresh(at: Date()), !fish.isFry {
@@ -5519,7 +5541,8 @@ struct AquariumView: View {
             .controlSize(.small)
             .frame(width: 108)
             .help("The fish every \(fish.providerID) session swims as.")
-            if let onOpen = toy?.core.openSession {
+            // A resident's session has left; there's nothing to raise.
+            if !fish.isResident, let onOpen = toy?.core.openSession {
                 Button("Open") { onOpen(fish.id) }
                     .controlSize(.small)
             }

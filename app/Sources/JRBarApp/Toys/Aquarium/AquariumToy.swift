@@ -423,6 +423,16 @@ final class AquariumToy: Toy {
         return eaters.count
     }
 
+    /// A resident's logbook (`AquariumResidentLog`): the daemon's history
+    /// rows for its session, from a little before the tank first raised
+    /// it. A daemon that can't answer leaves only what the tank knows.
+    func residentLog(for id: String) async -> AquariumResidentLog {
+        let care = game.pets[id]
+        let since = care.map { max(0, $0.createdAt - 86_400) }
+        let rows = (try? await core.listHistory(since: since, limit: 500)) ?? []
+        return AquariumResidentLog.make(sessionID: id, care: game.pets[id], rows: rows)
+    }
+
     /// A clicked pearl drop on the sand.
     func collectDrop(_ id: String) {
         let now = Date()
