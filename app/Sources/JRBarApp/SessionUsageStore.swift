@@ -4,8 +4,8 @@ import Observation
 
 /// Per-session model, tokens, cost and context, fetched from
 /// `session_usage` for whichever rows a surface is showing. One store is
-/// shared by the panel, the Overview and the Usage Center, so a row read
-/// for the panel is already there when the Overview opens.
+/// shared by the panel and the Overview, so a row read for the panel is
+/// already there when the Overview opens.
 ///
 /// Reads are cheap daemon-side (each transcript is parsed incrementally),
 /// but they are still file I/O on the daemon's socket thread, so every id

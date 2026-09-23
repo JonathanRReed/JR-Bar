@@ -97,6 +97,13 @@ public struct UsageForecast: Hashable, Sendable {
     public var pace: String?
     /// The daemon's reason a pace was refused, when `pace == "guarded"`.
     public var guardReason: String?
+    /// `SessionAwarePace` found no agent of this provider working here:
+    /// the measured rate is history, and the window holds where it is
+    /// until one starts. The verdict was softened from `runsOut`.
+    public var heldIdle = false
+    /// How many of this provider's agents are working here, when a
+    /// surface told `SessionAwarePace`; nil when nobody counted.
+    public var workingAgents: Int?
 
     public init(window: String, usedPct: Double?, resetsAt: Double?, verdict: Verdict, ratePctPerHour: Double?, source: Source, pace: String? = nil, guardReason: String? = nil) {
         self.window = window
@@ -142,6 +149,9 @@ public struct UsageForecast: Hashable, Sendable {
         case .runsOut(let at):
             return "At this pace the \(window) window runs out at \(Self.clock(at, timeZone: timeZone)) (\(Self.relative(to: at, now: now)))"
         case .comfortable:
+            if heldIdle {
+                return "Holding at \(left) % left: no agent is working on it here"
+            }
             if let rate = ratePctPerHour, rate <= UsageForecaster.idleRate {
                 return "Comfortable: \(left) % left, nothing burning right now"
             }
@@ -290,5 +300,83 @@ public enum UsageForecaster {
             return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: .comfortable, ratePctPerHour: rate, source: .local, pace: daemon?.pace)
         }
         return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: .runsOut(exhaustsAt: exhaustsAt), ratePctPerHour: rate, source: .local, pace: daemon?.pace)
+    }
+}
+
+// MARK: - Where the window lands, in words
+
+extension UsageForecast {
+    /// Where the window will stand when it resets if the current rate
+    /// holds, in percent — past 100 when it would run out first. Nil
+    /// without a reading, a rate, or a reset ahead; a window already used
+    /// up stands where it is. The Usage Center's rings draw it as a ghost
+    /// arc ahead of the used one.
+    public func projectedAtReset(now: Double) -> Double? {
+        guard let used = usedPct, let resetsAt, resetsAt > now else { return nil }
+        if verdict == .exhausted { return used }
+        if heldIdle { return used }
+        guard let rate = ratePctPerHour, rate > UsageForecaster.idleRate else { return nil }
+        return used + rate * (resetsAt - now) / 3600
+    }
+
+    /// The verdict as one or two words for a chip: "Used up", "Runs out
+    /// 16:42", "Resets first", "Holding", "No pace yet", "Paused", "No
+    /// reading" — the same facts `headline` spells out.
+    public func verdictWord(timeZone: TimeZone = .current) -> String {
+        switch verdict {
+        case .exhausted: return "Used up"
+        case .runsOut(let at): return "Runs out \(Self.clock(at, timeZone: timeZone))"
+        case .comfortable:
+            if heldIdle { return "Holding" }
+            if let rate = ratePctPerHour, rate <= UsageForecaster.idleRate { return "Not burning" }
+            return resetsAt != nil ? "Resets first" : "Comfortable"
+        case .unknown: return "No pace yet"
+        case .guarded: return "Paused"
+        case .unmeasured: return "No reading"
+        }
+    }
+}
+
+/// Pace that knows what is running. A line through percentages alone
+/// keeps projecting the last slope while every agent sits idle, and has
+/// no idea three more just started; JR-Bar sees the sessions, so it can
+/// say both. The count is this Mac's working sessions of the provider —
+/// quota spent elsewhere (a chat in the browser, another Mac) is not in
+/// it, which is why an idle hold is worded "here".
+public enum SessionAwarePace {
+    /// With nothing working, a `runsOut` verdict is history rather than a
+    /// forecast: the window holds where it is until an agent starts. Any
+    /// other verdict passes through, stamped with the count.
+    public static func adjust(_ forecast: UsageForecast, working: Int) -> UsageForecast {
+        var adjusted = forecast
+        adjusted.workingAgents = working
+        if working == 0, case .runsOut = forecast.verdict {
+            adjusted.verdict = .comfortable
+            adjusted.heldIdle = true
+        }
+        return adjusted
+    }
+
+    /// Would one more agent, burning what each working one burns now, run
+    /// the window out before it resets? Nil when there is nothing to
+    /// divide (no agent working, no rate, no reset, no reading).
+    public static func roomForOneMore(_ forecast: UsageForecast, now: Double) -> Bool? {
+        guard let working = forecast.workingAgents, working > 0,
+              let used = forecast.usedPct, used < 99.95,
+              let rate = forecast.ratePctPerHour, rate > UsageForecaster.idleRate,
+              let resetsAt = forecast.resetsAt, resetsAt > now else { return nil }
+        let withOneMore = rate / Double(working) * Double(working + 1)
+        let exhaustsAt = now + (100 - used) / withOneMore * 3600
+        return exhaustsAt >= resetsAt
+    }
+
+    /// "room for one more" / "one more would run it out" — for a tooltip
+    /// or the Usage Center's source line.
+    public static func roomText(_ forecast: UsageForecast, now: Double) -> String? {
+        switch roomForOneMore(forecast, now: now) {
+        case true?: return "room for one more agent"
+        case false?: return "one more agent would run it out before the reset"
+        case nil: return nil
+        }
     }
 }

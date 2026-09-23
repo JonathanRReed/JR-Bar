@@ -235,7 +235,7 @@ final class PanelStore {
 
     let core: CoreModel
     /// Per-session model, tokens, cost and context — shared with the
-    /// Overview and the Usage Center, which the app delegate hands it to.
+    /// Overview, which the app delegate hands it to.
     let sessionUsage: SessionUsageStore
 
     // Fallback (file feeds) and app-owned state.

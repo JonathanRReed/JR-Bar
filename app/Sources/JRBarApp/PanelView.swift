@@ -1033,6 +1033,11 @@ struct UsageRow: View {
 
     private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
     private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
+    /// The leading window's session-aware forecast — the Usage Center's
+    /// own, so the row and the card never disagree about "holding".
+    private var paceForecast: UsageForecast? {
+        windows.primary.map { UsageCenterStore.forecast(for: usage, window: $0, core: store.core, now: store.now) }
+    }
 
     var body: some View {
         let (primary, secondary) = windows
@@ -1068,9 +1073,15 @@ struct UsageRow: View {
                             .lineLimit(1)
                             .help(incident)
                     }
-                    if let hint = PanelStore.paceHint(usage.forecast?.pace,
-                                                    exhaustsAt: usage.forecast?.exhaustsAt,
-                                                    resetsAt: primary?.resetsAt, now: store.now) {
+                    if paceForecast?.heldIdle == true {
+                        // Nothing of this provider is working here: the
+                        // last slope is history, not a run-out.
+                        Text("holding")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                            .help(paceForecast.map { $0.headline(now: store.now) } ?? "")
+                    } else if let hint = PanelStore.paceHint(usage.forecast?.pace,
+                                                           exhaustsAt: usage.forecast?.exhaustsAt,
+                                                           resetsAt: primary?.resetsAt, now: store.now) {
                         Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
                     }
                     Spacer(minLength: 4)
@@ -1133,8 +1144,15 @@ struct UsageRow: View {
         var parts: [String] = []
         if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
         if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
-        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970 {
+        let forecast = paceForecast
+        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970,
+           forecast?.heldIdle != true {
             parts.append("runs out \(UsageForecast.relative(to: exhaustsAt, now: store.now))")
+        }
+        // The decision the panel is opened for: is there room for one
+        // more agent before the reset, at what each one burns now?
+        if let forecast, let room = SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) {
+            parts.append(room ? "room for +1" : "no room for +1")
         }
         if parts.isEmpty {
             if let action = usage.action, !action.isEmpty { return action }

@@ -63,6 +63,20 @@ import JRBarCore
         #expect(finished.liveContextFraction == nil)
     }
 
+    @Test("the model breakdown shares follow the card's metric")
+    func modelShares() {
+        let models = [
+            UsageHistoryModel(model: "opus-4-5", tokens: 100, costUsd: 3),
+            UsageHistoryModel(model: "haiku-4-5", tokens: 300, costUsd: 1),
+        ]
+        let byTokens = UsageModelBreakdown.shares(models, metric: .tokens)
+        #expect(byTokens.map(\.model.model) == ["haiku-4-5", "opus-4-5"])
+        #expect(byTokens[0].share == 0.75)
+        let byCost = UsageModelBreakdown.shares(models, metric: .cost)
+        #expect(byCost.map(\.model.model) == ["opus-4-5", "haiku-4-5"])
+        #expect(byCost[0].share == 0.75)
+    }
+
     @Test("the hairline shares the quota bars' thresholds")
     func hairlineLevels() {
         #expect(ContextHairline.level(0.5) == .calm)

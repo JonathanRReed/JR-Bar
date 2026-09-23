@@ -186,6 +186,49 @@ public struct UsagePricing: Codable, Hashable, Sendable {
     }
 }
 
+/// One model's share of a range: `usage_history.models[]`.
+public struct UsageHistoryModel: Codable, Hashable, Sendable, Identifiable {
+    /// The record's model key — Claude's pricing key (`opus-4-5`), Codex's
+    /// turn model (`gpt-5.6-sol`).
+    public var model: String
+    public var tokens: Int
+    public var costUsd: Double
+    public var records: Int
+    /// False when the model has no price at all: its dollars are a real
+    /// absence, not a zero.
+    public var priced: Bool
+    /// True when a stand-in rate priced it.
+    public var estimated: Bool
+
+    public var id: String { model }
+    /// "Opus 4.5" — `ModelName`'s reading, the raw key when it has none.
+    public var displayName: String { ModelName.display(model) ?? model }
+
+    public init(model: String, tokens: Int, costUsd: Double = 0, records: Int = 0, priced: Bool = true, estimated: Bool = false) {
+        self.model = model
+        self.tokens = tokens
+        self.costUsd = costUsd
+        self.records = records
+        self.priced = priced
+        self.estimated = estimated
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case model, tokens, records, priced, estimated
+        case costUsd = "cost_usd"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? "unknown"
+        tokens = (try? c.decodeIfPresent(Int.self, forKey: .tokens)) ?? 0
+        costUsd = (try? c.decodeIfPresent(Double.self, forKey: .costUsd)) ?? 0
+        records = (try? c.decodeIfPresent(Int.self, forKey: .records)) ?? 0
+        priced = (try? c.decodeIfPresent(Bool.self, forKey: .priced)) ?? true
+        estimated = (try? c.decodeIfPresent(Bool.self, forKey: .estimated)) ?? false
+    }
+}
+
 /// The account behind a provider's usage: plan name, a label (an email or
 /// an org), and how the daemon knows (`official`, `derived`, `manual`).
 public struct UsageAccount: Codable, Hashable, Sendable {
@@ -220,6 +263,9 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     /// in the rows; the cost they contributed is a real absence.
     public var unpricedRecords: Int
     public var unpricedModels: [String]
+    /// Tokens and dollars per model over the range, most tokens first —
+    /// empty from a daemon that predates the split.
+    public var models: [UsageHistoryModel] = []
 
     public init(provider: String, range: String, days: [UsageHistoryDay] = [], hours: [UsageHistoryHour] = [], pricing: UsagePricing? = nil,
                 account: UsageAccount? = nil, records: Int? = nil, partial: Bool = false,
@@ -238,7 +284,7 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case provider, range, days, hours, pricing, account, records, partial
+        case provider, range, days, hours, pricing, account, records, partial, models
         case estimatedRecords = "estimated_records"
         case unpricedRecords = "unpriced_records"
         case unpricedModels = "unpriced_models"
@@ -257,6 +303,13 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         estimatedRecords = (try? c.decodeIfPresent(Int.self, forKey: .estimatedRecords)) ?? 0
         unpricedRecords = (try? c.decodeIfPresent(Int.self, forKey: .unpricedRecords)) ?? 0
         unpricedModels = (try? c.decodeIfPresent([String].self, forKey: .unpricedModels)) ?? []
+        models = (try? c.decodeIfPresent([UsageHistoryModel].self, forKey: .models)) ?? []
+    }
+
+    /// Newest day first, the days that carried anything — ccusage's daily
+    /// report, for the card's "By day" table.
+    public var activeDaysNewestFirst: [UsageHistoryDay] {
+        days.filter { $0.totalTokens > 0 || $0.costUsd > 0 }.reversed()
     }
 
     /// True while the dollars are approximate: the headline quote is a
