@@ -3417,6 +3417,48 @@ def _cmd_deck_press(self, args):
     return self._core_deck_press(index)
 
 
+#: What a deck control may say to an ask beyond a press's approve: the
+#: verbs ``answer_ask`` takes (``always`` and ``answer`` only while the
+#: decide lane holds the agent's own prompt; the answer path says so).
+DECK_ANSWER_DECISIONS: Final = frozenset({"approve", "deny", "always", "answer"})
+
+
+@command("deck_answer", main_thread=False)
+def _cmd_deck_answer(self, args):
+    """An explicit answer from a deck control: the Rail's Deny, Always allow
+    or a choice, a Stream Deck key through serve's ``/answer``. The slot's
+    session is answered through ``answer_ask`` -- the same fences, journal
+    and decide lane as the panel -- and never falls back to revealing: a
+    slot with no live ask refuses. A plain press keeps ``deck_press``."""
+    from .deck_session_board import SLOTS_PER_BANK
+
+    index = _deck_index(args, limit=SLOTS_PER_BANK)
+    if getattr(self, "_deck_input_check_active", False):
+        raise CommandError("input_check", core_deck.INPUT_CHECK_MESSAGE)
+    decision = str(args.get("decision") or "").lower()
+    if decision not in DECK_ANSWER_DECISIONS:
+        raise CommandError("invalid_args", "decision must be approve, deny, always or answer")
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+
+    def _slot():
+        revision, identity = self._core_deck_board().resolve_slot(index)
+        if identity is None:
+            raise CommandError("not_found", core_deck.NO_SESSION_MESSAGE)
+        status = self._core_deck_status_for_identity(identity)
+        if status is None:
+            raise CommandError("not_found", core_deck.RESERVED_MESSAGE)
+        return identity, status
+
+    identity, status = on_main(_slot)
+    answer = {"session": status.agent_id, "decision": decision, "only_if_frontmost": True}
+    for key in ("answers", "request", "command_id"):
+        if args.get(key) is not None:
+            answer[key] = args[key]
+    result = _cmd_answer_ask(self, answer)
+    self._core_log(f"deck: {core_deck.control_label(index)} answers {status.agent_id}: {decision}")
+    return {"index": index, "identity": identity, "session": status.agent_id, "action": "answer_ask", **result}
+
+
 @command("deck_pin")
 def _cmd_deck_pin(self, args):
     from .deck_control_center import revoke_deck_context
@@ -5451,14 +5493,19 @@ def build_headless_controller_class() -> type:
             if server is not None:
                 return
             from .serve import SERVE_DEFAULT_PORT, create_serve_server
+            from .serve_answers import ControllerAnswers
 
             try:
                 port = int(os.environ.get("JRBAR_SERVE_PORT") or SERVE_DEFAULT_PORT)
             except ValueError:
                 port = SERVE_DEFAULT_PORT
             try:
+                # /answer and /asks.json read serve_answer_enabled on every
+                # request, so flipping it needs no restart of the port.
                 server = create_serve_server(
-                    port=port, status_access_token=token.encode("utf-8")
+                    port=port,
+                    status_access_token=token.encode("utf-8"),
+                    answers=ControllerAnswers(self),
                 )
             except OSError as error:
                 legacy.log_status_bar(f"core: serve could not bind :{port}: {error}")

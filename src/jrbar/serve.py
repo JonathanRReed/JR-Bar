@@ -9,9 +9,14 @@ it serves the last persisted truth with its timestamps, and honesty
 lives in those timestamps).
 
     GET /status.json   authenticated agent aggregates + redacted provider quota
+    GET /asks.json     what is waiting and which answers each ask takes
+    POST /answer       approve / deny / always / a choice, for a Stream Deck key
 
-Loopback only, read only, no query parameters, nothing written. The public
-schema is rebuilt from an allowlist and never forwards persisted rows.
+Loopback only, no query parameters on the status route, nothing written.
+The public schema is rebuilt from an allowlist and never forwards persisted
+rows. The two answering routes (serve_answers.py) exist only when the host
+wires an answer source, are never anonymous, and act only while the
+owner's ``serve_answer_enabled`` switch is on -- off by default.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from .local_api_contract import (
     LocalAPIRequest,
@@ -260,6 +266,10 @@ class ServeConfiguration:
     home: Path | None = None
     status_access_token: bytes | None = field(default=None, repr=False)
     allow_anonymous_status: bool = False
+    #: Where ``/asks.json`` and ``/answer`` go (serve_answers.py:
+    #: ``ControllerAnswers`` in the daemon, ``CoreSocketAnswers`` for a
+    #: standalone ``jrbar serve --allow-answers``); None serves neither.
+    answers: object | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.home is not None and not isinstance(self.home, Path):
@@ -272,6 +282,10 @@ class ServeConfiguration:
             or not 24 <= len(token) <= _MAX_ACCESS_TOKEN_BYTES
         ):
             raise ValueError("invalid access token")
+        if self.answers is not None and not all(
+            callable(getattr(self.answers, name, None)) for name in ("enabled", "asks", "answer")
+        ):
+            raise ValueError("invalid answer source")
 
 
 class _ServeServer(ThreadingHTTPServer):
@@ -285,6 +299,9 @@ class _ServeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         route = self.path.split("?", 1)[0]
+        if route == "/asks.json":
+            self._serve_asks()
+            return
         if route not in ("/", "/status.json"):
             self.send_error(404)
             return
@@ -300,6 +317,103 @@ class _ServeHandler(BaseHTTPRequestHandler):
             separators=(",", ":"),
         ).encode("utf-8")
         self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:
+        route = self.path.split("?", 1)[0]
+        if route != "/answer":
+            self.send_error(404)
+            return
+        self._serve_answer()
+
+    # -- answering (serve_answers.py) ------------------------------------------
+
+    def _answer_source(self):
+        """The wired answer source when this request may use it, after
+        sending the refusal itself when it may not. Never anonymous."""
+        from .serve_answers import ServeAnswerRefused
+
+        configuration = self._configuration()
+        if configuration.answers is None:
+            self.send_error(404)
+            return None
+        if not self._authenticated(configuration.status_access_token):
+            self._send_authentication_required()
+            return None
+        try:
+            enabled = bool(configuration.answers.enabled())
+        except Exception:
+            enabled = False
+        if not enabled:
+            refusal = ServeAnswerRefused(
+                "answering_off",
+                "Answering from serve is off -- turn on serve_answer_enabled.",
+            )
+            self._send_json(refusal.http_status, refusal.document())
+            return None
+        return configuration.answers
+
+    def _serve_asks(self) -> None:
+        from .serve_answers import ServeAnswerRefused
+
+        answers = self._answer_source()
+        if answers is None:
+            return
+        try:
+            asks = answers.asks()
+        except ServeAnswerRefused as refusal:
+            self._send_json(refusal.http_status, refusal.document())
+            return
+        except Exception as error:
+            refusal = ServeAnswerRefused("internal", f"{error.__class__.__name__}: {error}"[:300])
+            self._send_json(500, refusal.document())
+            return
+        self._send_json(200, {"ok": True, "asks": asks})
+
+    def _serve_answer(self) -> None:
+        from .serve_answers import (
+            MAX_ANSWER_BODY_BYTES,
+            ServeAnswerRefused,
+            decode_answer_body,
+            parse_answer_target,
+            receipt_document,
+        )
+
+        answers = self._answer_source()
+        if answers is None:
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= MAX_ANSWER_BODY_BYTES:
+            self._send_json(413, ServeAnswerRefused("invalid_args", "the body is too large").document())
+            return
+        try:
+            body = decode_answer_body(self.rfile.read(length) if length else b"")
+            try:
+                query = parse_qs(self.path.partition("?")[2], keep_blank_values=True, max_num_fields=8)
+            except ValueError:
+                raise ServeAnswerRefused("invalid_args", "too many query fields") from None
+            target = parse_answer_target({key: values[-1] for key, values in query.items()}, body)
+            result = answers.answer(target)
+        except ServeAnswerRefused as refusal:
+            self._send_json(refusal.http_status, refusal.document())
+            return
+        except Exception as error:
+            # The answer path's own failure: said, never a dropped socket.
+            refusal = ServeAnswerRefused("internal", f"{error.__class__.__name__}: {error}"[:300])
+            self._send_json(500, refusal.document())
+            return
+        self._send_json(200, receipt_document(result))
+
+    def _send_json(self, status: int, document: dict) -> None:
+        payload = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
@@ -340,12 +454,14 @@ def serve(
     port: int = SERVE_DEFAULT_PORT,
     status_access_token: bytes | None = None,
     allow_anonymous_status: bool = False,
+    answers: object | None = None,
 ) -> None:
     """Blocking loopback server; Ctrl-C stops it."""
     server = create_serve_server(
         port=port,
         status_access_token=status_access_token,
         allow_anonymous_status=allow_anonymous_status,
+        answers=answers,
     )
     print(f"jrbar serve: http://127.0.0.1:{int(port)}/status.json")
     try:
@@ -362,12 +478,14 @@ def create_serve_server(
     home: Path | None = None,
     status_access_token: bytes | None = None,
     allow_anonymous_status: bool = False,
+    answers: object | None = None,
 ) -> ThreadingHTTPServer:
     """Create the loopback server with explicit, testable configuration."""
     configuration = ServeConfiguration(
         home=home,
         status_access_token=status_access_token,
         allow_anonymous_status=allow_anonymous_status,
+        answers=answers,
     )
     return _ServeServer(("127.0.0.1", int(port)), _ServeHandler, configuration)
 

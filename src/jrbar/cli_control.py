@@ -69,11 +69,13 @@ _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86_400}
 
 
 class ControlError(Exception):
-    """A refusal to report, with the exit status it deserves."""
+    """A refusal to report, with the exit status it deserves -- and, for a
+    command the daemon refused, the daemon's own error code."""
 
-    def __init__(self, message: str, status: int = 1) -> None:
+    def __init__(self, message: str, status: int = 1, *, code: str | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.code = code
 
 
 def parse_duration(raw: str) -> int:
@@ -240,7 +242,8 @@ class CoreConnection:
             if reply.get("ok") is False:
                 error = reply.get("error") or {}
                 message = error.get("message") or error.get("code") or "refused"
-                raise ControlError(f"{name}: {message}", 1)
+                code = error.get("code") if isinstance(error.get("code"), str) else None
+                raise ControlError(f"{name}: {message}", 1, code=code)
             result = reply.get("result")
             return result if isinstance(result, dict) else {}
         raise ControlError(f"no reply to {name}", 1)  # pragma: no cover

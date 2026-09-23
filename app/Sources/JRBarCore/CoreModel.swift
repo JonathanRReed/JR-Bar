@@ -743,6 +743,27 @@ public final class CoreModel {
         try await send("deck_press", args: ["index": .number(Double(index))])
     }
 
+    /// `deck_answer {index, decision, answers?, request?}`: an explicit answer
+    /// from a session key 0..12 — the Rail's Deny, Always allow (its own
+    /// button) or a picked choice — through `answer_ask`, never a reveal in
+    /// its place. `decision` is `approve`, `deny`, `always` or `answer`
+    /// (with `answers: {<question>: <label>}`); `request` pins the ask.
+    @discardableResult
+    public func deckAnswer(index: Int, decision: String, answers: [String: JSONValue]? = nil,
+                           request: String? = nil) async throws -> CoreReply {
+        try await send("deck_answer", args: Self.deckAnswerArgs(index: index, decision: decision,
+                                                                answers: answers, request: request))
+    }
+
+    /// The `deck_answer` args `deckAnswer` sends.
+    public nonisolated static func deckAnswerArgs(index: Int, decision: String, answers: [String: JSONValue]? = nil,
+                                                  request: String? = nil) -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["index": .number(Double(index)), "decision": .string(decision)]
+        if let answers { args["answers"] = .object(answers) }
+        if let request { args["request"] = .string(request) }
+        return args
+    }
+
     /// `deck_pin {index}`: toggles the pin on the identity at that key. Pins
     /// are per identity, so they survive Clear absent and bank changes.
     @discardableResult

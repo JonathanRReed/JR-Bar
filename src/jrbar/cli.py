@@ -917,6 +917,14 @@ def add_serve_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Allow unauthenticated loopback status reads for legacy clients.",
     )
+    parser.add_argument(
+        "--allow-answers",
+        action="store_true",
+        help=(
+            "Also serve /asks.json and POST /answer through the running monitor "
+            "(token required; they act only while serve_answer_enabled is on)."
+        ),
+    )
 
 
 def add_effects_parser(subparsers) -> None:
@@ -1052,6 +1060,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    answers = None
+    if getattr(args, "allow_answers", False):
+        from .cli_control import default_socket_path
+        from .serve_answers import CoreSocketAnswers
+
+        answers = CoreSocketAnswers(default_socket_path())
     try:
         serve(
             port=int(getattr(args, "port", 8737)),
@@ -1059,6 +1073,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 raw_status_token.encode("utf-8") if raw_status_token else None
             ),
             allow_anonymous_status=allow_anonymous_status,
+            answers=answers,
         )
     except ValueError:
         print("jrbar serve: invalid serve configuration", file=sys.stderr)

@@ -964,9 +964,10 @@ the main thread). Unknown args are ignored.
 | `list_scene_packs` | | `{packs[{id, name, scenes[], installed}]}` — the installed Scene packs as the `ScenePackSummary` the app decodes; `scenes` lists the scene names each pack overrides. |
 | `import_scene_pack` | path, update? | Validates the pack file first (`preview_source`, so nothing writes before the plan exists — a version-1 pack is migrated in memory, `invalid_pack` when the validator refuses it), then `ScenePackStore.install` (or `update` with `update: true`). `{pack_id, name, scenes[], installed, migrated, status}`; `conflict` when the pack id is installed and no update was asked for. Scene packs are data-only, network-free and bounded, must declare reduced-motion / high-contrast / non-colour-cue support, and may only name the known scenes (`focus`, `calm`, `night`, `demo`, `travel`, `dnd`). |
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
-| `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. |
+| `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. The same server carries `GET /asks.json` and `POST /answer` (see "Answering from serve" below), which act only while `serve_answer_enabled` is on. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
 | `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask the decide lane holds -- in any terminal, frontmost or not -- or a live ask whose terminal or origin app is frontmost, the press approves it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Control Center (⌘K)."; `input_check` while input check is on. |
+| `deck_answer` | index 0…12, decision (`approve`, `deny`, `always`, `answer`), answers? (with `answer`), request?, command_id? | An explicit answer from a session key -- the Rail's Deny, Always allow (from its own button) or a picked choice, a Stream Deck key through serve's `/answer` -- where a press can only approve. The key's session is answered through `answer_ask` with `only_if_frontmost: true`: the same fences, command journal and decide lane (`always` and `answer` only while the lane holds the agent's own prompt), so a key can never do what the panel's own buttons could not. Never falls back to revealing: a key whose session has no live ask refuses `not_found`. `{index, identity, session, action: "answer_ask", …the answer_ask receipt}`. `invalid_args` for another decision or an index past the session keys; `not_found` for an empty or reserved key; `input_check` while input check is on. Runs on the socket thread. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
 | `deck_bank` | delta | Steps the bank, wrapping. `{index, count}`. |
 | `deck_scope` | delta | Steps the board scope through `automatic` plus the configured provider scopes, wrapping (what the `next_scope` / `previous_scope` aux actions run). `{scope, scopes}`. |
@@ -1082,6 +1083,40 @@ hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …"),
 with no `choices` or with nothing held) and `invalid_args` (`answers` that
 do not pick from the offered options for every question). A request the lane
 does not hold goes through the checks above unchanged.
+
+### Answering from serve
+
+A Stream Deck key (or a script) can answer through the loopback endpoint,
+on the one answer path the panel uses (`serve_answers.py`). Both routes are
+bearer-authenticated like `/status.json` -- never anonymous, whatever
+`--allow-anonymous-status` says -- and act only while
+`serve_answer_enabled` is on (off by default; separate from
+`serve_enabled`, since reading the fleet and answering for the owner are
+different grants). The daemon's own server reads the switch on every
+request; a standalone `jrbar serve --allow-answers` reaches the daemon over
+`core.sock` and reads the same switch.
+
+- `GET /asks.json` → `{ok: true, asks: [{session, provider, label, slot,
+  kind, request, opened_at, preview, risk, decisions, choices}]}`: what is
+  waiting, the deck `slot` (1-13, the current bank's key; null when none)
+  showing it, one bounded line of what it wants, and the `decisions` an
+  answer may carry -- `approve`/`deny` only while the ask is `answerable`,
+  `always` only when the agent offered a rule to remember, `answer` only
+  for a held question (`choices`).
+- `POST /answer` names one `session` (the daemon's id) or one `slot` and an
+  explicit `decision`, in the query string (`/answer?slot=2&decision=deny`,
+  for a key that can only send a URL) or a JSON object body (which wins
+  where both name a field); `answers` (an object, JSON only) goes with
+  `answer`, `request` pins the ask. A session runs `answer_ask`
+  (`only_if_frontmost: true`), a slot `deck_answer`. `200 {ok: true,
+  result: {session, decision, answered, delivered, mechanism, code,
+  message, confirmation}}` -- never the host's pid, tty or window
+  evidence. Refusals are `{ok: false, error: {code, message}}` with the
+  answer path's own code: `400` `invalid_args`, `401` without the bearer
+  token, `403` `answering_off`, `404` `not_found`, `413` for a body over
+  16 KiB, `503` when the monitor is unreachable, `500` `internal` for a
+  failure on the answer path itself, `409` for everything else
+  (`stale_ask`, `stale_request`, `unsupported`, `not_frontmost`, `busy`, …).
 
 ### subscribe
 Optional; protocol 1 always sends everything. Reserved.
