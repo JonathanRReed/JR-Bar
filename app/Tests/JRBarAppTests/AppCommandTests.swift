@@ -23,6 +23,18 @@ import Testing
         #expect(parse("jrbar://open/control-center") == .window(.controlCenter))
     }
 
+    @Test func everyWindowOpensByItsLinkName() {
+        for window in AppCommand.AppWindow.allCases {
+            #expect(parse("jrbar://open/\(window.rawValue)") == .window(window))
+            #expect(parse("jrbar://window/\(window.rawValue)") == .window(window))
+            #expect(parse("jrbar://\(window.rawValue)") == .window(window), "the bare verb list keeps up")
+        }
+        #expect(parse("jrbar://window/whats-new") == .window(.whatsNew))
+        #expect(parse("jrbar://window/Whats-New") == .window(.whatsNew))
+        #expect(parse("jrbar://window/nowhere") == nil)
+        #expect(parse("jrbar://window") == nil)
+    }
+
     @Test func everySettingsPageALinkMayNameExists() {
         // The pure parser keeps its own list so it needs no main-actor
         // type; this keeps it honest against the real pages.

@@ -1738,6 +1738,9 @@ extension AppDelegate {
             case .effects: self?.effectsWindow?.show()
             case .controlCenter: self?.controlCenterWindow?.show()
             case .setup: SetupWindowController.show()
+            // No window yet: the name routes so the menus and the palette
+            // can list it before What's New is built.
+            case .whatsNew: break
             }
         }
         router.quiet = { [weak self] mode, seconds in

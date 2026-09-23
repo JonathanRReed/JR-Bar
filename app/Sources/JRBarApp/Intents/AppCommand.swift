@@ -44,8 +44,11 @@ enum AppCommand: Equatable, Sendable {
     /// The notch's shelf: open it, or fold it when it is open.
     case shelf
 
+    /// A window by the name a link uses: `jrbar://open/<name>`,
+    /// `jrbar://window/<name>`, or the bare `jrbar://<name>`.
     enum AppWindow: String, CaseIterable, Sendable {
         case overview, history, usage, effects, controlCenter = "control-center", setup
+        case whatsNew = "whats-new"
     }
 
     /// Whose colours a linked burst wears: the focused session's (a bare
@@ -137,10 +140,10 @@ enum AppCommand: Equatable, Sendable {
             guard let object else { return .settings(page: nil) }
             let page = object.lowercased()
             return SettingsPageName.known.contains(page) ? .settings(page: page) : nil
-        case "open":
+        case "open", "window":
             guard let object, let window = AppWindow(rawValue: object.lowercased()) else { return nil }
             return .window(window)
-        case "overview", "history", "usage", "effects", "control-center", "setup":
+        case "overview", "history", "usage", "effects", "control-center", "setup", "whats-new":
             return AppWindow(rawValue: verb).map(AppCommand.window)
         case "toggle":
             guard let object, let toggle = SystemToggle(name: object) else { return nil }
