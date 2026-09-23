@@ -15,6 +15,15 @@ def jrbar_main(argv: list[str] | None = None) -> int:
         return integration_main(args[1:])
     if args[:1] == ["providers"]:
         return provider_main(args[1:])
+    # The control verbs drive the running monitor and app (status, quiet,
+    # snooze, set, get over core.sock; toggle, awake, open as jrbar://
+    # links) -- one small module, loaded only when asked for.
+    from .cli_control import VERBS as control_verbs
+
+    if args[:1] and args[0] in control_verbs:
+        from .cli_control import main as control_main
+
+        return control_main(args)
     # The source-checkout LaunchAgent and `jrbar status-bar --foreground`
     # both enter through this router. Load the native provider wrapper before
     # starting AppKit so the menu, Usage Center, reset cues, and background
