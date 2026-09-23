@@ -196,6 +196,26 @@ struct ScreenBarPeekTests {
         #expect(ScreenBarInteraction.peekPress(onPanel: false, onZone: false, peekShown: false) == .none)
     }
 
+    @Test func onlyAClickOrAPullTradesAPinnedCardForThePeek() {
+        // Nothing pinned: every ask hangs the peek, and no card is folded.
+        for intent: ScreenBarPeekIntent in [.hover, .pin, .toggle] {
+            let free = ScreenBarInteraction.peekGesture(intent: intent, cardPinned: false)
+            #expect(free.open && !free.unpinFirst, "\(intent) with nothing pinned")
+        }
+        // A rest, a wheel notch or a trackpad scroll over a pinned card
+        // (or the grown island) hangs nothing — never a second surface.
+        let scroll = ScreenBarInteraction.peekGesture(intent: .hover, cardPinned: true)
+        #expect(!scroll.open && !scroll.unpinFirst, "a scroll leaves the pinned card standing, alone")
+        // A pull folds the card first, then pins the peek; so does a click.
+        let pull = ScreenBarInteraction.peekGesture(intent: .pin, cardPinned: true)
+        #expect(pull.unpinFirst && pull.open, "one pinned surface at a time")
+        let click = ScreenBarInteraction.peekGesture(intent: .toggle, cardPinned: true)
+        #expect(click.unpinFirst && click.open)
+        // Folding the peek never touches the card.
+        let close = ScreenBarInteraction.peekGesture(intent: .close, cardPinned: true)
+        #expect(!close.unpinFirst)
+    }
+
     @Test func aScrollOnTheEarHangsThePeek() {
         // A wheel's notch answers at once, but only on the ear.
         #expect(ScreenBarInteraction.scrollOpensPeek(precise: false, beganOnPeek: false, onPeekZone: true,

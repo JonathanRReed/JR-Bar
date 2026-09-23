@@ -421,9 +421,9 @@ final class ScreenBarInteraction {
     }
 
     /// The peek's hover: resting on the ear hangs it after `peekDelay`
-    /// — never over a pinned card, which only a click trades for it —
-    /// and leaving the ear and the peek folds an unpinned one after the
-    /// card's own grace.
+    /// — never over a pinned card, which only a click or a pull trades
+    /// for it — and leaving the ear and the peek folds an unpinned one
+    /// after the card's own grace.
     private func notePeekHover(_ onSurface: Bool) {
         let state = peekState()
         if onSurface {
@@ -434,11 +434,8 @@ final class ScreenBarInteraction {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.peekShowWork = nil
-                    guard self.pointerOnPeekSurface(), !self.cardPinned() else { return }
-                    // A glass peek still in its leave grace goes now —
-                    // one surface under the notch at a time.
-                    if self.isTooltipShown, !self.card.isPinned { self.hideTooltip() }
-                    self.onPeek(.hover)
+                    guard self.pointerOnPeekSurface() else { return }
+                    self.requestPeek(.hover)
                 }
             }
             peekShowWork = work
@@ -464,6 +461,36 @@ final class ScreenBarInteraction {
     private func pointerOnPeekSurface() -> Bool {
         let point = NSEvent.mouseLocation
         return peekZoneAt(point) || (peekRegion()?.corridor.contains(point) ?? false)
+    }
+
+    /// Every gesture that asks for the peek — the rest, the wheel, the
+    /// trackpad, the click, the pull — asks here, so the rule holds on
+    /// each: a pinned card or grown island folds only for a click or a
+    /// pull, and a glass card still in its leave grace goes now — one
+    /// surface under the notch at a time.
+    private func requestPeek(_ intent: ScreenBarPeekIntent) {
+        let gesture = Self.peekGesture(intent: intent, cardPinned: cardPinned())
+        guard gesture.open else { return }
+        if gesture.unpinFirst {
+            unpin()
+        } else if isTooltipShown {
+            hideTooltip()
+        }
+        onPeek(intent)
+    }
+
+    /// What a gesture asking for the peek does about the card — pure: a
+    /// pinned card (or the grown island) is traded for the peek only by
+    /// a deliberate press on the ear, a click or a pull, which folds it
+    /// first; a rest or a scroll leaves it standing and hangs nothing.
+    nonisolated static func peekGesture(intent: ScreenBarPeekIntent,
+                                        cardPinned: Bool) -> (unpinFirst: Bool, open: Bool) {
+        guard cardPinned else { return (false, true) }
+        switch intent {
+        case .hover: return (false, false)
+        case .pin, .toggle: return (true, true)
+        case .close: return (false, true)
+        }
     }
 
     /// What a press does to the peek — pure: a press on the peek's own
@@ -653,7 +680,7 @@ final class ScreenBarInteraction {
         if swipeOnPeek {
             if point.y - start.y <= -Self.swipeThreshold {
                 swipeFired = true
-                onPeek(.pin)
+                requestPeek(.pin)
             }
             return
         }
@@ -694,14 +721,9 @@ final class ScreenBarInteraction {
         guard !wasSwipe, !onIsland, armed else { return }
         // A press on the right ear's peek zone: a fast pull down hangs
         // the peek, anything else is the click that toggles it — whether
-        // or not a card is pinned, which the click then trades away.
+        // or not a card is pinned, which the click or pull trades away.
         if pressedEar {
-            if flick <= -NotchPullGesture.flickVelocity {
-                onPeek(.pin)
-            } else {
-                if cardPinned() { unpin() }
-                onPeek(.toggle)
-            }
+            requestPeek(flick <= -NotchPullGesture.flickVelocity ? .pin : .toggle)
             return
         }
         // The flick: a fast pull released short of the travel
@@ -754,7 +776,7 @@ final class ScreenBarInteraction {
             if Self.scrollOpensPeek(precise: false, beganOnPeek: false,
                                     onPeekZone: peekZoneAt(NSEvent.mouseLocation),
                                     accumX: 0, accumY: 0) {
-                onPeek(.hover)
+                requestPeek(.hover)
             }
             return
         }
@@ -793,7 +815,7 @@ final class ScreenBarInteraction {
                         break
                     }
                 } else if scrollOnPeek, abs(scrollAccumY) >= commit {
-                    onPeek(.hover)
+                    requestPeek(.hover)
                 } else if abs(scrollAccumY) >= commit {
                     switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart,
                                              deltaY: scrollAccumY, threshold: commit) {
@@ -859,7 +881,7 @@ final class ScreenBarInteraction {
             if Self.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: true,
                                     accumX: scrollAccumX, accumY: scrollAccumY) {
                 scrollFired = true
-                onPeek(.hover)
+                requestPeek(.hover)
             }
             return
         }
