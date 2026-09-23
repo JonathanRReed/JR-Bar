@@ -920,6 +920,9 @@ final class NotchToy: Toy {
     private func collapseIsland() {
         guard islandExpanded else { return }
         islandExpanded = false
+        // A quiet stretch that ended under the card says its summary as
+        // the card folds — behind a capsule the fold brings back, if any.
+        defer { noteQuietChange() }
         expandHeld = false
         hoverHeld = false
         peekWork?.cancel()
@@ -1482,18 +1485,32 @@ final class NotchToy: Toy {
 
     /// Something quiet moved: a stretch that just ended replays what it
     /// held as one summary capsule ("While you were in Work · 3
-    /// finished"). `reconcile` and the Focus call it; internal for the
-    /// tests.
+    /// finished"). `reconcile`, the Focus and the card's fold call it;
+    /// internal for the tests.
+    ///
+    /// The end is only spent once the summary can be said. A Focus
+    /// ended from Control Center while the card is up (or the island is
+    /// hidden, or under Fold) keeps the edge and the hold, and the fold
+    /// or the next reconcile replays it — offered under the card, it
+    /// would have been cancelled as an orphan by the fold. Capsules
+    /// switched off entirely have no voice to wait for: the hold goes.
     func noteQuietChange() {
         let now = quietContext
-        defer { lastQuiet = now }
-        guard now == nil, let ended = lastQuiet,
-              let summary = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended)
-        else { return }
+        guard now == nil, let ended = lastQuiet else {
+            lastQuiet = now
+            return
+        }
         let s = settings
-        guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.capsuleNotifications,
-              islandVisible else { return }
-        offer(summary)
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.capsuleNotifications else {
+            lastQuiet = nil
+            _ = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended)
+            return
+        }
+        guard islandVisible, !islandExpanded, !foldEngaged else { return }
+        lastQuiet = nil
+        if let summary = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended) {
+            offer(summary)
+        }
     }
 
     /// A Focus turning on says what the island will do about it: good

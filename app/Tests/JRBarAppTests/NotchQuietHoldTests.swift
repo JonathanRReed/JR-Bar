@@ -99,6 +99,44 @@ struct NotchQuietHoldTests {
         #expect(toy.capsuleQueue.current?.session == "claude:c", "one run: a tap opens it")
     }
 
+    @Test("a Focus ending under the grown card keeps its summary for the fold")
+    func endUnderCardReplaysOnFold() throws {
+        let (toy, store, core) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        try quiet(core, #"{"mode":"off"}"#)
+        toy.noteMacFocus(name: "Work", on: true)
+        toy.offer(news(.completed, id: "c"))
+        #expect(toy.capsuleQueue.held.count == 1)
+
+        // Control Center ends the Focus while the card is up: the
+        // summary would have been offered under the card, then
+        // cancelled as an orphan by the fold.
+        toy.expandFromBand()
+        toy.noteMacFocus(name: "Work", on: false)
+        #expect(toy.capsuleQueue.held.count == 1, "the hold waits for a voice")
+        #expect(toy.capsuleQueue.current == nil)
+
+        toy.collapseFromBand()
+        #expect(toy.capsuleQueue.held.isEmpty)
+        #expect(toy.activeCapsule?.title == "While you were in Work")
+        #expect(toy.activeCapsule?.subtitle == "1 finished")
+    }
+
+    @Test("a Focus ending while the island is hidden replays once it shows")
+    func endWhileHiddenWaits() throws {
+        let (toy, store, core) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        try quiet(core, #"{"mode":"off"}"#)
+        toy.noteMacFocus(name: "Work", on: true)
+        toy.offer(news(.completed, id: "c"))
+        toy.islandVisible = false
+        toy.noteMacFocus(name: "Work", on: false)
+        #expect(toy.capsuleQueue.held.count == 1)
+        toy.islandVisible = true
+        toy.noteQuietChange()
+        #expect(toy.capsuleQueue.current?.title == "While you were in Work")
+    }
+
     @Test("a Focus turning on says good news will wait, only while the hold is on")
     func focusSaysPolicy() {
         let on = NotchAnnouncements.focusNotice(name: "Work", on: true)
