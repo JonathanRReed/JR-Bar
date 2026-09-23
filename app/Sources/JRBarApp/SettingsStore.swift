@@ -75,7 +75,11 @@ final class SettingsStore {
     }
 
     let core: CoreModel
-    var page: Page = .general
+    var page: Page = .general {
+        // A search hit names its row only on its own page; choosing any
+        // other page retires it.
+        didSet { if searchHit?.page != page { searchHit = nil } }
+    }
     /// The Toys page's store, created beside this one in the delegate.
     /// Weak: the delegate owns it.
     weak var toys: ToysStore?
@@ -230,6 +234,44 @@ final class SettingsStore {
     /// Where an app-action shortcut's write goes — the delegate's
     /// `AppHotkeys`, which persists it and re-registers.
     var onSetActionShortcut: (@MainActor (HotkeyChord?, String) -> Void)?
+
+    // MARK: Search
+
+    /// The sidebar's search text; non-empty swaps the page list for hits.
+    var searchQuery = ""
+    /// The row a search result was picked for — the page names it at the
+    /// top until another page is chosen.
+    var searchHit: SettingsSearchEntry?
+
+    /// Every searchable row: the daemon pages' titled rows, each page,
+    /// the shortcut catalogue, and the toys and utilities as they are.
+    var searchEntries: [SettingsSearchEntry] {
+        var entries = SettingsSearch.rows + SettingsSearch.pages + SettingsSearch.shortcutRows
+        entries += MenuBarHotkeyAction.allCases.map {
+            SettingsSearchEntry(.shortcuts, "Menu bar", MenuBarHotkeys.title(for: $0))
+        }
+        if let utilities {
+            let cards: [any Toy] = [utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder]
+            entries += cards.map { SettingsSearchEntry(.utilities, $0.name, $0.name, subtitle: $0.blurb) }
+        }
+        if let toys {
+            entries += toys.toys.map {
+                // The notch reads as a utility and sits on that page.
+                SettingsSearchEntry($0.id == "notch" ? .utilities : .toys, $0.name, $0.name, subtitle: $0.blurb)
+            }
+        }
+        return entries
+    }
+
+    var searchResults: [SettingsSearchEntry] {
+        SettingsSearch.search(searchQuery, in: searchEntries)
+    }
+
+    /// A result picked: its page, named at the top.
+    func reveal(_ entry: SettingsSearchEntry) {
+        searchHit = entry
+        page = entry.page
+    }
 
     /// macOS's answer to the notification permission, asked by the
     /// Notifications page on appear: the banner toggle can read on while
