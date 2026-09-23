@@ -72,7 +72,13 @@ import Testing
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(dock.sets.isEmpty)
         hold.active = false
-        try await Task.sleep(nanoseconds: 600_000_000)
+        // The wait re-checks every 250 ms on the main actor; a busy
+        // suite can hold that for a while, so give it a deadline, not a
+        // fixed nap.
+        let deadline = Date().addingTimeInterval(5)
+        while dock.sets.isEmpty, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
         #expect(dock.sets == [true])
         #expect(store.isOn[.dockAutoHide] == true)
     }
