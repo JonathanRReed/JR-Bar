@@ -2813,9 +2813,10 @@ final class DockEnhanceController {
         }
     }
 
-    /// The header's "Quit" — a plain terminate, never forced. An app
-    /// hosting a working or waiting agent asks first: quitting Ghostty
-    /// ends every session in it.
+    /// The header's "Quit" — a plain terminate. An app still running a
+    /// beat later turns the disc into Force Quit, and the next press
+    /// force-terminates. An app hosting a working or waiting agent asks
+    /// first: quitting Ghostty ends every session in it.
     private func quitApp() {
         let key = "quit:\(preview.processIdentifier ?? 0)"
         let live = preview.appAgents.first(where: \.isLive)
