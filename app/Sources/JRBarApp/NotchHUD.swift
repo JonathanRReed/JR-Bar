@@ -151,20 +151,26 @@ final class NotchHUD {
         let isMuted = muted == true
         let symbol: String
         var deviceName: String?
+        let target: NotchLevelScrub.Target
         switch key {
         case .volumeUp, .volumeDown, .mute:
             let route = SystemLevelReader.outputRoute()
             deviceName = route?.name
             symbol = NotchLevelGlyph.volume(level: level, muted: isMuted,
                                             transport: route?.transport, name: route?.name)
+            target = .volume
         case .brightnessUp, .brightnessDown:
             symbol = NotchLevelGlyph.brightness(level: level)
+            target = .brightness
         case .illuminationUp, .illuminationDown, .illuminationToggle:
             symbol = NotchLevelGlyph.keyboard
+            target = .keyboard
         }
+        // The key names which level this is, so a scroll over the
+        // capsule knows what it is setting.
         let notice = AlcoveNotice(id: UUID().uuidString, kind: .level,
                                   title: NotchLevelGlyph.title(for: key, deviceName: deviceName),
-                                  subtitle: "", key: "level", glyph: symbol,
+                                  subtitle: "", key: NotchLevelScrub.key(for: target), glyph: symbol,
                                   fraction: Double(level), muted: isMuted)
         if islandPresent(notice) {
             tick()

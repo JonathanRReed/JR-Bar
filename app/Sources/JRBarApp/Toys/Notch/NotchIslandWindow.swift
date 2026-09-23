@@ -88,6 +88,10 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     /// gesture (`NotchPinch`).
     var onPinch: (NotchPinch.Verdict) -> Void = { _ in }
     private var pinch = NotchPinch()
+    /// A scroll over the island, in finger travel (positive is up),
+    /// offered first to a level capsule that can take it: true when it
+    /// set the level, and the scroll is not a swipe.
+    var onLevelScroll: (_ fingerDelta: CGFloat, _ precise: Bool) -> Bool = { _, _ in false }
 
     override func magnify(with event: NSEvent) {
         guard pullsEnabled() else { return }
@@ -143,6 +147,14 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     // MARK: Swipe
 
     override func scrollWheel(with event: NSEvent) {
+        // A level capsule up is a slider: any scroll over it — trackpad
+        // or wheel, momentum included — moves the level instead.
+        let finger = NotchScrollFinger.travel(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                              inverted: event.isDirectionInvertedFromDevice)
+        if finger.dy != 0, onLevelScroll(finger.dy, event.hasPreciseScrollingDeltas) {
+            gestureLive = false
+            return
+        }
         // Only a trackpad gesture carries phases; momentum events arrive
         // with `phase` empty and are ignored with everything else.
         guard pullsEnabled(), event.hasPreciseScrollingDeltas, event.phase != [] else { return }
@@ -277,6 +289,9 @@ final class NotchIslandWindow: NSPanel {
         hosting.acceptsClicks = { [weak toy] in !(toy?.foldEngaged ?? false) }
         hosting.onSwipe = { [weak toy] swipe in toy?.islandSwipe(swipe) }
         hosting.onPinch = { [weak toy] verdict in toy?.islandPinch(verdict) }
+        hosting.onLevelScroll = { [weak toy] delta, precise in
+            toy?.scrubLevel(fingerDelta: delta, precise: precise) ?? false
+        }
         hosting.pullsEnabled = { [weak toy] in toy?.settings.pullGestures ?? true }
         hosting.pullSurface = { [weak toy] in toy?.islandExpanded == true ? .card : .rest }
         hosting.onPullBegan = { [weak self, weak toy] in

@@ -1621,6 +1621,52 @@ final class NotchToy: Toy {
         return true
     }
 
+    /// Writes a level the scroll asked for — the system's own paths, the
+    /// same ones the consuming key tap drives. False when the Mac said
+    /// no (no settable volume on this output, no built-in panel). The
+    /// tests stand in a recorder.
+    @ObservationIgnored var levelWriter: (NotchLevelScrub.Target, Float) -> Bool = { target, value in
+        switch target {
+        case .volume:
+            if value > 0, SystemLevelReader.outputMuted() == true { _ = SystemLevelReader.setOutputMuted(false) }
+            return SystemLevelReader.setOutputVolume(value)
+        case .brightness: return SystemLevelReader.setDisplayBrightness(value)
+        case .keyboard: return false
+        }
+    }
+
+    /// A scroll over the level capsule: while a volume or brightness
+    /// level is up it is a slider — the fill follows the fingers, the
+    /// Mac's level follows the fill, and the capsule holds for another
+    /// beat. False when no settable level is up, so the scroll stays a
+    /// swipe.
+    func scrubLevel(fingerDelta: CGFloat, precise: Bool) -> Bool {
+        guard let shown = activeOverlay, shown.kind == .level,
+              let target = NotchLevelScrub.target(ofKey: shown.key),
+              NotchLevelScrub.settable(target) else { return false }
+        let before = shown.fraction ?? 0
+        let next = NotchLevelScrub.step(before, fingerDelta: fingerDelta, precise: precise)
+        guard next != before else {
+            _ = presentFeedback(shown)   // pressed at the stop: hold the beat
+            return true
+        }
+        guard levelWriter(target, Float(next)) else { return true }
+        var moved = shown
+        moved.fraction = next
+        if target == .volume {
+            moved.muted = shown.muted && next <= 0
+            // The device the sound goes to, read again as the key does;
+            // a headless toy (the tests) draws the plain speaker.
+            let route = runtimeEnabled ? SystemLevelReader.outputRoute() : nil
+            moved.glyph = NotchLevelGlyph.volume(level: Float(next), muted: moved.muted,
+                                                 transport: route?.transport, name: route?.name)
+        } else {
+            moved.glyph = NotchLevelGlyph.brightness(level: Float(next))
+        }
+        _ = presentFeedback(moved)
+        return true
+    }
+
     /// The feedback's beat ended: the face under it shows again — the
     /// capsule it covered, or whatever the cursor wants.
     func endOverlay(settle: Bool) {
@@ -2256,7 +2302,7 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.mediaHUD)) {
                 SettingLabel(title: "Volume & brightness capsules",
-                             subtitle: "The level keys grow the level out of the notch as one continuous fill, with the device the sound is going to — the Alcove HUD. The key still does its job; we only draw it.")
+                             subtitle: "The level keys grow the level out of the notch as one continuous fill, with the device the sound is going to — the Alcove HUD. The key still does its job; we only draw it. While it shows, scroll over it to fine-tune the volume or brightness.")
             }
             if toy.settings.mediaHUD {
                 Stepper(value: toy.bind(\.hudDuration),

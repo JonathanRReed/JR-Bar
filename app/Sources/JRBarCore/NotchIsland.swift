@@ -810,6 +810,53 @@ public struct NotchPinch: Equatable, Sendable {
     }
 }
 
+/// A scroll event's deltas as the fingers moved: right and up positive.
+/// Under natural scrolling (`isDirectionInvertedFromDevice`) AppKit's
+/// deltas follow the content, which follows the fingers — in a y-down
+/// frame, so the vertical flips; a legacy wheel reports the opposite
+/// of the content on both axes. The Screen Bar's vertical reads the
+/// same way (`scrollFingerDelta`).
+public enum NotchScrollFinger {
+    public static func travel(dx: CGFloat, dy: CGFloat, inverted: Bool) -> CGVector {
+        inverted ? CGVector(dx: dx, dy: -dy) : CGVector(dx: -dx, dy: dy)
+    }
+}
+
+/// The level capsule as a control: while a volume or brightness level
+/// is up, scrolling over it moves the level — fingers up is more. The
+/// capsule's key names which level it shows (`level:volume`,
+/// `level:brightness`, `level:keyboard`); the keyboard backlight has
+/// no public set path, so it only ever shows.
+public enum NotchLevelScrub {
+    public enum Target: String, Equatable, Sendable { case volume, brightness, keyboard }
+
+    /// Finger travel, in points, that sweeps the whole range — about the
+    /// capsule's own width, so the fill follows the fingers.
+    public static let pointsPerRange: CGFloat = 220
+    /// One mouse-wheel click: the system's own key step, 1/16.
+    public static let wheelStep: Double = 1.0 / 16.0
+
+    public static func key(for target: Target) -> String { "level:\(target.rawValue)" }
+
+    public static func target(ofKey key: String) -> Target? {
+        guard key.hasPrefix("level:") else { return nil }
+        return Target(rawValue: String(key.dropFirst("level:".count)))
+    }
+
+    /// Whether a scroll may set this level at all.
+    public static func settable(_ target: Target) -> Bool { target != .keyboard }
+
+    /// The level after a scroll of `fingerDelta` points (positive is
+    /// fingers up), clamped to 0…1. A wheel (no precise deltas) moves
+    /// one key step per click, whichever way it turned.
+    public static func step(_ fraction: Double, fingerDelta: CGFloat, precise: Bool) -> Double {
+        let move = precise
+            ? Double(fingerDelta / pointsPerRange)
+            : (fingerDelta == 0 ? 0 : (fingerDelta > 0 ? wheelStep : -wheelStep))
+        return min(1, max(0, fraction + move))
+    }
+}
+
 // MARK: - Asks at the notch
 
 extension NotchIsland {
