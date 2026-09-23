@@ -700,8 +700,9 @@ final class NotchToy: Toy {
 
     /// A click or swipe on the band while our island is up: the island
     /// grows, deliberately — it stays until an outside click, a
-    /// swipe-down or Esc lets it go. Mid-capsule the click is
-    /// remembered and lands when the capsule steps down.
+    /// swipe-down or Esc lets it go. Mid-news the click is remembered
+    /// and lands when the capsule steps down; anything that holds the
+    /// island longer steps aside for it instead.
     func expandFromBand() {
         // Fold's overlay owns the screen: a band press through it must
         // not grow a card the user cannot see — it would still be open
@@ -710,11 +711,14 @@ final class NotchToy: Toy {
         // Key feedback is a beat, not a face worth waiting on.
         if activeOverlay != nil { endOverlay(settle: false) }
         if let capsule = activeCapsule {
-            // A latched ask yields to a deliberate grow — the card
-            // carries the same ask with its verbs, and the fold brings
-            // the capsule back while the ask is still open. News only
-            // holds the click until it steps down.
-            guard capsule.kind.life == nil else {
+            // News holds the click for its short beat, then the card
+            // lands. Whatever holds the island longer yields to a
+            // deliberate grow instead: a latched ask (the card carries
+            // it with its verbs), a due timer's eight seconds, a
+            // meeting's thirty. Waiting those out read as a click that
+            // did nothing, then a card popping open unasked. The fold
+            // brings the capsule back while it is still fresh.
+            if let life = capsule.kind.life, life <= AlcoveCapsuleQueue.life {
                 bandExpandPending = true
                 return
             }
@@ -935,12 +939,13 @@ final class NotchToy: Toy {
         let shelved = shelvedCapsule
         shelvedCapsule = nil
         if let current = capsuleQueue.current {
-            // News is fresh for its own life; a latched ask for as long
-            // as it is still open.
+            // A capsule is fresh for its own kind's life (news for its
+            // beat, a timer or a meeting for theirs); a latched ask for
+            // as long as it is still open.
             if let shelved, current == shelved.notice,
                current.kind.life == nil
                 ? askHolds(current)
-                : Date().timeIntervalSince(shelved.at) < AlcoveCapsuleQueue.life {
+                : Date().timeIntervalSince(shelved.at) < (current.kind.life ?? AlcoveCapsuleQueue.life) {
                 showCurrentCapsule()
                 return
             }
