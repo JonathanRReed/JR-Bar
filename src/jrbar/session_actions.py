@@ -231,6 +231,18 @@ def session_resume_parts(status: AgentStatus) -> tuple[str, str] | None:
     return status.cwd, f"{executable} {resume_argument} {shlex.quote(status.session_id)}"
 
 
+def new_session_parts(provider: object, cwd: object) -> tuple[str, str] | None:
+    """``(cwd, command)`` for starting a new session of that agent in
+    ``cwd``: the same CLI ``--resume`` runs, with no session id. Only the
+    agents JR-Bar knows how to resume, only an absolute directory."""
+    if type(provider) is not str or not _valid_session_cwd(cwd):
+        return None
+    opener = SESSION_TERMINAL_OPENERS.get(provider.lower())
+    if opener is None:
+        return None
+    return str(cwd), opener[0]
+
+
 def provider_session_opener_providers() -> tuple[str, ...]:
     return HOOK_PROVIDERS
 

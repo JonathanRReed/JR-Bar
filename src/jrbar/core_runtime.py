@@ -2902,6 +2902,19 @@ def _cmd_doctor(self, args):
     return self._core_doctor_document()
 
 
+@command("new_session", main_thread=False)
+def _cmd_new_session(self, args):
+    """Start an agent in a directory, in the owner's own terminal -- a new
+    Ghostty tab there, or a new Terminal.app / iTerm2 window. Explicit only:
+    the Overview's "New session here"; nothing calls it on its own, and the
+    agent's first prompt is still the owner's to type (answer_surfaces.py)."""
+    from .answer_surfaces import start_session_in_terminal
+
+    return start_session_in_terminal(
+        args.get("provider"), args.get("cwd"), terminal=args.get("terminal")
+    )
+
+
 @command("hooks_doctor", main_thread=False)
 def _cmd_hooks_doctor(self, args):
     """``jrbar hooks doctor`` as data, for Settings > Agents: per provider,

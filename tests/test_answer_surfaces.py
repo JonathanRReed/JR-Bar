@@ -485,3 +485,48 @@ def test_an_ended_session_resumes_in_the_terminal_it_ran_in__and_4_more(tmp_path
     # --- scenario: a terminal with no reviewed plan keeps the ladder too
     controller, status, recorder = _ended(tmp_path, "com.apple.Terminal")
     assert resume_in_own_terminal(controller, status, {}, runner=FakeRunner(launch=False), recorder=recorder) is None
+
+
+def test_new_session_starts_the_agent_in_the_owners_terminal__and_3_more(tmp_path: Path) -> None:
+    from jrbar.answer_surfaces import start_session_in_terminal
+
+    project = tmp_path / "my project"
+    project.mkdir()
+    recorder = SurfaceRecorder(path=tmp_path / "s.json", runner=FakeRunner(permitted=None), synchronous=True)
+    recorder._store("claude", "old", host_bundle="com.mitchellh.ghostty", terminal_id=None, cwd="/x")
+
+    # --- scenario: the terminal the last session ran in: a Ghostty tab there, the CLI typed in
+    runner = FakeRunner()
+    reply = start_session_in_terminal("Claude", str(project), runner=runner, recorder=recorder)
+    assert (reply["raised"], reply["app"], reply["provider"]) == ("new_tab", "Ghostty", "claude")
+    assert runner.calls == [("ghostty-new-tab", str(project), "claude\n")]
+
+    # --- scenario: a named terminal wins, with the directory quoted for its shell
+    runner = FakeRunner()
+    reply = start_session_in_terminal(
+        "codex", str(project), terminal="com.apple.Terminal", runner=runner, recorder=recorder
+    )
+    assert reply["raised"] == "new_window"
+    assert runner.calls == [("launch", "com.apple.Terminal", f"cd '{project}' && codex")]
+
+    # --- scenario: only known agents, only real absolute directories, only reviewed terminals
+    for provider, cwd, terminal, code in (
+        ("bash", str(project), None, "invalid_args"),
+        ("claude", "relative/dir", None, "invalid_args"),
+        ("claude", str(tmp_path / "missing"), None, "not_found"),
+        ("claude", str(project), "com.example.term", "invalid_args"),
+    ):
+        with pytest.raises(CommandError) as error:
+            start_session_in_terminal(provider, cwd, terminal=terminal, runner=FakeRunner(), recorder=recorder)
+        assert error.value.code == code
+
+    # --- scenario: a terminal that cannot be opened says so
+    with pytest.raises(CommandError) as error:
+        start_session_in_terminal(
+            "claude",
+            str(project),
+            terminal="com.apple.Terminal",
+            runner=FakeRunner(launch=False),
+            recorder=recorder,
+        )
+    assert error.value.code == "unsupported"

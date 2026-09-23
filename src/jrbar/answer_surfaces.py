@@ -37,6 +37,7 @@ import ctypes
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -599,6 +600,18 @@ class SurfaceRecorder:
         """The bundle id of the terminal app the session started in."""
         return self._field(provider, session_id, "host_bundle")
 
+    def latest_host(self, among: frozenset[str] | None = None) -> str | None:
+        """The terminal app the most recent recorded session started in."""
+        with self._lock:
+            rows = [
+                row
+                for row in self._loaded().values()
+                if type(row.get("host_bundle")) is str and (among is None or row["host_bundle"] in among)
+            ]
+        if not rows:
+            return None
+        return max(rows, key=lambda row: row.get("recorded_at", 0.0))["host_bundle"]
+
     def _field(self, provider: object, session_id: object, name: str) -> str | None:
         if type(provider) is not str or type(session_id) is not str:
             return None
@@ -961,6 +974,60 @@ def resume_in_own_terminal(
     }
 
 
+#: Terminals a new session can be started in, and what the reply calls them.
+_STARTABLE_TERMINALS: Final = {
+    GHOSTTY_BUNDLE_ID: "Ghostty",
+    TERMINAL_BUNDLE_ID: "Terminal",
+    ITERM_BUNDLE_ID: "iTerm",
+}
+_GHOSTTY_APP: Final = Path("/Applications/Ghostty.app")
+
+
+def start_session_in_terminal(
+    provider: object,
+    cwd: object,
+    *,
+    terminal: object = None,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+) -> dict[str, Any]:
+    """``new_session``: start that agent in ``cwd``, in the owner's terminal
+    -- the one named, else the one their most recent session ran in, else
+    Ghostty when it is installed, else Terminal.app. An explicit action; the
+    agent's own first prompt is the owner's to type."""
+    from .core_server import CommandError
+    from .session_actions import new_session_parts
+
+    parts = new_session_parts(provider, cwd)
+    if parts is None:
+        raise CommandError("invalid_args", "provider must be a known agent CLI and cwd an absolute path")
+    directory, command = parts
+    if not os.path.isdir(directory):
+        raise CommandError("not_found", "no such directory")
+    if terminal is not None and terminal not in _STARTABLE_TERMINALS:
+        raise CommandError("invalid_args", "terminal must be Ghostty, Terminal or iTerm")
+    chosen = terminal or (recorder or default_surface_recorder()).latest_host(frozenset(_STARTABLE_TERMINALS))
+    if chosen is None:
+        chosen = GHOSTTY_BUNDLE_ID if _GHOSTTY_APP.exists() else TERMINAL_BUNDLE_ID
+    runner = runner or SurfaceRunner()
+    opened = None
+    if chosen == GHOSTTY_BUNDLE_ID:
+        code, output = runner.osascript(_GHOSTTY_NEW_TAB, directory, command + "\n")
+        if code == 0 and output == "tab":
+            opened = "new_tab"
+    if opened is None and runner.launch_in_terminal(str(chosen), f"cd {shlex.quote(directory)} && {command}"):
+        opened = "new_window"
+    if opened is None:
+        raise CommandError("unsupported", "that terminal could not be opened")
+    return {
+        "provider": str(provider).lower(),
+        "cwd": directory,
+        "raised": opened,
+        "app": _STARTABLE_TERMINALS[str(chosen)],
+        "bundle_id": chosen,
+    }
+
+
 def open_session_surface(
     controller: object,
     status: object,
@@ -1078,5 +1145,6 @@ __all__ = [
     "raise_for_answer",
     "raise_session_host",
     "resume_in_own_terminal",
+    "start_session_in_terminal",
     "tmux_clients",
 ]
