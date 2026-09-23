@@ -400,12 +400,13 @@ final class ScreenBarView: NSView {
     /// The room a slot asks of its ear, before the flank and the claim
     /// cap it: the mark's fixed width, plus the privacy dots' lead when
     /// they ride along — or, for a dots-only ear, the dots between two
-    /// insets.
+    /// insets — plus the accessory's slice at the outer end.
     static func contentWidth(_ slot: ScreenBarWingSlot?) -> CGFloat {
         guard let slot else { return 0 }
-        guard slot.showsSensors else { return earWidth }
+        let accessory = slot.accessory == nil ? 0 : ScreenBarWingAccessory.width
+        guard slot.showsSensors else { return earWidth + accessory }
         let lead = ScreenBarSensorDots.lead(slot.sensors)
-        return slot.hasMark ? lead + earWidth : lead + ScreenBarSensorDots.inset
+        return (slot.hasMark ? lead + earWidth : lead + ScreenBarSensorDots.inset) + accessory
     }
 
     /// A dismiss-pull drags the ear off the bezel: outward travel only
