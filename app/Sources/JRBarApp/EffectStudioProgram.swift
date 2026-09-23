@@ -37,6 +37,8 @@ final class LEDSStudioModel {
     var burnTarget: CoreDevice?
     /// The name field of "Save to shelf…"; non-nil while the sheet is up.
     var shelving: String?
+    /// The layer composer is up.
+    var composing = false
 
     @ObservationIgnored var onStatus: ((String) -> Void)?
     @ObservationIgnored var onError: ((String) -> Void)?
@@ -252,6 +254,9 @@ struct LEDSStudioView: View {
         .sheet(isPresented: Binding(get: { model.shelving != nil }, set: { if !$0 { model.shelving = nil } })) {
             ShelveSheet(model: model)
         }
+        .sheet(isPresented: $model.composing) {
+            ComposeSheet(model: model)
+        }
     }
 
     // MARK: Editor
@@ -261,6 +266,12 @@ struct LEDSStudioView: View {
             HStack(spacing: 8) {
                 Text("LEDS.LED program").font(.headline)
                 Spacer()
+                Button {
+                    model.composing = true
+                } label: {
+                    Label("Compose…", systemImage: "square.3.layers.3d")
+                }
+                .help("Build a light from a base, a moving accent and held LEDs")
                 Menu {
                     ForEach(LEDSStudioModel.examples, id: \.name) { example in
                         Button(example.name) { model.text = example.program }
@@ -339,7 +350,7 @@ struct LEDSStudioView: View {
     private var verdict: some View {
         let analysis = model.analysis
         if analysis.isBlank {
-            Label("Write a program, or start from an example.", systemImage: "pencil.line")
+            Label("Write a program, compose one, or start from an example.", systemImage: "pencil.line")
                 .font(.callout).foregroundStyle(.secondary)
         } else if let error = analysis.strip.error {
             errorLabel(error, device: "The strip's firmware")
