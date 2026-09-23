@@ -175,6 +175,19 @@ struct DockUtilityControls: View {
                              subtitle: "Option-Tab raises every app's windows in recency order — a window whose agent waits on you comes first. Tab walks, releasing Option commits, esc cancels; type to search windows and the sessions in them (! for waiting agents), ` narrows to one app.")
             }
             .disabled(utility.settings().switcherProvider != .jrbar)
+            let learned = utility.settings().enhance.learnedPicks.count
+            if learned > 0 {
+                HStack(spacing: 8) {
+                    Text(learned == 1 ? "Type-ahead remembers 1 pick — a short query lands where it did last time."
+                                      : "Type-ahead remembers \(learned) picks — a short query lands where it did last time.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("Forget") { utility.update { $0.enhance.learnedPicks = [] } }
+                        .controlSize(.small)
+                }
+            }
             Toggle(isOn: switcherThisDisplay) {
                 SettingLabel(title: "⌥⇥ lists this display only",
                              subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")

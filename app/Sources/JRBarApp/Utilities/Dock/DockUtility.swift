@@ -268,6 +268,8 @@ final class DockUtility {
         switcher.thisDisplayOnly = { [weak self] in
             self?.settings().enhance.switcherThisDisplay ?? false
         }
+        switcher.learnedPicks = { [weak self] in self?.settings().enhance.learnedPicks ?? [] }
+        switcher.onLearn = { [weak self] picks in self?.update { $0.enhance.learnedPicks = picks } }
         enhance.agentMarks = { [weak self] in self?.agentMarks() ?? [] }
         enhance.answerAsk = { [weak self] ask, approve in
             await Self.answer(ask, approve: approve, send: self?.sendAnswer)

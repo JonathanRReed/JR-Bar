@@ -74,6 +74,20 @@ public enum DockSwitcherProvider: String, Codable, CaseIterable, Sendable {
     case jrbar, altTab, witch, contexts
 }
 
+/// One remembered switcher pick — Contexts' Fast Search: a short query
+/// and the window (app name + title stem) it last landed on, so the same
+/// query ranks that window first next time. Local, in `app-state.json`
+/// only; the card's Forget clears the list.
+public struct DockLearnedPick: Codable, Equatable, Sendable {
+    public var query: String
+    public var pick: String
+
+    public init(query: String, pick: String) {
+        self.query = query
+        self.pick = pick
+    }
+}
+
 /// What opens a Dock preview — DockDoor 1.39.5's trigger modes. Hover
 /// is the rest-on-an-icon default; the other two make it deliberate for
 /// anyone who finds hover panels noisy while aiming at the Dock.
@@ -144,6 +158,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Clicking the front app's own Dock icon minimizes its windows —
     /// the Windows-taskbar habit DockDoor offers. Off by default.
     public var clickToMinimize: Bool
+    /// The switcher's learned type-ahead, most recent first.
+    public var learnedPicks: [DockLearnedPick]
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -164,7 +180,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 previewThisDisplay: Bool = false,
                 previewTrigger: DockPreviewTrigger = .hover,
                 scrollGestures: Bool = false,
-                clickToMinimize: Bool = false) {
+                clickToMinimize: Bool = false,
+                learnedPicks: [DockLearnedPick] = []) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -180,6 +197,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.previewTrigger = previewTrigger
         self.scrollGestures = scrollGestures
         self.clickToMinimize = clickToMinimize
+        self.learnedPicks = learnedPicks
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -195,7 +213,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
-        case previewTrigger, scrollGestures, clickToMinimize
+        case previewTrigger, scrollGestures, clickToMinimize, learnedPicks
     }
 
     public init(from decoder: any Decoder) throws {
@@ -217,6 +235,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         previewTrigger = (try? c.decodeIfPresent(DockPreviewTrigger.self, forKey: .previewTrigger)) ?? .hover
         scrollGestures = (try? c.decodeIfPresent(Bool.self, forKey: .scrollGestures)) ?? false
         clickToMinimize = (try? c.decodeIfPresent(Bool.self, forKey: .clickToMinimize)) ?? false
+        learnedPicks = (try? c.decodeIfPresent([DockLearnedPick].self, forKey: .learnedPicks)) ?? []
     }
 }
 

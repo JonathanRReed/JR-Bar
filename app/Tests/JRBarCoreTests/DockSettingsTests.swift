@@ -75,6 +75,9 @@ struct DockSettingsTests {
         round.enhance.clickToMinimize = true
         #expect(try decode(DockSettings.self, encode(round)) == round)
         #expect(DockSettings().enhance.clickToMinimize == false)
+        round.enhance.learnedPicks = [DockLearnedPick(query: "g", pick: "Ghostty\u{1F}zsh")]
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"learnedPicks": "g"}}"#).enhance.learnedPicks.isEmpty)
         #expect(try decode(DockSettings.self, #"{"enhance": {"clickToMinimize": 1}}"#).enhance.clickToMinimize == false)
     }
 

@@ -365,6 +365,9 @@ struct SwitcherModel {
     /// The type-ahead buffer: letters narrow the strip to windows and
     /// apps whose names carry them. Empty means every item shows.
     private(set) var query = ""
+    /// What short queries last landed on — the learned pick leads (and
+    /// takes the selection) when the same query is typed again.
+    var learned: [DockLearnedPick] = []
 
     /// `selection` overrides the second-window start — the "needs you"
     /// lane opens on its first entry.
@@ -382,7 +385,7 @@ struct SwitcherModel {
     mutating func refresh(with items: [SwitcherItem]) {
         let keep = selected
         allItems = items
-        self.items = Self.ranked(items, query: query)
+        self.items = Self.learnedFirst(Self.ranked(items, query: query), query: query, learned: learned)
         if let keep, let index = self.items.firstIndex(where: { $0.id == keep.id }) {
             selection = index
         } else {
@@ -416,8 +419,12 @@ struct SwitcherModel {
 
     private mutating func refilter() {
         let keep = selected
-        items = Self.ranked(allItems, query: query)
-        if let keep, let index = items.firstIndex(where: { $0.id == keep.id }) {
+        items = Self.learnedFirst(Self.ranked(allItems, query: query), query: query, learned: learned)
+        if let first = items.first, Self.isLearnedPick(first, query: query, learned: learned) {
+            // The query was taught: its window leads and is the pick, so
+            // "g" then release lands where it did last time.
+            selection = 0
+        } else if let keep, let index = items.firstIndex(where: { $0.id == keep.id }) {
             selection = index
         } else {
             selection = items.isEmpty ? 0 : min(selection, items.count - 1)
@@ -446,6 +453,72 @@ struct SwitcherModel {
     /// The query prefix that narrows the strip to windows whose agent
     /// waits on you — a lone "!" is the whole "needs you" lane.
     static let waitingFilter: Character = "!"
+
+    // MARK: Learning (Contexts' Fast Search)
+
+    /// Only short queries are learned — "g", "gh", "code" — the ones a
+    /// hand types to jump, not the ones that spell a title out.
+    static let learnLimit = 4
+    /// How many queries are remembered, most recent first.
+    static let learnCap = 48
+
+    /// The query as it is remembered: lowercased, short, never the
+    /// waiting filter. nil means this query isn't one to learn.
+    static func learnQuery(_ query: String) -> String? {
+        let q = query.lowercased()
+        guard !q.isEmpty, q.count <= learnLimit, q.first != waitingFilter else { return nil }
+        return q
+    }
+
+    /// A window as a learned pick names it: the app and a stem of the
+    /// title — enough to tell two Ghostty windows apart, never a whole
+    /// path-long title.
+    static func learnKey(_ item: SwitcherItem) -> String {
+        "\(item.appName)\u{1F}\(item.title.prefix(40))"
+    }
+
+    static func learnedPick(for query: String, in learned: [DockLearnedPick]) -> String? {
+        guard let key = learnQuery(query) else { return nil }
+        return learned.first { $0.query == key }?.pick
+    }
+
+    static func learnedApp(for query: String, in learned: [DockLearnedPick]) -> String? {
+        learnedPick(for: query, in: learned)?.split(separator: "\u{1F}", maxSplits: 1).first.map(String.init)
+    }
+
+    /// Whether `item` is what `query` was taught — the exact window, or
+    /// (its title changed since) a window of the same app.
+    static func isLearnedPick(_ item: SwitcherItem, query: String, learned: [DockLearnedPick]) -> Bool {
+        guard let pick = learnedPick(for: query, in: learned) else { return false }
+        return learnKey(item) == pick || item.appName == learnedApp(for: query, in: learned)
+    }
+
+    /// The ranked matches with the query's learned pick moved to the
+    /// front: the exact window when it's still there, else a window of
+    /// the same app (a terminal retitled itself since). Only among
+    /// what the query already matched — learning reorders, never adds.
+    static func learnedFirst(_ ranked: [SwitcherItem], query: String,
+                             learned: [DockLearnedPick]) -> [SwitcherItem] {
+        guard let pick = learnedPick(for: query, in: learned) else { return ranked }
+        let app = learnedApp(for: query, in: learned)
+        guard let index = ranked.firstIndex(where: { learnKey($0) == pick })
+                ?? ranked.firstIndex(where: { $0.appName == app }),
+              index > 0 else { return ranked }
+        var out = ranked
+        out.insert(out.remove(at: index), at: 0)
+        return out
+    }
+
+    /// The list after a commit on `item` under `query`: that pick first,
+    /// the query's older pick dropped, capped. nil when the query isn't
+    /// one to learn or the list already says exactly this.
+    static func remembering(_ query: String, pick item: SwitcherItem,
+                            in list: [DockLearnedPick]) -> [DockLearnedPick]? {
+        guard let key = learnQuery(query) else { return nil }
+        let entry = DockLearnedPick(query: key, pick: learnKey(item))
+        guard list.first != entry else { return nil }
+        return Array(([entry] + list.filter { $0.query != key }).prefix(learnCap))
+    }
 
     /// The filtered set, best score first — Witch's ranked type-ahead
     /// over the plain subsequence filter. Ties keep the incoming
@@ -883,6 +956,10 @@ final class DockSwitcherController {
     /// "Only this display": the ⌥⇥ strip lists the windows on the
     /// pointer's screen (DockDoor 1.37, AltTab's screen filter).
     var thisDisplayOnly: () -> Bool = { false }
+    /// The learned type-ahead, read at each open, and its write path —
+    /// a commit made under a short query teaches it.
+    var learnedPicks: () -> [DockLearnedPick] = { [] }
+    var onLearn: (([DockLearnedPick]) -> Void)?
     /// ` while the strip is up narrows it to the picked app's windows
     /// (Contexts' ⌘`); a second ` widens back. nil lists every app.
     private(set) var scopePID: pid_t?
@@ -1144,6 +1221,7 @@ final class DockSwitcherController {
         guard !built.isEmpty else { return }
         // A waiting agent's window leads and takes the first pick.
         let lane = DockSwitcherList.needsYouFirst(built)
+        model.learned = learnedPicks()
         model.open(with: lane.items, selection: lane.selection)
         appMode = false
         drilledApp = nil
@@ -1230,6 +1308,7 @@ final class DockSwitcherController {
     private func openApps() {
         let items = buildAppItems()
         guard !items.isEmpty else { return }
+        model.learned = learnedPicks()
         model.open(with: items)
         appMode = true
         drilledApp = nil
@@ -1306,6 +1385,7 @@ final class DockSwitcherController {
     func cmdCommit() {
         let item = model.selected
         let drilled = drilledApp != nil
+        learn(item)
         closeStrip()
         guard let item else { return }
         let app = NSRunningApplication(processIdentifier: item.pid)
@@ -1363,6 +1443,7 @@ final class DockSwitcherController {
 
     func commit() {
         guard let item = model.selected else { return cancel() }
+        learn(item)
         closeStrip()
         if let element = resolvedElement(for: item) {
             let window = DockPreviewWindow(id: 0, title: item.title,
@@ -1378,6 +1459,14 @@ final class DockSwitcherController {
 
     func cancel() {
         closeStrip()
+    }
+
+    /// A commit under a short typed query teaches it: next time the same
+    /// query ranks this window first.
+    private func learn(_ item: SwitcherItem?) {
+        guard let item, let updated = SwitcherModel.remembering(model.query, pick: item, in: learnedPicks())
+        else { return }
+        onLearn?(updated)
     }
 
     /// Every way the strip goes away — commit, a card click, esc — lands

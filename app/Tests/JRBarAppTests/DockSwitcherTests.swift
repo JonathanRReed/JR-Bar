@@ -239,6 +239,49 @@ struct DockSwitcherTests {
         #expect(model.items.count == 2)
     }
 
+    @Test("a short query learns its pick: next time it leads and is selected")
+    func learnedTypeAhead() {
+        let items = [named("Safari", "Docs"), named("Ghostty", "zsh"), named("Ghostty", "JR-Bar — claude")]
+        let taught = SwitcherModel.remembering("g", pick: items[2], in: [])
+        #expect(taught == [DockLearnedPick(query: "g", pick: "Ghostty\u{1F}JR-Bar — claude")])
+        var model = SwitcherModel()
+        model.learned = taught ?? []
+        model.open(with: items)
+        model.type("G")
+        #expect(model.selected?.title == "JR-Bar — claude", "the query is matched lowercased and the pick is selected")
+        #expect(model.items.first?.title == "JR-Bar — claude")
+        model.type("x")
+        #expect(model.query == "Gx")
+        // A retitled window: the same app still answers the query.
+        var retitled = SwitcherModel()
+        retitled.learned = taught ?? []
+        retitled.open(with: [named("Safari", "Docs"), named("Ghostty", "vim"), named("Ghostty", "zsh")])
+        retitled.type("g")
+        #expect(retitled.selected?.appName == "Ghostty")
+    }
+
+    @Test("learning is short queries only, most recent first, capped, and never adds a non-match")
+    func learningRules() {
+        let a = named("Safari", "Docs"), b = named("Mail", "Inbox")
+        #expect(SwitcherModel.remembering("", pick: a, in: []) == nil)
+        #expect(SwitcherModel.remembering("!", pick: a, in: []) == nil, "the waiting filter isn't a query to learn")
+        #expect(SwitcherModel.remembering("safari docs", pick: a, in: []) == nil, "a spelled-out title needs no memory")
+        let first = SwitcherModel.remembering("s", pick: a, in: []) ?? []
+        #expect(SwitcherModel.remembering("s", pick: a, in: first) == nil, "the same lesson twice writes nothing")
+        let second = SwitcherModel.remembering("m", pick: b, in: first) ?? []
+        #expect(second.map(\.query) == ["m", "s"])
+        let relearned = SwitcherModel.remembering("s", pick: b, in: second) ?? []
+        #expect(relearned.map(\.query) == ["s", "m"] && relearned[0].pick.hasPrefix("Mail"))
+        var many: [DockLearnedPick] = []
+        for i in 0..<60 { many = SwitcherModel.remembering(String(i), pick: a, in: many) ?? many }
+        #expect(many.count == SwitcherModel.learnCap)
+        // Learning reorders the matches; it never smuggles in a window
+        // the query didn't match.
+        let ranked = SwitcherModel.learnedFirst([a], query: "s",
+                                                learned: [DockLearnedPick(query: "s", pick: "Mail\u{1F}Inbox")])
+        #expect(ranked.map(\.title) == ["Docs"])
+    }
+
     // MARK: Minimized-window tiles
 
     @Test("a minimized tile's owner needs a sole claimant — no guessing")
