@@ -16,8 +16,10 @@ import SwiftUI
 /// room clears — or let go, the card's pick — and a screen a fullscreen
 /// app owns is skipped, so a celebration never lands on a Keynote or a
 /// fullscreen video call. (A call on the mic joins the room once call
-/// presence is wired — `ToysStore.noteCallPresence`.) Anything outside JR-Bar that wants a burst
-/// asks through `fire(reason: .request)`.
+/// presence is wired — `ToysStore.noteCallPresence`.) Anything outside
+/// JR-Bar that wants a burst asks through `fire(reason: .request)`; the
+/// one route in today is a daemon `confetti` event, which the daemon
+/// does not emit yet.
 @MainActor
 @Observable
 final class ConfettiToy: Toy {
@@ -112,9 +114,11 @@ final class ConfettiToy: Toy {
         /// A rare moment JR-Bar noticed itself — an Aquarium achievement
         /// or tank level. Needs the Milestones trigger.
         case milestone
-        /// Something outside JR-Bar asked: the jrbar:// URL scheme, a
-        /// script, a hook. The toy must be on, the room is minded, and
-        /// a repeat inside `ConfettiRoom.requestCooldown` is dropped.
+        /// Something outside JR-Bar asked — a script or a hook, relayed
+        /// by the daemon as a `confetti` event (`requestEventKind`; no
+        /// daemon command emits one yet, and there is no URL scheme).
+        /// The toy must be on, the room is minded, and a repeat inside
+        /// `ConfettiRoom.requestCooldown` is dropped.
         case request
     }
 
@@ -159,7 +163,9 @@ final class ConfettiToy: Toy {
         deliver(decision, event: event)
     }
 
-    /// The event kind a daemon-relayed ask arrives as.
+    /// The event kind a daemon-relayed ask arrives as — the app's half
+    /// of the route; the daemon's half (a command that journals one) is
+    /// still to come.
     static let requestEventKind = "confetti"
 
     /// Each applied state document lands here too: the banked-credits
