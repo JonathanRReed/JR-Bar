@@ -350,7 +350,10 @@ final class PaletteController {
     func run(_ action: PaletteAction, of item: PaletteItem) {
         model.closeActions()
         // A verb that takes words opens its field; Return there is the run.
-        if model.beginInput(action, of: item) { return }
+        if model.beginInput(action, of: item) {
+            announce(action.input?.prompt ?? action.title)
+            return
+        }
         if action.keepsOpen {
             _ = action.run()
             model.usage = usage()
@@ -503,9 +506,14 @@ final class PaletteController {
     /// With VoiceOver on, the field keeps focus while ↑/↓ walk the
     /// list, so the row under the highlight is spoken.
     private func announceSelection() {
-        guard NSWorkspace.shared.isVoiceOverEnabled, let item = model.selected else { return }
-        let text = model.actionsOpen ? (model.selectedAction?.title ?? "") : item.title
-        guard !text.isEmpty else { return }
+        guard let item = model.selected else { return }
+        announce(model.actionsOpen ? (model.selectedAction?.title ?? "") : item.title)
+    }
+
+    /// One line for VoiceOver — the row under the highlight, or the
+    /// field a verb just opened ("Reply to fix-ci…").
+    private func announce(_ text: String) {
+        guard NSWorkspace.shared.isVoiceOverEnabled, !text.isEmpty else { return }
         NSAccessibility.post(element: panel as Any, notification: .announcementRequested, userInfo: [
             .announcement: text,
             .priority: NSAccessibilityPriorityLevel.medium.rawValue,
