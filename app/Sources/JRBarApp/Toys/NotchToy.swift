@@ -841,6 +841,20 @@ final class NotchToy: Toy {
         shelfDragMoved()
     }
 
+    /// Whether a leave fold is waiting out its grace. Tests read it
+    /// instead of sleeping past the grace: "the card stays up" is then a
+    /// fact about the queue, not a hope about the clock.
+    var shelfDragLeavePending: Bool { shelfDragLeaveWork != nil }
+
+    /// Runs a waiting leave fold now, exactly as its grace ending would,
+    /// and drops the queued copy. Tests crank it by hand so no claim
+    /// races a main queue a parallel suite has backed up.
+    func fireShelfDragLeave() {
+        guard let work = shelfDragLeaveWork else { return }
+        work.perform()
+        work.cancel()
+    }
+
     /// The drag moved between the island and the card's targets
     /// (`NotchCardModel.dropHover`).
     func shelfDragMoved() {

@@ -24,30 +24,8 @@ struct NotchShelfDragTests {
         return (toy, store)
     }
 
-    /// Past the leave grace — a fold that was going to land has landed
-    /// unless the main queue is badly backed up, in which case the
-    /// "stays up" claims pass without proving anything, never falsely.
-    private func settle() async {
-        try? await Task.sleep(for: .seconds(NotchToy.shelfDragLeaveGrace + 0.3))
-    }
-
-    /// Giving up takes one more poll past the timeout. A main thread held
-    /// longer than the timeout wakes this poll ahead of the fold that
-    /// came due meanwhile — both were queued, the poll first — so the
-    /// deadline alone would call a fold that already landed missing.
-    /// The last sleep queues behind it, and the last look sees it.
-    private func waitForFold(_ toy: NotchToy, timeout: Duration = .seconds(10)) async -> Bool {
-        let start = ContinuousClock.now
-        while ContinuousClock.now - start < timeout {
-            if !toy.islandExpanded { return true }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        try? await Task.sleep(for: .milliseconds(10))
-        return !toy.islandExpanded
-    }
-
     @Test("a drag crossing from the notch onto a session row keeps the card up")
-    func crossingOntoRowKeepsCard() async {
+    func crossingOntoRowKeepsCard() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.shelfDragAtIsland()
@@ -57,31 +35,35 @@ struct NotchShelfDragTests {
         // AppKit's order: the hosting view's exit, then the row's enter.
         toy.shelfDragLeftIsland()
         toy.cardModel.setDropHover("row:claude:s1", true)
-        await settle()
+        #expect(!toy.shelfDragLeavePending, "no fold waits under a drag heading for an agent")
         #expect(toy.islandExpanded, "the card stays under a drag heading for an agent")
 
         // Row to catch-all and back is still inside the island.
         toy.cardModel.setDropHover("row:claude:s1", false)
         toy.cardModel.setDropHover("card", true)
-        await settle()
+        #expect(!toy.shelfDragLeavePending)
         #expect(toy.islandExpanded)
 
         // Off the card's edge and away: nothing has the drag.
         toy.cardModel.setDropHover("card", false)
-        #expect(await waitForFold(toy), "a drag carried away folds the card it summoned")
+        #expect(toy.shelfDragLeavePending, "the fold waits out its grace")
+        toy.fireShelfDragLeave()
+        #expect(!toy.islandExpanded, "a drag carried away folds the card it summoned")
     }
 
     @Test("a drag that leaves the notch without reaching the card folds it")
-    func leavingFolds() async {
+    func leavingFolds() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.shelfDragAtIsland()
         toy.shelfDragLeftIsland()
-        #expect(await waitForFold(toy))
+        #expect(toy.shelfDragLeavePending)
+        toy.fireShelfDragLeave()
+        #expect(!toy.islandExpanded)
     }
 
     @Test("a drop on the card lands in the tray, turns to the shelf, and keeps the card")
-    func dropOnCardKeepsCard() async {
+    func dropOnCardKeepsCard() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.shelfDragAtIsland()
@@ -93,13 +75,14 @@ struct NotchShelfDragTests {
         toy.cardModel.onDropLanded?()
         toy.cardModel.setDropHover("card", false)
         #expect(toy.cardModel.page == .shelf, "the drop shows where it landed")
-        await settle()
+        #expect(!toy.shelfDragLeavePending, "a delivery is not an abandoned drag")
+        toy.fireShelfDragLeave()
         #expect(toy.islandExpanded, "a delivery is not an abandoned drag")
         #expect(!toy.shelfSummoned)
     }
 
     @Test("a card the person pinned stays pinned when a drag passes through")
-    func pinnedCardStays() async {
+    func pinnedCardStays() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.expandFromBand()
@@ -107,8 +90,8 @@ struct NotchShelfDragTests {
         toy.cardModel.setDropHover("card", true)
         toy.shelfDragLeftIsland()
         toy.cardModel.setDropHover("card", false)
-        await settle()
-        #expect(toy.islandExpanded)
+        toy.fireShelfDragLeave()
+        #expect(toy.islandExpanded, "a pinned card outlives any fold the drag queued")
     }
 
     @Test("a fold forgets which targets had the drag")
