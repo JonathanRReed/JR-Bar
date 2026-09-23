@@ -223,9 +223,13 @@ def test_gaps_are_named_not_zeroed(tmp_path):
 def test_command_resolves_roster_ids_and_names_remote_rows(tmp_path, monkeypatch):
     from jrbar.core_runtime import _cmd_session_usage
 
-    _write(_claude_path(tmp_path), [_assistant("msg_1")])
+    # The command resolves through session_timeline's process-wide path
+    # cache, keyed by (provider, session, cwd): a session id no other test
+    # module writes keeps an earlier test's transcript from answering.
+    sid = "12121212-3434-5656-7878-909090909090"
+    _write(tmp_path / ".claude" / "projects" / "-tmp-work" / f"{sid}.jsonl", [_assistant("msg_1")])
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    status = SimpleNamespace(agent_id="claude:1", provider="claude", session_id=SID, cwd="/tmp/work")
+    status = SimpleNamespace(agent_id="claude:1", provider="claude", session_id=sid, cwd="/tmp/work")
     controller = SimpleNamespace(
         last_snapshot=SimpleNamespace(statuses=[status], stale_statuses=[]),
     )
