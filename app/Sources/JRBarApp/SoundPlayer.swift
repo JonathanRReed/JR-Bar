@@ -264,16 +264,69 @@ final class SoundPlayer {
 /// default output; an engine whose output unit is pointed at the alert
 /// device does not. Any step that fails answers false and the caller
 /// falls back to the ordinary player.
+///
+/// Each ring's end stops the engine again: a running output unit keeps
+/// the device's IO up — an energy cost, a Bluetooth link that never
+/// idles — and the next ring restarts it anyway.
 @MainActor
 final class AlertDevicePlayer {
+    private let output: any AlertDeviceOutput
+    /// Where the alert device is read; tests answer their own.
+    var alertOutputDevice: () -> AudioObjectID? = {
+        AudioListener.defaultDevice(kAudioHardwarePropertyDefaultSystemOutputDevice)
+    }
+    /// Bumped by every ring, so only the newest ring's end stops the
+    /// hardware: a burst's next ring cuts the last one short, and that
+    /// stale end must not silence the new one.
+    private var ring = 0
+
+    init(output: any AlertDeviceOutput = EngineAlertOutput()) {
+        self.output = output
+    }
+
+    /// Whether the output unit holds the device right now.
+    var isRunning: Bool { output.isRunning }
+
+    func play(url: URL, volume: Float) -> Bool {
+        guard let target = alertOutputDevice(),
+              let file = try? AVAudioFile(forReading: url) else { return false }
+        ring += 1
+        let current = ring
+        return output.start(file, on: target, volume: volume) { [weak self] in
+            guard let self, self.ring == current else { return }
+            self.output.stop()
+        }
+    }
+}
+
+/// The hardware half of `AlertDevicePlayer` — the seam a test ends a
+/// ring through without an audio device.
+@MainActor
+protocol AlertDeviceOutput: AnyObject {
+    /// Whether the output unit is holding the device's IO.
+    var isRunning: Bool { get }
+    /// Starts `file` on `device` at `volume`; `ended` runs on the main
+    /// actor once it has played out or been cut short. False when any
+    /// step fails.
+    func start(_ file: AVAudioFile, on device: AudioObjectID, volume: Float,
+               ended: @escaping @MainActor @Sendable () -> Void) -> Bool
+    /// Stops the node and the engine, so the device can go idle.
+    func stop()
+}
+
+/// The real output: one AVAudioEngine, its output unit on the alert
+/// device, one player node.
+@MainActor
+final class EngineAlertOutput: AlertDeviceOutput {
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private var device: AudioObjectID?
     private var attached = false
 
-    func play(url: URL, volume: Float) -> Bool {
-        guard let target = AudioListener.defaultDevice(kAudioHardwarePropertyDefaultSystemOutputDevice),
-              let file = try? AVAudioFile(forReading: url) else { return false }
+    var isRunning: Bool { engine.isRunning }
+
+    func start(_ file: AVAudioFile, on target: AudioObjectID, volume: Float,
+               ended: @escaping @MainActor @Sendable () -> Void) -> Bool {
         if !attached {
             engine.attach(node)
             attached = true
@@ -281,8 +334,7 @@ final class AlertDevicePlayer {
         // Each ring reconnects with its own file's format (a custom
         // sound's channel count or rate can differ) and follows the alert
         // device if it moved since the last one.
-        node.stop()
-        engine.stop()
+        stop()
         if device != target {
             do {
                 try engine.outputNode.auAudioUnit.setDeviceID(target)
@@ -294,8 +346,17 @@ final class AlertDevicePlayer {
         engine.connect(node, to: engine.mainMixerNode, format: file.processingFormat)
         do { try engine.start() } catch { return false }
         node.volume = volume
-        node.scheduleFile(file, at: nil)
+        // The node calls back on its own render thread; the handler is
+        // `@Sendable`, so it carries no main-actor isolation and hops.
+        node.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { _ in
+            Task { @MainActor in ended() }
+        }
         node.play()
         return true
+    }
+
+    func stop() {
+        node.stop()
+        engine.stop()
     }
 }

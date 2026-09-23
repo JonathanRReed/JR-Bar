@@ -1,3 +1,5 @@
+import AVFoundation
+import CoreAudio
 import Foundation
 import JRBarCore
 import Testing
@@ -100,6 +102,30 @@ import Testing
         #expect(clients.filter { $0.pid == getpid() }.allSatisfy { $0.microphoneDevices == 0 })
     }
 
+    @MainActor @Test func theAlertDeviceLetsGoWhenTheNewestRingEnds() throws {
+        let output = RecordingAlertOutput()
+        let player = AlertDevicePlayer(output: output)
+        player.alertOutputDevice = { 42 }
+        let url = try #require(SoundPlayer.url(for: "Glass"))
+        #expect(player.play(url: url, volume: 0))
+        #expect(player.play(url: url, volume: 0))
+        #expect(player.isRunning)
+        output.ends[0]()
+        #expect(player.isRunning, "the first ring's end, cut short by the second, leaves it playing")
+        output.ends[1]()
+        #expect(!player.isRunning, "the newest ring's end releases the device")
+        #expect(output.devices == [42, 42])
+    }
+
+    @MainActor @Test func noAlertDeviceFallsBackWithoutStarting() throws {
+        let output = RecordingAlertOutput()
+        let player = AlertDevicePlayer(output: output)
+        player.alertOutputDevice = { nil }
+        let url = try #require(SoundPlayer.url(for: "Glass"))
+        #expect(!player.play(url: url, volume: 1))
+        #expect(output.ends.isEmpty && !player.isRunning)
+    }
+
     @Test func theMenusOfferTheSystemsSoundsOnce() {
         let available = SoundPlayer.availableSounds()
         #expect(available.system.contains("Glass"))
@@ -108,3 +134,21 @@ import Testing
     }
 }
 
+/// An alert output that plays nothing: it records each ring's device and
+/// its end, and runs until stopped.
+@MainActor
+private final class RecordingAlertOutput: AlertDeviceOutput {
+    private(set) var isRunning = false
+    private(set) var devices: [AudioObjectID] = []
+    private(set) var ends: [@MainActor @Sendable () -> Void] = []
+
+    func start(_ file: AVAudioFile, on device: AudioObjectID, volume: Float,
+               ended: @escaping @MainActor @Sendable () -> Void) -> Bool {
+        devices.append(device)
+        ends.append(ended)
+        isRunning = true
+        return true
+    }
+
+    func stop() { isRunning = false }
+}
