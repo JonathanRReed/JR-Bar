@@ -14,11 +14,14 @@ final class NotchCardModel {
     /// band click's deliberate focus, or the island's hover.
     var pinned = false {
         didSet {
+            // The lens is a peek, not a standing row: folding the card
+            // puts it away, and the next open starts without it.
+            if !pinned { mirrorSummoned = false }
             guard runtimeEnabled else { return }
             if pinned {
                 utility.start()
                 tray.revalidate()
-                mirror.sync(enabled: mirrorEnabled())
+                mirror.sync(enabled: mirrorEnabled() && mirrorSummoned)
                 calendar.sync(enabled: calendarEnabled())
                 reminders.sync(enabled: remindersEnabled())
                 wingHint = Self.wingHintDue()
@@ -29,6 +32,28 @@ final class NotchCardModel {
                 mirror.sync(enabled: false)
             }
         }
+    }
+    /// The Mirror was asked for on this open — ⌥-click on the island, or
+    /// the camera button in the pinned header. Only then does the lens
+    /// open; the setting just makes it available.
+    private(set) var mirrorSummoned = false
+
+    /// The header's camera button: open or close the lens in place.
+    func toggleMirror() {
+        guard mirrorEnabled() else { return }
+        setMirror(!mirrorSummoned)
+    }
+
+    /// Ask for the lens on this open — before the pin (it opens as the
+    /// card lands) or after it (it opens in place).
+    func summonMirror() {
+        guard mirrorEnabled() else { return }
+        setMirror(true)
+    }
+
+    private func setMirror(_ summoned: Bool) {
+        mirrorSummoned = summoned
+        if pinned, runtimeEnabled { mirror.sync(enabled: summoned) }
     }
     /// The one-line ear-gesture hint — drawn in the pinned card until
     /// the person has either flicked a wing once (the knowledge exists)
@@ -73,7 +98,8 @@ final class NotchCardModel {
     /// The reminders glance — same privacy rule as the calendar.
     let reminders = ShelfRemindersModel()
     /// The mirror row — the camera's own preview, live only while the
-    /// card is pinned *and* the setting says so.
+    /// card is pinned, the setting allows it, and this open asked for it
+    /// (`mirrorSummoned`).
     let mirror = ShelfMirrorModel()
     /// The toys state's mirror vote — the presenter hands it through so
     /// a flip lands on the next pin without rebuilding the model.
@@ -347,6 +373,19 @@ struct NotchCardView: View {
                         }
                         .padding(10)
                         .frame(width: 200)
+                    }
+                    // The Mirror is a peek on demand, never a standing
+                    // row: the lens opens here (or on ⌥-click at the
+                    // notch) and closes with the card.
+                    if model.mirrorEnabled() {
+                        Button { model.toggleMirror() } label: {
+                            Image(systemName: model.mirrorSummoned ? "camera.fill" : "camera")
+                                .font(.system(size: 9))
+                                .foregroundStyle(model.mirrorSummoned ? style.titleColor : style.faintColor)
+                                .frame(width: 16, height: 16)
+                        }
+                        .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
+                        .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
                     }
                     if model.focus.clickSession != nil {
                         Button("Open") { model.onOpenSession?() }

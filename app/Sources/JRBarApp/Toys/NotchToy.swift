@@ -1093,8 +1093,9 @@ final class NotchToy: Toy {
         // than on the half-hour tick.
         cardModel.utility.weather.reload()
         // The mirror toggle while the card is already pinned — the
-        // pin's own sync only runs on the edge.
-        cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror)
+        // pin's own sync only runs on the edge. The lens stays shut
+        // unless this open summoned it.
+        cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror && cardModel.mirrorSummoned)
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
               islandFrame(face: currentFace) != nil else {
@@ -1727,9 +1728,20 @@ final class NotchToy: Toy {
             } else {
                 dismissCapsule()
             }
+        } else if NSEvent.modifierFlags.contains(.option), settings.mirror {
+            summonMirror()
         } else {
             expandFromBand()
         }
+    }
+
+    /// ⌥-click on the resting island: the card opens straight onto the
+    /// Mirror. The camera only ever runs when asked for like this (or
+    /// from the card header's camera button), and closes with the card.
+    func summonMirror() {
+        guard settings.mirror, isDrawingIsland, !foldEngaged else { return }
+        cardModel.summonMirror()
+        if !islandExpanded { expandFromBand() }
     }
 
     /// A click on the resting island's amber count — straight to the
@@ -1862,6 +1874,7 @@ final class NotchToy: Toy {
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
             _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb
             _ = displayVersion
+            _ = cardModel.mirror.state    // the lens going live grows the card to hold it
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.runtimeEnabled else { return }
@@ -2080,7 +2093,7 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.mirror)) {
                 SettingLabel(title: "Mirror",
-                             subtitle: "A live camera preview row in the card — boring.notch's Mirror. The camera's consent is asked when you turn it on; the lens closes when the card folds away.")
+                             subtitle: "A quick look through the camera — boring.notch's Mirror, on demand: ⌥-click the notch, or the camera button in the card. It is never a standing row; the lens closes when the card folds away. The camera's consent is asked the first time it opens.")
             }
         case .alcove:
             if let settings = toy.store?.settings {

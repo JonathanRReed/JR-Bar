@@ -37,6 +37,39 @@ struct ShelfGlanceTests {
         #expect(reminders.state == .hidden)
     }
 
+    @Test("the Mirror opens only when summoned and folds away with the card")
+    func mirrorOnDemand() {
+        var toys = ToysState()
+        toys.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true, mirror: true)
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: toys,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy: NotchToy = store.notch
+        toy.islandVisible = true
+
+        toy.expandFromBand()
+        #expect(!toy.cardModel.mirrorSummoned, "a plain open never starts the camera")
+        toy.collapseFromBand()
+
+        toy.summonMirror()
+        #expect(toy.islandExpanded)
+        #expect(toy.cardModel.mirrorSummoned)
+        toy.collapseFromBand()
+        #expect(!toy.cardModel.mirrorSummoned, "the lens folds away with the card")
+
+        toy.expandFromBand()
+        toy.cardModel.toggleMirror()
+        #expect(toy.cardModel.mirrorSummoned, "the header's camera button opens it in place")
+        toy.cardModel.toggleMirror()
+        #expect(!toy.cardModel.mirrorSummoned)
+
+        // The setting off: nothing can summon it.
+        store.state.notch.mirror = false
+        toy.cardModel.toggleMirror()
+        #expect(!toy.cardModel.mirrorSummoned)
+    }
+
     @Test("both glance switches default on and round-trip")
     func settings() throws {
         let fresh = NotchSettings()
