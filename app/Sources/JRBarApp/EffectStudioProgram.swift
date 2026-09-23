@@ -300,6 +300,9 @@ struct LEDSStudioView: View {
 
             TextEditor(text: $model.text)
                 .font(.system(.body, design: .monospaced))
+                // Device text, not prose: a "corrected" easing name or a
+                // hyphen split out of roll-left is a different program.
+                .autocorrectionDisabled()
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))

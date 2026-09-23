@@ -935,8 +935,8 @@ extension CoreModel {
     /// `device` is a device id; nil lets the daemon pick the strip. The
     /// caller sends only a program the presentation compiler accepted.
     /// The command belongs to the daemon's hardware work; a daemon
-    /// without it refuses the name, which the LEDS Studio shows as "not
-    /// in this monitor yet" rather than claiming a burn.
+    /// without it answers `unknown_command`, which the LEDS Studio
+    /// reports as nothing written rather than claiming a burn.
     @discardableResult
     public func burnInitProgramNow(_ program: String, device: String? = nil) async throws -> CoreReply {
         var args: [String: JSONValue] = ["program": .string(program)]
