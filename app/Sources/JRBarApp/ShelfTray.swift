@@ -407,13 +407,61 @@ final class ShelfTrayModel {
         return Int64(size)
     }
 
-    /// Whether "Attach to draft" may inline this file's bytes or must
-    /// stay a path reference (bounded copies). A stack never attaches
-    /// as a copy — the draft takes the paths.
+    /// Whether a hand-off may carry this file's bytes as well as its
+    /// path (bounded copies) — a single image under the bound also goes
+    /// on the pasteboard as image data, which agents like Claude Code
+    /// take with their own image paste. A stack never attaches as a
+    /// copy — the agent takes the paths.
     func canAttachCopy(_ entry: ShelfEntry) -> Bool {
         guard case .item(let item) = entry,
               let size = size(of: item) else { return false }
         return size <= Self.attachCopyBound
+    }
+
+    /// The agent's file-mention form of the entry's present files —
+    /// `@/abs/path`, spaces escaped, one per file — the text an agent
+    /// CLI reads as "look at this file". Missing files are left out.
+    static func agentReferences(_ paths: [String]) -> String {
+        paths.map { path in
+            "@" + path.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: " ", with: "\\ ")
+        }.joined(separator: " ")
+    }
+
+    /// Hand the entry to an agent: its `@path` references go on the
+    /// pasteboard as text beside the file URLs, and a single small
+    /// image rides along as image data. Nothing is typed anywhere —
+    /// the person pastes it into the session this opens. False when no
+    /// file of the entry is present.
+    @discardableResult
+    func copyForAgent(_ entry: ShelfEntry) -> Bool {
+        let present = entries.first(where: { $0.id == entry.id })?.items.filter { !$0.missing } ?? []
+        guard !present.isEmpty else { return false }
+        Self.copyForAgent(present.map(\.url), attachImage: canAttachCopy(entry))
+        return true
+    }
+
+    /// The pasteboard half, shared with a file dropped straight onto a
+    /// session row: the `@path` text first, a small single image as
+    /// image data beside it, then the file URLs for a GUI app.
+    static func copyForAgent(_ urls: [URL], attachImage: Bool) {
+        guard !urls.isEmpty else { return }
+        let board = NSPasteboard.general
+        board.clearContents()
+        var objects: [NSPasteboardWriting] = [agentReferences(urls.map(\.path)) as NSString]
+        if attachImage, urls.count == 1, let url = urls.first,
+           let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
+           let image = NSImage(contentsOf: url) {
+            objects.append(image)
+        }
+        board.writeObjects(objects)
+        board.writeObjects(urls.map { $0 as NSURL })
+    }
+
+    /// Whether a dropped file is small enough to ride along as bytes.
+    static func withinAttachBound(_ url: URL) -> Bool {
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { return false }
+        return Int64(size) <= attachCopyBound
     }
 
     /// Mark missing entries by re-reading the filesystem — the same

@@ -133,6 +133,38 @@ final class NotchCardModel {
     /// start media, power, camera, calendar, or reminder readers.
     private let runtimeEnabled: Bool
 
+    /// Who a shelf file can be handed to: the focus session first, then
+    /// the card's other live sessions — never a peer's, whose terminal
+    /// is on another Mac. Id and label, capped.
+    var handTargets: [(id: String, label: String)] {
+        var targets: [(id: String, label: String)] = []
+        if let session = focus.clickSession, !CoreSession.isRemoteID(session) {
+            targets.append((session, focus.label))
+        }
+        for row in rows where !CoreSession.isRemoteID(row.id) && !targets.contains(where: { $0.id == row.id }) {
+            targets.append((row.id, row.label))
+        }
+        return Array(targets.prefix(5))
+    }
+
+    /// The shelf's hand-to-agent verb: the entry's `@path` references go
+    /// on the pasteboard and the session's window comes forward, ready
+    /// for the person's paste. Nothing is ever typed for them.
+    func handToAgent(_ entry: ShelfTrayModel.ShelfEntry, session: String) {
+        guard tray.copyForAgent(entry) else { return }
+        onOpenRow?(session)
+    }
+
+    /// Files dropped straight onto a session row — the same hand-off,
+    /// without a stop in the tray.
+    func handFiles(_ urls: [URL], session: String) {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty, !CoreSession.isRemoteID(session) else { return }
+        ShelfTrayModel.copyForAgent(files, attachImage: files.count == 1
+                                    && ShelfTrayModel.withinAttachBound(files[0]))
+        onOpenRow?(session)
+    }
+
     init(timers: ShelfTimerModel, tray: ShelfTrayModel,
          runtimeEnabled: Bool = true) {
         self.timers = timers
@@ -242,7 +274,11 @@ struct NotchCardView: View {
             revealRow(10, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
                                           heldAwake: model.heldAwake(), style: style))
             revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
-            revealRow(12, ShelfTrayRow(tray: model.tray, style: style))
+            revealRow(12, ShelfTrayRow(tray: model.tray, style: style,
+                                       handTargets: model.handTargets,
+                                       onHand: { entry, session in
+                                           model.handToAgent(entry, session: session)
+                                       }))
             if !model.timers.entries.isEmpty {
                 revealRow(13, ShelfTimersRow(timers: model.timers, style: style))
             }
@@ -462,6 +498,15 @@ struct NotchCardView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             if opens { model.onOpenRow?(row.id) }
+        }
+        // Drag a screenshot to the notch and let go on the agent: the
+        // file's `@path` is on the pasteboard and its session comes up.
+        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+            guard opens else { return false }
+            ShelfTrayDrop.urls(from: providers) { urls in
+                model.handFiles(urls, session: row.id)
+            }
+            return true
         }
         .contextMenu {
             if opens {
@@ -942,10 +987,13 @@ private struct ShelfWeatherRow: View {
 /// The card's tray strip: dropped files as chips. A moved or deleted
 /// file renders dimmed and disabled — the strip says missing, it
 /// doesn't silently forget. Reveal/share only ever act on a file that
-/// re-resolved this pass.
+/// re-resolved this pass. "Hand to" gives a file to an agent: its
+/// `@path` goes on the pasteboard and that session comes forward.
 private struct ShelfTrayRow: View {
     let tray: ShelfTrayModel
     let style: NotchCardStyle
+    var handTargets: [(id: String, label: String)] = []
+    var onHand: (ShelfTrayModel.ShelfEntry, String) -> Void = { _, _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -989,6 +1037,20 @@ private struct ShelfTrayRow: View {
         }
         .contextMenu {
             if !entry.missing {
+                // The job done all day: a screenshot or a file handed
+                // to an agent — copied as its `@path`, the session raised
+                // for the paste. Never typed for you.
+                if let first = handTargets.first {
+                    Button("Hand to \(first.label)") { onHand(entry, first.id) }
+                    if handTargets.count > 1 {
+                        Menu("Hand to") {
+                            ForEach(handTargets, id: \.id) { target in
+                                Button(target.label) { onHand(entry, target.id) }
+                            }
+                        }
+                    }
+                    Divider()
+                }
                 Button("Quick Look") { tray.quickLook(entry) }
                 Button("Reveal in Finder") { tray.reveal(entry) }
                 Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }

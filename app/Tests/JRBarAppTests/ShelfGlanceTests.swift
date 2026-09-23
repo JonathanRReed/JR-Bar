@@ -70,6 +70,34 @@ struct ShelfGlanceTests {
         #expect(!toy.cardModel.mirrorSummoned)
     }
 
+    @Test("a file is handed to an agent as its @path, spaces escaped")
+    func agentReferences() {
+        #expect(ShelfTrayModel.agentReferences(["/Users/j/shot.png"]) == "@/Users/j/shot.png")
+        #expect(ShelfTrayModel.agentReferences(["/Users/j/My Shot 2.png", "/tmp/a.txt"])
+                == #"@/Users/j/My\ Shot\ 2.png @/tmp/a.txt"#)
+    }
+
+    @Test("the focus session is the first hand-off target; a peer's never is")
+    func handTargets() {
+        let model = makeTestCardModel()
+        model.focus = ScreenBarFocus(style: nil, label: "rename-the-fish", word: "Working",
+                                     clickSession: "claude:focus")
+        model.rows = [
+            NotchIslandRow(id: "codex:two", label: "two", provider: "codex", activity: .working),
+            NotchIslandRow(id: "remote:studio:claude:x", label: "far", provider: "claude", activity: .working),
+            NotchIslandRow(id: "claude:focus", label: "dup", provider: "claude", activity: .working),
+        ]
+        let targets = model.handTargets
+        #expect(targets.map(\.id) == ["claude:focus", "codex:two"])
+        #expect(targets.first?.label == "rename-the-fish")
+        var opened: [String] = []
+        model.onOpenRow = { opened.append($0) }
+        model.handFiles([URL(fileURLWithPath: "/tmp/x.png")], session: "remote:studio:claude:x")
+        #expect(opened.isEmpty, "a peer's session is never handed a local path")
+        model.handFiles([URL(string: "https://example.com")!], session: "claude:focus")
+        #expect(opened.isEmpty, "only files are handed over")
+    }
+
     @Test("both glance switches default on and round-trip")
     func settings() throws {
         let fresh = NotchSettings()
