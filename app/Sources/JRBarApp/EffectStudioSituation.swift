@@ -62,6 +62,71 @@ enum EffectSituationResolver {
     }
 }
 
+extension EffectSituationResolver {
+    /// The daemon's name for each meaning (`SemanticEventKind`); nil where
+    /// it has none, and the mirror answers alone.
+    static func daemonSemantic(_ semantic: EffectSemantic) -> String? {
+        switch semantic {
+        case .asking: return "ask"
+        case .failure: return "failure"
+        case .notification: return "notification"
+        case .transition: return "handoff"
+        case .working: return "work"
+        case .completion: return "completion"
+        case .recovery: return "recovery"
+        case .environment: return "environment"
+        case .idle: return "idle"
+        case .quota: return nil
+        }
+    }
+
+    /// `resolve_effect`'s arguments for a situation; nil when the daemon
+    /// has no word for its meaning.
+    static func request(for situation: EffectSituation) -> [String: JSONValue]? {
+        guard let semantic = daemonSemantic(situation.semantic) else { return nil }
+        var args: [String: JSONValue] = ["semantic": .string(semantic), "scene": .string(situation.scene)]
+        for (key, value) in [("provider", situation.provider), ("instance", situation.instance),
+                             ("project", situation.project), ("device", situation.device)] {
+            if let value, !value.trimmingCharacters(in: .whitespaces).isEmpty { args[key] = .string(value) }
+        }
+        return args
+    }
+}
+
+/// `resolve_effect`'s reply: the daemon's own walk of the ladder, which
+/// the panel prefers to the mirror whenever the monitor has the command —
+/// one owner of the answer, with the mirror for a monitor that predates it.
+struct ResolvedEffectReply: Decodable {
+    struct Rung: Decodable {
+        let scope: String
+        let targetID: String?
+        let applicable: Bool?
+        let effectID: String?
+        let wins: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case scope, applicable, wins
+            case targetID = "target_id"
+            case effectID = "effect_id"
+        }
+
+        var assignment: EffectAssignment? {
+            guard let effectID, let scope = EffectScope(rawValue: scope) else { return nil }
+            return EffectAssignment(effectID: effectID, scope: scope, targetID: targetID)
+        }
+    }
+
+    let urgent: Bool
+    let winner: Rung?
+    let ladder: [Rung]
+
+    var outcome: EffectSituationResolver.Outcome {
+        if urgent { return .init(winner: nil, reserved: true, shadowed: []) }
+        let shadowed = ladder.filter { $0.applicable != false && $0.wins != true }.compactMap(\.assignment)
+        return .init(winner: winner?.assignment, reserved: false, shadowed: shadowed)
+    }
+}
+
 /// Effect Studio › assignments › "Try a situation": pick an event, a
 /// provider, a scene and a surface, and see which assignment wins — the
 /// deciding scope named — and which rows it shadows.
@@ -70,6 +135,8 @@ struct EffectSituationPanel: View {
     @ViewState private var situation = EffectSituation()
     @ViewState private var surface = "screen-bar"
     @ViewState private var seeded = false
+    /// The monitor's answer for `requestKey`, when it has `resolve_effect`.
+    @ViewState private var answer: (key: String, outcome: EffectSituationResolver.Outcome)?
 
     private static let events: [EffectSemantic] = [.completion, .notification, .asking, .failure]
 
@@ -115,6 +182,28 @@ struct EffectSituationPanel: View {
             situation.scene = store.activeScene
             situation.provider = store.providerTargets.first(where: \.live)?.id
         }
+        .task(id: requestKey) { await askMonitor() }
+    }
+
+    /// What the answer depends on: the situation and the assignments.
+    private var requestKey: String {
+        "\(resolvedSituation)|\(store.assignments?.generation ?? -1)|\(store.isLive)"
+    }
+
+    private func askMonitor() async {
+        let key = requestKey
+        guard store.isLive, let args = EffectSituationResolver.request(for: resolvedSituation) else {
+            answer = nil
+            return
+        }
+        do {
+            let reply = try await store.core.request("resolve_effect", args: args, as: ResolvedEffectReply.self)
+            answer = (key, reply.outcome)
+        } catch {
+            // unknown_command on a monitor that predates the command: the
+            // mirror answers.
+            answer = nil
+        }
     }
 
     /// The Dot follows the strip while linked: its own device rows are
@@ -135,7 +224,8 @@ struct EffectSituationPanel: View {
     @ViewBuilder
     private var outcome: some View {
         let resolved = resolvedSituation
-        let outcome = EffectSituationResolver.resolve(resolved, in: store.assignments)
+        let outcome = answer.flatMap { $0.key == requestKey ? $0.outcome : nil }
+            ?? EffectSituationResolver.resolve(resolved, in: store.assignments)
         VStack(alignment: .leading, spacing: 3) {
             if outcome.reserved {
                 Text("\(situation.semantic == .asking ? "An ask" : "A failure") plays its reserved alert in every scene — no assignment can replace it.")

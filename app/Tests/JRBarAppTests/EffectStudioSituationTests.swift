@@ -71,6 +71,38 @@ struct EffectStudioSituationTests {
         #expect(outcome.winner?.effectID == "aurora")
     }
 
+    @Test func theMonitorsAnswerIsPreferredAndReadsTheSame() throws {
+        // `resolve_effect` for (completion, night, codex, pro-1) against
+        // the same table, as core_lights.resolve_effect writes it.
+        let reply = Data("""
+        {"semantic": "completion", "scene": "night", "urgent": false,
+         "winner": {"scope": "device", "target_id": "pro-1", "effect_id": "glint"},
+         "ladder": [
+          {"scope": "device", "target_id": "pro-1", "applicable": true, "effect_id": "glint", "wins": true},
+          {"scope": "project", "target_id": null, "applicable": false, "effect_id": null, "wins": false},
+          {"scope": "provider_instance", "target_id": null, "applicable": false, "effect_id": null, "wins": false},
+          {"scope": "provider", "target_id": "codex", "applicable": true, "effect_id": "aurora", "wins": false},
+          {"scope": "scene", "target_id": "night", "applicable": true, "effect_id": "ember", "wins": false},
+          {"scope": "semantic", "target_id": "completion", "applicable": true, "effect_id": "comet", "wins": false},
+          {"scope": "global", "target_id": null, "applicable": true, "effect_id": "pulse", "wins": false}
+         ]}
+        """.utf8)
+        let daemon = try JSONDecoder().decode(ResolvedEffectReply.self, from: reply).outcome
+        let mirror = EffectSituationResolver.resolve(Self.situation(.completion, "night", "codex", device: "pro-1"), in: Self.document)
+        #expect(daemon == mirror, "the monitor and the mirror tell the same story")
+
+        let urgent = Data(#"{"semantic": "ask", "scene": "calm", "urgent": true, "winner": null, "ladder": []}"#.utf8)
+        #expect(try JSONDecoder().decode(ResolvedEffectReply.self, from: urgent).outcome.reserved)
+    }
+
+    @Test func theRequestSpeaksTheDaemonsWords() {
+        let args = EffectSituationResolver.request(for: Self.situation(.asking, "night", "codex", device: "pro-1"))
+        #expect(args == ["semantic": "ask", "scene": "night", "provider": "codex", "device": "pro-1"])
+        #expect(EffectSituationResolver.request(for: Self.situation(.completion, "calm", nil))
+                == ["semantic": "completion", "scene": "calm"], "absent ids are left out, never sent empty")
+        #expect(EffectSituationResolver.request(for: Self.situation(.quota, "calm", nil)) == nil)
+    }
+
     @Test func theSentenceNamesTheDecidingScope() {
         let aurora = EffectDefinition(id: "aurora", label: "Aurora", meaning: "provider animation: aurora")
         let row = EffectAssignment(effectID: "aurora", scope: .provider, targetID: "codex")
