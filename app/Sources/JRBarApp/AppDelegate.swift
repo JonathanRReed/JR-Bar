@@ -424,6 +424,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let replayWindow = ReplayWindowController(store: replayStore)
         self.replayWindow = replayWindow
         statusItem.onOpenReplay = { [weak replayWindow] in replayWindow?.show() }
+        // History owns the journal now (its Events tab), and its rows point
+        // at the Overview's inspector for a session's full story.
+        replayWindow.redirect = { [weak historyWindow] in historyWindow?.showEvents() }
+        historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
         // Usage Center (⌘U) and Effect Studio windows.
         let usageStore = UsageCenterStore(core: core)

@@ -319,6 +319,41 @@ final class PanelStore {
             }
         }
         syncMediaReader()
+        observeEvents()
+    }
+
+    // MARK: The light log
+
+    /// The last events the daemon published, oldest first, kept for the
+    /// "Why this light" popover's log. History's Events tab has the whole
+    /// journal; this is the handful that explains the light on screen.
+    @ObservationIgnored private(set) var recentEvents: [CoreEvent] = []
+    static let recentEventLimit = 48
+
+    /// "How it got here" under the popover's "what it is doing now".
+    var lightLog: [LightLogEntry] { LightLog.entries(from: recentEvents, limit: 4) }
+
+    /// One observation per frame, like the Replay store's: two events in
+    /// the same turn can coalesce to the last one, which a four-line log
+    /// can afford — the journal in History is the complete record.
+    private func observeEvents() {
+        withObservationTracking {
+            _ = core.lastEvent?.id
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.noteEvent(self.core.lastEvent)
+                self.observeEvents()
+            }
+        }
+    }
+
+    func noteEvent(_ event: CoreEvent?) {
+        guard let event, recentEvents.last?.id != event.id else { return }
+        recentEvents.append(event)
+        if recentEvents.count > Self.recentEventLimit {
+            recentEvents.removeFirst(recentEvents.count - Self.recentEventLimit)
+        }
     }
 
     isolated deinit {

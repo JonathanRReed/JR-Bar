@@ -404,9 +404,40 @@ final class OverviewStore {
             loadedAt = Date()
             error = nil
             resolveGitWorkspaces()
+            if let pending = pendingReveal, roster.contains(where: { $0.id == pending }) {
+                select(pending)
+            }
         } catch {
             self.error = Self.describe(error)
         }
+    }
+
+    // MARK: Reveal
+
+    /// A session another window pointed at; selected as soon as the
+    /// roster that holds it has loaded.
+    @ObservationIgnored private var pendingReveal: String?
+
+    /// Show every row and select `id` — now if the roster already holds
+    /// it, else when the next load lands.
+    func reveal(_ id: String) {
+        pane = .roster
+        workerFilter = nil
+        activeSavedFilter = nil
+        filter = OverviewFilter(preset: .all)
+        search = ""
+        selectedLinkID = nil
+        if roster.contains(where: { $0.id == id }) {
+            select(id)
+        } else {
+            pendingReveal = id
+        }
+    }
+
+    private func select(_ id: String) {
+        pendingReveal = nil
+        selectedID = id
+        selectedIDs = [id]
     }
 
     // MARK: Actions

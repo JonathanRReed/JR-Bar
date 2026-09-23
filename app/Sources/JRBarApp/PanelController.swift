@@ -88,7 +88,7 @@ final class PanelController {
         // SwiftUI's global space is the hosting view's (flipped) space.
         let inWindow = hosting.convert(frame, to: nil)
         let onScreen = panel.convertToScreen(inWindow)
-        popover.present(explanation, anchoredTo: onScreen, panelFrame: panel.frame, reduced: store.reduceMotion)
+        popover.present(explanation, log: store.lightLog, anchoredTo: onScreen, panelFrame: panel.frame, reduced: store.reduceMotion)
         if popover.parent == nil { panel.addChildWindow(popover, ordered: .above) }
     }
 
@@ -405,8 +405,9 @@ final class WhyDetailPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    func present(_ explanation: LightExplanation, anchoredTo row: NSRect, panelFrame: NSRect, reduced: Bool) {
+    func present(_ explanation: LightExplanation, log: [LightLogEntry] = [], anchoredTo row: NSRect, panelFrame: NSRect, reduced: Bool) {
         model.explanation = explanation
+        model.log = log
         hosting.rootView = WhyDetailView(model: model)
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
@@ -446,6 +447,8 @@ final class WhyDetailPanel: NSPanel {
 @Observable
 final class WhyDetailModel {
     var explanation: LightExplanation?
+    /// The events that moved a light lately, newest first.
+    var log: [LightLogEntry] = []
 }
 
 struct WhyDetailView: View {
@@ -472,10 +475,35 @@ struct WhyDetailView: View {
                         }
                     }
                 }
+                if !model.log.isEmpty {
+                    // The light log: how the light got here, newest first —
+                    // the events that moved it, not the whole journal
+                    // (History's Events tab has that).
+                    Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
+                    Text("Lately").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    ForEach(model.log) { entry in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(Self.age(entry.at))
+                                .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary)
+                                .frame(width: 34, alignment: .trailing)
+                            Circle().fill(EventLogStyle.color(entry.category).opacity(0.8)).frame(width: 5, height: 5)
+                            Text(entry.text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(width: WhyDetailPanel.width, alignment: .leading)
+    }
+
+    /// "now", "4m", "2h" — how long ago, in the log's narrow column.
+    static func age(_ at: Double, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince1970 - at)
+        if seconds < 45 { return "now" }
+        if seconds < 3600 { return "\(Int((seconds / 60).rounded()))m" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
+        return "\(Int(seconds / 86_400))d"
     }
 }
