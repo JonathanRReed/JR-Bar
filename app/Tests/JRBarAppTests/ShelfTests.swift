@@ -513,13 +513,16 @@ struct SharedCardShelfTests {
         let presenter = NotchCardPresenter(model: cardModel)
         #expect(store.notch.cardModel.timers === presenter.model.timers)
 
-        // The 1 s tick sweeps the due entry once through the shared
-        // store — a second model would have delivered it again. The
-        // wait is generous: the tick is a main-runloop `Timer` whose
-        // fire can slide under a parallel suite; what is being proven
-        // is that it lands exactly once, not when.
+        // Both surfaces sweep the one shared store — a second model would
+        // have delivered the due entry again. The sweeps are run by hand
+        // (the heartbeat is a main-runloop `Timer`, which a test runner
+        // need not pump at all): what is proven is that the entry lands
+        // exactly once however many sweeps see it, not when.
         timers.add(label: "tea", duration: 1)
-        try await Task.sleep(for: .seconds(5))
+        try await Task.sleep(for: .seconds(1.2))
+        timers.sweep()
+        presenter.model.timers.sweep()
+        store.notch.cardModel.timers.sweep()
         #expect(delivered == 1)
     }
 }

@@ -30,8 +30,8 @@ struct PresenceReporterTests {
     }
 
     /// Lets the send tasks run.
-    private func settle(_ until: @escaping () -> Bool) async {
-        let deadline = Date().addingTimeInterval(5)
+    private func settle(within seconds: TimeInterval = 5, _ until: @escaping () -> Bool) async {
+        let deadline = Date().addingTimeInterval(seconds)
         while !until(), Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -155,15 +155,20 @@ struct PresenceReporterTests {
         daemon.mirror = true
         let presence = mirrored(daemon, grace: 0.05)
         presence.noteSensors(NotchSensorState(cameraInUse: true))
-        await settle { daemon.sent.count == 1 }
-        #expect(daemon.sent == [CorePresenceReport(mic: false, camera: false)])
+        await settle { !daemon.sent.isEmpty }
+        // A slow runner may renew the report before the next step; every
+        // report so far still leaves the person's own look out.
+        #expect(!daemon.sent.isEmpty)
+        #expect(daemon.sent.allSatisfy { $0 == CorePresenceReport(mic: false, camera: false) })
         #expect(!presence.onCall, "the toys stay awake for the person's own look")
         // The Mirror closes while another app still holds the lens: the
-        // device flag has no edge, so the close itself looks again.
+        // device flag has no edge, so the close itself looks again. Wait
+        // for that report itself, not for a count a renewal can reach.
         daemon.mirror = false
         presence.ownCameraChanged()
-        await settle { daemon.sent.count == 2 }
-        #expect(daemon.sent.last == CorePresenceReport(mic: false, camera: true))
+        let held = CorePresenceReport(mic: false, camera: true)
+        await settle(within: 30) { daemon.sent.last == held }
+        #expect(daemon.sent.last == held)
         #expect(presence.onCall)
     }
 
