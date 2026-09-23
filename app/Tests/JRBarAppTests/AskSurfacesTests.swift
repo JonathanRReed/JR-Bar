@@ -121,6 +121,25 @@ struct AskSurfacesTests {
         #expect(PaletteRanking.rank([item], query: "rm -rf", usage: PaletteUsage(), now: now).count == 1)
     }
 
+    @Test("a typed destructive verb finds its row but never becomes Return")
+    func paletteDenyNeverPromoted() {
+        let log = Log()
+        let ask = CoreAsk(session: "claude:fix-ci", summary: "Run tests", answerable: true, request: "r")
+        let item = AgentPaletteRows.askItem(row: row("claude:fix-ci", ask: ask), ask: ask, now: now, verbs: verbs(log))
+        let typed = PaletteRanking.rank([item], query: "deny fix", usage: PaletteUsage(), now: now)
+        #expect(typed.first?.id == item.id, "the row still matches through Deny")
+        #expect(typed.first?.primary?.id == "open", "Return stays the safe verb")
+        #expect(typed.first?.action(for: .command("d"))?.id == "deny", "Deny keeps its own chord")
+        // Any destructive verb, not just Deny.
+        let clear = PaletteItem(id: "x", title: "fix-ci", icon: .symbol("circle", .gray), kind: "Session",
+                                section: .sessions, actions: [
+                                    PaletteAction(id: "open", title: "Open", symbol: "circle") { nil },
+                                    PaletteAction(id: "clear", title: "Clear", symbol: "circle",
+                                                  isDestructive: true) { nil },
+                                ])
+        #expect(PaletteRanking.promoting("clear", in: clear).primary?.id == "open")
+    }
+
     // MARK: Panel
 
     @Test("⌘↩ on a held question sends nothing and says to pick an option")

@@ -158,8 +158,15 @@ enum PaletteRanking {
     /// does what was typed ("hide 1p" hides) and the verb that was
     /// first moves to ⌘Return. A menu-only row (`opensActions`) runs a
     /// typed verb straight away rather than opening its panel.
+    ///
+    /// A destructive verb (Deny, Clear, Dismiss) is never promoted: a
+    /// query finds the row through it — "deny fix" still lists fix-ci's
+    /// ask first — but Return keeps its safe first verb, and the
+    /// destructive one stays on its own chord. Words typed in a hurry
+    /// must never turn Return into a no.
     static func promoting(_ verbID: String?, in item: PaletteItem) -> PaletteItem {
-        guard let verbID, let index = item.actions.firstIndex(where: { $0.id == verbID }) else {
+        guard let verbID, let index = item.actions.firstIndex(where: { $0.id == verbID }),
+              !item.actions[index].isDestructive else {
             return item
         }
         var promoted = item
