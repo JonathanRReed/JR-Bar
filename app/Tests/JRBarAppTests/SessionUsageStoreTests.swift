@@ -85,6 +85,56 @@ import JRBarCore
                 == Self.now.addingTimeInterval(SessionUsageStore.settledBackoffCap - freshFor))
     }
 
+    @Test("forgetting goes by the last ask: longest unasked first, never an id on the wire")
+    func forgettable() {
+        let asked = ["a": Self.now.addingTimeInterval(-300), "b": Self.now.addingTimeInterval(-10),
+                     "c": Self.now.addingTimeInterval(-600), "d": Self.now.addingTimeInterval(-5)]
+        let known: Set = ["a", "b", "c", "d", "e"]   // e was never asked about
+        #expect(SessionUsageStore.forgettable(known: known, askedAt: asked, inFlight: [], limit: 5).isEmpty)
+        #expect(SessionUsageStore.forgettable(known: known, askedAt: asked, inFlight: [], limit: 3) == ["e", "c"])
+        #expect(SessionUsageStore.forgettable(known: known, askedAt: asked, inFlight: ["e"], limit: 3) == ["c", "a"],
+                "an answer on its way is kept")
+    }
+
+    @Test("the store holds every per-session map to its limit, however many sessions pass through")
+    func bounded() {
+        let store = SessionUsageStore(core: CoreModel())
+        let limit = SessionUsageStore.rememberLimit
+        let read = (0..<(limit + 40)).map { "claude:bounded-read-\($0)" }
+        store.apply(SessionUsageDocument(sessions: Dictionary(uniqueKeysWithValues: read.map {
+            ($0, SessionUsage(model: "claude-opus-4-5"))
+        })), asked: read, now: Self.now)
+        #expect(store.usage.count == limit)
+
+        // The backoff's maps too: a missing transcript leaves a gap, a
+        // stamp and a repeat count, all held to the same limit.
+        let missing = (0..<(limit + 40)).map { "claude:bounded-gap-\($0)" }
+        store.apply(SessionUsageDocument(gaps: Dictionary(uniqueKeysWithValues: missing.map {
+            ($0, "transcript_not_found")
+        })), asked: missing, now: Self.now)
+        let known = Set(store.usage.keys).union(store.gaps.keys).union(store.fetchedAt.keys)
+            .union(store.settledGaps.keys)
+        #expect(known.count == limit)
+    }
+
+    @Test("the sort index forgets the rows no store has passed in longest; a sort's read is not a pass")
+    func indexBounded() {
+        let index = SessionUsageIndex(limit: 3)
+        for (id, cost) in [("a", 1.0), ("b", 2.0), ("c", 3.0)] {
+            index.update([id: SessionUsage(model: "claude-opus-4-5", estimatedCostUSD: cost)])
+        }
+        #expect(index.cost(for: "a") == 1)
+        index.update(["d": SessionUsage(model: "claude-opus-4-5", estimatedCostUSD: 4)])
+        #expect(index.count == 3)
+        #expect(index.cost(for: "a") == nil, "read by a sort, not passed in again — it ages out")
+        index.update(["b": SessionUsage(model: "claude-opus-4-5", estimatedCostUSD: 2)])
+        index.update(["e": SessionUsage(model: "claude-opus-4-5", estimatedCostUSD: 5)])
+        #expect(index.cost(for: "b") == 2, "passed in again, kept")
+        #expect(index.cost(for: "c") == nil)
+        #expect(index.model(for: "e") == "Opus 4.5")
+        #expect(SessionUsageIndex.limit == 2 * SessionUsageStore.rememberLimit)
+    }
+
     @Test("burners wait for every transcript before they rank")
     func burnersReading() {
         #expect(UsageCenterStore.burnersStillReading(["claude:a": "reading"]))
