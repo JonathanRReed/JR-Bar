@@ -53,6 +53,19 @@ struct ConfettiRoomTests {
         _ = (offStore, store)
     }
 
+    @Test("a daemon-relayed confetti event is an outside request")
+    func relayedRequest() {
+        let (toy, store, bursts) = makeToy()
+        toy.noteEvent(CoreEvent(id: "e1", kind: ConfettiToy.requestEventKind, provider: "codex"))
+        #expect(bursts.fired.count == 1)
+        toy.noteEvent(CoreEvent(id: "e2", kind: ConfettiToy.requestEventKind))
+        #expect(bursts.fired.count == 1, "the request cooldown holds for relayed asks too")
+        let (off, offStore, offBursts) = makeToy(enabled: false)
+        off.noteEvent(CoreEvent(id: "e3", kind: ConfettiToy.requestEventKind))
+        #expect(offBursts.fired.isEmpty)
+        _ = (store, offStore)
+    }
+
     @Test("a milestone needs its trigger ticked")
     func milestoneNeedsTrigger() {
         let (toy, store, bursts) = makeToy()

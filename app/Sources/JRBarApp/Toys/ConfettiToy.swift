@@ -138,9 +138,21 @@ final class ConfettiToy: Toy {
     /// trigger policy decides whether it earns a burst and the
     /// `firedKeys` ring keeps each fact to once.
     func noteEvent(_ event: CoreEvent) {
+        // An explicit ask relayed by the daemon (a `confetti` event from
+        // a CLI or a hook) is an outside request, not a trigger: it wears
+        // the named provider's colour, or the calling session's.
+        if event.kind == Self.requestEventKind {
+            let provider = event.provider
+                ?? event.session.flatMap { store?.core.state?.session(withID: $0) }?.provider
+            fire(reason: .request, provider: provider)
+            return
+        }
         guard let decision = ConfettiTriggerPolicy.eventFire(event, settings: settings) else { return }
         deliver(decision, event: event)
     }
+
+    /// The event kind a daemon-relayed ask arrives as.
+    static let requestEventKind = "confetti"
 
     /// Each applied state document lands here too: the banked-credits
     /// and all-clear triggers are document edges, not events. The
