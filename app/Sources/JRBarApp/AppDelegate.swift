@@ -1535,6 +1535,16 @@ extension AppDelegate {
             store.show(toast: "\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))")
             return nil
         }
+        // Deep work reads the live sessions at its start and end, and
+        // says its closing line on the panel and in Notification Center.
+        router.sessionsNow = { [weak self] in self?.core?.sessions ?? [] }
+        router.onDeepWorkSummary = { [weak self] line in
+            self?.notice(key: "deep-work", line, actionTitle: "Overview") { [weak self] in
+                self?.openOverview(nil)
+            }
+            self?.events?.notifications.deliver(.init(identifier: "deep-work", title: "Deep work",
+                                                      body: line, category: .plain))
+        }
         router.endQuiet = { [weak self] in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
             guard core.isLive else { return "The monitor is not connected." }

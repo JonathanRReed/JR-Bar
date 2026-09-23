@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
-VERBS = frozenset({"status", "quiet", "snooze", "set", "get", "toggle", "awake", "open"})
+VERBS = frozenset({"status", "quiet", "snooze", "set", "get", "toggle", "awake", "deepwork", "open"})
 
 QUIET_MODES = {
     "pause": "pause",
@@ -383,6 +383,22 @@ def cmd_awake(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
     return 0
 
 
+def cmd_deepwork(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
+    """Asks-only quiet for a focused stretch (25 min by default); the app
+    says what the agents did meanwhile when it ends. ``off`` ends it."""
+    if args.duration is not None and args.until is None and parse_duration(args.duration) == 0:
+        opener("jrbar://deepwork/end")
+        return 0
+    seconds = _length(args.duration, args.until, "deepwork")
+    if seconds is None:
+        opener("jrbar://deepwork")
+        return 0
+    if not 60 <= seconds <= MAX_SECONDS:
+        raise ControlError("deep work lasts between a minute and a day", 2)
+    opener("jrbar://deepwork?" + urlencode({"for": str(seconds)}))
+    return 0
+
+
 def cmd_open(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
     target = args.target.strip()
     if not target.startswith("jrbar://"):
@@ -422,6 +438,10 @@ def build_parser() -> argparse.ArgumentParser:
     awake.add_argument("duration", nargs="?", help="omit to hold until turned off")
     awake.add_argument("--until", help="a time of day instead: 8am, 20:30")
 
+    deep = commands.add_parser("deepwork", help="Asks-only quiet for a stretch, then what the agents did (off ends it).")
+    deep.add_argument("duration", nargs="?", help="25m (default), 50m, 1h, or off")
+    deep.add_argument("--until", help="a time of day instead: 11am, 16:30")
+
     opener = commands.add_parser("open", help="Run any jrbar:// link, e.g. panel/toggle or settings/shortcuts.")
     opener.add_argument("target")
     return parser
@@ -455,6 +475,8 @@ def main(
             return cmd_toggle(args, link)
         if args.command == "awake":
             return cmd_awake(args, link)
+        if args.command == "deepwork":
+            return cmd_deepwork(args, link)
         return cmd_open(args, link)
     except ControlError as exc:
         print(f"jrbar {args.command}: {exc}", file=sys.stderr)

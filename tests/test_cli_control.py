@@ -185,6 +185,23 @@ def test_quiet_and_awake_take_a_time_of_day(core, capsys, monkeypatch) -> None:
     assert "not both" in capsys.readouterr().err
 
 
+def test_deepwork_hands_the_app_a_stretch(capsys, monkeypatch) -> None:
+    opened: list[str] = []
+    assert run(["deepwork"], opened=opened) == 0
+    assert run(["deepwork", "50m"], opened=opened) == 0
+    assert run(["deepwork", "off"], opened=opened) == 0
+    monkeypatch.setattr(cli_control, "seconds_until", lambda raw, now=None: 5400)
+    assert run(["deepwork", "--until", "11am"], opened=opened) == 0
+    assert opened == [
+        "jrbar://deepwork",
+        "jrbar://deepwork?for=3000",
+        "jrbar://deepwork/end",
+        "jrbar://deepwork?for=5400",
+    ]
+    assert run(["deepwork", "30s"], opened=opened) == 2
+    assert "between a minute and a day" in capsys.readouterr().err
+
+
 def test_set_writes_json_values_and_says_what_the_monitor_kept(core, capsys) -> None:
     assert run(["set", "global_brightness_scale", "1.4"], core) == 0
     assert core.commands[-1]["args"] == {"path": "global_brightness_scale", "value": 1.4}

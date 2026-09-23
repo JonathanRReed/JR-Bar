@@ -34,6 +34,19 @@ final class AppCommandRouter {
     /// Said where the person will see it — the delegate points it at
     /// the panel's toast.
     var onRefused: ((String) -> Void)?
+    /// Deep work's hands: the live sessions (the snapshot at the start,
+    /// the summary at the end) and where the closing line is said.
+    var sessionsNow: (() -> [CoreSession])?
+    var onDeepWorkSummary: ((String) -> Void)?
+
+    /// The stretch in progress: when it began, every session's state
+    /// then, and the scheduled end.
+    private var deepWork: (started: Date, before: [String: SessionActivity], end: DispatchWorkItem)?
+    /// Tests stand in for the clock and the scheduler.
+    var now: () -> Date = Date.init
+    var schedule: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
 
     /// Run one command.
     @discardableResult
@@ -80,10 +93,17 @@ final class AppCommandRouter {
             toggles.holdAwake(seconds: seconds)
         case .quiet(let mode, let seconds):
             guard let quiet else { return Self.notReady }
-            return quiet(mode, seconds)
+            // A quiet asked for by hand replaces the stretch's.
+            if let refusal = quiet(mode, seconds) { return refusal }
+            abandonDeepWork()
         case .endQuiet:
             guard let endQuiet else { return Self.notReady }
-            return endQuiet()
+            if let refusal = endQuiet() { return refusal }
+            finishDeepWork(early: true)
+        case .deepWork(let seconds):
+            guard let quiet else { return Self.notReady }
+            if let refusal = quiet("asks_only", seconds) { return refusal }
+            beginDeepWork(seconds: seconds)
         case .screenBar(let on):
             guard let setScreenBar else { return Self.notReady }
             setScreenBar(on)
@@ -104,6 +124,36 @@ final class AppCommandRouter {
             return toggleShelf()
         }
         return nil
+    }
+
+    // MARK: Deep work
+
+    var isInDeepWork: Bool { deepWork != nil }
+
+    private func beginDeepWork(seconds: Int) {
+        deepWork?.end.cancel()
+        let end = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.finishDeepWork(early: false) }
+        }
+        deepWork = (now(), DeepWork.snapshot(sessionsNow?() ?? []), end)
+        schedule(TimeInterval(seconds), end)
+    }
+
+    /// The stretch's closing line — at its end, or early when quiet is
+    /// ended by hand.
+    private func finishDeepWork(early: Bool) {
+        guard let stretch = deepWork else { return }
+        stretch.end.cancel()
+        deepWork = nil
+        let elapsed = Int(now().timeIntervalSince(stretch.started))
+        onDeepWorkSummary?(DeepWork.summary(before: stretch.before, after: sessionsNow?() ?? [],
+                                            elapsedSeconds: elapsed, early: early))
+    }
+
+    /// Another quiet took over: the stretch ends without a word.
+    private func abandonDeepWork() {
+        deepWork?.end.cancel()
+        deepWork = nil
     }
 }
 
@@ -129,6 +179,8 @@ enum AppShortcutCatalog {
         AppShortcutAction(id: "action.quietHour", title: "Quiet for an hour",
                           command: .quiet(mode: nil, seconds: 3600)),
         AppShortcutAction(id: "action.endQuiet", title: "End quiet", command: .endQuiet),
+        AppShortcutAction(id: "action.deepWork", title: "Deep work for 25 minutes",
+                          command: .deepWork(seconds: DeepWork.defaultSeconds)),
         AppShortcutAction(id: "action.awakeHour", title: "Keep awake for an hour",
                           command: .keepAwake(seconds: 3600)),
         AppShortcutAction(id: "action.screenBar", title: "Show or hide the Screen Bar",

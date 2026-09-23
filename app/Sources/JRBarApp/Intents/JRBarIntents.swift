@@ -179,6 +179,20 @@ struct EndQuietIntent: AppIntent {
     }
 }
 
+struct DeepWorkIntent: AppIntent {
+    static let title: LocalizedStringResource = "Start Deep Work"
+    static let description = IntentDescription(
+        "Holds JR-Bar's quiet at asks-only for a focused stretch, then says what the agents did meanwhile.")
+
+    @Parameter(title: "Minutes", default: 25, inclusiveRange: (1, 1440)) var minutes: Int
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        try JRBarIntentBridge.run(.deepWork(seconds: minutes * 60))
+        return .result()
+    }
+}
+
 struct FireConfettiIntent: AppIntent {
     static let title: LocalizedStringResource = "Fire Confetti"
 
@@ -234,6 +248,8 @@ struct JRBarShortcuts: AppShortcutsProvider {
                     shortTitle: "Keep Awake", systemImageName: "cup.and.saucer")
         AppShortcut(intent: QuietIntent(), phrases: ["Quiet \(.applicationName)"],
                     shortTitle: "Quiet", systemImageName: "moon")
+        AppShortcut(intent: DeepWorkIntent(), phrases: ["Start deep work with \(.applicationName)"],
+                    shortTitle: "Deep Work", systemImageName: "timer")
         AppShortcut(intent: SetQuickToggleIntent(), phrases: ["Toggle with \(.applicationName)"],
                     shortTitle: "Quick Toggle", systemImageName: "switch.2")
     }

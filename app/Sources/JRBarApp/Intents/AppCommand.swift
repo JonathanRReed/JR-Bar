@@ -28,6 +28,9 @@ enum AppCommand: Equatable, Sendable {
     /// `asks_only`, `dark`; nil keeps the panel's last one) for seconds.
     case quiet(mode: String?, seconds: Int)
     case endQuiet
+    /// Deep work: asks-only quiet for that many seconds, then one line on
+    /// what the agents did meanwhile (`DeepWork`).
+    case deepWork(seconds: Int)
     /// The Screen Bar on, off, or flipped (nil).
     case screenBar(on: Bool?)
     case confetti
@@ -129,6 +132,17 @@ enum AppCommand: Equatable, Sendable {
             if let on = flag(raw), !on { return .endQuiet }
             guard let seconds = duration(raw), seconds <= maximumSeconds else { return nil }
             return seconds == 0 ? .endQuiet : .quiet(mode: mode, seconds: seconds)
+        case "deepwork", "deep-work":
+            if let object {
+                return ["end", "stop", "off"].contains(object.lowercased()) ? .endQuiet : nil
+            }
+            if let raw = query["until"] {
+                guard query["for"] == nil, let seconds = secondsUntil(raw, now: now, calendar: calendar) else { return nil }
+                return .deepWork(seconds: seconds)
+            }
+            guard let raw = query["for"] else { return .deepWork(seconds: DeepWork.defaultSeconds) }
+            guard let seconds = duration(raw), (60...maximumSeconds).contains(seconds) else { return nil }
+            return .deepWork(seconds: seconds)
         case "screenbar", "screen-bar":
             switch object?.lowercased() {
             case nil, "toggle": return .screenBar(on: nil)

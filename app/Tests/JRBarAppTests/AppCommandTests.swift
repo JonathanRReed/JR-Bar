@@ -141,6 +141,87 @@ import Testing
         #expect(said.count == 3)
     }
 
+    // MARK: Deep work
+
+    @Test func deepWorkLinks() {
+        #expect(parse("jrbar://deepwork") == .deepWork(seconds: 1500))
+        #expect(parse("jrbar://deep-work?for=50m") == .deepWork(seconds: 3000))
+        #expect(parse("jrbar://deepwork/end") == .endQuiet)
+        #expect(parse("jrbar://deepwork?for=30s") == nil, "shorter than a minute is not a stretch")
+        #expect(parse("jrbar://deepwork?for=2d") == nil)
+        #expect(parse("jrbar://deepwork/later") == nil)
+        #expect(AppShortcutCatalog.action(id: "action.deepWork")?.command == .deepWork(seconds: 1500))
+    }
+
+    @Test func theSummaryCountsOnlyWhatChangedDuringTheStretch() {
+        let before = DeepWork.snapshot([
+            CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),
+            CoreSession(id: "b", provider: "codex", mode: "completed", lifecycle: "completed"),
+            CoreSession(id: "c", provider: "claude", mode: "working", lifecycle: "active"),
+        ])
+        let after = [
+            CoreSession(id: "a", provider: "claude", mode: "completed", lifecycle: "completed"),
+            CoreSession(id: "b", provider: "codex", mode: "completed", lifecycle: "completed"),
+            CoreSession(id: "c", provider: "claude", mode: "blocked_error", lifecycle: "failed"),
+            CoreSession(id: "d", provider: "codex", mode: "waiting_for_input", lifecycle: "active"),
+            CoreSession(id: "e", provider: "claude", mode: "completed", lifecycle: "completed"),
+        ]
+        #expect(DeepWork.summary(before: before, after: after, elapsedSeconds: 1500, early: false)
+                == "Deep work over (25 min): 2 sessions finished, 1 failed and 1 needs you.")
+        #expect(DeepWork.summary(before: before, after: Array(after.prefix(2)), elapsedSeconds: 610, early: true)
+                == "Deep work ended after 10 min: 1 session finished.")
+        #expect(DeepWork.summary(before: before, after: [], elapsedSeconds: 20, early: true)
+                == "Deep work ended after 1 min: the agents had nothing new.")
+    }
+
+    @MainActor
+    @Test func theRouterHoldsAsksOnlyQuietAndSaysWhatHappened() {
+        let router = AppCommandRouter()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        router.now = { clock }
+        var scheduled: [(TimeInterval, DispatchWorkItem)] = []
+        router.schedule = { scheduled.append(($0, $1)) }
+        var quiets: [(String?, Int)] = []
+        router.quiet = { quiets.append(($0, $1)); return nil }
+        router.endQuiet = { nil }
+        var sessions = [CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active")]
+        router.sessionsNow = { sessions }
+        var lines: [String] = []
+        router.onDeepWorkSummary = { lines.append($0) }
+
+        #expect(router.perform(.deepWork(seconds: 1500)) == .done)
+        #expect(quiets.count == 1 && quiets[0].0 == "asks_only" && quiets[0].1 == 1500)
+        #expect(router.isInDeepWork)
+        #expect(scheduled.first?.0 == 1500)
+        sessions = [CoreSession(id: "a", provider: "claude", mode: "completed", lifecycle: "completed")]
+        clock = clock.addingTimeInterval(1500)
+        scheduled.first?.1.perform()
+        #expect(lines == ["Deep work over (25 min): 1 session finished."])
+        #expect(!router.isInDeepWork)
+
+        // Ending quiet by hand closes the stretch early, with its line.
+        router.perform(.deepWork(seconds: 1500))
+        clock = clock.addingTimeInterval(300)
+        router.perform(.endQuiet)
+        #expect(lines.last == "Deep work ended after 5 min: the agents had nothing new.")
+        #expect(scheduled.last?.1.isCancelled == true)
+
+        // Another quiet takes over without a word.
+        router.perform(.deepWork(seconds: 1500))
+        router.perform(.quiet(mode: "dim", seconds: 600))
+        #expect(!router.isInDeepWork)
+        #expect(lines.count == 2)
+    }
+
+    @MainActor
+    @Test func aRefusedQuietStartsNoStretch() {
+        let router = AppCommandRouter()
+        router.quiet = { _, _ in "The monitor is not connected — quiet needs it." }
+        router.onRefused = { _ in }
+        #expect(router.perform(.deepWork(seconds: 1500)) == .refused("The monitor is not connected — quiet needs it."))
+        #expect(!router.isInDeepWork)
+    }
+
     // MARK: App shortcuts
 
     @Test func theRetiredRevealKeyIsReadFromTheDaemonsSettings() {

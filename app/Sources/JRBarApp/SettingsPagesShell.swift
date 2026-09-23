@@ -380,6 +380,7 @@ private struct LinksGroup: View {
         ("jrbar://awake?for=2h", "Keep awake for a while (for=off lets go)"),
         ("jrbar://awake?until=8am", "Keep awake until a time of day"),
         ("jrbar://quiet?mode=dim&for=1h", "Quiet JR-Bar (until=08:00 works too; jrbar://quiet/end ends it)"),
+        ("jrbar://deepwork?for=50m", "Deep work: asks-only quiet, then what the agents did meanwhile"),
         ("jrbar://ask", "Open the panel on the waiting ask"),
         ("jrbar://menubar/reveal", "Reveal the hidden menu bar items"),
         ("jrbar://settings/shortcuts", "Open Settings on a page"),
