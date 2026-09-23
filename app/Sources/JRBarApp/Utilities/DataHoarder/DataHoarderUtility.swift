@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -576,6 +577,52 @@ final class DataHoarderModel {
                 error = nil
             } catch { self.error = error.localizedDescription }
         }
+    }
+
+    /// The selected transcript as a readable Markdown file — its
+    /// facts, what happened, the gaps and every rebuilt row, the proxy's
+    /// requests included — for a PR description or a postmortem. Written
+    /// from the timeline already rebuilt for the detail pane, so the file
+    /// says what the pane showed.
+    var canExportMarkdown: Bool {
+        detailKind == .transcript && reconstruction != nil && selected != nil && !busy
+    }
+
+    func exportMarkdown() {
+        guard canExportMarkdown, let record = selected, let reconstruction else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export as Markdown"
+        panel.message = "A readable copy of the rebuilt timeline. The archived file itself is unchanged."
+        panel.nameFieldStringValue = ((record.name as NSString).deletingPathExtension) + ".md"
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Data(Self.markdown(for: record, reconstruction: reconstruction).utf8).write(to: url, options: .atomic)
+            message = "Exported \(url.lastPathComponent)."
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// The Markdown for one archived record: the catalog's facts over the
+    /// shared renderer.
+    nonisolated static func markdown(for record: ArchiveRecord, reconstruction: SessionReconstruction,
+                                     generatedAt: Date = Date()) -> String {
+        let when = DateFormatter()
+        when.dateFormat = "yyyy-MM-dd HH:mm"
+        var facts: [SessionMarkdown.Fact] = []
+        if let provider = record.provider { facts.append(.init("Provider", SessionLabel.providerName(provider))) }
+        if let session = record.sessionID { facts.append(.init("Session", session)) }
+        if let project = record.project { facts.append(.init("Project", project)) }
+        if let model = record.model { facts.append(.init("Model", ModelName.display(model) ?? model)) }
+        if let started = record.startedAt { facts.append(.init("Started", when.string(from: started))) }
+        if let last = record.lastActivityAt { facts.append(.init("Last activity", when.string(from: last))) }
+        facts.append(.init("Archived file", record.name))
+        facts.append(.init("Capture", record.captureState.rawValue))
+        return SessionMarkdown.render(
+            title: record.title ?? record.name, facts: facts, reconstruction: reconstruction,
+            notes: ["From the Data Hoarder archive's hash-verified copy."], generatedAt: generatedAt)
     }
 
     func chooseArchiveExport() {

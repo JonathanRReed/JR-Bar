@@ -195,6 +195,26 @@ struct DataHoarderReconstructionTests {
         #expect(await DataHoarderModel.proxyRequests(in: archive, sessionID: "nobody").isEmpty)
     }
 
+    @Test func aTranscriptExportsAsReadableMarkdown() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let record = try await transcriptRecord(in: archive, intent: "please deploy the build")
+        let model = DataHoarderModel(archive: archive)
+        await model.reload()
+        #expect(!model.canExportMarkdown)
+        model.selectedID = record.id
+        await model.loadDetail()
+        #expect(model.canExportMarkdown)
+        let selected = try #require(model.selected)
+        let text = DataHoarderModel.markdown(for: selected, reconstruction: try #require(model.reconstruction))
+        #expect(text.contains("- **Provider:** Claude"))
+        #expect(text.contains("- **Session:** sess-1"))
+        #expect(text.contains("- **Archived file:** \(selected.name)"))
+        #expect(text.contains("## What happened\n\nLast asked: please deploy the build. Then tool `Bash` failed."))
+        #expect(text.contains("tool `Bash`"))
+        #expect(text.contains("boom: permission denied"))
+    }
+
     @Test func gapStateAndSegmentNotesAreSurfaced() async throws {
         let (root, archive) = try makeArchive()
         defer { try? FileManager.default.removeItem(at: root) }

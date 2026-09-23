@@ -24,6 +24,9 @@ struct DataHoarderView: View {
                 Menu("Export", systemImage: "square.and.arrow.up") {
                     Button("Selected File…") { model.exportSelected() }
                         .disabled(model.selected == nil)
+                    Button("Selected Session as Markdown…") { model.exportMarkdown() }
+                        .disabled(!model.canExportMarkdown)
+                        .help("A readable copy of the rebuilt timeline, for a PR or a postmortem")
                     Button("Entire Archive…") { model.chooseArchiveExport() }
                 }
                 .disabled(model.busy)

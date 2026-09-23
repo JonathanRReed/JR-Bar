@@ -96,25 +96,8 @@ struct ReconstructedTimelineView: View {
 
     /// Compose only what the story actually knows: intent, the last error,
     /// mid-turn death, and the failed tool names — nils drop out silently.
-    static func storyText(_ story: FailureStory) -> String {
-        var parts: [String] = []
-        if let intent = story.lastUserIntent, !intent.isEmpty {
-            parts.append("Last asked: \(intent)")
-        }
-        if let summary = story.lastErrorSummary, !summary.isEmpty {
-            parts.append("Then \(summary)")
-        } else if story.errorCount > 0 {
-            parts.append("\(story.errorCount) \(story.errorCount == 1 ? "error" : "errors") in these rows")
-        }
-        if story.diedMidTurn {
-            parts.append("The session ended mid-turn")
-        }
-        if !story.failedToolNames.isEmpty {
-            parts.append("Failed tools: \(story.failedToolNames.joined(separator: ", "))")
-        }
-        guard !parts.isEmpty else { return "These rows show a failure." }
-        return parts.joined(separator: ". ") + "."
-    }
+    /// The Markdown export reads the same sentence.
+    static func storyText(_ story: FailureStory) -> String { story.sentence }
 
     // MARK: Honest gaps
 
@@ -148,33 +131,9 @@ struct ReconstructedTimelineView: View {
         return parts.joined(separator: " · ")
     }
 
-    /// Named-gap strings → plain words. Unknown gaps pass through — honesty
-    /// beats a swallowed label.
-    static func gapText(_ gap: String) -> String {
-        if gap.hasPrefix("malformed_lines:") {
-            let count = gap.dropFirst("malformed_lines:".count)
-            return "\(count) malformed \(count == "1" ? "line" : "lines")"
-        }
-        if gap.hasPrefix("item_cap:") {
-            return "item cap reached (\(gap.dropFirst("item_cap:".count))) — later rows omitted"
-        }
-        if gap.hasPrefix("transcript_too_large:") {
-            return "transcript too large to rebuild (\(gap.dropFirst("transcript_too_large:".count)) bytes)"
-        }
-        if gap.hasPrefix("timeline_item_cap:") {
-            return "transcript exceeds the item cap — earliest rows omitted"
-        }
-        switch gap {
-        case "unsupported_provider":
-            return "this provider's transcript format is not read yet"
-        case "transcript_not_found":
-            return "no transcript found for this session"
-        case "transcript_unreadable":
-            return "the transcript file could not be read"
-        default:
-            return gap.hasPrefix("gap:") ? "capture gap: \(gap.dropFirst(4))" : gap
-        }
-    }
+    /// Named-gap strings → plain words (shared with the Markdown export).
+    /// Unknown gaps pass through — honesty beats a swallowed label.
+    static func gapText(_ gap: String) -> String { ReconstructionGap.text(gap) }
 
     // MARK: Kind chips + jump
 
