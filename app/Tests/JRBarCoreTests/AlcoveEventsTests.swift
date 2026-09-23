@@ -194,6 +194,28 @@ struct AlcoveEventsTests {
         #expect(seen.ids == ["3", "4"], "an ask is never history")
     }
 
+    @Test("a waiting announcement its own next state replaces goes quietly — the older half is no longer true")
+    func supersededGoesQuietly() {
+        var q = AlcoveCapsuleQueue()
+        let seen = Evictions()
+        q.onEvict = { seen.ids.append($0.id) }
+        _ = q.offer(notice(.failed, key: "failed:a", id: "1"), at: t0)
+        _ = q.offer(notice(.device, key: "device:AirPods:on", id: "2"), at: t0)
+        #expect(q.offer(notice(.device, key: "device:AirPods:off", id: "3"), at: t0 + 1) == .queued)
+        #expect(q.pending?.id == "3")
+        #expect(seen.ids.isEmpty, "\"AirPods · Connected\" is not said as they disconnect")
+        _ = q.offer(notice(.focus, key: "focus:on", id: "4"), at: t0 + 2)
+        #expect(seen.ids == ["3"], "another subject's news still reports the displaced one")
+        _ = q.offer(notice(.focus, key: "focus:off", id: "5"), at: t0 + 3)
+        #expect(seen.ids == ["3"])
+        _ = q.offer(notice(.completed, key: "completed:c", id: "6"), at: t0 + 4)
+        #expect(seen.ids == ["3", "5"])
+        #expect(AlcoveCapsuleQueue.subject(of: "device:Magic Keyboard:off") == "device:Magic Keyboard")
+        #expect(AlcoveCapsuleQueue.subject(of: "toast:Sound on") == "toast:Sound on",
+                "only a trailing state word is stripped")
+        #expect(AlcoveCapsuleQueue.subject(of: "display:on") == AlcoveCapsuleQueue.subject(of: "display:off"))
+    }
+
     @Test("a takeover parking the shown ask reports the notice it pushed out")
     func takeoverEvictionReported() {
         var q = AlcoveCapsuleQueue()

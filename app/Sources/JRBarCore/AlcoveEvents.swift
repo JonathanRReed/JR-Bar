@@ -369,7 +369,8 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
     /// the shown ask there. `.queued` promised the island would say it,
     /// so the owner hears when that promise lapses and can say it some
     /// other way. A waiting notice already past `pendingStaleAfter` is
-    /// history and goes quietly, as `finish` would have dropped it.
+    /// history and goes quietly, as `finish` would have dropped it, and
+    /// so does one its own subject's next state replaced (`wait`).
     /// Resolved asks, a dismissal and a parked island are the person's
     /// or the island's own doing, not displacements, and report nothing.
     public var onEvict: (@Sendable (AlcoveNotice) -> Void)?
@@ -384,15 +385,29 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
             && lhs.held == rhs.held
     }
 
-    /// Put `notice` in the waiting slot, reporting whatever it displaces.
+    /// Put `notice` in the waiting slot, reporting whatever it displaces
+    /// — unless the newcomer is the same subject's next state. The Mac's
+    /// announcements come as on/off pairs ("AirPods · Connected", then
+    /// "Disconnected"); the older half is no longer true, and saying it
+    /// now would say something false.
     private mutating func wait(_ notice: AlcoveNotice, at now: Date) {
-        if let displaced = pending, displaced.id != notice.id {
+        if let displaced = pending, displaced.id != notice.id,
+           Self.subject(of: displaced.key) != Self.subject(of: notice.key) {
             let fresh = displaced.kind == .ask
                 || pendingAt.map { now.timeIntervalSince($0) < Self.pendingStaleAfter } ?? true
             if fresh { onEvict?(displaced) }
         }
         pending = notice
         pendingAt = now
+    }
+
+    /// A notice key without its state: `device:AirPods:on` and
+    /// `device:AirPods:off` are one subject. Every other key is its own.
+    static func subject(of key: String) -> Substring {
+        for state in [":on", ":off"] where key.hasSuffix(state) {
+            return key.dropLast(state.count)
+        }
+        return key[...]
     }
 
     @discardableResult

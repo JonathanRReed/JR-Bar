@@ -95,11 +95,12 @@ final class NotchHUD {
     /// The island said yes to `notice`, then gave its waiting slot to
     /// newer news (`NotchToy.onCapsuleEvicted`): the pill says it now,
     /// so an announcement never falls between the two after all. Only
-    /// the Mac's own announcements are the HUD's to say.
+    /// the Mac's own announcements are the HUD's to say. Silently: the
+    /// tick went with the island's yes.
     func islandDropped(_ notice: AlcoveNotice) {
         guard notice.kind.isMacAnnouncement else { return }
         pill(notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)",
-             symbol: notice.symbol)
+             symbol: notice.symbol, ticks: false)
     }
 
     /// Everything that reaches outside the process — the media-key tap,
@@ -137,10 +138,10 @@ final class NotchHUD {
     }
 
     /// The glass pill under the band — the fallback voice.
-    private func pill(_ text: String, symbol: String) {
+    private func pill(_ text: String, symbol: String, ticks: Bool = true) {
         let band = anchorRect() ?? Self.fallbackAnchor()
         panel.present(text: text, symbol: symbol, under: band)
-        tick()
+        if ticks { tick() }
         armHide()
     }
 
