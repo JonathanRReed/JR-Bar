@@ -134,6 +134,41 @@ final class ToysStore {
         alcoveCapsule = capsule
     }
 
+    // MARK: The hinge
+
+    /// The lid's angle as the fold's sensor last read it, in whole
+    /// degrees — one shared signal (docs/TOYS.md). The fold publishes it
+    /// and never reads it back; the buddy pulls on its nightcap as the
+    /// lid comes down. nil until the sensor speaks, and only written
+    /// when the whole degree changes, so a lid at rest redraws nothing.
+    private(set) var hingeAngle: Double?
+    @ObservationIgnored private var hingeSeenAt: Date?
+
+    /// Where the lid reads "on its way down": below the angle a laptop is
+    /// used at, above shut.
+    static let lidClosingBelow: Double = 60
+    static let lidShutAtOrBelow: Double = 5
+
+    func noteHinge(_ angle: Double?, at now: Date = Date()) {
+        guard let angle, angle.isFinite else {
+            if hingeAngle != nil { hingeAngle = nil }
+            hingeSeenAt = nil
+            return
+        }
+        hingeSeenAt = now
+        let whole = angle.rounded()
+        if hingeAngle != whole { hingeAngle = whole }
+    }
+
+    /// The lid is coming down: a fresh reading (the sensor polls at
+    /// least 10 times a second while it runs) between shut and the
+    /// closing line.
+    func lidClosing(at now: Date = Date()) -> Bool {
+        guard let angle = hingeAngle, let seen = hingeSeenAt,
+              now.timeIntervalSince(seen) < 2 else { return false }
+        return angle > Self.lidShutAtOrBelow && angle < Self.lidClosingBelow
+    }
+
     // MARK: The room
 
     /// A call has the mic or the camera. Whoever senses presence feeds

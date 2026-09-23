@@ -617,6 +617,11 @@ final class NotchBuddyToy: Toy {
         // Three or more working at once: busy is exciting, not calm.
         else if s.working >= 3 { s.mood = .gathering }
         else if s.working > 0 { s.mood = .pacing }
+        // Goodnight: the lid on its way down puts the nightcap on,
+        // whatever the fleet is up to — unless something asks or failed.
+        if s.mood == .pacing || s.mood == .gathering, store?.lidClosing(at: now) == true {
+            s.mood = .asleep
+        }
         if let hopUntil, now < hopUntil { s.mood = .celebrating }
         if s.mood == .waving {
             if wavingSince == nil { wavingSince = now; waveOrdinal += 1 }

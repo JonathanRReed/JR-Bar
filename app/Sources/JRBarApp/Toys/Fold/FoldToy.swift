@@ -857,6 +857,8 @@ final class FoldToy: Toy {
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
         meter.tick()
         rawAngle = sample.angle
+        // The shared hinge signal: published, never read back here.
+        store?.noteHinge(sample.angle)
         if let angle = sample.angle, simulatedAngle == nil { voice(angle, at: sample.at) }
         // The clamshell flag is the one pause input that changes on
         // this path with no trigger of its own — the angle reconciles
