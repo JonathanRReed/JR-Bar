@@ -59,6 +59,35 @@ struct EffectStudioRoomsTests {
         #expect(refused == "Burn refused: no strip connected")
     }
 
+    @Test func onlyAWrittenDeviceIsCalledBurned() {
+        let written: JSONValue = ["confirmed": true, "written": true,
+                                  "devices": [["device": "pro-1", "written": true]]]
+        #expect(LEDSStudioModel.burnOutcome(written, device: "pro-1", name: "SidePulse").burned)
+
+        // The daemon answers an unconfirmed burn with the plan alone.
+        let plan: JSONValue = ["confirmed": false, "written": false,
+                               "devices": [["device": "pro-1", "written": false]]]
+        let planned = LEDSStudioModel.burnOutcome(plan, device: "pro-1", name: "SidePulse")
+        #expect(!planned.burned)
+        #expect(planned.message == "Nothing was written to SidePulse.")
+
+        let refused: JSONValue = ["written": false, "devices": [[
+            "device": "dot-1", "written": false, "error": "invalid_program",
+            "problems": [["severity": "error", "code": "too-long", "message": "Over 512 bytes."]],
+        ]]]
+        let check = LEDSStudioModel.burnOutcome(refused, device: "dot-1", name: "PulseDot")
+        #expect(!check.burned)
+        #expect(check.message == "The firmware check refused it for PulseDot: Over 512 bytes. Nothing was written.")
+
+        let failed: JSONValue = ["devices": [["device": "pro-1", "written": false, "error": "write_failed"]]]
+        #expect(LEDSStudioModel.burnOutcome(failed, device: "pro-1", name: "SidePulse").message
+                == "Nothing was written to SidePulse: write failed.")
+
+        // A reply that says nothing of the write is taken at its word.
+        #expect(LEDSStudioModel.burnOutcome(nil, device: "pro-1", name: "SidePulse").burned)
+        #expect(!LEDSStudioModel.burnOutcome(["written": false], device: "pro-1", name: "SidePulse").burned)
+    }
+
     @Test func theScreenBarNeedsNoHardwareConsent() {
         #expect(!EffectStudioStore.needsConsent(surface: "screen_bar"))
         #expect(EffectStudioStore.needsConsent(surface: "hardware"))

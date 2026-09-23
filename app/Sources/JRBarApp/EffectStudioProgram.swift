@@ -191,15 +191,41 @@ final class LEDSStudioModel {
             defer { self.inFlight = false }
             do {
                 let reply = try await self.core.burnInitProgramNow(program, device: device.id)
-                if reply.ok {
-                    self.onStatus?("Burned into \(name)'s INIT.LED — it plays at power-up")
-                } else {
+                guard reply.ok else {
                     self.onError?(Self.burnFailure(reply.error))
+                    return
                 }
+                let outcome = Self.burnOutcome(reply.result, device: device.id, name: name)
+                if outcome.burned { self.onStatus?(outcome.message) } else { self.onError?(outcome.message) }
             } catch {
                 self.onError?(Self.burnFailure(error as? CoreReplyError) )
             }
         }
+    }
+
+    /// What an accepted `burn_init` reply says happened. The reply lists
+    /// each device it judged (`devices[{device, written, error, problems}]`)
+    /// and whether anything was `written`; a reply that says nothing of it
+    /// is taken at its word. Only a written device is called burned: a
+    /// program the firmware check refused, or a plan that wrote nothing,
+    /// says so instead of claiming a startup program that is not there.
+    static func burnOutcome(_ result: JSONValue?, device: String, name: String) -> (burned: Bool, message: String) {
+        let burned = "Burned into \(name)'s INIT.LED — it plays at power-up"
+        let row = result?["devices"]?.arrayValue?.first { $0["device"]?.stringValue == device }
+        if let row {
+            if row["written"]?.boolValue == true { return (true, burned) }
+            if let problem = row["problems"]?.arrayValue?.first?["message"]?.stringValue {
+                return (false, "The firmware check refused it for \(name): \(problem) Nothing was written.")
+            }
+            if let error = row["error"]?.stringValue {
+                return (false, "Nothing was written to \(name): \(error.replacingOccurrences(of: "_", with: " ")).")
+            }
+            return (false, "Nothing was written to \(name).")
+        }
+        if let written = result?["written"]?.boolValue {
+            return written ? (true, burned) : (false, "Nothing was written to \(name).")
+        }
+        return (true, burned)
     }
 
     /// A refusal in words: an older monitor has no `burn_init` at all.
