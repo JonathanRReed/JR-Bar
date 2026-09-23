@@ -3116,10 +3116,16 @@ final class DockEnhanceController {
         }
     }
 
-    /// The tile under an AppKit point, when it's over the Dock.
+    /// The tile under an AppKit point, when it's over the Dock. The
+    /// gesture monitors call this for every click or scroll anywhere, so
+    /// a point outside the cached reach answers at once — the tick keeps
+    /// that frame fresh wherever the pointer nears a Dock edge — and
+    /// only a point over the Dock pays the AX read.
     private func tile(at point: NSPoint) -> DockAXItem? {
         let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight())
-        guard accessibilityTrusted, let list = dockList(near: axPoint),
+        guard accessibilityTrusted else { return nil }
+        if let cached = cachedList, !Self.listReach(of: cached.frame).contains(axPoint) { return nil }
+        guard let list = dockList(near: axPoint),
               Self.listReach(of: list.frame).contains(axPoint) else { return nil }
         return tiles(of: list).first { $0.frame.contains(axPoint) }
     }
