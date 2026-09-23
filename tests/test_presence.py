@@ -309,6 +309,16 @@ def test_the_call_role_is_a_steady_busylight_and_a_beacon_between_calls() -> Non
     assert plan.program == "#FF2D20" and plan.why == "on_call" and not plan.animated
     assert plan.role == "call"
 
+    # A meeting holds the same red for the whole of it, mic or no mic, and
+    # a live call names itself first.
+    meeting = plan_dot_surface(role="call", facts=DotBeaconFacts(in_meeting=True, ask_count=2))
+    assert meeting.program == "#FF2D20" and meeting.why == "in_meeting" and not meeting.animated
+    assert meeting.reasons == ("presence", "in_meeting")
+    both = plan_dot_surface(role="call", facts=DotBeaconFacts(on_call=True, in_meeting=True))
+    assert both.why == "on_call"
+    # Only the call role is a busylight: the beacon ignores meetings.
+    assert plan_dot_surface(role="asks", facts=DotBeaconFacts(in_meeting=True)).why == "idle"
+
     between = plan_dot_surface(role="call", facts=DotBeaconFacts(ask_count=1, escalation_stage=2))
     assert between.why == "waiting" and between.animated and between.role == "call"
     idle = plan_dot_surface(role="call", facts=DotBeaconFacts())
@@ -363,3 +373,17 @@ def test_the_daemon_caps_the_oldest_asks_provider() -> None:
     controller._core_oldest_ask = lambda: SimpleNamespace(provider="claude")
     assert core_power.escalation_stage(controller, 3) == 3
     assert AgentMonitorSettings().to_dict()["escalation_tier_by_provider"] == {}
+
+
+def test_the_daemon_hands_the_dot_the_meeting() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import core_power
+
+    facts = parse_presence({"meeting_until": NOW + 1800}, now=NOW)
+    controller = SimpleNamespace(_core_presence=facts)
+    assert core_power.in_meeting(controller, now=NOW + 60) is True
+    # The meeting carries its own end: no renewal needed, and none after it.
+    assert core_power.in_meeting(controller, now=NOW + 1000) is True
+    assert core_power.in_meeting(controller, now=NOW + 1801) is False
+    assert core_power.in_meeting(SimpleNamespace(), now=NOW) is False

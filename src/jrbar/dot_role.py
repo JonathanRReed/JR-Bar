@@ -35,10 +35,12 @@ So the Dot gets a ROLE:
 ``call``
     A presence light, the way a busylight is one: a steady red -- no
     flashing, it sits in view of the camera -- while the person is on a call
-    (a live microphone, camera or screen share the app reported), and the
-    ``asks`` beacon the rest of the time. It works for every call app
-    because it reads the devices, not a Teams API, and between calls it
-    still says whether an agent needs the person, which no busylight does.
+    (a live microphone, camera or screen share the app reported) or in a
+    calendar meeting, for the whole meeting (Kuando marks the meeting, not
+    only its start), and the ``asks`` beacon the rest of the time. It works
+    for every call app because it reads the devices, not a Teams API, and
+    between calls it still says whether an agent needs the person, which no
+    busylight does.
 
 With the lid shut, an ``extend`` Dot has nothing in view to continue: the
 strip in the SD slot and the notch band are both behind the closed lid. So
@@ -195,6 +197,9 @@ class DotBeaconFacts:
     escalation_stage: int = 0
     #: The person is on a call (jrbar.presence), for the ``call`` role.
     on_call: bool = False
+    #: A calendar meeting is in progress (jrbar.presence): the ``call``
+    #: role holds its red for the whole of it, mic or no mic.
+    in_meeting: bool = False
     #: The lid is shut: an ``extend`` Dot has nothing in view to continue.
     lid_closed: bool = False
 
@@ -204,6 +209,7 @@ class DotBeaconFacts:
         object.__setattr__(self, "blocked", bool(self.blocked))
         object.__setattr__(self, "escalation_stage", max(0, min(3, int(self.escalation_stage))))
         object.__setattr__(self, "on_call", bool(self.on_call))
+        object.__setattr__(self, "in_meeting", bool(self.in_meeting))
         object.__setattr__(self, "lid_closed", bool(self.lid_closed))
 
 
@@ -1042,16 +1048,18 @@ def plan_dot_surface(
         return None
     facts = facts or DotBeaconFacts()
 
-    if resolved == DotRole.CALL.value and facts.on_call:
+    if resolved == DotRole.CALL.value and (facts.on_call or facts.in_meeting):
         # Held, not breathed: the Dot is in view of the camera, and a
         # busylight that pulses is a distraction to the other side too.
+        # A live call names itself before a meeting does.
+        why = "on_call" if facts.on_call else "in_meeting"
         return DotSurfacePlan(
             program=apply_brightness_line(normalize_color(colors.on_call), brightness),
-            why="on_call",
+            why=why,
             role=resolved,
             led_count=led_count,
             animated=False,
-            reasons=("presence", "on_call"),
+            reasons=("presence", why),
         )
 
     auto_asks = resolved == DotRole.EXTEND.value and facts.lid_closed

@@ -4241,6 +4241,7 @@ def build_headless_controller_class() -> type:
                 # The ``call`` role's busylight, and the shut lid that turns
                 # an ``extend`` Dot into the asks beacon (jrbar.dot_role).
                 on_call=core_power.on_call(self),
+                in_meeting=core_power.in_meeting(self),
                 lid_closed=getattr(self, "last_lid_closed", None) is True,
             )
 

@@ -372,6 +372,13 @@ def on_call(controller: Any, *, now: float | None = None) -> bool:
     return bool(facts is not None and facts.on_call(time.time() if now is None else now))
 
 
+def in_meeting(controller: Any, *, now: float | None = None) -> bool:
+    """A calendar meeting the app reported is in progress; it carries its
+    own end, so it stands without the app renewing it."""
+    facts = presence_facts(controller)
+    return bool(facts is not None and facts.in_meeting(time.time() if now is None else now))
+
+
 def escalation_stage(controller: Any, stage: int, *, now: float | None = None) -> int:
     """The ladder's stage adjusted for whose ask it is and for presence: a
     per-provider ceiling first, then held at the light on a call, past the
@@ -542,6 +549,7 @@ __all__ = [
     "energy_sessions",
     "escalation_stage",
     "hold_awake",
+    "in_meeting",
     "merge_history",
     "observe_environment",
     "on_call",

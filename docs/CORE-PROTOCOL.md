@@ -1180,8 +1180,11 @@ never hands it work to do.
 Added 2026-09-22. `dot_role: "call"` makes the Dot a presence light the way
 a busylight is one: a **steady** red `#FF2D20` -- held, never breathed, it
 sits in view of the camera -- while `state.presence.on_call` is true
-(`why: "on_call"`, `reasons: ["presence", "on_call"]`), and exactly the
-`asks` beacon above the rest of the time. It reads the devices, not a call
+(`why: "on_call"`, `reasons: ["presence", "on_call"]`) and for the whole
+of a calendar meeting while `state.presence.in_meeting` is (`why:
+"in_meeting"`; a live call names itself first), the way Kuando marks the
+meeting and not only its start, and exactly the `asks` beacon above the
+rest of the time. It reads the devices, not a call
 app's API, so it works for every call app, and between calls it still says
 whether an agent needs the person. Like `asks` it needs no strip
 (`lights.dot_link.state` is `beacon`), is never scaled by
