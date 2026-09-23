@@ -38,6 +38,39 @@ struct NotchSensorMonitorTests {
         monitor.stop()
     }
 
+    @Test("start arms the system listeners, stop removes every one")
+    func listeners() {
+        let monitor = NotchSensorMonitor()
+        monitor.start()
+        // The default-input and camera-list listeners register on any
+        // Mac; the per-device ones depend on its hardware.
+        #expect(monitor.armedListenerCount >= 2)
+        monitor.stop()
+        #expect(monitor.armedListenerCount == 0)
+        monitor.stop()   // a second stop is harmless
+        #expect(monitor.armedListenerCount == 0)
+    }
+
+    @Test("under the ears nothing watches the mic unless another surface asks")
+    func drawableGate() {
+        #expect(NotchToy.sensorsDrawable(earsDrawn: false, wantedElsewhere: false),
+                "no ears: the island's own shoulders draw the dots")
+        #expect(!NotchToy.sensorsDrawable(earsDrawn: true, wantedElsewhere: false),
+                "a bare housing draws no dots, so nothing listens")
+        #expect(NotchToy.sensorsDrawable(earsDrawn: true, wantedElsewhere: true))
+
+        var state = ToysState()
+        state.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy: NotchToy = store.notch
+        toy.screenBarShown = { false }
+        #expect(toy.sensorsDrawable, "no bar, no ears")
+    }
+
     @Test("the toggle's default is on and the toy honours the write")
     func toggleDefault() {
         let key = NotchToy.sensorIndicatorsDefaultsKey

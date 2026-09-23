@@ -1720,12 +1720,31 @@ final class NotchToy: Toy {
 
     // MARK: Sensors
 
-    /// The mic/camera poller lives exactly as long as the island is
-    /// shown with the indicators switch on; `reconcile`/`parkIsland`
-    /// land here. `runtimeEnabled` is folded in, so state-machine
-    /// tests never build a CoreAudio/CoreMediaIO read.
+    /// Another surface that draws the privacy dots — the Screen Bar's
+    /// ears, once they carry them. Under the ears the island's resting
+    /// face is a bare housing and its own dots never draw, so without a
+    /// taker here the monitor would watch the mic for nobody.
+    var sensorsWantedElsewhere: @MainActor () -> Bool = { false }
+    /// Every sensor edge, for that other surface.
+    var onSensorsChanged: (@MainActor (NotchSensorState) -> Void)?
+
+    /// Whether any surface can draw the dots right now: the island's own
+    /// face when the ears are not drawn, or a surface that asked.
+    var sensorsDrawable: Bool {
+        Self.sensorsDrawable(earsDrawn: earsDrawn, wantedElsewhere: sensorsWantedElsewhere())
+    }
+
+    static func sensorsDrawable(earsDrawn: Bool, wantedElsewhere: Bool) -> Bool {
+        !earsDrawn || wantedElsewhere
+    }
+
+    /// The mic/camera monitor lives exactly as long as the island is
+    /// shown with the indicators switch on and some surface can draw
+    /// the dots; `reconcile`/`parkIsland` land here. `runtimeEnabled` is
+    /// folded in, so state-machine tests never build a
+    /// CoreAudio/CoreMediaIO read.
     private func syncSensorMonitor() {
-        let want = runtimeEnabled && islandVisible && sensorIndicatorsEnabled
+        let want = runtimeEnabled && islandVisible && sensorIndicatorsEnabled && sensorsDrawable
         if want {
             if sensorMonitor == nil {
                 let monitor = NotchSensorMonitor()
@@ -1738,6 +1757,7 @@ final class NotchToy: Toy {
             sensorMonitor = nil
             if sensorState.anyInUse {
                 sensorState = NotchSensorState()
+                onSensorsChanged?(sensorState)
                 if islandVisible, currentFace == .idle {
                     reframeCurrent(animated: false)
                 }
@@ -1751,6 +1771,7 @@ final class NotchToy: Toy {
     private func noteSensors(_ state: NotchSensorState) {
         guard state != sensorState else { return }
         sensorState = state
+        onSensorsChanged?(state)
         if currentFace == .idle {
             reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }
@@ -2080,7 +2101,9 @@ private struct NotchControlsView: View {
                 get: { toy.sensorIndicatorsEnabled },
                 set: { toy.sensorIndicatorsEnabled = $0 })) {
                 SettingLabel(title: "Mic & camera indicators",
-                             subtitle: "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar asks the system whether they are running; it never opens the mic or camera itself.")
+                             subtitle: toy.sensorsDrawable
+                                ? "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar listens for the system saying they started; it never opens the mic or camera itself."
+                                : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots — nothing watches the mic or camera until a surface can show them.")
             }
             Toggle(isOn: toy.bind(\.mediaEnabled)) {
                 SettingLabel(title: "Now Playing",
