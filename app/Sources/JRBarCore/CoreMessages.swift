@@ -1338,17 +1338,61 @@ public struct CorePowerRelease: Codable, Hashable, Sendable {
     public var duration: Double?
 }
 
+/// `state.power.battery.runway`: will the run holding the Mac awake
+/// outlast the battery. `short` only on battery, with agents working and a
+/// hold up, under half an hour left.
+public struct CoreBatteryRunway: Codable, Hashable, Sendable {
+    public var agents: Int?
+    public var minutesLeft: Int?
+    public var short: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case agents, short
+        case minutesLeft = "minutes_left"
+    }
+}
+
+/// `state.power.battery`: the daemon's battery reading (nil on a Mac with
+/// no battery). Estimates are nil while macOS is still estimating.
+public struct CoreBattery: Codable, Hashable, Sendable {
+    public var percent: Int?
+    public var charging: Bool?
+    public var plugged: Bool?
+    public var minutesLeft: Int?
+    public var minutesToFull: Int?
+    public var healthPercent: Int?
+    public var cycleCount: Int?
+    public var temperatureC: Double?
+    public var condition: String?
+    public var drawWatts: Double?
+    public var adapterWatts: Double?
+    public var runway: CoreBatteryRunway?
+
+    enum CodingKeys: String, CodingKey {
+        case percent, charging, plugged, condition, runway
+        case minutesLeft = "minutes_left"
+        case minutesToFull = "minutes_to_full"
+        case healthPercent = "health_percent"
+        case cycleCount = "cycle_count"
+        case temperatureC = "temperature_c"
+        case drawWatts = "draw_watts"
+        case adapterWatts = "adapter_watts"
+    }
+}
+
 public struct CorePower: Codable, Hashable, Sendable {
     public var keepAwake: Bool?
     public var closedLid: CoreClosedLid?
     public var hold: CoreAwakeHold?
     public var lastRelease: CorePowerRelease?
+    public var battery: CoreBattery?
 
     enum CodingKeys: String, CodingKey {
         case keepAwake = "keep_awake"
         case closedLid = "closed_lid"
         case hold
         case lastRelease = "last_release"
+        case battery
     }
 }
 

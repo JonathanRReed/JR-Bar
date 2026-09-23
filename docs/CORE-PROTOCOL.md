@@ -337,7 +337,15 @@ Vocabulary:
   `lease_ended` (`reason` `expired`/`finished`), `suspended`
   (`thermal`/`battery`), `lid_hold_ended` (`duration` the held stretch)
   or `slept`; a lease the person cancelled is not one. The same log backs
-  the `power` rows in `list_history` and the `power` event.
+  the `power` rows in `list_history` and the `power` event. `battery`
+  (null on a Mac with no battery) is the daemon's reading: `{percent,
+  charging, plugged, minutes_left, minutes_to_full, health_percent,
+  cycle_count, temperature_c, condition, draw_watts, adapter_watts,
+  runway}`, every estimate null while macOS is still estimating;
+  `runway` is `{agents, minutes_left, short}` and `short` is true only on
+  battery, with agents working and a hold keeping the Mac up, when fewer
+  than 30 minutes remain. The estimates, the draw and the temperature move
+  on every read and alone never re-broadcast `state`.
 - `presence` is the one presence fact from the app's `presence` reports:
   `{on_call, mic, camera, screen_shared, since, in_meeting, meeting_until,
   away, fresh, quiet, escalation_ceiling, celebrations_held}`. `on_call`,

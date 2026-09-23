@@ -58,6 +58,26 @@ struct PowerCodecTests {
         #expect(state.presence == nil)
     }
 
+    @Test("the battery and its agent runway decode")
+    func battery() throws {
+        let state = try Self.state("""
+        {"t":"state","v":1,"generation":5,"aggregate":{},"sessions":[],"asks":[],"devices":[],
+         "power":{"keep_awake":true,"closed_lid":{"policy":"agents"},
+                  "battery":{"percent":41,"charging":false,"plugged":false,"minutes_left":24,"minutes_to_full":null,
+                             "health_percent":91,"cycle_count":212,"temperature_c":31.3,"condition":"Normal",
+                             "draw_watts":18.0,"adapter_watts":null,
+                             "runway":{"agents":2,"minutes_left":24,"short":true}}}}
+        """)
+        let battery = try #require(state.power?.battery)
+        #expect(battery.percent == 41)
+        #expect(battery.minutesLeft == 24)
+        #expect(battery.healthPercent == 91)
+        #expect(battery.drawWatts == 18)
+        #expect(battery.adapterWatts == nil)
+        #expect(battery.runway?.short == true)
+        #expect(battery.runway?.agents == 2)
+    }
+
     @Test("a call decodes, and the quiet it caused reads as sounds off")
     func presence() throws {
         let state = try Self.state("""

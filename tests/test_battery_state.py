@@ -1,0 +1,97 @@
+"""state.power.battery: what the daemon already reads, published, plus the
+agent runway -- will the run holding the Mac awake outlast the battery."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from types import SimpleNamespace
+
+from jrbar.battery import BatterySnapshot
+from jrbar.battery_runtime import (
+    AGENT_RUNWAY_WARNING_MINUTES,
+    BATTERY_TIME_UNKNOWN,
+    battery_state_document,
+)
+from jrbar.core_runtime import doc_significant_equal
+
+ON_BATTERY = BatterySnapshot(
+    percent=41,
+    is_plugged=False,
+    battery_present=True,
+    voltage=12.0,
+    amperage=-1.5,
+    battery_watts=-18.0,
+    time_to_empty=95,
+    cycle_count=212,
+    temperature_c=31.26,
+    health_percent=91,
+    condition="Normal",
+)
+
+
+def test_the_document_reads_the_snapshot_honestly() -> None:
+    document = battery_state_document(ON_BATTERY, agents_working=2, hold_active=True)
+    assert document == {
+        "percent": 41,
+        "charging": False,
+        "plugged": False,
+        "minutes_left": 95,
+        "minutes_to_full": None,
+        "health_percent": 91,
+        "cycle_count": 212,
+        "temperature_c": 31.3,
+        "condition": "Normal",
+        "draw_watts": 18.0,
+        "adapter_watts": None,
+        "runway": {"agents": 2, "minutes_left": 95, "short": False},
+    }
+
+
+def test_the_runway_is_short_only_on_battery_with_a_held_run() -> None:
+    low = replace(ON_BATTERY, time_to_empty=AGENT_RUNWAY_WARNING_MINUTES - 1)
+    assert battery_state_document(low, agents_working=1, hold_active=True)["runway"]["short"] is True
+    assert battery_state_document(low, agents_working=0, hold_active=True)["runway"]["short"] is False
+    assert battery_state_document(low, agents_working=1, hold_active=False)["runway"]["short"] is False
+    plugged = replace(low, is_plugged=True, adapter_watts=67, battery_watts=20.0)
+    document = battery_state_document(plugged, agents_working=1, hold_active=True)
+    assert document["runway"] == {"agents": 1, "minutes_left": None, "short": False}
+    assert document["adapter_watts"] == 67.0 and document["draw_watts"] is None
+
+
+def test_unknown_estimates_and_missing_batteries() -> None:
+    estimating = replace(ON_BATTERY, time_to_empty=BATTERY_TIME_UNKNOWN, cycle_count=-1, health_percent=-1)
+    document = battery_state_document(estimating)
+    assert document["minutes_left"] is None
+    assert document["cycle_count"] is None and document["health_percent"] is None
+    charging = replace(ON_BATTERY, is_plugged=True, is_charging=True, time_to_full=40)
+    assert battery_state_document(charging)["minutes_to_full"] == 40
+    assert battery_state_document(replace(ON_BATTERY, battery_present=False)) is None
+    assert battery_state_document(None) is None
+
+
+def test_a_moving_estimate_alone_does_not_rebroadcast_the_state() -> None:
+    def state(snapshot):
+        return {"power": {"battery": battery_state_document(snapshot, agents_working=1, hold_active=True)}}
+
+    first = state(ON_BATTERY)
+    drifted = state(replace(ON_BATTERY, time_to_empty=93, battery_watts=-17.2, temperature_c=31.9))
+    assert doc_significant_equal("state", first, drifted)
+    stepped = state(replace(ON_BATTERY, percent=40))
+    assert not doc_significant_equal("state", first, stepped)
+    short = state(replace(ON_BATTERY, time_to_empty=12))
+    assert not doc_significant_equal("state", first, short)
+
+
+def test_the_state_carries_the_battery(monkeypatch) -> None:
+    from jrbar import core_power
+
+    keep = SimpleNamespace(working_count=1, process_running=lambda: True, hold_document=lambda: {})
+    controller = SimpleNamespace(
+        keep_awake=keep,
+        closed_lid_awake=SimpleNamespace(active=lambda: False, sleeper=None),
+        _production_battery_observation=SimpleNamespace(snapshot=ON_BATTERY),
+        last_lid_closed=False,
+    )
+    document = {"power": {"keep_awake": True, "closed_lid": {"policy": "never"}}}
+    core_power.augment_power_document(controller, document)
+    assert document["power"]["battery"]["runway"] == {"agents": 1, "minutes_left": 95, "short": False}

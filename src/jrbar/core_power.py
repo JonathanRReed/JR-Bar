@@ -18,6 +18,7 @@ from typing import Any
 
 from . import keep_awake as keep_awake_module
 from . import lid_sleep as lid_sleep_module
+from .battery_runtime import battery_state_document
 from .keep_awake import (
     LEASE_END_CANCELLED,
     LEASE_PENDING_MODES,
@@ -245,6 +246,17 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
     )
     closed_lid = power.get("closed_lid")
     lid = getattr(controller, "closed_lid_awake", None)
+    battery = getattr(getattr(controller, "_production_battery_observation", None), "snapshot", None)
+    process_running = getattr(keep, "process_running", None)
+    lid_active = getattr(lid, "active", None)
+    power["battery"] = battery_state_document(
+        battery,
+        agents_working=int(getattr(keep, "working_count", 0) or 0),
+        hold_active=bool(
+            (callable(process_running) and process_running())
+            or (callable(lid_active) and lid_active())
+        ),
+    )
     if isinstance(closed_lid, dict):
         lid_closed = getattr(controller, "last_lid_closed", None)
         closed_lid["lid_closed"] = lid_closed if isinstance(lid_closed, bool) else None

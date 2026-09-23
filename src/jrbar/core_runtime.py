@@ -273,6 +273,13 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("health", "intake", "silence_seconds"),
         ("usage", "providers", "*", "forecast", "exhausts_at"),
         ("usage", "providers", "*", "windows", "*", "forecast", "exhausts_at"),
+        # Battery estimates move on every read; a percent step or a plug
+        # change is what earns a broadcast.
+        ("power", "battery", "minutes_left"),
+        ("power", "battery", "minutes_to_full"),
+        ("power", "battery", "draw_watts"),
+        ("power", "battery", "temperature_c"),
+        ("power", "battery", "runway", "minutes_left"),
     ),
     "lights": (
         ("now",),

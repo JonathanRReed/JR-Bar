@@ -161,3 +161,70 @@ class BatteryObservationService:
                 callback(observation)
             except Exception:
                 pass
+
+
+# --- state.power.battery -------------------------------------------------------
+#
+# The daemon reads health, cycles, time left, temperature and the adapter,
+# and only percent and charging ever reached the app. This is the published
+# shape, plus the one reading no battery app can make: whether the agents
+# holding the Mac awake will outlast the battery.
+
+#: ioreg's "still estimating" answer for a time-to-empty or time-to-full.
+BATTERY_TIME_UNKNOWN = 65535
+#: On battery, with agents holding the Mac awake, fewer minutes left than
+#: this is a run about to die on a flat battery.
+AGENT_RUNWAY_WARNING_MINUTES = 30
+
+
+def _estimate_minutes(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 < value < BATTERY_TIME_UNKNOWN else None
+
+
+def battery_state_document(
+    snapshot: BatterySnapshot | None,
+    *,
+    agents_working: int = 0,
+    hold_active: bool = False,
+) -> dict[str, object] | None:
+    """``state.power.battery``, or None on a Mac with no battery.
+
+    ``runway`` answers "will this run make it": ``short`` is true only on
+    battery, with agents working and a hold keeping the Mac up, when the
+    estimate says fewer than ``AGENT_RUNWAY_WARNING_MINUTES`` remain."""
+    if snapshot is None or not getattr(snapshot, "battery_present", False):
+        return None
+    plugged = bool(snapshot.is_plugged)
+    minutes_left = None if plugged else _estimate_minutes(snapshot.time_to_empty)
+    minutes_to_full = _estimate_minutes(snapshot.time_to_full) if snapshot.is_charging else None
+    watts = float(snapshot.battery_watts)
+    draw = round(abs(watts), 1) if not plugged and watts < 0 else None
+    adapter = float(snapshot.adapter_power) if plugged else 0.0
+    temperature = snapshot.temperature_c
+    working = max(0, int(agents_working))
+    return {
+        "percent": int(snapshot.percent),
+        "charging": bool(snapshot.is_charging),
+        "plugged": plugged,
+        "minutes_left": minutes_left,
+        "minutes_to_full": minutes_to_full,
+        "health_percent": snapshot.health_percent if snapshot.health_percent > 0 else None,
+        "cycle_count": snapshot.cycle_count if snapshot.cycle_count >= 0 else None,
+        "temperature_c": None if temperature is None else round(float(temperature), 1),
+        "condition": snapshot.condition or None,
+        "draw_watts": draw,
+        "adapter_watts": round(adapter, 1) if adapter > 0 else None,
+        "runway": {
+            "agents": working,
+            "minutes_left": minutes_left if working and hold_active else None,
+            "short": bool(
+                not plugged
+                and working
+                and hold_active
+                and minutes_left is not None
+                and minutes_left < AGENT_RUNWAY_WARNING_MINUTES
+            ),
+        },
+    }
