@@ -47,11 +47,11 @@ struct DockAXWorkerTests {
     @Test("the tap's source is serviced on its own named thread, never main")
     func tapThreadServicesOffMain() throws {
         let runs = Runs()
-        let source = try #require(source(runs))
-        let thread = DockTapThread(source: source, name: "JR-Bar dock keys")
+        let tapSource = try #require(source(runs))
+        let thread = DockTapThread(source: tapSource, name: "JR-Bar dock keys")
         thread.start()
         defer { thread.stop() }
-        try fire(source, on: thread)
+        try fire(tapSource, on: thread)
         // A signal, not a sleep: the bound only ends a broken thread.
         #expect(runs.ran.wait(timeout: .now() + 10) == .success)
         runs.lock.withLock {
@@ -63,8 +63,8 @@ struct DockAXWorkerTests {
     @Test("stop takes the source off and lets the thread return; start again serves anew")
     func tapThreadStopsAndRestarts() throws {
         let runs = Runs()
-        let source = try #require(source(runs))
-        let thread = DockTapThread(source: source, name: "JR-Bar dock keys")
+        let tapSource = try #require(source(runs))
+        let thread = DockTapThread(source: tapSource, name: "JR-Bar dock keys")
         thread.start()
         let first = try #require(thread.runLoop)
         thread.stop()
@@ -73,7 +73,7 @@ struct DockAXWorkerTests {
         thread.start()
         let second = try #require(thread.runLoop)
         #expect(second !== first, "a fresh thread, a fresh loop")
-        try fire(source, on: thread)
+        try fire(tapSource, on: thread)
         #expect(runs.ran.wait(timeout: .now() + 10) == .success)
         thread.stop()
     }
