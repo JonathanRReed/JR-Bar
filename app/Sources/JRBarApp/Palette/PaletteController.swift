@@ -563,7 +563,10 @@ final class PaletteController {
 
     // MARK: Slower sources
 
-    /// The query moved: re-ask the slower sources once it settles.
+    /// The query moved: re-ask the slower sources once it settles. They
+    /// run side by side and each answer lands as it comes, in source
+    /// order — one slow Accessibility read of the front app's menus
+    /// never holds the archive's or History's hits back.
     func queryChanged() {
         searchTask?.cancel()
         let query = model.query
@@ -571,17 +574,34 @@ final class PaletteController {
             model.noteSearching(false)
             return
         }
-        let sources = activeSources
+        let count = activeSources.count
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: Self.searchDebounce)
             guard !Task.isCancelled, let self else { return }
             self.model.noteSearching(true)
-            var found: [PaletteItem] = []
-            for source in sources {
-                found += await source.results(for: query)
-                if Task.isCancelled { return }
+            guard count > 0 else {
+                self.model.setSearchResults([], for: query)
+                return
             }
-            self.model.setSearchResults(found, for: query)
+            let run = PaletteSearchRun(count: count)
+            // One read per source, by its place: each finds its source
+            // on the main actor, where every source lives, and while one
+            // waits on another app's Accessibility the rest carry on.
+            let reads = (0..<count).map { index in
+                Task { @MainActor [weak self] in
+                    guard let source = self?.activeSources[safe: index] else { return }
+                    let found = await source.results(for: query)
+                    guard !Task.isCancelled, let self else { return }
+                    run.answers.record(found, at: index)
+                    self.model.setSearchResults(run.answers.items, for: query,
+                                                finished: run.answers.isComplete)
+                }
+            }
+            await withTaskCancellationHandler {
+                for read in reads { await read.value }
+            } onCancel: {
+                for read in reads { read.cancel() }
+            }
         }
     }
 

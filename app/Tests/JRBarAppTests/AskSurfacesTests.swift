@@ -140,6 +140,53 @@ struct AskSurfacesTests {
         #expect(PaletteRanking.promoting("clear", in: clear).primary?.id == "open")
     }
 
+    @Test("slower sources land in source order as each answers; searching holds until the last")
+    func searchAnswers() {
+        func item(_ id: String) -> PaletteItem {
+            PaletteItem(id: id, title: id, icon: .symbol("circle", .gray), kind: "T", section: .archive,
+                        actions: [])
+        }
+        var answers = PaletteSearchAnswers(count: 3)
+        answers.record([item("c")], at: 2)
+        #expect(answers.items.map(\.id) == ["c"])
+        #expect(!answers.isComplete)
+        answers.record([item("a")], at: 0)
+        answers.record([], at: 1)
+        answers.record([item("z")], at: 9)
+        #expect(answers.items.map(\.id) == ["a", "c"])
+        #expect(answers.isComplete)
+        let model = PaletteModel()
+        model.load(items: [], usage: PaletteUsage())
+        model.query = "abc"
+        model.setSearchResults([item("c")], for: "abc", finished: false)
+        #expect(model.searching)
+        #expect(model.searchResults.map(\.id) == ["c"])
+        model.setSearchResults([item("a"), item("c")], for: "abc")
+        #expect(!model.searching)
+    }
+
+    @Test("one slow source never holds another's hits back")
+    func slowSourceDoesNotBlock() async {
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        let hit = PaletteItem(id: "fast.hit", title: "fast", icon: .symbol("circle", .gray), kind: "T",
+                              section: .archive, actions: [])
+        // The slow read outlasts the test; closing the palette cancels it.
+        let slow = PaletteClosureSource(build: { [] }, search: { _ in
+            try? await Task.sleep(for: .seconds(60))
+            return []
+        })
+        let fast = PaletteClosureSource(build: { [] }, search: { _ in [hit] })
+        controller.sources = { [slow, fast] }
+        controller.open()
+        defer { controller.close() }
+        controller.model.query = "fas"
+        controller.queryChanged()
+        await Self.waitFor { !controller.model.searchResults.isEmpty }
+        #expect(controller.model.searchResults.map(\.id) == ["fast.hit"], "the fast source's hit is listed")
+        #expect(controller.model.searching, "the slow one is still reading")
+    }
+
     // MARK: A verb's own toast
 
     @Test("a verb's ticket hears the toasts it raised — now or from its task — and no other")
