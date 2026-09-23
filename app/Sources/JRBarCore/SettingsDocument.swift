@@ -349,14 +349,16 @@ extension SettingsKey {
     ]
 
     /// The person's own light documents: saved calibration profiles, the
-    /// Focus → profile rules, and the hand-written Studio program. The
-    /// pages read and write them, but they are work rather than
-    /// preferences, so they stay out of `all` — a page's "Reset to
-    /// defaults" must never wipe a saved profile or a program.
+    /// Focus → profile rules, the hand-written Studio program and the
+    /// shelf of named programs (`[[name, program]]`). The pages read and
+    /// write them, but they are work rather than preferences, so they
+    /// stay out of `all` — a page's "Reset to defaults" must never wipe a
+    /// saved profile or a program.
     public static let lightsDocuments: [SettingsKey] = [
         SettingsKey(.devices, "calibration_profiles", .object),
         SettingsKey(.notifications, "focus_profile_rules", .object),
         SettingsKey(.lighting, "studio_program", .string),
+        SettingsKey(.lighting, "studio_library", .object),
     ]
 
     /// `_settings_legacy.CALIBRATION_PROFILE_SLOTS`: the only names the

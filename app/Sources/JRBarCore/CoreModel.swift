@@ -925,3 +925,22 @@ public final class CoreModel {
         return result
     }
 }
+
+// MARK: - Startup program (lights lane)
+
+extension CoreModel {
+    /// `burn_init {program, device?}`: writes `program` to a SidePulse
+    /// device's INIT.LED — what it plays at power-up, with no monitor
+    /// running — and the firmware applies it at once as confirmation.
+    /// `device` is a device id; nil lets the daemon pick the strip. The
+    /// caller sends only a program the presentation compiler accepted.
+    /// The command belongs to the daemon's hardware work; a daemon
+    /// without it refuses the name, which the LEDS Studio shows as "not
+    /// in this monitor yet" rather than claiming a burn.
+    @discardableResult
+    public func burnInitProgramNow(_ program: String, device: String? = nil) async throws -> CoreReply {
+        var args: [String: JSONValue] = ["program": .string(program)]
+        if let device { args["device"] = .string(device) }
+        return try await send("burn_init", args: args)
+    }
+}

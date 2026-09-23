@@ -53,6 +53,7 @@ def test_every_swift_light_path_exists_in_the_daemon_document() -> None:
         "calibration_profiles",
         "focus_profile_rules",
         "studio_program",
+        "studio_library",
     ):
         _value, found = core_runtime.get_path(document, path)
         assert found, path
@@ -122,6 +123,13 @@ def test_calibration_profile_slots_and_focus_rules_round_trip(tmp_path: Path) ->
 def test_studio_program_is_kept_verbatim(tmp_path: Path) -> None:
     program = "# a note\n#FF00FF 1s pulse\nrepeat"
     assert _round_trip(tmp_path, "studio_program", program)["studio_program"] == program
+
+
+def test_studio_shelf_keeps_named_pairs_only(tmp_path: Path) -> None:
+    # The LEDS Studio writes the shelf whole, as [[name, program]] pairs.
+    shelf = [["Glow", "#FF7A00"], ["  ", "#000000"], ["Wave", "roll 2s"], "junk"]
+    kept = _round_trip(tmp_path, "studio_library", shelf)["studio_library"]
+    assert kept == [["Glow", "#FF7A00"], ["Wave", "roll 2s"]]
 
 
 def test_focus_dim_rules_survive_only_as_a_whole_object(tmp_path: Path) -> None:
