@@ -207,3 +207,77 @@ def test_set_setting_round_trips_auto_dim_by_dot_path(headless) -> None:  # noqa
     assert published[-1]["document"]["auto_dim"]["schedule"]["fraction"] == 0.3
     reset = controller._core_dispatch("reset_settings", {"paths": ["auto_dim"]})
     assert reset["reset"] == ["auto_dim"] and controller.settings.auto_dim == AutoDimSettings()
+
+
+# --- temporal smoothing ---------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_passing_shadow_does_not_dim_the_desk() -> None:
+    from jrbar.auto_dim import LuxSmoother
+
+    clock = _Clock()
+    smoother = LuxSmoother(clock=clock)
+    assert smoother.update(120.0) == 120.0
+    clock.now = 1.0
+    # One dark read between bright ones: the median target stays bright.
+    assert smoother.update(5.0) == 120.0
+    clock.now = 2.0
+    assert 115.0 < smoother.update(118.0) <= 120.0
+    assert smoother.last_raw == 118.0
+
+
+def test_dusk_dims_slowly_and_a_lamp_brightens_at_once() -> None:
+    from jrbar.auto_dim import LuxSmoother
+
+    clock = _Clock()
+    smoother = LuxSmoother(dim_seconds=10.0, brighten_seconds=2.0, clock=clock)
+    smoother.update(100.0)
+    for second in range(1, 4):
+        clock.now = float(second)
+        value = smoother.update(10.0)
+    # Three seconds of a genuinely darker room: on the way, not there.
+    assert 10.0 < value < 100.0
+    for second in range(4, 60):
+        clock.now = float(second)
+        value = smoother.update(10.0)
+    assert value < 11.0
+    clock.now = 60.0
+    brightened = smoother.update(200.0)
+    assert brightened > value
+    # A two-second time constant: most of the way within five seconds,
+    # where a dim of the same size takes most of a minute.
+    clock.now = 64.0
+    assert smoother.update(200.0) > 180.0
+
+
+def test_the_readout_carries_the_raw_reading_beside_the_smoothed_one() -> None:
+    from jrbar.auto_dim import LuxSmoother, _SmoothedAmbientLight
+
+    clock = _Clock()
+    reader = _SmoothedAmbientLight(lambda: 80.0, LuxSmoother(clock=clock))
+    settings = AutoDimSettings(mode="ambient")
+    result = evaluate_auto_dim(settings, now_minutes=0, display_reader=lambda: None, ambient_reader=reader)
+    assert result.reading == 80.0 and result.raw == 80.0
+    assert result.to_dict()["raw"] == 80.0
+    assert "raw" not in AutoDimResult("display", "display", 0.6, True, 0.6).to_dict()
+
+
+def test_an_unreadable_sensor_resets_the_smoother() -> None:
+    from jrbar.auto_dim import AmbientLightUnavailableError, LuxSmoother, _SmoothedAmbientLight
+
+    def unreadable() -> float:
+        raise AmbientLightUnavailableError("no sensor")
+
+    smoother = LuxSmoother(clock=_Clock())
+    smoother.update(50.0)
+    reader = _SmoothedAmbientLight(unreadable, smoother)
+    assert reader() is None
+    assert smoother.value is None and reader.last_raw is None

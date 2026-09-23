@@ -289,6 +289,10 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("linked_skew_corrected_ms",),
         ("auto_dim", "lux"),
         ("auto_dim", "factor"),
+        # The sensor's value, smoothed and raw: it moves with every read,
+        # and the brightness it earns already shows in the surfaces.
+        ("auto_dim", "reading"),
+        ("auto_dim", "raw"),
     ),
 }
 
