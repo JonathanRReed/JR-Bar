@@ -420,6 +420,16 @@ public struct BuddyCare: Codable, Equatable, Sendable {
     public var treatsGiven: Int
     /// Completed sessions it has "eaten".
     public var crumbsEaten: Int
+    /// Epoch seconds of the first pet, treat or crumb; 0 = not met yet.
+    /// A log from before this field is seeded with its earliest stamp and
+    /// `firstMetIsFloor` — the pal card then says "at least since".
+    public var firstMetAt: Double = 0
+    public var firstMetIsFloor: Bool = false
+    /// Crumbs by the provider whose session finished — the pal card's
+    /// favourite agent.
+    public var crumbsByProvider: [String: Int] = [:]
+    /// The longest ask it waited through with you, in seconds.
+    public var longestAskSeconds: Double = 0
 
     public init(lastInteractionAt: Double = 0, lastTreatAt: Double = 0, lastCrumbAt: Double = 0,
                 petCount: Int = 0, treatsGiven: Int = 0, crumbsEaten: Int = 0) {
@@ -429,6 +439,17 @@ public struct BuddyCare: Codable, Equatable, Sendable {
         self.petCount = petCount
         self.treatsGiven = treatsGiven
         self.crumbsEaten = crumbsEaten
+        seedFirstMet()
+    }
+
+    /// A log with history but no meeting day met at least by its
+    /// earliest stamp — the floor the pal card words as "at least since".
+    private mutating func seedFirstMet() {
+        guard firstMetAt <= 0 else { return }
+        let stamps = [lastInteractionAt, lastTreatAt, lastCrumbAt].filter { $0 > 0 }
+        guard let earliest = stamps.min() else { return }
+        firstMetAt = earliest
+        firstMetIsFloor = true
     }
 
     /// How long a treat keeps it blissed out.
@@ -457,8 +478,30 @@ public struct BuddyCare: Codable, Equatable, Sendable {
 
     /// A tap on the buddy or a scratch behind the ear.
     public mutating func pet(at now: Date = Date()) {
+        meet(at: now)
         petCount += 1
         lastInteractionAt = now.timeIntervalSince1970
+    }
+
+    /// The first time anything happens between you is the day you met.
+    mutating func meet(at now: Date) {
+        guard firstMetAt <= 0 else { return }
+        firstMetAt = now.timeIntervalSince1970
+        firstMetIsFloor = false
+    }
+
+    /// An ask resolved after `seconds` open — kept if it's the longest.
+    public mutating func noteAsk(lasted seconds: Double) {
+        guard seconds.isFinite, seconds > longestAskSeconds else { return }
+        longestAskSeconds = seconds
+    }
+
+    /// The provider it has eaten the most crumbs from; ties break on the
+    /// id so the pick can't flicker. nil before any crumb had a provider.
+    public var favouriteProvider: (id: String, crumbs: Int)? {
+        crumbsByProvider.filter { $0.value > 0 }
+            .max { ($0.value, $1.key) < ($1.value, $0.key) }
+            .map { ($0.key, $0.value) }
     }
 
     /// A treat counts as a pet and starts the `fed` window.
@@ -471,13 +514,18 @@ public struct BuddyCare: Codable, Equatable, Sendable {
     /// A completed session is a crumb. Eating is ambient, not affection
     /// — it deliberately does not touch `lastInteractionAt`, so a buddy
     /// whose human never says hi still misses them.
-    public mutating func eat(at now: Date = Date(), count: Int = 1) {
+    public mutating func eat(at now: Date = Date(), count: Int = 1, provider: String? = nil) {
+        meet(at: now)
         crumbsEaten += count
         lastCrumbAt = now.timeIntervalSince1970
+        if let provider = provider?.lowercased(), !provider.isEmpty {
+            crumbsByProvider[provider, default: 0] += count
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case lastInteractionAt, lastTreatAt, lastCrumbAt, petCount, treatsGiven, crumbsEaten
+        case firstMetAt, firstMetIsFloor, crumbsByProvider, longestAskSeconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -488,6 +536,19 @@ public struct BuddyCare: Codable, Equatable, Sendable {
         petCount = (try? c.decodeIfPresent(Int.self, forKey: .petCount)) ?? 0
         treatsGiven = (try? c.decodeIfPresent(Int.self, forKey: .treatsGiven)) ?? 0
         crumbsEaten = (try? c.decodeIfPresent(Int.self, forKey: .crumbsEaten)) ?? 0
+        let crumbs = (try? c.decodeIfPresent([String: Int].self, forKey: .crumbsByProvider)) ?? [:]
+        crumbsByProvider = crumbs.filter { $0.value > 0 }
+        let longest = (try? c.decodeIfPresent(Double.self, forKey: .longestAskSeconds)) ?? 0
+        longestAskSeconds = longest.isFinite ? max(0, longest) : 0
+        if let met = (try? c.decodeIfPresent(Double.self, forKey: .firstMetAt)) ?? nil,
+           met.isFinite, met > 0 {
+            firstMetAt = met
+            firstMetIsFloor = (try? c.decodeIfPresent(Bool.self, forKey: .firstMetIsFloor)) ?? false
+        } else {
+            // A log from before the field: the earliest stamp it kept is
+            // the latest the two of you can have met.
+            seedFirstMet()
+        }
     }
 }
 

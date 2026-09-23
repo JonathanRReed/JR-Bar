@@ -721,6 +721,7 @@ final class NotchBuddyToy: Toy {
     /// every build — the menu itself only exists for the pop.
     @ObservationIgnored private let menuActions = BuddyMenuActions()
     @ObservationIgnored private var renamePanel: BuddyRenamePanel?
+    @ObservationIgnored private var cardPanel: BuddyCardPanel?
 
     /// The pet menu: pet it, feed it, rename it, swap characters, open
     /// the asking session while one is up, dock or float it, toggle the
@@ -744,6 +745,7 @@ final class NotchBuddyToy: Toy {
         let rosterItem = NSMenuItem(title: "Change character", action: nil, keyEquivalent: "")
         rosterItem.submenu = roster
         menu.addItem(rosterItem)
+        menu.addItem(menuActions.item(title: "About \(buddyName)…", action: #selector(BuddyMenuActions.about)))
         menu.addItem(.separator())
         if let asking = askingSession {
             let label = SessionLabel.display(label: asking.label, shortId: asking.shortId,
@@ -772,6 +774,38 @@ final class NotchBuddyToy: Toy {
         }
     }
 
+    /// "About Morel…": the pal card under the pill — the care log in a
+    /// few lines, every one of them something that happened.
+    func presentCard(near frame: NSRect?) {
+        if cardPanel == nil { cardPanel = BuddyCardPanel() }
+        let care = store?.state.notchBuddy.care ?? BuddyCare()
+        cardPanel?.present(near: frame, character: buddyCharacter, name: buddyName,
+                           card: BuddyPalCard.make(care: care))
+    }
+
+    /// Asks the buddy has watched open, by session: when each opened. A
+    /// session that stops waiting closes its ask, and the longest one
+    /// lands in the care log for the pal card.
+    @ObservationIgnored private var openAsks: [String: Double] = [:]
+
+    /// Follows the asks across documents. Only while enabled — a buddy
+    /// that's off keeps no log.
+    func noteAsks(_ sessions: [CoreSession], at now: Date = Date()) {
+        guard store?.state.notchBuddy.enabled == true else {
+            openAsks = [:]
+            return
+        }
+        var still: [String: Double] = [:]
+        for session in sessions where SessionActivity.reduce(session) == .waiting {
+            still[session.id] = openAsks[session.id]
+                ?? session.ask?.openedAt ?? now.timeIntervalSince1970
+        }
+        for (id, opened) in openAsks where still[id] == nil {
+            store?.state.notchBuddy.care.noteAsk(lasted: now.timeIntervalSince1970 - opened)
+        }
+        openAsks = still
+    }
+
     private static func sessionSnapshot(_ sessions: [CoreSession]) -> [String: SessionActivity] {
         Dictionary(sessions.map { ($0.id, SessionActivity.reduce($0)) },
                    uniquingKeysWith: { _, latest in latest })
@@ -781,6 +815,7 @@ final class NotchBuddyToy: Toy {
     /// it while tucked, to distinguish real activity changes from heartbeats.
     /// Historical state documents never earn completion crumbs.
     func noteState(_ state: CoreState) {
+        noteAsks(state.sessions)
         guard store?.state.notchBuddy.enabled == true,
               store?.state.notchBuddy.tucked == true else {
             wakeSnapshot = nil
@@ -807,7 +842,9 @@ final class NotchBuddyToy: Toy {
         }
         crumbAt = now
         stayLively(from: now)
-        store?.state.notchBuddy.care.eat(at: now, count: 1)
+        let provider = event.provider
+            ?? event.session.flatMap { core.state?.session(withID: $0) }?.provider
+        store?.state.notchBuddy.care.eat(at: now, count: 1, provider: provider)
     }
 
     private func wakeForActivity() {
@@ -936,6 +973,17 @@ private struct BuddyControlsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // The pal card's history, the part the caption can't hold —
+            // the same lines "About…" in its menu shows.
+            let card = BuddyPalCard.make(care: toy.store?.state.notchBuddy.care ?? BuddyCare())
+            let history = [card.since, card.favourite, card.longestAsk].compactMap { $0 }
+            if !history.isEmpty {
+                Text(history.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             // Roaming state at a glance: a wake-up call while tucked, a
             // dock button while it floats, and an undock that parks it
             // at the slot while docked (from there, drag it anywhere).
@@ -1031,6 +1079,7 @@ final class BuddyMenuActions: NSObject {
     @objc func pet(_ sender: Any?) { toy?.tapped() }
     @objc func treat(_ sender: Any?) { toy?.giveTreat() }
     @objc func rename(_ sender: Any?) { toy?.promptRename(near: panelFrame) }
+    @objc func about(_ sender: Any?) { toy?.presentCard(near: panelFrame) }
 
     @objc func pickCharacter(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
