@@ -1305,9 +1305,10 @@ def _publish_milestone(
     occurred_at: float,
     provider: str | None = None,
 ) -> None:
-    """One ``milestone`` event per fresh crossing, so Confetti at the notch
-    and the Aquarium's pearls celebrate the same count the lights do --
-    one completion counter behind every celebration, not one per toy. It
+    """One ``milestone`` event per fresh crossing, so Confetti's Milestones
+    burst celebrates the same count the lights do -- one completion counter
+    behind both, not one per surface. (The Aquarium keeps its own tank
+    milestones and asks Confetti itself; it does not read this event.) It
     names the provider whose completion crossed the step, so the burst
     wears that agent's colours."""
     publish = getattr(controller, "_core_publish_event", None)
