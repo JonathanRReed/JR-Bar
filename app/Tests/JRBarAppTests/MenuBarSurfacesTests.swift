@@ -318,6 +318,45 @@ struct MenuBarSurfacesTests {
                                             hiddenRevealed: false).count == 2)
     }
 
+    @Test("the menu that acts: one hide row per app, alphabetical, bundle-less items apart")
+    func hideRows() {
+        func app(_ id: String, _ owner: String, _ bundle: String?, title: String? = nil) -> MenuBarItem {
+            MenuBarItem(id: id, ownerPID: 500, ownerName: owner,
+                        bounds: CGRect(x: 0, y: 0, width: 24, height: 24),
+                        title: title, windowID: 0, bundleID: bundle)
+        }
+        let shown = [
+            app("Zoom", "zoom.us", "us.zoom.xos"),
+            app("1P·a", "1Password", "com.1password.1password", title: "a"),
+            app("1P·b", "1Password", "com.1password.1password", title: "b"),
+            app("helper·x", "helper", nil, title: "x"),
+            app("helper·y", "helper", nil, title: "y"),
+        ]
+        let rows = MenuBarCombinedMenu.hideRows(shown: shown)
+        #expect(rows.map(\.title) == ["1Password", "helper · x", "helper · y", "zoom.us"])
+        #expect(rows.first?.itemID == "1P·a", "an app's first item stands for it")
+        #expect(MenuBarCombinedMenu.hideRows(shown: []).isEmpty)
+        let crowd = (0..<40).map { app("a\($0)", "App \($0)", "com.example.\($0)") }
+        #expect(MenuBarCombinedMenu.hideRows(shown: crowd).count == MenuBarCombinedMenu.maxListedItems)
+    }
+
+    @Test("the icon's menu offers the shown apps as hide rows — inline while nothing hides")
+    func hideRowsInTheMenu() {
+        #expect(MenuBarUtility.hideMenu(shown: [], hiddenCount: 0) == nil)
+        let shown = [MenuBarItem(id: "Zoom", ownerPID: 500, ownerName: "zoom.us",
+                                 bounds: CGRect(x: 0, y: 0, width: 24, height: 24),
+                                 title: nil, windowID: 0, bundleID: "us.zoom.xos"),
+                     MenuBarItem(id: "Clock", ownerPID: 501, ownerName: "Control Center",
+                                 bounds: CGRect(x: 40, y: 0, width: 24, height: 24),
+                                 title: "Clock", windowID: 0, bundleID: "com.apple.controlcenter")]
+        let teaching = MenuBarUtility.hideMenu(shown: shown, hiddenCount: 0)
+        #expect(teaching?.inline == true)
+        #expect(teaching?.rows.map(\.title) == ["zoom.us"], "the clock is never offered")
+        let more = MenuBarUtility.hideMenu(shown: shown, hiddenCount: 2)
+        #expect(more?.inline == false)
+        #expect(more?.rows.map(\.itemID) == ["Zoom"])
+    }
+
     @MainActor
     @Test("applying a profile writes the active layer and the look through the store path")
     func utilityApplyProfile() {

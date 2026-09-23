@@ -3015,6 +3015,38 @@ final class MenuBarUtility: Toy {
                 menu.addItem(menuItem)
             }
         }
+        // The menu that acts: the apps standing on the bar, each a click
+        // from hidden. While nothing hides yet they lead as the teaching
+        // list; once something does they wait in a submenu.
+        if let (inline, hideRows) = Self.hideMenu(
+            shown: lastPlan.shown, hiddenCount: lastPlan.hidden.count + lastPlan.alwaysHidden.count) {
+            let target: NSMenu
+            menu.addItem(.separator())
+            if inline {
+                let header = NSMenuItem(title: "Hide in the Menu Bar", action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+                target = menu
+            } else {
+                let parent = NSMenuItem(title: "Hide Another App", action: nil, keyEquivalent: "")
+                target = NSMenu()
+                parent.submenu = target
+                menu.addItem(parent)
+            }
+            for row in hideRows {
+                let menuItem = NSMenuItem(title: row.title,
+                                          action: #selector(MenuBarChevronActions.menuHideApp(_:)),
+                                          keyEquivalent: "")
+                menuItem.target = chevronActions
+                menuItem.representedObject = row.itemID
+                if let listed = lastPlan.shown.first(where: { $0.id == row.itemID }) {
+                    let icon = listed.owner?.icon.flatMap { $0.copy() as? NSImage }
+                    icon?.size = NSSize(width: 16, height: 16)
+                    menuItem.image = icon
+                }
+                target.addItem(menuItem)
+            }
+        }
         // Which profile is laid over the bar, and a click away from the
         // others — no trip to Settings to see or switch.
         let rows = MenuBarCombinedMenu.profileRows(profiles: settings().profiles,
@@ -3041,6 +3073,23 @@ final class MenuBarUtility: Toy {
     fileprivate func menuProfileActivated(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         applyProfile(id: id)
+    }
+
+    /// The icon menu's hide list for a bar: the rows a click could hide
+    /// (someone else's, never a protected system item), inline while
+    /// nothing hides yet, else behind a submenu — nil when there is
+    /// nothing to offer. Pure so a test pins it.
+    nonisolated static func hideMenu(shown: [MenuBarItem],
+                                     hiddenCount: Int) -> (inline: Bool, rows: [MenuBarCombinedMenu.HideRow])? {
+        let rows = MenuBarCombinedMenu.hideRows(shown: hideAllTargets(shown))
+        return rows.isEmpty ? nil : (hiddenCount == 0, rows)
+    }
+
+    /// The menu's hide rows land here: the same pick the card's picker
+    /// makes, so a profile that speaks for the app takes it.
+    fileprivate func menuHideActivated(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        setSection(.hidden, for: id)
     }
 
     /// The menu's hidden-item rows land here: activate the item the
@@ -3116,16 +3165,21 @@ final class MenuBarUtility: Toy {
             $0.action == #selector(MenuBarChevronActions.menuToggleHidden(_:)) }) {
             menu.removeItem(toggle)
         }
-        // Under the concealer position teaches nothing — the picker is
-        // the way in; under the spacer the mark is the separator.
-        let hint = NSMenuItem(
-            title: concealer != nil
-                ? "Pick apps to hide in Settings › Utilities › Menu Bar"
-                : "⌘-drag an item left of the ‹ mark to hide it",
-            action: nil, keyEquivalent: "")
-        hint.isEnabled = false
-        menu.insertItem(hint, at: 0)
-        menu.insertItem(.separator(), at: 1)
+        // The hide rows teach by acting; the hint speaks only when there
+        // is nothing on the bar a click could hide. Under the concealer
+        // position teaches nothing — the picker is the way in; under the
+        // spacer the mark is the separator.
+        if !menu.items.contains(where: { $0.action == #selector(MenuBarChevronActions.menuHideApp(_:))
+                                          || $0.submenu != nil }) {
+            let hint = NSMenuItem(
+                title: concealer != nil
+                    ? "Pick apps to hide in Settings › Utilities › Menu Bar"
+                    : "⌘-drag an item left of the ‹ mark to hide it",
+                action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            menu.insertItem(hint, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
         // Anchor at the click itself — the ‹ lives in the host's spacer
         // and the › in the island; the ear's clicks arrive off the
         // monitor where no currentEvent exists, so screen coords it is.
@@ -3618,5 +3672,9 @@ private final class MenuBarChevronActions: NSObject {
 
     @objc func menuApplyProfile(_ sender: NSMenuItem) {
         utility?.menuProfileActivated(sender)
+    }
+
+    @objc func menuHideApp(_ sender: NSMenuItem) {
+        utility?.menuHideActivated(sender)
     }
 }
