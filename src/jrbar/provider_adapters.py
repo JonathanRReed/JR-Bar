@@ -453,8 +453,10 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "Notification": _NOTIFICATION,
         "PreCompact": _PRE_COMPACT,
         "PostCompact": _POST_COMPACT,
+        "SubagentStart": _SUBAGENT_START,
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
+        "StopFailure": _STOP_FAILURE,
         "SessionEnd": _SESSION_END,
     },
     "devin": {
