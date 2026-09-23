@@ -3,8 +3,15 @@ import JRBarCore
 import OSLog
 import SwiftUI
 
-/// A brief glass pill under the notch: "SidePulse connected". Click-through,
-/// never key, gone after two seconds.
+/// The Mac's own announcements at the top of the screen — a level key's
+/// answer, a Focus, a device, Caps Lock, a display, "SidePulse
+/// connected". The notch island is the one announcer: each is offered
+/// to it first (`islandPresent`), where it morphs out of the notch in
+/// black through the same capsule queue as the agents' news. Only when
+/// the island cannot take it — not ours, parked, grown into the card, an
+/// ask's buttons holding it, a waiting capsule that outranks it — does
+/// the brief glass pill hang under the band instead. Click-through,
+/// never key, gone after its beat.
 @MainActor
 final class NotchHUD {
     static let life: TimeInterval = 2.0
@@ -14,13 +21,25 @@ final class NotchHUD {
     /// session's system-defined stream and never swallows a press —
     /// `mediaHUDAllowed` (the notch's setting) is consulted per press.
     let mediaKeys = HUDKeyMonitor()
-    /// Focus toggles and Bluetooth connects, announced in the pill.
+    /// Focus toggles, Bluetooth connects and disconnects, Caps Lock and
+    /// displays.
     let announcements = NotchAnnouncements()
     /// The notch settings' vote on media capsules, wired by the delegate.
     var mediaHUDAllowed: () -> Bool = { true }
     /// The notch settings' votes on announcements and the felt tick.
     var alertsAllowed: () -> Bool = { true }
     var soundEffectsAllowed: () -> Bool = { true }
+    /// The island's door (`NotchToy.presentSystemNotice`): true when it
+    /// will say the notice, and the pill stays down; false whenever it
+    /// would not, so nothing falls between the two. The coordinator
+    /// wires it; unwired, everything takes the pill.
+    var islandPresent: @MainActor (AlcoveNotice) -> Bool = { _ in false }
+    /// How long a level or toast holds — the notch's "HUD duration".
+    var hudLife: @MainActor () -> TimeInterval = { NotchHUD.life }
+    /// Whether the Screen Bar's ear already announces the audio route —
+    /// then a headphone connect is its news, and saying it here too
+    /// would be the same thing twice.
+    var earAnnouncesAudioRoute: @MainActor () -> Bool = { false }
 
     private let panel = NotchHUDPanel()
     /// The buddy's other home: its own pill when a drag parks it on the
@@ -59,7 +78,18 @@ final class NotchHUD {
             self?.showMeter(for: key, value: value, muted: muted)
         }
         announcements.isAllowed = { [weak self] in self?.alertsAllowed() ?? true }
-        announcements.announce = { [weak self] text, symbol in self?.show(text, symbol: symbol) }
+        announcements.earAnnouncesAudioRoute = { [weak self] in self?.earAnnouncesAudioRoute() ?? false }
+        announcements.announce = { [weak self] notice in self?.announce(notice) }
+    }
+
+    /// One announcement: the island first, the pill when it can't.
+    func announce(_ notice: AlcoveNotice) {
+        if islandPresent(notice) {
+            tick()
+            return
+        }
+        pill(notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)",
+             symbol: notice.symbol)
     }
 
     /// Everything that reaches outside the process — the media-key tap,
@@ -88,38 +118,70 @@ final class NotchHUD {
         if soundEffectsAllowed() { NotchSounds.tick() }
     }
 
+    /// A one-line toast — "SidePulse connected", "Agent hooks
+    /// installed". It is an announcement like any other: the island
+    /// speaks it when it can.
     func show(_ text: String, symbol: String = "cable.connector") {
+        announce(AlcoveNotice(id: UUID().uuidString, kind: .device, title: text, subtitle: "",
+                              key: "toast:\(text)", glyph: symbol))
+    }
+
+    /// The glass pill under the band — the fallback voice.
+    private func pill(_ text: String, symbol: String) {
         let band = anchorRect() ?? Self.fallbackAnchor()
         panel.present(text: text, symbol: symbol, under: band)
         tick()
-        hide?.cancel()
-        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.panel.dismiss() } }
-        hide = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.life, execute: work)
+        armHide()
     }
 
-    /// A volume or brightness key press: the level capsule hangs under
-    /// the notch — the Alcove HUD. A key we cannot read (an output
-    /// with no hardware volume, a desk of externals) draws nothing.
-    private func showMeter(for key: MediaKeyPress.Key, value: Float?, muted: Bool?) {
-        let symbol: String
-        switch key {
-        case .volumeUp, .volumeDown, .mute:
-            symbol = muted == true ? "speaker.slash.fill" : "speaker.wave.2.fill"
-        case .brightnessUp, .brightnessDown:
-            symbol = "sun.max.fill"
-        case .illuminationUp, .illuminationDown, .illuminationToggle:
-            symbol = "keyboard"
-        }
-        guard let value else { return }
-        let band = anchorRect() ?? Self.fallbackAnchor()
-        panel.presentMeter(symbol: symbol, fraction: Double(min(1, max(0, value))),
-                           muted: muted == true, under: band)
-        tick()
+    private func armHide() {
         hide?.cancel()
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.panel.dismiss() } }
         hide = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.life, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + hudLife(), execute: work)
+    }
+
+    /// A volume, brightness or backlight key press: the level grows out
+    /// of the notch as one continuous fill — the Alcove HUD in the
+    /// island's own black. The glyph is the device the sound is going
+    /// to. Where the island can't take it the pill carries the same
+    /// continuous fill. A key we cannot read (an output with no hardware
+    /// volume, a desk of externals) draws nothing.
+    private func showMeter(for key: MediaKeyPress.Key, value: Float?, muted: Bool?) {
+        guard let value else { return }
+        let level = min(1, max(0, value))
+        let isMuted = muted == true
+        let symbol: String
+        var deviceName: String?
+        let target: NotchLevelScrub.Target
+        switch key {
+        case .volumeUp, .volumeDown, .mute:
+            let route = SystemLevelReader.outputRoute()
+            deviceName = route?.name
+            symbol = NotchLevelGlyph.volume(level: level, muted: isMuted,
+                                            transport: route?.transport, name: route?.name)
+            target = .volume
+        case .brightnessUp, .brightnessDown:
+            symbol = NotchLevelGlyph.brightness(level: level)
+            target = .brightness
+        case .illuminationUp, .illuminationDown, .illuminationToggle:
+            symbol = NotchLevelGlyph.keyboard
+            target = .keyboard
+        }
+        // The key names which level this is, so a scroll over the
+        // capsule knows what it is setting.
+        let notice = AlcoveNotice(id: UUID().uuidString, kind: .level,
+                                  title: NotchLevelGlyph.title(for: key, deviceName: deviceName),
+                                  subtitle: "", key: NotchLevelScrub.key(for: target), glyph: symbol,
+                                  fraction: Double(level), muted: isMuted)
+        if islandPresent(notice) {
+            tick()
+            return
+        }
+        let band = anchorRect() ?? Self.fallbackAnchor()
+        panel.presentMeter(symbol: symbol, fraction: Double(level), muted: isMuted, under: band)
+        tick()
+        armHide()
     }
 
     /// Where the docked pill centres, in screen coordinates — the drop
@@ -284,8 +346,9 @@ final class NotchHUDPanel: NSPanel {
         }
     }
 
-    /// The level capsule — a media key's answer: the symbol and the
-    /// segmented bar. Wider than a text toast, so the meter reads.
+    /// The fallback level capsule — a media key's answer where the
+    /// island can't take it: the symbol and one continuous fill. Wider
+    /// than a text toast, so the meter reads.
     func presentMeter(symbol: String, fraction: Double, muted: Bool, under band: NSRect) {
         buddyDrag?.cancel()
         model.meter = NotchHUDModel.Meter(symbol: symbol, fraction: fraction, muted: muted)
@@ -401,22 +464,24 @@ struct NotchHUDView: View {
 
     var body: some View {
         if model.toastActive, let meter = model.meter {
-            // The level capsule: the key's symbol, then the segmented
-            // bar — sixteen steps like the system's own meter.
+            // The level capsule: the key's symbol, then one continuous
+            // fill — the unbroken language the Screen Bar speaks, never
+            // a row of segments.
             HStack(spacing: 10) {
                 Image(systemName: meter.symbol)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(meter.muted ? .red : .secondary)
-                HStack(spacing: 2.5) {
-                    let lit = Int((meter.fraction * 16).rounded())
-                    ForEach(0..<16, id: \.self) { i in
+                    .frame(width: 18)
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.22))
+                    .frame(width: 110, height: 6)
+                    .overlay(alignment: .leading) {
                         Capsule(style: .continuous)
-                            .fill(i < lit
-                                  ? (meter.muted ? Color.red.opacity(0.85) : Color.white.opacity(0.92))
-                                  : Color.white.opacity(0.22))
-                            .frame(width: 5, height: 8)
+                            .fill(meter.muted ? Color.red.opacity(0.85) : Color.white.opacity(0.92))
+                            .frame(width: max(6, 110 * min(1, max(0, meter.fraction))), height: 6)
+                            .opacity(meter.fraction > 0 ? 1 : 0)
                     }
-                }
+                    .animation(.easeOut(duration: 0.12), value: meter.fraction)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

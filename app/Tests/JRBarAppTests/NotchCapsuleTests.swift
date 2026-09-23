@@ -200,7 +200,9 @@ struct NotchCapsuleTests {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
 
-        toy.offer(notice(.ask, key: "ask:a", id: "a"))
+        // News holds a band click until it steps down (a latched ask
+        // yields to it instead — `NotchAskTests`).
+        toy.offer(notice(.failed, key: "failed:a", id: "a"))
         #expect(toy.activeCapsule?.id == "a")
         // The click lands mid-capsule — remembered, not grown yet.
         toy.expandFromBand()
@@ -213,6 +215,41 @@ struct NotchCapsuleTests {
         #expect(!toy.islandExpanded)
         #expect(toy.activeCapsule == nil)
         #expect(toy.capsuleQueue.current == nil)
+    }
+
+    @Test("a timer or a meeting steps aside for a band click, and the fold brings it back",
+          arguments: [AlcoveNoticeKind.timer, .meeting])
+    func longCapsuleYieldsToClick(kind: AlcoveNoticeKind) {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+
+        toy.offer(notice(kind, key: "\(kind):a", id: "a"))
+        #expect(toy.activeCapsule?.id == "a")
+        // Parking the click behind an eight- or thirty-second capsule
+        // read as a click that did nothing, then a card that popped
+        // open unasked when it stepped down.
+        toy.expandFromBand()
+        #expect(toy.islandExpanded, "the card grows at once")
+        #expect(toy.activeCapsule == nil)
+        #expect(toy.shelvedCapsule?.notice.id == "a")
+
+        // Still inside its own life (not news's 2.4 s): it comes back.
+        toy.collapseFromBand()
+        #expect(!toy.islandExpanded)
+        #expect(toy.activeCapsule?.id == "a")
+    }
+
+    @Test("a meeting shelved past news's beat is still fresh on the fold")
+    func meetingFreshForItsOwnLife() async throws {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+
+        toy.offer(notice(.meeting, key: "meeting:a", id: "a"))
+        toy.expandFromBand()
+        #expect(toy.shelvedCapsule?.notice.id == "a")
+        try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.life + 0.4))
+        toy.collapseFromBand()
+        #expect(toy.activeCapsule?.id == "a", "a thirty-second heads-up outlives news's freshness")
     }
 
     @Test("a folded card stays folded when a later capsule steps down")

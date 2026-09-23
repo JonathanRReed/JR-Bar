@@ -718,11 +718,12 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// HUD.
     public var soundEffects: Bool
     /// The card's weather row — a keyless Open-Meteo read of the
-    /// place `weatherCity` names, or the IP's coarse fix when empty.
-    /// Off by default: it phones a third-party API, so the person
-    /// turns it on.
+    /// place `weatherCity` names (the IP's coarse fix only with
+    /// `weatherUseIPLocation`). Off by default: it phones a third-party
+    /// API, so the person turns it on.
     public var weather: Bool
-    /// A city name to geocode ("London"); empty uses the IP's place.
+    /// A city name to geocode ("London"); empty means no row unless
+    /// `weatherUseIPLocation` allows the IP lookup.
     public var weatherCity: String
     /// On a screen with no hardware notch, draw a synthetic housing —
     /// the island reads as a notch rather than a floating pill, like
@@ -746,6 +747,37 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// Shake the pointer while dragging files and the shelf pulls open
     /// under the notch as a drop target — Alcove's summon gesture.
     public var shelfShakeToSummon: Bool
+    /// Seconds a level (volume, brightness, backlight) and a toast hold
+    /// at the notch — MediaMate's HUD duration. A saved value outside
+    /// `hudDurationRange` is clamped when the file is read.
+    public var hudDuration: Double = 2.0
+    public static let hudDurationRange: ClosedRange<Double> = 1...6
+    /// The card's calendar glance. On by default — it reads only where
+    /// Calendar access was granted (the ask is Setup's and this
+    /// switch's), and off keeps the row away entirely.
+    public var calendar: Bool = true
+    /// The card's reminders glance — the same rule as `calendar`.
+    public var reminders: Bool = true
+    /// With no `weatherCity`, place the weather by a coarse IP lookup
+    /// (ipapi.co). Off by default: it sends the IP to a second third
+    /// party, so an empty city otherwise just means no weather row.
+    public var weatherUseIPLocation: Bool = false
+    /// Synced lyrics from LRCLIB under the card's media row. On by
+    /// default, as it shipped; off, nothing about the track is sent.
+    public var lyrics: Bool = true
+    /// While the Mac is quiet (a Focus synced in, or a quiet mode),
+    /// completions and quota resets wait and replay as one summary
+    /// capsule afterwards; asks and failures still show.
+    public var holdNewsWhileQuiet: Bool = true
+    /// Two minutes before a timed event with a join link, the island
+    /// says so with Join; while it runs it is a quiet stretch like a
+    /// Focus. Off by default: it reads the calendar in the background,
+    /// not only while the card is open.
+    public var meetingAlerts: Bool = false
+    /// A due timer breathes the LED strips orange three times, so it is
+    /// noticed across the room — only where a strip is connected, never
+    /// while the Mac is quiet.
+    public var timerLights: Bool = true
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -786,6 +818,13 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case hapticTick, mediaHUD, alerts, soundEffects, weather, weatherCity
         case simulateNotch, mirror, audioVisualizer, replaceSystemHUD
         case shelfShakeToSummon
+        case hudDuration
+        case calendar, reminders
+        case weatherUseIPLocation
+        case lyrics
+        case holdNewsWhileQuiet
+        case meetingAlerts
+        case timerLights
     }
 
     public init(from decoder: any Decoder) throws {
@@ -810,6 +849,15 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         audioVisualizer = (try? c.decodeIfPresent(Bool.self, forKey: .audioVisualizer)) ?? false
         replaceSystemHUD = (try? c.decodeIfPresent(Bool.self, forKey: .replaceSystemHUD)) ?? false
         shelfShakeToSummon = (try? c.decodeIfPresent(Bool.self, forKey: .shelfShakeToSummon)) ?? true
+        let hud = (try? c.decodeIfPresent(Double.self, forKey: .hudDuration)) ?? 2.0
+        hudDuration = min(Self.hudDurationRange.upperBound, max(Self.hudDurationRange.lowerBound, hud))
+        calendar = (try? c.decodeIfPresent(Bool.self, forKey: .calendar)) ?? true
+        reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
+        weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
+        lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? true
+        holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
+        meetingAlerts = (try? c.decodeIfPresent(Bool.self, forKey: .meetingAlerts)) ?? false
+        timerLights = (try? c.decodeIfPresent(Bool.self, forKey: .timerLights)) ?? true
     }
 }
 

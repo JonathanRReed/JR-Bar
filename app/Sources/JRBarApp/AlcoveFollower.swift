@@ -16,6 +16,12 @@ import QuartzCore
 /// 0.5 Hz once the width is stable, and only while Alcove is running; with
 /// Alcove gone, or the setting off, the poll stops and the band goes back to
 /// the notch.
+///
+/// Following is opt-in: it runs only while the Notch utility names Alcove
+/// as the notch's renderer (`rendererChosen`, published by `NotchToy`).
+/// JR-Bar's own island is the daily driver and Alcove's last build is
+/// 1.7.9, so a Mac that merely has Alcove installed and running no longer
+/// gets a window-list poll it never asked for.
 @MainActor
 final class AlcoveFollower {
     /// While the capsule may be moving.
@@ -24,6 +30,19 @@ final class AlcoveFollower {
     static let idlePollInterval: TimeInterval = 2.0
     /// How long after activity the fast cadence holds.
     static let activePollWindow: TimeInterval = 3.0
+
+    /// Whether the Notch utility is on with Alcove picked to draw the
+    /// notch — the follower's opt-in. `NotchToy` writes it and posts
+    /// `rendererChangedNotification`; off until it says otherwise.
+    static var rendererChosen = false
+    static let rendererChangedNotification = Notification.Name("JRBarNotchRendererChanged")
+
+    /// Publish the renderer pick; a change re-reconciles every follower.
+    static func noteRenderer(chosen: Bool) {
+        guard chosen != rendererChosen else { return }
+        rendererChosen = chosen
+        NotificationCenter.default.post(name: rendererChangedNotification, object: nil)
+    }
 
     /// Called on the main actor whenever the capsule changes (nil: stop following).
     var onChange: (@MainActor (AlcoveCapsule?) -> Void)?
@@ -46,7 +65,15 @@ final class AlcoveFollower {
                 MainActor.assumeIsolated { self?.reconcile() }
             })
         }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: Self.rendererChangedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reconcile() }
+        })
     }
+
+    /// The setting, the bar, and the renderer pick all say follow.
+    private var following: Bool { enabled && Self.rendererChosen }
 
     var isAlcoveRunning: Bool {
         NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == AlcoveGeometry.bundleIdentifier }
@@ -57,13 +84,14 @@ final class AlcoveFollower {
     /// "following the capsule (212 pt)", "Alcove not running", "off", for the status menu.
     var statusDescription: String {
         guard enabled else { return "off" }
+        guard Self.rendererChosen else { return "off (JR-Bar draws the notch)" }
         guard isAlcoveRunning else { return "Alcove not running" }
         if let capsule { return "following the capsule (\(Int(capsule.width.rounded())) pt, \(source))" }
         return "Alcove running, \(source)"
     }
 
     private func reconcile() {
-        if enabled, isAlcoveRunning {
+        if following, isAlcoveRunning {
             noteActivity()
             poll()
         } else {
@@ -84,7 +112,7 @@ final class AlcoveFollower {
     private func schedulePoll() {
         timer?.invalidate()
         timer = nil
-        guard enabled, isAlcoveRunning else { return }
+        guard following, isAlcoveRunning else { return }
         let interval = CACurrentMediaTime() < fastPollUntil ? Self.pollInterval : Self.idlePollInterval
         let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }

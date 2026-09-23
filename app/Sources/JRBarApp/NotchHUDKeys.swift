@@ -228,6 +228,34 @@ enum SystemLevelReader {
         return nil
     }
 
+    /// Where the sound is going — the default output's name and
+    /// transport, read at the key press so the level capsule's glyph is
+    /// the device (AirPods, a display, the built-in speakers) and not a
+    /// generic speaker. nil when CoreAudio names no default output.
+    static func outputRoute() -> (name: String, transport: UInt32)? {
+        guard let device = defaultOutputDevice(), device != 0 else { return nil }
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var name = "" as CFString
+        var nameSize = UInt32(MemoryLayout<CFString>.size)
+        let named = withUnsafeMutablePointer(to: &name) {
+            AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, $0)
+        } == noErr
+        var transportAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport = UInt32(0)
+        var transportSize = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectGetPropertyData(device, &transportAddress, 0, nil,
+                                      &transportSize, &transport) != noErr {
+            transport = 0
+        }
+        return (named ? name as String : "", transport)
+    }
+
     private static func defaultOutputDevice() -> AudioDeviceID? {
         var device = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -324,6 +352,55 @@ enum SystemLevelReader {
         }
         return nil
     }()
+}
+
+/// The level capsule's glyph and title — pure, so the device mapping is
+/// pinned without audio hardware. Volume names the device the sound is
+/// going to (MediaMate's device icons, off the same default-output read
+/// the level comes from); brightness dims its sun with the level; the
+/// keyboard keeps its own.
+enum NotchLevelGlyph {
+    static func volume(level: Float, muted: Bool, transport: UInt32?, name: String?) -> String {
+        if muted || level <= 0 { return "speaker.slash.fill" }
+        let lower = (name ?? "").lowercased()
+        switch transport {
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            if lower.contains("airpods max") { return "airpodsmax" }
+            if lower.contains("airpods pro") { return "airpodspro" }
+            if lower.contains("airpods") { return "airpods" }
+            if lower.contains("beats") { return "beats.headphones" }
+            return "headphones"
+        case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort:
+            return "tv"
+        case kAudioDeviceTransportTypeAirPlay:
+            return "airplayaudio"
+        case kAudioDeviceTransportTypeUSB:
+            return lower.contains("headphone") || lower.contains("headset")
+                ? "headphones" : "hifispeaker.fill"
+        default:
+            if lower.contains("headphone") { return "headphones" }
+            return level < 0.34 ? "speaker.wave.1.fill"
+                : level < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+        }
+    }
+
+    static func brightness(level: Float) -> String {
+        level < 0.5 ? "sun.min.fill" : "sun.max.fill"
+    }
+
+    static let keyboard = "light.max"
+
+    /// The capsule's spoken name — the device for volume when it has
+    /// one, else the key's family.
+    static func title(for key: MediaKeyPress.Key, deviceName: String?) -> String {
+        switch key {
+        case .volumeUp, .volumeDown, .mute:
+            if let deviceName, !deviceName.isEmpty { return deviceName }
+            return "Volume"
+        case .brightnessUp, .brightnessDown: return "Brightness"
+        case .illuminationUp, .illuminationDown, .illuminationToggle: return "Keyboard backlight"
+        }
+    }
 }
 
 /// Watches the session event stream for aux-button key-downs and

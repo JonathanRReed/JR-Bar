@@ -229,8 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                                       keyCode: UInt32(kVK_ANSI_D),
                                       hotKeyID: 1)
         shelfHotkey.onPress = { [weak toysStore] in
-            guard let notch = toysStore?.notch else { return }
-            if notch.islandExpanded { notch.collapseFromBand() } else { notch.expandFromBand() }
+            toysStore?.notch.toggleShelfFromHotkey()
         }
         shelfHotkey.setEnabled(settingsStore.shelfHotkeyEnabled)
         settingsStore.shelfHotkeyRegistrationFailed = shelfHotkey.registrationFailed
@@ -279,6 +278,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.onOpenSession = { [weak self] session in
             self?.core?.openSession(session)
         }
+        // The glass card's waiting rows answer through the island's own
+        // answerer — one pending set, one refusal line per session.
+        notchCard.model.answerer = toysStore.notch.answerer
+        // …and its calendar and reminders glances follow the Notch
+        // settings' switches, the same as the grown island's.
+        notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
+        notchCard.model.remindersEnabled = { [weak toysStore] in toysStore?.state.notch.reminders ?? true }
+        // The IP lookup for weather is the person's opt-in on both cards.
+        notchCard.model.utility.weather.allowIPLocation = { [weak toysStore] in
+            toysStore?.state.notch.weatherUseIPLocation ?? false
+        }
+        notchCard.model.utility.lyrics.enabled = { [weak toysStore] in
+            toysStore?.state.notch.lyrics ?? true
+        }
+        notchCard.model.heldAwake = { [weak self] in self?.core?.state?.power?.keepAwake == true }
+        // A reminder left from the glass card's session row says where
+        // the run worked, as the island's does.
+        notchCard.model.sessionCwd = { [weak self] id in self?.core?.state?.session(withID: id)?.cwd }
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.

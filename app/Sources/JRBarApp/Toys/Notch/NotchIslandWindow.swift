@@ -62,10 +62,15 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     /// summon: the card grows under the pointer so the tray strip is
     /// there to take the drop.
     var onShelfDragEntered: () -> Void = {}
-    /// The drag left without dropping — the summoned card lets go
-    /// again instead of sitting pinned forever.
+    /// The drag left this view — out of the island, or onto one of the
+    /// card's own drop targets (a session row, the tray catch-all),
+    /// which AppKit hands the drag to as destinations of their own. The
+    /// toy tells the two apart before it lets a summoned card go.
     var onShelfDragExited: () -> Void = {}
     /// The drop itself — pasteboard URLs, files and web links alike.
+    /// Only a drop on the island proper lands here; one on a session
+    /// row or the grown card is that target's own (SwiftUI's `onDrop`
+    /// views, never routed through this view's methods).
     var onShelfDrop: ([URL]) -> Void = { _ in }
     /// The drag ended (drop performed) — the summon flag clears.
     var onShelfDragEnded: () -> Void = {}
@@ -84,6 +89,29 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     private var pull = NotchPullGesture()
     private var pullLive = false
 
+    /// The pinch — spread to grow, squeeze to fold — one verdict per
+    /// gesture (`NotchPinch`).
+    var onPinch: (NotchPinch.Verdict) -> Void = { _ in }
+    private var pinch = NotchPinch()
+    /// A scroll over the island, in finger travel (positive is up),
+    /// offered first to a level capsule that can take it: true when it
+    /// set the level, and the scroll is not a swipe.
+    var onLevelScroll: (_ fingerDelta: CGFloat, _ precise: Bool) -> Bool = { _, _ in false }
+    /// ⌘-drag sideways sets a timer (`NotchTimerDrag`): the pull and the
+    /// tap stand aside for it. Travel is screen points, rightward
+    /// positive; the end hands the toy the last travel to commit.
+    var timerDragAllowed: () -> Bool = { false }
+    var onTimerDrag: (_ travel: CGFloat) -> Void = { _ in }
+    var onTimerDragEnd: (_ travel: CGFloat) -> Void = { _ in }
+    private var timerDragStart: NSPoint?
+
+    override func magnify(with event: NSEvent) {
+        guard pullsEnabled() else { return }
+        if event.phase.contains(.began) { pinch = NotchPinch() }
+        if let verdict = pinch.add(event.magnification) { onPinch(verdict) }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) { pinch = NotchPinch() }
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         acceptsClicks() ? super.hitTest(point) : nil
     }
@@ -91,6 +119,11 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     // MARK: Pull
 
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), timerDragAllowed() {
+            timerDragStart = NSEvent.mouseLocation
+            onTimerDrag(0)
+            return
+        }
         if pullsEnabled() {
             pullStart = NSEvent.mouseLocation
             pull = NotchPullGesture()
@@ -100,6 +133,10 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if let start = timerDragStart {
+            onTimerDrag(NSEvent.mouseLocation.x - start.x)
+            return
+        }
         if let start = pullStart {
             pull.move(translation: NSEvent.mouseLocation.y - start.y, at: event.timestamp)
             if !pullLive, pull.engaged {
@@ -112,6 +149,11 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let start = timerDragStart {
+            timerDragStart = nil
+            onTimerDragEnd(NSEvent.mouseLocation.x - start.x)
+            return
+        }
         if pullLive {
             onPullEnded(pull.release(at: event.timestamp, surface: pullSurface()))
         }
@@ -131,6 +173,14 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     // MARK: Swipe
 
     override func scrollWheel(with event: NSEvent) {
+        // A level capsule up is a slider: any scroll over it — trackpad
+        // or wheel, momentum included — moves the level instead.
+        let finger = NotchScrollFinger.travel(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                              inverted: event.isDirectionInvertedFromDevice)
+        if finger.dy != 0, onLevelScroll(finger.dy, event.hasPreciseScrollingDeltas) {
+            gestureLive = false
+            return
+        }
         // Only a trackpad gesture carries phases; momentum events arrive
         // with `phase` empty and are ignored with everything else.
         guard pullsEnabled(), event.hasPreciseScrollingDeltas, event.phase != [] else { return }
@@ -168,12 +218,15 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
             return
         }
         guard gestureLive, !gestureFired else { return }
-        // Normalise to finger direction: with "natural" scrolling the
-        // delta already follows the fingers (`isDirectionInvertedFrom-
-        // Device`), with legacy scrolling it is the wheel's opposite.
-        let inverted = event.isDirectionInvertedFromDevice
-        gestureX += inverted ? event.scrollingDeltaX : -event.scrollingDeltaX
-        gestureY += inverted ? event.scrollingDeltaY : -event.scrollingDeltaY
+        // Normalise to finger travel, right and up positive. Natural
+        // scrolling's deltas follow the content, which follows the
+        // fingers in a y-down frame — so the vertical flips — and a
+        // legacy wheel reports the opposite on both axes
+        // (`NotchScrollFinger`, the Screen Bar's reading too). The
+        // vertical used to keep AppKit's y-down sign, which turned a
+        // pull down into a fold and a push up into an open.
+        gestureX += finger.dx
+        gestureY += finger.dy
         if abs(gestureX) >= Self.horizontalThreshold, abs(gestureX) > abs(gestureY) {
             gestureFired = true
             // Fingers left = next track, fingers right = previous.
@@ -264,7 +317,14 @@ final class NotchIslandWindow: NSPanel {
         }
         hosting.acceptsClicks = { [weak toy] in !(toy?.foldEngaged ?? false) }
         hosting.onSwipe = { [weak toy] swipe in toy?.islandSwipe(swipe) }
+        hosting.onPinch = { [weak toy] verdict in toy?.islandPinch(verdict) }
+        hosting.onLevelScroll = { [weak toy] delta, precise in
+            toy?.scrubLevel(fingerDelta: delta, precise: precise) ?? false
+        }
         hosting.pullsEnabled = { [weak toy] in toy?.settings.pullGestures ?? true }
+        hosting.timerDragAllowed = { [weak toy] in toy?.timerDragAllowed ?? false }
+        hosting.onTimerDrag = { [weak toy] travel in toy?.timerDragChanged(travel: travel) }
+        hosting.onTimerDragEnd = { [weak toy] travel in toy?.timerDragEnded(travel: travel) }
         hosting.pullSurface = { [weak toy] in toy?.islandExpanded == true ? .card : .rest }
         hosting.onPullBegan = { [weak self, weak toy] in
             guard let self else { return }
@@ -298,7 +358,7 @@ final class NotchIslandWindow: NSPanel {
         // materializes as a .txt the way a web link becomes a .webloc.
         hosting.registerForDraggedTypes([.fileURL, .URL, .string])
         hosting.onShelfDragEntered = { [weak toy] in toy?.shelfDragAtIsland() }
-        hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragAbandoned() }
+        hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragLeftIsland() }
         hosting.onShelfDragEnded = { [weak toy] in toy?.shelfDragLanded() }
         hosting.onShelfDrop = { [weak toy] urls in toy?.shelfDrop(urls) }
         // The grown card's content follows its frame: each spring tick

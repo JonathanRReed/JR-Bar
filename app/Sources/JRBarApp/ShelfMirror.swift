@@ -3,11 +3,13 @@ import AVFoundation
 import Observation
 
 /// The card's mirror row — boring.notch's Mirror: a live feed from the
-/// Mac's own camera, behind the `mirror` setting so the lens never
-/// opens without the person turning it on. Consent is asked once, on
-/// the toggle; the session lives on a private queue (startRunning can
-/// take a second — never on main) and the layer's frames flow through
-/// `AVCaptureVideoPreviewLayer`, no frame-by-frame copy.
+/// Mac's own camera, behind the `mirror` setting and summoned per open
+/// (⌥-click at the notch, the card header's camera button), so the lens
+/// never opens without the person asking for it. Consent is asked once,
+/// the first time it opens; the session lives on a private queue
+/// (startRunning can take a second — never on main) and the layer's
+/// frames flow through `AVCaptureVideoPreviewLayer`, no frame-by-frame
+/// copy.
 @MainActor
 @Observable
 final class ShelfMirrorModel {

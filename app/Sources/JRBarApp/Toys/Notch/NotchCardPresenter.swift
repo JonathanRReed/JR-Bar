@@ -66,6 +66,13 @@ final class NotchCardPresenter {
             self.hide()
             self.onOpenSession(session)
         }
+        // A click on any session row opens it — the same raise the
+        // header's Open does for the focus session.
+        model.onOpenRow = { [weak self] session in
+            guard let self else { return }
+            self.hide()
+            self.onOpenSession(session)
+        }
         model.onClose = { [weak self] in self?.hide() }
         model.onOpenOverview = { [weak self] in self?.onOpenOverview() }
     }
@@ -141,7 +148,9 @@ final class NotchCardPresenter {
         lastFocus = focus
         model.focus = focus
         // The focus's own session is the header, not a row.
-        model.rows = sessionRows().filter { $0.id != focus.focusSession }
+        let rows = sessionRows()
+        model.rows = rows.filter { $0.id != focus.focusSession }
+        model.workingCount = rows.filter { $0.activity == .working }.count
         model.meters = meters()
         panel.present(under: anchor, clearance: clearance())
         isShown = true

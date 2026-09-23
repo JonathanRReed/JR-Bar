@@ -29,7 +29,8 @@ import SwiftUI
 /// The Screen Bar's capsule-following (`AlcoveFollower`,
 /// `screen_bar_follow_alcove`) is a different feature that only makes
 /// sense while the Alcove app is the renderer, so its toggle lives
-/// under that provider. The island's frame is always exactly its drawn
+/// under that provider and the follower only runs while this toy names
+/// Alcove (`publishRenderer`). The island's frame is always exactly its drawn
 /// shape — an invisible window would sit over the menu bar swallowing
 /// clicks.
 @MainActor
@@ -62,6 +63,17 @@ final class NotchToy: Toy {
     /// The notification capsule on screen, if any — Alcove's instant
     /// notification: the island's only face besides idle.
     private(set) var activeCapsule: AlcoveNotice?
+    /// Key feedback drawn over the face — a level, Caps Lock
+    /// (`AlcoveCapsuleQueue.present`). It outranks a transient capsule
+    /// for its short beat and never covers a latched ask.
+    private(set) var activeOverlay: AlcoveNotice?
+    @ObservationIgnored private var overlayWork: DispatchWorkItem?
+    /// The ask capsule's Approve / Deny / Open — the same answerer the
+    /// grown card's rows use.
+    let answerer: NotchAskAnswerer
+    /// Per ask notice id: when it was offered and whether its ask has
+    /// shown up in the state yet — `NotchIsland.askStillOpen`'s inputs.
+    @ObservationIgnored private var askTrack: [String: (offered: Date, seen: Bool)] = [:]
     /// What Now Playing reports, nil while MediaRemote is absent, off,
     /// or has nothing playing. The view reads it for the idle strip.
     private(set) var islandMedia: AlcoveMedia?
@@ -118,12 +130,19 @@ final class NotchToy: Toy {
     @ObservationIgnored private var mediaToken: UUID?
     /// The shared Now Playing source — one helper for every surface.
     @ObservationIgnored private let mediaFeed: MediaFeed
-    /// The battery poller; exists only while the island is ours, shown,
-    /// and `capsuleNotifications` + `capsuleKinds.charging` are on.
+    /// The island's subscription to the shared power feed; exists only
+    /// while the island is ours, shown, and `capsuleNotifications` +
+    /// `capsuleKinds.charging` are on.
     @ObservationIgnored private var powerMonitor: AlcovePowerMonitor?
     /// The mic/camera poller; exists only while the island is ours,
     /// shown, and the indicators switch is on.
     @ObservationIgnored private var sensorMonitor: NotchSensorMonitor?
+    /// The calendar's background heads-up and live-meeting reader —
+    /// only while the island is shown with `meetingAlerts` on.
+    @ObservationIgnored let meetingWatch = ShelfMeetingWatch()
+    /// The meeting the heads-up on screen is about — its face reads the
+    /// times and the link off it.
+    @ObservationIgnored private(set) var headsUpMeeting: ShelfCalendarModel.Event?
     /// What the idle face reads for its privacy dots — quiet while the
     /// monitor is off or nothing is live.
     private(set) var sensorState = NotchSensorState()
@@ -153,9 +172,10 @@ final class NotchToy: Toy {
     /// change can accidentally reconcile a real surface into the test.
     @ObservationIgnored private var runtimeEnabled: Bool
 
-    /// The island's three faces on the same window — idle capsule,
-    /// notice capsule, the grown card.
-    private enum NotchIslandFace { case idle, notice, expanded }
+    /// The island's faces on the same window — idle capsule, the
+    /// one-line notice capsule, the ask (a two-line capsule with its
+    /// verbs, or the takeover card), the grown card.
+    private enum NotchIslandFace { case idle, notice, ask, expanded }
 
     init(core: CoreModel, store: ToysStore, cardModel: NotchCardModel,
          mediaFeed: MediaFeed? = nil, runtimeEnabled: Bool = true) {
@@ -164,9 +184,23 @@ final class NotchToy: Toy {
         self.cardModel = cardModel
         self.mediaFeed = mediaFeed ?? MediaFeed.shared
         self.runtimeEnabled = runtimeEnabled
+        answerer = NotchAskAnswerer(core: core)
         sensorIndicatorsEnabled = UserDefaults.standard.object(
             forKey: Self.sensorIndicatorsDefaultsKey) as? Bool ?? true
+        // An answer the daemon took steps the capsule down at once — the
+        // `ask_resolved` that follows finds nothing left to close.
+        answerer.onAnswered = { [weak self] session, request in
+            self?.resolveAsk(session: session, request: request)
+        }
+        cardModel.answerer = answerer
+        cardModel.onOpenRow = { [weak self] session in
+            guard let self else { return }
+            self.collapseIsland()
+            self.answerer.open(session: session)
+        }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
+        cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
+        cardModel.onDropLanded = { [weak self] in self?.shelfDragLanded() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
             self.collapseIsland()
@@ -174,6 +208,28 @@ final class NotchToy: Toy {
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
         cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
+        cardModel.utility.weather.allowIPLocation = { [weak self] in
+            self?.settings.weatherUseIPLocation ?? false
+        }
+        cardModel.utility.lyrics.enabled = { [weak self] in self?.settings.lyrics ?? true }
+        cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
+        // A due timer morphs the island into its capsule, and a nudge
+        // about a run only speaks while that run is still working.
+        cardModel.timers.onFireNotice = { [weak self] entry in
+            self?.flashLightsForTimer()
+            self?.noteTimerFired(entry)
+        }
+        cardModel.timers.firePredicate = { [weak self] entry in
+            guard let session = entry.watchSession else { return true }
+            return self?.sessionStillWorking(session) ?? true
+        }
+        cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
+        cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
+        cardModel.sessionCwd = { [weak self] id in self?.core.state?.session(withID: id)?.cwd }
+        // A meeting about to start says so; one running is a quiet
+        // stretch, and its end may replay what it held.
+        meetingWatch.onSoon = { [weak self] event in self?.noteMeetingSoon(event) }
+        meetingWatch.onLiveChange = { [weak self] _ in self?.noteQuietChange() }
         audioTap.onLevels = { [weak self] bands in
             self?.cardModel.utility.audioLevels = bands
         }
@@ -301,6 +357,7 @@ final class NotchToy: Toy {
             reconcile()
             return
         }
+        if runtimeEnabled { publishRenderer() }
         parkIsland()
         if let url = externalURLFor(provider) {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
@@ -315,6 +372,12 @@ final class NotchToy: Toy {
         }
     }
 
+    /// The Screen Bar's Alcove following is opt-in by this pick: it runs
+    /// only while the utility is on with Alcove drawing the notch.
+    private func publishRenderer() {
+        AlcoveFollower.noteRenderer(chosen: settings.enabled && settings.provider == .alcove)
+    }
+
     func openExternal() {
         guard let url = externalURL else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
@@ -324,7 +387,7 @@ final class NotchToy: Toy {
 
     /// The capsule's contents, reduced by `NotchIsland` — the view reads
     /// this and `core.sessions` is observed, so it never sits stale.
-    var islandSummary: NotchIslandSummary { NotchIsland.summarize(core.sessions) }
+    var islandSummary: NotchIslandSummary { NotchIsland.summarize(core.sessions, asks: core.asks) }
 
     /// The island's on-screen frame — part of the band's shared hover
     /// region while the island is up.
@@ -379,6 +442,43 @@ final class NotchToy: Toy {
             slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
             notchDepth: depth, underHousing: corner)
         return NotchIslandLayout.housingClimb(size: size, notchDepth: depth, restingRadius: corner)
+    }
+
+    /// Points of the ask face's foot the Screen Bar's housing draws over
+    /// — the ask's verbs stand clear of it. Zero while no housing
+    /// couples under the island or no ask is up.
+    var askClimb: CGFloat {
+        _ = displayVersion
+        guard let screen = ScreenBarGeometry.preferredScreen(),
+              let corner = housingCorner(on: screen),
+              let size = askFaceSize(on: screen) else { return 0 }
+        return NotchIslandLayout.housingClimb(size: size,
+                                              notchDepth: ScreenBarGeometry.islandDepth(of: screen),
+                                              restingRadius: corner)
+    }
+
+    /// The ask face's size on `screen` for the capsule up now — nil
+    /// while the capsule is not an ask. The frame and the climb read
+    /// the same measure.
+    private func askFaceSize(on screen: NSScreen) -> CGSize? {
+        guard let capsule = activeCapsule, capsule.kind.hasVerbs else { return nil }
+        return NotchIslandLayout.askSize(
+            slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
+            notchDepth: ScreenBarGeometry.islandDepth(of: screen),
+            summaryLines: askSummaryLines, takeover: capsule.takeover,
+            underHousing: housingCorner(on: screen))
+    }
+
+    /// Lines the ask face gives its summary: one on the capsule, as many
+    /// as the takeover card's width needs (capped) — decided here so the
+    /// frame is exactly the drawn copy.
+    var askSummaryLines: Int {
+        _ = displayVersion
+        guard let capsule = activeCapsule, capsule.kind == .ask, capsule.takeover else { return 1 }
+        let slot = ScreenBarGeometry.preferredScreen().flatMap { ScreenBarGeometry.islandSlot(on: $0) }
+        let width = NotchIslandLayout.askWidth(slotWidth: slot?.width ?? 0, takeover: true)
+        return NotchIslandLayout.askSummaryLines(askSummary(capsule), width: width,
+                                                 maxLines: NotchIslandLayout.askTakeoverLines)
     }
 
     /// The resting corner the Screen Bar's housing is measured with
@@ -540,7 +640,7 @@ final class NotchToy: Toy {
         }
         collapseWork?.cancel()
         collapseWork = nil
-        guard activeCapsule == nil else { return }
+        guard activeCapsule == nil, activeOverlay == nil else { return }
         if hovering {
             if !islandExpanded, s.expandOnHover {
                 // The wink lands now; the card only after the pause.
@@ -602,16 +702,32 @@ final class NotchToy: Toy {
 
     /// A click or swipe on the band while our island is up: the island
     /// grows, deliberately — it stays until an outside click, a
-    /// swipe-down or Esc lets it go. Mid-capsule the click is
-    /// remembered and lands when the capsule steps down.
+    /// swipe-down or Esc lets it go. Mid-news the click is remembered
+    /// and lands when the capsule steps down; anything that holds the
+    /// island longer steps aside for it instead.
     func expandFromBand() {
         // Fold's overlay owns the screen: a band press through it must
         // not grow a card the user cannot see — it would still be open
         // when the fold lets go.
         guard isDrawingIsland, !foldEngaged else { return }
-        if activeCapsule != nil {
-            bandExpandPending = true
-            return
+        // Key feedback is a beat, not a face worth waiting on.
+        if activeOverlay != nil { endOverlay(settle: false) }
+        if let capsule = activeCapsule {
+            // News holds the click for its short beat, then the card
+            // lands. Whatever holds the island longer yields to a
+            // deliberate grow instead: a latched ask (the card carries
+            // it with its verbs), a due timer's eight seconds, a
+            // meeting's thirty. Waiting those out read as a click that
+            // did nothing, then a card popping open unasked. The fold
+            // brings the capsule back while it is still fresh.
+            if let life = capsule.kind.life, life <= AlcoveCapsuleQueue.life {
+                bandExpandPending = true
+                return
+            }
+            shelvedCapsule = (capsule, Date())
+            activeCapsule = nil
+            capsuleWork?.cancel()
+            capsuleWork = nil
         }
         expand(held: true)
     }
@@ -636,6 +752,13 @@ final class NotchToy: Toy {
     private var shelfExpandPending = false
 
     func shelfSummon() {
+        // A drag grows the card on Now: the session rows are drop
+        // targets there (let go on an agent to hand it the file), and a
+        // drop anywhere else lands in the tray and turns to the shelf.
+        // The rows and the card are AppKit destinations of their own
+        // (SwiftUI's `onDrop` views), so a drop on one never reaches
+        // the hosting view; `shelfDragLeftIsland` keeps the card up
+        // while the drag crosses onto them.
         guard !islandExpanded else { return }
         shelfSummoned = true
         let pendingWasClaimed = bandExpandPending
@@ -651,6 +774,9 @@ final class NotchToy: Toy {
     func shelfDragAbandoned() {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = false
         guard shelfSummoned else { return }
         shelfSummoned = false
         if shelfExpandPending {
@@ -666,8 +792,57 @@ final class NotchToy: Toy {
     func shelfDragLanded() {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = false
         shelfSummoned = false
         shelfExpandPending = false
+    }
+
+    /// The drag is over the hosting view itself — the notch strip, or
+    /// any part of the island the card's own targets do not cover.
+    @ObservationIgnored private var shelfDragOverIsland = false
+    /// The beat before a drag that left every target folds the card.
+    @ObservationIgnored private var shelfDragLeaveWork: DispatchWorkItem?
+    /// Long enough for the target the drag crossed onto to say so —
+    /// the hosting view hears the exit first — and short enough that a
+    /// drag carried away still folds the card at once.
+    static let shelfDragLeaveGrace: TimeInterval = 0.3
+
+    /// The hosting view heard the drag leave. AppKit says that too when
+    /// the drag only crossed onto one of the card's own drop targets (a
+    /// session row, the tray catch-all), which are destinations of their
+    /// own; folding then pulled the card out from under a drag heading
+    /// for an agent. The fold waits a beat and lands only if nothing in
+    /// the island has the drag by then.
+    func shelfDragLeftIsland() {
+        shelfDragOverIsland = false
+        shelfDragMoved()
+    }
+
+    /// The drag moved between the island and the card's targets
+    /// (`NotchCardModel.dropHover`).
+    func shelfDragMoved() {
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        if !cardModel.dropHover.isEmpty {
+            // A real drag over the card backs a shake summon now; its
+            // fold timer stands down, the same as at the notch.
+            shelfSummonExpiry?.cancel()
+            shelfSummonExpiry = nil
+            return
+        }
+        guard shelfSummoned, !shelfDragOverIsland else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.shelfDragLeaveWork = nil
+                guard !self.shelfDragOverIsland, self.cardModel.dropHover.isEmpty else { return }
+                self.shelfDragAbandoned()
+            }
+        }
+        shelfDragLeaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shelfDragLeaveGrace, execute: work)
     }
 
     /// The drop after the summon — file URLs straight in, web links
@@ -676,6 +851,8 @@ final class NotchToy: Toy {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
         cardModel.tray.add(ShelfTrayDrop.trayURLs(from: urls))
+        // Show where it landed.
+        cardModel.show(.shelf)
     }
 
     // MARK: - Shake to summon
@@ -755,6 +932,9 @@ final class NotchToy: Toy {
     func shelfDragAtIsland() {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = true
         shelfSummon()
     }
 
@@ -771,7 +951,8 @@ final class NotchToy: Toy {
         // return and leave `current` parked forever, wedging every
         // later offer behind it. Shelve it instead; `collapseIsland`
         // re-shows it while it is still fresh.
-        if activeCapsule == nil, let promoted = capsuleQueue.current {
+        if activeCapsule == nil, let promoted = capsuleQueue.current,
+           shelvedCapsule?.notice != promoted {
             shelvedCapsule = (promoted, Date())
             capsuleWork?.cancel()
             capsuleWork = nil
@@ -800,6 +981,9 @@ final class NotchToy: Toy {
     private func collapseIsland() {
         guard islandExpanded else { return }
         islandExpanded = false
+        // A quiet stretch that ended under the card says its summary as
+        // the card folds — behind a capsule the fold brings back, if any.
+        defer { noteQuietChange() }
         expandHeld = false
         hoverHeld = false
         peekWork?.cancel()
@@ -819,8 +1003,13 @@ final class NotchToy: Toy {
         let shelved = shelvedCapsule
         shelvedCapsule = nil
         if let current = capsuleQueue.current {
+            // A capsule is fresh for its own kind's life (news for its
+            // beat, a timer or a meeting for theirs); a latched ask for
+            // as long as it is still open.
             if let shelved, current == shelved.notice,
-               Date().timeIntervalSince(shelved.at) < AlcoveCapsuleQueue.life {
+               current.kind.life == nil
+                ? askHolds(current)
+                : Date().timeIntervalSince(shelved.at) < (current.kind.life ?? AlcoveCapsuleQueue.life) {
                 showCurrentCapsule()
                 return
             }
@@ -873,7 +1062,17 @@ final class NotchToy: Toy {
     /// glass card's presenter would hand it.
     private func feedCard() {
         if let focus = cardFocus() { cardModel.focus = focus }
-        cardModel.rows = islandSummary.rows.filter { $0.id != cardModel.focus.focusSession }
+        let summary = islandSummary
+        cardModel.rows = summary.rows.filter { $0.id != cardModel.focus.focusSession }
+        // Where each live local session works — the shelf gathers its
+        // files under its name.
+        let homes = summary.rows.compactMap { row -> ShelfTrayModel.SessionHome? in
+            guard !CoreSession.isRemoteID(row.id),
+                  let cwd = core.state?.session(withID: row.id)?.cwd, !cwd.isEmpty else { return nil }
+            return ShelfTrayModel.SessionHome(id: row.id, label: row.label, root: cwd)
+        }
+        if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
+        cardModel.workingCount = summary.working
         cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
     }
 
@@ -883,15 +1082,18 @@ final class NotchToy: Toy {
     /// bar that is not there, not for us — the grow stays down; the
     /// wink still answers, it is only a tell.
     private func applyHover() {
-        guard hoverHeld, settings.expandOnHover, activeCapsule == nil,
+        guard hoverHeld, settings.expandOnHover, activeCapsule == nil, activeOverlay == nil,
               !menuBarHidden() else { return }
         expand(held: false)
     }
 
-    /// The face the window should wear right now — a capsule outranks
-    /// the card, the card outranks idle.
+    /// The face the window should wear right now — key feedback
+    /// outranks a capsule, a capsule outranks the card, the card
+    /// outranks idle. An ask capsule wears the ask face.
     private var currentFace: NotchIslandFace {
-        activeCapsule != nil ? .notice : (islandExpanded ? .expanded : .idle)
+        if activeOverlay != nil { return .notice }
+        if let capsule = activeCapsule { return capsule.kind.hasVerbs ? .ask : .notice }
+        return islandExpanded ? .expanded : .idle
     }
 
     /// Resize the window to `face`'s frame — the island morphs in place;
@@ -939,6 +1141,10 @@ final class NotchToy: Toy {
         case .notice:
             size = NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
                                                 underHousing: housingCorner(on: screen))
+        case .ask:
+            size = askFaceSize(on: screen)
+                ?? NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
+                                                underHousing: housingCorner(on: screen))
         case .expanded:
             let width = NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
             let content = island?.expandedCardHeight(width: width) ?? 0
@@ -981,6 +1187,7 @@ final class NotchToy: Toy {
     /// fully ordered out otherwise — a parked island runs no timers.
     private func reconcile() {
         guard runtimeEnabled else { return }
+        publishRenderer()
         // The media-key tap's lifetime rides the same gates — a flip
         // must install or drop the tap now, not at the next press.
         onMediaGateChanged()
@@ -989,12 +1196,21 @@ final class NotchToy: Toy {
         // Sessions, usage or the focus may have moved while the card is
         // grown — refill before the frame re-measures its height.
         if islandExpanded { feedCard() }
+        // A latched ask answered anywhere else steps down on the
+        // document that says so.
+        noteAskState()
+        // A quiet stretch ending replays what it held.
+        noteQuietChange()
         // The weather toggle or city text changed — re-read now rather
         // than on the half-hour tick.
         cardModel.utility.weather.reload()
+        // The lyrics switch: off clears the line at once, on picks the
+        // playing track back up (a key compare when nothing moved).
+        cardModel.utility.lyrics.note(media: cardModel.utility.media)
         // The mirror toggle while the card is already pinned — the
-        // pin's own sync only runs on the edge.
-        cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror)
+        // pin's own sync only runs on the edge. The lens stays shut
+        // unless this open summoned it.
+        cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror && cardModel.mirrorSummoned)
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
               islandFrame(face: currentFace) != nil else {
@@ -1021,6 +1237,7 @@ final class NotchToy: Toy {
         syncSensorMonitor()
         syncAudioTap()
         syncShakeMonitor()
+        syncMeetingWatch()
     }
 
     /// The glass card's presenter reads the same `notchSurface` answer
@@ -1055,12 +1272,19 @@ final class NotchToy: Toy {
         shelfExpandPending = false
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = false
         activeCapsule = nil
         shelvedCapsule = nil
         capsuleWork?.cancel()
         capsuleWork = nil
         collapseWork?.cancel()
         collapseWork = nil
+        activeOverlay = nil
+        overlayWork?.cancel()
+        overlayWork = nil
+        askTrack.removeAll()
         capsuleQueue.clear()
         desiredFrame = nil
         islandVisible = false
@@ -1072,6 +1296,7 @@ final class NotchToy: Toy {
         syncSensorMonitor()
         syncAudioTap()
         syncShakeMonitor()
+        syncMeetingWatch()
     }
 
     /// Ends every owned runtime source and releases the island. The
@@ -1098,8 +1323,14 @@ final class NotchToy: Toy {
     /// capsule; the queue's cooldown keeps a burst of asks from strobing
     /// the notch. While the card is grown the event is already visible
     /// in its rows — a capsule over it would only blink — so a grown
-    /// island eats them quietly.
+    /// island eats them quietly. `ask_resolved` is never a capsule, but
+    /// it always closes one: an ask answered anywhere steps its capsule
+    /// down, whatever face is up.
     func noteEvent(_ event: CoreEvent) {
+        if event.kind == "ask_resolved", let session = event.session {
+            resolveAsk(session: session, request: event.request)
+            return
+        }
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
               s.capsuleNotifications, islandVisible, !islandExpanded else { return }
@@ -1110,12 +1341,22 @@ final class NotchToy: Toy {
     }
 
     /// A battery transition the power monitor saw — `AlcovePower.notice`
-    /// shapes it; the same queue and gate as daemon events.
+    /// shapes it; the same queue and gate as daemon events. An ear that
+    /// speaks for power keeps the island quiet about plugs and charge
+    /// states — but not about the one thing the ear can't know: the
+    /// battery running low while agents work on it.
     private func notePowerTransition(from old: AlcovePowerState, to new: AlcovePowerState) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
               s.capsuleNotifications, islandVisible, !islandExpanded else { return }
-        guard let notice = AlcovePower.notice(from: old, to: new,
+        if let low = AlcovePower.lowBatteryNotice(from: old, to: new,
+                                                  working: islandSummary.working,
+                                                  id: UUID().uuidString) {
+            offer(low)
+            return
+        }
+        guard !earNoticesLive,
+              let notice = AlcovePower.notice(from: old, to: new,
                                               id: UUID().uuidString,
                                               kinds: s.capsuleKinds) else { return }
         offer(notice)
@@ -1129,37 +1370,444 @@ final class NotchToy: Toy {
     /// an arriving power blip does not push a waiting ask aside, it
     /// simply never enters (and so never spends its key's cooldown).
     /// Internal so tests can drive the queue straight — `noteEvent` and
-    /// the power path both land here.
-    func offer(_ notice: AlcoveNotice) {
+    /// the power path both land here. Key feedback never queues: it goes
+    /// to the overlay (`presentSystemNotice`).
+    ///
+    /// True when the island has the notice — shown, due after the gap,
+    /// waiting its turn, or held for a quiet stretch's summary. False
+    /// when it will never say it: turned away at the door by a waiting
+    /// capsule that outranks it, or a repeat inside the cooldown. The
+    /// agents' news can let that go (the card's rows still tell it);
+    /// the Mac's announcements take the pill instead.
+    @discardableResult
+    func offer(_ notice: AlcoveNotice) -> Bool {
+        if notice.kind.isFeedback {
+            return presentFeedback(notice)
+        }
+        // A quiet stretch holds good news back for one summary later;
+        // asks and failures are not held.
+        if settings.holdNewsWhileQuiet, quietContext != nil, capsuleQueue.hold(notice) { return true }
         if let pending = capsuleQueue.pending,
-           notice.kind.queueRank > pending.kind.queueRank { return }
+           notice.kind.queueRank > pending.kind.queueRank { return false }
+        if notice.kind == .ask { askTrack[notice.id] = (Date(), false) }
         switch capsuleQueue.offer(notice, at: Date()) {
         case .now: showCurrentCapsule()
         case .after(let delay): scheduleCapsuleShow(after: delay)
-        case .queued, .suppressed: break
+        case .queued: break
+        case .suppressed: return false
         }
+        return true
     }
 
     /// Draw `capsuleQueue.current` as the island's face and arm its life
     /// timer. A grown island already tells the event's story in its
-    /// rows — a capsule queued before the grow simply does not draw.
+    /// rows — a capsule queued before the grow simply does not draw. An
+    /// ask whose question has already gone (answered while it waited
+    /// its turn) steps straight down instead of asking again.
     private func showCurrentCapsule() {
-        guard capsuleQueue.current != nil, islandVisible, !islandExpanded else { return }
-        activeCapsule = capsuleQueue.current
-        reframe(.notice, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        guard let current = capsuleQueue.current, islandVisible, !islandExpanded else { return }
+        if current.kind == .ask, !askHolds(current) {
+            finishCapsule()
+            return
+        }
+        activeCapsule = current
+        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         armCapsuleLife()
     }
 
-    /// The 2.4 s a shown capsule holds before `finishCapsule` steps it
-    /// down — the same arm a collapse-restored capsule gets.
+    /// The shown capsule's own life (`AlcoveNoticeKind.life`) before
+    /// `finishCapsule` steps it down — the same arm a collapse-restored
+    /// capsule gets. A latched ask arms nothing: it holds until it is
+    /// answered, opened, swiped away or resolved.
     private func armCapsuleLife() {
         capsuleWork?.cancel()
+        capsuleWork = nil
+        guard let life = activeCapsule?.kind.life else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.finishCapsule() }
         }
         capsuleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + AlcoveCapsuleQueue.life,
-                                      execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
+    }
+
+    // MARK: Asks
+
+    /// The live ask behind an ask capsule — pinned in `state.asks`
+    /// first, the session's own otherwise.
+    func liveAsk(for notice: AlcoveNotice) -> CoreAsk? {
+        notice.session.flatMap { NotchIsland.liveAsk(session: $0, state: core.state) }
+    }
+
+    /// What the ask face may offer right now — read live, so a daemon
+    /// that learns it can type into the terminal lights the buttons up
+    /// without a new capsule.
+    func askVerbs(for notice: AlcoveNotice) -> NotchAskVerbs {
+        NotchAskVerbs.resolve(live: liveAsk(for: notice), session: notice.session)
+    }
+
+    /// The question itself — the live summary, else the event's.
+    func askSummary(_ notice: AlcoveNotice) -> String {
+        let live = liveAsk(for: notice)?.summary
+        let text = (live?.isEmpty == false ? live : nil)
+            ?? notice.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
+            ?? notice.subtitle
+        return text
+    }
+
+    /// Whether a latched ask capsule still holds — `NotchIsland
+    /// .askStillOpen` over this notice's own bookkeeping. Reading it
+    /// marks the ask seen once the state carries it.
+    private func askHolds(_ notice: AlcoveNotice) -> Bool {
+        let live = liveAsk(for: notice)
+        var track = askTrack[notice.id] ?? (Date(), false)
+        if live != nil { track.seen = true }
+        askTrack[notice.id] = track
+        return NotchIsland.askStillOpen(notice, live: live, seenLive: track.seen,
+                                        age: Date().timeIntervalSince(track.offered))
+    }
+
+    /// The state moved: a shown ask whose question is gone — answered in
+    /// the terminal, replaced by a new request, the session ended —
+    /// steps down. `reconcile` calls it on every document; internal so
+    /// tests can run it without one.
+    func noteAskState() {
+        if let capsule = activeCapsule, capsule.kind == .ask, !askHolds(capsule) {
+            finishCapsule()
+        }
+        let live = Set([capsuleQueue.current?.id, capsuleQueue.pending?.id,
+                        shelvedCapsule?.notice.id].compactMap { $0 })
+        askTrack = askTrack.filter { live.contains($0.key) }
+    }
+
+    /// An ask was answered — here, in the panel, or in the terminal. A
+    /// waiting capsule about it is dropped; the shown one steps down and
+    /// whatever waits behind it gets its turn. A capsule the card
+    /// shelved goes too, so the fold never replays a settled question.
+    func resolveAsk(session: String, request: String?) {
+        let shown = capsuleQueue.resolveAsk(session: session, request: request)
+        if let shelved = shelvedCapsule, shelved.notice.kind == .ask,
+           shelved.notice.session == session {
+            shelvedCapsule = nil
+        }
+        guard shown else { return }
+        finishCapsule()
+    }
+
+    /// Approve or Deny on the ask face — only ever from a click on a
+    /// button `askVerbs` allowed. The pin is the episode the capsule
+    /// shows; answerability is the live ask's. The returned task is the
+    /// answer in flight — the button forgets it, tests await it.
+    @discardableResult
+    func answerCapsule(approve: Bool) -> Task<Void, Never>? {
+        guard let capsule = activeCapsule, capsule.kind == .ask,
+              let session = capsule.session else { return nil }
+        var ask = liveAsk(for: capsule) ?? capsule.ask
+        if let pinned = capsule.ask?.request { ask?.request = pinned }
+        return Task { [weak self] in
+            await self?.answerer.answer(session: session, ask: ask, approve: approve)
+        }
+    }
+
+    /// Open on the ask face, or a tap on any capsule about a session:
+    /// news you tap takes you to the thing. The capsule steps down — the
+    /// person acted on it.
+    func openCapsuleSession() {
+        guard let capsule = activeCapsule, let session = capsule.session else { return }
+        answerer.open(session: session)
+        dismissCapsule()
+    }
+
+    // MARK: Quiet hold
+
+    /// The quiet stretch the Mac is in, by name — nil when it isn't.
+    /// The daemon's `state.focus` is one signal (a macOS Focus synced
+    /// in, quiet hours, or a quiet mode picked by hand); the Mac's own
+    /// Focus, as `NotchAnnouncements` reads it, is the other — so the
+    /// hold works on a Mac whose daemon never syncs the Focus. A Focus
+    /// goes by the name the Mac gave it.
+    var quietContext: String? {
+        if let focus = core.state?.focus,
+           let context = AlcoveCapsuleQueue.quietContext(mode: focus.mode, source: focus.source,
+                                                         focusName: macFocus) {
+            return context
+        }
+        if let macFocus { return macFocus }
+        return settings.meetingAlerts ? meetingWatch.live?.title : nil
+    }
+
+    /// The last quiet stretch seen — its end is what replays the hold.
+    @ObservationIgnored private var lastQuiet: String?
+    /// The Mac's Focus while one is on ("Work"), nil otherwise.
+    @ObservationIgnored private(set) var macFocus: String?
+
+    /// The Mac's Focus settled (`NotchAnnouncements.onFocus`): its name
+    /// while on, and a Focus ending may end the quiet stretch.
+    func noteMacFocus(name: String, on: Bool) {
+        macFocus = on ? name : nil
+        noteQuietChange()
+    }
+
+    /// Something quiet moved: a stretch that just ended replays what it
+    /// held as one summary capsule ("While you were in Work · 3
+    /// finished"). `reconcile`, the Focus and the card's fold call it;
+    /// internal for the tests.
+    ///
+    /// The end is only spent once the summary can be said. A Focus
+    /// ended from Control Center while the card is up (or the island is
+    /// hidden, or under Fold) keeps the edge and the hold, and the fold
+    /// or the next reconcile replays it — offered under the card, it
+    /// would have been cancelled as an orphan by the fold. Capsules
+    /// switched off entirely have no voice to wait for: the hold goes.
+    func noteQuietChange() {
+        let now = quietContext
+        guard now == nil, let ended = lastQuiet else {
+            lastQuiet = now
+            return
+        }
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.capsuleNotifications else {
+            lastQuiet = nil
+            _ = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended)
+            return
+        }
+        guard islandVisible, !islandExpanded, !foldEngaged else { return }
+        lastQuiet = nil
+        if let summary = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended) {
+            offer(summary)
+        }
+    }
+
+    /// A Focus turning on says what the island will do about it: good
+    /// news waits for the end, asks still show.
+    static func focusPolicyNotice(_ notice: AlcoveNotice, holding: Bool) -> AlcoveNotice {
+        guard holding, notice.kind == .focus, notice.key == "focus:on" else { return notice }
+        var said = notice
+        said.subtitle = "Focus on · news waits"
+        return said
+    }
+
+    // MARK: Meetings
+
+    /// The meeting watch lives exactly as long as the island is shown
+    /// with the heads-up and the calendar both on; `reconcile` and
+    /// `parkIsland` land here. `runtimeEnabled` is folded in, so the
+    /// state-machine tests never make an EventKit store.
+    private func syncMeetingWatch() {
+        let s = settings
+        meetingWatch.sync(enabled: runtimeEnabled && islandVisible
+                          && s.meetingAlerts && s.calendar && s.provider == .jrbar)
+    }
+
+    /// Two minutes out: the island says which meeting, when, and offers
+    /// Join (and the Mirror, for a last look). Internal for the tests.
+    func noteMeetingSoon(_ event: ShelfCalendarModel.Event) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.meetingAlerts,
+              islandVisible, !islandExpanded else { return }
+        headsUpMeeting = event
+        let key = "meeting:\(ShelfMeetingWatch.key(event))"
+        offer(AlcoveNotice(id: key, kind: .meeting, title: event.title,
+                           subtitle: ShelfMeetingWatch.detail(event), key: key))
+    }
+
+    /// The heads-up's Join: the link opens in the browser (only an
+    /// http(s) one ever reaches here) and the heads-up steps down.
+    func joinHeadsUpMeeting() {
+        if let url = headsUpMeeting?.url { NSWorkspace.shared.open(url) }
+        dismissCapsule()
+    }
+
+    /// The heads-up's Mirror: a last look before the call — the card
+    /// opens straight onto the lens.
+    func mirrorBeforeMeeting() {
+        dismissCapsule()
+        summonMirror()
+    }
+
+    // MARK: Timers
+
+    /// A shelf timer came due: the island says so for longer than news
+    /// (`AlcoveCapsuleQueue.timerLife`) — it was set to be noticed. A
+    /// nudge names its session, so a tap on it opens the run. The card,
+    /// when grown, already shows the Done chip.
+    func noteTimerFired(_ entry: ShelfTimerModel.Entry) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
+              !islandExpanded else { return }
+        offer(AlcoveNotice(id: "timer:\(entry.id):\(Int(entry.deadline.timeIntervalSince1970))",
+                           kind: .timer, title: entry.label,
+                           subtitle: entry.watchSession != nil ? "still working" : "done",
+                           session: entry.watchSession,
+                           key: "timer:\(entry.id):\(Int(entry.deadline.timeIntervalSince1970))"))
+    }
+
+    /// A due timer breathes the strips, whether or not the island can
+    /// say it — the lights are how it reaches across the room.
+    func flashLightsForTimer() {
+        guard NotchTimerLights.shouldFlash(enabled: settings.timerLights, devices: core.devices,
+                                           quiet: quietContext != nil) else { return }
+        core.previewProgram(surface: "hardware", program: NotchTimerLights.program,
+                            seconds: NotchTimerLights.seconds)
+    }
+
+    /// Whether a session is still working — a nudge's condition.
+    func sessionStillWorking(_ id: String) -> Bool {
+        guard let session = core.state?.session(withID: id) else { return false }
+        return SessionActivity.reduce(session) == .working
+    }
+
+    // MARK: Takeover
+
+    /// The `takeover` tier's stage 3 (`EventDelivery.takeover`): the
+    /// island grows into the ask card and holds it until the person
+    /// answers, opens or swipes it away. The card already open carries
+    /// the ask in its rows, so a grown island is left alone; so is a
+    /// session with no open ask left to show.
+    func noteTakeover(_ event: CoreEvent) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
+              !islandExpanded, !foldEngaged, let session = event.session,
+              let live = NotchIsland.liveAsk(session: session, state: core.state) else { return }
+        let opened = CoreEvent(id: "takeover:\(event.id)", kind: "ask_opened", session: session,
+                               label: event.label, provider: event.provider,
+                               detail: live.summary, request: live.request)
+        // The tier is its own opt-in: the capsule switches do not gate it.
+        guard let notice = AlcoveEventPolicy.notice(
+            for: opened, session: core.state?.session(withID: session),
+            kinds: AlcoveCapsuleKinds()) else { return }
+        endOverlay(settle: false)
+        capsuleWork?.cancel()
+        capsuleWork = nil
+        shelvedCapsule = nil
+        bandExpandPending = false
+        capsuleQueue.takeOver(notice, at: Date())
+        if let current = capsuleQueue.current, askTrack[current.id] == nil {
+            askTrack[current.id] = (Date(), true)
+        }
+        activeCapsule = capsuleQueue.current
+        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    /// The escalation stood down without the ask closing (its pane came
+    /// to the front): the card shrinks back to the ask capsule, which
+    /// keeps holding.
+    func releaseTakeover() {
+        guard activeCapsule?.takeover == true else { return }
+        capsuleQueue.releaseTakeover()
+        activeCapsule = capsuleQueue.current
+        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    // MARK: Feedback overlay
+
+    /// The Mac's own announcements (`NotchHUD`): the level keys, Caps
+    /// Lock, Focus, devices, displays and the app's toasts. True when
+    /// the island will say it — ours, shown, not grown, not under Fold,
+    /// and the line open to it — so the HUD's glass pill stays down and
+    /// nothing is said twice. Key feedback overlays at once; news joins
+    /// the capsule line. False sends it to the pill: "SidePulse
+    /// disconnected" must never vanish between the two.
+    @discardableResult
+    func presentSystemNotice(_ notice: AlcoveNotice) -> Bool {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
+              !islandExpanded, !foldEngaged else { return false }
+        if notice.kind.isFeedback { return presentFeedback(notice) }
+        // A latched ask holds the line for as long as it is open: news
+        // offered behind it would wait there and go stale unsaid. The
+        // pill speaks now instead, the same as for key feedback.
+        guard capsuleQueue.acceptsOverlay else { return false }
+        return offer(Self.focusPolicyNotice(notice,
+                                            holding: s.holdNewsWhileQuiet && s.capsuleNotifications))
+    }
+
+    /// Draw key feedback over the island for its beat. A latched ask
+    /// refuses it (`acceptsOverlay`) — its buttons are why the island
+    /// is open — and the caller falls back to the pill.
+    @discardableResult
+    private func presentFeedback(_ notice: AlcoveNotice) -> Bool {
+        guard islandVisible, !islandExpanded, capsuleQueue.present(notice) else { return false }
+        let wasUp = activeOverlay != nil
+        activeOverlay = notice
+        overlayWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endOverlay(settle: true) }
+        }
+        overlayWork = work
+        // A level holds for the person's HUD duration; Caps Lock keeps
+        // the system's own beat.
+        let life = notice.kind == .level
+            ? settings.hudDuration
+            : (notice.kind.life ?? AlcoveCapsuleQueue.feedbackLife)
+        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
+        // A held key updates the fill in place — the face is already
+        // the notice, so only a first press morphs.
+        if !wasUp {
+            reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
+        return true
+    }
+
+    /// Writes a level the scroll asked for — the system's own paths, the
+    /// same ones the consuming key tap drives. False when the Mac said
+    /// no (no settable volume on this output, no built-in panel). The
+    /// tests stand in a recorder.
+    @ObservationIgnored var levelWriter: (NotchLevelScrub.Target, Float) -> Bool = { target, value in
+        switch target {
+        case .volume:
+            if value > 0, SystemLevelReader.outputMuted() == true { _ = SystemLevelReader.setOutputMuted(false) }
+            return SystemLevelReader.setOutputVolume(value)
+        case .brightness: return SystemLevelReader.setDisplayBrightness(value)
+        case .keyboard: return false
+        }
+    }
+
+    /// A scroll over the level capsule: while a volume or brightness
+    /// level is up it is a slider — the fill follows the fingers, the
+    /// Mac's level follows the fill, and the capsule holds for another
+    /// beat. False when no settable level is up, so the scroll stays a
+    /// swipe.
+    func scrubLevel(fingerDelta: CGFloat, precise: Bool) -> Bool {
+        guard let shown = activeOverlay, shown.kind == .level,
+              let target = NotchLevelScrub.target(ofKey: shown.key),
+              NotchLevelScrub.settable(target) else { return false }
+        let before = shown.fraction ?? 0
+        let next = NotchLevelScrub.step(before, fingerDelta: fingerDelta, precise: precise)
+        guard next != before else {
+            _ = presentFeedback(shown)   // pressed at the stop: hold the beat
+            return true
+        }
+        guard levelWriter(target, Float(next)) else { return true }
+        var moved = shown
+        moved.fraction = next
+        if target == .volume {
+            moved.muted = shown.muted && next <= 0
+            // The device the sound goes to, read again as the key does;
+            // a headless toy (the tests) draws the plain speaker.
+            let route = runtimeEnabled ? SystemLevelReader.outputRoute() : nil
+            moved.glyph = NotchLevelGlyph.volume(level: Float(next), muted: moved.muted,
+                                                 transport: route?.transport, name: route?.name)
+        } else {
+            moved.glyph = NotchLevelGlyph.brightness(level: Float(next))
+        }
+        _ = presentFeedback(moved)
+        return true
+    }
+
+    /// The feedback's beat ended: the face under it shows again — the
+    /// capsule it covered, or whatever the cursor wants.
+    func endOverlay(settle: Bool) {
+        overlayWork?.cancel()
+        overlayWork = nil
+        guard activeOverlay != nil else { return }
+        activeOverlay = nil
+        capsuleQueue.endOverlay()
+        guard settle else { return }
+        if activeCapsule == nil {
+            settleToRest()
+        } else {
+            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
     }
 
     /// The gap between two capsules: nothing drawn yet, `current` already
@@ -1211,7 +1859,12 @@ final class NotchToy: Toy {
     /// a dismissal — the held cursor must not pop the card right back
     /// open where the capsule was.
     func dismissCapsule() {
+        if activeOverlay != nil, activeCapsule == nil, capsuleQueue.current == nil {
+            endOverlay(settle: true)
+            return
+        }
         guard activeCapsule != nil || capsuleQueue.current != nil else { return }
+        endOverlay(settle: false)
         capsuleWork?.cancel()
         capsuleWork = nil
         capsuleQueue.cancel(at: Date())
@@ -1315,8 +1968,21 @@ final class NotchToy: Toy {
 
     // MARK: Power
 
-    /// The battery poller lives exactly as long as the island is shown
-    /// with both capsule switches on; `reconcile`/`parkIsland` land here.
+    /// Whether the Screen Bar's ears announce device transitions now —
+    /// drawn, with `screen_bar_wing_notices` on. Then the ear is the one
+    /// announcer for power and the audio route: the island keeps quiet
+    /// about both rather than say a charger plug twice.
+    var earNoticesLive: Bool {
+        guard earsDrawn else { return false }
+        return SettingsDocument(core.settings?.document ?? .object([:]))
+            .bool("screen_bar_wing_notices") ?? true
+    }
+
+    /// The island's subscription to the shared power feed lives exactly
+    /// as long as the island is shown with both capsule switches on —
+    /// with the ears speaking for power it stays only for the low-battery
+    /// word; `reconcile`/`parkIsland` land here. The feed is one poll
+    /// whoever listens.
     private func syncPowerMonitor() {
         let s = settings
         let want = islandVisible && s.capsuleNotifications && s.capsuleKinds.charging
@@ -1337,12 +2003,31 @@ final class NotchToy: Toy {
 
     // MARK: Sensors
 
-    /// The mic/camera poller lives exactly as long as the island is
-    /// shown with the indicators switch on; `reconcile`/`parkIsland`
-    /// land here. `runtimeEnabled` is folded in, so state-machine
-    /// tests never build a CoreAudio/CoreMediaIO read.
+    /// Another surface that draws the privacy dots — the Screen Bar's
+    /// ears, once they carry them. Under the ears the island's resting
+    /// face is a bare housing and its own dots never draw, so without a
+    /// taker here the monitor would watch the mic for nobody.
+    var sensorsWantedElsewhere: @MainActor () -> Bool = { false }
+    /// Every sensor edge, for that other surface.
+    var onSensorsChanged: (@MainActor (NotchSensorState) -> Void)?
+
+    /// Whether any surface can draw the dots right now: the island's own
+    /// face when the ears are not drawn, or a surface that asked.
+    var sensorsDrawable: Bool {
+        Self.sensorsDrawable(earsDrawn: earsDrawn, wantedElsewhere: sensorsWantedElsewhere())
+    }
+
+    static func sensorsDrawable(earsDrawn: Bool, wantedElsewhere: Bool) -> Bool {
+        !earsDrawn || wantedElsewhere
+    }
+
+    /// The mic/camera monitor lives exactly as long as the island is
+    /// shown with the indicators switch on and some surface can draw
+    /// the dots; `reconcile`/`parkIsland` land here. `runtimeEnabled` is
+    /// folded in, so state-machine tests never build a
+    /// CoreAudio/CoreMediaIO read.
     private func syncSensorMonitor() {
-        let want = runtimeEnabled && islandVisible && sensorIndicatorsEnabled
+        let want = runtimeEnabled && islandVisible && sensorIndicatorsEnabled && sensorsDrawable
         if want {
             if sensorMonitor == nil {
                 let monitor = NotchSensorMonitor()
@@ -1355,6 +2040,7 @@ final class NotchToy: Toy {
             sensorMonitor = nil
             if sensorState.anyInUse {
                 sensorState = NotchSensorState()
+                onSensorsChanged?(sensorState)
                 if islandVisible, currentFace == .idle {
                     reframeCurrent(animated: false)
                 }
@@ -1368,6 +2054,9 @@ final class NotchToy: Toy {
     private func noteSensors(_ state: NotchSensorState) {
         guard state != sensorState else { return }
         sensorState = state
+        onSensorsChanged?(state)
+        // An open card names who is listening; an edge re-reads it.
+        if cardModel.pinned { cardModel.refreshPrivacy() }
         if currentFace == .idle {
             reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }
@@ -1378,17 +2067,62 @@ final class NotchToy: Toy {
     /// A tap on the island itself — the view's tap gesture. The card
     /// toggles: grown folds, resting grows (the same deliberate pin a
     /// band click earns — a tap is a click, so outside-click and Esc
-    /// still let it go), and a showing capsule dismisses — a tap on
-    /// news puts it away, it never re-opens it.
+    /// still let it go). A capsule about a session opens that session —
+    /// news you tap takes you to the thing, and a tap on "failed" no
+    /// longer throws away the only pointer to the broken run — and steps
+    /// down; one about nothing in particular (power, a device) just puts
+    /// itself away. Key feedback is only ever put away. None of them
+    /// re-opens the card.
     func islandTapped() {
         guard isDrawingIsland, !foldEngaged else { return }
         if islandExpanded {
             collapseIsland()
-        } else if activeCapsule != nil {
-            dismissCapsule()
+        } else if activeOverlay != nil {
+            endOverlay(settle: true)
+        } else if let capsule = activeCapsule {
+            if let session = capsule.session, !CoreSession.isRemoteID(session) {
+                openCapsuleSession()
+            } else {
+                dismissCapsule()
+            }
+        } else if NSEvent.modifierFlags.contains(.option), settings.mirror {
+            summonMirror()
         } else {
             expandFromBand()
         }
+    }
+
+    /// ⌃⌥D: the card opens straight onto the shelf, or folds when it is
+    /// already up — the Yoink key, which is about the shelf, not the
+    /// sessions.
+    func toggleShelfFromHotkey() {
+        if islandExpanded {
+            collapseFromBand()
+        } else {
+            cardModel.show(.shelf)
+            expandFromBand()
+        }
+    }
+
+    /// ⌥-click on the resting island: the card opens straight onto the
+    /// Mirror. The camera only ever runs when asked for like this (or
+    /// from the card header's camera button), and closes with the card.
+    func summonMirror() {
+        guard settings.mirror, isDrawingIsland, !foldEngaged else { return }
+        cardModel.summonMirror()
+        if !islandExpanded { expandFromBand() }
+    }
+
+    /// A click on the resting island's amber count — straight to the
+    /// session that has waited longest, rather than the card: one click
+    /// from "someone needs me" to the terminal that does.
+    func openOldestAsk() {
+        guard isDrawingIsland, !foldEngaged,
+              let session = islandSummary.oldestWaiting else {
+            islandTapped()
+            return
+        }
+        answerer.open(session: session)
     }
 
     // MARK: Pull
@@ -1455,13 +2189,23 @@ final class NotchToy: Toy {
         guard settings.pullGestures else { return }
         switch swipe {
         case .left:
-            if islandMedia != nil { mediaNextTrack() }
+            // Across the grown card a sideways swipe turns its page; on
+            // the resting island it is the transport.
+            if islandExpanded {
+                cardModel.flipPage(toShelf: true)
+            } else if islandMedia != nil {
+                mediaNextTrack()
+            }
         case .right:
-            if islandMedia != nil { mediaPreviousTrack() }
+            if islandExpanded {
+                cardModel.flipPage(toShelf: false)
+            } else if islandMedia != nil {
+                mediaPreviousTrack()
+            }
         case .down:
             if islandExpanded {
                 foldExpandedCard()
-            } else if activeCapsule != nil || capsuleQueue.current != nil {
+            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
                 dismissCapsule()
             } else {
                 // The pull-open: a down swipe on the resting island
@@ -1475,12 +2219,70 @@ final class NotchToy: Toy {
                 // Alcove's dismiss flick, the same fold a down-swipe
                 // earns.
                 foldExpandedCard()
-            } else if activeCapsule != nil || capsuleQueue.current != nil {
+            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
                 dismissCapsule()
             }
             // On a resting island an up-flick means nothing — the
             // notch cannot be pushed into the screen.
         }
+    }
+
+    /// A pinch on the island: spreading two fingers grows the resting
+    /// island into the card (deliberately, like a band click);
+    /// squeezing folds the card back into the notch, or puts a capsule
+    /// away. Behind the same gestures switch as pull and swipe.
+    func islandPinch(_ verdict: NotchPinch.Verdict) {
+        guard settings.pullGestures, isDrawingIsland, !foldEngaged else { return }
+        switch verdict {
+        case .grow:
+            guard !islandExpanded else { return }
+            expandFromBand()
+        case .fold:
+            if islandExpanded {
+                foldExpandedCard()
+            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
+                dismissCapsule()
+            }
+        }
+    }
+
+    // MARK: ⌘-drag timer
+
+    /// Whether a ⌘-press on the island starts a timer drag: the resting
+    /// island (or news on it), never the card or an ask's buttons, and
+    /// behind the same gestures switch as pull and pinch.
+    var timerDragAllowed: Bool {
+        guard settings.pullGestures, isDrawingIsland, !foldEngaged, !islandExpanded else { return false }
+        return !(activeCapsule?.kind.hasVerbs ?? false)
+    }
+
+    /// The readout while the drag runs, and its word when it lands: the
+    /// level face's continuous fill toward three hours, the minutes in
+    /// place of a percent. Never a scrub target — its key names no level.
+    static func timerDragNotice(minutes: Int?, set: Bool) -> AlcoveNotice {
+        let words = minutes.map(NotchTimerDrag.label)
+        return AlcoveNotice(id: "timer-drag", kind: .level, title: "Timer",
+                            subtitle: words.map { set ? "\($0) set" : $0 } ?? "Drag right",
+                            key: "timer-drag", glyph: set ? "timer.circle.fill" : "timer",
+                            fraction: NotchTimerDrag.fraction(minutes))
+    }
+
+    func timerDragChanged(travel: CGFloat) {
+        guard timerDragAllowed else { return }
+        presentFeedback(Self.timerDragNotice(minutes: NotchTimerDrag.minutes(forTravel: travel), set: false))
+    }
+
+    /// Let go: a drag that reached a minute starts that timer (the card's
+    /// own timer model — the chip, the capsule and the strips follow); one
+    /// that didn't puts the readout away.
+    func timerDragEnded(travel: CGFloat) {
+        guard let minutes = NotchTimerDrag.minutes(forTravel: travel) else {
+            endOverlay(settle: true)
+            return
+        }
+        cardModel.timers.add(label: "\(NotchTimerDrag.label(minutes)) timer",
+                             duration: TimeInterval(minutes) * 60)
+        presentFeedback(Self.timerDragNotice(minutes: minutes, set: true))
     }
 
     /// The swipe's fold of the grown card — and it is a dismissal, so
@@ -1504,10 +2306,14 @@ final class NotchToy: Toy {
         withObservationTracking {
             _ = store?.state.notch
             _ = core.sessions
+            _ = core.state?.asks          // a pinned ask answered elsewhere steps its capsule down
             _ = core.state?.usage
+            _ = core.state?.focus         // a quiet stretch ending replays what it held
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
             _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb
             _ = displayVersion
+            _ = cardModel.mirror.state    // the lens going live grows the card to hold it
+            _ = cardModel.page            // a page turn re-measures the card
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.runtimeEnabled else { return }
@@ -1531,6 +2337,39 @@ final class NotchToy: Toy {
         Binding(
             get: { self.settings.provider },
             set: { self.setProvider($0) })
+    }
+
+    /// The Calendar switch. Turning it on is the explicit ask the card's
+    /// old "Show calendar" button made — through Setup's own request
+    /// path (a denied Mac deep-links to System Settings instead) — and
+    /// a pinned card re-reads on the spot.
+    var calendarBinding: Binding<Bool> {
+        Binding(
+            get: { self.settings.calendar },
+            set: { on in
+                self.store?.state.notch.calendar = on
+                let calendar = self.cardModel.calendar
+                let card = self.cardModel
+                Task { @MainActor in
+                    if on { await SetupModel.requestCalendar() }
+                    calendar.sync(enabled: on && card.pinned)
+                }
+            })
+    }
+
+    /// The Reminders switch — the same ask-on-enable as `calendarBinding`.
+    var remindersBinding: Binding<Bool> {
+        Binding(
+            get: { self.settings.reminders },
+            set: { on in
+                self.store?.state.notch.reminders = on
+                let reminders = self.cardModel.reminders
+                let card = self.cardModel
+                Task { @MainActor in
+                    if on { await SetupModel.requestReminders() }
+                    reminders.sync(enabled: on && card.pinned)
+                }
+            })
     }
 
     /// What the follower sees — the Capsule row under the Alcove provider.
@@ -1598,7 +2437,7 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.pullGestures)) {
                 SettingLabel(title: "Pull & swipe gestures",
-                             subtitle: "Drag the island down to open it; swipe or pull down to fold it away.")
+                             subtitle: "Pull the island down (or spread two fingers) to open it; push up or squeeze to fold it. ⌘-drag sideways on the notch sets a timer.")
             }
             Toggle(isOn: toy.bind(\.showUsage)) {
                 SettingLabel(title: "Usage meters",
@@ -1624,12 +2463,18 @@ private struct NotchControlsView: View {
                 Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
                     SettingLabel(title: "Power", subtitle: "Plugging in, switching to battery, fully charged.")
                 }
+                Toggle(isOn: toy.bind(\.holdNewsWhileQuiet)) {
+                    SettingLabel(title: "Hold news while quiet",
+                                 subtitle: "During a Focus or a quiet mode, finished runs and quota resets wait and come back as one summary when it ends. Asks and failures still show.")
+                }
             }
             Toggle(isOn: Binding(
                 get: { toy.sensorIndicatorsEnabled },
                 set: { toy.sensorIndicatorsEnabled = $0 })) {
                 SettingLabel(title: "Mic & camera indicators",
-                             subtitle: "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar asks the system whether they are running; it never opens the mic or camera itself.")
+                             subtitle: toy.sensorsDrawable
+                                ? "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar listens for the system saying they started; it never opens the mic or camera itself."
+                                : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots — nothing watches the mic or camera until a surface can show them.")
             }
             Toggle(isOn: toy.bind(\.mediaEnabled)) {
                 SettingLabel(title: "Now Playing",
@@ -1642,24 +2487,49 @@ private struct NotchControlsView: View {
                     SettingLabel(title: "Audio visualizer (reacts to what's playing)",
                                  subtitle: "Six live bands on the media row, tapped from the playing app's own audio — asks for the system-audio permission once. Off or denied keeps the decorative animation.")
                 }
+                Toggle(isOn: toy.bind(\.lyrics)) {
+                    SettingLabel(title: "Synced lyrics",
+                                 subtitle: "The current line and the next under the track, swept in time. Looks the song up on LRCLIB (title, artist, album, length — nothing else) and remembers the answer. Off, nothing is sent.")
+                }
             }
             Toggle(isOn: toy.bind(\.mediaHUD)) {
                 SettingLabel(title: "Volume & brightness capsules",
-                             subtitle: "The level keys hang a metered capsule under the notch — the Alcove HUD. The key still does its job; we only draw it.")
+                             subtitle: "The level keys grow the level out of the notch as one continuous fill, with the device the sound is going to — the Alcove HUD. The key still does its job; we only draw it. While it shows, scroll over it to fine-tune the volume or brightness.")
             }
             if toy.settings.mediaHUD {
+                Stepper(value: toy.bind(\.hudDuration),
+                        in: NotchSettings.hudDurationRange, step: 0.5) {
+                    SettingLabel(title: "Show for \(toy.settings.hudDuration.formatted(.number.precision(.fractionLength(0...1)))) s",
+                                 subtitle: "How long a level and a system notice hold at the notch.")
+                }
+                .padding(.leading, 28)
                 Toggle(isOn: toy.bind(\.replaceSystemHUD)) {
                     SettingLabel(title: "Replace the system volume & brightness overlay",
                                  subtitle: "The volume and brightness keys get our capsule instead of Apple's — needs the Accessibility permission. Changes made from Control Center still show Apple's overlay; JR-Bar never touches OSDUIHelper.")
                 }
             }
+            Toggle(isOn: toy.bind(\.timerLights)) {
+                SettingLabel(title: "Timers flash the lights",
+                             subtitle: "A timer coming due breathes the SidePulse strips orange three times, then the live light returns. Only with a strip connected, and never while the Mac is quiet.")
+            }
             Toggle(isOn: toy.bind(\.shelfShakeToSummon)) {
                 SettingLabel(title: "Shake to summon the shelf",
                              subtitle: "While dragging files, shake the pointer and the card opens under the notch as a drop target.")
             }
+            if let settings = toy.store?.settings {
+                // The same switch as General's, where a shelf person
+                // looks for it: beside the other way to summon the shelf.
+                Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
+                                     set: { settings.shelfHotkeyEnabled = $0 })) {
+                    SettingLabel(title: "Shelf hotkey",
+                                 subtitle: settings.shelfHotkeyRegistrationFailed
+                                    ? "⌃⌥D is taken by another app."
+                                    : "⌃⌥D opens or folds the card from any app. Anything you copied waits there as a Paste chip.")
+                }
+            }
             Toggle(isOn: toy.bind(\.alerts)) {
                 SettingLabel(title: "System alerts",
-                             subtitle: "A Focus mode turning on or a Bluetooth device connecting gets the pill.")
+                             subtitle: "A Focus mode, a Bluetooth device joining or leaving, Caps Lock and displays speak in the island, one at a time with the agents' news. Headphones the Screen Bar's ear already names stay quiet here.")
             }
             Toggle(isOn: toy.bind(\.soundEffects)) {
                 SettingLabel(title: "Capsule tick",
@@ -1667,22 +2537,44 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.weather)) {
                 SettingLabel(title: "Weather",
-                             subtitle: "A conditions row in the card — keyless Open-Meteo; your city below, or the IP's place when empty.")
+                             subtitle: "Conditions, today's high and low and rain in the next two hours — keyless Open-Meteo for the city below.")
             }
             if toy.settings.weather {
-                TextField("City (empty = where the IP lands)", text: toy.bind(\.weatherCity))
+                TextField("City, e.g. London", text: toy.bind(\.weatherCity))
                     .textFieldStyle(.roundedBorder)
                     .font(.callout)
                     .padding(.leading, 28)
+                Toggle(isOn: toy.bind(\.weatherUseIPLocation)) {
+                    SettingLabel(title: "Locate by IP when no city is set",
+                                 subtitle: "Sends your IP address to ipapi.co for a city-level guess. Off, an empty city just means no weather row.")
+                }
+                .padding(.leading, 28)
+            }
+            Toggle(isOn: toy.calendarBinding) {
+                SettingLabel(title: "Calendar",
+                             subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
+                                                       granted: "The next three events in the card, the first with Join."))
+            }
+            if toy.settings.calendar {
+                Toggle(isOn: toy.bind(\.meetingAlerts)) {
+                    SettingLabel(title: "Meeting heads-up",
+                                 subtitle: "Two minutes before an event with a join link, the island says so with Join (and the Mirror, when it is on). While the meeting runs, finished runs wait like in a Focus. Reads the calendar in the background, on this Mac only.")
+                }
+                .padding(.leading, 28)
+            }
+            Toggle(isOn: toy.remindersBinding) {
+                SettingLabel(title: "Reminders",
+                             subtitle: Self.accessNote(SetupModel.reminderStatus(), app: "Reminders",
+                                                       granted: "What's due by tomorrow, with a check-off circle that writes back."))
             }
             Toggle(isOn: toy.bind(\.mirror)) {
                 SettingLabel(title: "Mirror",
-                             subtitle: "A live camera preview row in the card — boring.notch's Mirror. The camera's consent is asked when you turn it on; the lens closes when the card folds away.")
+                             subtitle: "A quick look through the camera — boring.notch's Mirror, on demand: ⌥-click the notch, or the camera button in the card. It is never a standing row; the lens closes when the card folds away. The camera's consent is asked the first time it opens.")
             }
         case .alcove:
             if let settings = toy.store?.settings {
                 SettingToggle(settings, "Follow Alcove's capsule",
-                              subtitle: "The Screen Bar matches the capsule's width while Alcove is up.",
+                              subtitle: "The Screen Bar matches the capsule's width while Alcove draws the notch. It never runs while JR-Bar draws it.",
                               path: "screen_bar_follow_alcove", default: true)
             }
             LabeledContent {
@@ -1697,6 +2589,19 @@ private struct NotchControlsView: View {
         }
     }
 
+    /// A glance switch's subtitle: what it shows once access exists, or
+    /// the honest word on why it can't yet — the card itself never asks.
+    private static func accessNote(_ status: SetupPermissionStatus, app: String,
+                                   granted: String) -> String {
+        switch status {
+        case .granted: return granted
+        case .denied, .unavailable:
+            return "\(app) access is off — turning this on opens System Settings, or allow it in Setup."
+        default:
+            return "Turning this on asks for \(app) access once; Setup has the same row."
+        }
+    }
+
     /// What the chosen external renderer is doing — installed and
     /// launched, or a link to get it.
     @ViewBuilder
@@ -1706,10 +2611,10 @@ private struct NotchControlsView: View {
             EmptyView()
         case .alcove:
             externalNote(installed: toy.alcoveURL != nil, name: "Alcove",
-                         link: URL(string: "https://alcove.app")!)
+                         link: URL(string: "https://tryalcove.com")!)
         case .boringNotch:
             externalNote(installed: toy.boringNotchURL != nil, name: "Boring Notch",
-                         link: URL(string: "https://github.com/TheBoringNotch/boring.notch")!)
+                         link: URL(string: "https://github.com/TheBoredTeam/boring.notch")!)
         }
     }
 

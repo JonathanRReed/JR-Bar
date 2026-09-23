@@ -38,6 +38,20 @@ final class EventCoordinator {
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
         notifications.onOpenSession = { [weak core] session in core?.openSession(session) }
         notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
+        // One announcer at the top of the screen: the Mac's own news is
+        // offered to the island first and takes the pill only when the
+        // island can't; a headphone the ear already names is not said
+        // twice.
+        hud.islandPresent = { [weak self] notice in
+            self?.toys?.notch.presentSystemNotice(notice) ?? false
+        }
+        hud.hudLife = { [weak self] in self?.toys?.state.notch.hudDuration ?? NotchHUD.life }
+        hud.earAnnouncesAudioRoute = { [weak self] in self?.toys?.notch.earNoticesLive ?? false }
+        // The Mac's Focus, said or not, is a quiet stretch the island's
+        // hold follows.
+        hud.announcements.onFocus = { [weak self] name, on in
+            self?.toys?.notch.noteMacFocus(name: name, on: on)
+        }
         // The coordinator lives for the app's lifetime; the observer's
         // weak self is cleanup enough (a nonisolated deinit could not
         // touch the isolated token anyway).
@@ -90,6 +104,7 @@ final class EventCoordinator {
             if let toast = delivery.toast { parts.append("hud “\(toast)”") }
             if let pulse = delivery.statusPulse { parts.append(pulse ? "pulse on" : "pulse off") }
             if delivery.chime == .start { parts.append("chime every \(Int(EventPolicy.chimeInterval)) s") }
+            if delivery.takeover { parts.append("notch takeover") }
             if delivery.chime == .stop, sounds.isChiming { parts.append("chime off") }
             // A delivery whose whole job is to take a banner away has
             // nothing else to name; the log said "event ask_resolved → ".
@@ -128,6 +143,16 @@ final class EventCoordinator {
         // capsules — its own policy and cooldown decide whether this one
         // shows.
         toys?.notch.noteEvent(event)
+        // The `takeover` tier's finale: the ask grows out of the notch
+        // and holds until it is acted on. A stage below it (or a
+        // watched pane) shrinks a card already up back to its capsule.
+        if event.kind == "escalation_stage" {
+            if delivery.takeover {
+                toys?.notch.noteTakeover(event)
+            } else {
+                toys?.notch.releaseTakeover()
+            }
+        }
     }
 
     /// The ask the event names is on screen: the user is already looking
@@ -164,6 +189,10 @@ final class EventCoordinator {
         case .stop: sounds.stopChime()
         case .unchanged: break
         }
+        // The pane coming forward is the person looking at the ask: the
+        // takeover card shrinks back to its capsule. Walking away again
+        // does not re-grow it — that waits for the next stage.
+        if !delivery.takeover { toys?.notch.releaseTakeover() }
     }
 
     private var asksStillOpen: Bool {

@@ -14,13 +14,27 @@ final class NotchCardModel {
     /// band click's deliberate focus, or the island's hover.
     var pinned = false {
         didSet {
+            // The lens is a peek, not a standing row: folding the card
+            // puts it away, and the next open starts without it.
+            if !pinned {
+                mirrorSummoned = false
+                // The rows that had a drag over them are gone with the
+                // card; a stale entry would read as a drag still here.
+                dropHover.removeAll()
+                // Only a real fold starts the next open on Now — a
+                // repeat "not pinned" while the card is already away
+                // must not undo a shelf summon waiting to grow.
+                if oldValue { page = .now }
+            }
+            refreshPrivacy()
             guard runtimeEnabled else { return }
             if pinned {
                 utility.start()
                 tray.revalidate()
-                mirror.sync(enabled: mirrorEnabled())
-                calendar.resume()
-                reminders.resume()
+                tray.notePasteboard()
+                mirror.sync(enabled: mirrorEnabled() && mirrorSummoned)
+                calendar.sync(enabled: calendarEnabled())
+                reminders.sync(enabled: remindersEnabled())
                 wingHint = Self.wingHintDue()
             } else {
                 utility.stop()
@@ -29,6 +43,29 @@ final class NotchCardModel {
                 mirror.sync(enabled: false)
             }
         }
+    }
+    /// The Mirror was asked for on this open — ⌥-click on the island, or
+    /// the camera button in the pinned header. Only then does the lens
+    /// open; the setting just makes it available.
+    private(set) var mirrorSummoned = false
+
+    /// The header's camera button: open or close the lens in place.
+    func toggleMirror() {
+        guard mirrorEnabled() else { return }
+        setMirror(!mirrorSummoned)
+    }
+
+    /// Ask for the lens on this open — before the pin (it opens as the
+    /// card lands) or after it (it opens in place).
+    func summonMirror() {
+        guard mirrorEnabled() else { return }
+        setMirror(true)
+    }
+
+    private func setMirror(_ summoned: Bool) {
+        mirrorSummoned = summoned
+        if summoned { show(.shelf) }
+        if pinned, runtimeEnabled { mirror.sync(enabled: summoned) }
     }
     /// The one-line ear-gesture hint — drawn in the pinned card until
     /// the person has either flicked a wing once (the knowledge exists)
@@ -55,6 +92,11 @@ final class NotchCardModel {
     /// The headline quota meters (`NotchIsland.meters`); empty while
     /// the toy's `showUsage` is off.
     var meters: [NotchIslandMeter] = []
+    /// Sessions working right now — the battery line says whether a run
+    /// is riding on the charge.
+    var workingCount = 0
+    /// Whether the daemon holds the Mac awake (`state.power.keep_awake`).
+    var heldAwake: () -> Bool = { false }
     /// Media/device utility facts — monitored only while pinned.
     let utility = ShelfUtilityModel()
     /// The file tray — paths persist in defaults; revalidated on pin.
@@ -73,11 +115,68 @@ final class NotchCardModel {
     /// The reminders glance — same privacy rule as the calendar.
     let reminders = ShelfRemindersModel()
     /// The mirror row — the camera's own preview, live only while the
-    /// card is pinned *and* the setting says so.
+    /// card is pinned, the setting allows it, and this open asked for it
+    /// (`mirrorSummoned`).
     let mirror = ShelfMirrorModel()
     /// The toys state's mirror vote — the presenter hands it through so
     /// a flip lands on the next pin without rebuilding the model.
     var mirrorEnabled: () -> Bool = { false }
+    /// The Notch settings' Calendar and Reminders switches — read on
+    /// every pin, so a flip lands on the next open.
+    var calendarEnabled: () -> Bool = { true }
+    var remindersEnabled: () -> Bool = { true }
+    /// Where a session works — a reminder about it says so.
+    var sessionCwd: (String) -> String? = { _ in nil }
+
+    /// The card's two pages: what needs the person now (sessions, their
+    /// quota, who is listening, media, battery) and the shelf (files,
+    /// timers, the day, the Mirror, the Control Center strip) — Alcove's
+    /// calm of one thing at a time instead of every row in one scroll.
+    /// Every open starts on Now; a shelf summon or the Mirror lands on
+    /// the shelf.
+    enum Page: Equatable { case now, shelf }
+    private(set) var page: Page = .now
+
+    func show(_ page: Page) {
+        if self.page != page { self.page = page }
+    }
+
+    /// A two-finger swipe across the grown card: left is the shelf,
+    /// right is back to Now.
+    func flipPage(toShelf: Bool) {
+        show(toShelf ? .shelf : .now)
+    }
+
+    /// What waits on the shelf page, for its tab: files, running or
+    /// done timers, and a fresh copy to paste.
+    var shelfWaiting: Int {
+        tray.items.count + timers.entries.count + (tray.pasteOffered ? 1 : 0)
+    }
+
+    /// Who has the microphone, whether a camera is rolling — read as the
+    /// card opens and on every sensor edge while it is open; nil while
+    /// neither is live. The ears only ever draw the dots; the names are
+    /// the card's.
+    var privacyLine: String?
+    /// The reader: CoreAudio and CoreMediaIO on a live card, nothing
+    /// on a headless one — the tests stand in a fixed answer.
+    var readPrivacy: (() -> String?)?
+
+    func refreshPrivacy() {
+        guard let readPrivacy else { return }
+        let line = pinned ? readPrivacy() : nil
+        if line != privacyLine { privacyLine = line }
+    }
+
+    /// On a day with nothing on the calendar the weather takes the
+    /// calendar's place — Alcove's empty-day conditions — instead of a
+    /// "Nothing in the next 24 hours" line under a separate weather row.
+    static func weatherTakesCalendarSlot(calendar: ShelfCalendarModel.State, hasWeather: Bool) -> Bool {
+        hasWeather && calendar == .idle
+    }
+    var weatherInCalendarSlot: Bool {
+        Self.weatherTakesCalendarSlot(calendar: calendar.state, hasWeather: utility.weather.reading != nil)
+    }
     /// The island's content-follow gate: the expand starts with the
     /// rows hidden, and the frame spring reveals them once the frame
     /// has carried most of the way (`NotchMotion.contentRevealThreshold`)
@@ -85,6 +184,11 @@ final class NotchCardModel {
     /// Motion, where the whole card is a single crossfade.
     var contentRevealed = true
     var onOpenSession: (() -> Void)?
+    /// A click on a session row — that session's own window.
+    var onOpenRow: ((String) -> Void)?
+    /// Approve / Deny on a waiting row. nil draws no verbs: a card
+    /// without an answer path only ever offers the click-to-open.
+    var answerer: NotchAskAnswerer?
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
     var onOpenOverview: (() -> Void)?
@@ -93,11 +197,69 @@ final class NotchCardModel {
     /// start media, power, camera, calendar, or reminder readers.
     private let runtimeEnabled: Bool
 
+    /// Who a shelf file can be handed to: the focus session first, then
+    /// the card's other live sessions — never a peer's, whose terminal
+    /// is on another Mac. Id and label, capped.
+    var handTargets: [(id: String, label: String)] {
+        var targets: [(id: String, label: String)] = []
+        if let session = focus.clickSession, !CoreSession.isRemoteID(session) {
+            targets.append((session, focus.label))
+        }
+        for row in rows where !CoreSession.isRemoteID(row.id) && !targets.contains(where: { $0.id == row.id }) {
+            targets.append((row.id, row.label))
+        }
+        return Array(targets.prefix(5))
+    }
+
+    /// The shelf's hand-to-agent verb: the entry's `@path` references go
+    /// on the pasteboard and the session's window comes forward, ready
+    /// for the person's paste. Nothing is ever typed for them.
+    func handToAgent(_ entry: ShelfTrayModel.ShelfEntry, session: String) {
+        guard tray.copyForAgent(entry) else { return }
+        onOpenRow?(session)
+    }
+
+    /// Files dropped straight onto a session row — the same hand-off,
+    /// without a stop in the tray.
+    func handFiles(_ urls: [URL], session: String) {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty, !CoreSession.isRemoteID(session) else { return }
+        ShelfTrayModel.copyForAgent(files, attachImage: files.count == 1
+                                    && ShelfTrayModel.withinAttachBound(files[0]))
+        onOpenRow?(session)
+    }
+
+    /// A drop anywhere on the card but a session row: into the tray,
+    /// and the card turns to the shelf page to show where it landed.
+    func shelve(_ urls: [URL]) {
+        tray.add(urls)
+        show(.shelf)
+    }
+
+    /// The card's own drop targets a drag is over right now — the
+    /// catch-all ("card"), each session row ("row:<id>") and each
+    /// shelf tile ("tile:<id>"). AppKit
+    /// hands a drag to these as their own destinations, so the island's
+    /// hosting view hears it leave the moment it crosses onto one; the
+    /// toy reads this set to tell a drag that moved onto a row from one
+    /// that left the island.
+    @ObservationIgnored private(set) var dropHover: Set<String> = []
+    /// Any change to `dropHover`.
+    @ObservationIgnored var onDropHover: (() -> Void)?
+    /// A drop landed on one of the card's targets.
+    @ObservationIgnored var onDropLanded: (() -> Void)?
+
+    func setDropHover(_ target: String, _ over: Bool) {
+        let changed = over ? dropHover.insert(target).inserted : dropHover.remove(target) != nil
+        if changed { onDropHover?() }
+    }
+
     init(timers: ShelfTimerModel, tray: ShelfTrayModel,
          runtimeEnabled: Bool = true) {
         self.timers = timers
         self.tray = tray
         self.runtimeEnabled = runtimeEnabled
+        if runtimeEnabled { readPrivacy = { NotchSensorMonitor.privacyLineNow() } }
     }
 }
 
@@ -186,47 +348,31 @@ struct NotchCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             revealRow(0, focusHeader(pinned: true))
             if model.wingHint { revealRow(1, wingHintRow) }
-            if !model.rows.isEmpty {
-                ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
-                        id: \.element.id) { index, row in
-                    revealRow(2 + index, sessionRow(row))
-                }
-                if model.rows.count > NotchIsland.rowLimit {
-                    revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
-                        .font(.system(size: 10))
-                        .foregroundStyle(style.faintColor)
-                        .padding(.leading, 24))
-                }
+            switch model.page {
+            case .now: nowPage
+            case .shelf: shelfPage
             }
-            revealRow(9, ShelfMediaRow(utility: model.utility, style: style))
-            revealRow(10, ShelfBatteryRow(power: model.utility.power, style: style))
-            revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
-            revealRow(12, ShelfTrayRow(tray: model.tray, style: style))
-            if !model.timers.entries.isEmpty {
-                revealRow(13, ShelfTimersRow(timers: model.timers, style: style))
-            }
-            revealRow(14, ShelfCalendarRow(calendar: model.calendar, style: style))
-            revealRow(15, ShelfRemindersRow(reminders: model.reminders, style: style))
-            revealRow(16, ShelfMirrorRow(mirror: model.mirror, style: style))
-            revealRow(17, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
-            if !model.meters.isEmpty {
-                ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                    revealRow(18 + index, meterRow(meter))
-                }
-            }
-            revealRow(22, overviewButton)
+            revealRow(22, pageBar)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, verticalPad)
         .padding(.bottom, style == .island
             ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
-        .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText], isTargeted: nil) { providers in
+        .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
+                isTargeted: dropHover("card")) { providers in
             ShelfTrayDrop.urls(from: providers) { urls in
-                model.tray.add(urls)
+                model.shelve(urls)
             }
+            model.onDropLanded?()
             return true
         }
+    }
+
+    /// A drop target's hover, reported to the model (`dropHover`).
+    private func dropHover(_ target: String) -> Binding<Bool> {
+        Binding(get: { model.dropHover.contains(target) },
+                set: { model.setDropHover(target, $0) })
     }
 
     /// The ear-gesture vocabulary in one line — the marks-only ears
@@ -339,6 +485,19 @@ struct NotchCardView: View {
                         .padding(10)
                         .frame(width: 200)
                     }
+                    // The Mirror is a peek on demand, never a standing
+                    // row: the lens opens here (or on ⌥-click at the
+                    // notch) and closes with the card.
+                    if model.mirrorEnabled() {
+                        Button { model.toggleMirror() } label: {
+                            Image(systemName: model.mirrorSummoned ? "camera.fill" : "camera")
+                                .font(.system(size: 9))
+                                .foregroundStyle(model.mirrorSummoned ? style.titleColor : style.faintColor)
+                                .frame(width: 16, height: 16)
+                        }
+                        .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
+                        .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
+                    }
                     if model.focus.clickSession != nil {
                         Button("Open") { model.onOpenSession?() }
                             .controlSize(.mini)
@@ -354,24 +513,224 @@ struct NotchCardView: View {
         }
     }
 
-    /// One live session under the header: the provider's dot, its label,
-    /// and the same activity word the island would say.
-    private func sessionRow(_ row: NotchIslandRow) -> some View {
+    /// Page one — what needs the person now, in the product design's
+    /// order: the sessions (asks and failures sort first), their quota,
+    /// who is listening, what is playing, the battery the runs ride on.
+    @ViewBuilder
+    private var nowPage: some View {
+        if !model.rows.isEmpty {
+            ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
+                    id: \.element.id) { index, row in
+                revealRow(2 + index, sessionRow(row))
+            }
+            if model.rows.count > NotchIsland.rowLimit {
+                revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.faintColor)
+                    .padding(.leading, 24))
+            }
+        }
+        if !model.meters.isEmpty {
+            ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
+                revealRow(9 + index, meterRow(meter))
+            }
+        }
+        if let privacy = model.privacyLine {
+            revealRow(12, privacyRow(privacy))
+        }
+        revealRow(13, ShelfMediaRow(utility: model.utility, style: style))
+        revealRow(14, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
+                                      heldAwake: model.heldAwake(), style: style))
+    }
+
+    /// Page two — the shelf and the day: files, timers, the weather
+    /// and calendar, reminders, the Mirror when asked for, and the
+    /// Control Center strip.
+    @ViewBuilder
+    private var shelfPage: some View {
+        revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
+                                  handTargets: model.handTargets,
+                                  onHand: { entry, session in
+                                      model.handToAgent(entry, session: session)
+                                  },
+                                  dropHover: { dropHover($0) },
+                                  onDropLanded: { model.onDropLanded?() }))
+        if !model.timers.entries.isEmpty {
+            revealRow(3, ShelfTimersRow(timers: model.timers, style: style))
+        }
+        // The weather leads the day; on a day with nothing scheduled it
+        // is the day, and the calendar's empty line goes.
+        revealRow(4, ShelfWeatherRow(weather: model.utility.weather, style: style))
+        if !model.weatherInCalendarSlot {
+            revealRow(5, ShelfCalendarRow(calendar: model.calendar, style: style))
+        }
+        revealRow(6, ShelfRemindersRow(reminders: model.reminders, style: style))
+        revealRow(7, ShelfMirrorRow(mirror: model.mirror, style: style))
+        revealRow(8, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
+    }
+
+    /// The card's foot: the two pages as quiet tabs — the shelf's says
+    /// when something waits there — and, on Now, the roster.
+    private var pageBar: some View {
+        HStack(spacing: 4) {
+            pageTab(.now, title: "Now")
+            pageTab(.shelf, title: model.shelfWaiting > 0 ? "Shelf · \(model.shelfWaiting)" : "Shelf")
+            Spacer(minLength: 8)
+            if model.page == .now {
+                Button { model.onOpenOverview?() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "rectangle.grid.2x2")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Agent Overview")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(style.subColor)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Every session as a roster (⌘O)")
+            }
+        }
+    }
+
+    private func pageTab(_ page: NotchCardModel.Page, title: String) -> some View {
+        let selected = model.page == page
+        return Button { model.show(page) } label: {
+            Text(title)
+                .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? style.titleColor : style.faintColor)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule(style: .continuous).fill(selected ? style.chipFill : .clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(page == .now ? "Sessions, quota, media" : "Shelf, timers, calendar, reminders")
+    }
+
+    /// Who is listening: the dots' colours (green camera, orange mic)
+    /// and the apps behind them — the question the dots raise, answered
+    /// in words where words belong.
+    private func privacyRow(_ line: String) -> some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(ProviderStyle.style(for: row.provider).accent)
-                .frame(width: 5, height: 5)
-            Text(row.label)
-                .font(.system(size: 11))
-                .foregroundStyle(style == .island ? .white.opacity(0.85) : .primary)
+            HStack(spacing: 3) {
+                if line.hasPrefix("Camera") {
+                    Circle().fill(Color.green).frame(width: 5, height: 5)
+                }
+                if line.contains("icrophone") {
+                    Circle().fill(Color.orange).frame(width: 5, height: 5)
+                }
+            }
+            .frame(width: 13, alignment: .leading)
+            Text(line)
+                .font(.system(size: 10))
+                .foregroundStyle(style.subColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer(minLength: 4)
-            Text(row.activity.word)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(row.activity.wordColor)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line)
+    }
+
+    /// One live session under the header: the provider's dot, its label,
+    /// and the same activity word the island would say. A click opens
+    /// the session. A waiting row the daemon can answer carries Deny and
+    /// Approve inline instead of the word (`NotchAskVerbs` — hidden
+    /// where the answer chain cannot deliver), with the question itself
+    /// on a faint second line; a refused answer takes that line and
+    /// says why, and the ask stays open.
+    private func sessionRow(_ row: NotchIslandRow) -> some View {
+        let verbs = row.activity == .waiting
+            ? NotchAskVerbs.resolve(live: row.ask, session: row.id) : .none
+        let answerer = model.answerer
+        let pending = answerer?.isPending(row.id) ?? false
+        let second = answerer?.note(for: row.id)
+            ?? row.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
+        let opens = !CoreSession.isRemoteID(row.id) && model.onOpenRow != nil
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(ProviderStyle.style(for: row.provider).accent)
+                    .frame(width: 5, height: 5)
+                Text(row.label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(style == .island ? .white.opacity(0.85) : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                if verbs.answers, let answerer {
+                    NotchVerbButton(title: "Deny", style: style, prominent: false,
+                                    busy: pending) {
+                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: false) }
+                    }
+                    NotchVerbButton(title: "Approve", style: style, prominent: true,
+                                    busy: pending) {
+                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: true) }
+                    }
+                } else {
+                    Text(row.activity.word)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(row.activity.wordColor)
+                }
+            }
+            if let second {
+                Text(second)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(answerer?.note(for: row.id) != nil
+                                     ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.faintColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 11)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if opens { model.onOpenRow?(row.id) }
+        }
+        // Drag a screenshot to the notch and let go on the agent: the
+        // file's `@path` is on the pasteboard and its session comes up.
+        // A row that cannot be opened here (a peer's) is the card like
+        // anywhere else: the file lands in the tray instead of bouncing.
+        .onDrop(of: [UTType.fileURL], isTargeted: dropHover("row:\(row.id)")) { providers in
+            ShelfTrayDrop.urls(from: providers) { urls in
+                if opens {
+                    model.handFiles(urls, session: row.id)
+                } else {
+                    model.shelve(urls)
+                }
+            }
+            model.onDropLanded?()
+            return true
+        }
+        .contextMenu {
+            if opens {
+                Button("Open \(row.label)") { model.onOpenRow?(row.id) }
+            }
+            // A timer about the run itself: it only speaks if the
+            // session is still working when it comes due.
+            if row.activity == .working {
+                Button("Nudge Me in 20 Min If Still Working") {
+                    model.timers.add(label: "\(row.label) still working", duration: 20 * 60,
+                                     watchSession: row.id)
+                }
+            }
+            // "I'll look at that later", kept: a reminder that names the
+            // run and where it ran, due when the person says.
+            if model.reminders.canWrite {
+                Menu("Remind Me About This") {
+                    ForEach(ShelfRemindersModel.Later.allCases, id: \.self) { later in
+                        Button(later.title) {
+                            model.reminders.remind(about: row.label, provider: row.provider,
+                                                   cwd: model.sessionCwd(row.id), later: later)
+                        }
+                    }
+                }
+            }
+        }
+        .help(opens ? "Open \(row.label)" : "")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(row.label), \(row.activity.word)")
     }
 
     /// One quota meter: provider, window, a short bar, the percent —
@@ -416,26 +775,21 @@ struct NotchCardView: View {
                 .foregroundStyle(style.subColor)
                 .frame(width: 30, alignment: .trailing)
         }
+        .contentShape(Rectangle())
+        .contextMenu {
+            // A timer set to the window's own reset — "tell me when I
+            // can go again" without watching a countdown.
+            if let resetsAt = meter.resetsAt,
+               Date(timeIntervalSince1970: resetsAt).timeIntervalSinceNow <= ShelfTimerModel.maxDuration {
+                Button("Remind Me When \(meter.window) Resets") {
+                    model.timers.add(label: "\(ProviderStyle.style(for: meter.provider).name) \(meter.window) reset",
+                                     until: Date(timeIntervalSince1970: resetsAt))
+                }
+            }
+        }
         .accessibilityElement(children: .combine)
     }
 
-    private var overviewButton: some View {
-        Button { model.onOpenOverview?() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "rectangle.grid.2x2")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(style.subColor)
-                    .frame(width: 18, height: 18)
-                Text("Agent Overview")
-                    .font(.system(size: 11))
-                    .foregroundStyle(style.subColor)
-                Spacer(minLength: 8)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Every session as a roster (⌘O)")
-    }
 }
 
 /// The card's media row: artwork, source identity, track line,
@@ -462,6 +816,9 @@ private struct ShelfMediaRow: View {
                     }
                     .frame(width: 18, height: 18)
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .contentShape(Rectangle())
+                    .onTapGesture { utility.raisePlayer() }
+                    .help(utility.sourceName.map { "Open \($0)" } ?? "")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(media.displayLine)
                             .font(.system(size: 11))
@@ -473,11 +830,14 @@ private struct ShelfMediaRow: View {
                             .lineLimit(1)
                     }
                     if media.playing {
+                        // The bars wear the artwork's colour when it
+                        // has one.
+                        let bars = utility.artworkTint.map { Color(nsColor: $0).opacity(0.85) }
+                            ?? style.faintColor
                         if utility.audioTapLive {
-                            LiveEqualizer(levels: utility.audioLevels,
-                                          color: style.faintColor)
+                            LiveEqualizer(levels: utility.audioLevels, color: bars)
                         } else {
-                            ShelfEqualizer(color: style.faintColor)
+                            ShelfEqualizer(color: bars)
                         }
                     }
                     Spacer(minLength: 4)
@@ -506,6 +866,7 @@ private struct ShelfMediaRow: View {
                                 }
                             }
                             .controlSize(.mini)
+                            .tint(utility.artworkTint.map { Color(nsColor: $0) })
                             Text("−" + Self.clock(duration - utility.elapsedShown(at: context.date)))
                                 .font(.system(size: 9))
                                 .monospacedDigit()
@@ -514,18 +875,24 @@ private struct ShelfMediaRow: View {
                     }
                 }
                 if let synced = utility.lyrics.lyrics {
-                    // The synced line rides the same tick as the
-                    // playhead — faint, one line, silent when the
-                    // playhead sits between stamps.
-                    TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
-                        if let line = synced.line(at: utility.elapsedShown(at: context.date)) {
-                            Text(line)
-                                .font(.system(size: 9))
-                                .foregroundStyle(style.faintColor)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
+                    LyricLines(lyrics: synced, utility: utility, playing: media.playing, style: style)
+                }
+                if let volume = utility.outputVolume {
+                    // Fine adjustment without the keys — the same
+                    // CoreAudio path the level HUD reads.
+                    HStack(spacing: 6) {
+                        Image(systemName: volume <= 0 ? "speaker.slash.fill" : "speaker.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(style.faintColor)
+                            .frame(width: 12)
+                        Slider(value: Binding(get: { volume }, set: { utility.setVolume($0) }),
+                               in: 0...1)
+                            .controlSize(.mini)
+                        Image(systemName: "speaker.wave.3.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(style.faintColor)
                     }
+                    .accessibilityLabel("Volume")
                 }
             }
             .accessibilityElement(children: .combine)
@@ -547,6 +914,59 @@ private struct ShelfMediaRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The synced lyrics under the transport — Atoll's sweep in the card's
+/// own restraint: the current line bright with a soft highlight
+/// travelling through it in time, the next line faint beneath. The
+/// clock runs on the display (30 fps) only while the row is mounted
+/// and the track plays; paused, or under Reduce Motion, it steps at a
+/// calm rate and the sweep stands still. Silent between stamps.
+private struct LyricLines: View {
+    let lyrics: SyncedLyrics
+    let utility: ShelfUtilityModel
+    let playing: Bool
+    let style: NotchCardStyle
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let live = playing && !reduceMotion
+        TimelineView(.animation(minimumInterval: live ? 1.0 / 30.0 : 0.5, paused: !playing)) { context in
+            let at = utility.elapsedShown(at: context.date)
+            let position = lyrics.position(at: at)
+            VStack(alignment: .leading, spacing: 1) {
+                if let line = lyrics.line(at: at) {
+                    Text(line)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(style.subColor)
+                        .overlay {
+                            if live, let progress = position.progress {
+                                // The sweep: the same text, brighter,
+                                // revealed left to right as the line plays.
+                                Text(line)
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(style.titleColor)
+                                    .mask(alignment: .leading) {
+                                        GeometryReader { geo in
+                                            Rectangle().frame(width: geo.size.width * progress)
+                                        }
+                                    }
+                            }
+                        }
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if let next = position.next {
+                    Text(next)
+                        .font(.system(size: 9))
+                        .foregroundStyle(style.faintColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -693,44 +1113,38 @@ private struct LiveEqualizer: View {
 
 /// The card's battery row: the internal battery's observed state,
 /// hidden entirely on machines without one — never an invented charge.
-/// Volume/brightness controls are intentionally not here: macOS owns
-/// those HUDs.
+/// The glyph holds the charge it reads, and the line is agent-aware:
+/// the system's time estimate, how many runs ride on it, and whether
+/// the Mac is held awake (`AlcovePower.batteryLine`) — whether a long
+/// run survives unplugged is the question only this card can answer.
 private struct ShelfBatteryRow: View {
     let power: AlcovePowerState
+    let working: Int
+    let heldAwake: Bool
     let style: NotchCardStyle
 
     var body: some View {
         if power.hasBattery {
+            let low = !power.onAC && (power.percent ?? 100) < AlcovePower.lowThreshold
             HStack(spacing: 6) {
-                Image(systemName: power.charging ? "battery.100.bolt" : "battery.50")
+                Image(systemName: power.symbol)
                     .font(.system(size: 10))
-                    .foregroundStyle(style.subColor)
+                    .foregroundStyle(low ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.subColor))
                     .frame(width: 18)
-                Text(label)
+                Text(AlcovePower.batteryLine(power, working: working, heldAwake: heldAwake))
                     .font(.system(size: 11))
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
             }
         }
     }
-
-    private var label: String {
-        var parts: [String] = []
-        if let percent = power.percent { parts.append("\(percent)%") }
-        if power.fullyCharged {
-            parts.append("Charged")
-        } else if power.charging {
-            parts.append("Charging")
-        } else {
-            parts.append(power.onAC ? "On AC" : "On battery")
-        }
-        return parts.isEmpty ? "Battery" : parts.joined(separator: " · ")
-    }
 }
 
 /// The card's weather row: the Open-Meteo reading beside the battery —
-/// symbol, temperature, the place the reading is for. Absent while the
-/// setting is off or no fetch has landed; the row never invents a sky.
+/// symbol, temperature, the place the reading is for — over a faint
+/// outlook line (today's high and low, rain in the next two hours in a
+/// cool tint). Absent while the setting is off or no fetch has landed;
+/// the row never invents a sky.
 private struct ShelfWeatherRow: View {
     let weather: NotchWeather
     let style: NotchCardStyle
@@ -738,17 +1152,27 @@ private struct ShelfWeatherRow: View {
     var body: some View {
         if let reading = weather.reading {
             let (symbol, label) = NotchWeather.symbol(for: reading.code)
-            HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
                 Image(systemName: symbol)
                     .font(.system(size: 10))
                     .foregroundStyle(style.subColor)
                     .frame(width: 18)
-                Text([label, reading.temperatureText, reading.place]
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " · "))
-                    .font(.system(size: 11))
-                    .foregroundStyle(style.subColor)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text([label, reading.temperatureText, reading.place]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " · "))
+                        .font(.system(size: 11))
+                        .foregroundStyle(style.subColor)
+                        .lineLimit(1)
+                    if let outlook = reading.outlookText {
+                        Text(outlook)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(reading.rainInMinutes != nil
+                                             ? AnyShapeStyle(Color.cyan.opacity(0.85))
+                                             : AnyShapeStyle(style.faintColor))
+                            .lineLimit(1)
+                    }
+                }
             }
         }
     }
@@ -757,22 +1181,43 @@ private struct ShelfWeatherRow: View {
 /// The card's tray strip: dropped files as chips. A moved or deleted
 /// file renders dimmed and disabled — the strip says missing, it
 /// doesn't silently forget. Reveal/share only ever act on a file that
-/// re-resolved this pass.
+/// re-resolved this pass. "Hand to" gives a file to an agent: its
+/// `@path` goes on the pasteboard and that session comes forward.
 private struct ShelfTrayRow: View {
     let tray: ShelfTrayModel
     let style: NotchCardStyle
+    var handTargets: [(id: String, label: String)] = []
+    var onHand: (ShelfTrayModel.ShelfEntry, String) -> Void = { _, _ in }
+    /// Each tile is a drop target of its own; the card counts it among
+    /// the targets a drag can be over (`NotchCardModel.dropHover`).
+    var dropHover: ((String) -> Binding<Bool>)?
+    var onDropLanded: () -> Void = {}
+
+    /// The shelf's tiles: a thumbnail over the name, Yoink's grammar —
+    /// the shelf has its own page now, so a file shows its face rather
+    /// than an 11 pt glyph. One row until the shelf fills, then two,
+    /// scrolling sideways.
+    static let tileWidth: CGFloat = 58
+    static let tileHeight: CGFloat = 48
+    static let tileSpacing: CGFloat = 4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if !tray.entries.isEmpty {
+            if !tray.entries.isEmpty || tray.pasteOffered {
+                let rows = ShelfTrayModel.stripRows(tiles: tray.entries.count + (tray.pasteOffered ? 1 : 0))
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
+                    LazyHGrid(rows: Array(repeating: GridItem(.fixed(Self.tileHeight),
+                                                              spacing: Self.tileSpacing),
+                                          count: rows),
+                              spacing: Self.tileSpacing) {
+                        if tray.pasteOffered { pasteChip }
                         ForEach(tray.entries) { entry in
                             trayChip(entry)
                         }
                     }
                 }
                 .frame(maxWidth: 280)
+                .frame(height: CGFloat(rows) * Self.tileHeight + CGFloat(rows - 1) * Self.tileSpacing)
             }
             if let notice = tray.evictionNotice {
                 Text(notice)
@@ -791,6 +1236,28 @@ private struct ShelfTrayRow: View {
         }
     }
 
+    /// Yoink's keyboard-free save: something copied since the last
+    /// paste here can join the shelf in one click.
+    private var pasteChip: some View {
+        Button { tray.paste() } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 15))
+                    .frame(height: 26)
+                Text("Paste")
+                    .font(.system(size: 8.5, weight: .medium))
+            }
+            .foregroundStyle(style.subColor)
+            .frame(width: Self.tileWidth, height: Self.tileHeight)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(style.faintColor, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Put what you copied on the shelf")
+        .accessibilityLabel("Paste to the shelf")
+    }
+
     private func trayChip(_ entry: ShelfTrayModel.ShelfEntry) -> some View {
         Group {
             switch entry {
@@ -804,6 +1271,20 @@ private struct ShelfTrayRow: View {
         }
         .contextMenu {
             if !entry.missing {
+                // The job done all day: a screenshot or a file handed
+                // to an agent — copied as its `@path`, the session raised
+                // for the paste. Never typed for you.
+                if let first = handTargets.first {
+                    Button("Hand to \(first.label)") { onHand(entry, first.id) }
+                    if handTargets.count > 1 {
+                        Menu("Hand to") {
+                            ForEach(handTargets, id: \.id) { target in
+                                Button(target.label) { onHand(entry, target.id) }
+                            }
+                        }
+                    }
+                    Divider()
+                }
                 Button("Quick Look") { tray.quickLook(entry) }
                 Button("Reveal in Finder") { tray.reveal(entry) }
                 Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
@@ -825,12 +1306,13 @@ private struct ShelfTrayRow: View {
         .onDrag {
             tray.provider(for: entry) ?? NSItemProvider()
         }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+        .onDrop(of: [.fileURL], isTargeted: dropHover?("tile:\(entry.id)")) { providers in
             // No provider carrying a file means nothing to land —
             // an unconditional yes would animate acceptance anyway.
             guard providers.contains(where: {
                 $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
             }) else { return false }
+            onDropLanded()
             // A tray drag carries the entry's own file URLs: landing on
             // another chip reorders; a foreign file lands where it
             // dropped — onto a stack it joins the stack, anywhere else
@@ -866,28 +1348,32 @@ private struct ShelfTrayRow: View {
     /// gestures so a stack can answer a plain click with its grid.
     private func itemFace(_ item: ShelfTrayModel.Entry,
                           entry: ShelfTrayModel.ShelfEntry) -> some View {
-        HStack(spacing: 3) {
+        VStack(spacing: 3) {
             if item.missing {
                 Image(systemName: "doc.questionmark")
-                    .font(.system(size: 9))
+                    .font(.system(size: 15))
+                    .frame(width: 26, height: 26)
             } else {
-                // The file's own Finder face — Yoink's tray grammar,
-                // not a generic glyph.
+                // The file's own face — its Quick Look thumbnail once one
+                // lands, the Finder icon until then.
                 Image(nsImage: tray.icon(for: item))
                     .resizable()
-                    .frame(width: 11, height: 11)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 26, height: 26)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             }
             Text(item.missing ? "\(item.name) (moved)" : item.name)
-                .font(.system(size: 10))
+                .font(.system(size: 8.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(width: Self.tileWidth - 8)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .frame(width: Self.tileWidth, height: Self.tileHeight)
         .background(item.missing
                     ? AnyShapeStyle(style.chipFaint)
                     : AnyShapeStyle(style.chipFill),
-                    in: Capsule())
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .foregroundStyle(item.missing ? style.faintColor : style.subColor)
         .onTapGesture(count: 2) {
             if !item.missing { tray.quickLook(entry) }
@@ -920,29 +1406,33 @@ private struct ShelfStackChip: View {
     @ViewState private var open = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        VStack(spacing: 3) {
+            // The fan: the first three faces, tilted like a stack of
+            // prints — the tile's own tell that it holds more than one.
             ZStack {
                 ForEach(Array(stack.items.prefix(3).enumerated()),
                         id: \.element.id) { index, item in
                     Image(nsImage: tray.icon(for: item))
                         .resizable()
-                        .frame(width: 10, height: 10)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 20, height: 20)
                         .rotationEffect(.degrees(Double(index - 1) * 9))
-                        .offset(x: CGFloat(index - 1) * 3.5)
+                        .offset(x: CGFloat(index - 1) * 6)
                 }
             }
-            .frame(width: 20, height: 13)
-            Text("\(stack.name) · \(stack.items.count)")
-                .font(.system(size: 10))
+            .frame(width: 40, height: 26)
+            Text("\(tray.stackName(stack)) · \(stack.items.count)")
+                .font(.system(size: 8.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(width: ShelfTrayRow.tileWidth - 8)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .frame(width: ShelfTrayRow.tileWidth, height: ShelfTrayRow.tileHeight)
         .background(stack.items.allSatisfy(\.missing)
                     ? AnyShapeStyle(style.chipFaint)
                     : AnyShapeStyle(style.chipFill),
-                    in: Capsule())
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .foregroundStyle(stack.items.allSatisfy(\.missing)
                          ? style.faintColor : style.subColor)
         .onTapGesture {
@@ -962,7 +1452,7 @@ private struct ShelfStackChip: View {
     /// thins; the last one out leaves a loose chip.
     private var grid: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(stack.name)
+            Text(tray.stackName(stack))
                 .font(.system(size: 11, weight: .medium))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 56),
                                          spacing: 6)],
@@ -1033,30 +1523,63 @@ private struct ShelfTimersRow: View {
     /// model mutates per second, so without a TimelineView the count
     /// only re-renders when the card redraws for other reasons. The
     /// periodic schedule ticks the text every second while mounted and
-    /// costs nothing once the row unmounts.
+    /// costs nothing once the row unmounts. A click pauses or resumes a
+    /// running timer; a done one offers +1 and +5 minutes, the snooze
+    /// every timer has.
     private func timerChip(_ entry: ShelfTimerModel.Entry) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
+        TimelineView(.periodic(from: .now, by: entry.paused ? 60 : 1)) { _ in
             let overdue = entry.overdue
             HStack(spacing: 3) {
-                Image(systemName: overdue ? "checkmark" : "timer")
-                    .font(.system(size: 9))
-                Text(overdue ? "Done" : remainingText(entry))
-                    .font(.system(size: 10, design: .monospaced))
-                    .lineLimit(1)
+                HStack(spacing: 3) {
+                    Image(systemName: overdue ? "checkmark" : (entry.paused ? "pause.fill" : "timer"))
+                        .font(.system(size: 9))
+                    Text(overdue ? "Done" : remainingText(entry))
+                        .font(.system(size: 10, design: .monospaced))
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !overdue else { return }
+                    if entry.paused { timers.resume(entry) } else { timers.pause(entry) }
+                }
+                if overdue {
+                    ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
+                        Button("+\(Int(seconds / 60))") { timers.extend(entry, by: seconds) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .help("Run it again for \(Int(seconds / 60)) min")
+                    }
+                }
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(style.chipFill, in: Capsule())
-            .foregroundStyle(overdue
+            .foregroundStyle(overdue || entry.paused
                 ? AnyShapeStyle(style.subColor)
                 : AnyShapeStyle(style == .island
                                 ? Color.white.opacity(0.8)
                                 : Color.primary.opacity(0.75)))
             .contextMenu {
+                if !overdue {
+                    Button(entry.paused ? "Resume" : "Pause") {
+                        if entry.paused { timers.resume(entry) } else { timers.pause(entry) }
+                    }
+                }
+                ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
+                    Button("Add \(Int(seconds / 60)) min") { timers.extend(entry, by: seconds) }
+                }
+                Divider()
                 Button("Remove", role: .destructive) { timers.remove(entry) }
             }
-            .help(overdue ? "\(entry.label) — done." : "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened))")
+            .help(help(for: entry, overdue: overdue))
         }
+    }
+
+    private func help(for entry: ShelfTimerModel.Entry, overdue: Bool) -> String {
+        if overdue { return "\(entry.label) — done." }
+        if entry.paused { return "\(entry.label) — paused. Click to resume." }
+        let watch = entry.watchSession != nil ? " Only speaks if the session is still working." : ""
+        return "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened)). Click to pause.\(watch)"
     }
 
     /// `m:ss` or `h:mm:ss` remaining — the chip counts down from the
@@ -1069,93 +1592,152 @@ private struct ShelfTimersRow: View {
     }
 }
 
-/// The card's calendar glance: the next event, hidden until the owner
-/// grants EventKit access — no permission, no row. Join only ever
-/// opens an http(s) link.
+/// The card's calendar glance: the next few timed events, soonest
+/// first — the first carries Join when it has an http(s) link, the rest
+/// whisper under it. No access or the switch off, no row: the ask lives
+/// in Setup and the Notch settings, never here.
 private struct ShelfCalendarRow: View {
     let calendar: ShelfCalendarModel
     let style: NotchCardStyle
 
     var body: some View {
         switch calendar.state {
-        case .hidden:
+        case .hidden, .needsPermission:
             EmptyView()
-        case .needsPermission:
-            Button {
-                calendar.authorizeAndLoad()
-            } label: {
-                Label("Show calendar", systemImage: "calendar")
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.faintColor)
-            }
-            .buttonStyle(.plain)
         case .idle:
-            Label("Nothing on the calendar today", systemImage: "calendar")
+            Label("Nothing in the next 24 hours", systemImage: "calendar")
                 .font(.system(size: 10))
                 .foregroundStyle(style.faintColor)
-        case .event(let event):
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 9))
-                    .foregroundStyle(style.subColor)
-                    .frame(width: 14)
-                Text(event.start.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(style.subColor)
-                Text(event.title)
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.titleColor)
-                    .lineLimit(1)
-                if event.url != nil {
-                    Button("Join") { calendar.join(event) }
-                        .controlSize(.mini)
+        case .events(let events):
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(events.enumerated()), id: \.offset) { index, event in
+                    eventLine(event, lead: index == 0)
                 }
             }
-            .contextMenu {
-                Button("Open in Calendar") { calendar.openInCalendar(event) }
+        }
+    }
+
+    private func eventLine(_ event: ShelfCalendarModel.Event, lead: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "calendar")
+                .font(.system(size: 9))
+                .foregroundStyle(style.subColor)
+                .frame(width: 14)
+                .opacity(lead ? 1 : 0)
+            Text(event.start.formatted(date: .omitted, time: .shortened))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(lead ? style.subColor : style.faintColor)
+            Text(event.title)
+                .font(.system(size: 10))
+                .foregroundStyle(lead ? style.titleColor : style.faintColor)
+                .lineLimit(1)
+            if lead, event.url != nil {
+                Button("Join") { calendar.join(event) }
+                    .controlSize(.mini)
             }
+        }
+        .contextMenu {
+            if event.url != nil {
+                Button("Join") { calendar.join(event) }
+            }
+            Button("Open in Calendar") { calendar.openInCalendar(event) }
         }
     }
 }
 
 /// The card's reminders rows: a check-off circle, the title, the due
 /// time — overdue reads "Overdue", dueless rows carry no time. Drawn
-/// only while the state has something to say; permission stays an
-/// explicit button like the calendar's.
+/// only while the state has something to say; asking for access is
+/// Setup's and the Notch settings' job, never a button here.
 private struct ShelfRemindersRow: View {
     let reminders: ShelfRemindersModel
     let style: NotchCardStyle
+    @ViewState private var adding = false
+    @ViewState private var draft = ""
 
     var body: some View {
         switch reminders.state {
-        case .hidden:
+        case .hidden, .needsPermission:
             EmptyView()
-        case .needsPermission:
-            Button {
-                reminders.authorizeAndLoad()
-            } label: {
-                Label("Show reminders", systemImage: "checklist")
+        case .idle:
+            HStack(spacing: 6) {
+                Label("No reminders due", systemImage: "checklist")
                     .font(.system(size: 10))
                     .foregroundStyle(style.faintColor)
+                Spacer(minLength: 4)
+                addButton
             }
-            .buttonStyle(.plain)
-        case .idle:
-            Label("No reminders due", systemImage: "checklist")
-                .font(.system(size: 10))
-                .foregroundStyle(style.faintColor)
         case .items(let items):
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(items.prefix(ShelfRemindersModel.rowLimit)) { entry in
                     row(entry)
                 }
-                if items.count > ShelfRemindersModel.rowLimit {
-                    Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
-                        .font(.system(size: 9))
-                        .foregroundStyle(style.faintColor)
-                        .padding(.leading, 20)
+                HStack(spacing: 6) {
+                    if items.count > ShelfRemindersModel.rowLimit {
+                        Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
+                            .font(.system(size: 9))
+                            .foregroundStyle(style.faintColor)
+                            .padding(.leading, 20)
+                    }
+                    Spacer(minLength: 4)
+                    addButton
                 }
             }
         }
+    }
+
+    /// Quick add: one typed line, its date read out of the words ("Call
+    /// Sam tomorrow at 3pm"), saved to the default Reminders list. The
+    /// field lives in a popover — the card's panel never takes keys.
+    private var addButton: some View {
+        Button { adding = true } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(style.faintColor)
+                .frame(width: 16, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Add a reminder")
+        .accessibilityLabel("Add a reminder")
+        .popover(isPresented: $adding, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New reminder")
+                    .font(.system(size: 11, weight: .semibold))
+                TextField("Call Sam tomorrow at 3pm", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .onSubmit(save)
+                Text(Self.preview(draft))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                HStack {
+                    Spacer()
+                    Button("Add", action: save)
+                        .keyboardShortcut(.defaultAction)
+                        .controlSize(.small)
+                        .disabled(ShelfRemindersModel.quickAdd(draft) == nil)
+                }
+            }
+            .padding(10)
+            .frame(width: 230)
+        }
+    }
+
+    private func save() {
+        guard reminders.add(draft) else { return }
+        draft = ""
+        adding = false
+    }
+
+    /// What the line will save as: "Call Sam · Tomorrow, 15:00".
+    static func preview(_ draft: String) -> String {
+        guard let parsed = ShelfRemindersModel.quickAdd(draft) else { return "Type what, and when" }
+        guard let due = parsed.due, let date = Calendar.current.date(from: due) else {
+            return "\(parsed.title) · no date"
+        }
+        return "\(parsed.title) · \(ShelfRemindersModel.whenText(date, hasTime: due.hour != nil))"
     }
 
     private func row(_ entry: ShelfRemindersModel.Entry) -> some View {
@@ -1224,6 +1806,49 @@ private struct ShelfMirrorRow: View {
                 .font(.system(size: 10))
                 .foregroundStyle(style.faintColor)
         }
+    }
+}
+
+/// One verb on an ask — Approve, Deny, Open — as a small capsule the
+/// card rows and the island's ask face share. The prominent one is the
+/// white fill (the island's own colour for "yes"), the rest sit on the
+/// chip fill; a verb whose answer is in flight dims and takes no second
+/// click.
+struct NotchVerbButton: View {
+    let title: String
+    let style: NotchCardStyle
+    var prominent = false
+    var busy = false
+    var systemImage: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 8.5, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 10, weight: prominent ? .semibold : .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(prominent
+                             ? AnyShapeStyle(style == .island ? Color.black : Color.white)
+                             : AnyShapeStyle(style.titleColor.opacity(0.9)))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(prominent
+                          ? AnyShapeStyle(style == .island ? Color.white.opacity(0.92) : Color.accentColor)
+                          : AnyShapeStyle(style.chipFill)))
+            .contentShape(Capsule())
+            .opacity(busy ? 0.45 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .accessibilityLabel(title)
     }
 }
 

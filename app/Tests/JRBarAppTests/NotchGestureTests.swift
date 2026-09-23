@@ -134,6 +134,24 @@ struct NotchGestureTests {
         #expect(toy.islandExpanded)
     }
 
+    // MARK: Pinch
+
+    @Test("a spread grows the card, a squeeze folds it or puts a capsule away")
+    func pinch() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.islandPinch(.grow)
+        #expect(toy.islandExpanded)
+        toy.islandPinch(.fold)
+        #expect(!toy.islandExpanded)
+        toy.offer(notice(.completed, key: "done:a", id: "a"))
+        toy.islandPinch(.fold)
+        #expect(toy.activeCapsule == nil)
+        store.state.notch.pullGestures = false
+        toy.islandPinch(.grow)
+        #expect(!toy.islandExpanded, "gestures off: the pinch is inert")
+    }
+
     // MARK: The queue's door — priority
 
     @Test("a waiting ask is never displaced by an ambient offer")

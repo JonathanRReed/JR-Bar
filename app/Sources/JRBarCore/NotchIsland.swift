@@ -30,12 +30,17 @@ public struct NotchIslandRow: Equatable, Sendable, Identifiable {
     /// The provider id — the app resolves its name and colour.
     public var provider: String
     public var activity: SessionActivity
+    /// The open ask a waiting row carries — the card's inline Approve /
+    /// Deny read it (`NotchAskVerbs`); nil on every other row.
+    public var ask: CoreAsk?
 
-    public init(id: String, label: String, provider: String, activity: SessionActivity) {
+    public init(id: String, label: String, provider: String, activity: SessionActivity,
+                ask: CoreAsk? = nil) {
         self.id = id
         self.label = label
         self.provider = provider
         self.activity = activity
+        self.ask = ask
     }
 }
 
@@ -94,6 +99,13 @@ public struct NotchIslandSummary: Equatable, Sendable {
     public var rows: [NotchIslandRow] = []
     /// "3 working · 1 waiting" — the header and the accessibility value.
     public var statusLine = "Nothing on the clock"
+    /// The session that has waited longest on an answer — the amber
+    /// count's click goes straight there. Ordered by the ask's own
+    /// `opened_at`, then the session's `since`; nil when nobody waits
+    /// here. A peer's ask counts in `waiting` but is never the jump:
+    /// its terminal is on another Mac, so a click on it would open
+    /// nothing.
+    public var oldestWaiting: String?
 
     public init() {}
 }
@@ -130,17 +142,29 @@ public enum NotchIsland {
     /// One pass over the session list: the counts, the working-provider
     /// dots, the live rows and the status line all fall out of the same
     /// `SessionActivity.reduce` calls, the way `NotchBuddyToy.summary`
-    /// keeps its pieces from disagreeing.
-    public static func summarize(_ sessions: [CoreSession]) -> NotchIslandSummary {
+    /// keeps its pieces from disagreeing. `asks` is `state.asks`: a
+    /// waiting row carries the pinned ask over the one embedded in its
+    /// session, the same precedence the panel's rows take (`liveAsk`).
+    public static func summarize(_ sessions: [CoreSession], asks: [CoreAsk] = []) -> NotchIslandSummary {
         var s = NotchIslandSummary()
         var tally: [String: Int] = [:]
+        var oldest: (id: String, at: Double)?
         for session in sessions {
             let activity = SessionActivity.reduce(session)
             switch activity {
             case .working:
                 s.working += 1
                 tally[session.provider, default: 0] += 1
-            case .waiting: s.waiting += 1
+            case .waiting:
+                s.waiting += 1
+                guard !CoreSession.isRemoteID(session.id) else { break }
+                // Unknown times sort last, so a stamped ask always wins
+                // the jump over one the daemon could not date.
+                let at = session.ask?.openedAt ?? session.since ?? .greatestFiniteMagnitude
+                if oldest == nil || at < oldest!.at
+                    || (at == oldest!.at && session.id < oldest!.id) {
+                    oldest = (session.id, at)
+                }
             case .failed: s.failed += 1
             case .done, .ended, .idle: break
             }
@@ -151,10 +175,12 @@ public enum NotchIsland {
                     label: SessionLabel.display(label: session.label, shortId: session.shortId,
                                                 id: session.id, provider: session.provider),
                     provider: session.provider,
-                    activity: activity))
+                    activity: activity,
+                    ask: activity == .waiting ? liveAsk(for: session, asks: asks) : nil))
             case .done, .ended, .idle: break
             }
         }
+        s.oldestWaiting = oldest?.id
         // Busiest first; the id tiebreak keeps a split house from
         // flickering between ticks, the same rule the buddy uses.
         s.workingProviders = tally.keys.sorted { a, b in
@@ -417,6 +443,10 @@ public enum NotchIslandLayout {
 }
 
 extension AlcoveNoticeKind {
+    /// The kinds whose capsule carries buttons — the ask's verbs, a
+    /// meeting's Join — and so wears the taller verb face.
+    public var hasVerbs: Bool { self == .ask || self == .meeting }
+
     /// Which capsule deserves the queue's one waiting slot: an ask
     /// outranks a failure, and both outrun the ambient kinds. Lower
     /// wins. `AlcoveCapsuleQueue` itself stays newest-wins; the
@@ -426,9 +456,19 @@ extension AlcoveNoticeKind {
         switch self {
         case .ask: return 0
         case .failed: return 1
-        case .completed: return 2
-        case .quotaReset: return 3
-        case .charging: return 4
+        // A meeting about to start and a timer the person set outrank
+        // an agent's news about itself.
+        case .meeting, .timer: return 2
+        case .completed: return 3
+        case .quotaReset: return 4
+        case .device: return 5
+        case .focus: return 6
+        case .display: return 7
+        case .charging: return 8
+        // Feedback never waits in the line (`isFeedback` overlays), so
+        // these ranks only order it should it ever be offered there.
+        case .capsLock: return 9
+        case .level: return 10
         }
     }
 }
@@ -744,5 +784,304 @@ public struct NotchFrameSpring: Equatable, Sendable {
         yAxis = Axis(value: target.minY)
         wAxis = Axis(value: target.width)
         hAxis = Axis(value: target.height)
+    }
+}
+
+/// The island's pinch, read off trackpad magnify events: spreading two
+/// fingers grows the resting island into the card, squeezing folds the
+/// card back into the notch (or puts a capsule away). One verdict per
+/// gesture, at the threshold — the way the swipe fires once.
+public struct NotchPinch: Equatable, Sendable {
+    public enum Verdict: Equatable, Sendable { case grow, fold }
+
+    /// Accumulated magnification that commits — a deliberate spread,
+    /// not a wobble while two fingers rest on the trackpad.
+    public static let threshold: CGFloat = 0.18
+
+    public private(set) var total: CGFloat = 0
+    public private(set) var fired = false
+
+    public init() {}
+
+    /// One magnify delta; the verdict once it crosses, nil otherwise
+    /// (and nil for the rest of the gesture after it fired).
+    public mutating func add(_ delta: CGFloat) -> Verdict? {
+        guard !fired else { return nil }
+        total += delta
+        if total >= Self.threshold { fired = true; return .grow }
+        if total <= -Self.threshold { fired = true; return .fold }
+        return nil
+    }
+}
+
+/// ⌘-drag sideways on the resting island sets a timer — DynamicLake's
+/// quickest timer, on the notch's own black. Travel to the right counts
+/// up: a minute per step to half an hour, then five-minute steps to
+/// three hours. Back under one step (or left of where it started) is
+/// no timer, so letting go there cancels.
+public enum NotchTimerDrag {
+    /// Points of travel per step — small enough that half an hour sits
+    /// within the notch's own width plus its shoulders.
+    public static let pointsPerStep: CGFloat = 6
+    public static let fineSteps = 30
+    public static let coarseStep = 5
+    public static let maxMinutes = 180
+
+    /// The minutes a drag of `travel` points (rightward positive) sets,
+    /// or nil for none.
+    public static func minutes(forTravel travel: CGFloat) -> Int? {
+        let steps = Int((travel / pointsPerStep).rounded(.down))
+        guard steps >= 1 else { return nil }
+        if steps <= fineSteps { return steps }
+        return min(maxMinutes, fineSteps + (steps - fineSteps) * coarseStep)
+    }
+
+    /// "5 min", "1 h", "1 h 30 min".
+    public static func label(_ minutes: Int) -> String {
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if hours == 0 { return "\(rest) min" }
+        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
+    }
+
+    /// The readout's fill: how far toward the longest timer.
+    public static func fraction(_ minutes: Int?) -> Double {
+        guard let minutes else { return 0 }
+        return min(1, Double(minutes) / Double(maxMinutes))
+    }
+}
+
+/// A due timer across the room: three soft orange beats on the LED
+/// strips (`preview_program` on the `hardware` surface), then the live
+/// light comes back on its own. Only where a strip is connected, never
+/// while the Mac is quiet — the island's capsule still says it.
+public enum NotchTimerLights {
+    /// The timer capsule's orange, breathed three times.
+    public static let program = """
+    off
+    #FF9F0A 300ms cosine
+    off 300ms cosine
+    repeat 3
+    """
+    /// The preview's hold: the beats and a breath of dark after them.
+    public static let seconds: Double = 2.2
+
+    /// Whether a due timer flashes the strips now.
+    public static func shouldFlash(enabled: Bool, devices: [CoreDevice], quiet: Bool) -> Bool {
+        guard enabled, !quiet else { return false }
+        return devices.contains { $0.connected == true && !$0.id.hasPrefix("virtual:") }
+    }
+}
+
+/// A scroll event's deltas as the fingers moved: right and up positive.
+/// Under natural scrolling (`isDirectionInvertedFromDevice`) AppKit's
+/// deltas follow the content, which follows the fingers — in a y-down
+/// frame, so the vertical flips; a legacy wheel reports the opposite
+/// of the content on both axes. The Screen Bar's vertical reads the
+/// same way (`scrollFingerDelta`).
+public enum NotchScrollFinger {
+    public static func travel(dx: CGFloat, dy: CGFloat, inverted: Bool) -> CGVector {
+        inverted ? CGVector(dx: dx, dy: -dy) : CGVector(dx: -dx, dy: dy)
+    }
+}
+
+/// The level capsule as a control: while a volume or brightness level
+/// is up, scrolling over it moves the level — fingers up is more. The
+/// capsule's key names which level it shows (`level:volume`,
+/// `level:brightness`, `level:keyboard`); the keyboard backlight has
+/// no public set path, so it only ever shows.
+public enum NotchLevelScrub {
+    public enum Target: String, Equatable, Sendable { case volume, brightness, keyboard }
+
+    /// Finger travel, in points, that sweeps the whole range — about the
+    /// capsule's own width, so the fill follows the fingers.
+    public static let pointsPerRange: CGFloat = 220
+    /// One mouse-wheel click: the system's own key step, 1/16.
+    public static let wheelStep: Double = 1.0 / 16.0
+
+    public static func key(for target: Target) -> String { "level:\(target.rawValue)" }
+
+    public static func target(ofKey key: String) -> Target? {
+        guard key.hasPrefix("level:") else { return nil }
+        return Target(rawValue: String(key.dropFirst("level:".count)))
+    }
+
+    /// Whether a scroll may set this level at all.
+    public static func settable(_ target: Target) -> Bool { target != .keyboard }
+
+    /// The level after a scroll of `fingerDelta` points (positive is
+    /// fingers up), clamped to 0…1. A wheel (no precise deltas) moves
+    /// one key step per click, whichever way it turned.
+    public static func step(_ fraction: Double, fingerDelta: CGFloat, precise: Bool) -> Double {
+        let move = precise
+            ? Double(fingerDelta / pointsPerRange)
+            : (fingerDelta == 0 ? 0 : (fingerDelta > 0 ? wheelStep : -wheelStep))
+        return min(1, max(0, fraction + move))
+    }
+}
+
+// MARK: - Asks at the notch
+
+extension NotchIsland {
+    /// The ask a session waits on: the one pinned in `state.asks` first
+    /// (it carries the daemon's `answerable` verdict and the request
+    /// pin), the session's embedded one otherwise — with `session`
+    /// filled in, so the answer path always has an id to send.
+    public static func liveAsk(for session: CoreSession, asks: [CoreAsk]) -> CoreAsk? {
+        if let pinned = asks.first(where: { $0.session == session.id }) { return pinned }
+        guard var ask = session.ask else { return nil }
+        ask.session = session.id
+        return ask
+    }
+
+    /// The same read by session id over a whole state — an orphaned
+    /// pinned ask whose row is gone still answers.
+    public static func liveAsk(session id: String, state: CoreState?) -> CoreAsk? {
+        guard let state else { return nil }
+        if let pinned = state.asks.first(where: { $0.session == id }) { return pinned }
+        guard let session = state.session(withID: id) else { return nil }
+        return liveAsk(for: session, asks: [])
+    }
+
+    /// Whether a latched ask capsule still holds: its ask is live and is
+    /// still the episode the capsule pinned. An ask the capsule has
+    /// never seen in the state gets `askGrace` to arrive — the event can
+    /// land a beat before the document that carries it — and once seen,
+    /// its disappearance is the resolution.
+    public static func askStillOpen(_ notice: AlcoveNotice, live: CoreAsk?,
+                                    seenLive: Bool, age: TimeInterval) -> Bool {
+        guard notice.kind == .ask else { return false }
+        guard let live else { return !seenLive && age < askGrace }
+        guard let pinned = notice.ask?.request, let current = live.request else { return true }
+        return pinned == current
+    }
+
+    /// Seconds an ask capsule waits for its ask to show up in the state.
+    public static let askGrace: TimeInterval = 6
+}
+
+/// What a notch surface may offer for an ask — the capsule, the takeover
+/// card, a waiting row in the card. Only an explicit click ever answers:
+/// nothing here approves on its own, and the buttons exist only where
+/// the daemon says the answer chain can deliver (`CoreAsk.canAnswer`).
+public enum NotchAskVerbs: Equatable, Sendable {
+    /// Approve and Deny through `answer_ask` with the request pin, and
+    /// Open beside them.
+    case answer
+    /// Only Open. `reason` is the short why (a typed reply is wanted,
+    /// the daemon can't type into that terminal); nil while the ask has
+    /// not reached the state yet.
+    case openOnly(reason: String?)
+    /// A peer Mac's session: nothing here can answer it or raise it.
+    case remote(machine: String?)
+    /// Nothing to act on.
+    case none
+
+    public static func resolve(live: CoreAsk?, session: String?) -> NotchAskVerbs {
+        guard let session, !session.isEmpty else { return .none }
+        if CoreSession.isRemoteID(session) {
+            return .remote(machine: CoreSession.remoteMachine(inID: session))
+        }
+        guard let live else { return .openOnly(reason: nil) }
+        if live.wantsTextReply { return .openOnly(reason: "Wants a typed reply") }
+        guard live.canAnswer else { return .openOnly(reason: "Answer it in its window") }
+        return .answer
+    }
+
+    /// Approve / Deny may draw.
+    public var answers: Bool { self == .answer }
+    /// Open may draw.
+    public var opens: Bool {
+        switch self {
+        case .answer, .openOnly: return true
+        case .remote, .none: return false
+        }
+    }
+
+    /// The line under an ask that cannot be answered here, if any.
+    public var note: String? {
+        switch self {
+        case .openOnly(let reason): return reason
+        case .remote(let machine): return "Runs on \(machine ?? "another Mac") — answer it there"
+        case .answer, .none: return nil
+        }
+    }
+}
+
+/// A refused `answer_ask`, as one short line for the island: the same
+/// cases the panel's toast names (`PanelStore.answerRefused`), trimmed
+/// to fit under the notch. The ask stays open either way.
+public enum NotchAskRefusal {
+    public static func line(for error: CoreReplyError?) -> String {
+        switch error?.code {
+        case "stale_request": return "That request changed — nothing was sent"
+        case "accessibility_required": return "Needs Accessibility for JR-Bar's helper"
+        case "not_frontmost": return "Its terminal tab has to be in front"
+        case "not_found": return "That session is gone"
+        default:
+            let message = error?.message ?? error?.code ?? "refused"
+            return "Couldn't answer: \(message)"
+        }
+    }
+
+    /// The socket never answered — the ask is still open.
+    public static let unreachable = "No answer from the monitor — still open"
+}
+
+extension NotchIslandLayout {
+    /// The ask face: hung from the notch like every notice, two lines of
+    /// copy (who, and what they ask) over a row of verbs. The takeover
+    /// grows it to the card's width and lets the summary run to
+    /// `askTakeoverLines`.
+    public static let askTitleLine: CGFloat = 16
+    public static let askSummaryLine: CGFloat = 14
+    public static let askVerbRow: CGFloat = 22
+    public static let askPad: CGFloat = 8
+    public static let askGap: CGFloat = 6
+    public static let askMinWidth: CGFloat = 300
+    public static let askTakeoverLines = 3
+    /// The notch-less pill's ask needs no notch depth over its copy.
+    public static let askFloatingTop: CGFloat = 4
+
+    /// The ask face's width: the notice's own measure, floored so three
+    /// verbs fit; the takeover is the grown card's width.
+    public static func askWidth(slotWidth: CGFloat, takeover: Bool) -> CGFloat {
+        takeover
+            ? expandedWidth(slotWidth: slotWidth)
+            : max(askMinWidth, slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth)
+    }
+
+    /// Lines the summary takes at `width` — a character estimate at the
+    /// face's 11 pt, capped. The frame is the drawn shape, so this is
+    /// decided before layout; the text's own `lineLimit` keeps any
+    /// miscount inside the box.
+    public static func askSummaryLines(_ summary: String, width: CGFloat, maxLines: Int) -> Int {
+        let usable = max(40, width - 2 * 14)
+        let perLine = max(10, Int(usable / 6.0))
+        let needed = Int((Double(summary.count) / Double(perLine)).rounded(.up))
+        return min(max(1, needed), max(1, maxLines))
+    }
+
+    /// The ask face's size. Under a live Screen Bar's housing the foot
+    /// climbs over the island's bottom corners (`housingClimb`), so the
+    /// content box stands on top of that climb — the same stepping the
+    /// one-line notice takes.
+    public static func askSize(slotWidth: CGFloat, notchDepth: CGFloat, summaryLines: Int,
+                               takeover: Bool, underHousing restingRadius: CGFloat? = nil) -> CGSize {
+        let width = askWidth(slotWidth: slotWidth, takeover: takeover)
+        let content = askPad + askTitleLine + CGFloat(max(1, summaryLines)) * askSummaryLine
+            + askGap + askVerbRow + askPad
+        let top = notchDepth > 0 ? notchDepth : askFloatingTop
+        let room = top + content
+        guard notchDepth > 0, let restingRadius else {
+            return CGSize(width: width, height: room.rounded(.up))
+        }
+        func climb(_ height: CGFloat) -> CGFloat {
+            housingClimb(size: CGSize(width: width, height: height),
+                         notchDepth: notchDepth, restingRadius: restingRadius)
+        }
+        var height = (room + climb(room)).rounded(.up)
+        while height - climb(height) < room { height += 1 }
+        return CGSize(width: width, height: height)
     }
 }

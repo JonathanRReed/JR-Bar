@@ -48,9 +48,15 @@ public struct EventDelivery: Equatable, Sendable {
     /// nil leaves the status item alone; true / false start or stop the amber pulse.
     public var statusPulse: Bool?
     public var chime: Chime = .unchanged
+    /// The `takeover` tier's own stage-3 act, over the chime: the notch
+    /// island grows into the ask card and holds it until the person
+    /// answers, opens or swipes it away. false is "no takeover now" — a
+    /// card already up stands down to its capsule, it is not dismissed.
+    public var takeover: Bool
 
     public init(sound: String? = nil, soundRepeats: Int = 1, notification: Notification? = nil, toast: String? = nil,
-                withdrawNotification: String? = nil, statusPulse: Bool? = nil, chime: Chime = .unchanged) {
+                withdrawNotification: String? = nil, statusPulse: Bool? = nil, chime: Chime = .unchanged,
+                takeover: Bool = false) {
         self.sound = sound
         self.soundRepeats = soundRepeats
         self.notification = notification
@@ -58,11 +64,12 @@ public struct EventDelivery: Equatable, Sendable {
         self.withdrawNotification = withdrawNotification
         self.statusPulse = statusPulse
         self.chime = chime
+        self.takeover = takeover
     }
 
     public static let nothing = EventDelivery()
 
-    public var isSilent: Bool { sound == nil && notification == nil && toast == nil && statusPulse == nil && chime == .unchanged && withdrawNotification == nil }
+    public var isSilent: Bool { sound == nil && notification == nil && toast == nil && statusPulse == nil && chime == .unchanged && withdrawNotification == nil && !takeover }
 }
 
 public enum EventPolicy {
@@ -169,6 +176,13 @@ public enum EventPolicy {
             } else {
                 delivery.chime = .stop
             }
+            // Take over is the loudest tier, so it keeps the chime and
+            // adds the one thing the chime tier never does: the ask
+            // itself, grown out of the notch with its buttons. It is a
+            // picture, not a sound, so dim/dark leave it standing; a
+            // paused Mac and a watched pane do not get it.
+            delivery.takeover = stage >= 3 && !askingFrontmost && !chimeSuppressed
+                && isTakeoverTier(settings?.string("escalation_tier"))
             return delivery
 
         case "device_connected":
@@ -201,6 +215,17 @@ public enum EventPolicy {
         case "menu_bar", "menubar": return 2
         case "chime", "final", "takeover", "all": return 3
         default: return 2
+        }
+    }
+
+    /// Whether the chosen ceiling is `takeover` — the stage-3 finale
+    /// that grows the ask out of the notch, distinct from `chime`, which
+    /// only sounds. The daemon counts both as stage 3; the word is what
+    /// tells them apart.
+    public static func isTakeoverTier(_ tier: String?) -> Bool {
+        switch tier?.lowercased() {
+        case "takeover", "take_over", "all": return true
+        default: return false
         }
     }
 }

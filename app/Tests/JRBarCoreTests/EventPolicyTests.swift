@@ -90,6 +90,39 @@ struct EventPolicyTests {
         #expect(CoreEscalation.stageNumber("none") == 0)
     }
 
+    @Test("take over is its own stage: the chime plus the ask grown out of the notch")
+    func takeoverTier() {
+        let stage3 = CoreEvent(id: "30", kind: "escalation_stage", session: "codex:1", notify: true, stage: 3)
+        let takeover = Self.settings(["escalation_tier": .string("takeover")])
+        let loud = EventPolicy.delivery(for: stage3, state: Self.state(), settings: takeover)
+        #expect(loud.takeover)
+        #expect(loud.chime == .start, "the loudest tier keeps the chime")
+        #expect(!loud.isSilent)
+
+        // Chime is chime: it never takes the notch over.
+        let chime = EventPolicy.delivery(for: stage3, state: Self.state(),
+                                         settings: Self.settings(["escalation_tier": .string("chime")]))
+        #expect(!chime.takeover)
+        #expect(chime.chime == .start)
+
+        // Below the finale, a watched pane or a paused Mac: no takeover.
+        let stage2 = CoreEvent(id: "31", kind: "escalation_stage", session: "codex:1", notify: true, stage: 2)
+        #expect(!EventPolicy.delivery(for: stage2, state: Self.state(), settings: takeover).takeover)
+        #expect(!EventPolicy.delivery(for: stage3, state: Self.state(), settings: takeover,
+                                      askingFrontmost: true).takeover)
+        #expect(!EventPolicy.delivery(for: stage3, state: Self.state(focus: "pause"), settings: takeover).takeover)
+        // Dim and dark silence sounds, not pictures.
+        let dim = EventPolicy.delivery(for: stage3, state: Self.state(focus: "dim"), settings: takeover)
+        #expect(dim.takeover)
+        #expect(dim.chime == .stop)
+
+        #expect(EventPolicy.isTakeoverTier("takeover"))
+        #expect(EventPolicy.isTakeoverTier("TAKEOVER"))
+        #expect(!EventPolicy.isTakeoverTier("chime"))
+        #expect(!EventPolicy.isTakeoverTier(nil))
+        #expect(!EventDelivery(takeover: false).takeover)
+    }
+
     @Test("a frontmost asking pane quiets the ladder but keeps the record")
     func askingFrontmost() {
         let ask = CoreEvent(id: "20", kind: "ask_opened", session: "codex:1", label: "sidepulse-core",

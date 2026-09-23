@@ -4,9 +4,12 @@ import CoreMediaIO
 import JRBarCore
 
 /// The island's privacy dots: whether a microphone or a camera is live
-/// somewhere on the machine. A slow poll, alive only while the island
-/// is ours and shown — a privacy LED may lag a couple of seconds, but
-/// it must never be a hot loop, and a parked island holds no reader.
+/// somewhere on the machine. Property listeners make a dot land the
+/// moment a device starts or stops — CoreAudio's `IsRunningSomewhere`
+/// on the default input (re-armed when the default input moves) and
+/// CoreMediaIO's twin on every camera (re-armed when cameras come and
+/// go) — with a slow poll kept only as the safety net. Alive only while
+/// a surface can draw the dots; a parked island holds no reader.
 ///
 /// The mic answer is the same CoreAudio read the menu-bar mic trigger
 /// makes (`MenuBarSystemTriggerSource.microphoneInUse` —
@@ -22,7 +25,9 @@ import JRBarCore
 /// quiet — a dot that can't be checked is simply not drawn.
 @MainActor
 final class NotchSensorMonitor {
-    static let interval: TimeInterval = 2
+    /// The safety-net poll — the listeners carry the edges; this only
+    /// catches a device whose listener the system never fired.
+    static let interval: TimeInterval = 10
 
     /// The latest reading — written only on change, so the toy sees
     /// edges, not ticks.
@@ -32,14 +37,41 @@ final class NotchSensorMonitor {
     private var timer: Timer?
     private(set) var running = false
 
+    /// A registered CoreAudio listener — removal needs the identical
+    /// object, address and block.
+    private struct AudioListener {
+        var object: AudioObjectID
+        var address: AudioObjectPropertyAddress
+        var block: AudioObjectPropertyListenerBlock
+    }
+    private struct CameraListener {
+        var object: CMIOObjectID
+        var address: CMIOObjectPropertyAddress
+        var block: CMIOObjectPropertyListenerBlock
+    }
+    /// The system-level ones (default input moved, camera list changed)
+    /// live for the run; the device-level ones are re-armed on those.
+    private var systemAudio: AudioListener?
+    private var systemCameras: CameraListener?
+    private var inputListener: AudioListener?
+    private var cameraListeners: [CameraListener] = []
+
+    /// How many device listeners are armed — the tests' window on the
+    /// re-arming.
+    var armedListenerCount: Int {
+        (systemAudio == nil ? 0 : 1) + (systemCameras == nil ? 0 : 1)
+            + (inputListener == nil ? 0 : 1) + cameraListeners.count
+    }
+
     func start() {
         guard !running else { return }
         running = true
         poll()
+        armListeners()
         let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
-        timer.tolerance = 0.5
+        timer.tolerance = 2
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -48,9 +80,119 @@ final class NotchSensorMonitor {
         running = false
         timer?.invalidate()
         timer = nil
+        disarmListeners()
         // A stopped monitor reports quiet — a parked island's dots die
         // with it rather than linger stale.
         state = NotchSensorState()
+    }
+
+    // MARK: Listeners
+
+    private func armListeners() {
+        var inputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let inputMoved: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                self?.armInputListener()
+                self?.poll()
+            }
+        }
+        if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &inputAddress,
+                                               DispatchQueue.main, inputMoved) == noErr {
+            systemAudio = AudioListener(object: AudioObjectID(kAudioObjectSystemObject),
+                                        address: inputAddress, block: inputMoved)
+        }
+        var devicesAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+        let camerasChanged: CMIOObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                self?.armCameraListeners()
+                self?.poll()
+            }
+        }
+        if CMIOObjectAddPropertyListenerBlock(CMIOObjectID(kCMIOObjectSystemObject), &devicesAddress,
+                                              DispatchQueue.main, camerasChanged) == noErr {
+            systemCameras = CameraListener(object: CMIOObjectID(kCMIOObjectSystemObject),
+                                           address: devicesAddress, block: camerasChanged)
+        }
+        armInputListener()
+        armCameraListeners()
+    }
+
+    /// Watch the current default input's running state; the old
+    /// device's listener goes first.
+    private func armInputListener() {
+        if let old = inputListener {
+            var address = old.address
+            AudioObjectRemovePropertyListenerBlock(old.object, &address, DispatchQueue.main, old.block)
+            inputListener = nil
+        }
+        guard running, let device = Self.defaultInputDevice() else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+        if AudioObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block) == noErr {
+            inputListener = AudioListener(object: device, address: address, block: block)
+        }
+    }
+
+    /// Watch every camera's running state — re-armed whenever the list
+    /// changes, so a Continuity camera arriving is watched too.
+    private func armCameraListeners() {
+        for old in cameraListeners {
+            var address = old.address
+            CMIOObjectRemovePropertyListenerBlock(old.object, &address, DispatchQueue.main, old.block)
+        }
+        cameraListeners = []
+        guard running else { return }
+        for device in Self.cameraDevices() {
+            var address = CMIOObjectPropertyAddress(
+                mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+            let block: CMIOObjectPropertyListenerBlock = { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.poll() }
+            }
+            if CMIOObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block) == noErr {
+                cameraListeners.append(CameraListener(object: device, address: address, block: block))
+            }
+        }
+    }
+
+    private func disarmListeners() {
+        if let listener = systemAudio {
+            var address = listener.address
+            AudioObjectRemovePropertyListenerBlock(listener.object, &address, DispatchQueue.main, listener.block)
+            systemAudio = nil
+        }
+        if let listener = systemCameras {
+            var address = listener.address
+            CMIOObjectRemovePropertyListenerBlock(listener.object, &address, DispatchQueue.main, listener.block)
+            systemCameras = nil
+        }
+        armInputListener()
+        armCameraListeners()
+    }
+
+    /// The default input device, nil when CoreAudio names none.
+    private static func defaultInputDevice() -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var device = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
+                                         &size, &device) == noErr, device != 0 else { return nil }
+        return device
     }
 
     private func poll() {
@@ -75,24 +217,11 @@ final class NotchSensorMonitor {
     /// Whether any camera is running somewhere. A machine with no
     /// cameras — or a read the system refuses — answers false.
     static func cameraInUse() -> Bool {
-        var listAddress = CMIOObjectPropertyAddress(
-            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
-            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
-            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
-        var size: UInt32 = 0
-        let system = CMIOObjectID(kCMIOObjectSystemObject)
-        guard CMIOObjectGetPropertyDataSize(system, &listAddress, 0, nil, &size) == noErr,
-              size >= UInt32(MemoryLayout<CMIOObjectID>.size) else { return false }
-        var devices = [CMIOObjectID](
-            repeating: CMIOObjectID(kCMIOObjectUnknown),
-            count: Int(size) / MemoryLayout<CMIOObjectID>.size)
-        guard CMIOObjectGetPropertyData(system, &listAddress, 0, nil,
-                                        size, &size, &devices) == noErr else { return false }
         var runningAddress = CMIOObjectPropertyAddress(
             mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
-        for device in devices where device != CMIOObjectID(kCMIOObjectUnknown) {
+        for device in cameraDevices() {
             var value: UInt32 = 0
             var used = UInt32(MemoryLayout<UInt32>.size)
             if CMIOObjectGetPropertyData(device, &runningAddress, 0, nil,
@@ -101,5 +230,87 @@ final class NotchSensorMonitor {
             }
         }
         return false
+    }
+
+    // MARK: Who is listening
+
+    /// The processes holding audio input right now — CoreAudio's process
+    /// objects (`kAudioHardwarePropertyProcessObjectList`) that report
+    /// `IsRunningInput`. Observation only, like the dot: no device is
+    /// opened. Empty when the system refuses the read.
+    static func microphoneClientPIDs() -> [pid_t] {
+        var listAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &listAddress, 0, nil, &size) == noErr,
+              size >= UInt32(MemoryLayout<AudioObjectID>.size) else { return [] }
+        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &listAddress, 0, nil, &size, &objects) == noErr else { return [] }
+        return objects.compactMap { object in
+            var inputAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyIsRunningInput,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var running: UInt32 = 0
+            var runningSize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(object, &inputAddress, 0, nil, &runningSize, &running) == noErr,
+                  running != 0 else { return nil }
+            var pidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var pid: pid_t = -1
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            guard AudioObjectGetPropertyData(object, &pidAddress, 0, nil, &pidSize, &pid) == noErr,
+                  pid > 0 else { return nil }
+            return pid
+        }
+    }
+
+    /// The names of what holds the mic: the app's own name, a helper
+    /// process's owning app where macOS says (a browser's audio helper
+    /// reads as the browser), else the executable's name. JR-Bar itself
+    /// is never listed.
+    static func microphoneClientNames() -> [String] {
+        let me = ProcessInfo.processInfo.processIdentifier
+        return microphoneClientPIDs().filter { $0 != me }.compactMap { pid in
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                return app.localizedName ?? app.bundleURL?.deletingPathExtension().lastPathComponent
+            }
+            var buffer = [UInt8](repeating: 0, count: 256)
+            let length = proc_name(pid, &buffer, UInt32(buffer.count))
+            guard length > 0 else { return nil }
+            let name = String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
+            return name.isEmpty ? nil : name
+        }
+    }
+
+    /// The card's privacy line as of now — nil while nothing is live.
+    static func privacyLineNow() -> String? {
+        let state = read()
+        guard state.anyInUse else { return nil }
+        return state.privacyLine(microphoneApps: state.microphoneInUse ? microphoneClientNames() : [])
+    }
+
+    /// Every camera CoreMediaIO lists — empty on a machine with none, or
+    /// a read the system refuses.
+    static func cameraDevices() -> [CMIOObjectID] {
+        var listAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+        var size: UInt32 = 0
+        let system = CMIOObjectID(kCMIOObjectSystemObject)
+        guard CMIOObjectGetPropertyDataSize(system, &listAddress, 0, nil, &size) == noErr,
+              size >= UInt32(MemoryLayout<CMIOObjectID>.size) else { return [] }
+        var devices = [CMIOObjectID](
+            repeating: CMIOObjectID(kCMIOObjectUnknown),
+            count: Int(size) / MemoryLayout<CMIOObjectID>.size)
+        guard CMIOObjectGetPropertyData(system, &listAddress, 0, nil,
+                                        size, &size, &devices) == noErr else { return [] }
+        return devices.filter { $0 != CMIOObjectID(kCMIOObjectUnknown) }
     }
 }

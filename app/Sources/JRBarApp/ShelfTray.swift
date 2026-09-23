@@ -101,6 +101,50 @@ final class ShelfTrayModel {
 
     private(set) var entries: [ShelfEntry] = []
 
+    // MARK: Session homes
+
+    /// A live local session's working folder — files under it belong
+    /// with that session, not with whichever subfolder they sit in.
+    struct SessionHome: Equatable {
+        let id: String
+        let label: String
+        let root: String
+    }
+
+    /// The card's live local sessions and where they work — fed with the
+    /// card's rows. A session ending takes its name off its stack; the
+    /// files stay where they are.
+    var sessionHomes: [SessionHome] = []
+
+    /// The session whose folder holds `path` — the deepest one when
+    /// folders nest. A session working in the home folder or at the
+    /// root would claim every file there, so those never count.
+    nonisolated static func home(for path: String, in homes: [SessionHome],
+                                 userHome: String = NSHomeDirectory()) -> SessionHome? {
+        func trimmed(_ root: String) -> String {
+            root.count > 1 && root.hasSuffix("/") ? String(root.dropLast()) : root
+        }
+        let broad: Set<String> = ["/", trimmed(userHome), ""]
+        return homes
+            .filter { !broad.contains(trimmed($0.root)) }
+            .filter { path == trimmed($0.root) || path.hasPrefix(trimmed($0.root) + "/") }
+            .max { trimmed($0.root).count < trimmed($1.root).count }
+    }
+
+    /// The one session every file in `items` belongs to, or nil.
+    func commonHome(_ items: [Entry]) -> SessionHome? {
+        guard let first = items.first,
+              let home = Self.home(for: first.path, in: sessionHomes) else { return nil }
+        return items.allSatisfy({ Self.home(for: $0.path, in: sessionHomes)?.id == home.id }) ? home : nil
+    }
+
+    /// What a stack's chip is called now: the session it belongs to
+    /// while that session lives ("rename-the-fish"), its folder or
+    /// count otherwise.
+    func stackName(_ stack: ShelfEntry.Stack) -> String {
+        commonHome(stack.items)?.label ?? stack.name
+    }
+
     /// Every item across every chip — the verbs and the bound work on
     /// files, not tiles.
     var items: [Entry] { entries.flatMap(\.items) }
@@ -161,9 +205,38 @@ final class ShelfTrayModel {
             return
         }
 
-        // A single new file: same-folder rules — join a stack living
-        // in its folder, or stack up with a loose item from it.
+        // A single new file: a live session's own files gather first —
+        // join the stack that is all that session's, or stack up with a
+        // loose file from its folder tree.
         let item = fresh[0]
+        if let home = Self.home(for: item.path, in: sessionHomes) {
+            if let at = known.firstIndex(where: {
+                if case .stack(let stack) = $0 { return commonHome(stack.items)?.id == home.id }
+                return false
+            }), case .stack(var stack) = known[at] {
+                stack.items.append(item)
+                stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
+                stack.name = ShelfEntry.Stack.name(for: stack.items)
+                known[at] = .stack(stack)
+                finish(&known)
+                return
+            }
+            if let at = known.firstIndex(where: {
+                if case .item(let other) = $0 { return Self.home(for: other.path, in: sessionHomes)?.id == home.id }
+                return false
+            }), case .item(let other) = known[at] {
+                let items = [other, item]
+                known[at] = .stack(ShelfEntry.Stack(
+                    id: "stack-\(UUID().uuidString)",
+                    name: ShelfEntry.Stack.name(for: items),
+                    items: items,
+                    folder: ShelfEntry.Stack.commonFolder(of: items)))
+                finish(&known)
+                return
+            }
+        }
+        // Then same-folder rules — join a stack living in its folder,
+        // or stack up with a loose item from it.
         if let at = known.firstIndex(where: {
             if case .stack(let stack) = $0 {
                 return stack.folder == item.folder
@@ -271,7 +344,8 @@ final class ShelfTrayModel {
         guard pendingThumbs.insert(path).inserted else { return }
         let request = QLThumbnailGenerator.Request(
             fileAt: URL(fileURLWithPath: path),
-            size: CGSize(width: 22, height: 22),
+            // The tile's 26 pt face, with room to stay sharp.
+            size: CGSize(width: 32, height: 32),
             scale: NSScreen.main?.backingScaleFactor ?? 2,
             representationTypes: .thumbnail)
         QLThumbnailGenerator.shared.generateBestRepresentation(
@@ -407,17 +481,95 @@ final class ShelfTrayModel {
         return Int64(size)
     }
 
-    /// Whether "Attach to draft" may inline this file's bytes or must
-    /// stay a path reference (bounded copies). A stack never attaches
-    /// as a copy — the draft takes the paths.
+    /// Whether a hand-off may carry this file's bytes as well as its
+    /// path (bounded copies) — a single image under the bound also goes
+    /// on the pasteboard as image data, which agents like Claude Code
+    /// take with their own image paste. A stack never attaches as a
+    /// copy — the agent takes the paths.
     func canAttachCopy(_ entry: ShelfEntry) -> Bool {
         guard case .item(let item) = entry,
               let size = size(of: item) else { return false }
         return size <= Self.attachCopyBound
     }
 
+    /// The agent's file-mention form of the entry's present files —
+    /// `@/abs/path`, spaces escaped, one per file — the text an agent
+    /// CLI reads as "look at this file". Missing files are left out.
+    static func agentReferences(_ paths: [String]) -> String {
+        paths.map { path in
+            "@" + path.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: " ", with: "\\ ")
+        }.joined(separator: " ")
+    }
+
+    /// Hand the entry to an agent: its `@path` references go on the
+    /// pasteboard as text beside the file URLs, and a single small
+    /// image rides along as image data. Nothing is typed anywhere —
+    /// the person pastes it into the session this opens. False when no
+    /// file of the entry is present.
+    @discardableResult
+    func copyForAgent(_ entry: ShelfEntry) -> Bool {
+        let present = entries.first(where: { $0.id == entry.id })?.items.filter { !$0.missing } ?? []
+        guard !present.isEmpty else { return false }
+        Self.copyForAgent(present.map(\.url), attachImage: canAttachCopy(entry))
+        return true
+    }
+
+    /// The pasteboard half, shared with a file dropped straight onto a
+    /// session row: the `@path` text first, a small single image as
+    /// image data beside it, then the file URLs for a GUI app.
+    static func copyForAgent(_ urls: [URL], attachImage: Bool) {
+        guard !urls.isEmpty else { return }
+        let board = NSPasteboard.general
+        board.clearContents()
+        var objects: [NSPasteboardWriting] = [agentReferences(urls.map(\.path)) as NSString]
+        if attachImage, urls.count == 1, let url = urls.first,
+           let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
+           let image = NSImage(contentsOf: url) {
+            objects.append(image)
+        }
+        board.writeObjects(objects)
+        board.writeObjects(urls.map { $0 as NSURL })
+    }
+
+    /// Whether a dropped file is small enough to ride along as bytes.
+    static func withinAttachBound(_ url: URL) -> Bool {
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { return false }
+        return Int64(size) <= attachCopyBound
+    }
+
     /// Mark missing entries by re-reading the filesystem — the same
     /// check the read path makes, so the strip and reads never disagree.
+    /// Rows the shelf page's strip lays its tiles in: one while a row
+    /// holds them all, two once the shelf fills, scrolling sideways.
+    nonisolated static func stripRows(tiles: Int) -> Int { tiles > 4 ? 2 : 1 }
+
+    // MARK: Paste
+
+    /// Something copied the shelf could take, not yet pasted here — the
+    /// strip offers a Paste chip. Read off the pasteboard's types and
+    /// change count only; its contents are read on the click.
+    private(set) var pasteOffered = false
+    /// The pasteboard generation last pasted, so the same copy is not
+    /// offered twice.
+    private var pastedChangeCount: Int?
+
+    /// Look at the pasteboard as the card opens — types only.
+    func notePasteboard(_ pasteboard: NSPasteboard = .general) {
+        pasteOffered = pasteboard.changeCount != pastedChangeCount
+            && ShelfTrayDrop.hasShelfable(pasteboard.types ?? [])
+    }
+
+    /// The Paste chip: what was copied lands on the shelf the way a drop
+    /// does — files as themselves, links as `.webloc`s, text as a clip.
+    func paste(from pasteboard: NSPasteboard = .general) {
+        let urls = ShelfTrayDrop.pasteURLs(pasteboard)
+        pastedChangeCount = pasteboard.changeCount
+        pasteOffered = false
+        guard !urls.isEmpty else { return }
+        add(urls)
+    }
+
     func revalidate() {
         entries = entries.map { entry in
             switch entry {
@@ -558,6 +710,35 @@ struct ShelfTrayDrop {
         group.notify(queue: .main) {
             MainActor.assumeIsolated { completion(urls.withLock { $0 }) }
         }
+    }
+
+    /// Whether a pasteboard holding `types` has anything for the shelf:
+    /// files, a link, or text.
+    static func hasShelfable(_ types: [NSPasteboard.PasteboardType]) -> Bool {
+        types.contains(.fileURL) || types.contains(.URL) || types.contains(.string)
+    }
+
+    /// A pasteboard's shelf-able contents as tray-ready file URLs:
+    /// copied files first, else links (as `.webloc`s), else text (as a
+    /// `.txt` clip). Read only when the person asks for the paste.
+    static func pasteURLs(_ pasteboard: NSPasteboard) -> [URL] {
+        let fileOnly: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        if let files = pasteboard.readObjects(forClasses: [NSURL.self], options: fileOnly) as? [URL],
+           !files.isEmpty {
+            return files
+        }
+        if pasteboard.types?.contains(.URL) == true,
+           let links = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !links.isEmpty {
+            return trayURLs(from: links)
+        }
+        if let text = pasteboard.string(forType: .string) {
+            if let link = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+               link.scheme?.hasPrefix("http") == true, let loc = webLoc(for: link) {
+                return [loc]
+            }
+            return textLoc(for: text).map { [$0] } ?? []
+        }
+        return []
     }
 
     /// Pasteboard-read URLs → tray-ready file URLs: files pass

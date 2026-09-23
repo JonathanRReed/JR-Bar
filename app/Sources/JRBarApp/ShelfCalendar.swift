@@ -1,22 +1,30 @@
 import AppKit
 import EventKit
 
-/// W12's event glance: the next calendar event, read-only, with an
-/// explicit Open/Join action. Privacy is the default (T52): no
+/// W12's event glance: the next few calendar events, read-only, with
+/// explicit Open/Join actions. Privacy is the default (T52): no
 /// permission → the row is hidden entirely, never a fake "free all
-/// day"; the read happens only after the user asks for it.
+/// day". The ask is never the card's: it lives on the Notch settings'
+/// Calendar switch and Setup's permission row, and the card only reads
+/// once access exists and the switch is on.
 @MainActor
 @Observable
 final class ShelfCalendarModel {
-    /// What the card renders. `hidden` covers denied/restricted —
-    /// the system said no and we show nothing rather than a state that
-    /// pretends to know the calendar is empty.
+    /// What the card renders. `hidden` covers the switch off and
+    /// denied/restricted — the system said no and we show nothing
+    /// rather than a state that pretends to know the calendar is empty.
+    /// `needsPermission` draws nothing either: asking is Setup's job.
     enum State: Equatable {
         case hidden
         case needsPermission
-        case idle            // authorized, nothing upcoming
-        case event(Event)    // the next authorized event
+        case idle              // authorized, nothing upcoming
+        case events([Event])   // the next events, soonest first
     }
+
+    /// Events the glance shows — the first carries Join.
+    nonisolated static let eventLimit = 3
+    /// How far ahead the glance looks.
+    nonisolated static let lookahead: TimeInterval = 24 * 3600
 
     struct Event: Equatable {
         let title: String
@@ -36,65 +44,54 @@ final class ShelfCalendarModel {
     /// the stop just killed.
     private var epoch = 0
 
-    /// The explicit opt-in — called from the card's calendar button,
-    /// never at launch or on a timer.
-    func authorizeAndLoad() {
-        let store = self.store ?? EKEventStore()
-        self.store = store
-        let epoch = self.epoch
-        switch EKEventStore.authorizationStatus(for: .event) {
-        case .fullAccess:
-            loadNext(from: store)
-        case .denied, .restricted:
-            state = .hidden
-        case .notDetermined, .writeOnly:
-            store.requestFullAccessToEvents { [weak self] granted, _ in
-                Task { @MainActor [weak self] in
-                    // EKEventStore isn't Sendable — read it back off
-                    // self on the actor rather than sending it in.
-                    guard let self, let store = self.store,
-                          self.epoch == epoch else { return }
-                    if granted {
-                        self.loadNext(from: store)
-                    } else {
-                        self.state = .hidden
-                    }
-                }
-            }
-        @unknown default:
-            state = .hidden
-        }
-    }
-
     func stop() {
         epoch += 1
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
 
-    /// Pin-side entry — the refresh cadence `stop` killed on unpin has
-    /// no other restart path, so a repinned card would otherwise show
-    /// a stale event forever. Only ever reloads when access was granted
-    /// earlier; asking stays the button's job.
-    func resume() {
-        guard let store,
-              EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
-        loadNext(from: store)
+    /// Pin-side entry: the switch off hides the row; on, the glance
+    /// reads — but only where access was already granted. It never
+    /// asks: a card that pops a permission prompt (or a "Show calendar"
+    /// button on every open) is the clutter this replaces. The refresh
+    /// cadence `stop` killed on unpin restarts here.
+    func sync(enabled: Bool) {
+        guard enabled else {
+            stop()
+            state = .hidden
+            return
+        }
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess:
+            let store = self.store ?? EKEventStore()
+            self.store = store
+            loadNext(from: store)
+        case .denied, .restricted:
+            state = .hidden
+        default:
+            state = .needsPermission
+        }
     }
 
-    /// Next event within the lookahead window. `nil` is an honest
-    /// "nothing upcoming" — the row says so rather than hiding a
-    /// stale event.
+    /// The next few timed events in the lookahead window. An empty list
+    /// is an honest "nothing upcoming" — the row says so rather than
+    /// hiding a stale event.
     private func loadNext(from store: EKEventStore) {
         let now = Date()
-        let end = now.addingTimeInterval(24 * 3600)
-        let predicate = store.predicateForEvents(withStart: now, end: end, calendars: nil)
-        let next = store.events(matching: predicate)
+        let predicate = store.predicateForEvents(withStart: now, end: now.addingTimeInterval(Self.lookahead),
+                                                 calendars: nil)
+        let timed = store.events(matching: predicate)
             .filter { !$0.isAllDay }
-            .sorted { $0.startDate < $1.startDate }
-            .first
-        state = next.map { .event(Self.project($0)) } ?? .idle
+            .map(Self.project)
+        let next = Self.upcoming(timed, now: now, limit: Self.eventLimit)
+        state = next.isEmpty ? .idle : .events(next)
         scheduleRefresh()
+    }
+
+    /// Soonest first, ended ones out (a meeting still running stays —
+    /// it is the one you would Join), capped. Pure for the tests.
+    nonisolated static func upcoming(_ events: [Event], now: Date, limit: Int) -> [Event] {
+        Array(events.filter { $0.end > now }.sorted { $0.start < $1.start }.prefix(limit))
     }
 
     /// Re-read on a slow cadence while the card is pinned — events move.
@@ -161,5 +158,173 @@ final class ShelfCalendarModel {
            let url = URL(string: "ical://\(Int(when.timeIntervalSince1970))") {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+/// The calendar's background half, and the only part that reads while
+/// the card is shut: two minutes before a timed event with a join link
+/// it hands the island a heads-up, and while such a meeting runs it is
+/// a quiet stretch the island's hold follows. Opt-in (`meetingAlerts`),
+/// and only ever where Calendar access was already granted — it never
+/// asks. No polling: one read, then a single timer armed for the next
+/// edge (a heads-up, a start, an end), re-read when the store changes
+/// and at least every few minutes.
+@MainActor
+final class ShelfMeetingWatch {
+    typealias Event = ShelfCalendarModel.Event
+
+    /// How far ahead of the start the heads-up lands.
+    nonisolated static let lead: TimeInterval = 120
+    /// A meeting that started this long ago without a heads-up (the Mac
+    /// was asleep) is no longer "starting" — nothing is said late.
+    nonisolated static let lateGrace: TimeInterval = 60
+    /// The longest the watch goes without a read — events move.
+    nonisolated static let safetyRead: TimeInterval = 300
+
+    /// A meeting is about to start.
+    var onSoon: (Event) -> Void = { _ in }
+    /// The meeting running now changed (one began, or it ended).
+    var onLiveChange: (Event?) -> Void = { _ in }
+
+    /// The meeting with a join link running now, if any.
+    private(set) var live: Event?
+    private(set) var running = false
+    /// Heads-ups already given, so a re-read never repeats one.
+    private var announced: Set<String> = []
+    private var store: EKEventStore?
+    private var timer: Timer?
+    private var changeObserver: NSObjectProtocol?
+
+    /// On while the switch is on and access exists; off otherwise.
+    func sync(enabled: Bool) {
+        guard enabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            stop()
+            return
+        }
+        guard !running else { return }
+        running = true
+        let store = self.store ?? EKEventStore()
+        self.store = store
+        changeObserver = NotificationCenter.default.addObserver(
+            forName: .EKEventStoreChanged, object: store, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.read() }
+        }
+        read()
+    }
+
+    func stop() {
+        running = false
+        timer?.invalidate()
+        timer = nil
+        if let changeObserver { NotificationCenter.default.removeObserver(changeObserver) }
+        changeObserver = nil
+        if live != nil {
+            live = nil
+            onLiveChange(nil)
+        }
+    }
+
+    private func read() {
+        guard running, let store else { return }
+        let now = Date()
+        // Back far enough to catch a long meeting already running.
+        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-12 * 3600),
+                                                 end: now.addingTimeInterval(ShelfCalendarModel.lookahead),
+                                                 calendars: nil)
+        let events = store.events(matching: predicate)
+            .filter { !$0.isAllDay }
+            .map(ShelfCalendarModel.project)
+        note(events, now: now)
+    }
+
+    /// One reading: say what is due, move the live meeting, arm the next
+    /// edge. Internal for the tests, which hand it events directly (a
+    /// watch that is not running arms nothing).
+    func note(_ events: [Event], now: Date) {
+        if let soon = Self.dueSoon(events, now: now, announced: announced) {
+            announced.insert(Self.key(soon))
+            onSoon(soon)
+        }
+        // Only keys for events still in the window are worth keeping.
+        let current = Set(events.map(Self.key))
+        announced.formIntersection(current)
+        let nowLive = Self.live(events, now: now)
+        if nowLive != live {
+            live = nowLive
+            onLiveChange(nowLive)
+        }
+        arm(Self.nextWake(events, now: now), now: now)
+    }
+
+    private func arm(_ wake: Date?, now: Date) {
+        timer?.invalidate()
+        timer = nil
+        guard running else { return }
+        let at = min(wake ?? .distantFuture, now.addingTimeInterval(Self.safetyRead))
+        let timer = Timer(fire: at, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.read() }
+        }
+        timer.tolerance = 2
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    // MARK: Pure
+
+    /// One event's identity across re-reads.
+    nonisolated static func key(_ event: Event) -> String {
+        "\(event.title)|\(Int(event.start.timeIntervalSince1970))"
+    }
+
+    /// The meeting to give a heads-up for now: joinable, starting within
+    /// `lead` (or only just started), not yet announced — the soonest.
+    nonisolated static func dueSoon(_ events: [Event], now: Date, announced: Set<String>) -> Event? {
+        events
+            .filter { event in
+                event.url != nil && event.end > now
+                    && event.start.addingTimeInterval(-lead) <= now
+                    && now < event.start.addingTimeInterval(lateGrace)
+                    && !announced.contains(key(event))
+            }
+            .min { $0.start < $1.start }
+    }
+
+    /// The joinable meeting running now — the latest to start when two
+    /// overlap, since that is the one the person moved into.
+    nonisolated static func live(_ events: [Event], now: Date) -> Event? {
+        events
+            .filter { $0.url != nil && $0.start <= now && now < $0.end }
+            .max { $0.start < $1.start }
+    }
+
+    /// The next moment something changes — a heads-up, a start, an end
+    /// — a hair past it, so the read lands on the far side.
+    nonisolated static func nextWake(_ events: [Event], now: Date) -> Date? {
+        let edges = events
+            .filter { $0.url != nil }
+            .flatMap { [$0.start.addingTimeInterval(-lead), $0.start, $0.end] }
+            .filter { $0 > now }
+        return edges.min()?.addingTimeInterval(0.5)
+    }
+
+    /// "in 2 min", "in 1 min", "now".
+    nonisolated static func countdown(to start: Date, now: Date) -> String {
+        let seconds = start.timeIntervalSince(now)
+        guard seconds > 30 else { return "now" }
+        return "in \(Int((seconds / 60).rounded(.up))) min"
+    }
+
+    /// The heads-up's second line: "10:00–10:30 · zoom.us".
+    nonisolated static func detail(_ event: Event, calendar: Calendar = .current,
+                                   locale: Locale = .current) -> String {
+        let style = Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar,
+                                     timeZone: calendar.timeZone)
+        var line = "\(event.start.formatted(style))–\(event.end.formatted(style))"
+        if var host = event.url?.host?.lowercased() {
+            if host.hasPrefix("www.") { host.removeFirst(4) }
+            line += " · \(host)"
+        }
+        return line
     }
 }

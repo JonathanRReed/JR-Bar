@@ -16,6 +16,20 @@ struct NotchSensorTests {
                                        earsDrawn: false, sensors: s) == NotchIdleLayout())
     }
 
+    @Test("the card's privacy line names who has the mic and says when a camera rolls")
+    func privacyLine() {
+        #expect(NotchSensorState().privacyLine(microphoneApps: ["Zoom"]) == nil)
+        #expect(NotchSensorState(microphoneInUse: true).privacyLine(microphoneApps: ["Zoom"])
+                == "Microphone · Zoom")
+        #expect(NotchSensorState(microphoneInUse: true).privacyLine(microphoneApps: [])
+                == "Microphone in use", "no name found is still said")
+        #expect(NotchSensorState(cameraInUse: true).privacyLine(microphoneApps: [])
+                == "Camera in use")
+        #expect(NotchSensorState(microphoneInUse: true, cameraInUse: true)
+                .privacyLine(microphoneApps: ["FaceTime", "FaceTime", "Chrome", "Zoom", "Arc"])
+                == "Camera and microphone in use · FaceTime, Chrome +2", "deduped, two named, the rest counted")
+    }
+
     @Test("each live sensor earns a dot")
     func counts() {
         #expect(NotchSensorState(microphoneInUse: true).dotCount == 1)
