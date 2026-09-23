@@ -21,6 +21,7 @@ from .dnd_policy import (
     DndSource,
     OutboundAdmission,
     compose_dnd_contributions,
+    contribution_for_presence,
     evaluate_dnd_policy,
 )
 from .focus_status import (
@@ -164,10 +165,113 @@ class DndController:
         self._refresh_deferred = False
         self._started = False
         self._closed = False
+        # The app's presence report (jrbar.presence.PresenceFacts): a call,
+        # a meeting, and its own Focus reading. None until one arrives.
+        self._presence: object | None = None
 
     @property
     def projection(self) -> DndProjection:
         return self._projection
+
+    @property
+    def presence(self) -> object | None:
+        return self._presence
+
+    def set_presence(self, facts: object | None) -> DndChangeResult:
+        """Adopt the app's latest presence report and re-evaluate. A call
+        or meeting contributes its own quiet source; the app's Focus reading
+        stands in for the daemon's when the daemon cannot read Focus."""
+        self._presence = facts
+        if self._closed:
+            return self._result(False, DndChangeFailure.CLOSED)
+        if not self._started:
+            return self._result(False, DndChangeFailure.NOT_STARTED)
+        return self.refresh()
+
+    def _focus_hint(self, now: float) -> bool | None:
+        facts = self._presence
+        hint = getattr(facts, "focus_hint", None)
+        if not callable(hint):
+            return None
+        try:
+            value = hint(now)
+        except Exception:
+            return None
+        return value if isinstance(value, bool) else None
+
+    def _public_focus_active(
+        self,
+        settings: object,
+        observation: FocusStatusObservation,
+        now: float,
+    ) -> bool:
+        if not bool(getattr(settings, "focus_sync_enabled", False)):
+            return False
+        if observation.authorization is FocusAuthorization.AUTHORIZED:
+            return observation.activity is FocusActivity.ACTIVE
+        # The daemon's helper holds no Focus Status grant of its own; the
+        # app does, and says what it reads. Only a positive reading counts,
+        # and only while the report is fresh.
+        return self._focus_hint(now) is True
+
+    def _presence_contributions(
+        self,
+        settings: object,
+        now: float,
+        dim_fraction: float,
+    ) -> tuple[
+        DndContribution | None,
+        DndContribution | None,
+        DndContribution | None,
+        tuple[float, ...],
+    ]:
+        """(call, meeting, away, transitions) from the latest report."""
+        facts = self._presence
+        if facts is None:
+            return None, None, None, ()
+        from .presence import (
+            DEFAULT_AWAY_QUIET_MODE,
+            DEFAULT_CALL_QUIET_MODE,
+            DEFAULT_MEETING_QUIET_MODE,
+            normalize_presence_quiet_mode,
+        )
+
+        call = meeting = away = None
+        transitions: tuple[float, ...] = ()
+        try:
+            if facts.away(now):  # type: ignore[attr-defined]
+                away = contribution_for_presence(
+                    DndSource.AWAY,
+                    normalize_presence_quiet_mode(
+                        getattr(settings, "away_quiet_mode", DEFAULT_AWAY_QUIET_MODE),
+                        DEFAULT_AWAY_QUIET_MODE,
+                    ),
+                    dim_fraction=dim_fraction,
+                )
+            if facts.on_call(now):  # type: ignore[attr-defined]
+                call = contribution_for_presence(
+                    DndSource.CALL,
+                    normalize_presence_quiet_mode(
+                        getattr(settings, "call_quiet_mode", DEFAULT_CALL_QUIET_MODE),
+                        DEFAULT_CALL_QUIET_MODE,
+                    ),
+                    dim_fraction=dim_fraction,
+                )
+            if facts.in_meeting(now):  # type: ignore[attr-defined]
+                meeting = contribution_for_presence(
+                    DndSource.CALENDAR,
+                    normalize_presence_quiet_mode(
+                        getattr(settings, "meeting_quiet_mode", DEFAULT_MEETING_QUIET_MODE),
+                        DEFAULT_MEETING_QUIET_MODE,
+                    ),
+                    dim_fraction=dim_fraction,
+                )
+                until = getattr(facts, "meeting_until", None)
+                if meeting is not None and until is not None:
+                    transitions = (float(until),)
+        except (AttributeError, TypeError, ValueError):
+            return None, None, None, ()
+        return call, meeting, away, transitions
 
     @property
     def focus_observation(self) -> FocusStatusObservation:
@@ -235,11 +339,7 @@ class DndController:
             )
         settings = self._settings_getter()
         named = ()
-        if (
-            bool(getattr(settings, "focus_sync_enabled", False))
-            and observation.authorization is FocusAuthorization.AUTHORIZED
-            and observation.activity is FocusActivity.ACTIVE
-        ):
+        if self._public_focus_active(settings, observation, self._finite_now()):
             named = self._read_named_focus_identifiers()
         if not self._accept_focus_observation(generation, observation, named):
             return self._result(False, DndChangeFailure.STALE_CALLBACK)
@@ -286,12 +386,7 @@ class DndController:
         settings = self._settings_getter()
         now = self._finite_now()
         local_timezone = self._timezone_getter(now)
-        follow_focus = bool(getattr(settings, "focus_sync_enabled", False))
-        public_active = bool(
-            follow_focus
-            and observation.authorization is FocusAuthorization.AUTHORIZED
-            and observation.activity is FocusActivity.ACTIVE
-        )
+        public_active = self._public_focus_active(settings, observation, now)
         if not public_active:
             named = ()
         named_contribution = (
@@ -300,6 +395,9 @@ class DndController:
             else None
         )
         parsed = settings.dnd_settings()
+        call, meeting, away, presence_transitions = self._presence_contributions(
+            settings, now, parsed.dim_fraction
+        )
         projection = evaluate_dnd_policy(
             schedule=parsed.schedule,
             override=parsed.override,
@@ -309,6 +407,10 @@ class DndController:
             local_timezone=local_timezone,
             macos_focus_active=public_active,
             named_focus=named_contribution,
+            call=call,
+            meeting=meeting,
+            extra_transitions=presence_transitions,
+            away=away,
         )
         next_generation = generation + 1
         prepared_timer = self._prepare_timer(
@@ -567,12 +669,7 @@ class DndController:
             now = self._finite_now()
             observation = self._focus_observation
             named = self._named_focus_identifiers
-            follow_focus = bool(getattr(settings, "focus_sync_enabled", False))
-            public_active = bool(
-                follow_focus
-                and observation.authorization is FocusAuthorization.AUTHORIZED
-                and observation.activity is FocusActivity.ACTIVE
-            )
+            public_active = self._public_focus_active(settings, observation, now)
             if not public_active:
                 named = ()
             named_contribution = (
@@ -581,6 +678,9 @@ class DndController:
                 else None
             )
             parsed = settings.dnd_settings()
+            call, meeting, away, presence_transitions = self._presence_contributions(
+                settings, now, parsed.dim_fraction
+            )
             projection = evaluate_dnd_policy(
                 schedule=parsed.schedule,
                 override=parsed.override,
@@ -590,6 +690,10 @@ class DndController:
                 local_timezone=local_timezone,
                 macos_focus_active=public_active,
                 named_focus=named_contribution,
+                call=call,
+                meeting=meeting,
+                extra_transitions=presence_transitions,
+                away=away,
             )
             expected_generation = self._generation
             next_generation = expected_generation + 1

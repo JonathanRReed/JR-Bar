@@ -31,12 +31,19 @@ from .led_status import (
     led_count_for_target,
     normalize_channel_gain,
 )
+from .presence import (
+    DEFAULT_AWAY_QUIET_MODE,
+    DEFAULT_CALL_QUIET_MODE,
+    DEFAULT_MEETING_QUIET_MODE,
+    normalize_presence_quiet_mode,
+)
 from .providers import PROVIDER_REGISTRY
 from .signals import (
     DEFAULT_ALERT_BURST,
     DEFAULT_QUOTA_THRESHOLDS,
     FOCUS_SIGNAL_POLICIES,
     normalize_alert_burst,
+    normalize_provider_escalation_tiers,
     normalize_quota_thresholds,
 )
 from .private_io import (
@@ -346,6 +353,11 @@ class AgentMonitorSettings:
     # battery is the one signal that should outrank agent status.
     low_battery_alert_enabled: bool = True
     low_battery_threshold_percent: float = 5.0
+    # The same warning by time left rather than charge: a fast drain at 20%
+    # can be closer to empty than a slow one at 8%. 0 is off. While agents
+    # run on battery with keep-awake holding the Mac, it fires at twice this,
+    # so a run is warned about before it dies (battery_runtime).
+    low_battery_threshold_minutes: float = 0.0
     # Sweep the bar in the finishing agent's color the moment ANY
     # session completes -- the aggregate hides completions whenever
     # another agent is still working.
@@ -376,6 +388,10 @@ class AgentMonitorSettings:
     escalation_ramp_seconds: float = 30.0
     escalation_menu_bar_seconds: float = 120.0
     escalation_final_seconds: float = 300.0
+    # A ceiling per provider under the global tier: {provider id: tier}.
+    # Claude's permission asks may climb to the chime while another
+    # provider's never go past the light (signals.provider_escalation_stage).
+    escalation_tier_by_provider: dict[str, str] = field(default_factory=dict)
     session_open_preferences: dict[str, str] = field(default_factory=dict)
     setup_screen_completed: bool = False
     colors: ColorSettings = field(default_factory=ColorSettings.defaults)
@@ -464,6 +480,18 @@ class AgentMonitorSettings:
     dnd_focus_mode: str = "pause"
     # Load-only diagnostics. Refused persisted values are not re-serialized.
     dnd_persisted_refusals: tuple[DndPersistedRefusal, ...] = ()
+    # A call (a live microphone, camera or screen share the app reports
+    # through `presence`) quiets JR-Bar the way a busylight goes red, with
+    # no Focus and no Full Disk Access: "sounds" keeps every light and
+    # banner and drops the sounds, a DND mode word applies that mode for the
+    # call, "off" ignores calls (jrbar.presence).
+    call_quiet_mode: str = DEFAULT_CALL_QUIET_MODE
+    # The same for a calendar meeting the app reports. Off by default: a
+    # meeting on the calendar is not always a call.
+    meeting_quiet_mode: str = DEFAULT_MEETING_QUIET_MODE
+    # And for an empty desk (a locked screen, a long idle). Off by default;
+    # "asks_only" keeps the Dot beacon and every ask while the rest goes.
+    away_quiet_mode: str = DEFAULT_AWAY_QUIET_MODE
     tips_enabled: bool = True
     menu_bar_label_enabled: bool = False
     # The native app's status item picture (MENU_BAR_ICON_STYLES).
@@ -536,6 +564,9 @@ class AgentMonitorSettings:
     # deduplicated, bounded (the pure planner accepts at most 16). The
     # default ladder makes the toggle meaningful on its own.
     milestone_odometer_steps: tuple[int, ...] = DEFAULT_MILESTONE_ODOMETER_STEPS
+    # The semantic ambient cues switched off by name (jrbar.ambient_cues):
+    # firefly, meniscus, baton and the rest play unless listed here.
+    ambient_cues_disabled: tuple[str, ...] = ()
     # Capacity retention is a separate, explicit consent boundary. Existing
     # transcript and broad usage settings never enable either history stream.
     capacity_history_enabled: bool = False
@@ -1686,6 +1717,7 @@ class AgentMonitorSettings:
                 "charging_idle_enabled": self.battery_charging_idle_enabled,
                 "low_battery_alert_enabled": self.low_battery_alert_enabled,
                 "low_battery_threshold_percent": self.low_battery_threshold_percent,
+                "low_battery_threshold_minutes": self.low_battery_threshold_minutes,
             },
             "completion_sweep_enabled": self.completion_sweep_enabled,
             "calendar_alerts_enabled": self.calendar_alerts_enabled,
@@ -1705,6 +1737,9 @@ class AgentMonitorSettings:
             "escalation_ramp_seconds": self.escalation_ramp_seconds,
             "escalation_menu_bar_seconds": self.escalation_menu_bar_seconds,
             "escalation_final_seconds": self.escalation_final_seconds,
+            "escalation_tier_by_provider": normalize_provider_escalation_tiers(
+                self.escalation_tier_by_provider
+            ),
             "session_open_preferences": dict(sorted(self.session_open_preferences.items())),
             "setup_screen_completed": self.setup_screen_completed,
             "colors": self.colors.to_dict(),
@@ -1775,9 +1810,19 @@ class AgentMonitorSettings:
             "milestone_odometer_steps": list(
                 _milestone_steps_setting(self.milestone_odometer_steps)
             ),
+            "ambient_cues_disabled": list(_ambient_cues_disabled_setting(self.ambient_cues_disabled)),
             "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
+            "call_quiet_mode": normalize_presence_quiet_mode(
+                self.call_quiet_mode, DEFAULT_CALL_QUIET_MODE
+            ),
+            "meeting_quiet_mode": normalize_presence_quiet_mode(
+                self.meeting_quiet_mode, DEFAULT_MEETING_QUIET_MODE
+            ),
+            "away_quiet_mode": normalize_presence_quiet_mode(
+                self.away_quiet_mode, DEFAULT_AWAY_QUIET_MODE
+            ),
             "completion_notification_enabled": self.completion_notification_enabled,
             "notification_policy_version": 1,
             "webhook_events": [
@@ -1902,6 +1947,15 @@ def _active_scene_pack_overrides(pack_id: object):
         return ScenePackStore().policy_overrides(pack_id.strip())
     except Exception:
         return None
+
+
+def _ambient_cues_disabled_setting(raw: object) -> tuple[str, ...]:
+    """Known, switchable cue ids, sorted and deduplicated. Imported late:
+    the cue catalogue reaches the ambient dispatch, which settings must not
+    load at import time."""
+    from .ambient_cues import normalize_disabled_cues
+
+    return normalize_disabled_cues(raw)
 
 
 def _milestone_steps_setting(raw: object) -> tuple[int, ...]:
@@ -2056,6 +2110,9 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         low_battery_threshold_percent=max(
             1.0, min(50.0, _float_setting(battery.get("low_battery_threshold_percent"), 5.0))
         ),
+        low_battery_threshold_minutes=max(
+            0.0, min(120.0, _float_setting(battery.get("low_battery_threshold_minutes"), 0.0))
+        ),
         completion_sweep_enabled=_bool_setting(data.get("completion_sweep_enabled"), True),
         calendar_alerts_enabled=_bool_setting(data.get("calendar_alerts_enabled"), False),
         calendar_lead_minutes=max(
@@ -2085,6 +2142,9 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         signal_styles=_signal_styles(data.get("signal_styles")),
         escalation_tier=_escalation_tier(data.get("escalation_tier")),
+        escalation_tier_by_provider=normalize_provider_escalation_tiers(
+            data.get("escalation_tier_by_provider")
+        ),
         **_escalation_thresholds(data),
         session_open_preferences=_session_open_preferences(data.get("session_open_preferences")),
         setup_screen_completed=_bool_setting(data.get("setup_screen_completed"), False),
@@ -2187,6 +2247,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         milestone_odometer_steps=_milestone_steps_setting(
             data.get("milestone_odometer_steps")
         ),
+        ambient_cues_disabled=_ambient_cues_disabled_setting(data.get("ambient_cues_disabled")),
         capacity_history_enabled=_bool_setting(
             data.get("capacity_history_enabled"), False
         ),
@@ -2237,6 +2298,15 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             }
             if isinstance(data.get("focus_signal_policy"), dict)
             else {}
+        ),
+        call_quiet_mode=normalize_presence_quiet_mode(
+            data.get("call_quiet_mode"), DEFAULT_CALL_QUIET_MODE
+        ),
+        meeting_quiet_mode=normalize_presence_quiet_mode(
+            data.get("meeting_quiet_mode"), DEFAULT_MEETING_QUIET_MODE
+        ),
+        away_quiet_mode=normalize_presence_quiet_mode(
+            data.get("away_quiet_mode"), DEFAULT_AWAY_QUIET_MODE
         ),
         completion_notification_enabled=_bool_setting(
             data.get("completion_notification_enabled"),

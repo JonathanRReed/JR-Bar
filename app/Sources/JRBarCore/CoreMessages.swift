@@ -846,10 +846,13 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     /// write time.
     public var lastWrite: Double?
     public var error: String?
+    /// How the writes are going (`state.devices[].write_health`), nil
+    /// before the first one: the card can say why the strip looks wrong.
+    public var writeHealth: CoreWriteHealth?
 
     public init(id: String, kind: String, name: String? = nil, path: String? = nil, leds: Int? = nil,
                 connected: Bool? = nil, enabled: Bool? = nil, brightness: Double? = nil, linked: Bool? = nil,
-                lastWrite: Double? = nil, error: String? = nil) {
+                lastWrite: Double? = nil, error: String? = nil, writeHealth: CoreWriteHealth? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
@@ -861,6 +864,7 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
         self.linked = linked
         self.lastWrite = lastWrite
         self.error = error
+        self.writeHealth = writeHealth
     }
 
     public var brightnessFraction: Double? {
@@ -874,6 +878,7 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, kind, name, path, leds, connected, enabled, brightness, linked, error
         case lastWrite = "last_write"
+        case writeHealth = "write_health"
     }
 
     public init(from decoder: Decoder) throws {
@@ -889,6 +894,30 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
         linked = try c.decodeIfPresent(Bool.self, forKey: .linked)
         lastWrite = try c.decodeIfPresent(Double.self, forKey: .lastWrite)
         error = try c.decodeIfPresent(String.self, forKey: .error)
+        // Tolerant: a malformed health line must never cost the device row.
+        writeHealth = try? c.decodeIfPresent(CoreWriteHealth.self, forKey: .writeHealth)
+    }
+}
+
+/// `state.devices[].write_health`: the last write's latency, how many
+/// programs the safety compiler had to change, and how many never reached
+/// the device -- with the last refusal's reason. Counts since the daemon
+/// started.
+public struct CoreWriteHealth: Codable, Hashable, Sendable {
+    public var latencyMs: Int?
+    public var writes: Int?
+    public var transformed: Int?
+    public var refused: Int?
+    public var lastRefusal: String?
+    public var lastRefusalAt: Double?
+    /// The latest attempt never reached the device: failing now, not once.
+    public var failing: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case writes, transformed, refused, failing
+        case latencyMs = "latency_ms"
+        case lastRefusal = "last_refusal"
+        case lastRefusalAt = "last_refusal_at"
     }
 }
 
@@ -1259,27 +1288,296 @@ public struct CoreClosedLid: Codable, Hashable, Sendable {
     public var policy: String?
     public var holding: Bool?
     public var helperInstalled: Bool?
+    /// The lid as the daemon last read it; nil while it has no reading.
+    public var lidClosed: Bool?
+    /// The daemon asks for sleep when the hold drops with the lid shut.
+    public var sleepsOnRelease: Bool?
+    public var lastSleepAt: Double?
+    public var sleepError: String?
 
     enum CodingKeys: String, CodingKey {
         case policy, holding
         case helperInstalled = "helper_installed"
+        case lidClosed = "lid_closed"
+        case sleepsOnRelease = "sleeps_on_release"
+        case lastSleepAt = "last_sleep_at"
+        case sleepError = "sleep_error"
+    }
+}
+
+/// The person's own keep-awake request (`state.power.hold.lease`): for a
+/// duration (`until` is its end), until the named sessions finish
+/// (`kind == "agents"`, `until` is the backstop), or until turned off
+/// (`kind == "indefinite"`, no `until`).
+public struct CoreAwakeLease: Codable, Hashable, Sendable {
+    public var kind: String?
+    public var startedAt: Double?
+    public var until: Double?
+    public var sessions: [String]?
+    public var display: Bool?
+    public var source: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, until, sessions, display, source
+        case startedAt = "started_at"
+    }
+
+    public var waitsOnAgents: Bool { kind == "agents" }
+
+    /// Seconds left on a duration lease; nil for the other two shapes,
+    /// whose end is not a countdown.
+    public func remaining(now: Double) -> Double? {
+        guard kind == "duration", let until else { return nil }
+        return max(0, until - now)
+    }
+}
+
+/// `state.power.hold`: why the Mac is (or is not) held awake. `state` is
+/// the chip's three words -- `off`, `agents` (the agents hold it; `agents`
+/// counts them), `manual` (a lease is in force). `suspended` names a yield
+/// that took the hold away (`thermal`, `battery`) while the demand stands.
+public struct CoreAwakeHold: Codable, Hashable, Sendable {
+    public var state: String?
+    public var agents: Int?
+    public var active: Bool?
+    public var display: Bool?
+    public var graceUntil: Double?
+    public var lease: CoreAwakeLease?
+    public var suspended: String?
+    public var thermal: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state, agents, active, display, lease, suspended, thermal
+        case graceUntil = "grace_until"
+    }
+
+    public var isManual: Bool { state == "manual" }
+    public var isHeldByAgents: Bool { state == "agents" }
+    public var isOff: Bool { state == nil || state == "off" }
+}
+
+/// The last time a hold let go for a reason worth reading
+/// (`state.power.last_release`): a lease ending on time or when its agents
+/// finished, a yield to heat or the battery floor, a closed-lid stretch,
+/// or a sleep the daemon asked for.
+public struct CorePowerRelease: Codable, Hashable, Sendable {
+    public var kind: String?
+    public var reason: String?
+    public var at: Double?
+    public var duration: Double?
+}
+
+/// `state.power.battery.runway`: will the run holding the Mac awake
+/// outlast the battery. `short` only on battery, with agents working and a
+/// hold up, under half an hour left. `adapterShort` while the charger is in
+/// and the battery still falls under the agents' load, with
+/// `fullSpeedWatts` the adapter this Mac charges at full speed on.
+public struct CoreBatteryRunway: Codable, Hashable, Sendable {
+    public var agents: Int?
+    public var minutesLeft: Int?
+    public var short: Bool?
+    public var adapterShort: Bool?
+    public var fullSpeedWatts: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case agents, short
+        case minutesLeft = "minutes_left"
+        case adapterShort = "adapter_short"
+        case fullSpeedWatts = "full_speed_watts"
+    }
+}
+
+/// `state.power.battery`: the daemon's battery reading (nil on a Mac with
+/// no battery). Estimates are nil while macOS is still estimating.
+public struct CoreBattery: Codable, Hashable, Sendable {
+    public var percent: Int?
+    public var charging: Bool?
+    public var plugged: Bool?
+    public var minutesLeft: Int?
+    public var minutesToFull: Int?
+    public var healthPercent: Int?
+    public var cycleCount: Int?
+    public var temperatureC: Double?
+    public var condition: String?
+    public var drawWatts: Double?
+    public var adapterWatts: Double?
+    public var runway: CoreBatteryRunway?
+
+    enum CodingKeys: String, CodingKey {
+        case percent, charging, plugged, condition, runway
+        case minutesLeft = "minutes_left"
+        case minutesToFull = "minutes_to_full"
+        case healthPercent = "health_percent"
+        case cycleCount = "cycle_count"
+        case temperatureC = "temperature_c"
+        case drawWatts = "draw_watts"
+        case adapterWatts = "adapter_watts"
     }
 }
 
 public struct CorePower: Codable, Hashable, Sendable {
     public var keepAwake: Bool?
     public var closedLid: CoreClosedLid?
+    public var hold: CoreAwakeHold?
+    public var lastRelease: CorePowerRelease?
+    public var battery: CoreBattery?
 
     enum CodingKeys: String, CodingKey {
         case keepAwake = "keep_awake"
         case closedLid = "closed_lid"
+        case hold
+        case lastRelease = "last_release"
+        case battery
     }
+}
+
+/// The `hold_awake` command's arguments: exactly one shape -- a duration,
+/// until a time, until the agents finish, or until turned off -- plus
+/// whether the screen is held too and which surface asked.
+public struct CoreAwakeRequest: Hashable, Sendable {
+    public enum Shape: Hashable, Sendable {
+        case seconds(Double)
+        case until(Double)
+        /// A local `HH:MM` ("08:00"): the daemon resolves the next one in
+        /// the Mac's own zone.
+        case untilTime(String)
+        /// Every main session running now, or the named ones.
+        case untilAgentsFinish(sessions: [String]?)
+        case indefinite
+    }
+
+    public var shape: Shape
+    public var display: Bool
+    public var source: String
+
+    public init(_ shape: Shape, display: Bool = false, source: String = "app") {
+        self.shape = shape
+        self.display = display
+        self.source = source
+    }
+
+    public var arguments: [String: JSONValue] {
+        var args: [String: JSONValue] = ["display": .bool(display), "source": .string(source)]
+        switch shape {
+        case .seconds(let seconds): args["seconds"] = .number(seconds)
+        case .until(let epoch): args["until"] = .number(epoch)
+        case .untilTime(let clock): args["until_time"] = .string(clock)
+        case .untilAgentsFinish(let sessions):
+            args["until_agents_idle"] = .bool(true)
+            if let sessions { args["sessions"] = .array(sessions.map(JSONValue.string)) }
+        case .indefinite: args["indefinite"] = .bool(true)
+        }
+        return args
+    }
+}
+
+/// The `presence` command's arguments: what the app senses right now. The
+/// daemon treats a report as current for three minutes, so a sender renews
+/// it at least every minute while a sensor is live.
+public struct CorePresenceReport: Hashable, Sendable {
+    public var mic: Bool
+    public var camera: Bool
+    public var screenShared: Bool
+    public var locked: Bool?
+    public var idleSeconds: Double?
+    /// INFocusStatusCenter's `isFocused`, from the app's own grant.
+    public var focus: Bool?
+    /// When a calendar meeting in progress ends.
+    public var meetingUntil: Double?
+    /// The app's own Calendar reading for the "glow before events" signal:
+    /// `.some(nil)` says "nothing coming", `nil` sends nothing and leaves
+    /// the daemon on its own EventKit read.
+    public var nextEventStart: Double??
+    /// Identifiers of the reminders due now, from the app's own read.
+    public var remindersDue: [String]?
+
+    public init(mic: Bool = false, camera: Bool = false, screenShared: Bool = false,
+                locked: Bool? = nil, idleSeconds: Double? = nil, focus: Bool? = nil, meetingUntil: Double? = nil,
+                nextEventStart: Double?? = nil, remindersDue: [String]? = nil) {
+        self.mic = mic
+        self.camera = camera
+        self.screenShared = screenShared
+        self.locked = locked
+        self.idleSeconds = idleSeconds
+        self.focus = focus
+        self.meetingUntil = meetingUntil
+        self.nextEventStart = nextEventStart
+        self.remindersDue = remindersDue
+    }
+
+    public var sensingCall: Bool { mic || camera || screenShared }
+
+    public var arguments: [String: JSONValue] {
+        var args: [String: JSONValue] = [
+            "mic": .bool(mic), "camera": .bool(camera), "screen_shared": .bool(screenShared),
+        ]
+        if let locked { args["locked"] = .bool(locked) }
+        if let idleSeconds { args["idle_seconds"] = .number(max(0, idleSeconds)) }
+        if let focus { args["focus"] = .bool(focus) }
+        if let meetingUntil { args["meeting_until"] = .number(meetingUntil) }
+        if let nextEventStart { args["next_event_start"] = nextEventStart.map(JSONValue.number) ?? .null }
+        if let remindersDue { args["reminders_due"] = .array(remindersDue.prefix(32).map(JSONValue.string)) }
+        return args
+    }
+}
+
+/// `state.presence`: the one presence fact every surface reads the same
+/// way. `onCall` is a live microphone, camera or screen share the app
+/// reported (and renewed); `quiet` is what the daemon did about it
+/// (`sounds`, a quiet mode word, or `off`); `escalationCeiling` is the
+/// stage the ladder holds at (1 on a call); `celebrationsHeld` asks
+/// Confetti and every other celebration to hold its burst.
+public struct CorePresence: Codable, Hashable, Sendable {
+    public var onCall: Bool?
+    public var mic: Bool?
+    public var camera: Bool?
+    public var screenShared: Bool?
+    public var since: Double?
+    public var inMeeting: Bool?
+    public var meetingUntil: Double?
+    public var away: Bool?
+    public var fresh: Bool?
+    public var quiet: String?
+    public var escalationCeiling: Int?
+    public var celebrationsHeld: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case mic, camera, since, away, fresh, quiet
+        case onCall = "on_call"
+        case screenShared = "screen_shared"
+        case inMeeting = "in_meeting"
+        case meetingUntil = "meeting_until"
+        case escalationCeiling = "escalation_ceiling"
+        case celebrationsHeld = "celebrations_held"
+    }
+
+    public var isOnCall: Bool { onCall == true }
+    public var holdsCelebrations: Bool { celebrationsHeld == true }
 }
 
 public struct CoreFocus: Codable, Hashable, Sendable {
     public var mode: String?
     public var source: String?
     public var until: Double?
+    /// The quiet policy's own effect axes. A call's default quiet
+    /// (`source == "call"`) leaves `mode` at `off` and takes only the
+    /// sounds, so `audibleAllowed == false` is how a reader learns it.
+    public var bannerAllowed: Bool?
+    public var audibleAllowed: Bool?
+    public var summary: String?
+    /// Whether the daemon's helper can read which Focus is on (it needs
+    /// Full Disk Access of its own); nil until it has tried.
+    public var namedReadable: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case mode, source, until, summary
+        case bannerAllowed = "banner_allowed"
+        case audibleAllowed = "audible_allowed"
+        case namedReadable = "named_readable"
+    }
+
+    /// False only when the daemon says sounds are off right now.
+    public var soundsAllowed: Bool { audibleAllowed != false }
 }
 
 public struct CoreEscalation: Codable, Hashable, Sendable {
@@ -1362,12 +1660,15 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// `peers`: the remote-peers fleet as of the last refresh — absent
     /// while the feature is off, one row per discovered peer otherwise.
     public var peers: [CorePeer]?
+    /// `presence`: on a call, in a meeting, away; nil from an older daemon.
+    public var presence: CorePresence?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
-                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil) {
+                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil,
+                presence: CorePresence? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -1385,6 +1686,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.catalogGeneration = catalogGeneration
         self.unseenCompletions = unseenCompletions
         self.peers = peers
+        self.presence = presence
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1394,6 +1696,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         case catalogGeneration = "catalog_generation"
         case unseenCompletions = "unseen_completions"
         case peers
+        case presence
     }
 
     public init(from decoder: Decoder) throws {
@@ -1431,6 +1734,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         catalogGeneration = try? c.decodeIfPresent(Int.self, forKey: .catalogGeneration)
         unseenCompletions = (try? c.decodeIfPresent([String].self, forKey: .unseenCompletions)) ?? []
         peers = tolerantRows(CorePeer.self, try c.decodeIfPresent([JSONValue].self, forKey: .peers))
+        // A malformed presence reads as "no report", never a lost state.
+        presence = try? c.decodeIfPresent(CorePresence.self, forKey: .presence)
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -1757,10 +2062,17 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// interruption episode, and a resolution only closes its own ask.
     public var request: String?
 
+    /// `milestone`: the completion count the odometer just crossed (the
+    /// latest, when one batch crossed several). The lights, Confetti and
+    /// the Aquarium celebrate the same number.
+    public var count: Int?
+    public static let milestoneKind = "milestone"
+
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
-                lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil) {
+                lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil,
+                count: Int? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -1779,9 +2091,13 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.duration = duration
         self.cursor = cursor
         self.request = request
+        self.count = count
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request }
+    enum CodingKeys: String, CodingKey {
+        case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request
+        case count
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1809,6 +2125,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         duration = try? c.decodeIfPresent(Double.self, forKey: .duration)
         cursor = try? c.decodeIfPresent(String.self, forKey: .cursor)
         request = try? c.decodeIfPresent(String.self, forKey: .request)
+        count = try? c.decodeIfPresent(Int.self, forKey: .count)
     }
 
     /// `deck_receipt` as a receipt value.

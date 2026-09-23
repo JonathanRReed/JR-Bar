@@ -207,3 +207,29 @@ def test_surface_geometry_is_bounded() -> None:
     for pixel_count in [None, True, 0, 1, 1_025, 4.0, "8"]:
         with pytest.raises(RainstickIdleError, match="surface_pixel_count"):
             plan_rainstick_idle(surface_pixel_count=pixel_count)
+
+
+def test_a_deaf_watcher_stops_the_drip() -> None:
+    """The drip says "JR-Bar is alive and can hear its agents"; when it
+    provably cannot, the pixel stops and says why."""
+    plan = plan_rainstick_idle(preference_enabled=True, watcher_deaf=True)
+    assert plan.disposition is RainstickDisposition.SUPPRESS
+    assert plan.suppression_reasons == (RainstickSuppressionReason.WATCHER_DEAF,)
+    assert "cannot hear its agents" in plan.accessibility_text
+    assert plan_rainstick_idle(preference_enabled=True).disposition is RainstickDisposition.MOVE
+    with pytest.raises(RainstickIdleError):
+        plan_rainstick_idle(preference_enabled=True, watcher_deaf="yes")
+
+
+def test_the_runtime_calls_the_watcher_deaf_only_on_evidence() -> None:
+    from types import SimpleNamespace
+
+    from jrbar.ambient_effect_runtime import _watcher_deaf
+
+    assert _watcher_deaf(SimpleNamespace()) is False
+    healthy = SimpleNamespace(any_installed=True, stuck_providers=())
+    assert _watcher_deaf(SimpleNamespace(current_intake_report=healthy)) is False
+    stuck = SimpleNamespace(any_installed=True, stuck_providers=("claude",))
+    assert _watcher_deaf(SimpleNamespace(current_intake_report=stuck)) is True
+    nothing = SimpleNamespace(any_installed=False, stuck_providers=())
+    assert _watcher_deaf(SimpleNamespace(current_intake_report=nothing)) is True

@@ -8,6 +8,7 @@ import pytest
 
 from jrbar.dnd_policy import (
     DEFAULT_DND_DIM_FRACTION,
+    MAX_DND_CONTRIBUTIONS,
     MAX_DND_OVERRIDE_SECONDS,
     DisplayAdmission,
     DndContribution,
@@ -66,6 +67,9 @@ def test_exact_five_mode_matrix__and_2_more() -> None:
         "schedule",
         "macos_focus",
         "named_focus",
+        "call",
+        "calendar",
+        "away",
     )
     assert tuple(item.value for item in DisplayAdmission) == (
         "none",
@@ -137,7 +141,7 @@ def test_empty_composition_is_exactly_off__and_2_more() -> None:
                     brightness_factor=1.0,
                     outbound_admission=OutboundAdmission.ALL,
                 )
-                for _ in range(5)
+                for _ in range(MAX_DND_CONTRIBUTIONS + 1)
             )
         )
     with pytest.raises(ValueError, match="bounded"):

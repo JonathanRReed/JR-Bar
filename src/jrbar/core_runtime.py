@@ -273,6 +273,21 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("health", "intake", "silence_seconds"),
         ("usage", "providers", "*", "forecast", "exhausts_at"),
         ("usage", "providers", "*", "windows", "*", "forecast", "exhausts_at"),
+        # Battery estimates move on every read; a percent step or a plug
+        # change is what earns a broadcast.
+        ("power", "battery", "minutes_left"),
+        ("power", "battery", "minutes_to_full"),
+        ("power", "battery", "draw_watts"),
+        ("power", "battery", "temperature_c"),
+        ("power", "battery", "runway", "minutes_left"),
+        # A device's write health moves with every write; starting or
+        # stopping failing, or a new reason, is what earns a broadcast. The
+        # refusal count and stamp tick with every retry of a dead device.
+        ("devices", "*", "write_health", "latency_ms"),
+        ("devices", "*", "write_health", "writes"),
+        ("devices", "*", "write_health", "transformed"),
+        ("devices", "*", "write_health", "refused"),
+        ("devices", "*", "write_health", "last_refusal_at"),
     ),
     "lights": (
         ("now",),
@@ -282,6 +297,10 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("linked_skew_corrected_ms",),
         ("auto_dim", "lux"),
         ("auto_dim", "factor"),
+        # The sensor's value, smoothed and raw: it moves with every read,
+        # and the brightness it earns already shows in the surfaces.
+        ("auto_dim", "reading"),
+        ("auto_dim", "raw"),
     ),
 }
 
@@ -1081,6 +1100,18 @@ def _cmd_set_brightness(self, args):
         raise CommandError("not_found", "no such device")
     for device in devices:
         self.set_device_brightness(device.device_id, value * 255.0)
+    if target == "all":
+        # The panel slider: in ambient auto-dim, a vote for how bright the
+        # lights should be at this much light (jrbar.core_lights). Auto-dim
+        # scales only the hardware, so only a slider over hardware votes.
+        try:
+            from . import core_lights
+
+            virtual = self._core_legacy().VIRTUAL_DEVICE_ID
+            if any(device.connected and device.device_id != virtual for device in devices):
+                core_lights.note_brightness_nudge(self, value)
+        except Exception:
+            pass
     self._core_publish_lights()
     return {"value": value, "devices": [device.device_id for device in devices]}
 
@@ -2403,6 +2434,112 @@ def _cmd_quiet(self, args):
     return {"until": until if until is not None else time.time() + max(60.0, seconds), "mode": mode.value}
 
 
+@command("hold_awake")
+def _cmd_hold_awake(self, args):
+    """The person's keep-awake lease (jrbar.core_power.hold_awake)."""
+    from . import core_power
+
+    return core_power.hold_awake(self, args)
+
+
+@command("release_awake")
+def _cmd_release_awake(self, args):
+    from . import core_power
+
+    return core_power.release_awake(self, args)
+
+
+@command("session_energy", main_thread=False)
+def _cmd_session_energy(self, args):
+    """Which agent session is keeping the CPU busy (jrbar.session_energy)."""
+    from . import core_power
+
+    return core_power.session_energy(self, args)
+
+
+@command("presence")
+def _cmd_presence(self, args):
+    """The app's report of what it senses: a live microphone, camera or
+    screen share, a locked screen, its own Focus reading, a meeting's end
+    (jrbar.presence)."""
+    from . import core_power
+
+    return core_power.set_presence(self, args)
+
+
+# --- light controls that lived only in the legacy window (jrbar.core_lights) ---
+
+
+@command("list_cues")
+def _cmd_list_cues(self, args):
+    from . import core_lights
+
+    return core_lights.list_cues(self, args)
+
+
+@command("set_cue")
+def _cmd_set_cue(self, args):
+    from . import core_lights
+
+    return core_lights.set_cue(self, args)
+
+
+@command("burn_init", main_thread=False)
+def _cmd_burn_init(self, args):
+    from . import core_lights
+
+    return core_lights.burn_init(self, args)
+
+
+@command("calibration_profile")
+def _cmd_calibration_profile(self, args):
+    from . import core_lights
+
+    return core_lights.calibration_profile(self, args)
+
+
+@command("list_focuses", main_thread=False)
+def _cmd_list_focuses(self, args):
+    from . import core_lights
+
+    return core_lights.list_focuses(self, args)
+
+
+@command("auto_dim_learning", main_thread=False)
+def _cmd_auto_dim_learning(self, args):
+    from . import core_lights
+
+    return core_lights.auto_dim_learning(self, args)
+
+
+@command("check_palette", main_thread=False)
+def _cmd_check_palette(self, args):
+    from . import core_lights
+
+    return core_lights.check_palette(self, args)
+
+
+@command("preview_fleet", main_thread=False)
+def _cmd_preview_fleet(self, args):
+    from . import core_lights
+
+    return core_lights.preview_fleet(self, args)
+
+
+@command("list_light_log")
+def _cmd_list_light_log(self, args):
+    from . import core_lights
+
+    return core_lights.list_light_log(self, args)
+
+
+@command("resolve_effect", main_thread=False)
+def _cmd_resolve_effect(self, args):
+    from . import core_lights
+
+    return core_lights.resolve_effect(self, args)
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
@@ -2415,6 +2552,17 @@ def _cmd_list_history(self, args):
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     ledger = on_main(lambda: self.ensure_activity_ledger())
     rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+    # The power log's rows ("let go: Mac too hot", "put the Mac to sleep")
+    # sit beside the sessions' in the one History list.
+    from . import core_power
+
+    rows = core_power.merge_history(
+        self,
+        rows,
+        since=float(since) if isinstance(since, (int, float)) else None,
+        limit=limit,
+        last_seen=float(ledger.last_seen_epoch or 0.0),
+    )
     return {"rows": rows, "total": len(ledger.entries), "last_seen": ledger.last_seen_epoch}
 
 
@@ -3798,6 +3946,58 @@ def build_headless_controller_class() -> type:
             objc.super(JRCoreHeadlessController, self)._dnd_projection_changed(projection)
             self._core_publish_state()
 
+        # -- power: the lease, the thermal governor, sleep on release -----------
+
+        def sync_keep_awake(self, mode) -> None:
+            """The legacy sync, told first what the holds yield to (the
+            sessions a lease waits on, the battery floor, heat, the lid) and
+            followed by the power events it recorded (jrbar.core_power)."""
+            from . import core_power
+
+            try:
+                core_power.before_keep_awake_sync(self)
+            except Exception:
+                legacy.log_status_bar(f"core: power environment failed: {traceback.format_exc(limit=3)}")
+            objc.super(JRCoreHeadlessController, self).sync_keep_awake(mode)
+            try:
+                core_power.after_keep_awake_sync(self)
+            except Exception:
+                legacy.log_status_bar(f"core: power events failed: {traceback.format_exc(limit=3)}")
+
+        def low_power_active(self, battery_snapshot) -> bool:
+            """The charge threshold, or the time left: a fast drain at 20% can
+            be closer to empty than a slow one at 8% (jrbar.core_power)."""
+            if objc.super(JRCoreHeadlessController, self).low_power_active(battery_snapshot):
+                return True
+            try:
+                from . import core_power
+
+                return core_power.low_battery_by_time_left(self, battery_snapshot)
+            except Exception:
+                return False
+
+        # -- presence: a call holds the ladder at the light ----------------------
+
+        def current_escalation_stage(self) -> int:
+            """The legacy stage, adjusted for whether anyone can see it: held
+            at the light on a call, past the invisible menu-bar pulse while the
+            screen is locked (jrbar.presence, signals.presence_escalation_stage)."""
+            stage = objc.super(JRCoreHeadlessController, self).current_escalation_stage()
+            try:
+                from . import core_power
+
+                return core_power.escalation_stage(self, stage)
+            except Exception:
+                return stage
+
+        def corePresenceExpired_(self, _timer) -> None:
+            from . import core_power
+
+            try:
+                core_power.presence_expired(self)
+            except Exception:
+                legacy.log_status_bar(f"core: presence expiry failed: {traceback.format_exc(limit=3)}")
+
         def sync_virtual_status_device(self, *args, **kwargs) -> None:
             objc.super(JRCoreHeadlessController, self).sync_virtual_status_device(*args, **kwargs)
             self._core_publish_lights()
@@ -4053,11 +4253,18 @@ def build_headless_controller_class() -> type:
             # exists to answer, so a headline with no countable ask still
             # lights the beacon.
             asks = int(aggregate.get("needs_you") or 0)
+            from . import core_power
+
             return DotBeaconFacts(
                 ask_count=max(asks, 1 if mode == "needs_you" else 0),
                 blocked=bool(aggregate.get("failed") or 0) or mode == "failed",
                 unseen_completions=int(aggregate.get("ready") or 0),
                 escalation_stage=stage,
+                # The ``call`` role's busylight, and the shut lid that turns
+                # an ``extend`` Dot into the asks beacon (jrbar.dot_role).
+                on_call=core_power.on_call(self),
+                in_meeting=core_power.in_meeting(self),
+                lid_closed=core_power.lid_closed(self) is True,
             )
 
         def _core_dot_plan(self, controller=None, program: str | None = None):
@@ -4071,6 +4278,7 @@ def build_headless_controller_class() -> type:
             ``controller`` is optional because the ``lights`` frame wants the
             role and the ``why`` without wanting a brightness line.
             """
+            from . import core_power
             from ._led_status_legacy import (
                 normalize_brightness,
                 scale_nominal_brightness,
@@ -4099,7 +4307,9 @@ def build_headless_controller_class() -> type:
                     default=255,
                 )
                 brightness = min(existing, device)
-                if role == DotRole.EXTEND.value:
+                # A shut lid makes an ``extend`` Dot the asks beacon, which is
+                # never scaled down (see below).
+                if role == DotRole.EXTEND.value and core_power.lid_closed(self) is not True:
                     # Exactly one place applies ``linked_dot_scale``, and it
                     # applies it to LIGHT. A code-domain multiply looks like a
                     # ratio and is not one: the write boundary then decodes
@@ -5733,6 +5943,19 @@ def build_headless_controller_class() -> type:
                         ]
             except Exception:
                 legacy.log_status_bar(f"core: peers projection failed: {traceback.format_exc(limit=6)}")
+            try:
+                from . import core_power
+
+                core_power.augment_power_document(self, document)
+                core_power.augment_presence_document(self, document, now=wall_now)
+            except Exception:
+                legacy.log_status_bar(f"core: power projection failed: {traceback.format_exc(limit=6)}")
+            try:
+                from . import core_lights
+
+                core_lights.augment_device_health(document)
+            except Exception:
+                legacy.log_status_bar(f"core: write health failed: {traceback.format_exc(limit=3)}")
             return document
 
         def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:
@@ -5961,7 +6184,7 @@ def build_headless_controller_class() -> type:
             mirror_anchor = hardware_anchor
             mirror_program = hardware_mirror_program
             mirror_source = hardware_mirror_source
-            if mirror is None and "dot" in surfaces and dot_role != "asks":
+            if mirror is None and "dot" in surfaces and dot_role not in ("asks", "call"):
                 widened = upsample_program(
                     dot_mirror_program or surfaces["dot"].program,
                     source_leds=2,
@@ -6134,6 +6357,12 @@ def build_headless_controller_class() -> type:
                 document["linked_skew_at"] = self._core_linked_skew_at
                 if self._core_linked_corrected_ms is not None:
                     document["linked_skew_corrected_ms"] = self._core_linked_corrected_ms
+            try:
+                from . import core_lights
+
+                core_lights.augment_lights_cues(self, document)
+            except Exception:
+                legacy.log_status_bar(f"core: cue naming failed: {traceback.format_exc(limit=3)}")
             return document
 
         def _core_dot_link(self, dot_connected: bool, strip_connected: bool, dot_role: str) -> dict[str, Any]:
@@ -6154,9 +6383,9 @@ def build_headless_controller_class() -> type:
                 return {"state": "off", "role": None, "error": None}
             if not dot_connected:
                 return {"state": "no_dot", "role": None, "error": None}
-            if dot_role == DotRole.ASKS.value:
-                # A beacon needs no strip: it is lit by asks, not by light
-                # borrowed from the Pro.
+            if dot_role in (DotRole.ASKS.value, DotRole.CALL.value):
+                # A beacon needs no strip: it is lit by asks (and, for the
+                # ``call`` role, by a call), not by light borrowed from the Pro.
                 return {"state": "beacon", "role": dot_role, "error": None}
             if dot_role == DotRole.STATUS.value:
                 return {"state": "solo", "role": dot_role, "error": None}

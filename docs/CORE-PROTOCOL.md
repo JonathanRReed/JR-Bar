@@ -312,6 +312,81 @@ Vocabulary:
   period never surfaces as an end time.
 - `escalation.stage`: `none`, `ramp`, `menu_bar`, `final` (0…3);
   `since` is when the oldest unanswered ask started blocking.
+- `power` says why the Mac is (or is not) held awake. `keep_awake` is true
+  while anybody wants it awake -- the agents (working, or in the grace
+  after) or the person's lease -- and nothing has made the holds yield.
+  `hold` is the one keep-awake hold: `state` is `off`, `agents` (the
+  agents hold it; `agents` counts the main sessions working) or `manual`
+  (a lease is in force; `lease` is `{kind: duration|agents|indefinite,
+  started_at, until, sessions[], display, source}`, `until` being the
+  countdown's end for `duration` and the backstop for `agents`); `active`
+  is whether the assertion is actually held right now; `display` whether
+  the screen is held too; `grace_until` the end of the post-work grace
+  while the agents' hold is in it; `suspended` names a yield that took the
+  hold away while the demand stands -- `thermal` (the thermal state
+  reached `serious` with the lid shut or `critical` with it open, released
+  until five cool minutes pass) or `battery` (the low-battery floor);
+  `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
+  `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
+  has none or while nothing watches the lid -- the lid is polled only
+  under a closed-lid policy, a hold or a lid animation, and a reading the
+  poll no longer keeps is not reported), `sleeps_on_release` (the daemon asks for sleep -- an
+  unprivileged `pmset sleepnow` -- when the closed-lid hold drops with the
+  lid shut and `AppleClamshellCausesSleep` says no external display is
+  keeping clamshell mode; heat and the battery floor release even the
+  `always` policy), `last_sleep_at` and `sleep_error`. `last_release` is
+  the newest release worth reading, `{kind, reason, at, duration,
+  finished, slept_at}`: `kind` `lease_ended` (`reason`
+  `expired`/`finished`), `suspended` (`thermal`/`battery`),
+  `lid_hold_ended` (`duration` the held stretch, `finished` how many runs
+  the activity ledger saw finish during it) or `slept` (carrying the
+  stretch it closed, so one row reads "ran 2 h 40 m closed, 3 finished,
+  slept at 02:14"); a lease the person cancelled is not one. The same log backs
+  the `power` rows in `list_history` and the `power` event. `battery`
+  (null on a Mac with no battery) is the daemon's reading: `{percent,
+  charging, plugged, minutes_left, minutes_to_full, health_percent,
+  cycle_count, temperature_c, condition, draw_watts, adapter_watts,
+  runway}`, every estimate null while macOS is still estimating;
+  `runway` is `{agents, minutes_left, short, adapter_short,
+  full_speed_watts}` and `short` is true only on battery, with agents
+  working and a hold keeping the Mac up, when fewer than 30 minutes remain.
+  `adapter_short` is true while the charger is in, agents are working and
+  the battery still falls by 1.5 W or more (it clears under 0.5 W, so a
+  spike at the edge does not flap it): the charger cannot carry the run.
+  `full_speed_watts` is then the adapter this Mac charges at full speed on,
+  else null. The estimates, the draw and the temperature move on every read
+  and alone never re-broadcast `state`.
+- `presence` is the one presence fact from the app's `presence` reports:
+  `{on_call, mic, camera, screen_shared, since, in_meeting, meeting_until,
+  away, fresh, quiet, escalation_ceiling, celebrations_held}`. `on_call`,
+  the three sensor flags and `away` read false once the report is stale
+  (`fresh` false, 180 s without a renewal); `since` is when the current
+  call began, carried across renewals; `quiet` is what the daemon did about
+  it (`sounds`, a quiet-mode word, or `off` -- `call_quiet_mode` while on a
+  call, else `meeting_quiet_mode` while in a meeting); `escalation_ceiling`
+  is 1 while a call holds the ladder at the light, else null;
+  `celebrations_held` is true for the whole call, whatever the quiet mode.
+  While a call's quiet is in force `focus.source` is `call` (`calendar` for
+  a meeting, `away` for an empty desk under `away_quiet_mode`), and a
+  `sounds` quiet leaves `focus.mode` at `off` with
+  `focus.audible_allowed` false -- the one test for "no sounds right now".
+  `quiet` takes the first that applies: the call, then the meeting, then
+  the empty desk. `focus.named_readable` says whether the daemon's helper
+  can itself read which Focus is on (Full Disk Access is granted per
+  binary, so the app's own probe can say "granted" while the helper still
+  cannot see); null until it has tried.
+- `devices[].write_health` (a hardware device, once the daemon has tried
+  to write it) says why a strip looks wrong instead of only "Connected":
+  `{latency_ms, writes, transformed, refused, last_refusal,
+  last_refusal_at, failing}` -- how long the last write took, how many
+  programs reached it, how many of those the safety compiler had to
+  change (a clamped cadence, a slowed flash; not mere spelling), how many
+  never reached it and the last one's reason, and whether the latest
+  attempt was one of those (`failing`). Counts run since the daemon
+  started; no program text is kept. The latency, the counts and the
+  refusal stamp move with every attempt and alone never re-broadcast
+  `state`; starting or stopping failing, or a new reason, does -- a dead
+  device's retry every few seconds is the same news each time.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was
@@ -453,6 +528,11 @@ end) and with every refresh.
   at the signal's own intensity (the strip's N over the strip's signal
   plan). The strip's drive bytes are never replayed on a display that
   has no die to calibrate.
+- `cue` (on `screen_bar`, `hardware` or `dot`, only while one is staged
+  there) names the semantic ambient cue on that surface, `{id, name}` --
+  `{"id":"handoff_baton","name":"Handoff baton"}` -- so Why this light can
+  say "Handoff baton" instead of an unexplained sweep. The ids are
+  `list_cues`'; the Dot's binary heartbeat is a display and never named.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when
   `linked` (the `link_screen_bar_to_hardware` setting) and a strip is
@@ -604,6 +684,21 @@ celebration preferences, so the Usage Center can pulse the card and the
 Confetti toy can fire on the weekly one); `peer_arrived` / `peer_departed`
 (`label` is the machine name; the reachable-set diff after the first
 applied refresh, never on daemon start).
+`power` goes out once per power-log entry worth a line: `power` is the
+entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
+`detail` its reason (`expired`, `finished`, `thermal`, `battery`,
+`agents_idle`, `policy`), `label` History's words for it ("Keep awake let
+go", "Put the Mac to sleep"), `duration` the held stretch where there
+is one and, on `lid_hold_ended`, `finished` the runs that finished during
+it -- the lid-open report's "3 finished".
+`milestone` goes out once when the opt-in milestone odometer
+(`milestone_odometer_enabled`) crosses a step on a completion that
+happened in the last two minutes -- history re-read after a restart
+never fires it: `count` is the step just reached (the latest, when one
+batch crossed several), `reached` every step this batch crossed,
+`next_count` the step above it (absent at the top of the ladder), `label`
+"Completion milestone" and `detail` "50 finished". The lights' own cue and
+the toys (Confetti, the Aquarium) celebrate the same number from it.
 
 ### settings
 Full settings document, sent on connect and after every change from any
@@ -768,6 +863,20 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
+| `hold_awake` | exactly one of `seconds` (> 0), `until` (epoch), `until_time` (a local `HH:MM`, the next one, resolved in the Mac's zone so "until 08:00" survives a daylight-saving night), `until_agents_idle: true` (+ optional `sessions[]`), `indefinite: true`; `display` (default false); `source` (a short word, default `app`) | The person's keep-awake lease, the one hold every surface shares (the notch chip, a deck key, a CLI verb). It replaces any earlier lease, lasts at most 24 h (an agents lease: until none of its sessions is working or waiting on the person, backstop 12 h; without `sessions` it waits on every main session running now), holds the display too with `display: true` (the screen will not lock), outranks the agent-only switches (`agent_keep_awake_enabled`, `keep_awake_on_battery`) and survives a daemon restart. It yields -- never ends -- to heat and to the low-battery floor (`state.power.hold.suspended`). `seconds: 0` ends it, like `quiet`. `{lease, hold}`; `refused` "No agent is working right now." for an agents lease with nothing to wait on, `invalid_args` otherwise. |
+| `release_awake` | | Ends the person's lease (the agent hold keeps its own switch). `{ended, hold}`; `ended: false` when no lease was in force. |
+| `session_energy` | | Which agent session is keeping the CPU busy -- the battery reading no battery app can make (`jrbar.session_energy`). Each live main session's process (the pid its hook recorded, still running under the same start time) and every process under it -- the builds, tests and servers its tools started -- billed to the nearest session above it, so a session started from another's shell is never counted twice; shared-host providers are never billed. `{sampled_at, window_seconds, sessions[{session, provider, cpu_percent, cpu_seconds, processes}], total_percent, heaviest}`: `cpu_percent` is Activity Monitor's (100 is one core fully busy) averaged over `window_seconds` -- the time since the previous ask when that was 1.5 s to 15 min ago, else a 1.5 s window the command waits for -- and null for a session whose pid the earlier sample did not see; heaviest first; `heaviest` is the top session at 5 % or more, else null. One `ps` fork per sample and nothing sampled in the background; no command line or argument is read. Socket thread. |
+| `list_cues` | | The semantic ambient cues by name (`jrbar.ambient_cues`), highest priority first: `{cues[{id, name, meaning, enabled, default_enabled, setting, priority}]}`. `id` is the ambient family (`firefly_completion`, `completion_meniscus`, `handoff_baton`, `recovery_grace`, `ask_heartbeat`, `turn_length_ember`, `fleet_arrival_departure`, `courtesy_signature`, `glance_light`, `rainstick_idle`, `milestone_odometer`); `setting` names what switches it -- `ambient_cues_disabled` for the nine that default on, the cue's own flag (`rainstick_idle_enabled`, `milestone_odometer_enabled`) for the two opt-in ones. The Dot's binary heartbeat and the assigned semantic effects are displays, not cues, and are not listed. The `milestone_odometer` row adds `count` (the exact completions this daemon has counted since it started) and `next_step` (the next of `milestone_odometer_steps` above it, or null), so its cue arrives with a meaning you could see coming. |
+| `set_cue` | id, enabled | Switches one cue through its `setting` (a switched-off cue is still planned and simply never reaches a surface), saved like `set_setting`. `{generation, cues}`; `invalid_args` for an unknown id or a non-bool. |
+| `burn_init` | program, device? (id, default every connected strip and Dot), confirm? (default false) | The power-up program. Each device is judged at its own LED count through `animation.plan_power_up_burn`'s four gates -- the model, the compile, the device limits and the real firmware parser, refusing when that parser is unavailable. Without `confirm: true` nothing is written: the reply is the exact plan. `{confirmed, written, devices[{device, name, led_count, bytes, firmware_checked, warnings[], written, target, error}]}`; a device whose program does not validate carries `error: "invalid_program"` and `problems[{severity, code, message, step}]` and is never written. Runs on the socket thread (an SD write can take seconds). `not_found` with no connected hardware (the Screen Bar has no INIT.LED), `invalid_args` for an empty program, one past 4096 characters, or a non-bool `confirm`. |
+| `calibration_profile` | action (`save`/`apply`/`delete`), slot (`Day`/`Night`/`Travel`) | The calibration profile slots: `save` snapshots every known device's brightness, gains and resting glow into the slot, `apply` writes the slot back onto the devices it names (`matched` counts them; `not_found` for an empty slot), `delete` empties it. `{slot, action, generation, slots[]}` (`delete`: `{slot, removed, slots}`). `focus_profile_rules` maps a Focus id to a slot the daemon applies when that Focus turns on; write it whole with `set_setting` on `focus_profile_rules` -- Focus ids contain dots, so a per-key dot path cannot address them. |
+| `auto_dim_learning` | clear? (bool: forget the votes) | What the panel slider has taught the ambient curve (`jrbar.auto_dim`). While auto-dim follows the ambient sensor and the sensor answers, every `set_brightness` for `all` over at least one connected hardware device (auto-dim scales only the hardware) is a vote -- at this smoothed lux the person chose lights at their slider times the curve's factor -- the latest vote at a given light (within 25 %) replacing an older one, 24 kept since the daemon started. Once there are 3 votes from light at least 3 times brighter than the darkest, and a curve fits them clearly better than the one set now, it is OFFERED, never applied: `{mode, votes, ready, reason, suggested{brightness, min_fraction, lux_floor, lux_ceiling} or null, error_now, error_suggested, samples[{lux, level, at}]}` -- `reason` `needs_votes`, `needs_range`, `already_fits` or `no_fit` while not ready; the app applies a suggestion with `set_setting` (`auto_dim.ambient.*`) and `set_brightness` when the person says so. `invalid_args` for a non-boolean `clear`. Socket thread. |
+| `check_palette` | colors? (`{"agent:<provider>": "#RRGGBB", "state:<idle|working|done|ask|error>": "#RRGGBB"}`, an edit previewed on top of the saved palette), visions? (list of `normal`, `deuteranopia`, `protanopia`, `tritanopia`; default the first three, the ones the shipped palette was searched against) | The colour-vision check: which of the person's provider and state colours read as one light for a colourblind viewer, measured the way the palette was chosen (Viénot's LMS simulation, CIE Lab distance, 12 the floor). `{min_separation, visions, checked, pairs[{left, right, left_color, right_color, vision, separation, shipped, suggestion}]}`, worst first: `vision` is the worst model for the pair, `shipped` true when both colours are exactly as shipped (the person did not cause it), and `suggestion` `{key, color, separation}` the smallest lightness step (hue kept, still bright enough to be a light) that clears the moved colour from every other colour, not just its pair -- the person's own edit moves first, then a provider before a state -- or null when no such step exists. Error is checked as the lights paint it. Nothing is written. `invalid_args` for an unknown key, a colour that is not `#RRGGBB`, or an unknown vision. Socket thread. |
+| `preview_fleet` | scenario? (default `fleet`: two working, one done; or `quiet`, `one_working`, `one_needs_you`, `same_provider_duo`, `pair`, `full_team`, `busy_team`), blend_mode? (`color_blend`, `round_robin`, `spatial_split`, `relay`, `cycle`, `classic`; default the device's own, else the global), cycle_speed_seconds? (the speed that mode plays at, even over its own override), device? (whose blend to use), led_count? (2 or 8, default 8) | A blend mode played against a synthetic fleet in the person's own colours, before choosing it -- how a mixed desk reads, which a single swatch hides. Compiled exactly as the device would play it; nothing is written to a device. `{scenario, label, blend_mode, cycle_speed_seconds, led_count, program, transformed, agents[{provider, mode}]}`. A scenario with an ask in it shows one strip under every blend: an ask takes the strip. `invalid_args` for an unknown scenario (or `live`), blend mode or LED count. Socket thread. |
+| `resolve_effect` | semantic (`ask`, `failure`, `notification`, `handoff`, `work`, `completion`, `recovery`, `environment`, `idle`), scene? (default the active scene), provider?, instance?, project?, device? | Situation preview for the Effect Studio: which assignment wins before the situation happens. `{semantic, scene, urgent, winner{scope, target_id, effect_id} or null, ladder[{scope, target_id, applicable, effect_id, wins}]}` -- the ladder walked in precedence order (device, project, provider instance, provider, scene, meaning, everywhere), each rung's own assignment shown so a losing one is visible too. An ask or a failure keeps its reserved alert: `urgent` is true and only the meaning rung is walked. `invalid_args` for an unknown meaning or scene, or an empty id. Socket thread. |
+| `list_light_log` | limit? (default 20, at most 200) | The light log for Why this light: the content-free effect history (`effect_history`, 200 events, persisted) newest first -- `{rows[{at, effect, category, surface, outcome, explanation, unseen}], total, last_seen}`, where `outcome` is `shown`/`suppressed`/`acknowledged`/`expired` and `explanation` is the history's own sentence ("Suppressed on the Dot by Do Not Disturb."). No provider text, session or path is ever in it. `invalid_args` for a non-positive limit. |
+| `list_focuses` | | The Focuses this Mac has configured, so a per-Focus rule can name a custom one: `{available, reason, focuses[{id, name}], active[]}`. macOS keeps the roster beside the Focus assertions it guards with Full Disk Access; without that grant `available` is false and `reason` says why. Socket thread. |
+| `presence` | mic, camera, screen_shared (bools), locked? (bool), idle_seconds? (≥ 0), focus? (bool, INFocusStatusCenter's `isFocused` from the app's grant), meeting_until? (epoch of a calendar meeting's end, at most 12 h ahead), next_event_start? (epoch, or null for "nothing coming"), reminders_due? (list of up to 32 reminder ids) | The app's report of what it senses (`jrbar.presence`). `next_event_start` and `reminders_due` are the app's own Calendar and Reminders readings: while they keep arriving (each stands 180 s), the calendar and reminder glows use them and the helper never asks EventKit or needs a grant of its own -- one reader, so the glow and the shelf cannot disagree; absent keys leave the helper's own read in place, and a malformed one refuses the whole report. A live microphone, camera or screen share is a call: the quiet policy gains a `call` source per `call_quiet_mode` (default `sounds`: every light and banner stays, `audible_allowed` goes false), the escalation ladder holds at `ramp` (no menu-bar pulse on a shared screen, no chime into a headset; `escalation_stage` events follow the held stage), and `state.presence.celebrations_held` asks the app's celebrations to hold their burst. A meeting adds a `calendar` source per `meeting_quiet_mode` (default `off`) until `meeting_until`. `locked`, or `idle_seconds` of 300 or more, is away: an ask that reaches the menu-bar stage goes straight to the finale (still capped by `escalation_tier`). `focus: true` stands in for the daemon's own Focus reading while the daemon holds no Focus Status grant (Follow Focus must be on). A report stands for 180 s: the app renews it at least every minute while a sensor is live, and a stale one ends the call on its own. Unknown keys are ignored; a known key of the wrong type is `invalid_args`. `{presence}` (the `state.presence` document). |
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
 | `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape plus `schema` (record contract version), `pinned` (open ask), `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`), and `axes`: `{outcome, review, freshness}` — `outcome` is `none`/`succeeded`/`failed`/`unreported`/`unknown` (what the provider reported, separate from `lifecycle`), `review` is `pending`/`unreviewed`/`reviewed` (Clear Agents acknowledgement is the review receipt), `freshness` is `live`/`delayed`/`unknown` (is the source still delivering). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `session_timeline` | id? or session+provider, cwd?, limit (default 100, max 500), before? | A session's provider transcript as bounded, paginated items — the Overview inspector's Timeline (S7.2). `id` is a roster row id and resolves the status's provider/`session_id`/cwd itself (`not_found` for an unknown id); an ended session whose status aged out is still inspectable via `session` (the provider uuid) + `provider` + optional `cwd`. Items are `{seq, at, kind, role?, name?, text?, tool_use_id?, is_error?, sidechain?, model?, uuid?, parent_uuid?, origin:"transcript", recorded_at:null, untrusted?}` — `kind` is `message`/`tool_use`/`tool_result`/`turn_end`; `tool_use`/`tool_result` pair on `tool_use_id`; `at` is the row's own stamp (occurrence) and `recorded_at` stays null because per-row ingestion time was never kept. `untrusted` marks tool output and assistant text — content, never a command. `before` is the seq of the oldest item the caller holds; the reply is `{schema, events[], has_more, next_before, total, source{provider, file}, gaps[]}` where `gaps` names `transcript_not_found`, `transcript_unreadable`, `transcript_too_large:N`, `timeline_item_cap:N`, or `unsupported_provider` (providers without a transcript reader answer that, not an empty success). Supported: `claude` (`~/.claude/projects/**/*.jsonl`) and `codex` (`~/.codex/sessions/**/*.jsonl`), matched by uuid-in-filename. Reads are bounded (64 MB file cap, 5000-item cap, 600-char text, secret-run redaction). `invalid_value` without a provider. |
@@ -1071,6 +1180,28 @@ and exactly at its 1 Hz saturated-red ceiling, so the red state needs no
 separate table. The compiler is still the authority; `dot_role` simply
 never hands it work to do.
 
+### The `call` role, and a shut lid
+
+Added 2026-09-22. `dot_role: "call"` makes the Dot a presence light the way
+a busylight is one: a **steady** red `#FF2D20` -- held, never breathed, it
+sits in view of the camera -- while `state.presence.on_call` is true
+(`why: "on_call"`, `reasons: ["presence", "on_call"]`) and for the whole
+of a calendar meeting while `state.presence.in_meeting` is (`why:
+"in_meeting"`; a live call names itself first), the way Kuando marks the
+meeting and not only its start, and exactly the `asks` beacon above the
+rest of the time. It reads the devices, not a call
+app's API, so it works for every call app, and between calls it still says
+whether an agent needs the person. Like `asks` it needs no strip
+(`lights.dot_link.state` is `beacon`), is never scaled by
+`linked_dot_scale`, and is never what a linked Screen Bar mirrors.
+
+With the lid shut (the daemon's lid reading, `state.power.closed_lid.lid_closed`),
+an `extend` Dot has nothing in view to continue -- the strip in the SD slot
+and the notch band are both behind the lid -- so it plays the `asks` beacon
+instead, unscaled: the surface's `role` reads `asks` and its `reasons`
+carry `auto:lid_closed`. The stored `dot_role` is untouched; the Dot goes
+back to `extend` when the lid opens.
+
 ### Settings
 
 Both live in the `settings` document and are writable with `set_setting`:
@@ -1098,6 +1229,31 @@ raises `DeviceWriteError`. The animation validator calls both of those a
 exactly why nothing noticed an eight-colour strip program being written to
 a two-LED Dot: LEDs 0 and 1 were black in most frames of the chase, so a
 lit strip sat beside a Dot that looked dead.
+
+## Light and presence settings the legacy window owned
+
+Added 2026-09-22. These keys were always in the `settings` document; until
+now only the PyObjC window wrote them. Every one is a plain `set_setting`
+path, validated by the real settings loader:
+
+| path | type | default | meaning |
+| --- | --- | --- | --- |
+| `calendar_alerts_enabled` | bool | `false` | A calm purple glow before a timed event starts. |
+| `calendar_lead_minutes` | number (1…60) | `5` | How long before the event the glow starts. |
+| `reminder_alerts_enabled` | bool | `false` | An amber glow when a Reminder comes due. |
+| `battery_monitoring.charging_idle_enabled` | bool | `true` | The charging fill while idle and plugged in. |
+| `battery_monitoring.show_on_power_change` | bool | `true` | The short power-change preview. |
+| `battery_monitoring.low_battery_threshold_minutes` | number (0…120) | `0` (off) | The low-battery warning by time left rather than charge: a fast drain at 20 % can be closer to empty than a slow one at 8 %. While agents run on battery under a keep-awake hold it fires at twice this. Never on an estimate macOS is still making, never on AC. |
+| `rainstick_night_enabled` | bool | `false` | Let the Rainstick drip inside the night scene too. |
+| `milestone_odometer_steps` | list of positive ints (at most 16) | `[10, 25, 50, 100]` | The completion counts that earn the milestone cue. |
+| `ambient_cues_disabled` | list of cue ids | `[]` | The semantic cues switched off (`list_cues`, `set_cue`). |
+| `calibration_profiles` | object: slot → device id → `{brightness, red_gain, green_gain, blue_gain, resting_glow}` | `{}` | Written by `calibration_profile save`. |
+| `focus_profile_rules` | object: Focus id → slot | `{}` | Write the whole object (Focus ids contain dots). |
+| `devices.N.blend_mode` | `color_blend` \| `round_robin` \| `spatial_split` \| `relay` \| `cycle` \| `classic`, or null | null | A per-device blend, so eight discrete LEDs can take per-agent blocks while the band stays smooth. Null (or an unknown word) follows the global `colors.blend_mode`. |
+| `call_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `sounds` | What a call does (`presence`). |
+| `meeting_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What a calendar meeting does. |
+| `away_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What an empty desk does (a locked screen or five idle minutes, as the app reports them): `asks_only` keeps the Dot beacon and every ask lit while the rest goes quiet, `dark` turns the desk off like Lolgato. The report expires after 180 s, so the quiet cannot outlive the evidence. |
+| `escalation_tier_by_provider` | object: provider id → `light`/`menu_bar`/`chime`/`takeover` | `{}` | A ceiling per provider under `escalation_tier`, judged on the oldest open ask's provider: Claude's asks may climb to the chime while another provider's never go past the light. It only ever lowers the stage (the global tier arms the finale). |
 
 ## Versioning
 

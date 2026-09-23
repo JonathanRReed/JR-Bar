@@ -207,3 +207,205 @@ def test_set_setting_round_trips_auto_dim_by_dot_path(headless) -> None:  # noqa
     assert published[-1]["document"]["auto_dim"]["schedule"]["fraction"] == 0.3
     reset = controller._core_dispatch("reset_settings", {"paths": ["auto_dim"]})
     assert reset["reset"] == ["auto_dim"] and controller.settings.auto_dim == AutoDimSettings()
+
+
+# --- temporal smoothing ---------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_passing_shadow_does_not_dim_the_desk() -> None:
+    from jrbar.auto_dim import LuxSmoother
+
+    clock = _Clock()
+    smoother = LuxSmoother(clock=clock)
+    assert smoother.update(120.0) == 120.0
+    clock.now = 1.0
+    # One dark read between bright ones: the median target stays bright.
+    assert smoother.update(5.0) == 120.0
+    clock.now = 2.0
+    assert 115.0 < smoother.update(118.0) <= 120.0
+    assert smoother.last_raw == 118.0
+
+
+def test_dusk_dims_slowly_and_a_lamp_brightens_at_once() -> None:
+    from jrbar.auto_dim import LuxSmoother
+
+    clock = _Clock()
+    smoother = LuxSmoother(dim_seconds=10.0, brighten_seconds=2.0, clock=clock)
+    smoother.update(100.0)
+    for second in range(1, 4):
+        clock.now = float(second)
+        value = smoother.update(10.0)
+    # Three seconds of a genuinely darker room: on the way, not there.
+    assert 10.0 < value < 100.0
+    for second in range(4, 60):
+        clock.now = float(second)
+        value = smoother.update(10.0)
+    assert value < 11.0
+    clock.now = 60.0
+    brightened = smoother.update(200.0)
+    assert brightened > value
+    # A two-second time constant: most of the way within five seconds,
+    # where a dim of the same size takes most of a minute.
+    clock.now = 64.0
+    assert smoother.update(200.0) > 180.0
+
+
+def test_the_readout_carries_the_raw_reading_beside_the_smoothed_one() -> None:
+    from jrbar.auto_dim import LuxSmoother, _SmoothedAmbientLight
+
+    clock = _Clock()
+    reader = _SmoothedAmbientLight(lambda: 80.0, LuxSmoother(clock=clock))
+    settings = AutoDimSettings(mode="ambient")
+    result = evaluate_auto_dim(settings, now_minutes=0, display_reader=lambda: None, ambient_reader=reader)
+    assert result.reading == 80.0 and result.raw == 80.0
+    assert result.to_dict()["raw"] == 80.0
+    assert "raw" not in AutoDimResult("display", "display", 0.6, True, 0.6).to_dict()
+
+
+def test_an_unreadable_sensor_resets_the_smoother() -> None:
+    from jrbar.auto_dim import AmbientLightUnavailableError, LuxSmoother, _SmoothedAmbientLight
+
+    def unreadable() -> float:
+        raise AmbientLightUnavailableError("no sensor")
+
+    smoother = LuxSmoother(clock=_Clock())
+    smoother.update(50.0)
+    reader = _SmoothedAmbientLight(unreadable, smoother)
+    assert reader() is None
+    assert smoother.value is None and reader.last_raw is None
+
+
+# --- learning from the slider ------------------------------------------------------
+
+
+def _votes_from(curve, base, luxes):
+    from jrbar.auto_dim import BrightnessVote, ambient_factor
+
+    return tuple(
+        BrightnessVote(
+            lux=lux,
+            level=base
+            * ambient_factor(
+                lux,
+                min_fraction=curve.ambient_min_fraction,
+                lux_floor=curve.ambient_lux_floor,
+                lux_ceiling=curve.ambient_lux_ceiling,
+            ),
+            at=float(index),
+        )
+        for index, lux in enumerate(luxes)
+    )
+
+
+def test_the_slider_teaches_a_curve_that_is_offered_not_applied() -> None:
+    from jrbar.auto_dim import AutoDimSettings, learn_ambient_curve
+
+    wanted = AutoDimSettings(mode="ambient", ambient_min_fraction=0.2, ambient_lux_floor=30.0, ambient_lux_ceiling=300.0)
+    votes = _votes_from(wanted, 0.8, (8.0, 30.0, 90.0, 180.0, 300.0, 600.0))
+    current = AutoDimSettings(mode="ambient")
+    learned = learn_ambient_curve(votes, current, current_base=1.0)
+    assert learned["ready"] is True and learned["reason"] is None
+    suggested = learned["suggested"]
+    assert suggested["brightness"] == 0.8
+    assert suggested["lux_floor"] == 30.0 and suggested["lux_ceiling"] == 300.0
+    assert abs(suggested["min_fraction"] - 0.2) < 1e-9
+    assert learned["error_suggested"] < learned["error_now"]
+    # Votes that the current curve already explains ask for nothing.
+    fits = learn_ambient_curve(_votes_from(current, 1.0, (5.0, 40.0, 150.0, 400.0)), current, current_base=1.0)
+    assert fits["ready"] is False and fits["reason"] == "already_fits"
+
+
+def test_a_curve_needs_enough_votes_across_enough_light() -> None:
+    from jrbar.auto_dim import AutoDimSettings, BrightnessVote, learn_ambient_curve
+
+    current = AutoDimSettings(mode="ambient")
+    two = (BrightnessVote(10.0, 0.3, 1.0), BrightnessVote(200.0, 0.9, 2.0))
+    assert learn_ambient_curve(two, current, current_base=1.0)["reason"] == "needs_votes"
+    narrow = (BrightnessVote(40.0, 0.3, 1.0), BrightnessVote(60.0, 0.5, 2.0), BrightnessVote(100.0, 0.9, 3.0))
+    assert learn_ambient_curve(narrow, current, current_base=1.0)["reason"] == "needs_range"
+
+
+def test_the_latest_vote_at_a_light_stands_and_nonsense_is_dropped() -> None:
+    from jrbar.auto_dim import MAX_LEARN_SAMPLES, BrightnessVote, record_vote
+
+    votes = record_vote((), BrightnessVote(100.0, 0.5, 1.0))
+    votes = record_vote(votes, BrightnessVote(110.0, 0.7, 2.0))
+    assert votes == (BrightnessVote(110.0, 0.7, 2.0),)
+    for bad in (BrightnessVote(float("nan"), 0.5, 3.0), BrightnessVote(10.0, 0.0, 3.0), BrightnessVote(-1.0, 0.5, 3.0)):
+        assert record_vote(votes, bad) == votes
+    for index in range(MAX_LEARN_SAMPLES + 10):
+        votes = record_vote(votes, BrightnessVote(2.0 * 1.5**index, 0.5, float(index)))
+    assert len(votes) == MAX_LEARN_SAMPLES
+
+
+def test_the_daemon_counts_a_slider_move_only_while_following_the_sensor() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import core_lights, core_runtime
+    from jrbar.auto_dim import AutoDimResult, AutoDimSettings
+
+    result = [AutoDimResult("ambient", "ambient", 0.5, True, 40.0)]
+    controller = SimpleNamespace(
+        auto_dim_result=lambda: result[0],
+        settings=SimpleNamespace(auto_dim=AutoDimSettings(mode="ambient")),
+    )
+    core_lights.note_brightness_nudge(controller, 0.8, now=10.0)
+    assert [(vote.lux, vote.level) for vote in controller._core_brightness_votes] == [(40.0, 0.4)]
+    # The display fallback, another mode, or an unread sensor is no vote.
+    for other in (
+        AutoDimResult("ambient", "display", 0.7, False, 0.7),
+        AutoDimResult("schedule", "schedule", 0.3, True, 600.0),
+        AutoDimResult("ambient", "ambient", 1.0, True, None),
+    ):
+        result[0] = other
+        core_lights.note_brightness_nudge(controller, 0.5, now=11.0)
+    assert len(controller._core_brightness_votes) == 1
+    assert controller._core_brightness_base == 0.5
+
+    reply = core_runtime._cmd_auto_dim_learning(controller, {})
+    assert reply["mode"] == "ambient" and reply["votes"] == 1 and reply["reason"] == "needs_votes"
+    assert reply["samples"] == [{"lux": 40.0, "level": 0.4, "at": 10.0}]
+    assert core_runtime._cmd_auto_dim_learning(controller, {"clear": True})["votes"] == 0
+    import pytest
+
+    from jrbar.core_server import CommandError
+
+    with pytest.raises(CommandError):
+        core_runtime._cmd_auto_dim_learning(controller, {"clear": "yes"})
+    assert "auto_dim_learning" in core_runtime.command_names()
+
+
+def test_only_the_panel_slider_over_hardware_votes() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime
+    from jrbar.auto_dim import AutoDimResult
+
+    def daemon(*devices):
+        return SimpleNamespace(
+            status_bar_devices=lambda remember=False: list(devices),
+            set_device_brightness=lambda device_id, value: None,
+            _core_publish_lights=lambda: None,
+            _core_legacy=lambda: SimpleNamespace(VIRTUAL_DEVICE_ID="virtual:status-bar"),
+            auto_dim_result=lambda: AutoDimResult("ambient", "ambient", 0.5, True, 40.0),
+        )
+
+    band = SimpleNamespace(device_id="virtual:status-bar", connected=True)
+    strip = SimpleNamespace(device_id="pro", connected=True)
+    band_only = daemon(band)
+    core_runtime._cmd_set_brightness(band_only, {"value": 0.8})
+    assert not getattr(band_only, "_core_brightness_votes", ())
+    desk = daemon(band, strip)
+    core_runtime._cmd_set_brightness(desk, {"value": 0.8})
+    assert len(desk._core_brightness_votes) == 1
+    # One device's own slider is not the panel's.
+    core_runtime._cmd_set_brightness(desk, {"device": "pro", "value": 0.2})
+    assert desk._core_brightness_votes[0].level == 0.4

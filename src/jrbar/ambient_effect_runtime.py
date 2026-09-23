@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .accessibility_display import AccessibilityDisplayPreferences
+from .ambient_cues import disabled_cue_families
 from .ambient_effect_dispatch import (
     AmbientEffectDispatch,
     AmbientEffectFamily,
@@ -328,33 +329,46 @@ def _compile_runtime_dispatch(controller: object) -> None:
     semantic_program = getattr(controller, "_semantic_effect_program", None)
     if type(semantic_program) is not str or not semantic_program:
         semantic_program = None
+    # A cue the person switched off (jrbar.ambient_cues) is planned as it
+    # always was -- its observers keep their bookkeeping -- and simply never
+    # reaches a surface.
+    off = disabled_cue_families(getattr(controller, "settings", None))
+
+    def unless_off(family: AmbientEffectFamily, plan):
+        return None if family in off else plan
+
     proposed = compile_ambient_effect_dispatch(
         semantic_selection=semantic_selection,
         semantic_program=semantic_program,
-        glance_light=_typed_plan(
-            getattr(controller, "_glance_light_plan", None),
-            GlanceLightPlan,
+        glance_light=unless_off(
+            AmbientEffectFamily.GLANCE_LIGHT,
+            _typed_plan(getattr(controller, "_glance_light_plan", None), GlanceLightPlan),
         ),
-        firefly_completion=_decision_plan(
-            getattr(controller, "_firefly_completion_decision", None),
-            FireflyCompletionPlan,
+        firefly_completion=unless_off(
+            AmbientEffectFamily.FIREFLY_COMPLETION,
+            _decision_plan(
+                getattr(controller, "_firefly_completion_decision", None),
+                FireflyCompletionPlan,
+            ),
         ),
-        completion_meniscus=_first_screen_meniscus(controller),
-        handoff_baton=_decision_plan(
-            getattr(controller, "_handoff_baton_decision", None),
-            HandoffBatonPlan,
+        completion_meniscus=unless_off(
+            AmbientEffectFamily.COMPLETION_MENISCUS, _first_screen_meniscus(controller)
         ),
-        recovery_grace=_typed_plan(
-            getattr(controller, "_recovery_grace_plan", None),
-            RecoveryGracePlan,
+        handoff_baton=unless_off(
+            AmbientEffectFamily.HANDOFF_BATON,
+            _decision_plan(getattr(controller, "_handoff_baton_decision", None), HandoffBatonPlan),
         ),
-        ask_heartbeat=_typed_plan(
-            getattr(controller, "_ask_heartbeat_plan", None),
-            AskHeartbeatPlan,
+        recovery_grace=unless_off(
+            AmbientEffectFamily.RECOVERY_GRACE,
+            _typed_plan(getattr(controller, "_recovery_grace_plan", None), RecoveryGracePlan),
         ),
-        turn_length_ember=_typed_plan(
-            getattr(controller, "_turn_length_ember_plan", None),
-            TurnLengthEmberPlan,
+        ask_heartbeat=unless_off(
+            AmbientEffectFamily.ASK_HEARTBEAT,
+            _typed_plan(getattr(controller, "_ask_heartbeat_plan", None), AskHeartbeatPlan),
+        ),
+        turn_length_ember=unless_off(
+            AmbientEffectFamily.TURN_LENGTH_EMBER,
+            _typed_plan(getattr(controller, "_turn_length_ember_plan", None), TurnLengthEmberPlan),
         ),
         rainstick_idle=_typed_plan(
             getattr(controller, "_rainstick_idle_plan", None),
@@ -368,10 +382,12 @@ def _compile_runtime_dispatch(controller: object) -> None:
             getattr(controller, "_milestone_odometer_plan", None),
             MilestoneOdometerPlan,
         ),
-        fleet_arrival_departure=_latest_fleet_cue(controller),
-        courtesy_signature=_typed_plan(
-            getattr(controller, "_courtesy_signature_plan", None),
-            CourtesySignaturePlan,
+        fleet_arrival_departure=unless_off(
+            AmbientEffectFamily.FLEET_ARRIVAL_DEPARTURE, _latest_fleet_cue(controller)
+        ),
+        courtesy_signature=unless_off(
+            AmbientEffectFamily.COURTESY_SIGNATURE,
+            _typed_plan(getattr(controller, "_courtesy_signature_plan", None), CourtesySignaturePlan),
         ),
         semantic_colors=_ambient_colors(controller),
     )
@@ -1269,6 +1285,47 @@ def _milestone_odometer(
     )
     setattr(controller, "_milestone_odometer_plan", plan)
     setattr(controller, "_milestone_odometer_state", plan.state)
+    if plan.reached_milestones:
+        _publish_milestone(controller, plan, occurred_at=event.occurred_at_epoch)
+
+
+#: A crossing older than this is history being re-read (a restart, a
+#: backfill), not a moment: the lights may replay it, the toys must not.
+MILESTONE_EVENT_FRESH_SECONDS = 120.0
+
+
+def _publish_milestone(
+    controller: object,
+    plan: MilestoneOdometerPlan,
+    *,
+    occurred_at: float,
+) -> None:
+    """One ``milestone`` event per fresh crossing, so Confetti at the notch
+    and the Aquarium's pearls celebrate the same count the lights do --
+    one completion counter behind every celebration, not one per toy."""
+    publish = getattr(controller, "_core_publish_event", None)
+    if not callable(publish):
+        return
+    try:
+        age = time.time() - float(occurred_at)
+    except (TypeError, ValueError):
+        return
+    # A few seconds ahead is clock skew between the hook and the daemon.
+    if not -5.0 <= age <= MILESTONE_EVENT_FRESH_SECONDS:
+        return
+    latest = plan.reached_milestones[-1]
+    try:
+        publish(
+            "milestone",
+            label="Completion milestone",
+            detail=f"{latest} finished",
+            count=latest,
+            reached=list(plan.reached_milestones),
+            next_count=plan.next_milestone,
+        )
+    except Exception:
+        # A dead socket must never cost the lights their cue.
+        return
 
 
 def _handoff_endpoint(
@@ -1599,8 +1656,22 @@ def _observe_dot_and_rainstick(
             thermal=thermal,
             reduce_motion=preferences.reduce_motion,
             surface_pixel_count=8,
+            watcher_deaf=_watcher_deaf(controller),
         ),
     )
+
+
+def _watcher_deaf(controller: object) -> bool:
+    """True when the last intake report proves JR-Bar cannot hear: no hook
+    is installed anywhere, or a hook is writing and nothing arrives. An
+    absent report is not evidence, and quiet is not deafness."""
+    report = getattr(controller, "current_intake_report", None)
+    if report is None:
+        return False
+    try:
+        return (not bool(report.any_installed)) or bool(report.stuck_providers)
+    except AttributeError:
+        return False
 
 
 def _observe_remote_fleet(controller: object, *, reduce_motion: bool) -> None:

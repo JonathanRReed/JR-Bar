@@ -50,15 +50,16 @@ def stray_indices(program: str, led_count: int = DOT_LED_COUNT) -> tuple[int, ..
 # --- the role vocabulary ----------------------------------------------------
 
 
-def test_roles_are_exactly_three_and_default_to_extend__and_2_more() -> None:
-    # --- scenario: roles_are_exactly_three_and_default_to_extend
-    assert DOT_ROLE_CHOICES == ("extend", "asks", "status")
+def test_roles_are_exactly_four_and_default_to_extend__and_2_more() -> None:
+    # --- scenario: roles_are_exactly_four_and_default_to_extend
+    assert DOT_ROLE_CHOICES == ("extend", "asks", "status", "call")
     assert DEFAULT_DOT_ROLE == "extend"
 
     # --- scenario: normalize_dot_role_never_refuses
     for value, expected in [
         ("asks", "asks"),
         ("STATUS", "status"),
+        (" Call ", "call"),
         ("  extend  ", "extend"),
         (DotRole.ASKS, "asks"),
         ("beacon", "extend"),

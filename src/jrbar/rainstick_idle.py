@@ -61,6 +61,12 @@ class RainstickSuppressionReason(str, Enum):
     LOW_POWER = "low_power"
     THERMAL_SERIOUS = "thermal_serious"
     THERMAL_CRITICAL = "thermal_critical"
+    # The drip means "JR-Bar is alive and can hear its agents". When no hook
+    # is installed, or a hook is writing and nothing it says arrives, that
+    # is a lie -- so the pixel stops, and a still strip means the watcher
+    # has stopped hearing. Silence alone is not deafness: a weekend away
+    # keeps the drip.
+    WATCHER_DEAF = "watcher_deaf"
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +235,7 @@ _SUPPRESSION_LABELS: Final = {
     RainstickSuppressionReason.LOW_POWER: "Low Power Mode is active",
     RainstickSuppressionReason.THERMAL_SERIOUS: "thermal pressure is serious",
     RainstickSuppressionReason.THERMAL_CRITICAL: "thermal pressure is critical",
+    RainstickSuppressionReason.WATCHER_DEAF: "JR-Bar cannot hear its agents",
 }
 
 
@@ -244,6 +251,7 @@ def plan_rainstick_idle(
     thermal: object = RainstickThermalState.NOMINAL,
     reduce_motion: object = False,
     surface_pixel_count: object = DEFAULT_SURFACE_PIXEL_COUNT,
+    watcher_deaf: object = False,
 ) -> RainstickIdlePlan:
     """Plan Rainstick Idle from already-observed policy and machine facts.
 
@@ -269,6 +277,7 @@ def plan_rainstick_idle(
     reduced = _boolean(reduce_motion, "reduce_motion")
     thermal_state = _thermal_state(thermal)
     pixel_count = _surface_pixel_count(surface_pixel_count)
+    deaf = _boolean(watcher_deaf, "watcher_deaf")
 
     reasons: list[RainstickSuppressionReason] = []
     if not enabled:
@@ -291,6 +300,8 @@ def plan_rainstick_idle(
     }.get(thermal_state)
     if thermal_reason is not None:
         reasons.append(thermal_reason)
+    if deaf:
+        reasons.append(RainstickSuppressionReason.WATCHER_DEAF)
 
     if reasons:
         explanation = "; ".join(_SUPPRESSION_LABELS[reason] for reason in reasons)

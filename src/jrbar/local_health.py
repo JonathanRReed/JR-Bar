@@ -99,9 +99,11 @@ class LocalHealthDndStatus:
             type(source) is DndSource for source in self.sources
         ):
             raise TypeError("DND health sources must be typed")
-        if len(self.modes) > 4 or len(set(self.modes)) != len(self.modes):
+        # Bounded by the vocabularies themselves: every source can be live at
+        # once (a call over a schedule over a Focus), and each one distinct.
+        if len(self.modes) > len(DndMode) or len(set(self.modes)) != len(self.modes):
             raise ValueError("DND health modes must remain bounded")
-        if len(self.sources) > 4 or len(set(self.sources)) != len(self.sources):
+        if len(self.sources) > len(DndSource) or len(set(self.sources)) != len(self.sources):
             raise ValueError("DND health sources must remain bounded")
         if self.return_epoch is not None and _finite_nonnegative(
             self.return_epoch
@@ -394,6 +396,9 @@ def format_local_health(snapshot: LocalHealthSnapshot) -> str:
             DndSource.SCHEDULE: "Scheduled",
             DndSource.MACOS_FOCUS: "macOS Focus",
             DndSource.NAMED_FOCUS: "Named Focus",
+            DndSource.CALL: "Call",
+            DndSource.CALENDAR: "Meeting",
+            DndSource.AWAY: "Away",
         }
         modes = "+".join(mode_labels[value] for value in dnd.modes) or (
             "Named Rule" if dnd.sources else "Off"

@@ -3810,6 +3810,19 @@ def _scenario_full_team(now: datetime) -> tuple[AgentStatus, ...]:
     )
 
 
+def _scenario_fleet(now: datetime) -> tuple[AgentStatus, ...]:
+    # The desk a blend mode is really chosen for: three agents in three
+    # colours, two working and one done. A single swatch hides how a mixed
+    # desk reads; this is the mixed desk. No one asks: an ask takes the
+    # whole strip whatever the blend, so it would make every mode look
+    # the same.
+    return (
+        _preview_status("claude", AgentMode.WORKING, agent_id="claude:preview", now=now),
+        _preview_status("codex", AgentMode.WORKING, agent_id="codex:preview", now=now),
+        _preview_status("gemini", AgentMode.COMPLETED, agent_id="gemini:preview", now=now),
+    )
+
+
 def _scenario_busy_team(now: datetime) -> tuple[AgentStatus, ...]:
     # More active sessions than either device has LEDs (2 or 8) -- shows
     # how each blend mode degrades gracefully when it has to wrap or share.
@@ -3831,6 +3844,7 @@ PREVIEW_SCENARIO_SAME_PROVIDER_DUO = "same_provider_duo"
 PREVIEW_SCENARIO_PAIR = "pair"
 PREVIEW_SCENARIO_FULL_TEAM = "full_team"
 PREVIEW_SCENARIO_BUSY_TEAM = "busy_team"
+PREVIEW_SCENARIO_FLEET = "fleet"
 
 # PREVIEW_SCENARIO_LIVE is handled by the caller (use the real snapshot when
 # one exists) and isn't in this table -- everything else maps straight to a
@@ -3843,6 +3857,7 @@ _PREVIEW_SCENARIO_BUILDERS: dict[str, Any] = {
     PREVIEW_SCENARIO_PAIR: _scenario_pair,
     PREVIEW_SCENARIO_FULL_TEAM: _scenario_full_team,
     PREVIEW_SCENARIO_BUSY_TEAM: _scenario_busy_team,
+    PREVIEW_SCENARIO_FLEET: _scenario_fleet,
 }
 
 PREVIEW_SCENARIO_CHOICES: tuple[str, ...] = (
@@ -3855,6 +3870,9 @@ PREVIEW_SCENARIO_CHOICES: tuple[str, ...] = (
     PREVIEW_SCENARIO_FULL_TEAM,
     PREVIEW_SCENARIO_BUSY_TEAM,
 )
+#: The blend-mode preview's own desk (``preview_fleet``). Kept out of the
+#: legacy window's picker above, whose catalogue is pinned.
+FLEET_PREVIEW_SCENARIOS: tuple[str, ...] = (*PREVIEW_SCENARIO_CHOICES, PREVIEW_SCENARIO_FLEET)
 
 PREVIEW_SCENARIO_LABELS: dict[str, str] = {
     PREVIEW_SCENARIO_LIVE: "Live Activity",
@@ -3865,6 +3883,7 @@ PREVIEW_SCENARIO_LABELS: dict[str, str] = {
     PREVIEW_SCENARIO_PAIR: "Two Different Agents",
     PREVIEW_SCENARIO_FULL_TEAM: "Full Team, Mixed States",
     PREVIEW_SCENARIO_BUSY_TEAM: "Busy Team (more agents than LEDs)",
+    PREVIEW_SCENARIO_FLEET: "Three Agents: Two Working, One Done",
 }
 
 
@@ -4628,3 +4647,172 @@ def studio_preview_program(
         brightness=brightness,
     )
     return program
+
+
+# --- Colour-vision check -----------------------------------------------------
+#
+# The shipped palette was grid-searched so every provider and state colour
+# stays a different LIGHT for a red/green colourblind viewer (about one man
+# in twelve) -- see test_provider_colour_dichromacy.py, whose metric this
+# is, measured the same way: Viénot's LMS dichromacy simulation, then CIE
+# Lab distance. That promise lasted exactly until the person picked a colour
+# of their own. check_palette measures the colours they have NOW, names the
+# pairs that read as one light, and offers the smallest lightness step that
+# pulls one of them apart without landing on a third -- lightness being the
+# one channel a dichromat keeps.
+
+#: Two colours closer than this read as the same light. ~2.3 is "just
+#: noticeable"; 10 is "clearly different"; the palette clears 12.
+MIN_VISION_SEPARATION_DE = 12.0
+VISION_NORMAL = "normal"
+VISION_DEUTERANOPIA = "deuteranopia"
+VISION_PROTANOPIA = "protanopia"
+#: Blue/yellow, about one person in ten thousand. The shipped palette was
+#: never searched against it, so it is checked only on request.
+VISION_TRITANOPIA = "tritanopia"
+VISION_MODELS: tuple[str, ...] = (
+    VISION_NORMAL,
+    VISION_DEUTERANOPIA,
+    VISION_PROTANOPIA,
+    VISION_TRITANOPIA,
+)
+#: The visions the palette promises to survive.
+DICHROMACY_VISIONS: tuple[str, ...] = (VISION_NORMAL, VISION_DEUTERANOPIA, VISION_PROTANOPIA)
+#: Lightness steps tried, smallest first, both ways.
+_NUDGE_OFFSETS: tuple[float, ...] = (0.06, -0.06, 0.1, -0.1, 0.14, -0.14, 0.2, -0.2, 0.28, -0.28)
+
+
+def _vision_linear(hex_value: str) -> tuple[float, float, float]:
+    cleaned = normalize_hex(hex_value, "#000000").lstrip("#")
+    return tuple(srgb_to_linear(int(cleaned[index : index + 2], 16) / 255.0) for index in (0, 2, 4))
+
+
+def simulate_vision(hex_value: str, vision: str) -> tuple[float, float, float]:
+    """Linear RGB of ``hex_value`` as ``vision`` sees it (Viénot 1999 for
+    the red/green dichromacies, the same LMS basis for tritanopia)."""
+    red, green, blue = _vision_linear(hex_value)
+    if vision == VISION_NORMAL:
+        return (red, green, blue)
+    long_ = 0.31399 * red + 0.63951 * green + 0.04649 * blue
+    medium = 0.15537 * red + 0.75789 * green + 0.08670 * blue
+    short = 0.01776 * red + 0.10945 * green + 0.87247 * blue
+    if vision == VISION_DEUTERANOPIA:
+        medium = 0.494207 * long_ + 1.24827 * short
+    elif vision == VISION_PROTANOPIA:
+        long_ = 2.02344 * medium - 2.52581 * short
+    elif vision == VISION_TRITANOPIA:
+        short = -0.86744736 * long_ + 1.86727089 * medium
+    else:
+        raise ValueError(f"unknown vision model {vision!r}")
+    return (
+        5.47221 * long_ - 4.6419 * medium + 0.16963 * short,
+        -1.1252 * long_ + 2.29317 * medium - 0.1678 * short,
+        0.02980 * long_ - 0.19318 * medium + 1.16364 * short,
+    )
+
+
+def _vision_lab(rgb: tuple[float, float, float]) -> tuple[float, float, float]:
+    red, green, blue = (max(0.0, min(1.0, channel)) for channel in rgb)
+    x = 0.4124 * red + 0.3576 * green + 0.1805 * blue
+    y = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    z = 0.0193 * red + 0.1192 * green + 0.9505 * blue
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+
+    fx, fy, fz = f(x / 0.95047), f(y), f(z / 1.08883)
+    return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
+
+
+def vision_separation(left: str, right: str, vision: str) -> float:
+    """Lab distance between two colours as ``vision`` sees them."""
+    a = _vision_lab(simulate_vision(left, vision))
+    b = _vision_lab(simulate_vision(right, vision))
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _worst_separation(left: str, right: str, visions: tuple[str, ...]) -> tuple[float, str]:
+    return min((vision_separation(left, right, vision), vision) for vision in visions)
+
+
+def palette_colors(colors: ColorSettings, providers: tuple[str, ...]) -> dict[str, str]:
+    """The lights a person can see side by side: every provider's identity
+    colour and every state colour, keyed ``agent:<id>`` / ``state:<key>``.
+    Error is the colour the lights paint, after its own separation."""
+    palette = {f"agent:{provider}": colors.agent_color(provider) for provider in providers}
+    for key in MODE_COLOR_KEYS:
+        palette[f"state:{key}"] = colors.rendered_error_color() if key == MODE_ERROR else colors.mode_color(key)
+    return palette
+
+
+def _nudge(
+    key: str,
+    palette: dict[str, str],
+    visions: tuple[str, ...],
+) -> tuple[str, float] | None:
+    """The smallest lightness step that clears ``key`` from EVERY other
+    colour (not just its pair -- a nudge must not land on a third light)
+    and keeps it bright enough to be a light at all."""
+    original = palette[key]
+    others = [value for other, value in palette.items() if other != key]
+    for offset in _NUDGE_OFFSETS:
+        candidate = shade_of(original, offset)
+        if relative_luminance(candidate) < IDENTITY_LUMINANCE_FLOOR:
+            continue
+        worst = min(
+            (_worst_separation(candidate, other, visions)[0] for other in others),
+            default=float("inf"),
+        )
+        if worst >= MIN_VISION_SEPARATION_DE:
+            return candidate, worst
+    return None
+
+
+def check_palette(
+    palette: dict[str, str],
+    *,
+    shipped: dict[str, str] | None = None,
+    visions: tuple[str, ...] = DICHROMACY_VISIONS,
+) -> list[dict[str, Any]]:
+    """Every pair that reads as one light under some vision, worst first.
+
+    Each pair carries its worst ``vision`` and ``separation``, whether both
+    colours are exactly as shipped (``shipped``: the person did not cause
+    it), and a ``suggestion`` -- the key to move and the nudged colour --
+    or None when no lightness step clears it. The colour moved is the
+    person's own edit when only one of the pair is edited, else a provider
+    before a state (a state colour carries a meaning every provider
+    shares), else the second of the pair."""
+    shipped = shipped or {}
+    keys = sorted(palette)
+    pairs: list[dict[str, Any]] = []
+    for index, left in enumerate(keys):
+        for right in keys[index + 1 :]:
+            separation, vision = _worst_separation(palette[left], palette[right], visions)
+            if separation >= MIN_VISION_SEPARATION_DE:
+                continue
+            left_shipped = shipped.get(left, "").upper() == palette[left].upper()
+            right_shipped = shipped.get(right, "").upper() == palette[right].upper()
+            if left_shipped != right_shipped:
+                moving = right if left_shipped else left
+            elif left.startswith("agent:") != right.startswith("agent:"):
+                moving = left if left.startswith("agent:") else right
+            else:
+                moving = right
+            nudged = _nudge(moving, palette, visions)
+            pairs.append(
+                {
+                    "left": left,
+                    "right": right,
+                    "left_color": palette[left],
+                    "right_color": palette[right],
+                    "vision": vision,
+                    "separation": round(separation, 1),
+                    "shipped": left_shipped and right_shipped,
+                    "suggestion": None
+                    if nudged is None
+                    else {"key": moving, "color": nudged[0], "separation": round(nudged[1], 1)},
+                }
+            )
+    pairs.sort(key=lambda pair: (pair["separation"], pair["left"], pair["right"]))
+    return pairs

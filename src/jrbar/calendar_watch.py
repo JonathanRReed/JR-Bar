@@ -80,10 +80,64 @@ def request_access(completion) -> None:
         store.requestAccessToEntityType_completion_(eventkit.EKEntityTypeEvent, _handler)
 
 
+# --- the app's reading --------------------------------------------------------
+#
+# The app already holds the Calendars grant for the notch shelf and reads
+# the next event itself; a second EventKit reader in the helper meant a
+# second permission prompt and a glow that could disagree with the shelf.
+# While the app keeps reporting (``presence``'s ``next_event_start``), the
+# glow uses that reading and never touches EventKit here.
+
+#: How long one app report stands before this module falls back to its own
+#: EventKit read.
+APP_FACTS_TTL_SECONDS = 180.0
+#: The furthest ahead a reported start may lie.
+MAX_APP_EVENT_AHEAD_SECONDS = 7 * 24 * 60 * 60.0
+
+_app_facts: tuple[float, float | None] | None = None
+
+
+def adopt_app_calendar_facts(next_start: float | None, *, now: float) -> None:
+    """Record the app's next event start (an epoch, or None for "nothing
+    coming"). ``ValueError`` for a start that is not a plausible epoch."""
+    global _app_facts
+    if next_start is not None:
+        if isinstance(next_start, bool) or not isinstance(next_start, (int, float)):
+            raise ValueError("next_event_start must be an epoch")
+        value = float(next_start)
+        if value != value or value - now > MAX_APP_EVENT_AHEAD_SECONDS:
+            raise ValueError("next_event_start is not a plausible epoch")
+        next_start = value
+    _app_facts = (float(now), next_start)
+
+
+def forget_app_calendar_facts() -> None:
+    global _app_facts
+    _app_facts = None
+
+
+def app_next_event_start(within_minutes: float, *, now: float):
+    """The app's answer to ``next_event_start``: ``(title, start)``, None
+    for nothing inside the window, or ``...`` (Ellipsis) when the app has
+    not reported recently and EventKit must be asked instead."""
+    facts = _app_facts
+    if facts is None or not 0.0 <= now - facts[0] < APP_FACTS_TTL_SECONDS:
+        return ...
+    start = facts[1]
+    if start is None or start < now - 30.0 or start - now > max(0.0, float(within_minutes)) * 60.0:
+        return None
+    return "Event", datetime.fromtimestamp(start, tz=timezone.utc)
+
+
 def next_event_start(within_minutes: float):
     """(title, start) of the earliest not-yet-started, non-all-day event
     beginning within ``within_minutes``, or None. ``start`` is timezone
-    aware (UTC)."""
+    aware (UTC). The app's recent reading wins over EventKit here."""
+    import time
+
+    reported = app_next_event_start(within_minutes, now=time.time())
+    if reported is not ...:
+        return reported
     from Foundation import NSDate
 
     if authorization_status() != AUTH_AUTHORIZED:

@@ -200,6 +200,63 @@ def escalation_stage(
     return min(stage, _TIER_CEILING.get(tier, 2))
 
 
+MAX_PROVIDER_ESCALATION_TIERS = 32
+
+
+def normalize_provider_escalation_tiers(value: object) -> dict[str, str]:
+    """``{provider id: tier}``, known tiers and short ids only."""
+    if not isinstance(value, dict):
+        return {}
+    tiers: dict[str, str] = {}
+    for provider, tier in value.items():
+        if (
+            isinstance(provider, str)
+            and 0 < len(provider.strip()) <= 64
+            and provider.strip().isprintable()
+            and tier in ESCALATION_TIERS
+            and len(tiers) < MAX_PROVIDER_ESCALATION_TIERS
+        ):
+            tiers[provider.strip()] = tier
+    return dict(sorted(tiers.items()))
+
+
+def provider_escalation_stage(stage: int, *, provider: str | None, tiers: dict[str, str]) -> int:
+    """Pure: a per-provider ceiling under the global one. A Claude
+    permission ask may climb to the chime while another provider's asks
+    never go past the light. It can only lower the stage: the global tier
+    is what arms the finale, so a provider cannot climb above it."""
+    stage = max(0, min(3, int(stage)))
+    tier = tiers.get(provider or "") if provider else None
+    if tier is None:
+        return stage
+    return min(stage, _TIER_CEILING[tier])
+
+
+def presence_escalation_stage(
+    stage: int,
+    *,
+    tier: str,
+    call_ceiling: int | None = None,
+    away: bool = False,
+) -> int:
+    """Pure: the stage adjusted for whether anyone can see it.
+
+    On a call (``call_ceiling``, 1 from jrbar.presence) the ladder holds at
+    the light: no menu-bar pulse on a shared screen, no chime into the
+    person's headset. With the screen locked or the desk idle, the menu-bar
+    pulse is a stage nobody can see, so an ask that reached it goes straight
+    to the finale -- still capped by the person's own tier, which is a
+    ceiling and never a floor. A call outranks away: a locked screen during
+    a call is still a call.
+    """
+    stage = max(0, min(3, int(stage)))
+    if call_ceiling is not None:
+        return min(stage, max(0, int(call_ceiling)))
+    if away and stage == 2:
+        return min(3, _TIER_CEILING.get(tier, 2))
+    return stage
+
+
 # The owner's numbers: a nudge at 90, a real warning at 95. Edge detection
 # itself already lives in quota_crossings/quota_resets below -- these are the
 # thresholds it is fed, and the burst budget spent when one fires ("a couple

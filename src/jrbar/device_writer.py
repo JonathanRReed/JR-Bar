@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys as _sys
+import time as _time
 from pathlib import Path
 
 from . import _device_writer_legacy as _legacy
@@ -59,6 +60,55 @@ def write_led_program(
     dry_run: bool = False,
     preserve_existing_inode: bool = False,
 ) -> Path:
+    normalized = _legacy.normalize_led_text(text)
+    _legacy.validate_led_text(normalized)
+    target = _legacy.resolve_target_path(
+        device_path=device_path,
+        file_name=file_name,
+    )
+    try:
+        return _checked_write(
+            normalized,
+            target,
+            file_name=file_name,
+            dry_run=dry_run,
+            preserve_existing_inode=preserve_existing_inode,
+        )
+    except _legacy.DeviceWriteError as exc:
+        if not dry_run:
+            _note_health(target, refusal=str(exc))
+        raise
+
+
+def _note_health(
+    target: Path,
+    *,
+    seconds: float | None = None,
+    transformed: bool = False,
+    refusal: str | None = None,
+) -> None:
+    """The device card's write-health line (jrbar.write_health). Never
+    raises: a bookkeeping slip must not cost a write."""
+    try:
+        from . import write_health
+
+        root = str(Path(target).parent)
+        if refusal is not None:
+            write_health.record_refusal(root, refusal)
+        elif seconds is not None:
+            write_health.record_write(root, seconds=seconds, transformed=transformed)
+    except Exception:
+        pass
+
+
+def _checked_write(
+    normalized: str,
+    target: Path,
+    *,
+    file_name: str,
+    dry_run: bool,
+    preserve_existing_inode: bool,
+) -> Path:
     from .firmware_validation import (
         FirmwareValidationError,
         FirmwareValidationUnavailableError,
@@ -66,12 +116,6 @@ def write_led_program(
     )
     from .presentation_compiler import compile_presentation_program
 
-    normalized = _legacy.normalize_led_text(text)
-    _legacy.validate_led_text(normalized)
-    target = _legacy.resolve_target_path(
-        device_path=device_path,
-        file_name=file_name,
-    )
     led_count = _led_count_for_target(target)
     stray = leds_addressed_beyond(normalized, led_count)
     if stray:
@@ -103,13 +147,17 @@ def write_led_program(
             ) from exc
         except FirmwareValidationError as exc:
             raise _legacy.DeviceWriteError(str(exc)) from exc
-    return _ORIGINAL_WRITE_LED_PROGRAM(
+    started = _time.monotonic()
+    written = _ORIGINAL_WRITE_LED_PROGRAM(
         final_program,
         device_path=target,
         file_name=file_name,
         dry_run=dry_run,
         preserve_existing_inode=preserve_existing_inode,
     )
+    if not dry_run:
+        _note_health(target, seconds=_time.monotonic() - started, transformed=bool(compiled.reasons))
+    return written
 
 
 _legacy.write_led_program = write_led_program

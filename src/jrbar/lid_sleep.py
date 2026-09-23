@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,18 @@ RENEWAL_STALE_SECONDS = 900
 WATCHDOG_POLL_SECONDS = 300
 IOREG_CLAMSHELL_COMMAND = ("/usr/sbin/ioreg", "-r", "-k", "AppleClamshellState", "-d", "4")
 IOREG_SLEEP_DISABLED_COMMAND = ("/usr/sbin/ioreg", "-r", "-k", "SleepDisabled", "-d", "4")
+# True when shutting the lid puts the Mac to sleep -- no external display
+# is keeping it in clamshell mode. The one fact that separates "a laptop in
+# a bag" from "a laptop closed on a desk driving a monitor".
+IOREG_CLAMSHELL_CAUSES_SLEEP_COMMAND = (
+    "/usr/sbin/ioreg",
+    "-r",
+    "-k",
+    "AppleClamshellCausesSleep",
+    "-d",
+    "4",
+)
+PMSET_SLEEP_NOW_COMMAND = ("/usr/bin/pmset", "sleepnow")
 SUDO_PMSET_DISABLE_SLEEP_COMMAND = (
     "/usr/bin/sudo",
     "-n",
@@ -165,6 +178,55 @@ def read_sleep_disabled(
         timeout=2,
     )
     return parse_bool_ioreg_property(result.stdout, "SleepDisabled")
+
+
+def read_clamshell_causes_sleep(
+    *,
+    runner: CommandRunner = subprocess.run,
+    command: Sequence[str] = IOREG_CLAMSHELL_CAUSES_SLEEP_COMMAND,
+) -> bool | None:
+    if runner is subprocess.run and command is IOREG_CLAMSHELL_CAUSES_SLEEP_COMMAND:
+        direct = _iokit_root_domain_bool("AppleClamshellCausesSleep")
+        if direct is not None:
+            return direct
+    result = runner(
+        list(command),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    return parse_bool_ioreg_property(result.stdout, "AppleClamshellCausesSleep")
+
+
+class SystemSleepSuppressedError(RuntimeError):
+    """This process must never put the Mac to sleep (the test sandbox)."""
+
+
+def system_sleep_suppressed() -> bool:
+    """True inside the test sandbox. A test that walks a closed-lid release
+    must never reach the real ``pmset sleepnow``: the machine running the
+    suite may be the one a closed-lid hold is keeping awake right now."""
+    from .env import env_value
+
+    return env_value("JRBAR_TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
+
+
+def run_pmset_sleepnow(*, runner: CommandRunner = subprocess.run) -> None:
+    """Ask macOS to sleep now. ``pmset sleepnow`` needs no privilege, so the
+    sudoers rule stays exactly the two ``disablesleep`` lines it grants."""
+    if system_sleep_suppressed():
+        raise SystemSleepSuppressedError("system sleep is suppressed in this process")
+    result = runner(
+        list(PMSET_SLEEP_NOW_COMMAND),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        raise RuntimeError(f"pmset sleepnow failed{': ' + detail[0] if detail else ''}")
 
 
 def parse_bool_ioreg_property(text: str | bytes, property_name: str) -> bool | None:
@@ -431,6 +493,39 @@ class ClosedLidAwakeController:
             else self.renewal_path.with_name(WATCHDOG_PID_FILE_NAME)
         )
         self.watchdog_process = None
+        # Wired by the daemon (configure_sleep_on_release); inert otherwise,
+        # so the menu-bar app and every test that builds one of these keeps
+        # the release behaviour it always had.
+        self.governor: Callable[[], str | None] | None = None
+        self.power_log = None
+        self.lid_closed_reader: Callable[[], bool | None] | None = None
+        self.clamshell_sleep_reader: Callable[[], bool | None] | None = None
+        self.sleeper: Callable[[], None] | None = None
+        self.wall_clock: Callable[[], float] = time.time
+        self.held_since: float | None = None
+        self.last_release_reason: str | None = None
+        self.last_sleep_epoch: float | None = None
+        self.last_sleep_error: str | None = None
+
+    def configure_sleep_on_release(
+        self,
+        *,
+        lid_closed_reader: Callable[[], bool | None],
+        clamshell_sleep_reader: Callable[[], bool | None],
+        sleeper: Callable[[], None],
+    ) -> None:
+        """Sleep explicitly when the hold drops with the lid shut.
+
+        Releasing ``disablesleep`` leaves a shut, displayless laptop awake
+        until macOS next re-checks the clamshell -- which may be never, on
+        an idle machine with nothing to wake it. "Auto-sleep when the agents
+        finish" is a promise, so the release asks for sleep in so many
+        words, and only when both readings agree: the lid IS shut, and
+        shutting it DOES mean sleep (no external display holding clamshell
+        mode). An unreadable fact never sleeps the Mac."""
+        self.lid_closed_reader = lid_closed_reader
+        self.clamshell_sleep_reader = clamshell_sleep_reader
+        self.sleeper = sleeper
 
     def set_use_system_disable(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -456,15 +551,82 @@ class ClosedLidAwakeController:
 
     def update(self, policy: str, *, agents_active: bool) -> bool:
         should_hold = closed_lid_awake_should_hold(policy, agents_active=agents_active)
-        if policy != self.last_policy:
+        # Heat and a dying battery outrank even "Always stay awake": that
+        # policy means "while it is safe", and a laptop cooking in a bag or
+        # about to die mid-write is not.
+        suspension = self._suspension()
+        if suspension is not None:
+            should_hold = False
+        was_requested = self.last_requested
+        policy_changed = policy != self.last_policy
+        if policy_changed:
             self.system_disable_attempted = False
         self.last_policy = policy
         self.last_requested = should_hold
         if should_hold:
+            if not was_requested:
+                self.held_since = self.wall_clock()
             self.ensure_awake()
         else:
             self.release()
+            if was_requested:
+                self._after_release(
+                    suspension
+                    or ("policy" if policy_changed and policy == CLOSED_LID_AWAKE_NEVER else "agents_idle")
+                )
         return self.active()
+
+    def _suspension(self) -> str | None:
+        governor = self.governor
+        if governor is None:
+            return None
+        try:
+            reason = governor()
+        except Exception:
+            return None
+        return reason if isinstance(reason, str) and reason else None
+
+    @staticmethod
+    def _read(reader: Callable[[], bool | None] | None) -> bool | None:
+        if reader is None:
+            return None
+        try:
+            value = reader()
+        except Exception:
+            return None
+        return value if isinstance(value, bool) else None
+
+    def _after_release(self, reason: str) -> None:
+        """Record the held stretch and, with the lid shut and nothing to
+        keep clamshell mode, put the Mac to sleep."""
+        now = self.wall_clock()
+        held_for = None if self.held_since is None else max(0.0, now - self.held_since)
+        self.held_since = None
+        self.last_release_reason = reason
+        lid_closed = self._read(self.lid_closed_reader)
+        if lid_closed is not True:
+            return
+        self._log("lid_hold_ended", reason=reason, duration=held_for)
+        if self.sleeper is None or self._read(self.clamshell_sleep_reader) is not True:
+            return
+        try:
+            self.sleeper()
+        except Exception as exc:
+            self.last_sleep_error = str(exc) or exc.__class__.__name__
+            return
+        self.last_sleep_error = None
+        self.last_sleep_epoch = now
+        self._log("slept", reason=reason)
+
+    def _log(self, kind: str, *, reason: str | None = None, duration: float | None = None) -> None:
+        log = self.power_log
+        record = getattr(log, "record", None)
+        if not callable(record):
+            return
+        try:
+            record(kind, reason=reason, duration=duration)
+        except ValueError:
+            pass
 
     def _renew_heartbeat(self, errors: list[str]) -> None:
         """Touch the renewal file and keep the fail-safe watchdog alive."""

@@ -244,3 +244,28 @@ def test_invalid_or_unobserved_inputs_remain_unavailable__and_2_more() -> None:
         "returns 2027-01-15 08:00Z"
     ) in rendered
 
+
+
+def test_the_formatter_names_every_quiet_source_at_once() -> None:
+    # A call and a meeting over a schedule and both Focus kinds, on an
+    # empty desk: every source live together must still format.
+    modes = tuple(DndMode)
+    snapshot = LocalHealthMonitor(monotonic=lambda: 10.0).observe(
+        presentation=PresentationMetrics().snapshot(),
+        performance=PerformanceRegistry().snapshot(),
+        workers=(),
+        source_ages_seconds=(),
+        dnd_projection=compose_dnd_contributions(
+            tuple(
+                contribution_for_mode(source, modes[index % len(modes)])
+                for index, source in enumerate(DndSource)
+            ),
+        ),
+    )
+
+    assert snapshot.dnd_status.sources == tuple(DndSource)
+    assert len(snapshot.dnd_status.modes) == len(DndMode)
+    rendered = format_local_health(snapshot)
+    assert (
+        "sources Manual+Scheduled+macOS Focus+Named Focus+Call+Meeting+Away" in rendered
+    )

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from .dnd_policy import DndMode, DndSource
+from .dnd_policy import MAX_DND_CONTRIBUTIONS, DndMode, DndSource
 from .product_identity import PRODUCT_DISPLAY_NAME
 
 MAX_ROOT_MENU_ROWS = 15
@@ -88,7 +88,7 @@ class MenuProjectionInputs:
             raise ValueError("DND menu mode and source must be present together")
         if (
             type(self.dnd_active_sources) is not tuple
-            or len(self.dnd_active_sources) > 4
+            or len(self.dnd_active_sources) > MAX_DND_CONTRIBUTIONS
             or not all(type(source) is DndSource for source in self.dnd_active_sources)
             or len(set(self.dnd_active_sources)) != len(self.dnd_active_sources)
         ):

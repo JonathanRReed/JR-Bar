@@ -78,11 +78,65 @@ def request_access(completion) -> None:
         )
 
 
+# --- the app's reading --------------------------------------------------------
+#
+# calendar_watch's sibling rule: the app already reads Reminders for the
+# shelf, so while it keeps reporting the due reminders (``presence``'s
+# ``reminders_due``), the glow uses that list and never asks EventKit here.
+
+APP_FACTS_TTL_SECONDS = 180.0
+MAX_APP_REMINDERS = 32
+MAX_APP_REMINDER_ID_LENGTH = 256
+
+_app_due: tuple[float, tuple[str, ...]] | None = None
+
+
+def adopt_app_reminders(identifiers: object, *, now: float) -> None:
+    """Record the identifiers of the reminders due now, as the app read
+    them. ``ValueError`` for anything but a short list of short ids."""
+    global _app_due
+    if isinstance(identifiers, (str, bytes)) or not isinstance(identifiers, (list, tuple)):
+        raise ValueError("reminders_due must be a list of reminder ids")
+    if len(identifiers) > MAX_APP_REMINDERS:
+        raise ValueError("reminders_due lists too many reminders")
+    cleaned: list[str] = []
+    for item in identifiers:
+        if type(item) is not str or not item.strip() or len(item) > MAX_APP_REMINDER_ID_LENGTH:
+            raise ValueError("reminders_due must be a list of reminder ids")
+        cleaned.append(item.strip())
+    _app_due = (float(now), tuple(dict.fromkeys(cleaned)))
+
+
+def forget_app_reminders() -> None:
+    global _app_due
+    _app_due = None
+
+
+def app_due_reminders(*, now: float):
+    """``[(identifier, "Reminder")]`` from the app's recent report, or
+    ``...`` (Ellipsis) when EventKit must be asked instead. Titles never
+    cross the socket; the glow only needs to tell reminders apart."""
+    facts = _app_due
+    if facts is None or not 0.0 <= now - facts[0] < APP_FACTS_TTL_SECONDS:
+        return ...
+    return [(identifier, "Reminder") for identifier in facts[1]]
+
+
 def fetch_due(lookback_seconds: float, completion) -> None:
     """Async: ``completion(items)`` where items is a list of
     (calendar_item_identifier, title) for INCOMPLETE reminders whose due
     date fell inside [now - lookback, now]. Called on an EventKit queue;
-    on any setup failure this raises synchronously instead."""
+    on any setup failure this raises synchronously instead. The app's
+    recent report answers synchronously, without EventKit."""
+    import time
+
+    reported = app_due_reminders(now=time.time())
+    if reported is not ...:
+        try:
+            completion(reported)
+        except Exception:
+            pass
+        return
     from Foundation import NSDate
 
     if authorization_status() != AUTH_AUTHORIZED:
