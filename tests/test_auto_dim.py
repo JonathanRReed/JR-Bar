@@ -381,3 +381,31 @@ def test_the_daemon_counts_a_slider_move_only_while_following_the_sensor() -> No
     with pytest.raises(CommandError):
         core_runtime._cmd_auto_dim_learning(controller, {"clear": "yes"})
     assert "auto_dim_learning" in core_runtime.command_names()
+
+
+def test_only_the_panel_slider_over_hardware_votes() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime
+    from jrbar.auto_dim import AutoDimResult
+
+    def daemon(*devices):
+        return SimpleNamespace(
+            status_bar_devices=lambda remember=False: list(devices),
+            set_device_brightness=lambda device_id, value: None,
+            _core_publish_lights=lambda: None,
+            _core_legacy=lambda: SimpleNamespace(VIRTUAL_DEVICE_ID="virtual:status-bar"),
+            auto_dim_result=lambda: AutoDimResult("ambient", "ambient", 0.5, True, 40.0),
+        )
+
+    band = SimpleNamespace(device_id="virtual:status-bar", connected=True)
+    strip = SimpleNamespace(device_id="pro", connected=True)
+    band_only = daemon(band)
+    core_runtime._cmd_set_brightness(band_only, {"value": 0.8})
+    assert not getattr(band_only, "_core_brightness_votes", ())
+    desk = daemon(band, strip)
+    core_runtime._cmd_set_brightness(desk, {"value": 0.8})
+    assert len(desk._core_brightness_votes) == 1
+    # One device's own slider is not the panel's.
+    core_runtime._cmd_set_brightness(desk, {"device": "pro", "value": 0.2})
+    assert desk._core_brightness_votes[0].level == 0.4

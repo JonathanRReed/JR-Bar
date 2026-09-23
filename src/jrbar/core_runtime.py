@@ -1099,11 +1099,14 @@ def _cmd_set_brightness(self, args):
         self.set_device_brightness(device.device_id, value * 255.0)
     if target == "all":
         # The panel slider: in ambient auto-dim, a vote for how bright the
-        # lights should be at this much light (jrbar.core_lights).
+        # lights should be at this much light (jrbar.core_lights). Auto-dim
+        # scales only the hardware, so only a slider over hardware votes.
         try:
             from . import core_lights
 
-            core_lights.note_brightness_nudge(self, value)
+            virtual = self._core_legacy().VIRTUAL_DEVICE_ID
+            if any(device.connected and device.device_id != virtual for device in devices):
+                core_lights.note_brightness_nudge(self, value)
         except Exception:
             pass
     self._core_publish_lights()
