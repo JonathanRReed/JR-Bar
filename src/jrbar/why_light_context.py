@@ -7,7 +7,7 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
 
-from .dnd_policy import DndMode, DndSource
+from .dnd_policy import MAX_DND_CONTRIBUTIONS, DndMode, DndSource
 
 MAX_SOURCE_AGE_SECONDS = 30.0 * 24.0 * 60.0 * 60.0
 MAX_SUPPRESSION_COUNT = 99
@@ -161,9 +161,9 @@ class FocusDNDDecision:
             type(source) is DndSource for source in self.dnd_sources
         ):
             raise TypeError("DND sources must be immutable typed values")
-        if len(self.dnd_modes) > 4 or len(set(self.dnd_modes)) != len(self.dnd_modes):
+        if len(self.dnd_modes) > len(DndMode) or len(set(self.dnd_modes)) != len(self.dnd_modes):
             raise ValueError("DND modes must remain bounded and unique")
-        if len(self.dnd_sources) > 4 or len(set(self.dnd_sources)) != len(
+        if len(self.dnd_sources) > MAX_DND_CONTRIBUTIONS or len(set(self.dnd_sources)) != len(
             self.dnd_sources
         ):
             raise ValueError("DND sources must remain bounded and unique")
@@ -320,6 +320,8 @@ _DND_SOURCE_LABELS = {
     DndSource.SCHEDULE: "Scheduled",
     DndSource.MACOS_FOCUS: "macOS Focus",
     DndSource.NAMED_FOCUS: "Named Focus",
+    DndSource.CALL: "On a call",
+    DndSource.CALENDAR: "In a meeting",
 }
 
 _REDUCE_MOTION_LABELS = {

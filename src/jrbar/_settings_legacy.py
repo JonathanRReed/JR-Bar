@@ -31,6 +31,11 @@ from .led_status import (
     led_count_for_target,
     normalize_channel_gain,
 )
+from .presence import (
+    DEFAULT_CALL_QUIET_MODE,
+    DEFAULT_MEETING_QUIET_MODE,
+    normalize_presence_quiet_mode,
+)
 from .providers import PROVIDER_REGISTRY
 from .signals import (
     DEFAULT_ALERT_BURST,
@@ -464,6 +469,15 @@ class AgentMonitorSettings:
     dnd_focus_mode: str = "pause"
     # Load-only diagnostics. Refused persisted values are not re-serialized.
     dnd_persisted_refusals: tuple[DndPersistedRefusal, ...] = ()
+    # A call (a live microphone, camera or screen share the app reports
+    # through `presence`) quiets JR-Bar the way a busylight goes red, with
+    # no Focus and no Full Disk Access: "sounds" keeps every light and
+    # banner and drops the sounds, a DND mode word applies that mode for the
+    # call, "off" ignores calls (jrbar.presence).
+    call_quiet_mode: str = DEFAULT_CALL_QUIET_MODE
+    # The same for a calendar meeting the app reports. Off by default: a
+    # meeting on the calendar is not always a call.
+    meeting_quiet_mode: str = DEFAULT_MEETING_QUIET_MODE
     tips_enabled: bool = True
     menu_bar_label_enabled: bool = False
     # The native app's status item picture (MENU_BAR_ICON_STYLES).
@@ -1778,6 +1792,12 @@ class AgentMonitorSettings:
             "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
+            "call_quiet_mode": normalize_presence_quiet_mode(
+                self.call_quiet_mode, DEFAULT_CALL_QUIET_MODE
+            ),
+            "meeting_quiet_mode": normalize_presence_quiet_mode(
+                self.meeting_quiet_mode, DEFAULT_MEETING_QUIET_MODE
+            ),
             "completion_notification_enabled": self.completion_notification_enabled,
             "notification_policy_version": 1,
             "webhook_events": [
@@ -2237,6 +2257,12 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             }
             if isinstance(data.get("focus_signal_policy"), dict)
             else {}
+        ),
+        call_quiet_mode=normalize_presence_quiet_mode(
+            data.get("call_quiet_mode"), DEFAULT_CALL_QUIET_MODE
+        ),
+        meeting_quiet_mode=normalize_presence_quiet_mode(
+            data.get("meeting_quiet_mode"), DEFAULT_MEETING_QUIET_MODE
         ),
         completion_notification_enabled=_bool_setting(
             data.get("completion_notification_enabled"),

@@ -2418,6 +2418,16 @@ def _cmd_release_awake(self, args):
     return core_power.release_awake(self, args)
 
 
+@command("presence")
+def _cmd_presence(self, args):
+    """The app's report of what it senses: a live microphone, camera or
+    screen share, a locked screen, its own Focus reading, a meeting's end
+    (jrbar.presence)."""
+    from . import core_power
+
+    return core_power.set_presence(self, args)
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
@@ -3842,6 +3852,28 @@ def build_headless_controller_class() -> type:
             except Exception:
                 legacy.log_status_bar(f"core: power events failed: {traceback.format_exc(limit=3)}")
 
+        # -- presence: a call holds the ladder at the light ----------------------
+
+        def current_escalation_stage(self) -> int:
+            """The legacy stage, adjusted for whether anyone can see it: held
+            at the light on a call, past the invisible menu-bar pulse while the
+            screen is locked (jrbar.presence, signals.presence_escalation_stage)."""
+            stage = objc.super(JRCoreHeadlessController, self).current_escalation_stage()
+            try:
+                from . import core_power
+
+                return core_power.escalation_stage(self, stage)
+            except Exception:
+                return stage
+
+        def corePresenceExpired_(self, _timer) -> None:
+            from . import core_power
+
+            try:
+                core_power.presence_expired(self)
+            except Exception:
+                legacy.log_status_bar(f"core: presence expiry failed: {traceback.format_exc(limit=3)}")
+
         def sync_virtual_status_device(self, *args, **kwargs) -> None:
             objc.super(JRCoreHeadlessController, self).sync_virtual_status_device(*args, **kwargs)
             self._core_publish_lights()
@@ -4097,11 +4129,17 @@ def build_headless_controller_class() -> type:
             # exists to answer, so a headline with no countable ask still
             # lights the beacon.
             asks = int(aggregate.get("needs_you") or 0)
+            from . import core_power
+
             return DotBeaconFacts(
                 ask_count=max(asks, 1 if mode == "needs_you" else 0),
                 blocked=bool(aggregate.get("failed") or 0) or mode == "failed",
                 unseen_completions=int(aggregate.get("ready") or 0),
                 escalation_stage=stage,
+                # The ``call`` role's busylight, and the shut lid that turns
+                # an ``extend`` Dot into the asks beacon (jrbar.dot_role).
+                on_call=core_power.on_call(self),
+                lid_closed=getattr(self, "last_lid_closed", None) is True,
             )
 
         def _core_dot_plan(self, controller=None, program: str | None = None):
@@ -4143,7 +4181,9 @@ def build_headless_controller_class() -> type:
                     default=255,
                 )
                 brightness = min(existing, device)
-                if role == DotRole.EXTEND.value:
+                # A shut lid makes an ``extend`` Dot the asks beacon, which is
+                # never scaled down (see below).
+                if role == DotRole.EXTEND.value and getattr(self, "last_lid_closed", None) is not True:
                     # Exactly one place applies ``linked_dot_scale``, and it
                     # applies it to LIGHT. A code-domain multiply looks like a
                     # ratio and is not one: the write boundary then decodes
@@ -5781,6 +5821,7 @@ def build_headless_controller_class() -> type:
                 from . import core_power
 
                 core_power.augment_power_document(self, document)
+                core_power.augment_presence_document(self, document, now=wall_now)
             except Exception:
                 legacy.log_status_bar(f"core: power projection failed: {traceback.format_exc(limit=6)}")
             return document
@@ -6011,7 +6052,7 @@ def build_headless_controller_class() -> type:
             mirror_anchor = hardware_anchor
             mirror_program = hardware_mirror_program
             mirror_source = hardware_mirror_source
-            if mirror is None and "dot" in surfaces and dot_role != "asks":
+            if mirror is None and "dot" in surfaces and dot_role not in ("asks", "call"):
                 widened = upsample_program(
                     dot_mirror_program or surfaces["dot"].program,
                     source_leds=2,
@@ -6204,9 +6245,9 @@ def build_headless_controller_class() -> type:
                 return {"state": "off", "role": None, "error": None}
             if not dot_connected:
                 return {"state": "no_dot", "role": None, "error": None}
-            if dot_role == DotRole.ASKS.value:
-                # A beacon needs no strip: it is lit by asks, not by light
-                # borrowed from the Pro.
+            if dot_role in (DotRole.ASKS.value, DotRole.CALL.value):
+                # A beacon needs no strip: it is lit by asks (and, for the
+                # ``call`` role, by a call), not by light borrowed from the Pro.
                 return {"state": "beacon", "role": dot_role, "error": None}
             if dot_role == DotRole.STATUS.value:
                 return {"state": "solo", "role": dot_role, "error": None}

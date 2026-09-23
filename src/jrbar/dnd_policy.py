@@ -15,8 +15,13 @@ DEFAULT_DND_SCHEDULE_START_MINUTES = 22 * 60
 DEFAULT_DND_SCHEDULE_END_MINUTES = 7 * 60
 DEFAULT_DND_DIM_FRACTION = 0.15
 MAX_DND_OVERRIDE_SECONDS = 7 * 24 * 60 * 60
-MAX_DND_CONTRIBUTIONS = 4
+# One per source: manual, schedule, macOS Focus, named Focus, a call, a
+# calendar meeting.
+MAX_DND_CONTRIBUTIONS = 6
 MAX_DND_REFUSALS = 9
+#: A presence quiet that keeps every light and banner and drops only the
+#: sounds -- the busylight default for a call (jrbar.presence).
+PRESENCE_QUIET_SOUNDS = "sounds"
 
 
 class DndMode(str, Enum):
@@ -32,6 +37,14 @@ class DndSource(str, Enum):
     SCHEDULE = "schedule"
     MACOS_FOCUS = "macos_focus"
     NAMED_FOCUS = "named_focus"
+    # The person is on a call (a live microphone, camera or screen share
+    # the app reported) or in a calendar meeting -- jrbar.presence.
+    CALL = "call"
+    CALENDAR = "calendar"
+
+
+#: The sources a presence report can contribute.
+PRESENCE_DND_SOURCES = frozenset({DndSource.CALL, DndSource.CALENDAR})
 
 
 class DisplayAdmission(str, Enum):
@@ -302,6 +315,8 @@ _SOURCE_LABEL = {
     DndSource.SCHEDULE: "Scheduled",
     DndSource.MACOS_FOCUS: "macOS Focus",
     DndSource.NAMED_FOCUS: "Named Focus",
+    DndSource.CALL: "On a call",
+    DndSource.CALENDAR: "In a meeting",
 }
 _MODE_LABEL = {
     DndMode.MUTE: "Mute",
@@ -369,6 +384,35 @@ def contribution_for_mode(
         False,
         False,
     )
+
+
+def contribution_for_presence(
+    source: DndSource,
+    quiet_mode: str,
+    *,
+    dim_fraction: float = DEFAULT_DND_DIM_FRACTION,
+) -> DndContribution | None:
+    """What a call or a meeting contributes: nothing for ``off``, the
+    sounds alone for ``sounds``, else the named quiet mode."""
+    if source not in PRESENCE_DND_SOURCES:
+        raise ValueError("presence DND contribution needs a presence source")
+    word = str(quiet_mode or "").strip().lower()
+    if word == PRESENCE_QUIET_SOUNDS:
+        return DndContribution(
+            source,
+            None,
+            DisplayAdmission.ALL,
+            1.0,
+            OutboundAdmission.ALL,
+            True,
+            False,
+            True,
+        )
+    try:
+        mode = DndMode(word)
+    except ValueError:
+        return None
+    return contribution_for_mode(source, mode, dim_fraction=dim_fraction)
 
 
 def compose_dnd_contributions(
@@ -476,8 +520,16 @@ def evaluate_dnd_policy(
     local_timezone: tzinfo,
     macos_focus_active: bool = False,
     named_focus: DndContribution | None = None,
+    call: DndContribution | None = None,
+    meeting: DndContribution | None = None,
+    extra_transitions: tuple[float, ...] = (),
 ) -> DndProjection:
-    """Evaluate durable local and injected Focus truth into one projection."""
+    """Evaluate durable local and injected Focus truth into one projection.
+
+    ``call`` and ``meeting`` are the presence contributions
+    (``contribution_for_presence``); ``extra_transitions`` are the moments
+    they change on their own -- a meeting's end -- so the controller re-arms
+    its timer for them."""
     epoch = _finite_epoch(now)
     if epoch is None:
         raise ValueError("DND policy clock must be finite")
@@ -493,6 +545,11 @@ def evaluate_dnd_policy(
         or named_focus.source is not DndSource.NAMED_FOCUS
     ):
         raise ValueError("named Focus DND contribution has the wrong source")
+    for presence, source in ((call, DndSource.CALL), (meeting, DndSource.CALENDAR)):
+        if presence is not None and (
+            type(presence) is not DndContribution or presence.source is not source
+        ):
+            raise ValueError("presence DND contribution has the wrong source")
     schedule_state = evaluate_dnd_schedule(
         schedule,
         now=epoch,
@@ -528,8 +585,14 @@ def evaluate_dnd_policy(
         )
     if macos_focus_active and named_focus is not None:
         contributions.append(named_focus)
+    if call is not None:
+        contributions.append(call)
+    if meeting is not None:
+        contributions.append(meeting)
 
-    transitions: list[float] = []
+    transitions: list[float] = [
+        value for value in (_finite_epoch(item) for item in extra_transitions) if value is not None
+    ]
     if override is not None:
         if override_active:
             transitions.append(override.until_epoch)
@@ -666,6 +729,8 @@ def _schedule_interval(
 
 def _contribution_label(contribution: DndContribution) -> str:
     source = _SOURCE_LABEL[contribution.source]
+    if contribution.mode is None and contribution.source in PRESENCE_DND_SOURCES:
+        return f"{source}, sounds off"
     if contribution.mode is None:
         return f"{source} policy"
     return f"{source} {_MODE_LABEL[contribution.mode]}"

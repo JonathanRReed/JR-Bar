@@ -32,6 +32,19 @@ So the Dot gets a ROLE:
     exactly as an unlinked Dot always has. This module claims nothing and
     the daemon falls through to that path.
 
+``call``
+    A presence light, the way a busylight is one: a steady red -- no
+    flashing, it sits in view of the camera -- while the person is on a call
+    (a live microphone, camera or screen share the app reported), and the
+    ``asks`` beacon the rest of the time. It works for every call app
+    because it reads the devices, not a Teams API, and between calls it
+    still says whether an agent needs the person, which no busylight does.
+
+With the lid shut, an ``extend`` Dot has nothing in view to continue: the
+strip in the SD slot and the notch band are both behind the closed lid. So
+it plays the ``asks`` beacon instead, the only light on the desk that can
+still answer "do they need me?", and says so in its reasons.
+
 Everything here is pure: no I/O, no settings object, no controller. The
 daemon hands in facts and gets back a program plus the ``why`` the
 protocol's ``lights.surfaces.dot`` entry should carry.
@@ -79,11 +92,12 @@ BLACK: Final = "#000000"
 
 
 class DotRole(str, Enum):
-    """The three answers to "what is the Dot for?"."""
+    """The answers to "what is the Dot for?"."""
 
     EXTEND = "extend"
     ASKS = "asks"
     STATUS = "status"
+    CALL = "call"
 
 
 DOT_ROLE_CHOICES: Final = tuple(role.value for role in DotRole)
@@ -151,9 +165,12 @@ class DotRoleColors:
     ask: str = "#FF9F0A"
     blocked: str = ERROR_RED
     completion: str = "#00FF66"
+    #: The ``call`` role's steady busylight red. Held, never pulsed, so it
+    #: is told apart from the blocked pulse by motion as well as hue.
+    on_call: str = "#FF2D20"
 
     def __post_init__(self) -> None:
-        for name in ("ask", "blocked", "completion"):
+        for name in ("ask", "blocked", "completion", "on_call"):
             value = getattr(self, name)
             try:
                 object.__setattr__(self, name, normalize_color(value))
@@ -176,12 +193,18 @@ class DotBeaconFacts:
     unseen_completions: int = 0
     #: ``signals.escalation_stage`` for the oldest unanswered ask, 0-3.
     escalation_stage: int = 0
+    #: The person is on a call (jrbar.presence), for the ``call`` role.
+    on_call: bool = False
+    #: The lid is shut: an ``extend`` Dot has nothing in view to continue.
+    lid_closed: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ask_count", max(0, int(self.ask_count)))
         object.__setattr__(self, "unseen_completions", max(0, int(self.unseen_completions)))
         object.__setattr__(self, "blocked", bool(self.blocked))
         object.__setattr__(self, "escalation_stage", max(0, min(3, int(self.escalation_stage))))
+        object.__setattr__(self, "on_call", bool(self.on_call))
+        object.__setattr__(self, "lid_closed", bool(self.lid_closed))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1019,17 +1042,33 @@ def plan_dot_surface(
         return None
     facts = facts or DotBeaconFacts()
 
-    if resolved == DotRole.ASKS.value:
+    if resolved == DotRole.CALL.value and facts.on_call:
+        # Held, not breathed: the Dot is in view of the camera, and a
+        # busylight that pulses is a distraction to the other side too.
+        return DotSurfacePlan(
+            program=apply_brightness_line(normalize_color(colors.on_call), brightness),
+            why="on_call",
+            role=resolved,
+            led_count=led_count,
+            animated=False,
+            reasons=("presence", "on_call"),
+        )
+
+    auto_asks = resolved == DotRole.EXTEND.value and facts.lid_closed
+    if resolved in (DotRole.ASKS.value, DotRole.CALL.value) or auto_asks:
         program, why, animated = beacon_program(
             facts, colors=colors, include_completions=include_completions
         )
+        reasons = ("beacon", f"stage:{facts.escalation_stage}") if animated else ("beacon", "resting")
+        if auto_asks:
+            reasons = (*reasons, "auto:lid_closed")
         return DotSurfacePlan(
             program=apply_brightness_line(program, brightness),
             why=why,
-            role=resolved,
+            role=DotRole.ASKS.value if auto_asks else resolved,
             led_count=led_count,
             animated=animated,
-            reasons=("beacon", f"stage:{facts.escalation_stage}") if animated else ("beacon", "resting"),
+            reasons=reasons,
         )
 
     narrowed = downsample_program(

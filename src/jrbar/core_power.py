@@ -1,5 +1,7 @@
-"""The headless daemon's power glue: the keep-awake lease commands, the
-environment the holds yield to, and what ``state.power`` says about them.
+"""The headless daemon's power and presence glue: the keep-awake lease
+commands, the environment the holds yield to, what ``state.power`` says
+about them, and the app's presence report (``presence``) that quiets a
+call, holds escalation at the light and gives ``state.presence``.
 
 ``core_runtime`` registers the commands and calls in here from its
 controller seams; everything below takes the controller as an argument and
@@ -32,6 +34,16 @@ from .keep_awake import (
     merge_history_rows,
 )
 from .models import AgentMode
+from .presence import (
+    DEFAULT_CALL_QUIET_MODE,
+    DEFAULT_MEETING_QUIET_MODE,
+    PresenceFacts,
+    normalize_presence_quiet_mode,
+    parse_presence,
+    presence_document,
+    presence_escalation_ceiling,
+)
+from .signals import presence_escalation_stage
 
 #: The power events a client hears as an ``event`` frame (kind ``power``),
 #: in History's words. Starting a lease and resuming are visible in
@@ -241,6 +253,114 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
         closed_lid["sleep_error"] = getattr(lid, "last_sleep_error", None)
 
 
+# --- presence ------------------------------------------------------------------
+
+
+def presence_facts(controller: Any) -> PresenceFacts | None:
+    facts = getattr(controller, "_core_presence", None)
+    return facts if isinstance(facts, PresenceFacts) else None
+
+
+def _quiet_modes(controller: Any) -> tuple[str, str]:
+    settings = getattr(controller, "settings", None)
+    return (
+        normalize_presence_quiet_mode(
+            getattr(settings, "call_quiet_mode", DEFAULT_CALL_QUIET_MODE), DEFAULT_CALL_QUIET_MODE
+        ),
+        normalize_presence_quiet_mode(
+            getattr(settings, "meeting_quiet_mode", DEFAULT_MEETING_QUIET_MODE),
+            DEFAULT_MEETING_QUIET_MODE,
+        ),
+    )
+
+
+def presence_state_document(controller: Any, *, now: float | None = None) -> dict[str, Any]:
+    call_mode, meeting_mode = _quiet_modes(controller)
+    return presence_document(
+        presence_facts(controller),
+        now=time.time() if now is None else now,
+        call_quiet_mode=call_mode,
+        meeting_quiet_mode=meeting_mode,
+    )
+
+
+def on_call(controller: Any, *, now: float | None = None) -> bool:
+    facts = presence_facts(controller)
+    return bool(facts is not None and facts.on_call(time.time() if now is None else now))
+
+
+def escalation_stage(controller: Any, stage: int, *, now: float | None = None) -> int:
+    """The ladder's stage adjusted for presence: held at the light on a
+    call, past the invisible menu-bar pulse while the screen is locked."""
+    facts = presence_facts(controller)
+    if facts is None:
+        return stage
+    current = time.time() if now is None else now
+    call_mode, _meeting_mode = _quiet_modes(controller)
+    return presence_escalation_stage(
+        stage,
+        tier=str(getattr(getattr(controller, "settings", None), "escalation_tier", "menu_bar")),
+        call_ceiling=presence_escalation_ceiling(facts, now=current, call_quiet_mode=call_mode),
+        away=facts.away(current),
+    )
+
+
+def _apply_presence(controller: Any, facts: PresenceFacts | None) -> None:
+    """Hand the facts to the quiet policy, re-judge the escalation stage,
+    arm the expiry and publish -- every consumer reads the new fact at once."""
+    controller._core_presence = facts
+    dnd = getattr(controller, "dnd_controller", None)
+    set_presence = getattr(dnd, "set_presence", None)
+    if callable(set_presence):
+        set_presence(facts)
+    apply_escalation = getattr(controller, "apply_escalation", None)
+    if callable(apply_escalation):
+        apply_escalation(allow_refresh=False)
+    if facts is not None and facts.sensing_call:
+        from . import core_runtime
+
+        previous = getattr(controller, "_core_presence_timer", None)
+        invalidate = getattr(previous, "invalidate", None)
+        if callable(invalidate):
+            invalidate()
+        controller._core_presence_timer = core_runtime._schedule_timer(
+            max(1.0, facts.expires_at() - time.time()),
+            controller,
+            "corePresenceExpired:",
+            False,
+        )
+    publish = getattr(controller, "_core_publish_state", None)
+    if callable(publish):
+        publish()
+
+
+def set_presence(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """The ``presence`` command: the app's report of what it senses."""
+    now = time.time()
+    try:
+        facts = parse_presence(args, now=now, previous=presence_facts(controller))
+    except ValueError as error:
+        raise _command_error("invalid_args", str(error)) from error
+    _apply_presence(controller, facts)
+    return {"presence": presence_state_document(controller, now=now)}
+
+
+def presence_expired(controller: Any) -> None:
+    """The expiry timer: a report nobody renewed stops counting as a call.
+    The facts stay (a meeting carries its own end); the policy re-reads
+    them and finds the call over."""
+    facts = presence_facts(controller)
+    if facts is None:
+        return
+    if facts.fresh(time.time()):
+        return
+    _apply_presence(controller, facts)
+
+
+def augment_presence_document(controller: Any, document: dict[str, Any], *, now: float) -> None:
+    document["presence"] = presence_state_document(controller, now=now)
+
+
 def merge_history(
     controller: Any,
     rows: list[dict[str, Any]],
@@ -264,10 +384,17 @@ __all__ = [
     "after_keep_awake_sync",
     "attach",
     "augment_power_document",
+    "augment_presence_document",
     "before_keep_awake_sync",
+    "escalation_stage",
     "hold_awake",
     "merge_history",
     "observe_environment",
+    "on_call",
+    "presence_expired",
+    "presence_facts",
+    "presence_state_document",
     "release_awake",
     "session_facts",
+    "set_presence",
 ]

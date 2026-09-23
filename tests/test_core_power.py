@@ -177,3 +177,59 @@ def test_the_grace_epoch_is_stable_across_builds(powered) -> None:
     first = controller._core_build_state()["power"]["hold"]["grace_until"]
     second = controller._core_build_state()["power"]["hold"]["grace_until"]
     assert first is not None and first == second
+
+
+# --- presence ------------------------------------------------------------------
+
+
+def test_presence_quiets_a_call_and_holds_the_ladder_at_the_light(powered, monkeypatch) -> None:
+    from jrbar import presence as presence_module
+    from tests.test_core_runtime import _TimerAPI
+
+    controller = powered
+    controller.dnd_controller.start()
+    controller.settings = controller.settings.with_escalation_tier("chime")
+    controller.ask_blocked_since = time.monotonic() - 10_000
+    assert controller.current_escalation_stage() == 3
+
+    reply = core_runtime._cmd_presence(controller, {"mic": True, "camera": False})
+    assert reply["presence"]["on_call"] is True
+    assert reply["presence"]["quiet"] == "sounds"
+    assert reply["presence"]["celebrations_held"] is True
+    assert controller.current_escalation_stage() == 1
+    assert any(selector == "corePresenceExpired:" for _interval, selector, _repeats in _TimerAPI.calls)
+
+    state = controller._core_build_state()
+    assert state["presence"]["on_call"] is True and state["presence"]["mic"] is True
+    assert state["focus"]["source"] == "call"
+    assert state["focus"]["audible_allowed"] is False
+    assert state["focus"]["banner_allowed"] is True
+    assert state["escalation"]["stage"] == "ramp"
+    assert controller._core_dot_beacon_facts().on_call is True
+
+    # The app stops renewing: the timer finds the report stale and the call over.
+    stale_at = time.time() + presence_module.PRESENCE_TTL_SECONDS + 1
+    monkeypatch.setattr(core_power.time, "time", lambda: stale_at)
+    controller.dnd_controller._wall_clock = lambda: stale_at
+    controller.corePresenceExpired_(None)
+    assert controller.current_escalation_stage() == 3
+    assert controller._core_build_state()["focus"]["source"] is None
+
+
+def test_presence_refuses_a_malformed_report(powered) -> None:
+    with pytest.raises(CommandError) as error:
+        core_runtime._cmd_presence(powered, {"mic": "yes"})
+    assert error.value.code == "invalid_args"
+    assert core_power.presence_facts(powered) is None
+    assert powered._core_build_state()["presence"]["on_call"] is False
+
+
+def test_the_call_quiet_setting_can_switch_calls_off(powered) -> None:
+    controller = powered
+    controller.dnd_controller.start()
+    reply = core_runtime._cmd_set_setting(controller, {"path": "call_quiet_mode", "value": "off"})
+    assert reply["value"] == "off"
+    core_runtime._cmd_presence(controller, {"camera": True})
+    state = controller._core_build_state()
+    assert state["presence"]["on_call"] is True and state["presence"]["quiet"] == "off"
+    assert state["focus"]["source"] is None

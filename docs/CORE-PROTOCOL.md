@@ -338,6 +338,19 @@ Vocabulary:
   (`thermal`/`battery`), `lid_hold_ended` (`duration` the held stretch)
   or `slept`; a lease the person cancelled is not one. The same log backs
   the `power` rows in `list_history` and the `power` event.
+- `presence` is the one presence fact from the app's `presence` reports:
+  `{on_call, mic, camera, screen_shared, since, in_meeting, meeting_until,
+  away, fresh, quiet, escalation_ceiling, celebrations_held}`. `on_call`,
+  the three sensor flags and `away` read false once the report is stale
+  (`fresh` false, 180 s without a renewal); `since` is when the current
+  call began, carried across renewals; `quiet` is what the daemon did about
+  it (`sounds`, a quiet-mode word, or `off` -- `call_quiet_mode` while on a
+  call, else `meeting_quiet_mode` while in a meeting); `escalation_ceiling`
+  is 1 while a call holds the ladder at the light, else null;
+  `celebrations_held` is true for the whole call, whatever the quiet mode.
+  While a call's quiet is in force `focus.source` is `call` (`calendar` for
+  a meeting), and a `sounds` quiet leaves `focus.mode` at `off` with
+  `focus.audible_allowed` false -- the one test for "no sounds right now".
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was
@@ -802,6 +815,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
 | `hold_awake` | exactly one of `seconds` (> 0), `until` (epoch), `until_agents_idle: true` (+ optional `sessions[]`), `indefinite: true`; `display` (default false); `source` (a short word, default `app`) | The person's keep-awake lease, the one hold every surface shares (the notch chip, a deck key, a CLI verb). It replaces any earlier lease, lasts at most 24 h (an agents lease: until none of its sessions is working or waiting on the person, backstop 12 h; without `sessions` it waits on every main session running now), holds the display too with `display: true` (the screen will not lock), outranks the agent-only switches (`agent_keep_awake_enabled`, `keep_awake_on_battery`) and survives a daemon restart. It yields -- never ends -- to heat and to the low-battery floor (`state.power.hold.suspended`). `seconds: 0` ends it, like `quiet`. `{lease, hold}`; `refused` "No agent is working right now." for an agents lease with nothing to wait on, `invalid_args` otherwise. |
 | `release_awake` | | Ends the person's lease (the agent hold keeps its own switch). `{ended, hold}`; `ended: false` when no lease was in force. |
+| `presence` | mic, camera, screen_shared (bools), locked? (bool), idle_seconds? (≥ 0), focus? (bool, INFocusStatusCenter's `isFocused` from the app's grant), meeting_until? (epoch of a calendar meeting's end, at most 12 h ahead) | The app's report of what it senses (`jrbar.presence`). A live microphone, camera or screen share is a call: the quiet policy gains a `call` source per `call_quiet_mode` (default `sounds`: every light and banner stays, `audible_allowed` goes false), the escalation ladder holds at `ramp` (no menu-bar pulse on a shared screen, no chime into a headset; `escalation_stage` events follow the held stage), and `state.presence.celebrations_held` asks the app's celebrations to hold their burst. A meeting adds a `calendar` source per `meeting_quiet_mode` (default `off`) until `meeting_until`. `locked`, or `idle_seconds` of 300 or more, is away: an ask that reaches the menu-bar stage goes straight to the finale (still capped by `escalation_tier`). `focus: true` stands in for the daemon's own Focus reading while the daemon holds no Focus Status grant (Follow Focus must be on). A report stands for 180 s: the app renews it at least every minute while a sensor is live, and a stale one ends the call on its own. Unknown keys are ignored; a known key of the wrong type is `invalid_args`. `{presence}` (the `state.presence` document). |
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
 | `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape plus `schema` (record contract version), `pinned` (open ask), `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`), and `axes`: `{outcome, review, freshness}` — `outcome` is `none`/`succeeded`/`failed`/`unreported`/`unknown` (what the provider reported, separate from `lifecycle`), `review` is `pending`/`unreviewed`/`reviewed` (Clear Agents acknowledgement is the review receipt), `freshness` is `live`/`delayed`/`unknown` (is the source still delivering). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `session_timeline` | id? or session+provider, cwd?, limit (default 100, max 500), before? | A session's provider transcript as bounded, paginated items — the Overview inspector's Timeline (S7.2). `id` is a roster row id and resolves the status's provider/`session_id`/cwd itself (`not_found` for an unknown id); an ended session whose status aged out is still inspectable via `session` (the provider uuid) + `provider` + optional `cwd`. Items are `{seq, at, kind, role?, name?, text?, tool_use_id?, is_error?, sidechain?, model?, uuid?, parent_uuid?, origin:"transcript", recorded_at:null, untrusted?}` — `kind` is `message`/`tool_use`/`tool_result`/`turn_end`; `tool_use`/`tool_result` pair on `tool_use_id`; `at` is the row's own stamp (occurrence) and `recorded_at` stays null because per-row ingestion time was never kept. `untrusted` marks tool output and assistant text — content, never a command. `before` is the seq of the oldest item the caller holds; the reply is `{schema, events[], has_more, next_before, total, source{provider, file}, gaps[]}` where `gaps` names `transcript_not_found`, `transcript_unreadable`, `transcript_too_large:N`, `timeline_item_cap:N`, or `unsupported_provider` (providers without a transcript reader answer that, not an empty success). Supported: `claude` (`~/.claude/projects/**/*.jsonl`) and `codex` (`~/.codex/sessions/**/*.jsonl`), matched by uuid-in-filename. Reads are bounded (64 MB file cap, 5000-item cap, 600-char text, secret-run redaction). `invalid_value` without a provider. |
@@ -1104,6 +1118,25 @@ sits at or under 1 Hz — half the `presentation_compiler` ceiling of 2 Hz,
 and exactly at its 1 Hz saturated-red ceiling, so the red state needs no
 separate table. The compiler is still the authority; `dot_role` simply
 never hands it work to do.
+
+### The `call` role, and a shut lid
+
+Added 2026-09-22. `dot_role: "call"` makes the Dot a presence light the way
+a busylight is one: a **steady** red `#FF2D20` -- held, never breathed, it
+sits in view of the camera -- while `state.presence.on_call` is true
+(`why: "on_call"`, `reasons: ["presence", "on_call"]`), and exactly the
+`asks` beacon above the rest of the time. It reads the devices, not a call
+app's API, so it works for every call app, and between calls it still says
+whether an agent needs the person. Like `asks` it needs no strip
+(`lights.dot_link.state` is `beacon`), is never scaled by
+`linked_dot_scale`, and is never what a linked Screen Bar mirrors.
+
+With the lid shut (the daemon's lid reading, `state.power.closed_lid.lid_closed`),
+an `extend` Dot has nothing in view to continue -- the strip in the SD slot
+and the notch band are both behind the lid -- so it plays the `asks` beacon
+instead, unscaled: the surface's `role` reads `asks` and its `reasons`
+carry `auto:lid_closed`. The stored `dot_role` is untouched; the Dot goes
+back to `extend` when the lid opens.
 
 ### Settings
 
