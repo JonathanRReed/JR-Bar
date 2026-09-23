@@ -192,12 +192,15 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
             return
         }
         guard gestureLive, !gestureFired else { return }
-        // Normalise to finger direction: with "natural" scrolling the
-        // delta already follows the fingers (`isDirectionInvertedFrom-
-        // Device`), with legacy scrolling it is the wheel's opposite.
-        let inverted = event.isDirectionInvertedFromDevice
-        gestureX += inverted ? event.scrollingDeltaX : -event.scrollingDeltaX
-        gestureY += inverted ? event.scrollingDeltaY : -event.scrollingDeltaY
+        // Normalise to finger travel, right and up positive. Natural
+        // scrolling's deltas follow the content, which follows the
+        // fingers in a y-down frame — so the vertical flips — and a
+        // legacy wheel reports the opposite on both axes
+        // (`NotchScrollFinger`, the Screen Bar's reading too). The
+        // vertical used to keep AppKit's y-down sign, which turned a
+        // pull down into a fold and a push up into an open.
+        gestureX += finger.dx
+        gestureY += finger.dy
         if abs(gestureX) >= Self.horizontalThreshold, abs(gestureX) > abs(gestureY) {
             gestureFired = true
             // Fingers left = next track, fingers right = previous.

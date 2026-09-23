@@ -42,6 +42,17 @@ struct NotchLevelScrubTests {
         #expect(NotchScrollFinger.travel(dx: -4, dy: 0, inverted: false).dx == 4)
     }
 
+    @Test("the island's vertical reads a scroll the way the Screen Bar's does")
+    func verticalMatchesScreenBar() {
+        for inverted in [true, false] {
+            for delta: CGFloat in [-7, 3] {
+                #expect(NotchScrollFinger.travel(dx: 0, dy: delta, inverted: inverted).dy
+                        == ScreenBarInteraction.scrollFingerDelta(delta, inverted: inverted),
+                        "a pull down is down on both surfaces")
+            }
+        }
+    }
+
     private func makeToy() -> (NotchToy, ToysStore) {
         var toys = ToysState()
         toys.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
