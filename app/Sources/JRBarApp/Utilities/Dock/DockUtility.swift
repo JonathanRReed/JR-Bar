@@ -256,6 +256,9 @@ final class DockUtility {
             self?.settings().enhance.includeOffscreenWindows ?? false
         }
         switcher.agentMarks = { [weak self] in self?.agentMarks() ?? [] }
+        switcher.thisDisplayOnly = { [weak self] in
+            self?.settings().enhance.switcherThisDisplay ?? false
+        }
         enhance.agentMarks = { [weak self] in self?.agentMarks() ?? [] }
         enhance.answerAsk = { [weak self] ask, approve in
             await Self.answer(ask, approve: approve, send: self?.sendAnswer)

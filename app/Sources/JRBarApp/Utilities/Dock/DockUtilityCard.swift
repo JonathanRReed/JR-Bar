@@ -94,6 +94,10 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Hold the Dock out",
                              subtitle: "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes.")
             }
+            Toggle(isOn: previewThisDisplay) {
+                SettingLabel(title: "Only windows on this display",
+                             subtitle: "A preview lists the windows on the Dock's own screen; minimized ones always list.")
+            }
             Divider()
                 .padding(.vertical, 4)
             Picker(selection: utility.switcherProviderBinding) {
@@ -124,7 +128,12 @@ struct DockUtilityControls: View {
             }
             Toggle(isOn: switcher) {
                 SettingLabel(title: "⌥⇥ window switcher",
-                             subtitle: "Option-Tab raises every app's windows in recency order; Tab walks, releasing Option commits, esc cancels.")
+                             subtitle: "Option-Tab raises every app's windows in recency order — a window whose agent waits on you comes first. Tab walks, releasing Option commits, esc cancels; type to search windows and the sessions in them (! for waiting agents), ` narrows to one app.")
+            }
+            .disabled(utility.settings().switcherProvider != .jrbar)
+            Toggle(isOn: switcherThisDisplay) {
+                SettingLabel(title: "⌥⇥ lists this display only",
+                             subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")
             }
             .disabled(utility.settings().switcherProvider != .jrbar)
             Toggle(isOn: appSwitcher) {
@@ -223,6 +232,14 @@ struct DockUtilityControls: View {
     private var hoverPreviews: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.hoverPreviews },
                 set: { utility.enhance.preferences.hoverPreviews = $0 })
+    }
+    private var previewThisDisplay: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.previewThisDisplay },
+                set: { utility.enhance.preferences.previewThisDisplay = $0 })
+    }
+    private var switcherThisDisplay: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.switcherThisDisplay },
+                set: { utility.enhance.preferences.switcherThisDisplay = $0 })
     }
     private var holdOpen: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.holdDockOpen },

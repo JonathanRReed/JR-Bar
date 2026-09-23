@@ -25,6 +25,9 @@ struct SwitcherItem: Identifiable {
     let element: AXUIElement?
     /// The CGWindow number when on-screen — the thumbnail key.
     let windowID: CGWindowID?
+    /// The window's frame in Quartz space (CG bounds, else the AX
+    /// frame) — the "only this display" filter reads it.
+    var frame: CGRect? = nil
     /// The Dock tile's `AXStatusLabel` — the unread count the ⌘⇥ card
     /// draws on the icon like Witch's strip. nil when there is none.
     var badge: String? = nil
@@ -140,14 +143,14 @@ enum DockSwitcherList {
                     id: "w\(row.windowID)", pid: row.pid,
                     appName: appName(row.pid), icon: icon(row.pid),
                     title: hit.title, minimized: false, onScreen: true,
-                    element: hit.element, windowID: row.windowID))
+                    element: hit.element, windowID: row.windowID, frame: row.bounds))
             } else if resolution != .ambiguous {
                 items.append(SwitcherItem(
                     id: "w\(row.windowID)", pid: row.pid,
                     appName: appName(row.pid), icon: icon(row.pid),
                     title: row.title.isEmpty ? appName(row.pid) : row.title,
                     minimized: false, onScreen: true,
-                    element: nil, windowID: row.windowID))
+                    element: nil, windowID: row.windowID, frame: row.bounds))
             }
         }
 
@@ -176,14 +179,15 @@ enum DockSwitcherList {
                     appName: appName(pid), icon: icon(pid),
                     title: hit?.title ?? (row.title.isEmpty ? appName(pid) : row.title),
                     minimized: hit?.minimized ?? true, onScreen: false,
-                    element: hit?.element, windowID: row.windowID))
+                    element: hit?.element, windowID: row.windowID, frame: row.bounds))
             }
             for window in leftover {
                 items.append(SwitcherItem(
                     id: "a\(pid)-\(window.id)", pid: pid,
                     appName: appName(pid), icon: icon(pid),
                     title: window.title, minimized: window.minimized,
-                    onScreen: false, element: window.element, windowID: window.windowID))
+                    onScreen: false, element: window.element, windowID: window.windowID,
+                    frame: window.frame))
             }
         }
         return items
@@ -277,6 +281,31 @@ enum DockSwitcherList {
         default:
             return nil
         }
+    }
+
+    // MARK: Scope
+
+    /// "Only this display": rows whose window sits on `display` (a
+    /// Quartz-space screen frame, judged by the window's centre). A
+    /// minimized window belongs to no display and stays, as does a row
+    /// with no frame to judge — the filter narrows, it never hides
+    /// what it can't place.
+    static func onDisplay(_ items: [SwitcherItem], display: CGRect) -> [SwitcherItem] {
+        items.filter { item in
+            guard !item.minimized, let frame = item.frame else { return true }
+            return display.contains(CGPoint(x: frame.midX, y: frame.midY))
+        }
+    }
+
+    /// What a live strip watches for between rebuilds: which windows
+    /// exist and what each agent is doing — cheap to read every second
+    /// (two window-list passes, no AX), and titles are left out because
+    /// a terminal's spinner retitles it several times a second.
+    static func signature(rows: [SwitcherWindowRow], offRows: [SwitcherWindowRow],
+                          marks: [DockAgentMark]) -> Set<String> {
+        var parts = Set((rows + offRows).map { "w\($0.windowID)" })
+        for mark in marks { parts.insert("s\(mark.sessionID):\(mark.activity.rawValue)") }
+        return parts
     }
 
     /// The window a plain ⌘⇥ commit restores: when every window the app
@@ -448,6 +477,8 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// Witch's drill-down: ↓ on an app card opens that app's windows
     /// under the same strip — command's release then commits the window.
     var onDrill: () -> Void = {}
+    /// ` under the ⌥⇥ strip — the one-app scope toggle.
+    var onScope: () -> Void = {}
     /// The preview panel's keys — Esc/arrows/Return — while its flag is
     /// set. The events are eaten either way: the panel can't take key
     /// status, so a pass-through would land them in the front app too.
@@ -583,6 +614,11 @@ final class SwitcherKeyTap: @unchecked Sendable {
                     return swallow { self.isCmdOpenNow ? self.onCmdCommit() : self.onCommit() }
                 case 51: return swallow { self.onBackspace() }  // ⌫
                 case 53: return swallow { self.onCancel() }     // esc
+                case 50 where !isCmdOpen && !flags.contains(.maskCommand):
+                    // ` — narrow to the picked app's windows, or widen
+                    // back. Only while the strip is up: ⌥` alone stays
+                    // the dead key it types everywhere else.
+                    return swallow { self.onScope() }
                 default:
                     // ⌘-modified keys are verbs on the highlighted row
                     // (stock ⌘⇥ semantics) — and they never leak to the
@@ -695,6 +731,19 @@ final class DockSwitcherController {
     /// The daemon's live agent sessions, reduced to marks — the Dock
     /// utility wires it to `state.sessions`. Empty means no lane.
     var agentMarks: () -> [DockAgentMark] = { [] }
+    /// "Only this display": the ⌥⇥ strip lists the windows on the
+    /// pointer's screen (DockDoor 1.37, AltTab's screen filter).
+    var thisDisplayOnly: () -> Bool = { false }
+    /// ` while the strip is up narrows it to the picked app's windows
+    /// (Contexts' ⌘`); a second ` widens back. nil lists every app.
+    private(set) var scopePID: pid_t?
+    /// The live strip: a one-second look at the window list (and the
+    /// agents) while the panel is up, rebuilding only when it changed —
+    /// a window opened with ⌘N elsewhere appears under a held ⌥.
+    private var liveTimer: Timer?
+    private var liveSignature: Set<String> = []
+    private var workspaceObservers: [NSObjectProtocol] = []
+    static let liveInterval: TimeInterval = 1
     /// The dock preview's keys while its panel floats — Esc closes,
     /// arrows walk the cards, Return raises. The tap eats them either
     /// way: the panel can't take key status, so a pass-through would
@@ -737,17 +786,81 @@ final class DockSwitcherController {
         }
         tap.onVerb = { [weak self] char in self?.verb(char) }
         tap.onPreviewKey = { [weak self] code in self?.onPreviewKey?(code) }
+        tap.onScope = { [weak self] in self?.toggleScope() }
         // The layout the type-ahead spells through — read now on the
         // main thread and again on every input-source switch.
         tap.keyboard.startWatching()
         tap.start()
+        // An app launching or quitting under a held strip re-lists it
+        // at once rather than on the next live tick.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification,
+                     NSWorkspace.didTerminateApplicationNotification] {
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.rebuild() }
+            })
+        }
     }
 
     func stop() {
         guard running else { return }
         running = false
         tap.stop()
+        for observer in workspaceObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        workspaceObservers = []
         cancel()
+    }
+
+    /// Start watching for list changes under the open strip.
+    private func startLive() {
+        liveTimer?.invalidate()
+        liveSignature = currentSignature()
+        let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.liveTick() }
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        liveTimer = timer
+    }
+
+    private func stopLive() {
+        liveTimer?.invalidate()
+        liveTimer = nil
+    }
+
+    private func liveTick() {
+        guard panel?.isVisible == true else { return stopLive() }
+        let signature = currentSignature()
+        guard signature != liveSignature else { return }
+        liveSignature = signature
+        rebuild()
+    }
+
+    private func currentSignature() -> Set<String> {
+        var signature = DockSwitcherList.signature(rows: DockSwitcherList.onScreenRows(),
+                                                   offRows: DockSwitcherList.offScreenRows(),
+                                                   marks: agentMarks())
+        if appMode {
+            for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+                signature.insert("p\(app.processIdentifier)")
+            }
+        }
+        return signature
+    }
+
+    /// ` under the strip: narrow to the picked card's app, or widen back.
+    private func toggleScope() {
+        guard panel?.isVisible == true, !appMode, drilledApp == nil else { return }
+        scopePID = scopePID == nil ? model.selected?.pid : nil
+        let built = buildItems()
+        guard !built.isEmpty else { scopePID = nil; return }
+        let lane = DockSwitcherList.needsYouFirst(built)
+        let keep = model.selected?.id
+        model.open(with: lane.items, selection: lane.items.firstIndex { $0.id == keep } ?? lane.selection)
+        panel?.present(model: model)
+        loadThumbnails()
     }
 
     private func tab(shifted: Bool) {
@@ -760,6 +873,7 @@ final class DockSwitcherController {
     }
 
     private func open() {
+        scopePID = nil
         let built = buildItems()
         guard !built.isEmpty else { return }
         // A waiting agent's window leads and takes the first pick.
@@ -772,6 +886,7 @@ final class DockSwitcherController {
         hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
         loadThumbnails()
+        startLive()
     }
 
     /// The ⌥⇥ strip's rows: on-screen windows in z-order, then
@@ -794,13 +909,28 @@ final class DockSwitcherController {
         // The Dock's unread badges ride the window cards too — Mail's 3
         // shows on each Mail window, the way the tile shows it.
         let badges = Self.dockBadges()
-        let badged = badges.isEmpty ? items : items.map { item in
+        var scoped = badges.isEmpty ? items : items.map { item in
             var item = item
             item.badge = apps[item.pid]?.bundleURL.flatMap { badges[$0.path] }
             return item
         }
-        return DockSwitcherList.annotate(badged, marks: agentMarks(),
+        if let scopePID { scoped = scoped.filter { $0.pid == scopePID } }
+        if thisDisplayOnly(), let display = Self.pointerDisplayQuartz() {
+            scoped = DockSwitcherList.onDisplay(scoped, display: display)
+        }
+        return DockSwitcherList.annotate(scoped, marks: agentMarks(),
                                          bundleID: { apps[$0]?.bundleIdentifier })
+    }
+
+    /// The pointer's screen in Quartz space (y down from the primary
+    /// display's top) — the space CG bounds and AX frames share.
+    private static func pointerDisplayQuartz() -> CGRect? {
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }),
+              let primary = NSScreen.screens.first(where: { $0.frame.origin == .zero })
+                ?? NSScreen.screens.first else { return nil }
+        let f = screen.frame
+        return CGRect(x: f.minX, y: primary.frame.height - f.maxY, width: f.width, height: f.height)
     }
 
     /// The unread counts live on the Dock's tiles — one AX walk maps
@@ -842,6 +972,7 @@ final class DockSwitcherController {
         hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
         loadThumbnails()
+        startLive()
     }
 
     private func buildAppItems() -> [SwitcherItem] {
@@ -898,11 +1029,7 @@ final class DockSwitcherController {
     func cmdCommit() {
         let item = model.selected
         let drilled = drilledApp != nil
-        agentGuard.reset()
-        appMode = false
-        drilledApp = nil
-        tap.setCmdOpen(false)
-        panel?.dismiss()
+        closeStrip()
         guard let item else { return }
         let app = NSRunningApplication(processIdentifier: item.pid)
         if drilled, let element = resolvedElement(for: item) {
@@ -957,11 +1084,7 @@ final class DockSwitcherController {
 
     func commit() {
         guard let item = model.selected else { return cancel() }
-        agentGuard.reset()
-        appMode = false
-        drilledApp = nil
-        tap.setOpen(false)
-        panel?.dismiss()
+        closeStrip()
         if let element = resolvedElement(for: item) {
             let window = DockPreviewWindow(id: 0, title: item.title,
                                          minimized: item.minimized,
@@ -975,9 +1098,18 @@ final class DockSwitcherController {
     }
 
     func cancel() {
+        closeStrip()
+    }
+
+    /// Every way the strip goes away — commit, a card click, esc — lands
+    /// here: the tap stops owning the keyboard, the live watch and the
+    /// scope end, and a half-armed guard is forgotten.
+    private func closeStrip() {
         agentGuard.reset()
         appMode = false
         drilledApp = nil
+        scopePID = nil
+        stopLive()
         tap.setOpen(false)
         panel?.dismiss()
     }

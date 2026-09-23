@@ -78,6 +78,16 @@ final class DockEnhancePreferences {
         get { read().hoverPreviews }
         set { write?({ var s = read(); s.hoverPreviews = newValue; return s }()) }
     }
+    /// ⌥⇥ lists only the pointer's display.
+    var switcherThisDisplay: Bool {
+        get { read().switcherThisDisplay }
+        set { write?({ var s = read(); s.switcherThisDisplay = newValue; return s }()) }
+    }
+    /// A preview lists only the windows on its Dock's display.
+    var previewThisDisplay: Bool {
+        get { read().previewThisDisplay }
+        set { write?({ var s = read(); s.previewThisDisplay = newValue; return s }()) }
+    }
 
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
     static let defaultDelay: Double = DockEnhanceSettings.defaultDelay
@@ -505,6 +515,17 @@ enum DockEnhanceMath {
                 ? $0.element.urgency < $1.element.urgency : $0.offset < $1.offset }
             .map(\.element)
         return (cards, app)
+    }
+
+    /// "Only windows on this display": cards whose window's centre sits
+    /// on `display` (Quartz space). Minimized and frameless windows stay
+    /// — they belong to no display, and the filter never hides what it
+    /// can't place.
+    static func onDisplay(_ windows: [DockPreviewWindow], display: CGRect) -> [DockPreviewWindow] {
+        windows.filter { window in
+            guard !window.minimized, let frame = window.frame else { return true }
+            return display.contains(CGPoint(x: frame.midX, y: frame.midY))
+        }
     }
 
     /// Close-all's split: windows hosting a working or waiting agent are
@@ -1642,8 +1663,26 @@ final class DockEnhanceController {
         content.isRunning = running != nil && !(running?.isTerminated ?? true)
         content.icon = running?.icon
             ?? appURL.map { DockIconResolver.icon(appURL: $0, pointSize: 64, scale: 2) }
-        content.windows = running.map { AppleDockReader.windows(pid: $0.processIdentifier) } ?? []
+        content.windows = running.map { listWindows(pid: $0.processIdentifier) } ?? []
         content.selectedWindowID = nil
+    }
+
+    /// One app's cards: its AX windows, narrowed to the Dock's display
+    /// when the card asks — DockDoor's per-monitor filter; the Dock is
+    /// on the pointer's screen, and so are the windows worth previewing
+    /// from it.
+    private func listWindows(pid: pid_t) -> [DockPreviewWindow] {
+        let windows = AppleDockReader.windows(pid: pid)
+        guard preferences.previewThisDisplay, let display = Self.pointerDisplayQuartz() else { return windows }
+        return DockEnhanceMath.onDisplay(windows, display: display)
+    }
+
+    /// The pointer's screen in Quartz space — where AX frames live.
+    private static func pointerDisplayQuartz() -> CGRect? {
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) else { return nil }
+        let f = screen.frame
+        return CGRect(x: f.minX, y: mainScreenHeight() - f.maxY, width: f.width, height: f.height)
     }
 
     /// Mark the cards whose windows host an agent session, and collect
@@ -1841,7 +1880,7 @@ final class DockEnhanceController {
             try? await Task.sleep(for: .milliseconds(600))
             guard let self, self.generation == generationAtNew,
                   let pid = self.preview.processIdentifier else { return }
-            self.preview.windows = AppleDockReader.windows(pid: pid)
+            self.preview.windows = self.listWindows(pid: pid)
             self.applyAgents(to: self.preview)
             self.reframe()
             // The refill's rows carry no thumbnails — re-attach so the

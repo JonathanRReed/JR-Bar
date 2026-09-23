@@ -70,7 +70,13 @@ struct DockSettingsTests {
         var round = DockSettings()
         round.switcherProvider = .contexts
         round.enhance.hoverPreviews = false
+        round.enhance.switcherThisDisplay = true
+        round.enhance.previewThisDisplay = true
         #expect(try decode(DockSettings.self, encode(round)) == round)
+        let display = try decode(DockSettings.self, #"{"enhance": {"switcherThisDisplay": 1, "previewThisDisplay": true}}"#)
+        #expect(display.enhance.switcherThisDisplay == false, "a number is not a switch")
+        #expect(display.enhance.previewThisDisplay == true)
+        #expect(DockSettings().enhance.switcherThisDisplay == false && DockSettings().enhance.previewThisDisplay == false)
     }
 
     @Test("handing the previews to DockDoor keeps JR-Bar's switcher; the card off stops both")

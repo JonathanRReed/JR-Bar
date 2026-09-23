@@ -285,6 +285,55 @@ struct DockSwitcherTests {
         #expect(passes(tap, arrow), "closing the panel hands the keys back")
     }
 
+    @Test("only this display keeps the windows centred on it — minimized and frameless rows stay")
+    func displayFilter() {
+        func item(_ id: String, x: CGFloat?, minimized: Bool = false) -> SwitcherItem {
+            SwitcherItem(id: id, pid: 1, appName: "A", icon: nil, title: id,
+                         minimized: minimized, onScreen: !minimized, element: nil, windowID: nil,
+                         frame: x.map { CGRect(x: $0, y: 100, width: 400, height: 300) })
+        }
+        let left = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let kept = DockSwitcherList.onDisplay([
+            item("here", x: 100), item("there", x: 2000), item("parked", x: 2000, minimized: true),
+            item("unknown", x: nil), item("straddle", x: 1300),
+        ], display: left)
+        #expect(kept.map(\.id) == ["here", "parked", "unknown"],
+                "a window mostly on the next screen belongs to that screen")
+        let windows = [
+            DockPreviewWindow(id: 1, title: "a", minimized: false, fullScreen: nil,
+                              frame: CGRect(x: 10, y: 10, width: 100, height: 100), thumbnail: nil, element: nil),
+            DockPreviewWindow(id: 2, title: "b", minimized: false, fullScreen: nil,
+                              frame: CGRect(x: 2000, y: 10, width: 100, height: 100), thumbnail: nil, element: nil),
+            DockPreviewWindow(id: 3, title: "c", minimized: true, fullScreen: nil,
+                              frame: CGRect(x: 2000, y: 10, width: 100, height: 100), thumbnail: nil, element: nil),
+        ]
+        #expect(DockEnhanceMath.onDisplay(windows, display: left).map(\.id) == [1, 3])
+    }
+
+    @Test("the live strip rebuilds on window and agent changes, not retitles")
+    func liveSignature() {
+        let rows = [row(pid: 1, wid: 10, title: "⠂ Claude"), row(pid: 2, wid: 20)]
+        let before = DockSwitcherList.signature(rows: rows, offRows: [], marks: [])
+        let retitled = DockSwitcherList.signature(
+            rows: [row(pid: 1, wid: 10, title: "⠐ Claude"), row(pid: 2, wid: 20)], offRows: [], marks: [])
+        #expect(before == retitled, "a terminal's spinner must not rebuild the strip every frame")
+        let opened = DockSwitcherList.signature(rows: rows + [row(pid: 1, wid: 11)], offRows: [], marks: [])
+        #expect(before != opened, "a new window re-lists")
+        let minimized = DockSwitcherList.signature(rows: [row(pid: 2, wid: 20)],
+                                                   offRows: [row(pid: 1, wid: 10)], marks: [])
+        #expect(before == minimized, "a window moving off-screen is the same window")
+    }
+
+    @Test("` under the open strip is the scope toggle, not a typed character")
+    func scopeKey() throws {
+        let tap = SwitcherKeyTap()
+        let grave = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 50, keyDown: true))
+        #expect(passes(tap, grave), "closed: ` types as usual")
+        tap.setOpen(true)
+        #expect(!passes(tap, grave))
+        tap.setOpen(false)
+    }
+
     @Test("stills capture the selected card first, then the strip in order")
     func captureOrder() {
         let items = ["a", "b", "c", "d"].map { named("App", $0) }

@@ -119,6 +119,10 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Resting on a Dock icon opens its preview. Off keeps the card on
     /// for the switcher alone — ⌥⇥ without hover panels.
     public var hoverPreviews: Bool
+    /// The ⌥⇥ strip lists only the windows on the pointer's display.
+    public var switcherThisDisplay: Bool
+    /// A preview lists only the windows on the display its Dock is on.
+    public var previewThisDisplay: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -134,7 +138,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 windowSwitcher: Bool = true,
                 appSwitcher: Bool = false,
                 excludedBundleIDs: [String] = [],
-                hoverPreviews: Bool = true) {
+                hoverPreviews: Bool = true,
+                switcherThisDisplay: Bool = false,
+                previewThisDisplay: Bool = false) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -145,6 +151,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.appSwitcher = appSwitcher
         self.excludedBundleIDs = excludedBundleIDs
         self.hoverPreviews = hoverPreviews
+        self.switcherThisDisplay = switcherThisDisplay
+        self.previewThisDisplay = previewThisDisplay
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -159,7 +167,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
-        case hoverPreviews
+        case hoverPreviews, switcherThisDisplay, previewThisDisplay
     }
 
     public init(from decoder: any Decoder) throws {
@@ -176,6 +184,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         appSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .appSwitcher)) ?? false
         excludedBundleIDs = (try? c.decodeIfPresent([String].self, forKey: .excludedBundleIDs)) ?? []
         hoverPreviews = (try? c.decodeIfPresent(Bool.self, forKey: .hoverPreviews)) ?? true
+        switcherThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .switcherThisDisplay)) ?? false
+        previewThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .previewThisDisplay)) ?? false
     }
 }
 
