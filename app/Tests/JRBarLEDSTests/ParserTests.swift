@@ -10,6 +10,7 @@ import Testing
         #expect(verdicts.count > 100)
         var failures: [String] = []
         var lineMatches = 0
+        var positionMatches = 0
         var errors = 0
         for verdict in verdicts {
             do {
@@ -25,12 +26,17 @@ import Testing
                     failures.append("\(verdict.led_count) LED: \(verdict.program.debugDescription) -> \(error.kind.rawValue), firmware says \(verdict.error_name ?? "?")")
                 } else if error.line == verdict.line {
                     lineMatches += 1
+                    if error.column == verdict.column { positionMatches += 1 }
                 }
             }
         }
         #expect(failures.isEmpty, Comment(rawValue: failures.joined(separator: "\n")))
-        // Error positions are advisory; most should still agree on the line.
+        // Most errors agree with the firmware on the line…
         #expect(lineMatches * 10 >= errors * 8, Comment(rawValue: "only \(lineMatches)/\(errors) error lines match the firmware"))
+        // …and where the line agrees, so does the column: the LEDS Studio
+        // points at the exact character the firmware names.
+        #expect(positionMatches == lineMatches,
+                Comment(rawValue: "\(lineMatches - positionMatches) error columns differ from the firmware's"))
     }
 
     @Test func modelShapes() throws {

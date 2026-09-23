@@ -101,7 +101,9 @@ enum LEDSParser {
 
     static func isBlank(_ scalar: Unicode.Scalar) -> Bool { scalar == " " || scalar == "\t" }
 
-    /// Splits on spaces and tabs only (a no-break space is not blank to the firmware).
+    /// Splits on spaces and tabs only (a no-break space is not blank to the
+    /// firmware). A token's column is 1-based on the physical line: the
+    /// text starts at `baseColumn`, so its first character is that column.
     static func tokenize(_ text: String, baseColumn: Int) -> [Token] {
         var tokens: [Token] = []
         var current = ""
@@ -111,7 +113,7 @@ enum LEDSParser {
             column += 1
             if isBlank(scalar) {
                 if !current.isEmpty {
-                    tokens.append(Token(text: current, column: baseColumn + start))
+                    tokens.append(Token(text: current, column: baseColumn + start - 1))
                     current = ""
                 }
             } else {
@@ -119,7 +121,7 @@ enum LEDSParser {
                 current.unicodeScalars.append(scalar)
             }
         }
-        if !current.isEmpty { tokens.append(Token(text: current, column: baseColumn + start)) }
+        if !current.isEmpty { tokens.append(Token(text: current, column: baseColumn + start - 1)) }
         return tokens
     }
 
@@ -219,7 +221,7 @@ enum LEDSParser {
         let head = tokens[0]
         let direction: LEDSRollDirection = head.lowercased == "roll-left" ? .left : .right
         guard tokens.count > 1 else {
-            throw LEDSParseError(.badTime, line: lineNumber, column: head.column + head.text.count + 1)
+            throw LEDSParseError(.badTime, line: lineNumber, column: head.column + head.text.count)
         }
         // Roll owns its line: a `;` anywhere is a syntax failure to the firmware.
         for token in tokens where token.text.contains(";") {
