@@ -269,6 +269,74 @@ def test_session_start_records_the_ghostty_terminal__and_4_more(tmp_path: Path) 
     assert later.recorded("codex", "s-1") is None
 
 
+def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> None:
+    import os
+    import signal
+    import subprocess
+    import time
+
+    from jrbar import answer_local
+
+    # --- scenario: a process's directory, read the way lsof reads it
+    assert answer_local.process_cwd(os.getpid()) == os.getcwd()
+    child = subprocess.Popen(["/bin/sleep", "30"], cwd="/private/tmp")
+    try:
+        assert answer_local.process_cwd(child.pid) == "/private/tmp"
+        # --- scenario: a stopped (Ctrl-Z'd) process is seen as stopped
+        assert answer_local.process_stopped(child.pid) is False
+        os.kill(child.pid, signal.SIGSTOP)
+        deadline = time.monotonic() + 5
+        while answer_local.process_stopped(child.pid) is not True and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert answer_local.process_stopped(child.pid) is True
+    finally:
+        child.kill()
+        child.wait()
+    assert answer_local.process_cwd(None) is None and answer_local.process_stopped(-1) is None
+
+    monkeypatch.setattr(answer_local, "process_cwd", lambda pid: "/Users/me/repo")
+
+    # --- scenario: the focused terminal, alone in the session's directory, is proof
+    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tclaude\nT2\t/tmp\tzsh\n")
+    assert answer_local.ghostty_focused_surface_proven(500, runner) is True
+
+    # --- scenario: focus elsewhere is a definite no; a shared directory is unknown
+    runner = FakeRunner(focused="T2\t/tmp", ghostty_terminals="T1\t/Users/me/repo\tx\nT2\t/tmp\ty\n")
+    assert answer_local.ghostty_focused_surface_proven(500, runner) is False
+    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tx\nT3\t/Users/me/repo\ty\n")
+    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+
+    # --- scenario: no directory to compare, or Ghostty will not say, is unknown
+    runner = FakeRunner(focused="")
+    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+    monkeypatch.setattr(answer_local, "process_cwd", lambda pid: None)
+    assert answer_local.ghostty_focused_surface_proven(500, FakeRunner(focused="T1\t/x")) is None
+
+
+def test_answer_raise_brings_the_exact_surface_forward(tmp_path: Path) -> None:
+    runner = FakeRunner(ghostty_terminals="T1\t/Users/me/repo\tcodex\n")
+    controller, status = _live()
+    main_calls: list = []
+
+    def on_main(function):
+        main_calls.append(function)
+        return function()
+
+    outcome = surfaces.raise_for_answer(
+        controller,
+        status,
+        on_main=on_main,
+        runner=runner,
+        recorder=SurfaceRecorder(path=tmp_path / "s.json", runner=FakeRunner(), synchronous=True),
+        process_table=lambda: GHOSTTY_CODEX,
+    )
+    assert (outcome.raised, outcome.detail) == ("terminal", "T1")
+    # The row's extras are main-thread state: read there, not on the socket thread.
+    assert len(main_calls) == 1
+    controller, status = _live(pid=None)
+    assert surfaces.raise_for_answer(controller, status, runner=FakeRunner()) is None
+
+
 class _Settings:
     def __init__(self, action=None):
         self.action = action

@@ -720,6 +720,12 @@ def _cmd_answer_ask(self, args):
         if not bool(args.get("only_if_frontmost", True)):
             # Explicitly asked to answer a terminal that is not in front: raise it,
             # then let the unchanged check chain decide. Never a bypass.
+            # The session's own tab, tmux pane or Ghostty terminal first
+            # (answer_surfaces.py), so the focused-target proof can pass;
+            # the app-level raise below stays the fallback.
+            from .answer_surfaces import raise_for_answer
+
+            raise_for_answer(self, status, on_main=on_main)
             host = session_host(
                 getattr(status, "provider", None),
                 getattr(status, "session_id", None),

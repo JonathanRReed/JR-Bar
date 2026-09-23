@@ -25,10 +25,19 @@ therefore the whole risk, and every check below exists to refuse instead:
   shares one process across windows (Ghostty above all) ancestry alone cannot
   tell this session's window from a sibling's;
 * the terminal names its focused tab's tty and that tty IS the session's.
-  Only Terminal.app and iTerm2 expose that proof; a session hosted anywhere
-  else -- or whose own tty could not be resolved -- has no safe in-place
-  answer and refuses, leaving Open-in-terminal as the honest path;
+  Terminal.app and iTerm2 expose that proof. Ghostty names no tty, so its
+  proof is the focused terminal of its front window being in the session
+  process's working directory while no other Ghostty terminal is; two
+  terminals in one directory cannot be told apart and refuse. A session
+  hosted anywhere else -- or whose own tty could not be resolved -- has no
+  safe in-place answer and refuses, leaving Open-in-terminal as the honest
+  path;
+* the session's process is not stopped (a Ctrl-Z'd job's terminal shows the
+  shell, and a key there is a shell command);
 * Accessibility is granted, without which the keystroke silently goes nowhere.
+
+A permission prompt the agent's own hook is holding for JR-Bar never gets
+here: answer_decisions.py replies to the hook instead, with nothing typed.
 
 Anything that fails refuses, and anything that cannot be proven refuses too.
 There is no "type it anyway" path.
@@ -91,6 +100,7 @@ ACCESSIBILITY_REFUSAL_MESSAGE: Final = accessibility_refusal_message()
 DELIVERY_BUDGET_SECONDS: Final = 4.0
 #: How long the terminal-scripting tty probe may block.
 SCRIPT_PROBE_TIMEOUT_SECONDS: Final = 1.5
+GHOSTTY_BUNDLE_ID: Final = "com.mitchellh.ghostty"
 #: Ancestry walk depth, matching the daemon's own terminal resolution.
 MAX_ANCESTRY_DEPTH: Final = 12
 
@@ -232,10 +242,22 @@ class AnswerHostFacts:
     #: naming the wrong row would send the owner to a switch that changes
     #: nothing.
     accessibility_app_name: str | None = None
+    #: Ghostty's stand-in for ``focused_tab_tty``, which it cannot name:
+    #: ``True`` when the focused terminal of its front window is in the
+    #: session process's working directory AND is the only Ghostty terminal
+    #: there; ``False`` when the focused terminal is somewhere else; ``None``
+    #: when that cannot be told (two terminals in one directory, no Apple
+    #: events, not Ghostty).
+    focused_surface_proven: bool | None = None
+    #: The session's process is stopped (Ctrl-Z): its prompt is not what the
+    #: terminal is showing, the shell is, and a key would go to the shell.
+    session_stopped: bool | None = None
 
     def __post_init__(self) -> None:
         if not (
-            (self.session_pid is None or type(self.session_pid) is int)
+            (self.focused_surface_proven is None or type(self.focused_surface_proven) is bool)
+            and (self.session_stopped is None or type(self.session_stopped) is bool)
+            and (self.session_pid is None or type(self.session_pid) is int)
             and (self.session_alive is None or type(self.session_alive) is bool)
             and (self.session_tty is None or type(self.session_tty) is str)
             and type(self.expected_bundle_ids) is frozenset
@@ -275,6 +297,8 @@ class AnswerHostFacts:
             and self.focused_tab_tty == self.session_tty
         ):
             return "focused_tab_tty"
+        if self.focused_surface_proven is True and self.frontmost_bundle_id == GHOSTTY_BUNDLE_ID:
+            return "focused_surface_cwd"
         if self.frontmost_ancestor_of_session:
             return "host_process_ancestry"
         return "frontmost_application_only"
@@ -402,32 +426,51 @@ def _checked_answer_host(
             "nothing was sent.",
             "ownership_unproven",
         )
+    # A stopped session (Ctrl-Z) is alive, but its terminal is showing the
+    # shell: a key would be a shell command, not an answer.
+    if facts.session_stopped is True:
+        raise AnswerRefusal(
+            "session_gone",
+            "That session is suspended in its terminal; nothing was sent.",
+            "process_stopped",
+        )
     # The exact focused-target proof, required of every host now. The key
     # lands on whatever tab is focused in the frontmost window, so the
     # terminal must name that tab's tty and it must be this session's.
     # ``focused_tab_tty`` is ``None`` both for terminals with no scripting
-    # call (Ghostty, kitty, WezTerm, Alacritty -- where ancestry cannot pick
-    # a window) and for a probe that failed; neither is affirmative proof.
-    if facts.session_tty is None:
+    # call (kitty, WezTerm, Alacritty -- where ancestry cannot pick a
+    # window) and for a probe that failed; neither is affirmative proof.
+    # Ghostty names no tty, but it names its focused terminal's working
+    # directory: the only Ghostty terminal in the session's own directory,
+    # focused, is the same proof by other means.
+    ghostty_in_front = facts.frontmost_bundle_id == GHOSTTY_BUNDLE_ID
+    if ghostty_in_front and facts.focused_surface_proven is False:
         raise AnswerRefusal(
             "not_frontmost",
-            "JR-Bar cannot name that session's terminal tab; nothing was "
-            "sent.",
-            "session_tty_unknown",
+            "A different Ghostty tab or split is in front.",
+            "other_surface",
         )
-    if facts.focused_tab_tty is None:
-        raise AnswerRefusal(
-            "not_frontmost",
-            "JR-Bar cannot prove which tab of that terminal is in front; "
-            "nothing was sent. Open the session's terminal to answer there.",
-            "focused_tab_unproven",
-        )
-    if facts.focused_tab_tty != facts.session_tty:
-        raise AnswerRefusal(
-            "not_frontmost",
-            "A different tab of that terminal is in front.",
-            f"other_tab:{facts.focused_tab_tty}",
-        )
+    if not (ghostty_in_front and facts.focused_surface_proven is True):
+        if facts.session_tty is None:
+            raise AnswerRefusal(
+                "not_frontmost",
+                "JR-Bar cannot name that session's terminal tab; nothing was "
+                "sent.",
+                "session_tty_unknown",
+            )
+        if facts.focused_tab_tty is None:
+            raise AnswerRefusal(
+                "not_frontmost",
+                "JR-Bar cannot prove which tab of that terminal is in front; "
+                "nothing was sent. Open the session's terminal to answer there.",
+                "focused_tab_unproven",
+            )
+        if facts.focused_tab_tty != facts.session_tty:
+            raise AnswerRefusal(
+                "not_frontmost",
+                "A different tab of that terminal is in front.",
+                f"other_tab:{facts.focused_tab_tty}",
+            )
     if not facts.accessibility_trusted:
         raise AnswerRefusal(
             "accessibility_required",
@@ -654,10 +697,11 @@ def tty_for_pid(pid: object) -> str | None:
     return text if text.startswith("/dev/") else f"/dev/{text}"
 
 
-#: Terminals that will name their focused tab's tty over Apple events. Ghostty,
-#: kitty, Alacritty and WezTerm have no such call -- and since the delivery
-#: fence now requires that exact proof, a session hosted in one can never be
-#: answered in place. The honest path there is Open-in-terminal.
+#: Terminals that will name their focused tab's tty over Apple events. Ghostty
+#: proves its focused terminal another way (``ghostty_focused_surface_proven``);
+#: kitty, Alacritty and WezTerm have no call at all, so a session hosted in
+#: one can never be answered in place. The honest path there is
+#: Open-in-terminal.
 _FOCUSED_TTY_SCRIPTS: Final[Mapping[str, str]] = {
     "com.apple.Terminal": (
         'tell application id "com.apple.Terminal" to '
@@ -699,12 +743,95 @@ def focused_tab_tty(bundle_id: object) -> str | None:
     return value or None
 
 
-#: The only hosts that can satisfy the fence's exact focused-target proof.
-FOCUSED_TAB_PROOF_BUNDLES: Final = frozenset(_FOCUSED_TTY_SCRIPTS)
+_LIBPROC: Final = "/usr/lib/libproc.dylib"
+_PROC_PIDTBSDINFO: Final = 3
+_PROC_BSDINFO_SIZE: Final = 136
+_SSTOP: Final = 4
+_PROC_PIDVNODEPATHINFO: Final = 9
+_VNODE_INFO_SIZE: Final = 152
+_MAXPATHLEN: Final = 1024
+
+
+def _proc_pidinfo(pid: int, flavor: int, size: int) -> bytes | None:
+    try:
+        libproc = ctypes.cdll.LoadLibrary(_LIBPROC)
+        call = libproc.proc_pidinfo
+        call.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        call.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(size)
+        if call(pid, flavor, 0, buffer, size) != size:
+            return None
+        return buffer.raw
+    except Exception:
+        return None
+
+
+def process_cwd(pid: object) -> str | None:
+    """That process's current directory (libproc, as ``lsof`` reads it)."""
+    if type(pid) is not int or pid <= 0:
+        return None
+    raw = _proc_pidinfo(pid, _PROC_PIDVNODEPATHINFO, 2 * (_VNODE_INFO_SIZE + _MAXPATHLEN))
+    if raw is None:
+        return None
+    path = raw[_VNODE_INFO_SIZE : _VNODE_INFO_SIZE + _MAXPATHLEN].split(b"\0", 1)[0]
+    return path.decode("utf-8", "surrogateescape") or None
+
+
+def process_stopped(pid: object) -> bool | None:
+    """Whether the process is stopped (``SSTOP``, a Ctrl-Z'd job)."""
+    if type(pid) is not int or pid <= 0:
+        return None
+    raw = _proc_pidinfo(pid, _PROC_PIDTBSDINFO, _PROC_BSDINFO_SIZE)
+    if raw is None:
+        return None
+    return int.from_bytes(raw[4:8], "little") == _SSTOP
+
+
+def ghostty_focused_surface_proven(session_pid: object, runner: object = None) -> bool | None:
+    """Ghostty's focused-target proof: ``True`` when the focused terminal of
+    its front window is in the session process's working directory and no
+    other Ghostty terminal is; ``False`` when the focused terminal is in
+    another directory; ``None`` when it cannot be told -- two terminals in
+    that directory, an Apple event macOS refused, no directory to compare.
+    Ghostty 1.3 names no tty, so a directory only it holds is the proof."""
+    session_cwd = process_cwd(session_pid)
+    if not session_cwd:
+        return None
+    from .answer_surfaces import (
+        _GHOSTTY_FOCUSED_TERMINAL,
+        _GHOSTTY_LIST_TERMINALS,
+        SurfaceRunner,
+        _same_directory,
+        parse_ghostty_terminals,
+    )
+
+    scripts = runner if runner is not None else SurfaceRunner()
+    code, output = scripts.osascript(_GHOSTTY_FOCUSED_TERMINAL)  # type: ignore[attr-defined]
+    if code != 0 or not output:
+        return None
+    _terminal_id, _sep, focused_cwd = output.partition("\t")
+    if not _same_directory(focused_cwd.strip(), session_cwd):
+        return False
+    code, output = scripts.osascript(_GHOSTTY_LIST_TERMINALS)  # type: ignore[attr-defined]
+    if code != 0:
+        return None
+    sharing = [
+        terminal
+        for terminal in parse_ghostty_terminals(output)
+        if _same_directory(terminal.working_directory, session_cwd)
+    ]
+    return True if len(sharing) == 1 else None
+
+
+#: The hosts that can satisfy the fence's exact focused-target proof:
+#: Terminal.app and iTerm2 by the focused tab's tty, Ghostty by its focused
+#: terminal being the only one in the session's directory.
+FOCUSED_TAB_PROOF_BUNDLES: Final = frozenset({*_FOCUSED_TTY_SCRIPTS, GHOSTTY_BUNDLE_ID})
 
 
 def host_offers_focused_tab_proof(bundle_ids: object) -> bool:
-    """Whether any expected host can name its focused tab's tty.
+    """Whether any expected host can prove which tab or terminal is focused:
+    by its tty (Terminal.app, iTerm2) or by its working directory (Ghostty).
 
     The projection uses this to keep ``answerable`` honest: a session hosted
     by a terminal with no scripting call can never pass the delivery fence,
@@ -878,6 +1005,11 @@ def observe_host_facts(
         if ancestors:
             ancestry_verdict = frontmost_pid in ancestors or frontmost_pid == pid
     focused_tty = focused_tab_tty(frontmost_bundle) if frontmost_bundle else None
+    surface_proven = (
+        ghostty_focused_surface_proven(pid)
+        if frontmost_bundle == GHOSTTY_BUNDLE_ID and pid is not None
+        else None
+    )
     return AnswerHostFacts(
         session_pid=pid,
         session_alive=alive,
@@ -891,6 +1023,8 @@ def observe_host_facts(
         focused_tab_tty=focused_tty,
         accessibility_trusted=accessibility_trusted(),
         accessibility_app_name=running_app_name(),
+        focused_surface_proven=surface_proven,
+        session_stopped=process_stopped(pid) if pid is not None else None,
     )
 
 
@@ -1276,6 +1410,7 @@ __all__ = [
     "DEFAULT_ACCESSIBILITY_APP_NAME",
     "DELIVERY_BUDGET_SECONDS",
     "FOCUSED_TAB_PROOF_BUNDLES",
+    "GHOSTTY_BUNDLE_ID",
     "AnswerDeliveryOutcome",
     "AnswerHostFacts",
     "AnswerKey",
@@ -1292,6 +1427,7 @@ __all__ = [
     "answer_keys_for_provider",
     "focused_tab_tty",
     "frontmost_application",
+    "ghostty_focused_surface_proven",
     "host_offers_focused_tab_proof",
     "observe_host_facts",
     "plan_local_answer",
@@ -1300,6 +1436,8 @@ __all__ = [
     "post_answer_text",
     "process_alive",
     "process_ancestry",
+    "process_cwd",
+    "process_stopped",
     "raise_application",
     "running_app_name",
     "session_host",

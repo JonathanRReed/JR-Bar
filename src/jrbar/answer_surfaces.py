@@ -710,6 +710,92 @@ def default_surface_recorder() -> SurfaceRecorder:
 RAISE_ACTIONS: Final = frozenset({"terminal", "raise"})
 
 
+def _live_host(
+    controller: object,
+    status: object,
+    *,
+    process_table: Callable[[], Mapping[int, Any]] | None = None,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
+) -> tuple[SessionHost, object] | None:
+    """The live, terminal-hosted session's host and the row's extras, or
+    ``None`` for an ended session or one its provider's app hosts."""
+    extras = None
+    lookup = getattr(controller, "_core_extras_for", None)
+    if callable(lookup):
+        try:
+            extras = on_main(lambda: lookup(status)) if on_main is not None else lookup(status)
+        except Exception:
+            extras = None
+    pid = getattr(extras, "pid", None)
+    if type(pid) is not int or pid <= 1:
+        return None
+    try:
+        if process_table is not None:
+            table = process_table()
+        else:
+            from .process_registry import list_processes
+
+            table = list_processes()
+    except Exception:
+        table = {}
+    app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
+    if bundle_id in APP_HOSTED_BUNDLE_IDS:
+        return None
+    terminal = getattr(extras, "terminal", None)
+    tty = terminal.get("tty") if isinstance(terminal, Mapping) else None
+    host = SessionHost(
+        pid=pid,
+        tty=tty if type(tty) is str else None,
+        app_name=app_name,
+        bundle_id=bundle_id,
+        in_tmux=in_tmux,
+    )
+    return host, extras
+
+
+def _raise_live(
+    host: SessionHost,
+    extras: object,
+    status: object,
+    *,
+    runner: SurfaceRunner | None,
+    recorder: SurfaceRecorder | None,
+) -> RaiseOutcome:
+    cwd = getattr(status, "cwd", None) or getattr(extras, "cwd", None)
+    return raise_session_host(
+        host,
+        cwd=cwd if type(cwd) is str else None,
+        title=getattr(extras, "name", None),
+        recorded_ghostty_id=(recorder or default_surface_recorder()).recorded(
+            getattr(status, "provider", None), getattr(status, "session_id", None)
+        ),
+        runner=runner,
+    )
+
+
+def raise_for_answer(
+    controller: object,
+    status: object,
+    *,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+    process_table: Callable[[], Mapping[int, Any]] | None = None,
+) -> RaiseOutcome | None:
+    """``answer_ask``'s "raise the session's terminal first", exactly: its
+    own tab, tmux pane or Ghostty terminal comes forward, so the keystroke
+    fence's focused-target proof can pass. Raising proves nothing -- the
+    same fence still runs against whatever is in front afterwards."""
+    try:
+        live = _live_host(controller, status, process_table=process_table, on_main=on_main)
+        if live is None:
+            return None
+        host, extras = live
+        return _raise_live(host, extras, status, runner=runner, recorder=recorder)
+    except Exception:
+        return None
+
+
 def open_live_session(
     controller: object,
     status: object,
@@ -760,50 +846,16 @@ def open_live_session(
                 configured = None
         if configured is not None and configured not in RAISE_ACTIONS:
             return None
-    extras = None
-    lookup = getattr(controller, "_core_extras_for", None)
-    if callable(lookup):
-        try:
-            extras = lookup(status)
-        except Exception:
-            extras = None
-    pid = getattr(extras, "pid", None)
-    if type(pid) is not int or pid <= 1:
-        return None  # ended: --resume is the right open
-    try:
-        if process_table is not None:
-            table = process_table()
-        else:
-            from .process_registry import list_processes
-
-            table = list_processes()
-    except Exception:
-        table = {}
-    app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
-    if bundle_id in APP_HOSTED_BUNDLE_IDS:
-        return None
-    terminal = getattr(extras, "terminal", None)
-    tty = terminal.get("tty") if isinstance(terminal, Mapping) else None
-    host = SessionHost(
-        pid=pid,
-        tty=tty if type(tty) is str else None,
-        app_name=app_name,
-        bundle_id=bundle_id,
-        in_tmux=in_tmux,
-    )
+    live = _live_host(controller, status, process_table=process_table)
+    if live is None:
+        return None  # ended or app-hosted: the ladder's open is the right one
+    host, extras = live
     from .answer_decisions import release_for_open
 
     # The owner is going to the session to answer there: a Codex prompt
     # held behind the decide lane must appear now, not when the hold lapses.
     release_for_open(status)
-    cwd = getattr(status, "cwd", None) or getattr(extras, "cwd", None)
-    outcome = raise_session_host(
-        host,
-        cwd=cwd if type(cwd) is str else None,
-        title=getattr(extras, "name", None),
-        recorded_ghostty_id=(recorder or default_surface_recorder()).recorded(provider, session_id),
-        runner=runner,
-    )
+    outcome = _raise_live(host, extras, status, runner=runner, recorder=recorder)
     if outcome.raised == "none":
         raise CommandError(
             "not_found",
@@ -835,6 +887,7 @@ __all__ = [
     "open_live_session",
     "parse_ghostty_terminals",
     "parse_tmux_pane_for_tty",
+    "raise_for_answer",
     "raise_session_host",
     "tmux_clients",
 ]
