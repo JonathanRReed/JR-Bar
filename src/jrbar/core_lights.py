@@ -43,8 +43,26 @@ def _apply_settings(controller: Any, candidate: Any, *, touched: list[str]) -> i
 # --- the cues -------------------------------------------------------------------
 
 
+def _with_milestone_count(controller: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The odometer row says where it stands -- "37 finished, next at 50"
+    -- so its cue arrives with a meaning you could see coming. The count is
+    the exact completions this daemon has seen since it started."""
+    state = getattr(controller, "_milestone_odometer_state", None)
+    count = getattr(state, "completed_count", 0)
+    count = count if type(count) is int and count >= 0 else 0
+    steps = getattr(getattr(controller, "settings", None), "milestone_odometer_steps", ()) or ()
+    upcoming = [step for step in steps if type(step) is int and step > count]
+    for row in rows:
+        if row["id"] == "milestone_odometer":
+            row["count"] = count
+            row["next_step"] = min(upcoming) if upcoming else None
+    return rows
+
+
 def list_cues(controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
-    return {"cues": cue_documents(getattr(controller, "settings", None))}
+    return {
+        "cues": _with_milestone_count(controller, cue_documents(getattr(controller, "settings", None)))
+    }
 
 
 def set_cue(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -70,7 +88,10 @@ def set_cue(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     from . import core_runtime
 
     generation = core_runtime._apply_settings_document(controller, document, touched=touched)
-    return {"generation": generation, "cues": cue_documents(controller.settings)}
+    return {
+        "generation": generation,
+        "cues": _with_milestone_count(controller, cue_documents(controller.settings)),
+    }
 
 
 # --- INIT.LED -------------------------------------------------------------------------

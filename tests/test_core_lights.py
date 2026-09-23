@@ -102,6 +102,15 @@ def daemon(headless):  # noqa: F811
 def test_list_and_set_cues(daemon) -> None:
     rows = core_runtime._cmd_list_cues(daemon, {})["cues"]
     assert len(rows) == 11
+    odometer = next(row for row in rows if row["id"] == "milestone_odometer")
+    assert (odometer["count"], odometer["next_step"]) == (0, 10)
+    from jrbar.milestone_odometer import MilestoneOdometerState
+
+    daemon._milestone_odometer_state = MilestoneOdometerState(completed_count=37)
+    odometer = next(
+        row for row in core_runtime._cmd_list_cues(daemon, {})["cues"] if row["id"] == "milestone_odometer"
+    )
+    assert (odometer["count"], odometer["next_step"]) == (37, 50)
 
     reply = core_runtime._cmd_set_cue(daemon, {"id": "firefly_completion", "enabled": False})
     assert daemon.settings.ambient_cues_disabled == ("firefly_completion",)
