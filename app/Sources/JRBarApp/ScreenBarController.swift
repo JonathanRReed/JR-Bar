@@ -1059,13 +1059,30 @@ final class ScreenBarController {
         return zone.width > 0 ? zone : nil
     }
 
-    /// The hanging peek's frame, and the corridor from the ear down to
-    /// it — the band's stretch between them included, so crossing the
-    /// light on the way to a glyph never counts as leaving. nil while
-    /// the peek is down.
-    var peekRegion: (panel: NSRect, corridor: NSRect)? {
-        guard let frame = peek.frame else { return nil }
-        return (frame, rightEarScreenRect.map { frame.union($0) } ?? frame)
+    /// The hanging peek's frame; nil while it is down.
+    var peekFrame: NSRect? { peek.frame }
+
+    /// Whether a screen point is on the corridor from the ear down to the
+    /// hanging peek — the peek, the ear, and the band's stretch between
+    /// them, so crossing the light on the way to a glyph never counts as
+    /// leaving. False while the peek is down.
+    func peekCorridor(contains point: NSPoint) -> Bool {
+        guard let frame = peek.frame else { return false }
+        return Self.peekCorridor(frame.union(rightEarScreenRect ?? frame), contains: point,
+                                 handle: menuHandleScreenRect)
+    }
+
+    /// The corridor's test — pure so a test pins the seam: its box, but
+    /// never the ‹ slice inside it, which keeps its own hover reveal and
+    /// its own click while the peek hangs as while it is down.
+    nonisolated static func peekCorridor(_ corridor: CGRect, contains point: CGPoint, handle: CGRect?) -> Bool {
+        corridor.contains(point) && !(handle?.contains(point) ?? false)
+    }
+
+    /// The ‹ slice's drawn bounds in screen coordinates while it stands.
+    private var menuHandleScreenRect: NSRect? {
+        guard isShown, panel.isVisible, !steppedAsideForVideo, let rect = view.menuHandleRect else { return nil }
+        return panel.convertToScreen(view.convert(rect, to: nil))
     }
 
     /// The right ear's drawn bounds in screen coordinates while it

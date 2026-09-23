@@ -537,8 +537,7 @@ extension ScreenBarController {
         menuBar.earAnswersGesture = { [weak self] in
             guard let self else { return false }
             let point = NSEvent.mouseLocation
-            return self.peekZone(atScreenPoint: point)
-                || (self.peekRegion?.corridor.contains(point) ?? false)
+            return self.peekZone(atScreenPoint: point) || self.peekCorridor(contains: point)
         }
         peek.model.onOpen = { [weak self, weak menuBar] id in
             self?.peek.hide()
@@ -549,7 +548,8 @@ extension ScreenBarController {
             menuBar?.chooseFromEar(choice, nudgeID: nudgeID)
         }
         interaction.peekZoneAt = { [weak self] point in self?.peekZone(atScreenPoint: point) ?? false }
-        interaction.peekRegion = { [weak self] in self?.peekRegion }
+        interaction.peekPanel = { [weak self] in self?.peekFrame }
+        interaction.peekCorridorAt = { [weak self] point in self?.peekCorridor(contains: point) ?? false }
         interaction.peekState = { [weak self] in
             (shown: self?.peek.isShown ?? false, pinned: self?.peek.isPinned ?? false)
         }

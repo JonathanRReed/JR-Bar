@@ -118,9 +118,12 @@ final class ScreenBarInteraction {
     /// nothing to peek at. That zone is the peek's alone: the card and
     /// the island never arm from it.
     var peekZoneAt: @MainActor (NSPoint) -> Bool = { _ in false }
-    /// The hanging peek's frame, and the corridor from the ear down to
-    /// it; nil while it is down.
-    var peekRegion: @MainActor () -> (panel: NSRect, corridor: NSRect)? = { nil }
+    /// The hanging peek's frame; nil while it is down.
+    var peekPanel: @MainActor () -> NSRect? = { nil }
+    /// Whether a screen point is on the corridor from the ear down to
+    /// the hanging peek — never on the ‹ slice, which stays the handle's
+    /// while the peek hangs; false while it is down.
+    var peekCorridorAt: @MainActor (NSPoint) -> Bool = { _ in false }
     /// Whether the peek hangs, and whether a click pinned it there.
     var peekState: @MainActor () -> (shown: Bool, pinned: Bool) = { (false, false) }
     /// Hang, pin, toggle or fold the peek.
@@ -356,7 +359,7 @@ final class ScreenBarInteraction {
         // from one surface to the other.
         let point = NSEvent.mouseLocation
         let region = Self.pointerRegion(onPeekZone: peekZoneAt(point),
-                                        onPeek: peekRegion()?.corridor.contains(point) ?? false,
+                                        onPeek: peekCorridorAt(point),
                                         inHitRegion: pointerInHitRegion())
         notePeekHover(region == .peek)
         let inside = region == .band
@@ -460,7 +463,7 @@ final class ScreenBarInteraction {
     /// Whether the pointer is on the ear's zone, the peek, or between.
     private func pointerOnPeekSurface() -> Bool {
         let point = NSEvent.mouseLocation
-        return peekZoneAt(point) || (peekRegion()?.corridor.contains(point) ?? false)
+        return peekZoneAt(point) || peekCorridorAt(point)
     }
 
     /// Every gesture that asks for the peek — the rest, the wheel, the
@@ -601,7 +604,7 @@ final class ScreenBarInteraction {
         Self.diag("down (\(Int(point.x)),\(Int(point.y))) islandRects=\(islandRects)")
         pressOnIsland = false
         swipeOnPeek = false
-        switch Self.peekPress(onPanel: peekRegion()?.panel.contains(point) ?? false,
+        switch Self.peekPress(onPanel: peekPanel()?.contains(point) ?? false,
                               onZone: peekZoneAt(point), peekShown: peekState().shown) {
         case .panel:
             // The peek's glyphs and buttons answer this press; it is

@@ -178,6 +178,24 @@ struct ScreenBarPeekTests {
                 "a handle-only ear is the handle's")
     }
 
+    @Test func theHangingPeeksCorridorLeavesTheHandleItsOwn() {
+        // The right ear with its ‹ at the outer end, and a peek hanging
+        // under the band, right edge on the ear's.
+        let ear = CGRect(x: 850, y: 950, width: 52, height: 32)
+        let handle = CGRect(x: 886, y: 950, width: 16, height: 32)
+        let panel = CGRect(x: 760, y: 880, width: 142, height: 60)
+        let corridor = panel.union(ear)
+        func on(_ x: CGFloat, _ y: CGFloat) -> Bool {
+            ScreenBarController.peekCorridor(corridor, contains: CGPoint(x: x, y: y), handle: handle)
+        }
+        #expect(on(870, 945), "the band's stretch between the ear and the peek")
+        #expect(on(800, 900), "the peek itself")
+        #expect(!on(handle.midX, handle.midY), "the ‹ keeps its hover reveal while the peek hangs")
+        #expect(!on(700, 900), "outside the box is outside")
+        #expect(ScreenBarController.peekCorridor(corridor, contains: CGPoint(x: handle.midX, y: handle.midY),
+                                                 handle: nil), "no handle drawn: the whole ear is the peek's")
+    }
+
     // MARK: The pointer
 
     @Test func theEarZoneIsThePeeksAndNeverTheCards() {
