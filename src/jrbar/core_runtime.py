@@ -2915,6 +2915,20 @@ def _cmd_new_session(self, args):
     )
 
 
+@command("session_in_front", main_thread=False)
+def _cmd_session_in_front(self, args):
+    """Whether the owner is looking at that session's own tab, pane or
+    Ghostty terminal right now, for "Quiet while you watch": ``in_front``
+    true on proof, false when something else is in front, null when it
+    cannot be told. Never raises, types or asks for a permission
+    (answer_surfaces.py)."""
+    from .answer_surfaces import session_in_front
+
+    status = _find_status(self, args.get("session"))
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    return session_in_front(self, status, on_main=on_main)
+
+
 @command("hooks_doctor", main_thread=False)
 def _cmd_hooks_doctor(self, args):
     """``jrbar hooks doctor`` as data, for Settings > Agents: per provider,

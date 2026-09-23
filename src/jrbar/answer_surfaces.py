@@ -297,6 +297,49 @@ def choose_ghostty_terminal(
     return None
 
 
+def ghostty_focus_verdict(
+    runner: SurfaceRunner,
+    session_cwd: str,
+    *,
+    recorded_id: str | None = None,
+) -> tuple[bool | None, str]:
+    """Whether the focused terminal of Ghostty's front window is the
+    session's, and why: ``(False, "other_surface")`` when it is in another
+    directory; ``(True, "focused_surface_cwd")`` when it is the only Ghostty
+    terminal in the session's directory and every terminal names one (a
+    terminal that names none could be the session's own); else unknown.
+
+    ``recorded_id`` -- the surface the session started in -- decides between
+    terminals that share the directory: focused, it is the session's; still
+    there but not focused, the session is not in front. The in-place answer
+    never passes it: a key needs the stricter proof, a chime does not."""
+    code, output = runner.osascript(_GHOSTTY_FOCUSED_TERMINAL)
+    if code != 0 or not output:
+        return None, "focused_surface_unproven"
+    focused_id, _sep, focused_cwd = output.partition(_SEP)
+    focused_id = focused_id.strip()
+    if not _same_directory(focused_cwd.strip(), session_cwd):
+        return False, "other_surface"
+    code, output = runner.osascript(_GHOSTTY_LIST_TERMINALS)
+    if code != 0:
+        return None, "focused_surface_unproven"
+    terminals = parse_ghostty_terminals(output)
+    if recorded_id:
+        if focused_id == recorded_id:
+            return True, "recorded_surface"
+        if any(
+            terminal.id == recorded_id and _same_directory(terminal.working_directory, session_cwd)
+            for terminal in terminals
+        ):
+            return False, "other_surface"
+    if any(not terminal.working_directory for terminal in terminals):
+        return None, "focused_surface_unproven"
+    sharing = [terminal for terminal in terminals if _same_directory(terminal.working_directory, session_cwd)]
+    if len(sharing) == 1 and sharing[0].id == focused_id:
+        return True, "focused_surface_cwd"
+    return None, "focused_surface_unproven"
+
+
 # --- tmux ----------------------------------------------------------------------
 
 
@@ -405,9 +448,12 @@ class SurfaceRunner:
         return True
 
     def frontmost_bundle(self) -> str | None:
+        return self.frontmost_application()[0]
+
+    def frontmost_application(self) -> tuple[str | None, int | None]:
         from .answer_local import frontmost_application
 
-        return frontmost_application()[0]
+        return frontmost_application()
 
     def automation_permitted(self, bundle_id: str) -> bool | None:
         return automation_permitted(bundle_id)
@@ -886,6 +932,104 @@ def raise_for_answer(
         return None
 
 
+def _ancestors(pid: int, table: Mapping[int, Any]) -> tuple[int, ...]:
+    chain: list[int] = []
+    current = getattr(table.get(pid), "ppid", None)
+    for _ in range(MAX_ANCESTRY_DEPTH):
+        if type(current) is not int or current <= 1 or current in chain:
+            break
+        chain.append(current)
+        current = getattr(table.get(current), "ppid", None)
+    return tuple(chain)
+
+
+def session_in_front(
+    controller: object,
+    status: object,
+    *,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+    process_table: Callable[[], Mapping[int, Any]] | None = None,
+) -> dict[str, Any]:
+    """``session_in_front``: is the owner looking at this session's own tab,
+    pane or Ghostty terminal right now? For "Quiet while you watch", which
+    asks it before an ask's noise is dropped: the app alone cannot tell a
+    background Ghostty tab from the one in front, since every Ghostty window
+    is one process.
+
+    ``in_front`` is ``True`` only on proof (the focused tab's tty, the
+    focused Ghostty terminal being the session's), ``False`` when another
+    app, tab or terminal is in front, and ``None`` when it cannot be told --
+    a tmux pane, a terminal with no scripting call, an Apple-events grant
+    not yet decided. It never asks macOS for that grant: a background check
+    must not raise a permission prompt. Nothing is raised or typed.
+    """
+    agent_id = getattr(status, "agent_id", "") or ""
+    reply: dict[str, Any] = {"session": agent_id, "in_front": None, "evidence": "remote", "app": None}
+    if not isinstance(agent_id, str) or agent_id.startswith("remote:"):
+        return reply
+    try:
+        if process_table is not None:
+            table = process_table()
+        else:
+            from .process_registry import list_processes
+
+            table = list_processes()
+    except Exception:
+        table = {}
+    live = _live_host(controller, status, process_table=lambda: table, on_main=on_main)
+    if live is None:
+        return {**reply, "evidence": "not_running"}
+    host, _extras = live
+    reply["app"] = host.app_name
+    runner = runner or SurfaceRunner()
+    front_bundle, front_pid = runner.frontmost_application()
+    if front_pid is None:
+        return {**reply, "evidence": "no_frontmost_app"}
+    pid = host.pid if type(host.pid) is int else 0
+    ancestors = _ancestors(pid, table)
+    if not ancestors:
+        # A walk that cannot run is "could not be determined", never "no".
+        return {**reply, "evidence": "ownership_unproven"}
+    if front_pid != pid and front_pid not in ancestors:
+        if host.in_tmux:
+            # The terminal around a tmux pane is the tmux client's, not an
+            # ancestor of the session: in front or not, this cannot say.
+            return {**reply, "evidence": "tmux_unproven"}
+        return {**reply, "in_front": False, "evidence": "other_app"}
+    if front_bundle not in (GHOSTTY_BUNDLE_ID, TERMINAL_BUNDLE_ID, ITERM_BUNDLE_ID):
+        # kitty, WezTerm, an IDE's terminal: the app is in front, the tab unknown.
+        return {**reply, "evidence": "tab_unproven"}
+    if runner.automation_permitted(front_bundle) is not True:
+        return {**reply, "evidence": "automation_not_granted"}
+    if front_bundle == GHOSTTY_BUNDLE_ID:
+        from .answer_local import process_cwd
+
+        session_cwd = process_cwd(pid)
+        if not session_cwd:
+            return {**reply, "evidence": "focused_surface_unproven"}
+        verdict, evidence = ghostty_focus_verdict(
+            runner,
+            session_cwd,
+            recorded_id=(recorder or default_surface_recorder()).recorded(
+                getattr(status, "provider", None), getattr(status, "session_id", None)
+            ),
+        )
+        return {**reply, "in_front": verdict, "evidence": evidence}
+    from .answer_local import _FOCUSED_TTY_SCRIPTS
+
+    code, output = runner.osascript(_FOCUSED_TTY_SCRIPTS[front_bundle])
+    focused = output.strip() if code == 0 else ""
+    if focused and not focused.startswith("/dev/"):
+        focused = f"/dev/{focused}"
+    if not focused or not host.tty:
+        return {**reply, "evidence": "focused_tab_unproven"}
+    if focused == host.tty:
+        return {**reply, "in_front": True, "evidence": "focused_tab_tty"}
+    return {**reply, "in_front": False, "evidence": "other_tab"}
+
+
 def _resolved_open_action(controller: object, status: object, args: Mapping[str, Any]) -> str | None:
     """The open action the controller's own ladder would take: the command's
     ``action``, a provider profile's, Settings' Clicks-open, else the row's
@@ -1137,6 +1281,7 @@ __all__ = [
     "automation_permitted",
     "choose_ghostty_terminal",
     "default_surface_recorder",
+    "ghostty_focus_verdict",
     "host_from_ancestry",
     "open_live_session",
     "open_session_surface",
@@ -1145,6 +1290,7 @@ __all__ = [
     "raise_for_answer",
     "raise_session_host",
     "resume_in_own_terminal",
+    "session_in_front",
     "start_session_in_terminal",
     "tmux_clients",
 ]

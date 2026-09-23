@@ -804,33 +804,11 @@ def ghostty_focused_surface_proven(session_pid: object, runner: object = None) -
     session_cwd = process_cwd(session_pid)
     if not session_cwd:
         return None
-    from .answer_surfaces import (
-        _GHOSTTY_FOCUSED_TERMINAL,
-        _GHOSTTY_LIST_TERMINALS,
-        SurfaceRunner,
-        _same_directory,
-        parse_ghostty_terminals,
-    )
+    from .answer_surfaces import SurfaceRunner, ghostty_focus_verdict
 
     scripts = runner if runner is not None else SurfaceRunner()
-    code, output = scripts.osascript(_GHOSTTY_FOCUSED_TERMINAL)  # type: ignore[attr-defined]
-    if code != 0 or not output:
-        return None
-    focused_id, _sep, focused_cwd = output.partition("\t")
-    if not _same_directory(focused_cwd.strip(), session_cwd):
-        return False
-    code, output = scripts.osascript(_GHOSTTY_LIST_TERMINALS)  # type: ignore[attr-defined]
-    if code != 0:
-        return None
-    terminals = parse_ghostty_terminals(output)
-    if any(not terminal.working_directory for terminal in terminals):
-        return None
-    sharing = [
-        terminal
-        for terminal in terminals
-        if _same_directory(terminal.working_directory, session_cwd)
-    ]
-    return True if len(sharing) == 1 and sharing[0].id == focused_id.strip() else None
+    verdict, _evidence = ghostty_focus_verdict(scripts, session_cwd)  # type: ignore[arg-type]
+    return verdict
 
 
 #: The hosts that can satisfy the fence's exact focused-target proof:

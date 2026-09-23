@@ -544,3 +544,122 @@ def test_new_session_starts_the_agent_in_the_owners_terminal__and_3_more(tmp_pat
             recorder=recorder,
         )
     assert error.value.code == "unsupported"
+
+
+# --- is the owner looking at it -------------------------------------------------
+
+TERMINAL_CODEX = _table(
+    _entry(500, 400, "/opt/homebrew/Caskroom/codex/0.155.1/bin/codex"),
+    _entry(400, 300, "/bin/zsh"),
+    _entry(300, 1, "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"),
+)
+TMUX_CODEX = _table(
+    _entry(500, 400, "/opt/homebrew/Caskroom/codex/0.155.1/bin/codex"),
+    _entry(400, 350, "/bin/zsh"),
+    _entry(350, 1, "/opt/homebrew/bin/tmux"),
+)
+
+
+class _FrontRunner(FakeRunner):
+    """FakeRunner that also says which app is in front and which tty the
+    frontmost Terminal.app / iTerm2 tab has."""
+
+    def __init__(self, *, front=("com.mitchellh.ghostty", 200), focused_tty: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.front = front
+        self.focused_tty = focused_tty
+
+    def frontmost_application(self):
+        return self.front
+
+    def osascript(self, script, *arguments):
+        from jrbar.answer_local import _FOCUSED_TTY_SCRIPTS
+
+        if script in _FOCUSED_TTY_SCRIPTS.values():
+            self.calls.append(("focused-tty",))
+            return 0, self.focused_tty
+        return super().osascript(script, *arguments)
+
+
+def test_session_in_front_says_yes_only_on_proof__and_6_more(tmp_path: Path, monkeypatch) -> None:
+    from jrbar import answer_local
+
+    monkeypatch.setattr(answer_local, "process_cwd", lambda pid: "/Users/me/repo")
+    no_record = SimpleNamespace(recorded=lambda provider, session_id: None)
+
+    def ask(runner, *, table=GHOSTTY_CODEX, recorder=no_record, pid=500, agent_id=None):
+        controller, status = _live(pid=pid)
+        if agent_id is not None:
+            status.agent_id = agent_id
+        return surfaces.session_in_front(
+            controller, status, runner=runner, recorder=recorder, process_table=lambda: table
+        )
+
+    one = "T1\t/Users/me/repo\tcodex\nT2\t/tmp\tzsh\n"
+
+    # --- scenario: the only Ghostty terminal in the session's directory, focused, is in front
+    assert ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=one)) == {
+        "session": "codex:session:s-1",
+        "in_front": True,
+        "evidence": "focused_surface_cwd",
+        "app": "Ghostty",
+    }
+
+    # --- scenario: another Ghostty tab in front is a no -- the case the app alone cannot see
+    reply = ask(_FrontRunner(focused="T2\t/tmp", ghostty_terminals=one))
+    assert (reply["in_front"], reply["evidence"]) == (False, "other_surface")
+
+    # --- scenario: two terminals in the directory: the surface the session started in decides
+    both = "T1\t/Users/me/repo\tzsh\nT3\t/Users/me/repo\tcodex\n"
+    started_in_t3 = SimpleNamespace(recorded=lambda provider, session_id: "T3")
+    reply = ask(_FrontRunner(focused="T3\t/Users/me/repo", ghostty_terminals=both), recorder=started_in_t3)
+    assert (reply["in_front"], reply["evidence"]) == (True, "recorded_surface")
+    reply = ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=both), recorder=started_in_t3)
+    assert (reply["in_front"], reply["evidence"]) == (False, "other_surface")
+    reply = ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=both))
+    assert (reply["in_front"], reply["evidence"]) == (None, "focused_surface_unproven")
+
+    # --- scenario: Terminal.app answers by the focused tab's tty
+    front = ("com.apple.Terminal", 300)
+    reply = ask(_FrontRunner(front=front, focused_tty="/dev/ttys004"), table=TERMINAL_CODEX)
+    assert (reply["in_front"], reply["evidence"], reply["app"]) == (True, "focused_tab_tty", "Terminal")
+    reply = ask(_FrontRunner(front=front, focused_tty="/dev/ttys009"), table=TERMINAL_CODEX)
+    assert (reply["in_front"], reply["evidence"]) == (False, "other_tab")
+    reply = ask(_FrontRunner(front=front, focused_tty=""), table=TERMINAL_CODEX)
+    assert (reply["in_front"], reply["evidence"]) == (None, "focused_tab_unproven")
+
+    # --- scenario: another app in front is a no; a tmux pane or an unscriptable terminal cannot be told
+    reply = ask(_FrontRunner(front=("com.apple.Safari", 999)))
+    assert (reply["in_front"], reply["evidence"]) == (False, "other_app")
+    reply = ask(_FrontRunner(), table=TMUX_CODEX)
+    assert (reply["in_front"], reply["evidence"]) == (None, "tmux_unproven")
+    reply = ask(_FrontRunner(front=("net.kovidgoyal.kitty", 200)))
+    assert (reply["in_front"], reply["evidence"]) == (None, "tab_unproven")
+
+    # --- scenario: with no Apple-events grant yet it is unknown, and nothing is sent to ask
+    runner = _FrontRunner(permitted=None, focused="T1\t/Users/me/repo", ghostty_terminals=one)
+    reply = ask(runner)
+    assert (reply["in_front"], reply["evidence"]) == (None, "automation_not_granted")
+    assert [call for call in runner.calls if call[0] != "permitted?"] == []
+
+    # --- scenario: an ended session, a remote row or an unwalkable process table is unknown
+    assert ask(_FrontRunner(), pid=None)["evidence"] == "not_running"
+    assert ask(_FrontRunner(), agent_id="remote:studio:codex:session:s-1")["evidence"] == "remote"
+    reply = ask(_FrontRunner(), table={})
+    assert (reply["in_front"], reply["evidence"]) == (None, "ownership_unproven")
+
+
+def test_session_in_front_is_a_socket_thread_command__and_1_more() -> None:
+    from jrbar.core_runtime import _MAIN_THREAD_COMMANDS, _cmd_session_in_front
+
+    # --- scenario: registered off the main thread, its Apple events never stall a refresh
+    assert _MAIN_THREAD_COMMANDS["session_in_front"].main_thread is False
+
+    # --- scenario: the row is found by its id; a remote row answers without a probe
+    remote = SimpleNamespace(agent_id="remote:studio:codex:session:s-1", provider="codex", session_id="s-1")
+    controller = SimpleNamespace(last_snapshot=SimpleNamespace(statuses=[remote], stale_statuses=[]))
+    reply = _cmd_session_in_front(controller, {"session": remote.agent_id})
+    assert reply == {"session": remote.agent_id, "in_front": None, "evidence": "remote", "app": None}
+    with pytest.raises(CommandError) as error:
+        _cmd_session_in_front(controller, {"session": "claude:session:nobody"})
+    assert error.value.code == "not_found"
