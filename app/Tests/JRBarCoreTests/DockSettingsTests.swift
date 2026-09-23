@@ -78,6 +78,10 @@ struct DockSettingsTests {
         round.enhance.learnedPicks = [DockLearnedPick(query: "g", pick: "Ghostty\u{1F}zsh")]
         #expect(try decode(DockSettings.self, encode(round)) == round)
         #expect(try decode(DockSettings.self, #"{"enhance": {"learnedPicks": "g"}}"#).enhance.learnedPicks.isEmpty)
+        #expect(DockSettings().enhance.liveCard == false, "the recording dot stays off unless asked for")
+        round.enhance.liveCard = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"liveCard": "on"}}"#).enhance.liveCard == false)
         #expect(try decode(DockSettings.self, #"{"enhance": {"clickToMinimize": 1}}"#).enhance.clickToMinimize == false)
     }
 

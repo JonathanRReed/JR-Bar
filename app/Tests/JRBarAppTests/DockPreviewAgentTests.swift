@@ -171,6 +171,23 @@ struct DockPreviewAgentTests {
                                             cachedTag: nil, tag: nil))
     }
 
+    @Test("the live card plays only when asked for, on a card that carries stills")
+    func liveCardGate() {
+        func live(_ liveCard: Bool = true, thumbnails: Bool = true, granted: Bool = true,
+                  compact: Bool = false, minimized: Bool = false, offscreen: Bool = false) -> Bool {
+            DockEnhanceMath.streamsLive(liveCard: liveCard, thumbnails: thumbnails, granted: granted,
+                                        compact: compact, minimized: minimized, offscreen: offscreen)
+        }
+        #expect(live())
+        #expect(!live(false), "off by default — the recording dot stays off")
+        #expect(!live(thumbnails: false))
+        #expect(!live(granted: false))
+        #expect(!live(compact: true), "the compact list never captures")
+        #expect(!live(minimized: true), "a minimized window only when every window is captured")
+        #expect(live(minimized: true, offscreen: true))
+        #expect(DockLiveStill.framesPerSecond <= 10, "a thumbnail, not a video call")
+    }
+
     @Test("a hovered card re-takes only an aged or out-of-date still, never a missing one")
     func hoverRefresh() {
         #expect(!DockThumbnailer.wantsHoverRefresh(hasStill: false, age: nil, cachedTag: nil, tag: nil),

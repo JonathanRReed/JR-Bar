@@ -102,8 +102,10 @@ final class DockPreviewActions {
     /// The context menu's Move To — the window to another display.
     var onMoveToDisplay: (@MainActor (DockPreviewWindow, CGDirectDisplayID) -> Void)?
     /// The pointer landed on a card — the controller re-takes its still
-    /// when the cached one has aged past a glance.
+    /// when the cached one has aged past a glance, or plays it live.
     var onHoverCard: (@MainActor (DockPreviewWindow) -> Void)?
+    /// The pointer left a card — a live card stops streaming.
+    var onHoverCardEnd: (@MainActor (DockPreviewWindow) -> Void)?
     /// The header's "Never Preview <App>" — the app joins the card's
     /// exclusion list from where it bothered you.
     var onExcludeApp: (@MainActor () -> Void)?
@@ -851,7 +853,7 @@ struct DockPreviewCard: View {
         .contentShape(Rectangle())
         .onHover { inside in
             hovering = inside
-            if inside { actions.performWindowAction(window, actions.onHoverCard) }
+            actions.performWindowAction(window, inside ? actions.onHoverCard : actions.onHoverCardEnd)
         }
         // Aero shake lives on continuous hover — a non-activating panel
         // still gets tracking-area events while the pointer rests.

@@ -104,6 +104,11 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute (needs Screen Recording — each fresh capture flashes macOS's recording dot); off shows icon + title cards.")
             }
+            Toggle(isOn: liveCard) {
+                SettingLabel(title: "Live card under the pointer",
+                             subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
+            }
+            .disabled(!utility.enhance.preferences.showThumbnails)
             Toggle(isOn: largePreviews) {
                 SettingLabel(title: "Large cards",
                              subtitle: "Bigger thumbnails for reading the window, not just the title.")
@@ -310,6 +315,10 @@ struct DockUtilityControls: View {
     private var scrollGestures: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.scrollGestures },
                 set: { utility.enhance.preferences.scrollGestures = $0 })
+    }
+    private var liveCard: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.liveCard },
+                set: { utility.enhance.preferences.liveCard = $0 })
     }
     private var clickToMinimize: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.clickToMinimize },

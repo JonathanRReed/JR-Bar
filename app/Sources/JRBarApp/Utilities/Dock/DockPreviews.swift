@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreImage
 import JRBarCore
 import ScreenCaptureKit
 
@@ -361,5 +362,121 @@ enum DockThumbnailer {
               scWindow.owningApplication?.processID == pid else { return nil }
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         return await capture(scWindow: scWindow, pid: pid, scale: scale, tag: tag, maxAge: hoverFreshness)
+    }
+}
+
+/// The opt-in live card: one `SCStream` on the one window the pointer
+/// rests on, at a thumbnail's size and `framesPerSecond`, torn down the
+/// moment the pointer leaves the card or the panel goes. Unlike the
+/// one-shot stills it keeps macOS's recording dot lit while it plays —
+/// the card's copy says so, and the setting is off by default. Every
+/// step fails soft: a window that won't stream keeps its still.
+@MainActor
+final class DockLiveStill {
+    static let framesPerSecond: Int32 = 8
+
+    /// A frame for `windowID`, already sized for the card.
+    var onFrame: (@MainActor (CGWindowID, NSImage) -> Void)?
+    /// The window streaming now (or starting to).
+    private(set) var windowID: CGWindowID?
+    private var stream: SCStream?
+    private var sink: DockLiveSink?
+    /// Bumped on every start and stop — a start still resolving when
+    /// the pointer moved on closes what it opened instead of keeping it.
+    private var token = 0
+
+    func start(windowID: CGWindowID, pid: pid_t) {
+        guard self.windowID != windowID else { return }
+        stop()
+        token &+= 1
+        let started = token
+        self.windowID = windowID
+        Task { @MainActor [weak self] in
+            guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: false),
+                  let scWindow = shareable.windows.first(where: {
+                      $0.windowID == windowID && $0.owningApplication?.processID == pid }),
+                  let self, self.token == started else { return }
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            let bounds = scWindow.frame
+            let factor = min(1, DockThumbnailer.pointLimit / max(bounds.width, bounds.height, 1)) * scale
+            let configuration = SCStreamConfiguration()
+            configuration.width = max(2, Int(bounds.width * factor))
+            configuration.height = max(2, Int(bounds.height * factor))
+            configuration.scalesToFit = true
+            configuration.showsCursor = false
+            configuration.capturesAudio = false
+            configuration.queueDepth = 3
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: Self.framesPerSecond)
+            configuration.pixelFormat = kCVPixelFormatType_32BGRA
+            configuration.colorSpaceName = CGColorSpace.sRGB
+            let sink = DockLiveSink()
+            sink.onImage = { [weak self] frame in
+                Task { @MainActor [weak self] in
+                    guard let self, self.token == started else { return }
+                    self.onFrame?(windowID, NSImage(
+                        cgImage: frame.image,
+                        size: NSSize(width: CGFloat(frame.image.width) / scale,
+                                     height: CGFloat(frame.image.height) / scale)))
+                }
+            }
+            let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: scWindow),
+                                  configuration: configuration, delegate: sink)
+            do {
+                try stream.addStreamOutput(sink, type: .screen,
+                                           sampleHandlerQueue: DispatchQueue(label: "jrbar.dock.live"))
+                try await stream.startCapture()
+            } catch {
+                return
+            }
+            guard self.token == started else {
+                try? await stream.stopCapture()
+                return
+            }
+            self.stream = stream
+            self.sink = sink
+        }
+    }
+
+    func stop() {
+        token &+= 1
+        windowID = nil
+        sink = nil
+        guard let stream else { return }
+        self.stream = nil
+        Task { try? await stream.stopCapture() }
+    }
+
+    isolated deinit { stop() }
+}
+
+/// A finished frame crossing from the stream's queue to the main actor.
+struct DockLiveFrame: @unchecked Sendable {
+    let image: CGImage
+}
+
+/// Receives the live card's frames on the stream's queue, keeps only
+/// complete ones and turns each into a `CGImage` there, off the main
+/// thread. Also the stream's delegate — SCK only reports a dead stream
+/// through `didStopWithError`.
+final class DockLiveSink: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    var onImage: (@Sendable (DockLiveFrame) -> Void)?
+    private let context = CIContext(options: [.cacheIntermediates: false])
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+                of type: SCStreamOutputType) {
+        guard type == .screen, sampleBuffer.isValid,
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                  sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let status = attachments.first?[.status] as? Int,
+              status == SCFrameStatus.complete.rawValue,
+              let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let image = CIImage(cvPixelBuffer: buffer)
+        guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
+        onImage?(DockLiveFrame(image: cgImage))
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        onImage = nil
     }
 }

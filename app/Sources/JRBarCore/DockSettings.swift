@@ -160,6 +160,11 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var clickToMinimize: Bool
     /// The switcher's learned type-ahead, most recent first.
     public var learnedPicks: [DockLearnedPick]
+    /// The card under the pointer plays live (one stream on that one
+    /// window) instead of showing a still — AltTab's and DockDoor's
+    /// live previews, at the cost of macOS's recording dot staying on
+    /// while it plays. Off by default.
+    public var liveCard: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -181,7 +186,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 previewTrigger: DockPreviewTrigger = .hover,
                 scrollGestures: Bool = false,
                 clickToMinimize: Bool = false,
-                learnedPicks: [DockLearnedPick] = []) {
+                learnedPicks: [DockLearnedPick] = [],
+                liveCard: Bool = false) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -198,6 +204,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.scrollGestures = scrollGestures
         self.clickToMinimize = clickToMinimize
         self.learnedPicks = learnedPicks
+        self.liveCard = liveCard
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -213,7 +220,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
-        case previewTrigger, scrollGestures, clickToMinimize, learnedPicks
+        case previewTrigger, scrollGestures, clickToMinimize, learnedPicks, liveCard
     }
 
     public init(from decoder: any Decoder) throws {
@@ -236,6 +243,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         scrollGestures = (try? c.decodeIfPresent(Bool.self, forKey: .scrollGestures)) ?? false
         clickToMinimize = (try? c.decodeIfPresent(Bool.self, forKey: .clickToMinimize)) ?? false
         learnedPicks = (try? c.decodeIfPresent([DockLearnedPick].self, forKey: .learnedPicks)) ?? []
+        liveCard = (try? c.decodeIfPresent(Bool.self, forKey: .liveCard)) ?? false
     }
 }
 

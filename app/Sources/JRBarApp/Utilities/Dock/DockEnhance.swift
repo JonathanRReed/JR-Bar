@@ -98,6 +98,12 @@ final class DockEnhancePreferences {
         get { read().scrollGestures }
         set { write?({ var s = read(); s.scrollGestures = newValue; return s }()) }
     }
+    /// The card under the pointer plays live — the recording dot stays
+    /// on while it does.
+    var liveCard: Bool {
+        get { read().liveCard }
+        set { write?({ var s = read(); s.liveCard = newValue; return s }()) }
+    }
     /// Clicking the front app's own Dock icon minimizes its windows.
     var clickToMinimize: Bool {
         get { read().clickToMinimize }
@@ -469,6 +475,15 @@ enum DockEnhanceMath {
     /// Preview" on a stale panel doesn't list the app twice.
     static func excluding(_ bundleID: String, from list: [String]) -> [String] {
         list.contains(bundleID) ? list : list + [bundleID]
+    }
+
+    /// Whether the hovered card plays live: the opt-in is on, the card
+    /// carries stills at all (thumbnails on, the grant given, not the
+    /// compact list), and a minimized window only when the card
+    /// captures those.
+    static func streamsLive(liveCard: Bool, thumbnails: Bool, granted: Bool, compact: Bool,
+                            minimized: Bool, offscreen: Bool) -> Bool {
+        liveCard && thumbnails && granted && !compact && (!minimized || offscreen)
     }
 
     /// Whether a card click keeps the panel up: ⌥ held, DockDoor's
@@ -1545,6 +1560,8 @@ final class DockEnhanceController {
     @ObservationIgnored private var mirroredChars: Set<String> = []
     /// Windows whose hovered still is being re-taken — one capture each.
     @ObservationIgnored private var freshening = Set<CGWindowID>()
+    /// The opt-in live card's stream — at most one window at a time.
+    @ObservationIgnored private let liveStill = DockLiveStill()
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1584,6 +1601,11 @@ final class DockEnhanceController {
             self?.previewAction(action)
         }
         windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
+        liveStill.onFrame = { [weak self] windowID, image in
+            guard let self, let row = self.preview.windows.firstIndex(where: { $0.windowID == windowID })
+            else { return }
+            self.preview.windows[row].thumbnail = image
+        }
     }
 
     isolated deinit {
@@ -1912,6 +1934,7 @@ final class DockEnhanceController {
 
     private func showPreview(for item: DockAXItem) {
         generation += 1
+        liveStill.stop()
         let generationAtShow = generation
         if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
         mediaToken = nil
@@ -2051,6 +2074,7 @@ final class DockEnhanceController {
 
     private func hidePreview() {
         generation += 1
+        liveStill.stop()
         anchor = nil
         windowObserver.stop()
         if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
@@ -2165,6 +2189,28 @@ final class DockEnhanceController {
         }
     }
 
+    /// The pointer landed on a card: with the live card on, that window
+    /// streams while the pointer stays; otherwise its still is freshened
+    /// if it has aged past a glance.
+    private func hoverCard(_ window: DockPreviewWindow) {
+        guard DockEnhanceMath.streamsLive(liveCard: preferences.liveCard,
+                                          thumbnails: preferences.showThumbnails,
+                                          granted: screenCaptureGranted, compact: preview.compact,
+                                          minimized: window.minimized,
+                                          offscreen: preferences.includeOffscreenWindows),
+              let pid = preview.processIdentifier, let windowID = window.windowID else {
+            freshenStill(window)
+            return
+        }
+        liveStill.start(windowID: windowID, pid: pid)
+    }
+
+    /// The pointer left a card: its stream stops, the last frame stays.
+    private func leaveCard(_ window: DockPreviewWindow) {
+        guard let windowID = window.windowID, liveStill.windowID == windowID else { return }
+        liveStill.stop()
+    }
+
     /// A hovered card whose still has aged past a glance, or predates
     /// its agent's current state, re-takes that one window; the other
     /// cards keep the cache. Minimized and other-Space windows only when
@@ -2248,7 +2294,8 @@ final class DockEnhanceController {
         panel.actions.onMoveToDisplay = { [weak self] window, display in
             self?.move(window, toDisplay: display)
         }
-        panel.actions.onHoverCard = { [weak self] window in self?.freshenStill(window) }
+        panel.actions.onHoverCard = { [weak self] window in self?.hoverCard(window) }
+        panel.actions.onHoverCardEnd = { [weak self] window in self?.leaveCard(window) }
         panel.actions.onExcludeApp = { [weak self] in self?.excludePreviewedApp() }
         self.panel = panel
         wireShelf()
