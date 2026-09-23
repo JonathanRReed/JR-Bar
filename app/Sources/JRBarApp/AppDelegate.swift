@@ -1424,6 +1424,11 @@ extension AppDelegate {
                 body: "Choose Check for Updates… when it suits you.",
                 category: .plain))
         }
+        // A sound held for a live microphone says so in the log, so a
+        // quiet chime on a call is never a mystery.
+        events?.sounds.onHeldForCall = { [weak self] name in
+            self?.core?.appendLocalLog(level: "sound", "\(name) held: the microphone is live")
+        }
         // Once Sparkle's own window has the person's attention, the
         // banner has said its piece.
         updater?.onUpdateAttended = { [weak self] in

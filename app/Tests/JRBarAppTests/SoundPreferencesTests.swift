@@ -45,6 +45,41 @@ import Testing
         #expect(SoundPreferences.load(from: defaults).volume == 1)
     }
 
+    @Test func aLiveMicrophoneHoldsTheSoundOnlyWhenAsked() {
+        var preferences = SoundPreferences()
+        #expect(preferences.quietOnCalls, "on unless turned off")
+        #expect(preferences.resolve("Glass", micLive: { true }) == nil)
+        #expect(preferences.resolve("Glass", micLive: { false }) == "Glass")
+        preferences.choices[.ask] = SoundPreferences.silent
+        var asked = false
+        #expect(preferences.resolve("Funk", micLive: { asked = true; return true }) == nil)
+        #expect(!asked, "silence needs no microphone read")
+        preferences.quietOnCalls = false
+        #expect(preferences.resolve("Glass", micLive: { asked = true; return true }) == "Glass")
+        #expect(!asked, "off never reads the microphone")
+    }
+
+    @Test func quietOnCallsSurvivesARelaunch() throws {
+        let suite = "SoundPreferencesTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var preferences = SoundPreferences()
+        preferences.quietOnCalls = false
+        preferences.save(to: defaults)
+        #expect(SoundPreferences.load(from: defaults).quietOnCalls == false)
+        #expect(SettingsBundle.travels(SoundPreferences.quietOnCallsKey))
+    }
+
+    @MainActor @Test func thePlayerHoldsASoundForALiveMicrophone() {
+        let player = SoundPlayer()
+        player.preferences = { SoundPreferences() }
+        player.microphoneLive = { true }
+        var held: [String] = []
+        player.onHeldForCall = { held.append($0) }
+        player.play(EventPolicy.completionSound)
+        #expect(held == [EventPolicy.completionSound])
+    }
+
     @Test func theMenusOfferTheSystemsSoundsOnce() {
         let available = SoundPlayer.availableSounds()
         #expect(available.system.contains("Glass"))

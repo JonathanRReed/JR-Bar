@@ -59,10 +59,15 @@ struct SoundPreferences: Equatable, Sendable {
     var choices: [SoundRole: String] = [:]
     var volume: Double = 1
     var useAlertDevice = false
+    /// Hold every event sound while the microphone is live — a call, a
+    /// recording, dictation. Lights and banners still land. On unless
+    /// the person turns it off.
+    var quietOnCalls = true
 
     nonisolated static func choiceKey(_ role: SoundRole) -> String { "sound.choice.\(role.rawValue)" }
     nonisolated static let volumeKey = "sound.volume"
     nonisolated static let alertDeviceKey = "sound.alertDevice"
+    nonisolated static let quietOnCallsKey = "sound.quietOnCalls"
 
     nonisolated static func load(from defaults: UserDefaults = .standard) -> SoundPreferences {
         var preferences = SoundPreferences()
@@ -75,6 +80,9 @@ struct SoundPreferences: Equatable, Sendable {
             preferences.volume = min(1, max(0, defaults.double(forKey: volumeKey)))
         }
         preferences.useAlertDevice = defaults.bool(forKey: alertDeviceKey)
+        if defaults.object(forKey: quietOnCallsKey) != nil {
+            preferences.quietOnCalls = defaults.bool(forKey: quietOnCallsKey)
+        }
         return preferences
     }
 
@@ -88,6 +96,7 @@ struct SoundPreferences: Equatable, Sendable {
         }
         defaults.set(volume, forKey: Self.volumeKey)
         defaults.set(useAlertDevice, forKey: Self.alertDeviceKey)
+        defaults.set(quietOnCalls, forKey: Self.quietOnCallsKey)
     }
 
     /// What to actually play for a requested name: a role's default is
@@ -97,6 +106,13 @@ struct SoundPreferences: Equatable, Sendable {
         guard let role = SoundRole(defaultName: name) else { return name }
         let choice = choices[role] ?? role.defaultSound
         return choice == Self.silent ? nil : choice
+    }
+
+    /// The same, with the microphone asked about: nil while it is live
+    /// and `quietOnCalls` is on. `micLive` is only read when it matters.
+    nonisolated func resolve(_ name: String, micLive: () -> Bool) -> String? {
+        guard let resolved = resolve(name) else { return nil }
+        return quietOnCalls && micLive() ? nil : resolved
     }
 }
 
@@ -115,6 +131,11 @@ final class SoundPlayer {
     var onMissing: ((String) -> Void)?
     /// Read at every play, so a Settings change lands on the next sound.
     var preferences: () -> SoundPreferences = { SoundPreferences.load() }
+    /// Whether the microphone is live — read only when a sound is about
+    /// to play and the person keeps sounds quiet on calls; no poll.
+    var microphoneLive: () -> Bool = { NotchSensorMonitor.microphoneInUse() }
+    /// Told when a sound is held for a live microphone.
+    var onHeldForCall: ((String) -> Void)?
     private lazy var alertDevice = AlertDevicePlayer()
 
     /// The folders a sound name is looked up in: the system's, then the
@@ -152,7 +173,11 @@ final class SoundPlayer {
     func play(_ name: String, repeats: Int = 1) {
         burst?.cancel()
         let preferences = preferences()
-        guard let resolved = preferences.resolve(name) else { return }
+        guard let chosen = preferences.resolve(name) else { return }
+        guard let resolved = preferences.resolve(name, micLive: microphoneLive) else {
+            onHeldForCall?(chosen)
+            return
+        }
         guard let once = playback(for: resolved, preferences: preferences) else {
             onMissing?(resolved)
             return

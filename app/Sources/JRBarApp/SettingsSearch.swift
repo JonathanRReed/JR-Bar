@@ -156,7 +156,7 @@ enum SettingsSearch {
         .toys: ["fold", "aquarium", "confetti", "buddy", "fun"],
         .notifications: ["banner", "focus", "do not disturb", "dnd", "quiet", "sleep", "keep awake",
                          "caffeinate", "lid", "battery", "escalation"],
-        .sounds: ["sound", "chime", "alert", "volume", "airpods", "speaker", "audio"],
+        .sounds: ["sound", "chime", "alert", "volume", "airpods", "speaker", "audio", "call", "meeting", "microphone"],
         .shortcuts: ["hotkey", "keyboard", "key", "chord", "links", "url", "jrbar://", "toggles", "raycast", "alfred"],
         .remote: ["peers", "tailscale", "webhook", "serve", "ingest", "token", "fleet"],
         .advanced: ["doctor", "logs", "reset", "diagnostics", "socket", "debug"],

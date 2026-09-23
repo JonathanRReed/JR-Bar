@@ -70,6 +70,11 @@ struct SoundsPage: View {
                              subtitle: "Sounds go where macOS plays its own alerts, not to the current output — a chime stays off your AirPods on a call.")
             }
             .settingRowStyle()
+            Toggle(isOn: $store.soundPreferences.quietOnCalls) {
+                SettingLabel(title: "Quiet while the microphone is live",
+                             subtitle: "On a call, recording or dictating, the sounds wait; the lights and banners still land.")
+            }
+            .settingRowStyle()
         }
 
         SettingGroup("Your own sounds", note: "Drop .aiff, .caf, .wav or .m4a files here and they join the menus above.") {
