@@ -29,7 +29,8 @@ import SwiftUI
 /// The Screen Bar's capsule-following (`AlcoveFollower`,
 /// `screen_bar_follow_alcove`) is a different feature that only makes
 /// sense while the Alcove app is the renderer, so its toggle lives
-/// under that provider. The island's frame is always exactly its drawn
+/// under that provider and the follower only runs while this toy names
+/// Alcove (`publishRenderer`). The island's frame is always exactly its drawn
 /// shape — an invisible window would sit over the menu bar swallowing
 /// clicks.
 @MainActor
@@ -328,6 +329,7 @@ final class NotchToy: Toy {
             reconcile()
             return
         }
+        if runtimeEnabled { publishRenderer() }
         parkIsland()
         if let url = externalURLFor(provider) {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
@@ -340,6 +342,12 @@ final class NotchToy: Toy {
         case .alcove: return alcoveURL
         case .boringNotch: return boringNotchURL
         }
+    }
+
+    /// The Screen Bar's Alcove following is opt-in by this pick: it runs
+    /// only while the utility is on with Alcove drawing the notch.
+    private func publishRenderer() {
+        AlcoveFollower.noteRenderer(chosen: settings.enabled && settings.provider == .alcove)
     }
 
     func openExternal() {
@@ -1069,6 +1077,7 @@ final class NotchToy: Toy {
     /// fully ordered out otherwise — a parked island runs no timers.
     private func reconcile() {
         guard runtimeEnabled else { return }
+        publishRenderer()
         // The media-key tap's lifetime rides the same gates — a flip
         // must install or drop the tap now, not at the next press.
         onMediaGateChanged()
@@ -2076,7 +2085,7 @@ private struct NotchControlsView: View {
         case .alcove:
             if let settings = toy.store?.settings {
                 SettingToggle(settings, "Follow Alcove's capsule",
-                              subtitle: "The Screen Bar matches the capsule's width while Alcove is up.",
+                              subtitle: "The Screen Bar matches the capsule's width while Alcove draws the notch. It never runs while JR-Bar draws it.",
                               path: "screen_bar_follow_alcove", default: true)
             }
             LabeledContent {
