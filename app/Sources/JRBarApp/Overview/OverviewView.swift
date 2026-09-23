@@ -1291,6 +1291,12 @@ private struct CompareRunsSheet: View {
                     side.activity.map { "\($0.retriedTools)" } ?? "—"
                 }
                 compareRow("Asked you") { "\($0.interruptions.asked)" }
+                compareRow("Files changed") { side in
+                    guard let artifacts = side.artifacts else { return "—" }
+                    let edits = artifacts.files.reduce(0) { $0 + $1.edits }
+                    return artifacts.total == 0 ? "none"
+                        : "\(artifacts.total) · \(edits) edit\(edits == 1 ? "" : "s")\(artifacts.truncated ? "+" : "")"
+                }
                 compareRow("Top tools") { side in
                     side.activity.map { activity in
                         activity.tools.prefix(3)
@@ -1300,6 +1306,9 @@ private struct CompareRunsSheet: View {
                 }
             }
             .font(.system(size: 12))
+            if let a = comparison.a.artifacts, let b = comparison.b.artifacts, a.total + b.total > 0 {
+                filesSection(RunFileDiff(a: a, b: b))
+            }
             ForEach(gaps, id: \.self) { gap in
                 Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(.orange)
             }
@@ -1310,6 +1319,42 @@ private struct CompareRunsSheet: View {
         }
         .padding(20)
         .frame(minWidth: 560)
+    }
+
+    /// The files each run's edits named: those both touched, then each
+    /// side's own — the "what did it actually change" the counts cannot say.
+    private func filesSection(_ diff: RunFileDiff) -> some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 4) {
+            if !diff.both.isEmpty {
+                GridRow {
+                    Text("Both").foregroundStyle(.tertiary).frame(width: 90, alignment: .leading)
+                    fileList(diff.both).gridCellColumns(2)
+                }
+            }
+            GridRow {
+                Text("Only here").foregroundStyle(.tertiary).frame(width: 90, alignment: .leading)
+                fileList(diff.onlyA)
+                fileList(diff.onlyB)
+            }
+        }
+        .font(.system(size: 11))
+    }
+
+    private func fileList(_ paths: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if paths.isEmpty {
+                Text("—").foregroundStyle(.quaternary)
+            }
+            ForEach(paths.prefix(8), id: \.self) { path in
+                Text(path).font(.system(size: 10, design: .monospaced))
+                    .lineLimit(1).truncationMode(.head).textSelection(.enabled)
+                    .help(path)
+            }
+            if paths.count > 8 {
+                Text("+\(paths.count - 8) more").font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func sideHeader(_ side: CoreRunSide) -> some View {
@@ -1337,7 +1382,7 @@ private struct CompareRunsSheet: View {
 
     private static func gapText(_ gap: String) -> String {
         switch gap {
-        case "artifacts_not_tracked": "Artifacts are not tracked per session — nothing to compare."
+        case "artifacts_not_tracked": "Files changed are unknown for a run whose transcript was not read."
         case "model_not_tracked": "Model is not tracked per session — differences are unknown, not equal."
         default: gap
         }

@@ -205,6 +205,57 @@ public enum RadarReportMatch {
     }
 }
 
+/// `compare_sessions` side `artifacts`: the files a run's edit tools
+/// named (Claude Edit/Write/MultiEdit/NotebookEdit, Codex patch
+/// headers), each with how many edits it took, most-edited first;
+/// `total` counts every file even past the daemon's cap.
+public struct CoreRunArtifacts: Codable, Hashable, Sendable {
+    public struct File: Codable, Hashable, Sendable {
+        public var path: String
+        public var edits: Int
+
+        public init(path: String, edits: Int = 1) {
+            self.path = path
+            self.edits = edits
+        }
+    }
+
+    public var files: [File]
+    public var total: Int
+    public var truncated: Bool
+
+    public init(files: [File] = [], total: Int? = nil, truncated: Bool = false) {
+        self.files = files
+        self.total = total ?? files.count
+        self.truncated = truncated
+    }
+
+    enum CodingKeys: String, CodingKey { case files, total, truncated }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        files = (try? c.decodeIfPresent([File].self, forKey: .files)) ?? []
+        total = (try? c.decodeIfPresent(Int.self, forKey: .total)) ?? files.count
+        truncated = (try? c.decodeIfPresent(Bool.self, forKey: .truncated)) ?? false
+    }
+}
+
+/// Where two runs' file sets meet and differ — Compare's "what did each
+/// one actually change", by path.
+public struct RunFileDiff: Equatable, Sendable {
+    public var both: [String]
+    public var onlyA: [String]
+    public var onlyB: [String]
+
+    public init(a: CoreRunArtifacts, b: CoreRunArtifacts) {
+        let left = Set(a.files.map(\.path)), right = Set(b.files.map(\.path))
+        // Each list keeps its side's most-edited-first order.
+        both = a.files.map(\.path).filter(right.contains)
+        onlyA = a.files.map(\.path).filter { !right.contains($0) }
+        onlyB = b.files.map(\.path).filter { !left.contains($0) }
+    }
+}
+
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
