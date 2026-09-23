@@ -428,6 +428,67 @@ def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- auto-dim that learns from the slider ------------------------------------------------
+
+
+def note_brightness_nudge(controller: Any, value: float, *, now: float | None = None) -> None:
+    """A panel slider move is a vote for how bright the lights should be
+    at the light the sensor reads right now -- counted only while auto-dim
+    follows the ambient sensor and the sensor answered (jrbar.auto_dim)."""
+    import time
+
+    from .auto_dim import BrightnessVote, record_vote
+
+    base = max(0.0, min(1.0, float(value)))
+    controller._core_brightness_base = base
+    reader = getattr(controller, "auto_dim_result", None)
+    if not callable(reader):
+        return
+    result = reader()
+    if (
+        getattr(result, "mode", None) != "ambient"
+        or getattr(result, "source", None) != "ambient"
+        or not getattr(result, "available", False)
+        or not isinstance(getattr(result, "reading", None), (int, float))
+    ):
+        return
+    vote = BrightnessVote(
+        lux=float(result.reading),
+        level=base * float(getattr(result, "factor", 1.0)),
+        at=time.time() if now is None else float(now),
+    )
+    controller._core_brightness_votes = record_vote(tuple(getattr(controller, "_core_brightness_votes", ())), vote)
+
+
+def auto_dim_learning(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """What the slider has taught the ambient curve: the votes kept since
+    the daemon started and, once there are enough across enough light, the
+    floor, ceiling, minimum and slider level that explain them -- offered,
+    never applied (the app applies it with set_setting and set_brightness
+    when the person says so). ``clear: true`` forgets the votes."""
+    from .auto_dim import AutoDimSettings, learn_ambient_curve
+
+    clear = args.get("clear", False)
+    if type(clear) is not bool:
+        raise _command_error("invalid_args", "clear must be a boolean")
+    if clear:
+        controller._core_brightness_votes = ()
+    votes = tuple(getattr(controller, "_core_brightness_votes", ()))
+    current = getattr(getattr(controller, "settings", None), "auto_dim", None)
+    if not isinstance(current, AutoDimSettings):
+        current = AutoDimSettings()
+    document = learn_ambient_curve(
+        votes,
+        current,
+        current_base=float(getattr(controller, "_core_brightness_base", 1.0)),
+    )
+    document["mode"] = current.mode
+    document["samples"] = [
+        {"lux": round(vote.lux, 1), "level": round(vote.level, 3), "at": vote.at} for vote in votes
+    ]
+    return document
+
+
 # --- write health --------------------------------------------------------------------------
 
 
@@ -554,12 +615,14 @@ __all__ = [
     "MAX_BURN_PROGRAM_CHARACTERS",
     "augment_device_health",
     "augment_lights_cues",
+    "auto_dim_learning",
     "burn_init",
     "calibration_profile",
     "check_palette",
     "list_cues",
     "list_focuses",
     "list_light_log",
+    "note_brightness_nudge",
     "preview_fleet",
     "set_cue",
 ]

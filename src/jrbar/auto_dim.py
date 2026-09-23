@@ -433,16 +433,153 @@ class _SmoothedAmbientLight:
 ambient_light_lux = _SmoothedAmbientLight(_SENSOR.read_lux, LuxSmoother())
 
 
+# --- learning from nudges ----------------------------------------------------------
+#
+# The ambient curve is three numbers the person set once from a settings
+# page, while the panel slider is what they actually reach for. Every
+# slider move in ambient mode is a vote: "at this much light, I want the
+# lights this bright". Those votes are kept, and a curve fitted to them is
+# OFFERED -- never applied on its own; an unasked-for change to the desk's
+# brightness is exactly the twitch the smoother exists to prevent.
+
+#: A curve needs at least this many votes, from light at least this many
+#: times brighter than the darkest, before it can say anything about slope.
+MIN_LEARN_SAMPLES: Final = 3
+MIN_LEARN_LUX_RATIO: Final = 3.0
+MAX_LEARN_SAMPLES: Final = 24
+#: A vote this close in light to an older one replaces it: the latest word
+#: at a given light is the one that stands.
+SAME_LIGHT_RATIO: Final = 1.25
+#: The fitted curve must beat the current one by this much to be offered.
+MIN_LEARN_IMPROVEMENT: Final = 0.02
+
+
+@dataclass(frozen=True, slots=True)
+class BrightnessVote:
+    """At ``lux`` (the smoothed reading), the person chose lights at
+    ``level`` of full (their slider times the curve's own factor then)."""
+
+    lux: float
+    level: float
+    at: float
+
+
+def record_vote(
+    votes: tuple[BrightnessVote, ...],
+    vote: BrightnessVote,
+) -> tuple[BrightnessVote, ...]:
+    """``votes`` with ``vote`` added: newest last, one per light level,
+    bounded. A vote with an impossible reading is dropped."""
+    if not (
+        math.isfinite(vote.lux)
+        and 0.0 <= vote.lux <= MAX_LUX
+        and math.isfinite(vote.level)
+        and 0.0 < vote.level <= 1.0
+    ):
+        return votes
+
+    def same_light(other: BrightnessVote) -> bool:
+        low, high = sorted((max(other.lux, 1.0), max(vote.lux, 1.0)))
+        return high / low < SAME_LIGHT_RATIO
+
+    kept = tuple(other for other in votes if not same_light(other))
+    return (*kept, vote)[-MAX_LEARN_SAMPLES:]
+
+
+def _curve_error(votes: tuple[BrightnessVote, ...], *, base: float, min_fraction: float, floor: float, ceiling: float) -> float:
+    total = 0.0
+    for vote in votes:
+        predicted = base * ambient_factor(vote.lux, min_fraction=min_fraction, lux_floor=floor, lux_ceiling=ceiling)
+        total += (predicted - vote.level) ** 2
+    return math.sqrt(total / len(votes))
+
+
+def learn_ambient_curve(
+    votes: tuple[BrightnessVote, ...],
+    current: AutoDimSettings,
+    *,
+    current_base: float,
+) -> dict[str, Any]:
+    """The curve (and slider level) that best explains the votes, offered
+    only when there are enough of them across enough light and it fits them
+    clearly better than what is set now.
+
+    The slider sets the base; the curve scales it with the light. The
+    offered base is the brightest level voted for, and the curve is found by
+    a small search over floor, ceiling and minimum -- the same three numbers
+    the settings page shows -- so the person can read what it would change.
+    """
+    count = len(votes)
+    document: dict[str, Any] = {
+        "votes": count,
+        "ready": False,
+        "reason": None,
+        "suggested": None,
+        "error_now": None,
+        "error_suggested": None,
+    }
+    if count < MIN_LEARN_SAMPLES:
+        document["reason"] = "needs_votes"
+        return document
+    darkest = max(1.0, min(vote.lux for vote in votes))
+    brightest = max(vote.lux for vote in votes)
+    if brightest / darkest < MIN_LEARN_LUX_RATIO:
+        document["reason"] = "needs_range"
+        return document
+    base = max(vote.level for vote in votes)
+    error_now = _curve_error(
+        votes,
+        base=max(0.0, min(1.0, float(current_base))),
+        min_fraction=current.ambient_min_fraction,
+        floor=current.ambient_lux_floor,
+        ceiling=current.ambient_lux_ceiling,
+    )
+    marks = sorted({round(vote.lux, 1) for vote in votes} | {5.0, 10.0, 15.0, 30.0, 50.0, 100.0, 150.0, 300.0, 600.0})
+    best: tuple[float, float, float, float] | None = None
+    for floor in marks:
+        for ceiling in marks:
+            if ceiling <= floor:
+                continue
+            for step in range(1, 20):
+                fraction = step / 20.0
+                error = _curve_error(votes, base=base, min_fraction=fraction, floor=floor, ceiling=ceiling)
+                if best is None or error < best[0] - 1e-9:
+                    best = (error, fraction, floor, ceiling)
+    document["error_now"] = round(error_now, 3)
+    if best is None:
+        document["reason"] = "no_fit"
+        return document
+    error, fraction, floor, ceiling = best
+    document["error_suggested"] = round(error, 3)
+    if error_now - error < MIN_LEARN_IMPROVEMENT:
+        document["reason"] = "already_fits"
+        return document
+    document["ready"] = True
+    document["suggested"] = {
+        "brightness": round(base, 3),
+        "min_fraction": max(MIN_FRACTION, fraction),
+        "lux_floor": floor,
+        "lux_ceiling": ceiling,
+    }
+    return document
+
+
 __all__ = [
     "AUTO_DIM_MODES",
+    "MAX_LEARN_SAMPLES",
+    "MIN_LEARN_LUX_RATIO",
+    "MIN_LEARN_SAMPLES",
     "OFF_RESULT",
     "AmbientLightUnavailableError",
     "AutoDimResult",
     "AutoDimSettings",
+    "BrightnessVote",
     "LuxSmoother",
     "ambient_factor",
     "ambient_light_lux",
     "display_brightness_fraction",
     "evaluate_auto_dim",
+    "learn_ambient_curve",
+    "record_vote",
     "schedule_active",
 ]

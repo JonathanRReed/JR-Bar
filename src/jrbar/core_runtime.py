@@ -1097,6 +1097,15 @@ def _cmd_set_brightness(self, args):
         raise CommandError("not_found", "no such device")
     for device in devices:
         self.set_device_brightness(device.device_id, value * 255.0)
+    if target == "all":
+        # The panel slider: in ambient auto-dim, a vote for how bright the
+        # lights should be at this much light (jrbar.core_lights).
+        try:
+            from . import core_lights
+
+            core_lights.note_brightness_nudge(self, value)
+        except Exception:
+            pass
     self._core_publish_lights()
     return {"value": value, "devices": [device.device_id for device in devices]}
 
@@ -2488,6 +2497,13 @@ def _cmd_list_focuses(self, args):
     from . import core_lights
 
     return core_lights.list_focuses(self, args)
+
+
+@command("auto_dim_learning", main_thread=False)
+def _cmd_auto_dim_learning(self, args):
+    from . import core_lights
+
+    return core_lights.auto_dim_learning(self, args)
 
 
 @command("check_palette", main_thread=False)
