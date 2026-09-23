@@ -709,10 +709,41 @@ final class PanelStore {
         return configured > 0 ? configured : 300
     }
 
+    /// When the focus pick's ask opened — the moment the left ear's ring
+    /// counts from; nil while the focus has no open ask.
+    var focusAskOpened: Double? {
+        focusPick.flatMap { pick in pick.ask.flatMap { $0.openedAt ?? pick.since?.timeIntervalSince1970 } }
+    }
+
+    /// The epoch at which the left ear next changes on its own, for the
+    /// delegate's one-shot re-push: the daemon sends no frame while only
+    /// the clock moves, so without it the ring would wait for unrelated
+    /// activity. Nil without an open ask in focus.
+    func nextAskAgeTick(now: Double = Date().timeIntervalSince1970) -> Double? {
+        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds)
+    }
+
+    /// The next boundary the ear shows: the ring's next twelfth of
+    /// `finalSeconds` while it is filling, or the wait's next whole minute
+    /// (the peek's "· N min"), whichever comes first. The words keep
+    /// counting past an hour, so a full ring still ticks once a minute;
+    /// nil only when there is no ask to count.
+    nonisolated static func nextAskAgeTick(opened: Double?, now: Double, finalSeconds: Double) -> Double? {
+        guard let opened else { return nil }
+        let waited = max(0, now - opened)
+        let minute = opened + ((waited / 60).rounded(.down) + 1) * 60
+        guard finalSeconds > 0, waited < finalSeconds else { return minute }
+        // The same arithmetic `askAgeFraction` steps on, so the tick lands
+        // on the twelfth that changes the fill.
+        let twelfth = opened + ((waited / finalSeconds * 12).rounded(.down) + 1) * finalSeconds / 12
+        return min(twelfth, minute)
+    }
+
     /// The ask-age ring's fill: the share of the way to the final stage,
     /// in twelfths — a step every 25 s at the default, so the ear moves
     /// visibly without re-laying on every lighting frame. Full from the
-    /// final stage on.
+    /// final stage on. The delegate re-pushes the wings at each step
+    /// (`nextAskAgeTick`), since no daemon frame marks one.
     nonisolated static func askAgeFraction(opened: Double, now: Double, finalSeconds: Double) -> Double {
         guard finalSeconds > 0 else { return 1 }
         let share = max(0, now - opened) / finalSeconds

@@ -1116,6 +1116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func coreDidChange() {
         screenBar?.updateAccessibility()
         screenBar?.wings = store?.screenBarWings ?? .empty
+        rearmAskAgeTick()
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:
@@ -1146,6 +1147,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshScreenBarGlow()
         refreshScreenBarGeometry()
         reconcileScreenBarSetting()
+    }
+
+    /// The left ear's ask-age ring steps with the clock, and the daemon
+    /// sends nothing while only the clock moves: one sleeping task re-pushes
+    /// the wings at the next step and re-arms. It exists only while the
+    /// focus has an open ask, and a frame that leaves the next step where
+    /// it was keeps the task it has.
+    private var askAgeTick: Task<Void, Never>?
+    private var askAgeTickAt: Double?
+
+    private func rearmAskAgeTick() {
+        let next = store?.nextAskAgeTick()
+        guard next != askAgeTickAt || askAgeTick == nil || next == nil else { return }
+        askAgeTick?.cancel()
+        askAgeTick = nil
+        askAgeTickAt = next
+        guard let next else { return }
+        // A hair past the boundary, so the fill has certainly stepped.
+        let delay = max(0, next - Date().timeIntervalSince1970) + 0.05
+        askAgeTick = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.askAgeTick = nil
+            self.screenBar?.wings = self.store?.screenBarWings ?? .empty
+            self.rearmAskAgeTick()
+        }
     }
 
     /// `screen_bar_follow_alcove` (default on) while the bar is shown.

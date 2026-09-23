@@ -19,6 +19,37 @@ struct AskAgeRingTests {
         #expect(PanelStore.askAgeFraction(opened: 100, now: 50, finalSeconds: 300) == 0)
     }
 
+    @Test("the ear's next step: the ring's next twelfth or the next whole minute, whichever is sooner")
+    func nextTick() {
+        #expect(PanelStore.nextAskAgeTick(opened: 100, now: 124, finalSeconds: 300) == 125)
+        #expect(PanelStore.nextAskAgeTick(opened: 100, now: 125, finalSeconds: 300) == 150)
+        // A slow ring (twelfths of 20 min are 100 s) ticks on the minute.
+        #expect(PanelStore.nextAskAgeTick(opened: 0, now: 30, finalSeconds: 1_200) == 60)
+        #expect(PanelStore.nextAskAgeTick(opened: 0, now: 70, finalSeconds: 1_200) == 100)
+        // A full ring still counts minutes for the words, past an hour too.
+        #expect(PanelStore.nextAskAgeTick(opened: 0, now: 3_725, finalSeconds: 300) == 3_780)
+        // A clock that ran backwards waits for the first step.
+        #expect(PanelStore.nextAskAgeTick(opened: 100, now: 50, finalSeconds: 300) == 125)
+        #expect(PanelStore.nextAskAgeTick(opened: nil, now: 50, finalSeconds: 300) == nil)
+    }
+
+    @Test("each tick lands on a boundary the ring or the words actually cross")
+    func ticksChangeTheSlot() {
+        let opened: Double = 1_000
+        let asking = SessionRow(session: CoreSession(
+            id: "claude:session:a", provider: "claude", mode: "waiting", lifecycle: "active",
+            ask: CoreAsk(session: "claude:session:a", kind: "permission", openedAt: opened, summary: "Run tests?")),
+            pinnedAsk: nil)
+        var now = opened
+        for _ in 0..<20 {
+            guard let next = PanelStore.nextAskAgeTick(opened: opened, now: now, finalSeconds: 300) else { break }
+            let before = PanelStore.activitySlot(for: asking, askCount: 1, now: now, finalSeconds: 300)
+            let after = PanelStore.activitySlot(for: asking, askCount: 1, now: next + 0.05, finalSeconds: 300)
+            #expect(before != after)
+            now = next + 0.05
+        }
+    }
+
     @Test("the peek says minutes, never seconds")
     func words() {
         #expect(PanelStore.askWaitWords(opened: 0, now: 59) == nil)
