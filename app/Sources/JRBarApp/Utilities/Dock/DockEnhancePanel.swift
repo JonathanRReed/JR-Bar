@@ -73,6 +73,8 @@ final class DockPreviewActions {
     var onSwipeMinimize: (@MainActor (DockPreviewWindow, Bool) -> Void)?
     /// The player row's transport — previous, play/pause, next.
     var onMediaCommand: (@MainActor (MediaRemoteBridge.Command) -> Void)?
+    /// The player row's scrubber — seek to a playhead in seconds.
+    var onMediaSeek: (@MainActor (Double) -> Void)?
     /// The calendar row's "Show events" — asks for the grant.
     var onCalendarAuth: (@MainActor () -> Void)?
     /// The calendar row's "Join" — opens the meeting link.
@@ -1135,6 +1137,18 @@ private struct DockMediaRow: View {
     let actions: DockPreviewActions
 
     var body: some View {
+        VStack(spacing: 3) {
+            transport
+            // Seek without opening the player: a continuous hairline of
+            // the playhead, the times either side. Only when the source
+            // named both a playhead and a length — never a bar at 0:00.
+            if let duration = media.duration, duration > 0, media.elapsed != nil {
+                DockMediaScrubber(media: media, duration: duration) { actions.onMediaSeek?($0) }
+            }
+        }
+    }
+
+    private var transport: some View {
         HStack(spacing: 8) {
             Group {
                 if let data = media.artworkData, let image = NSImage(data: data) {
@@ -1177,6 +1191,50 @@ private struct DockMediaRow: View {
         }
         .padding(.vertical, 2)
         .help(media.displayLine)
+    }
+}
+
+/// The player row's playhead: elapsed, a thin continuous track, the
+/// length. A click or drag on the track seeks there. The playhead
+/// advances between feed pushes from the sampled elapsed + timestamp.
+private struct DockMediaScrubber: View {
+    let media: AlcoveMedia
+    let duration: Double
+    let onSeek: (Double) -> Void
+    @ViewState private var dragFraction: Double?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let elapsed = media.liveElapsed(at: context.date) ?? 0
+            let fraction = dragFraction ?? min(1, max(0, elapsed / duration))
+            HStack(spacing: 6) {
+                Text(DockEnhanceMath.clock(dragFraction.map { $0 * duration } ?? elapsed))
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.quaternary)
+                        Capsule().fill(.secondary)
+                            .frame(width: max(2, geo.size.width * fraction))
+                    }
+                    .frame(height: 3)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            dragFraction = min(1, max(0, value.location.x / max(1, geo.size.width)))
+                        }
+                        .onEnded { value in
+                            let f = min(1, max(0, value.location.x / max(1, geo.size.width)))
+                            dragFraction = nil
+                            onSeek(f * duration)
+                        })
+                }
+                .frame(height: 12)
+                Text(DockEnhanceMath.clock(duration))
+            }
+            .font(.system(size: 9, weight: .medium).monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        .help("Drag to seek")
     }
 }
 

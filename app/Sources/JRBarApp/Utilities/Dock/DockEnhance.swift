@@ -390,9 +390,30 @@ enum DockEnhanceMath {
         "com.spotify.client", "org.videolan.vlc", "com.colliderli.iina",
     ]
 
+    /// Any app the now-playing source names gets the row — Safari or
+    /// Chrome playing a video, a player this list never heard of. The
+    /// list only answers for an anonymous source (the raw info dict
+    /// names no bundle), where a known player is the best guess.
     static func showsMediaRow(mediaBundleID: String?, appBundleID: String?) -> Bool {
-        guard let appBundleID, playerBundleIDs.contains(appBundleID) else { return false }
-        return mediaBundleID == nil || mediaBundleID == appBundleID
+        guard let appBundleID else { return false }
+        if let mediaBundleID { return mediaBundleID == appBundleID }
+        return playerBundleIDs.contains(appBundleID)
+    }
+
+    /// "3:07", "1:02:45" — a playhead the way players print it.
+    static func clock(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.isFinite ? seconds.rounded(.down) : 0))
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    /// Whether a hover should read the Now Playing feed at all: always
+    /// for a known player; for any other app only while another surface
+    /// already runs the feed — a hover never spawns the media helper
+    /// just to find a browser isn't playing.
+    static func readsMedia(appBundleID: String?, feedRunning: Bool) -> Bool {
+        guard let appBundleID else { return false }
+        return playerBundleIDs.contains(appBundleID) || feedRunning
     }
 
     /// The Calendar tile's bundle id — the only tile that earns the
@@ -1635,10 +1656,11 @@ final class DockEnhanceController {
         }
 
         // A player tile subscribes to the shared Now Playing feed for
-        // the life of its panel; the reader applies the bundle match —
+        // the life of its panel — any app tile too while another surface
+        // already runs the feed; the reader applies the bundle match —
         // a track from a different app never lands on this one.
         if let bundleID = preview.bundleID,
-           DockEnhanceMath.playerBundleIDs.contains(bundleID) {
+           DockEnhanceMath.readsMedia(appBundleID: bundleID, feedRunning: MediaFeed.shared.isRunning) {
             mediaToken = MediaFeed.shared.subscribe { [weak self] media in
                 guard let self, self.generation == generationAtShow else { return }
                 self.preview.media = media.flatMap {
@@ -1767,6 +1789,7 @@ final class DockEnhanceController {
         panel.actions.onCloseAll = { [weak self] in self?.closeAll() }
         panel.actions.onOpen = { [weak self] url in self?.openItem(url) }
         panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
+        panel.actions.onMediaSeek = { MediaFeed.shared.seek(to: $0) }
         panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
         panel.actions.onSwipeMinimize = { [weak self] window, minimize in
             self?.swipeMinimize(window, minimize)

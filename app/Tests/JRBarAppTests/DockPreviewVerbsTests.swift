@@ -44,6 +44,29 @@ struct DockPreviewVerbsTests {
         #expect(abs(center.midX - visible.midX) < 1 && abs(center.midY - visible.midY) < 1)
     }
 
+    @Test("the Now Playing row follows the app the source names — any app, not a fixed list")
+    func mediaRowOwner() {
+        #expect(DockEnhanceMath.showsMediaRow(mediaBundleID: "com.apple.Safari", appBundleID: "com.apple.Safari"),
+                "a browser playing a video gets transport on its tile")
+        #expect(!DockEnhanceMath.showsMediaRow(mediaBundleID: "com.spotify.client", appBundleID: "com.apple.Music"),
+                "a track from another app never lands here")
+        #expect(DockEnhanceMath.showsMediaRow(mediaBundleID: nil, appBundleID: "com.apple.Music"),
+                "an anonymous source still lands on a known player")
+        #expect(!DockEnhanceMath.showsMediaRow(mediaBundleID: nil, appBundleID: "com.apple.Safari"))
+        #expect(DockEnhanceMath.readsMedia(appBundleID: "com.apple.Music", feedRunning: false))
+        #expect(!DockEnhanceMath.readsMedia(appBundleID: "com.apple.Safari", feedRunning: false),
+                "a hover never spawns the media helper to check a browser")
+        #expect(DockEnhanceMath.readsMedia(appBundleID: "com.apple.Safari", feedRunning: true))
+    }
+
+    @Test("the scrubber prints playheads the way players do")
+    func clock() {
+        #expect(DockEnhanceMath.clock(0) == "0:00")
+        #expect(DockEnhanceMath.clock(187.9) == "3:07")
+        #expect(DockEnhanceMath.clock(3765) == "1:02:45")
+        #expect(DockEnhanceMath.clock(.nan) == "0:00")
+    }
+
     @Test("Move To keeps the size, clamps it to the target, and centres it there")
     func moveToDisplay() {
         let target = CGRect(x: 1440, y: 0, width: 1920, height: 1055)
