@@ -1196,6 +1196,7 @@ path, validated by the real settings loader:
 | `reminder_alerts_enabled` | bool | `false` | An amber glow when a Reminder comes due. |
 | `battery_monitoring.charging_idle_enabled` | bool | `true` | The charging fill while idle and plugged in. |
 | `battery_monitoring.show_on_power_change` | bool | `true` | The short power-change preview. |
+| `battery_monitoring.low_battery_threshold_minutes` | number (0…120) | `0` (off) | The low-battery warning by time left rather than charge: a fast drain at 20 % can be closer to empty than a slow one at 8 %. While agents run on battery under a keep-awake hold it fires at twice this. Never on an estimate macOS is still making, never on AC. |
 | `rainstick_night_enabled` | bool | `false` | Let the Rainstick drip inside the night scene too. |
 | `milestone_odometer_steps` | list of positive ints (at most 16) | `[10, 25, 50, 100]` | The completion counts that earn the milestone cue. |
 | `ambient_cues_disabled` | list of cue ids | `[]` | The semantic cues switched off (`list_cues`, `set_cue`). |

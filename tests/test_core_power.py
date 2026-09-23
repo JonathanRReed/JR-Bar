@@ -179,6 +179,20 @@ def test_the_grace_epoch_is_stable_across_builds(powered) -> None:
     assert first is not None and first == second
 
 
+def test_the_daemons_low_power_reads_time_left_too(powered) -> None:
+    from jrbar.battery import BatterySnapshot
+
+    controller = powered
+    draining = BatterySnapshot(percent=30, is_plugged=False, battery_present=True, time_to_empty=15)
+    assert controller.low_power_active(draining) is False
+    core_runtime._cmd_set_setting(
+        controller, {"path": "battery_monitoring.low_battery_threshold_minutes", "value": 20}
+    )
+    assert controller.low_power_active(draining) is True
+    # The charge threshold still stands on its own.
+    assert controller.low_power_active(BatterySnapshot(percent=3, is_plugged=False, battery_present=True)) is True
+
+
 # --- presence ------------------------------------------------------------------
 
 

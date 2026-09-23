@@ -19,6 +19,7 @@ from typing import Any
 from . import keep_awake as keep_awake_module
 from . import lid_sleep as lid_sleep_module
 from .battery_runtime import battery_state_document
+from .battery_runtime import low_battery_by_time_left as battery_time_left_rule
 from .keep_awake import (
     LEASE_END_CANCELLED,
     LEASE_PENDING_MODES,
@@ -264,6 +265,22 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
         closed_lid["sleeps_on_release"] = bool(getattr(lid, "sleeper", None) is not None)
         closed_lid["last_sleep_at"] = getattr(lid, "last_sleep_epoch", None)
         closed_lid["sleep_error"] = getattr(lid, "last_sleep_error", None)
+
+
+def low_battery_by_time_left(controller: Any, snapshot: object) -> bool:
+    """The time-left half of the low-battery warning, with the agents in
+    it: twice as early while they run on battery under a keep-awake hold."""
+    settings = getattr(controller, "settings", None)
+    if not bool(getattr(settings, "low_battery_alert_enabled", True)):
+        return False
+    keep = getattr(controller, "keep_awake", None)
+    return battery_time_left_rule(
+        snapshot,  # type: ignore[arg-type]
+        threshold_minutes=getattr(settings, "low_battery_threshold_minutes", 0.0),
+        agents_working=int(getattr(keep, "working_count", 0) or 0),
+        hold_on_battery=bool(getattr(settings, "keep_awake_on_battery", True))
+        and bool(getattr(keep, "agent_demand", False)),
+    )
 
 
 # --- presence ------------------------------------------------------------------

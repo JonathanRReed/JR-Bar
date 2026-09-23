@@ -183,6 +183,35 @@ def _estimate_minutes(value: object) -> int | None:
     return value if 0 < value < BATTERY_TIME_UNKNOWN else None
 
 
+def low_battery_by_time_left(
+    snapshot: BatterySnapshot | None,
+    *,
+    threshold_minutes: float,
+    agents_working: int = 0,
+    hold_on_battery: bool = False,
+) -> bool:
+    """The low-battery warning judged by time left rather than charge.
+
+    Off at a zero threshold, on AC, and while macOS is still estimating --
+    never on a guess. While agents run on battery with keep-awake holding
+    the Mac, it fires at twice the threshold: the run needs the warning in
+    time to plug in, not when the Mac is already going down."""
+    if snapshot is None or not getattr(snapshot, "battery_present", False) or snapshot.is_plugged:
+        return False
+    try:
+        threshold = float(threshold_minutes)
+    except (TypeError, ValueError):
+        return False
+    if not threshold > 0.0:
+        return False
+    minutes = _estimate_minutes(snapshot.time_to_empty)
+    if minutes is None:
+        return False
+    if agents_working > 0 and hold_on_battery:
+        threshold *= 2.0
+    return minutes <= threshold
+
+
 def battery_state_document(
     snapshot: BatterySnapshot | None,
     *,

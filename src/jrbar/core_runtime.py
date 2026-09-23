@@ -3908,6 +3908,18 @@ def build_headless_controller_class() -> type:
             except Exception:
                 legacy.log_status_bar(f"core: power events failed: {traceback.format_exc(limit=3)}")
 
+        def low_power_active(self, battery_snapshot) -> bool:
+            """The charge threshold, or the time left: a fast drain at 20% can
+            be closer to empty than a slow one at 8% (jrbar.core_power)."""
+            if objc.super(JRCoreHeadlessController, self).low_power_active(battery_snapshot):
+                return True
+            try:
+                from . import core_power
+
+                return core_power.low_battery_by_time_left(self, battery_snapshot)
+            except Exception:
+                return False
+
         # -- presence: a call holds the ladder at the light ----------------------
 
         def current_escalation_stage(self) -> int:

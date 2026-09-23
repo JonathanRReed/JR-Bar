@@ -353,6 +353,11 @@ class AgentMonitorSettings:
     # battery is the one signal that should outrank agent status.
     low_battery_alert_enabled: bool = True
     low_battery_threshold_percent: float = 5.0
+    # The same warning by time left rather than charge: a fast drain at 20%
+    # can be closer to empty than a slow one at 8%. 0 is off. While agents
+    # run on battery with keep-awake holding the Mac, it fires at twice this,
+    # so a run is warned about before it dies (battery_runtime).
+    low_battery_threshold_minutes: float = 0.0
     # Sweep the bar in the finishing agent's color the moment ANY
     # session completes -- the aggregate hides completions whenever
     # another agent is still working.
@@ -1712,6 +1717,7 @@ class AgentMonitorSettings:
                 "charging_idle_enabled": self.battery_charging_idle_enabled,
                 "low_battery_alert_enabled": self.low_battery_alert_enabled,
                 "low_battery_threshold_percent": self.low_battery_threshold_percent,
+                "low_battery_threshold_minutes": self.low_battery_threshold_minutes,
             },
             "completion_sweep_enabled": self.completion_sweep_enabled,
             "calendar_alerts_enabled": self.calendar_alerts_enabled,
@@ -2103,6 +2109,9 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         low_battery_alert_enabled=_bool_setting(battery.get("low_battery_alert_enabled"), True),
         low_battery_threshold_percent=max(
             1.0, min(50.0, _float_setting(battery.get("low_battery_threshold_percent"), 5.0))
+        ),
+        low_battery_threshold_minutes=max(
+            0.0, min(120.0, _float_setting(battery.get("low_battery_threshold_minutes"), 0.0))
         ),
         completion_sweep_enabled=_bool_setting(data.get("completion_sweep_enabled"), True),
         calendar_alerts_enabled=_bool_setting(data.get("calendar_alerts_enabled"), False),
