@@ -27,8 +27,27 @@ final class ScreenBarController {
     /// `screen_bar_show_in_full_screen` (absent = show, as it always was):
     /// whether the panel keeps its `.fullScreenAuxiliary` membership.
     var showsInFullScreen = true {
-        didSet { panel.showsInFullScreen = showsInFullScreen }
+        didSet {
+            panel.showsInFullScreen = showsInFullScreen
+            if showsInFullScreen != oldValue { updateVideoGuard() }
+        }
     }
+    /// `jrbar.screenBarHideOverVideo` (default on): with Show in full
+    /// screen on, the band still steps aside while the frontmost app is
+    /// the one playing media and fills the screen — over a movie, not
+    /// over a full-screen terminal with music behind it. App-local, like
+    /// the camera hold: the band and the now-playing reading are the app's.
+    static let hideOverVideoDefaultsKey = "jrbar.screenBarHideOverVideo"
+    private var hideOverVideo = UserDefaults.standard.object(forKey: ScreenBarController.hideOverVideoDefaultsKey) as? Bool ?? true
+    /// The now-playing app's bundle id while it is actually playing; nil
+    /// when nothing plays or the source named no app.
+    var nowPlaying: String? {
+        didSet { if nowPlaying != oldValue { updateVideoGuard() } }
+    }
+    /// Whether the band has stepped aside for a full-screen video: the
+    /// panel stays ordered in (no Space dance) at zero alpha, and it
+    /// answers no hover or click while it does.
+    private(set) var steppedAsideForVideo = false
     /// `screen_bar_gap_width`, live from the settings document: the manual
     /// width of the notch gap the band is centred on. nil is Automatic.
     var gapWidth: CGFloat? {
@@ -278,6 +297,10 @@ final class ScreenBarController {
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
         workspace.addObserver(self, selector: #selector(reduceMotionChanged(_:)), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        // The video guard's two moving parts besides the media feed: who
+        // is frontmost, and a window going full screen (its own Space).
+        workspace.addObserver(self, selector: #selector(frontmostMayHaveChanged(_:)), name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        workspace.addObserver(self, selector: #selector(frontmostMayHaveChanged(_:)), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         // Settings › Screen Bar's camera hold is an app-local default;
         // re-read it whenever the defaults move.
         center.addObserver(self, selector: #selector(defaultsChanged(_:)), name: UserDefaults.didChangeNotification, object: nil)
@@ -300,7 +323,7 @@ final class ScreenBarController {
 
     /// The band's rounded rect in screen coordinates, for hit testing.
     var bandScreenRect: NSRect? {
-        guard isShown, panel.isVisible else { return nil }
+        guard isShown, panel.isVisible, !steppedAsideForVideo else { return nil }
         return panel.convertToScreen(view.convert(view.bandRect, to: nil))
     }
 
@@ -309,7 +332,7 @@ final class ScreenBarController {
     /// read by `ScreenBarInteraction`'s monitors — and they are exactly the
     /// drawn capsules, so a click on one is a click on something of ours.
     var hoverScreenRects: [NSRect] {
-        guard isShown, panel.isVisible else { return [] }
+        guard isShown, panel.isVisible, !steppedAsideForVideo else { return [] }
         let drawn: [CGRect?] = [view.bandRect, view.leftWingRect, view.rightWingRect,
                                 view.trayRect, view.housingRect]
         // A dismissed wing's ghost stays in the region: the lobe is gone
@@ -353,15 +376,17 @@ final class ScreenBarController {
     func show() {
         isShown = true
         reposition()
+        steppedAsideForVideo = wantsVideoGuard()
+        let shown: CGFloat = steppedAsideForVideo ? 0 : 1
         if reduceMotion {
-            panel.alphaValue = 1
+            panel.alphaValue = shown
             panel.orderFrontRegardless()
         } else {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = 1
+                panel.animator().alphaValue = shown
             }
         }
         updateNoticeMonitors()
@@ -372,6 +397,8 @@ final class ScreenBarController {
 
     func hide() {
         isShown = false
+        steppedAsideForVideo = false
+        publishStatus()
         ScreenBarGeometry.menuHandleScreenRect = nil
         updateNoticeMonitors()
         updateAppMenuWatch()
@@ -453,7 +480,7 @@ final class ScreenBarController {
     /// The handle's slice of the right ear as a screen-space hit test —
     /// a click inside it toggles the hidden run, it is not the wing's.
     func menuHandle(atScreenPoint point: NSPoint) -> Bool {
-        guard isShown, panel.isVisible, let rect = view.menuHandleRect else {
+        guard isShown, panel.isVisible, !steppedAsideForVideo, let rect = view.menuHandleRect else {
             // Debug, not notice: every band click asks, and no handle is
             // the normal state while the mirror carries the icon.
             MenuBarCombinedItem.log.debug("menuHandle: dead — shown=\(self.isShown) visible=\(self.panel.isVisible) rect=\(self.view.menuHandleRect == nil ? "nil" : "set")")
@@ -508,13 +535,88 @@ final class ScreenBarController {
         present()
     }
 
-    /// The camera hold's switch moved (or any other default did — the
-    /// read is cheap and only a real change re-presents).
+    /// The camera hold's or the video guard's switch moved (or any other
+    /// default did — the reads are cheap and only a real change acts).
     @objc private func defaultsChanged(_ note: Notification) {
+        let overVideo = UserDefaults.standard.object(forKey: Self.hideOverVideoDefaultsKey) as? Bool ?? true
+        if overVideo != hideOverVideo {
+            hideOverVideo = overVideo
+            updateVideoGuard()
+        }
         let wanted = UserDefaults.standard.object(forKey: Self.stillOnCameraDefaultsKey) as? Bool ?? true
         guard wanted != stillOnCamera else { return }
         stillOnCamera = wanted
         if sensors.cameraInUse { present() }
+    }
+
+    @objc private func frontmostMayHaveChanged(_ note: Notification) {
+        updateVideoGuard()
+    }
+
+    // MARK: Full-screen video
+
+    /// Whether the band should step aside right now: shown over full
+    /// screen, the guard on, and the frontmost app both the one playing
+    /// and filling the band's screen.
+    private func wantsVideoGuard() -> Bool {
+        guard isShown, showsInFullScreen, hideOverVideo,
+              let playing = nowPlaying,
+              let front = NSWorkspace.shared.frontmostApplication,
+              front.bundleIdentifier == playing,
+              let screen = ScreenBarGeometry.preferredScreen() else { return false }
+        return Self.windowFillsScreen(pid: front.processIdentifier, screen: screen)
+    }
+
+    /// Fades the band out over a full-screen video, and back in after.
+    private func updateVideoGuard() {
+        let want = wantsVideoGuard()
+        guard want != steppedAsideForVideo, isShown else { return }
+        steppedAsideForVideo = want
+        publishStatus()
+        onGeometryChange?()
+        let alpha: CGFloat = want ? 0 : 1
+        if reduceMotion {
+            panel.alphaValue = alpha
+        } else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.fadeSeconds
+                panel.animator().alphaValue = alpha
+            }
+        }
+    }
+
+    /// Whether `pid` has an ordinary on-screen window filling `screen`: its
+    /// whole width and height, the top allowed to start under the camera
+    /// housing, where a notched MacBook puts full-screen content by
+    /// default. Window bounds and owners need no Screen Recording grant;
+    /// titles would.
+    static func windowFillsScreen(pid: pid_t, screen: NSScreen) -> Bool {
+        guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        let bounds = info.compactMap { window -> CGRect? in
+            guard (window[kCGWindowOwnerPID as String] as? pid_t) == pid,
+                  (window[kCGWindowLayer as String] as? Int) == 0,
+                  let raw = window[kCGWindowBounds as String] as? NSDictionary else { return nil }
+            return CGRect(dictionaryRepresentation: raw as CFDictionary)
+        }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
+        return coversScreen(windowBounds: bounds, screenFrame: screen.frame, primaryHeight: primaryHeight,
+                            topInset: screen.safeAreaInsets.top)
+    }
+
+    /// The pure half: a window rect (Quartz, top-left origin) spanning the
+    /// screen's frame (AppKit, bottom-left origin) side to side and to the
+    /// bottom, its top no lower than the camera housing's inset. A zoomed
+    /// window stops under the menu bar, which on a notched screen is one
+    /// point deeper than the housing (33 against 32 on a 14-inch), so the
+    /// top gets only half a point of slack; the sides and bottom a point.
+    nonisolated static func coversScreen(windowBounds: [CGRect], screenFrame: CGRect, primaryHeight: CGFloat,
+                                         topInset: CGFloat = 0) -> Bool {
+        let quartz = CGRect(x: screenFrame.minX, y: primaryHeight - screenFrame.maxY,
+                            width: screenFrame.width, height: screenFrame.height)
+        return windowBounds.contains { window in
+            window.minX <= quartz.minX + 1 && window.maxX >= quartz.maxX - 1
+                && window.maxY >= quartz.maxY - 1 && window.minY <= quartz.minY + max(0, topInset) + 0.5
+        }
     }
 
     /// Hands what the band is doing to Settings' "Right now" line.
@@ -524,6 +626,7 @@ final class ScreenBarController {
         let note = menuMotionNote
         if status.motionNote != note { status.motionNote = note }
         if status.followingAlcove != (capsule != nil) { status.followingAlcove = capsule != nil }
+        if status.steppedAsideForVideo != steppedAsideForVideo { status.steppedAsideForVideo = steppedAsideForVideo }
     }
 
     /// Each side's content-wing claim: the measured flank room beside the
@@ -578,7 +681,7 @@ final class ScreenBarController {
     /// Which drawn wing a screen point is over — the dismiss swipe's
     /// target. The band and empty flank room answer nil.
     func wingSide(atScreenPoint point: NSPoint) -> ScreenBarWingSide? {
-        guard isShown, panel.isVisible else { return nil }
+        guard isShown, panel.isVisible, !steppedAsideForVideo else { return nil }
         for (side, rect) in [(ScreenBarWingSide.left, view.leftWingRect),
                              (.right, view.rightWingRect)] {
             if let rect, panel.convertToScreen(view.convert(rect, to: nil))
@@ -998,6 +1101,8 @@ final class ScreenBarLiveStatus {
     /// Why the band is not moving ("still under Reduce Motion"), or nil.
     var motionNote: String?
     var followingAlcove = false
+    /// True while the band has stepped aside for a full-screen video.
+    var steppedAsideForVideo = false
 }
 
 /// The Screen Bar card's "Right now" line: which source the band plays,
@@ -1005,7 +1110,8 @@ final class ScreenBarLiveStatus {
 /// the card never gave ("whose clock is it on?", "why is it frozen?").
 enum ScreenBarSourceLine {
     static func describe(live: Bool, mirrorSetting: Bool, stripPresent: Bool, phaseOffsetMs: Double?,
-                         why: String?, rejection: String?, motionNote: String?, followingAlcove: Bool) -> String {
+                         why: String?, rejection: String?, motionNote: String?, followingAlcove: Bool,
+                         steppedAsideForVideo: Bool = false) -> String {
         var parts: [String] = []
         if !live {
             parts.append("Monitor offline — playing the last program the strip was sent")
@@ -1028,6 +1134,7 @@ enum ScreenBarSourceLine {
         }
         if let motionNote { parts.append(motionNote) }
         if followingAlcove { parts.append("following Alcove") }
+        if steppedAsideForVideo { parts.append("stepped aside for a full-screen video") }
         return parts.joined(separator: " · ")
     }
 }

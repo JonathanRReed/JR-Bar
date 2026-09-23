@@ -901,6 +901,9 @@ struct ScreenBarCard: View {
     /// The camera hold is the app's own: the band is drawn here, and the
     /// camera reading is the app's too.
     @AppStorage(ScreenBarController.stillOnCameraDefaultsKey) private var stillOnCamera = true
+    /// The video guard is the app's too: it reads the now-playing app and
+    /// the frontmost window, neither of which the daemon sees.
+    @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
         SettingRow("Right now", subtitle: rightNow) {
@@ -908,7 +911,24 @@ struct ScreenBarCard: View {
         }
         SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
-        SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
+        Provided(store, "screen_bar_show_in_full_screen") {
+            Picker(selection: Binding(
+                get: { ScreenBarFullScreen(shows: store.document.bool("screen_bar_show_in_full_screen") ?? true,
+                                           hideOverVideo: hideOverVideo) },
+                set: { mode in
+                    store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
+                    if mode != .hidden { hideOverVideo = mode == .notOverVideo }
+                }
+            )) {
+                ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
+            } label: {
+                SettingLabel(title: "In full screen", subtitle: ScreenBarFullScreen(
+                    shows: store.document.bool("screen_bar_show_in_full_screen") ?? true,
+                    hideOverVideo: hideOverVideo).detail)
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+        }
         SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
         SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,
                       path: "screen_bar_notch_profile",
@@ -953,7 +973,8 @@ struct ScreenBarCard: View {
             why: core.lights?.screenBar?.why,
             rejection: status.rejection,
             motionNote: status.motionNote,
-            followingAlcove: status.followingAlcove)
+            followingAlcove: status.followingAlcove,
+            steppedAsideForVideo: status.steppedAsideForVideo)
     }
 
     /// The picker's note: what the machine reports and what the tray's
@@ -969,6 +990,34 @@ struct ScreenBarCard: View {
             return "Uncalibrated"
         }
         return SettingsStore.calibrationSummary(document: store.document, prefix: "devices.\(index)")
+    }
+}
+
+/// Where the band goes in full screen: the daemon's
+/// `screen_bar_show_in_full_screen` plus the app's own video guard, as one
+/// choice. A band over a full-screen movie reads as a glitch (the daemon's
+/// own default says so); over a full-screen terminal it is the point.
+enum ScreenBarFullScreen: CaseIterable, Hashable {
+    case hidden, notOverVideo, always
+
+    init(shows: Bool, hideOverVideo: Bool) {
+        self = !shows ? .hidden : hideOverVideo ? .notOverVideo : .always
+    }
+
+    var title: String {
+        switch self {
+        case .hidden: return "Hidden"
+        case .notOverVideo: return "Shown, not over video"
+        case .always: return "Always shown"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .hidden: return "Full-screen apps have the top of the screen to themselves."
+        case .notOverVideo: return "Over full-screen apps, but it steps aside while the app in front is playing a video."
+        case .always: return "Over every full-screen app, videos included."
+        }
     }
 }
 
