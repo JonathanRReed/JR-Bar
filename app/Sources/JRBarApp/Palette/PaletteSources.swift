@@ -647,7 +647,7 @@ enum AquariumPaletteRows {
                 id: "aquarium.feed", title: "Feed the Tank",
                 subtitle: "A pellet for \(fishCount == 1 ? "the one fish" : "each of \(fishCount) fish")",
                 keywords: ["aquarium", "fish", "food", "pellet"],
-                icon: .symbol("fish.fill", .teal), kind: "Aquarium", section: .aquarium,
+                icon: .symbol("fish.fill", .teal), kind: "Aquarium", section: .toys,
                 actions: [PaletteAction(id: "feed", title: "Feed", symbol: "drop.fill") {
                     verbs.feed()
                 }]))
@@ -658,13 +658,48 @@ enum AquariumPaletteRows {
             keywords: ["tank", "fish"],
             icon: .symbol("water.waves", .blue),
             tags: [PaletteTag(text: isOn ? "On" : "Off", tone: isOn ? .positive : .neutral)],
-            kind: "Toy", section: .aquarium,
+            kind: "Toy", section: .toys,
             actions: [PaletteAction(id: "toggle", title: isOn ? "Close the Tank" : "Open the Tank",
                                     symbol: isOn ? "xmark.circle" : "macwindow") {
                 verbs.setOpen(!isOn)
                 return nil
             }]))
         return items
+    }
+}
+
+// MARK: - Confetti
+
+struct ConfettiPaletteVerbs {
+    /// One burst now — the Toys card's Test burst, an explicit ask, so
+    /// it fires whether or not the automatic bursts are on.
+    var fire: @MainActor () -> Void
+    /// The toy's own switch: bursts on JR-Bar's triggers.
+    var setAutomatic: @MainActor (Bool) -> Void
+}
+
+enum ConfettiPaletteRows {
+    /// Raycast's Confetti command: Return fires a burst on every screen;
+    /// ⌘↩ flips the automatic bursts, which the row names rather than
+    /// tagging, so an Off never reads as "this row does nothing".
+    @MainActor
+    static func items(automatic: Bool, verbs: ConfettiPaletteVerbs) -> [PaletteItem] {
+        [PaletteItem(
+            id: "toys.confetti", title: "Confetti", subtitle: "A burst on every screen",
+            keywords: ["celebrate", "party", "tada", "burst", "popper"],
+            icon: .symbol("party.popper.fill", .pink), kind: "Toy", section: .toys,
+            actions: [
+                PaletteAction(id: "fire", title: "Fire Confetti", symbol: "party.popper") {
+                    verbs.fire()
+                    return nil
+                },
+                PaletteAction(id: "automatic",
+                              title: automatic ? "Turn Off Automatic Bursts" : "Turn On Automatic Bursts",
+                              symbol: automatic ? "pause.circle" : "sparkles") {
+                    verbs.setAutomatic(!automatic)
+                    return automatic ? "Automatic confetti off" : "Automatic confetti on"
+                },
+            ])]
     }
 }
 

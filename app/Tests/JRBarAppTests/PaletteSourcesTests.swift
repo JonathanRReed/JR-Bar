@@ -418,6 +418,28 @@ struct PaletteSourcesTests {
         #expect(empty.first?.primary?.title == "Close the Tank")
     }
 
+    // MARK: Confetti
+
+    @Test("Confetti fires on Return whatever the toy's switch says; ⌘↩ flips the automatic bursts")
+    func confettiRow() {
+        let log = Log()
+        let verbs = ConfettiPaletteVerbs(fire: { log.calls.append("fire") },
+                                         setAutomatic: { log.calls.append("auto:\($0)") })
+        let off = ConfettiPaletteRows.items(automatic: false, verbs: verbs)
+        #expect(off.map(\.id) == ["toys.confetti"])
+        #expect(off[0].section == .toys)
+        #expect(off[0].tags.isEmpty, "no Off tag on a row that still fires")
+        #expect(off[0].primary?.title == "Fire Confetti")
+        #expect(off[0].primary?.run() == nil, "the burst is its own proof")
+        #expect(off[0].secondary?.title == "Turn On Automatic Bursts")
+        #expect(off[0].secondary?.run() == "Automatic confetti on")
+        let on = ConfettiPaletteRows.items(automatic: true, verbs: verbs)
+        #expect(on[0].secondary?.title == "Turn Off Automatic Bursts")
+        _ = on[0].secondary?.run()
+        #expect(log.calls == ["fire", "auto:true", "auto:false"])
+        #expect(PaletteRanking.rank(off, query: "tada", usage: PaletteUsage(), now: now).count == 1)
+    }
+
     // MARK: Archive
 
     @Test("archive hits read as one quiet line, and a search row carries the query into the window")

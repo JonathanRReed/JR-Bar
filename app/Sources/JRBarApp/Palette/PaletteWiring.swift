@@ -26,6 +26,7 @@ enum PaletteWiring {
                         effects: EffectStudioStore,
                         toggles: @escaping @MainActor () -> SystemTogglesStore?,
                         aquarium: @escaping @MainActor () -> AquariumToy?,
+                        confetti: @escaping @MainActor () -> ConfettiToy? = { nil },
                         hoarder: DataHoarderUtility,
                         windows: Windows) -> [any PaletteSource] {
         [
@@ -35,6 +36,7 @@ enum PaletteWiring {
             controlCenter(toggles: toggles),
             usage(panel: panel, windows: windows),
             tank(aquarium: aquarium),
+            confettiSource(confetti),
             AppMenuPaletteSource(),
             archive(hoarder: hoarder),
             open(hoarder: hoarder, windows: windows),
@@ -165,6 +167,17 @@ enum PaletteWiring {
                     return fed.count == 1 ? "Fed the fish" : "Fed \(fed.count) fish"
                 },
                 setOpen: { tank.isOn = $0 }))
+        }
+    }
+
+    /// Confetti on demand, through the Toys card's own Test burst and
+    /// switch — the same tint, the same Reduce Motion flash.
+    static func confettiSource(_ confetti: @escaping @MainActor () -> ConfettiToy?) -> PaletteClosureSource {
+        PaletteClosureSource {
+            guard let toy = confetti() else { return [] }
+            return ConfettiPaletteRows.items(automatic: toy.isOn, verbs: ConfettiPaletteVerbs(
+                fire: { toy.testBurst(providerColor: ConfettiView.toysTint) },
+                setAutomatic: { toy.isOn = $0 }))
         }
     }
 

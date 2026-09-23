@@ -464,6 +464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             panel: store, effects: effectsStore,
             toggles: { [weak toysStore] in toysStore?.notch.cardModel.utility.toggles },
             aquarium: { [weak toysStore] in toysStore?.aquarium },
+            confetti: { [weak toysStore] in toysStore?.confetti },
             hoarder: utilitiesStore.dataHoarder,
             windows: PaletteWiring.Windows(
                 overview: { [weak overviewWindow] in overviewWindow?.show() },

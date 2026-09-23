@@ -32,7 +32,8 @@ struct PaletteSection: Hashable, Sendable {
     static let controlCenter = PaletteSection(id: "controlCenter", title: "Control Center", order: 50)
     static let usage = PaletteSection(id: "usage", title: "Usage", order: 55)
     static let automation = PaletteSection(id: "automation", title: "Profiles & Rules", order: 60)
-    static let aquarium = PaletteSection(id: "aquarium", title: "Aquarium", order: 70)
+    /// Feed the Tank, the tank itself, Confetti.
+    static let toys = PaletteSection(id: "toys", title: "Toys", order: 70)
     static let open = PaletteSection(id: "open", title: "Open", order: 80)
     static let settings = PaletteSection(id: "settings", title: "Settings", order: 90)
     /// Data Hoarder's full-text hits — searched only once you type,
