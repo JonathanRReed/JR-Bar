@@ -124,6 +124,10 @@ public struct AquariumFleetLog: Codable, Equatable, Sendable {
     public static let budgetWatchWindow: Double = 6 * 3600
     /// How many counted failures the log keeps.
     public static let failedMemory = 64
+    /// A weekly reading that hasn't moved is re-stamped at most this
+    /// often — fine grain next to the six-hour watch window, and it
+    /// keeps a steady fleet from rewriting the log on every document.
+    public static let restampAfter: Double = 10 * 60
 
     /// Fold one document's facts in. Pure: the same log and facts always
     /// give the same log.
@@ -138,8 +142,10 @@ public struct AquariumFleetLog: Codable, Equatable, Sendable {
             failedIDs = Array((failedIDs + fresh).suffix(Self.failedMemory))
         }
         for (key, reading) in facts.weekly {
-            if let last = weekly[key], Self.endedUnderBudget(last: last, next: reading) {
-                underBudgetResets += 1
+            if let last = weekly[key] {
+                if Self.endedUnderBudget(last: last, next: reading) { underBudgetResets += 1 }
+                let same = last.usedPct == reading.usedPct && last.resetsAt == reading.resetsAt
+                if same, reading.observedAt - last.observedAt < Self.restampAfter { continue }
             }
             weekly[key] = reading
         }

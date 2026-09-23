@@ -77,6 +77,9 @@ final class AquariumToy: Toy {
     /// The tank outside its window: the live wallpaper and the idle
     /// screensaver, both opt-in from the card.
     @ObservationIgnored private var ambient: AquariumAmbientController?
+    /// The two ambient settings the controller last synced to — the
+    /// observation fires on any toys-state write, most of them not ours.
+    @ObservationIgnored private var ambientSynced: (idle: Int, display: String?)?
 
     init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumSaveFile()) {
         self.core = core
@@ -115,6 +118,11 @@ final class AquariumToy: Toy {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observeAmbientSettings() }
         }
+        let wanted = (idle: settings.idleFillMinutes, display: settings.ambientDisplay)
+        if let synced = ambientSynced, synced.idle == wanted.idle, synced.display == wanted.display {
+            return
+        }
+        ambientSynced = wanted
         if settings.idleFillMinutes > 0 || settings.ambientDisplay != nil {
             if ambient == nil { ambient = AquariumAmbientController(toy: self) }
             ambient?.sync()
@@ -658,7 +666,12 @@ final class AquariumToy: Toy {
     /// milestone saves at once; the log's quiet moves ride the next save.
     private func noteFleet(now: Date) {
         guard let state = core.state else { return }
-        let effects = game.apply(.fleet(AquariumFleetFacts.read(state, now: now)), now: now)
+        // Applied to a copy and written back only when it moved: the
+        // game is observed, and a document that changed nothing must
+        // not redraw every view that reads it.
+        var next = game
+        let effects = next.apply(.fleet(AquariumFleetFacts.read(state, now: now)), now: now)
+        if next != game { game = next }
         note(effects, now: now)
         if !effects.isEmpty { persist() }
     }

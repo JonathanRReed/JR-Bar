@@ -205,3 +205,22 @@ struct AquariumFleetTests {
         #expect(game.lifetimePearls >= AquariumAchievement.bankedCredits.reward, "the reward paid")
     }
 }
+
+extension AquariumFleetTests {
+    @Test("a steady weekly reading is re-stamped only now and then")
+    func restamp() {
+        var log = AquariumFleetLog()
+        let reading = { (t: Double) in
+            AquariumFleetFacts(weekly: ["c|weekly": AquariumWeeklyReading(usedPct: 40, resetsAt: 9e9, observedAt: t)])
+        }
+        log.note(reading(1_000), now: Self.t0)
+        let first = log
+        log.note(reading(1_060), now: Self.t0)
+        #expect(log == first, "a minute later, nothing to write")
+        log.note(reading(1_000 + AquariumFleetLog.restampAfter), now: Self.t0)
+        #expect(log.weekly["c|weekly"]?.observedAt == 1_000 + AquariumFleetLog.restampAfter)
+        let moved = AquariumFleetFacts(weekly: ["c|weekly": AquariumWeeklyReading(usedPct: 41, resetsAt: 9e9, observedAt: 1_700)])
+        log.note(moved, now: Self.t0)
+        #expect(log.weekly["c|weekly"]?.usedPct == 41, "a moved reading always lands")
+    }
+}
