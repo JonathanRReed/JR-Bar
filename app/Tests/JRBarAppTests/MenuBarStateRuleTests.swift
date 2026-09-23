@@ -137,6 +137,10 @@ struct MenuBarStateRuleTests {
         var scene: String? = "calm"
         var before: String?
         var quiet: [Int] = []
+        /// The daemon's override slot as the rule reads it, and the
+        /// quiets put back ("mode:seconds").
+        var current: MenuBarQuiet?
+        var restored: [String] = []
         var layers = 0
         func wire(_ runner: MenuBarStateRunner, rules: [MenuBarStateRule]) {
             runner.rules = { rules }
@@ -145,6 +149,8 @@ struct MenuBarStateRuleTests {
             runner.sceneBeforeRule = { [unowned self] in self.before }
             runner.setSceneBeforeRule = { [unowned self] in self.before = $0 }
             runner.quietAgents = { [unowned self] in self.quiet.append($0) }
+            runner.currentQuiet = { [unowned self] in self.current }
+            runner.restoreQuiet = { [unowned self] in self.restored.append("\($0):\($1)") }
             runner.onLayersChange = { [unowned self] in self.layers += 1 }
         }
     }
@@ -208,6 +214,105 @@ struct MenuBarStateRuleTests {
         #expect(recorder.quiet == [MenuBarStateRunner.quietLeaseSeconds, 0])
         #expect(recorder.layers == 2)
         #expect(runner.outcome == MenuBarStateOutcome())
+    }
+
+    /// The daemon's echo of a lease taken at `at`.
+    private func leaseEcho(at date: Date) -> MenuBarQuiet {
+        MenuBarQuiet(mode: "pause",
+                     until: date.timeIntervalSince1970 + Double(MenuBarStateRunner.quietLeaseSeconds) + 0.4)
+    }
+
+    @MainActor
+    @Test("a quiet of yours that outlasts the lease runs on; a shorter one comes back after the rule")
+    func quietKeepsYours() {
+        let t0 = Date(timeIntervalSince1970: 10_000)
+        let epoch = t0.timeIntervalSince1970
+        let rules = [rule(.microphoneLive, [.quietAgents])]
+        // Two hours of Dim set by hand: no lease, and nothing ended.
+        let long = MenuBarStateRunner()
+        let yours = Recorder()
+        yours.wire(long, rules: rules)
+        yours.current = MenuBarQuiet(mode: "dim", until: epoch + 7200)
+        long.absorb(.micInUse(true), now: t0)
+        long.holdQuiet(now: t0.addingTimeInterval(600))
+        long.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
+        #expect(yours.quiet.isEmpty && yours.restored.isEmpty)
+        // Five minutes of Mute: the lease replaces it, and it comes back
+        // with the time it had left — no 0 in between.
+        let short = MenuBarStateRunner()
+        let mute = Recorder()
+        mute.wire(short, rules: rules)
+        mute.current = MenuBarQuiet(mode: "mute", until: epoch + 300)
+        short.absorb(.micInUse(true), now: t0)
+        #expect(mute.quiet == [MenuBarStateRunner.quietLeaseSeconds])
+        mute.current = leaseEcho(at: t0)
+        short.absorb(.micInUse(false), now: t0.addingTimeInterval(60))
+        #expect(mute.restored == ["mute:240"])
+        #expect(mute.quiet == [MenuBarStateRunner.quietLeaseSeconds])
+        // Twenty minutes of Dim runs down under the rule: the renewal
+        // takes the lease before it ends, and puts the rest back after.
+        let fading = MenuBarStateRunner()
+        let dim = Recorder()
+        dim.wire(fading, rules: rules)
+        dim.current = MenuBarQuiet(mode: "dim", until: epoch + 1200)
+        fading.absorb(.micInUse(true), now: t0)
+        #expect(dim.quiet.isEmpty)
+        fading.holdQuiet(now: t0.addingTimeInterval(600))
+        #expect(dim.quiet == [MenuBarStateRunner.quietLeaseSeconds])
+        dim.current = leaseEcho(at: t0.addingTimeInterval(600))
+        fading.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
+        #expect(dim.restored == ["dim:500"])
+        // A rule that ends before the daemon's echo lands still puts
+        // yours back.
+        let quick = MenuBarStateRunner()
+        let blink = Recorder()
+        blink.wire(quick, rules: rules)
+        blink.current = MenuBarQuiet(mode: "mute", until: epoch + 300)
+        quick.absorb(.micInUse(true), now: t0)
+        quick.absorb(.micInUse(false), now: t0.addingTimeInterval(0.2))
+        #expect(blink.restored == ["mute:300"])
+    }
+
+    @MainActor
+    @Test("a quiet changed or ended by hand mid-rule is yours: no renewal, nothing ended after")
+    func quietChangedByHand() {
+        let t0 = Date(timeIntervalSince1970: 10_000)
+        let epoch = t0.timeIntervalSince1970
+        let rules = [rule(.microphoneLive, [.quietAgents])]
+        let lease = MenuBarStateRunner.quietLeaseSeconds
+        // The lease renews while it is the quiet in force, and ends after.
+        let steady = MenuBarStateRunner()
+        let ours = Recorder()
+        ours.wire(steady, rules: rules)
+        steady.absorb(.micInUse(true), now: t0)
+        ours.current = leaseEcho(at: t0)
+        steady.holdQuiet(now: t0.addingTimeInterval(600))
+        #expect(ours.quiet == [lease, lease])
+        ours.current = leaseEcho(at: t0.addingTimeInterval(600))
+        steady.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
+        #expect(ours.quiet == [lease, lease, 0])
+        // An hour of Dim set mid-rule: the renewal stands down and the
+        // rule's end leaves it.
+        let changed = MenuBarStateRunner()
+        let dim = Recorder()
+        dim.wire(changed, rules: rules)
+        changed.absorb(.micInUse(true), now: t0)
+        dim.current = MenuBarQuiet(mode: "dim", until: epoch + 100 + 3600)
+        changed.holdQuiet(now: t0.addingTimeInterval(600))
+        changed.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
+        #expect(dim.quiet == [lease])
+        #expect(dim.restored.isEmpty)
+        // The quiet ended by hand mid-rule stays ended.
+        let ended = MenuBarStateRunner()
+        let off = Recorder()
+        off.wire(ended, rules: rules)
+        off.current = MenuBarQuiet(mode: "mute", until: epoch + 300)
+        ended.absorb(.micInUse(true), now: t0)
+        off.current = nil
+        ended.holdQuiet(now: t0.addingTimeInterval(600))
+        ended.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
+        #expect(off.quiet == [lease])
+        #expect(off.restored.isEmpty, "the Mute the lease replaced is not revived")
     }
 
     // MARK: Through the utility

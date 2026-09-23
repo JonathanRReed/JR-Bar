@@ -457,6 +457,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         menuBarRules.setScene = { [weak effectsStore] scene in effectsStore?.setActiveScene(scene) }
         menuBarRules.quietAgents = { [weak core] seconds in core?.quiet(mode: "dnd", seconds: seconds) }
+        // The lease shares the daemon's one override slot with a quiet
+        // set by hand: the rule reads it to leave yours standing.
+        menuBarRules.currentQuiet = { [weak core] in
+            guard let focus = core?.state?.focus, focus.source == "override",
+                  let mode = focus.mode, mode != "off", let until = focus.until else { return nil }
+            return MenuBarQuiet(mode: mode, until: until)
+        }
+        menuBarRules.quietKnown = { [weak core] in core?.isLive == true }
+        menuBarRules.restoreQuiet = { [weak core] mode, seconds in core?.quiet(mode: mode, seconds: seconds) }
 
         let deckStore = DeckStore(core: core)
         let controlCenterWindow = ControlCenterWindowController(store: deckStore)
