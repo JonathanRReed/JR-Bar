@@ -231,6 +231,15 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public var speciesOverrides: [String: String]
     /// Where the day/night wash takes its clock from.
     public var dayNight: DayNightMode
+    /// The idle screensaver: after this many minutes without input the
+    /// tank fills every free screen until the next touch. 0 is off.
+    public var idleFillMinutes: Int = 0
+    /// The live wallpaper: the display (by its name) the tank lives on
+    /// behind every window, click-through. nil is off.
+    public var ambientDisplay: String? = nil
+
+    /// The screensaver's choices, in minutes; 0 is off.
+    public static let idleFillChoices = [0, 5, 10, 15, 30]
 
     public init(enabled: Bool = false, showLabels: Bool = true, density: Double = 1.0,
                 speciesOverrides: [String: String] = [:],
@@ -244,6 +253,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, showLabels, density, speciesOverrides, dayNight
+        case idleFillMinutes, ambientDisplay
     }
 
     public init(from decoder: any Decoder) throws {
@@ -255,6 +265,10 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         speciesOverrides = raw.filter { FishSpecies(rawValue: $0.value) != nil }
         let dayNightRaw = (try? c.decodeIfPresent(String.self, forKey: .dayNight)) ?? nil
         dayNight = dayNightRaw.flatMap(DayNightMode.init(rawValue:)) ?? .realTime
+        let idle = (try? c.decodeIfPresent(Int.self, forKey: .idleFillMinutes)) ?? 0
+        idleFillMinutes = Self.idleFillChoices.contains(idle) ? idle : 0
+        let display = (try? c.decodeIfPresent(String.self, forKey: .ambientDisplay)) ?? nil
+        ambientDisplay = display?.isEmpty == false ? display : nil
     }
 
     /// What `provider` swims as: the user's pick when one is stored,

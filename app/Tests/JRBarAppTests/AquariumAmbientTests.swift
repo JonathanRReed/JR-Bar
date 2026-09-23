@@ -1,0 +1,101 @@
+import Foundation
+import Testing
+import JRBarCore
+@testable import JRBarApp
+
+/// The tank outside its window: the live wallpaper's picker and the idle
+/// screensaver's rules. The panels themselves need a screen; the rules
+/// that decide when they show are pure and pinned here.
+@Suite("Aquarium ambient")
+struct AquariumAmbientTests {
+    @Test("the idle clock alone: at or past the minutes, never when off")
+    func idleClock() {
+        #expect(AquariumScreensaver.isIdle(idleSeconds: 600, minutes: 10))
+        #expect(AquariumScreensaver.isIdle(idleSeconds: 601, minutes: 10))
+        #expect(!AquariumScreensaver.isIdle(idleSeconds: 599, minutes: 10))
+        #expect(!AquariumScreensaver.isIdle(idleSeconds: 99_999, minutes: 0), "0 is off")
+        #expect(!AquariumScreensaver.isIdle(idleSeconds: .infinity, minutes: 5))
+        #expect(!AquariumScreensaver.isIdle(idleSeconds: .nan, minutes: 5))
+    }
+
+    @Test("the room vetoes: a lock screen, someone watching, no free screen")
+    func roomVetoes() {
+        func show(locked: Bool = false, watching: Bool = false, free: Int = 1) -> Bool {
+            AquariumScreensaver.shouldShow(idleSeconds: 900, minutes: 10, locked: locked,
+                                           someoneWatching: watching, freeScreens: free)
+        }
+        #expect(show())
+        #expect(!show(locked: true))
+        #expect(!show(watching: true))
+        #expect(!show(free: 0), "every screen is a fullscreen app's")
+        #expect(!AquariumScreensaver.shouldShow(idleSeconds: 60, minutes: 10, locked: false,
+                                                someoneWatching: false, freeScreens: 2))
+    }
+
+    @Test("input since showing: the idle clock fell behind the time it's been up")
+    func inputSinceShowing() {
+        // Up for 30 s and idle for 630: nobody touched it.
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 630, shownFor: 30))
+        // The poll's own jitter is not a touch.
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 29.9, shownFor: 30))
+        // A key two seconds ago.
+        #expect(AquariumScreensaver.inputSinceShowing(idleSeconds: 2, shownFor: 30))
+    }
+
+    @Test("a video or a call holding the display is watching; our own keep-awake isn't")
+    func watching() {
+        typealias A = AquariumScreensaver.Assertion
+        let own: Int32 = 42
+        #expect(AquariumScreensaver.isWatching(
+            [A(pid: 7, process: "IINA", type: "PreventUserIdleDisplaySleep")], ownPID: own))
+        #expect(!AquariumScreensaver.isWatching(
+            [A(pid: 9, process: "caffeinate", type: "PreventUserIdleDisplaySleep")], ownPID: own),
+            "JR-Bar's keep-display-awake is the reason the screen is lit")
+        #expect(!AquariumScreensaver.isWatching(
+            [A(pid: own, process: "JR-Bar", type: "PreventUserIdleDisplaySleep")], ownPID: own))
+        #expect(!AquariumScreensaver.isWatching(
+            [A(pid: 7, process: "backupd", type: "PreventUserIdleSystemSleep")], ownPID: own),
+            "keeping the system up is not watching the screen")
+        #expect(!AquariumScreensaver.isWatching([], ownPID: own))
+    }
+
+    @Test("the wallpaper picker lists each display once, and keeps an unplugged pick")
+    func displayChoices() {
+        #expect(AquariumWallpaper.displayChoices(connected: ["Built-in", "LG", "LG"], saved: nil)
+                == ["Built-in", "LG"])
+        #expect(AquariumWallpaper.displayChoices(connected: ["Built-in"], saved: "Studio Display")
+                == ["Built-in", "Studio Display"])
+        #expect(AquariumWallpaper.displayChoices(connected: ["Built-in", "LG"], saved: "LG")
+                == ["Built-in", "LG"])
+    }
+
+    @Test("both switches default off, round-trip, and read tolerantly")
+    func settings() throws {
+        let fresh = AquariumSettings()
+        #expect(fresh.idleFillMinutes == 0)
+        #expect(fresh.ambientDisplay == nil)
+
+        var on = AquariumSettings(enabled: true)
+        on.idleFillMinutes = 15
+        on.ambientDisplay = "LG UltraFine"
+        let back = try JSONDecoder().decode(AquariumSettings.self,
+                                            from: JSONEncoder().encode(on))
+        #expect(back == on)
+
+        func decode(_ json: String) throws -> AquariumSettings {
+            try JSONDecoder().decode(AquariumSettings.self, from: Data(json.utf8))
+        }
+        // A file from before either existed.
+        let old = try decode(#"{"enabled": true, "density": 0.5}"#)
+        #expect(old.idleFillMinutes == 0 && old.ambientDisplay == nil)
+        #expect(old.density == 0.5)
+        // A minute count the picker never offers is off, not a surprise.
+        #expect(try decode(#"{"idleFillMinutes": 7}"#).idleFillMinutes == 0)
+        #expect(try decode(#"{"idleFillMinutes": "ten"}"#).idleFillMinutes == 0)
+        #expect(try decode(#"{"idleFillMinutes": 30}"#).idleFillMinutes == 30)
+        // An empty or mistyped display name is no display.
+        #expect(try decode(#"{"ambientDisplay": ""}"#).ambientDisplay == nil)
+        #expect(try decode(#"{"ambientDisplay": 3, "showLabels": false}"#).ambientDisplay == nil)
+        #expect(try decode(#"{"ambientDisplay": 3, "showLabels": false}"#).showLabels == false)
+    }
+}

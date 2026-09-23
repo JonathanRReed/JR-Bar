@@ -49,6 +49,9 @@ final class AquariumToy: Toy {
 
     @ObservationIgnored private var windowController: AquariumWindowController?
     @ObservationIgnored private var gameTimer: Timer?
+    /// The tank outside its window: the live wallpaper and the idle
+    /// screensaver, both opt-in from the card.
+    @ObservationIgnored private var ambient: AquariumAmbientController?
 
     init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumSaveFile()) {
         self.core = core
@@ -74,6 +77,26 @@ final class AquariumToy: Toy {
         // Left on at quit: the tank comes back at launch, without
         // stealing focus for it.
         if isOn { present(activate: false) }
+        observeAmbientSettings()
+    }
+
+    /// The wallpaper and the screensaver follow their two settings; the
+    /// controller only exists once either is on.
+    private func observeAmbientSettings() {
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        withObservationTracking {
+            _ = store?.state.aquarium.idleFillMinutes
+            _ = store?.state.aquarium.ambientDisplay
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observeAmbientSettings() }
+        }
+        if settings.idleFillMinutes > 0 || settings.ambientDisplay != nil {
+            if ambient == nil { ambient = AquariumAmbientController(toy: self) }
+            ambient?.sync()
+        } else if let ambient {
+            ambient.tearDown()
+            self.ambient = nil
+        }
     }
 
     /// The tick runs exactly while the toy is on.
@@ -149,6 +172,33 @@ final class AquariumToy: Toy {
                     SettingLabel(title: "Fill screen", subtitle: "The tank covers the whole screen. Esc leaves.")
                 }
                 LabeledContent {
+                    Picker("", selection: ambientDisplay) {
+                        Text("Off").tag(String?.none)
+                        let connected = NSScreen.screens.map(\.localizedName)
+                        ForEach(AquariumWallpaper.displayChoices(
+                            connected: connected,
+                            saved: store?.state.aquarium.ambientDisplay), id: \.self) { name in
+                            Text(connected.contains(name) ? name : "\(name) (not connected)")
+                                .tag(String?.some(name))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                } label: {
+                    SettingLabel(title: "Live wallpaper", subtitle: "The tank behind every window on a display, click-through. Draws while you can see it.")
+                }
+                LabeledContent {
+                    Picker("", selection: idleFillMinutes) {
+                        ForEach(AquariumSettings.idleFillChoices, id: \.self) { minutes in
+                            Text(minutes == 0 ? "Off" : "After \(minutes) min").tag(minutes)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                } label: {
+                    SettingLabel(title: "Screensaver", subtitle: "Idle that long, the tank fills your screens until you're back — never over a video, a call or a fullscreen app.")
+                }
+                LabeledContent {
                     Text(fact)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -195,6 +245,16 @@ final class AquariumToy: Toy {
     private var density: Binding<Double> {
         Binding(get: { self.store?.state.aquarium.density ?? 1 },
                 set: { self.store?.state.aquarium.density = $0 })
+    }
+
+    private var ambientDisplay: Binding<String?> {
+        Binding(get: { self.store?.state.aquarium.ambientDisplay },
+                set: { self.store?.state.aquarium.ambientDisplay = $0 })
+    }
+
+    private var idleFillMinutes: Binding<Int> {
+        Binding(get: { self.store?.state.aquarium.idleFillMinutes ?? 0 },
+                set: { self.store?.state.aquarium.idleFillMinutes = $0 })
     }
 
     private var dayNight: Binding<DayNightMode> {

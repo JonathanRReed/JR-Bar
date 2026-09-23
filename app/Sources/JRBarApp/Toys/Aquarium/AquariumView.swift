@@ -65,15 +65,28 @@ struct AquariumView: View {
         }
     }
 
-    init(toy: AquariumToy) {
+    init(toy: AquariumToy, ambient: Bool = false) {
         self.toy = toy
         self.fixture = nil
+        self.ambient = ambient
     }
 
     init(fixture: Fixture) {
         self.toy = nil
         self.fixture = fixture
+        self.ambient = false
     }
+
+    /// The tank as scenery rather than a window: the live wallpaper on a
+    /// second display, or the idle screensaver. No chrome (no pearl
+    /// count, shop or inspector — nobody is going to click it), its own
+    /// covered-or-not pause instead of the window's, and it leaves the
+    /// visitor queue to the real window so a parade is never counted
+    /// twice.
+    private let ambient: Bool
+    /// The ambient panel's own visibility — a live wallpaper under a
+    /// stack of windows draws nothing.
+    @ViewState private var ambientVisible = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// W14's selection: the tapped fish's id, cleared when it leaves
@@ -89,7 +102,8 @@ struct AquariumView: View {
         let fish = toy?.fish ?? fixture?.fish ?? []
         let showLabels = toy?.store?.state.aquarium.showLabels ?? fixture?.showLabels ?? true
         let density = max(0.1, toy?.store?.state.aquarium.density ?? fixture?.density ?? 1)
-        let paused = toy?.windowOccluded ?? fixture?.paused ?? false
+        let paused = ambient ? !ambientVisible
+            : (toy?.windowOccluded ?? fixture?.paused ?? false)
         ZStack {
             // The still tank: water, sand and every decor piece that
             // doesn't sway. A slow two-second tick lets the day/night
@@ -309,7 +323,7 @@ struct AquariumView: View {
             // The idle game's chrome (docs/TOYS.md): a pearl count &
             // streak up top, feed & shop buttons, the "while you were
             // away" card on reopen, and a small toast for game moments.
-            if toy != nil {
+            if toy != nil, !ambient {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
                         if let game = toy?.game {
@@ -493,6 +507,9 @@ struct AquariumView: View {
         })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.02, green: 0.07, blue: 0.25))
+        .background {
+            if ambient { WindowVisibilityReader { ambientVisible = $0 } }
+        }
     }
 
     /// Where the pointer is and which fish it is over. A plain
@@ -4273,7 +4290,7 @@ struct AquariumView: View {
         // Claim the queue's head when the lane is free. The claim lands
         // on `activeVisitor` now; the game's `visitorShown` waits for
         // the post-pass drain like every draw-time event.
-        if motion.activeVisitor == nil, now >= motion.visitorCooldownUntil,
+        if !ambient, motion.activeVisitor == nil, now >= motion.visitorCooldownUntil,
            let next = game?.pendingVisitors.first {
             motion.activeVisitor = (next, now)
             motion.pendingEvents.append(.visitorShown(next))
