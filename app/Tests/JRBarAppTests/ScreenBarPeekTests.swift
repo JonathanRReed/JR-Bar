@@ -66,6 +66,37 @@ struct ScreenBarPeekTests {
                 "the run growing is the same ear still dismissed")
     }
 
+    // MARK: When hiding stops
+
+    @Test func onlyARealFailureIsAnAlert() throws {
+        let failing = try #require(MenuBarEarFeed.failure(for: .concealerFailing, osMajor: 27))
+        #expect(failing == MenuBarEngineHealth.concealerFailing.line(), "the card's own reason, in the peek")
+        #expect(MenuBarEarFeed.failure(for: .spacer(.frameworkMissing), osMajor: 27)?
+                    .contains("spacer engine") == true, "a 27 point release that lost the framework")
+        #expect(MenuBarEarFeed.failure(for: .spacer(.frameworkMissing), osMajor: 26) == nil,
+                "on macOS 26 the spacer engine is simply the engine")
+        for calm: MenuBarEngineHealth in [.parked, .concealer(hidden: 3), .concealer(hidden: 0), .concealerStarting,
+                                          .spacer(.forced), .spacer(.notNotarized), .spacer(.pending)] {
+            #expect(MenuBarEarFeed.failure(for: calm, osMajor: 27) == nil, "\(calm) is no failure")
+        }
+    }
+
+    @Test func aFailureTakesTheEarInTheAlertTone() throws {
+        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
+        let marks = ScreenBarMenuBarMarks(hiddenCount: 4, failure: "The concealer is failing")
+        let dressed = ScreenBarMenuBarMarks.apply(marks, to: ScreenBarWings(left: nil, right: meter))
+        let right = try #require(dressed.right)
+        #expect(right.symbol == ScreenBarMenuBarMarks.failureSymbol, "the menu bar's own mark")
+        #expect(right.tone == .alert)
+        #expect(right.dots == 0 && right.meter == nil, "one mark, not a stack of them")
+        #expect(right.text == "The concealer is failing", "the reason is VoiceOver's and the peek's")
+        #expect(!ScreenBarController.sameWingSubject(right, meter), "a failure revives a dismissed meter ear")
+        #expect(right.symbol != "exclamationmark.triangle.fill", "never mistaken for the band's refused program")
+        // With the reason alone, the ear still opens a peek to say it.
+        #expect(!MenuBarEarFeed(failure: "why").isEmpty)
+        #expect(ScreenBarMenuBarMarks(feed: MenuBarEarFeed(failure: "why")).failure == "why")
+    }
+
     // MARK: The feed
 
     @Test func theFeedTilesTheItemBarsItemsWithTheirFaces() {

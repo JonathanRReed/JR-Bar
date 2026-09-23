@@ -1064,6 +1064,7 @@ final class ScreenBarController {
     private func syncPeekModel() {
         let tiles = menuBarFeed?.hidden ?? []
         if peek.model.tiles != tiles { peek.model.tiles = tiles }
+        if peek.model.failure != menuBarFeed?.failure { peek.model.failure = menuBarFeed?.failure }
         let width = ScreenBarPeekLayout.width(tileWidths: tiles.map(\.width), hasWords: peek.model.hasWords)
         if peek.model.width != width { peek.model.width = width }
     }

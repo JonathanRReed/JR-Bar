@@ -2628,6 +2628,9 @@ final class MenuBarUtility: Toy {
         refreshChevron()
         updateIconMirror()
         engineVersion += 1
+        // An assertion refused or recovered: the ear's alert follows at
+        // once, not on the next plan pass.
+        refreshEarFeed()
     }
 
     // MARK: The glyph camera
@@ -3834,8 +3837,12 @@ final class MenuBarUtility: Toy {
             if earFeed != nil { earFeed = nil }
             return
         }
-        let feed = MenuBarEarFeed(hidden: MenuBarEarFeed.tiles(
-            barItems(), face: { self.glyphFace(for: $0) }, changed: bar.updatedIDs))
+        let feed = MenuBarEarFeed(
+            hidden: MenuBarEarFeed.tiles(barItems(), face: { self.glyphFace(for: $0) },
+                                         changed: bar.updatedIDs),
+            failure: MenuBarEarFeed.failure(
+                for: engineHealth,
+                osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
         if feed != earFeed { earFeed = feed }
     }
 

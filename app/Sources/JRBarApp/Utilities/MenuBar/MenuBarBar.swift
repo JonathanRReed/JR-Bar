@@ -295,9 +295,29 @@ struct MenuBarEarFeed: Equatable {
 
     /// The hidden and always-hidden runs, in the Item Bar's order.
     var hidden: [Tile] = []
+    /// Why hiding stopped, in the peek's words — the ear's alert mark
+    /// stands while it is set. nil while the engine is healthy.
+    var failure: String?
 
     /// Whether there is anything of the menu bar's for the ear to show.
-    var isEmpty: Bool { hidden.isEmpty }
+    var isEmpty: Bool { hidden.isEmpty && failure == nil }
+
+    /// The failure worth an alert on the ear, or nil. Only two states
+    /// are one: macOS refusing every assertion (nothing is hidden, the
+    /// real icon is back), and the concealer's framework missing on a
+    /// macOS that ships it — a point release that renamed it. On macOS
+    /// 26 the spacer engine is simply the engine, and a forced or
+    /// unnotarized spacer is the person's own choice: no alert.
+    nonisolated static func failure(for health: MenuBarEngineHealth, osMajor: Int) -> String? {
+        switch health {
+        case .concealerFailing:
+            return health.line()
+        case .spacer(.frameworkMissing) where osMajor >= 27:
+            return "macOS's concealer didn't load on this Mac, so hiding fell back to the spacer engine — a macOS update may have moved it."
+        default:
+            return nil
+        }
+    }
 
     /// The feed for `items` — the Item Bar's own tiles, each wearing the
     /// face the cache holds for it.

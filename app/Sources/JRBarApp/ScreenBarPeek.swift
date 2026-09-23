@@ -29,17 +29,28 @@ enum ScreenBarPeekIntent: Equatable {
 /// The menu bar's say on the right ear, read off `MenuBarEarFeed`: while
 /// items are tucked away and nothing else claims the side, a resting mark
 /// of one to three dots holds the ear — the peek's home — so the reveal
-/// surface is there whenever there is something to reveal.
+/// surface is there whenever there is something to reveal. When hiding
+/// stops working the ear says so in the alert tone, and its peek says why.
 struct ScreenBarMenuBarMarks: Equatable {
     /// How many hidden items the feed tiles.
     var hiddenCount = 0
+    /// Why hiding stopped — the alert mark's VoiceOver words; nil while
+    /// the engine is healthy.
+    var failure: String?
 
-    init(hiddenCount: Int = 0) {
+    /// The alert mark: the menu bar itself, in the failed tone — the
+    /// subject, not a generic warning, so it never reads as the band's
+    /// refused program.
+    static let failureSymbol = "menubar.rectangle"
+
+    init(hiddenCount: Int = 0, failure: String? = nil) {
         self.hiddenCount = hiddenCount
+        self.failure = failure
     }
 
     init(feed: MenuBarEarFeed?) {
         hiddenCount = feed?.hidden.count ?? 0
+        failure = feed?.failure
     }
 
     /// The resting mark's weight: one dot for a few, two for a handful,
@@ -58,12 +69,16 @@ struct ScreenBarMenuBarMarks: Equatable {
         count == 1 ? "1 menu bar item tucked away" : "\(count) menu bar items tucked away"
     }
 
-    /// `wings` with the menu bar's marks on the right ear. The resting
-    /// dots only fill an empty side: the meter, the media ear and a
-    /// device beat all keep it, and their ear still opens the peek.
+    /// `wings` with the menu bar's marks on the right ear. A failure
+    /// takes the side from whatever ambient mark held it — hiding
+    /// stopped, and the person should see that where they look. The
+    /// resting dots only fill an empty side: the meter, the media ear
+    /// and a device beat all keep it, and their ear still opens the peek.
     static func apply(_ marks: ScreenBarMenuBarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
         var dressed = wings
-        if dressed.right == nil, marks.hiddenCount > 0 {
+        if let failure = marks.failure {
+            dressed.right = ScreenBarWingSlot(text: failure, symbol: failureSymbol, tone: .alert)
+        } else if dressed.right == nil, marks.hiddenCount > 0 {
             dressed.right = ScreenBarWingSlot(text: hiddenWords(marks.hiddenCount),
                                               dots: dots(hiddenCount: marks.hiddenCount))
         }
@@ -129,22 +144,38 @@ enum ScreenBarPeekLayout {
 @Observable
 final class ScreenBarPeekModel {
     var tiles: [MenuBarEarFeed.Tile] = []
+    /// Why hiding stopped, when it has — the alert mark's reason.
+    var failure: String?
     var width: CGFloat = ScreenBarPeekLayout.width(tileWidths: [], hasWords: false)
     /// A glyph was clicked: open that item the Item Bar's way.
     @ObservationIgnored var onOpen: @MainActor (String) -> Void = { _ in }
 
     /// Whether the peek carries sentences, which set its floor width.
-    var hasWords: Bool { false }
+    var hasWords: Bool { failure != nil }
 }
 
-/// The peek's face: notch black, the hidden glyphs in a row. Template
-/// glyphs are drawn white, as the bar would draw them on a dark
-/// wallpaper; a glyph never photographed shows its app's icon.
+/// The peek's face: notch black — the reason hiding stopped, when it
+/// has, then the hidden glyphs in a row. Template glyphs are drawn
+/// white, as the bar would draw them on a dark wallpaper; a glyph never
+/// photographed shows its app's icon.
 struct ScreenBarPeekView: View {
     let model: ScreenBarPeekModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: ScreenBarPeekLayout.spacing) {
+            if let failure = model.failure {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: ScreenBarMenuBarMarks.failureSymbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.red)
+                        .accessibilityHidden(true)
+                    Text(failure)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
             if !model.tiles.isEmpty {
                 tileRow
             }
