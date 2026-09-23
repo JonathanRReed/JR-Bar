@@ -361,6 +361,9 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// Docked, the buddy wears the Screen Bar's colour while a program
     /// is published, instead of its own resting tint. On by default.
     public var wearsStripColor: Bool = true
+    /// Floating, it takes the odd calm walk along a window's top edge
+    /// while the agents work, then comes home. On by default.
+    public var walkabout: Bool = true
 
     /// The size slider's reach — 1× is the docked size, 3× is desk-pet.
     public static let scaleRange: ClosedRange<Double> = 1.0...3.0
@@ -408,7 +411,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
-        case wearsStripColor
+        case wearsStripColor, walkabout
     }
 
     public init(from decoder: any Decoder) throws {
@@ -426,6 +429,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         // Missing or mistyped is 1×; a number outside the dial clamps.
         scale = Self.clampedScale((try? c.decodeIfPresent(Double.self, forKey: .scale)) ?? 1.0)
         wearsStripColor = (try? c.decodeIfPresent(Bool.self, forKey: .wearsStripColor)) ?? true
+        walkabout = (try? c.decodeIfPresent(Bool.self, forKey: .walkabout)) ?? true
     }
 }
 

@@ -96,6 +96,13 @@ final class NotchBuddyToy: Toy {
         return isTucked ? .paused("Tucked away") : .on
     }
 
+    /// The floating buddy's walkabout (`BuddyStroll`) is allowed.
+    var takesWalks: Bool { store?.state.notchBuddy.walkabout ?? true }
+    /// Which way it faces while strolling along an edge (+1 right, -1
+    /// left); nil the rest of the time. The free panel sets it at each
+    /// leg, never per frame.
+    var strollHeading: Double?
+
     /// Where the buddy is in life, from the crumbs it has eaten.
     var stage: BuddyStage {
         BuddyStage.of(crumbs: store?.state.notchBuddy.care.crumbsEaten ?? 0)
@@ -779,6 +786,12 @@ final class NotchBuddyToy: Toy {
                                            action: #selector(BuddyMenuActions.toggleCaption))
         captionItem.state = showsCaption ? .on : .off
         menu.addItem(captionItem)
+        if isFree {
+            let walkItem = menuActions.item(title: "Take walks",
+                                            action: #selector(BuddyMenuActions.toggleWalkabout))
+            walkItem.state = takesWalks ? .on : .off
+            menu.addItem(walkItem)
+        }
         menu.addItem(.separator())
         menu.addItem(menuActions.item(title: "Tuck away", action: #selector(BuddyMenuActions.tuck)))
         return menu
@@ -1124,5 +1137,6 @@ final class BuddyMenuActions: NSObject {
     }
 
     @objc func toggleCaption(_ sender: Any?) { toy?.toggleCaption() }
+    @objc func toggleWalkabout(_ sender: Any?) { toy?.store?.state.notchBuddy.walkabout.toggle() }
     @objc func tuck(_ sender: Any?) { toy?.tuckAway() }
 }

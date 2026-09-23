@@ -289,16 +289,129 @@ final class BuddyPanel: NSPanel {
             .insetBy(dx: 2, dy: 2)
         let centre = BuddyPlacement.clampedCenter(
             point, size: NSSize(width: width, height: height), inside: visible)
+        // Out on a walk from this very spot: the walk keeps the frame.
+        // Anywhere else (re-parked, resized) ends the walk here.
+        if stroll != nil {
+            if home == centre, frame.size == NSSize(width: width, height: height) { return }
+            endStroll()
+        }
+        home = centre
+        homeVisible = visible
         setFrame(NSRect(x: (centre.x - width / 2).rounded(),
                         y: (centre.y - height / 2).rounded(),
                         width: width, height: height), display: true)
         orderFrontRegardless()
         animator().alphaValue = 1
+        armWalkabout()
     }
 
     func dismiss() {
+        endStroll()
+        beat?.invalidate()
+        beat = nil
+        home = nil
         alphaValue = 0
         orderOut(nil)
+    }
+
+    // MARK: Walkabout
+
+    /// The parked centre, and the screen area it was clamped into.
+    private var home: CGPoint?
+    private var homeVisible: CGRect = .zero
+    /// The walk in progress, and when (uptime) it set off.
+    private var stroll: (plan: BuddyStroll, began: TimeInterval)?
+    private var strollTimer: Timer?
+    /// The once-a-minute decision beat, alive while the panel shows.
+    private var beat: Timer?
+    private var lastStrollAt = ProcessInfo.processInfo.systemUptime
+    private var lastLedgeLook: TimeInterval = 0
+
+    private func armWalkabout() {
+        guard beat == nil else { return }
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.considerStroll() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        beat = timer
+    }
+
+    private func considerStroll() {
+        guard stroll == nil, isVisible, let home, let toy = model.toy, toy.isOn, toy.isFree,
+              toy.takesWalks, !toy.isTucked else { return }
+        let digest = toy.sessionDigest()
+        let now = ProcessInfo.processInfo.systemUptime
+        guard BuddyStroll.shouldStroll(
+            working: digest.working, waiting: digest.waiting, failed: digest.failed,
+            dragging: toy.isDragged || buddyDrag?.inProgress == true,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            sinceLast: now - lastStrollAt, roll: Double.random(in: 0..<1)),
+              let plan = BuddyStroll.plan(home: home, size: frame.size, visible: homeVisible,
+                                          windows: BuddyStroll.windowFrames(),
+                                          rightward: Bool.random())
+        else { return }
+        begin(plan)
+    }
+
+    private func begin(_ plan: BuddyStroll) {
+        strollTimer?.invalidate()
+        let now = ProcessInfo.processInfo.systemUptime
+        stroll = (plan, now)
+        lastLedgeLook = now
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stepStroll() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        strollTimer = timer
+    }
+
+    /// One frame of the walk: the panel moves, the pose faces the way
+    /// it goes. A carry, an ask or a vanished edge sends it home.
+    private func stepStroll() {
+        guard let (plan, began) = stroll, let home, let toy = model.toy else { endStroll(); return }
+        if toy.isDragged || buddyDrag?.inProgress == true {
+            // The carry owns the frame now; the drop parks it.
+            endStroll(reframe: false)
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = now - began
+        // Once a second: still nothing asking, and the edge still there.
+        if now - lastLedgeLook >= 1, plan.legs.count > 1 {
+            lastLedgeLook = now
+            let digest = toy.sessionDigest()
+            if digest.waiting > 0 || digest.failed > 0 || digest.working == 0
+                || !toy.isOn || !toy.isFree
+                || !BuddyStroll.ledgeStands(plan.ledge, in: BuddyStroll.windowFrames()) {
+                let here = CGPoint(x: frame.midX, y: frame.midY)
+                stroll = (BuddyStroll.homeward(from: here, home: home), now)
+                toy.strollHeading = nil
+                return
+            }
+        }
+        guard let point = plan.point(at: elapsed) else {
+            endStroll()
+            return
+        }
+        let heading = plan.heading(at: elapsed)
+        if toy.strollHeading != heading { toy.strollHeading = heading }
+        setFrameOrigin(NSPoint(x: (point.x - frame.width / 2).rounded(),
+                               y: (point.y - frame.height / 2).rounded()))
+    }
+
+    /// Home, and the walk forgotten. `reframe` false leaves the frame to
+    /// whoever took it (a carry).
+    private func endStroll(reframe: Bool = true) {
+        strollTimer?.invalidate()
+        strollTimer = nil
+        guard stroll != nil else { return }
+        stroll = nil
+        lastStrollAt = ProcessInfo.processInfo.systemUptime
+        model.toy?.strollHeading = nil
+        if reframe, let home {
+            setFrameOrigin(NSPoint(x: (home.x - frame.width / 2).rounded(),
+                                   y: (home.y - frame.height / 2).rounded()))
+        }
     }
 }
 

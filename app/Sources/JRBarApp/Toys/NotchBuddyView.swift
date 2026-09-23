@@ -85,7 +85,8 @@ struct NotchBuddyView: View {
                 treatAge: age(of: toy.treatBurstAt, at: context.date),
                 crumbAge: age(of: toy.crumbAt, at: context.date),
                 stride: toy.walkPhase(at: context.date),
-                stage: toy.stage
+                stage: toy.stage,
+                heading: toy.strollHeading
             )
             .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
             .scaleEffect(x: dress.squash.width, y: dress.squash.height, anchor: .bottom)
@@ -337,6 +338,9 @@ struct BuddyFigure: View {
     /// an elder stands a touch taller and wears a longer nightcap with a
     /// gold pom. The roster strip shows every body grown.
     var stage: BuddyStage = .grown
+    /// Strolling along an edge: the way it walks (+1 right, -1 left).
+    /// The patrol and the hops in place give way to a straight walk.
+    var heading: Double? = nil
 
     /// The stage's proportions, applied to the body only — the shadow,
     /// the "!" and the effects keep their places.
@@ -384,6 +388,7 @@ struct BuddyFigure: View {
     }
 
     private var movingPose: Pose {
+        if heading != nil, mood == .pacing || mood == .gathering { return strollPose }
         switch mood {
         case .asleep: return asleepPose
         case .pacing: return pacingPose
@@ -525,6 +530,18 @@ struct BuddyFigure: View {
             pose.lean = leg.dir * (5 - 7 * leg.turn)
             pose.look = CGSize(width: leg.dir * (0.9 - 1.8 * leg.turn), height: -0.2)
         }
+        pose.mouth = .flat
+        return pose
+    }
+
+    /// The walkabout's stride: the patrol's step bob and lean, facing
+    /// one way the whole time — the panel does the travelling.
+    private var strollPose: Pose {
+        var pose = Pose()
+        let dir = heading ?? 1
+        pose.offset.height = -abs(sin(walk * .pi * 2.2)) * 0.6
+        pose.lean = dir * 5
+        pose.look = CGSize(width: dir * 0.9, height: -0.2)
         pose.mouth = .flat
         return pose
     }
