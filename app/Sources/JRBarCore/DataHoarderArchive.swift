@@ -161,6 +161,22 @@ public struct ArchiveSegment: Codable, Sendable, Equatable, Identifiable {
 /// The capture engine's persisted per-file position (catalog v3
 /// `capture_state`). `recordID` is nil on files position-seeded before any
 /// content was stored — pre-existing backlog waits for explicit import.
+/// `DataHoarderArchive.captureHealth()`: what the Overview's archive
+/// chip says about capture.
+public struct ArchiveCaptureHealth: Sendable, Hashable {
+    public var lastCapturedAt: Date?
+    public var gapRecords: Int
+    public var liveRecords: Int
+    public var failures: Int
+
+    public init(lastCapturedAt: Date? = nil, gapRecords: Int = 0, liveRecords: Int = 0, failures: Int = 0) {
+        self.lastCapturedAt = lastCapturedAt
+        self.gapRecords = gapRecords
+        self.liveRecords = liveRecords
+        self.failures = failures
+    }
+}
+
 public struct CaptureStateRow: Sendable, Equatable {
     public var path: String
     public var sourceID: String
@@ -913,6 +929,18 @@ public actor DataHoarderArchive {
 
     public func captureFailureCount() throws -> Int {
         try openCatalogIfPresent()?.captureFailureCount() ?? 0
+    }
+
+    /// The capture's health at a glance — when a segment last landed,
+    /// how many records carry a gap, how many writes failed. Zeros and
+    /// nil for an archive that was never created.
+    public func captureHealth() throws -> ArchiveCaptureHealth {
+        guard let catalog = try openCatalogIfPresent() else { return ArchiveCaptureHealth() }
+        return ArchiveCaptureHealth(
+            lastCapturedAt: try catalog.lastCapturedAt(),
+            gapRecords: try catalog.recordCount(captureState: CaptureState.gap.rawValue),
+            liveRecords: try catalog.recordCount(captureState: CaptureState.live.rawValue),
+            failures: try catalog.captureFailureCount())
     }
 
     public func setMetadata(key: String, value: String) throws {

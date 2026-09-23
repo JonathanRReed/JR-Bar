@@ -169,6 +169,7 @@ final class OverviewStore {
             peers: core.state?.peers ?? [], devices: core.state?.devices ?? [],
             providers: core.state?.usage?.providers ?? [],
             deck: core.state?.deck?.device,
+            hoarder: hoarderHealth,
             minute: Int(now.timeIntervalSince1970 / 60)
         )
         if let cached = linksCache, cached.key == key { return cached.value }
@@ -180,7 +181,8 @@ final class OverviewStore {
             stateAge: key.stateAge, stateStale: key.stateStale,
             localName: Host.current().localizedName ?? "This Mac",
             localSessions: key.localSessions, peers: key.peers,
-            devices: key.devices, providers: key.providers, deck: key.deck
+            devices: key.devices, providers: key.providers, deck: key.deck,
+            hoarder: key.hoarder
         ), now: now)
         linksCache = (key, value)
         return value
@@ -204,6 +206,7 @@ final class OverviewStore {
         var devices: [CoreDevice]
         var providers: [CoreProviderUsage]
         var deck: DeckDevice?
+        var hoarder: OverviewLinkage.HoarderHealth?
         var minute: Int
     }
     @ObservationIgnored private var linksCache: (key: LinksKey, value: [OverviewLink])?
@@ -362,6 +365,7 @@ final class OverviewStore {
 
     private func tick() {
         now = Date()
+        probeHoarderIfDue()
         guard core.isLive else { return }
         // Per id at most every `SessionUsageStore.freshFor`.
         refreshSessionUsage()
@@ -421,6 +425,31 @@ final class OverviewStore {
             }
         } catch {
             self.error = Self.describe(error)
+        }
+    }
+
+    // MARK: Archive capture health
+
+    /// The Data Hoarder's capture health for the connections strip — set
+    /// by the app delegate; answers nil while the utility is off, which
+    /// draws no archive chip.
+    var hoarderProbe: (() async -> OverviewLinkage.HoarderHealth?)?
+    private(set) var hoarderHealth: OverviewLinkage.HoarderHealth?
+    @ObservationIgnored private var hoarderProbedAt = Date.distantPast
+    @ObservationIgnored private var hoarderProbing = false
+    /// A capture is slow-moving; the strip asks this often.
+    static let hoarderProbeInterval: TimeInterval = 30
+
+    func probeHoarderIfDue(force: Bool = false) {
+        guard let hoarderProbe, !hoarderProbing,
+              force || now.timeIntervalSince(hoarderProbedAt) >= Self.hoarderProbeInterval else { return }
+        hoarderProbing = true
+        hoarderProbedAt = now
+        Task { [weak self] in
+            let health = await hoarderProbe()
+            guard let self else { return }
+            self.hoarderProbing = false
+            if self.hoarderHealth != health { self.hoarderHealth = health }
         }
     }
 

@@ -553,6 +553,24 @@ final class DataHoarderCatalog {
         return Int(sqlite3_column_int64(statement, 0))
     }
 
+    /// The newest segment's capture stamp; nil for an empty archive.
+    func lastCapturedAt() throws -> Date? {
+        let statement = try prepare("SELECT MAX(captured_at) FROM segments")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw databaseError() }
+        guard sqlite3_column_type(statement, 0) != SQLITE_NULL else { return nil }
+        return Date(timeIntervalSince1970: sqlite3_column_double(statement, 0))
+    }
+
+    /// Saved records in one capture state.
+    func recordCount(captureState: String) throws -> Int {
+        let statement = try prepare("SELECT COUNT(*) FROM records WHERE capture_state = ?1")
+        defer { sqlite3_finalize(statement) }
+        try bind(captureState, to: statement, at: 1)
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw databaseError() }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+
     // MARK: - FTS index
 
     func ftsInsert(rowid: Int64, text: String) throws {

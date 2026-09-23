@@ -18,7 +18,7 @@ struct OverviewLinkFact: Hashable, Sendable {
 /// could disagree with the rows.
 struct OverviewLink: Identifiable, Hashable, Sendable {
     enum Group: String, Sendable, CaseIterable {
-        case core, nodes, devices, providers
+        case core, nodes, devices, providers, archive
 
         var title: String {
             switch self {
@@ -26,6 +26,7 @@ struct OverviewLink: Identifiable, Hashable, Sendable {
             case .nodes: "Nodes"
             case .devices: "Devices"
             case .providers: "Providers"
+            case .archive: "Archive"
             }
         }
     }
@@ -83,6 +84,20 @@ enum OverviewLinkage {
         var devices: [CoreDevice] = []
         var providers: [CoreProviderUsage] = []
         var deck: DeckDevice?
+        /// The Data Hoarder's capture, while the utility is on; nil draws
+        /// no archive chip.
+        var hoarder: HoarderHealth?
+    }
+
+    /// The Data Hoarder's live capture as the strip reads it: the dials
+    /// the utility holds and what the archive itself last recorded.
+    struct HoarderHealth: Hashable, Sendable {
+        var paused = false
+        /// Capture sources switched on, and how many the engine watches.
+        var sources = 0
+        var watching = 0
+        var fullContent = false
+        var archive = ArchiveCaptureHealth()
     }
 
     static func links(_ s: Snapshot, now: Date = Date()) -> [OverviewLink] {
@@ -91,7 +106,47 @@ enum OverviewLinkage {
         out.append(contentsOf: s.devices.map(deviceLink))
         if let deck = s.deck { out.append(deckLink(deck)) }
         out.append(contentsOf: s.providers.map(providerLink))
+        if let hoarder = s.hoarder { out.append(hoarderLink(hoarder, now: now)) }
         return out
+    }
+
+    // MARK: Archive
+
+    /// A stalled capture shows where the connections are checked: failures
+    /// and gaps warn, a pause or no live source is quiet, and a watching
+    /// capture says how long ago a segment last landed.
+    static func hoarderLink(_ h: HoarderHealth, now: Date) -> OverviewLink {
+        var facts: [OverviewLinkFact] = [
+            .init("Capture", h.paused ? "paused" : (h.watching > 0 ? "watching" : "not watching")),
+            .init("Live sources", h.sources == 0 ? "none switched on" : "\(h.watching) of \(h.sources) watched"),
+            .init("Content", h.fullContent ? "full transcripts" : "structure only (text withheld)"),
+        ]
+        let age = h.archive.lastCapturedAt.map { AgentMonitorFeed.ageText(max(0, now.timeIntervalSince($0))) }
+        if let age { facts.append(.init("Last capture", "\(age) ago")) }
+        if h.archive.liveRecords > 0 { facts.append(.init("Open records", "\(h.archive.liveRecords)")) }
+        if h.archive.failures > 0 { facts.append(.init("Failures", "\(h.archive.failures)")) }
+        if h.archive.gapRecords > 0 { facts.append(.init("Gaps", "\(h.archive.gapRecords) record\(h.archive.gapRecords == 1 ? "" : "s")")) }
+
+        let tone: OverviewLink.Tone
+        let subtitle: String
+        if h.archive.failures > 0 {
+            tone = .warn
+            subtitle = "\(h.archive.failures) failure\(h.archive.failures == 1 ? "" : "s")"
+        } else if h.paused {
+            tone = .idle
+            subtitle = "paused"
+        } else if h.sources == 0 || h.watching == 0 {
+            tone = .idle
+            subtitle = h.sources == 0 ? "no live sources" : "not watching"
+        } else if h.archive.gapRecords > 0 {
+            tone = .warn
+            subtitle = "\(h.archive.gapRecords) gap\(h.archive.gapRecords == 1 ? "" : "s")"
+        } else {
+            tone = .good
+            subtitle = age.map { "captured \($0) ago" } ?? "capturing"
+        }
+        return OverviewLink(id: "archive:data-hoarder", group: .archive, symbol: "archivebox",
+                            title: "Data Hoarder", subtitle: subtitle, tone: tone, facts: facts)
     }
 
     // MARK: Core

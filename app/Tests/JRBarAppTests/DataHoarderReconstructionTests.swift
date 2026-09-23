@@ -231,6 +231,22 @@ struct DataHoarderReconstructionTests {
         #expect(await DataHoarderModel.transcriptHits(in: archive, query: "nothing-like-this").isEmpty)
     }
 
+    @Test func captureHealthCountsWhatTheCatalogRecorded() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(try await archive.captureHealth() == ArchiveCaptureHealth())
+        let record = try await transcriptRecord(in: archive, intent: "ask")
+        var health = try await archive.captureHealth()
+        #expect(health.lastCapturedAt != nil)
+        #expect(health.gapRecords == 0)
+        #expect(health.failures == 0)
+        try await archive.setCaptureState(id: record.id, state: .gap)
+        try await archive.recordCaptureFailure(path: "/tmp/x.jsonl", sourceID: "claude", error: "boom")
+        health = try await archive.captureHealth()
+        #expect(health.gapRecords == 1)
+        #expect(health.failures == 1)
+    }
+
     @Test func gapStateAndSegmentNotesAreSurfaced() async throws {
         let (root, archive) = try makeArchive()
         defer { try? FileManager.default.removeItem(at: root) }

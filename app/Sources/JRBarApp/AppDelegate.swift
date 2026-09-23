@@ -410,6 +410,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
             return await DataHoarderModel.archivedTimeline(in: archive, sessionID: sessionID)
         }
+        overviewStore.hoarderProbe = { [weak utilitiesStore] in
+            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
+            let settings = model.captureSettings
+            return OverviewLinkage.HoarderHealth(
+                paused: settings.paused, sources: settings.enabledSources.count,
+                watching: await model.capture.activeSourceIDs.count, fullContent: settings.fullContent,
+                archive: (try? await model.archive.captureHealth()) ?? ArchiveCaptureHealth())
+        }
         overviewStore.archiveProxyEvidence = { [weak utilitiesStore] sessionID in
             guard let archive = utilitiesStore?.dataHoarder.model.archive else { return [] }
             return await DataHoarderModel.proxyRequests(in: archive, sessionID: sessionID)
