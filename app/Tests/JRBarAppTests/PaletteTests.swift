@@ -250,7 +250,11 @@ struct PaletteTests {
         #expect(controller.handle(.submit))
         #expect(controller.handle(.chord(.secondary)))
         #expect(controller.handle(.chord(.commandShift("h"))))
-        #expect(!controller.handle(.chord(.command("j"))), "an unclaimed chord reaches the field")
+        #expect(controller.handle(.chord(.command("h"))),
+                "an unclaimed ⌘ chord stays in the palette — ⌘H must not hide JR-Bar's windows")
+        #expect(!controller.handle(.chord(PaletteShortcut(.character("a"), .control))),
+                "⌃A is the field's: line start")
+        #expect(!controller.handle(.chord(.command(","))), "⌘, goes on to Settings")
         #expect(controller.handle(.down))
         #expect(controller.handle(.submit))
         #expect(log.ran == ["m:Open", "m:Hide", "m:Always Hide", "s:Open"])

@@ -327,7 +327,9 @@ final class PaletteController {
             case .cancel: model.closeActions()
             case .chord(let chord):
                 if chord == .actionPanel { model.closeActions(); return true }
-                guard let item = model.selected, let action = item.action(for: chord) else { return false }
+                guard let item = model.selected, let action = item.action(for: chord) else {
+                    return unclaimed(chord)
+                }
                 run(action, of: item)
             case .passThrough: return false
             }
@@ -349,13 +351,33 @@ final class PaletteController {
                 run(action, of: item)
                 return true
             }
-            if chord == .command("w") { close(); return true }
-            return false
+            return unclaimed(chord)
         case .passThrough:
             return false
         }
         announceSelection()
         return true
+    }
+
+    /// A chord no verb on the row claims. ⌃ chords are the field's
+    /// (⌃A, ⌃E, ⌃K edit the query). A ⌘ chord is the palette's either
+    /// way: the key window is ours while the frontmost app is not, so
+    /// an unclaimed ⌘H would reach JR-Bar's own menu and hide every
+    /// JR-Bar window — the Screen Bar with them — and ⌘Q would quit
+    /// it. ⌘W and ⌘Q fold the palette; ⌘, folds it and goes on to the
+    /// menu's Settings; the rest do nothing.
+    private func unclaimed(_ chord: PaletteShortcut) -> Bool {
+        guard chord.modifiers.contains(.command) else { return false }
+        switch chord {
+        case .command("w"), .command("q"):
+            close()
+            return true
+        case .command(","):
+            close()
+            return false
+        default:
+            return true
+        }
     }
 
     /// With VoiceOver on, the field keeps focus while ↑/↓ walk the
