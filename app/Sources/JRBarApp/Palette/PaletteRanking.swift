@@ -192,11 +192,15 @@ enum PaletteRanking {
     static func filterActions(_ actions: [PaletteAction], query: String) -> [PaletteAction] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return actions }
-        return actions.enumerated()
-            .compactMap { offset, action in
-                MenuBarCommands.score(trimmed, action.title).map { (action, $0, offset) }
+        // Typed and spelled out: the one-line tuple chain cost the type
+        // checker seconds and times out on a slower runner.
+        var scored: [(action: PaletteAction, score: Int, offset: Int)] = []
+        for (offset, action) in actions.enumerated() {
+            if let points = MenuBarCommands.score(trimmed, action.title) {
+                scored.append((action, points, offset))
             }
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.2 < $1.2 }
-            .map(\.0)
+        }
+        scored.sort { a, b in a.score != b.score ? a.score > b.score : a.offset < b.offset }
+        return scored.map { $0.action }
     }
 }

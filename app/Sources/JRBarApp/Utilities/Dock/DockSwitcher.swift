@@ -551,12 +551,14 @@ struct SwitcherModel {
             pool = items.filter { $0.agent?.isWaiting == true }
         }
         guard !query.isEmpty else { return pool }
-        return pool.enumerated()
-            .compactMap { index, item in
-                score(item, query: query).map { (item, $0, index) }
-            }
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.2 < $1.2 }
-            .map(\.0)
+        // Typed and spelled out: the one-line tuple chain cost the type
+        // checker several seconds here and timed out on a slower runner.
+        var scored: [(item: SwitcherItem, score: Int, index: Int)] = []
+        for (index, item) in pool.enumerated() {
+            if let points = score(item, query: query) { scored.append((item, points, index)) }
+        }
+        scored.sort { a, b in a.score != b.score ? a.score > b.score : a.index < b.index }
+        return scored.map { $0.item }
     }
 
     var selected: SwitcherItem? {

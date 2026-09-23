@@ -877,10 +877,19 @@ struct AskRow: View {
         .help(row.help(now: store.now) ?? "")
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(row.label) asks: \(row.ask?.summary ?? "")"
-            + (row.ask?.previewLine.map { ", runs \($0)" } ?? "")
-            + (row.ask?.isDestructive == true ? ", destructive" : ""))
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
+    }
+
+    /// What VoiceOver reads for the row: who asks, what, the command it
+    /// would run and whether it is destructive. Built apart from the
+    /// modifier chain — inline, the concatenation of optionals left a
+    /// slower CI runner's type checker timing out on the whole body.
+    private var accessibilityLabel: String {
+        var label = "\(row.label) asks: \(row.ask?.summary ?? "")"
+        if let preview = row.ask?.previewLine { label += ", runs \(preview)" }
+        if row.ask?.isDestructive == true { label += ", destructive" }
+        return label
     }
 
     /// Who asks and what kind of ask, the destructive mark, and the
