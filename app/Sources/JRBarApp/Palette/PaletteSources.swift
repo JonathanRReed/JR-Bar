@@ -710,10 +710,15 @@ struct PaletteWindowVerbs {
 enum WindowPaletteRows {
     @MainActor
     static func items(verbs: PaletteWindowVerbs) -> [PaletteItem] {
+        // A window JR-Bar's own menu already has a chord for shows it,
+        // and the chord works from the palette too.
         func window(_ id: String, _ title: String, _ subtitle: String?, _ symbol: String, _ tint: PaletteTint,
-                    keywords: [String] = [], run: @escaping @MainActor () -> Void) -> PaletteItem {
+                    keywords: [String] = [], chord: PaletteShortcut? = nil,
+                    run: @escaping @MainActor () -> Void) -> PaletteItem {
             PaletteItem(id: "open.\(id)", title: title, subtitle: subtitle, keywords: keywords,
-                        icon: .symbol(symbol, tint), kind: "Window", section: .open,
+                        icon: .symbol(symbol, tint),
+                        tags: chord.map { [PaletteTag(text: $0.display)] } ?? [],
+                        kind: "Window", section: .open,
                         actions: [PaletteAction(id: "open", title: "Open", symbol: "macwindow") {
                             run()
                             return nil
@@ -723,11 +728,14 @@ enum WindowPaletteRows {
             window("panel", "JR-Bar Panel", "Sessions, asks and the lights at a glance",
                    "menubar.dock.rectangle", .blue, keywords: ["dropdown", "menu"], run: verbs.panel),
             window("overview", "Overview", "Every session, scoped and searchable",
-                   "square.grid.2x2.fill", .indigo, keywords: ["roster", "sessions"], run: verbs.overview),
+                   "square.grid.2x2.fill", .indigo, keywords: ["roster", "sessions"], chord: .command("o"),
+                   run: verbs.overview),
             window("usage", "Usage Center", "Quotas, pace and history for every provider",
-                   "chart.bar.fill", .green, keywords: ["quota", "limits", "cost"], run: verbs.usageCenter),
+                   "chart.bar.fill", .green, keywords: ["quota", "limits", "cost"], chord: .command("u"),
+                   run: verbs.usageCenter),
             window("history", "History", "What your agents did, newest first",
-                   "clock.arrow.circlepath", .orange, keywords: ["log", "events"], run: verbs.history),
+                   "clock.arrow.circlepath", .orange, keywords: ["log", "events"], chord: .command("y"),
+                   run: verbs.history),
             window("effects", "Effect Studio", "Light effects, scenes and assignments",
                    "wand.and.stars", .pink, keywords: ["leds", "animations", "lights"], run: verbs.effects),
             window("deck", "Control Center", "Creator Micro 2 keys and the Rail",
@@ -756,7 +764,9 @@ enum WindowPaletteRows {
             PaletteItem(
                 id: "settings.\(page.rawValue)", title: "\(page.title) Settings",
                 keywords: settingsKeywords(page) + ["preferences"],
-                icon: .symbol(page.symbol, settingsTint(page)), kind: "Settings", section: .settings,
+                icon: .symbol(page.symbol, settingsTint(page)),
+                tags: page == .general ? [PaletteTag(text: PaletteShortcut.command(",").display)] : [],
+                kind: "Settings", section: .settings,
                 actions: [PaletteAction(id: "open", title: "Open Settings", symbol: "gearshape") {
                     open(page)
                     return nil

@@ -255,6 +255,7 @@ struct PaletteTests {
         #expect(!controller.handle(.chord(PaletteShortcut(.character("a"), .control))),
                 "⌃A is the field's: line start")
         #expect(!controller.handle(.chord(.command(","))), "⌘, goes on to Settings")
+        #expect(!controller.handle(.chord(.command("o"))), "⌘O goes on to JR-Bar's own Overview")
         #expect(controller.handle(.down))
         #expect(controller.handle(.submit))
         #expect(log.ran == ["m:Open", "m:Hide", "m:Always Hide", "s:Open"])

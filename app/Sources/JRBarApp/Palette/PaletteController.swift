@@ -364,21 +364,28 @@ final class PaletteController {
     /// way: the key window is ours while the frontmost app is not, so
     /// an unclaimed ⌘H would reach JR-Bar's own menu and hide every
     /// JR-Bar window — the Screen Bar with them — and ⌘Q would quit
-    /// it. ⌘W and ⌘Q fold the palette; ⌘, folds it and goes on to the
-    /// menu's Settings; the rest do nothing.
+    /// it. ⌘W and ⌘Q fold the palette; JR-Bar's own window chords
+    /// (`windowChords`) fold it and go on to the menu that owns them;
+    /// the rest do nothing.
     private func unclaimed(_ chord: PaletteShortcut) -> Bool {
         guard chord.modifiers.contains(.command) else { return false }
-        switch chord {
-        case .command("w"), .command("q"):
+        if chord == .command("w") || chord == .command("q") {
             close()
-            return true
-        case .command(","):
-            close()
-            return false
-        default:
             return true
         }
+        if Self.windowChords.contains(chord) {
+            close()
+            return false
+        }
+        return true
     }
+
+    /// The app menu's own key equivalents — Settings, History,
+    /// Overview, Usage Center — so the chords JR-Bar already teaches
+    /// work from the palette too.
+    static let windowChords: Set<PaletteShortcut> = [
+        .command(","), .command("y"), .command("o"), .command("u"),
+    ]
 
     /// With VoiceOver on, the field keeps focus while ↑/↓ walk the
     /// list, so the row under the highlight is spoken.
