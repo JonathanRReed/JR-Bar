@@ -259,6 +259,29 @@ struct DockSwitcherTests {
         #expect(DockSwitcherList.minimizedOwnerPID(title: "Doc", rows: sameApp) == 4)
     }
 
+    @Test("a shared title narrows to the app whose own list holds that window minimized")
+    func minimizedOwnerTieBreak() {
+        let rows = [row(pid: 1, wid: 10, title: "Untitled"),
+                    row(pid: 2, wid: 20, title: "Untitled")]
+        func card(_ wid: CGWindowID, minimized: Bool) -> DockPreviewWindow {
+            DockPreviewWindow(id: Int(wid), title: "Untitled", minimized: minimized, fullScreen: nil,
+                              frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                              thumbnail: nil, element: nil, windowID: wid)
+        }
+        // App 2's "Untitled" sits on another Space: off-screen, but not
+        // in the Dock — only app 1 holds a minimized one.
+        let owner = DockSwitcherList.minimizedOwnerPID(title: "Untitled", rows: rows) { pid in
+            pid == 1 ? [card(10, minimized: true)] : [card(20, minimized: false)]
+        }
+        #expect(owner == 1)
+        let both = DockSwitcherList.minimizedOwnerPID(title: "Untitled", rows: rows) { pid in
+            [card(pid == 1 ? 10 : 20, minimized: true)]
+        }
+        #expect(both == nil, "two minimized claimants stay ambiguous — the card stays tile-backed")
+        let neither = DockSwitcherList.minimizedOwnerPID(title: "Untitled", rows: rows) { _ in [] }
+        #expect(neither == nil)
+    }
+
     // MARK: The preview key surface
 
     /// nil from `handle` is an eaten event; a returned event passed.

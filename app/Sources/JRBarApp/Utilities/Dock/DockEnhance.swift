@@ -1692,7 +1692,10 @@ final class DockEnhanceController {
         if preferences.showThumbnails, !preview.compact, screenCaptureGranted,
            let pid = preview.processIdentifier {
             let bundleID = preview.bundleID
-            let offscreen = preferences.includeOffscreenWindows
+            // A minimized-window tile is one window the pointer chose —
+            // its single still is taken even with "Capture every
+            // window" off, so the card shows what's inside, not an icon.
+            let offscreen = preferences.includeOffscreenWindows || item.kind == .minimizedWindow
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await DockThumbnailer.attach(
@@ -1978,7 +1981,8 @@ final class DockEnhanceController {
             return
         }
         let offRows = DockSwitcherList.offScreenRows()
-        guard let pid = DockSwitcherList.minimizedOwnerPID(title: itemTitle, rows: offRows),
+        guard let pid = DockSwitcherList.minimizedOwnerPID(
+            title: itemTitle, rows: offRows, axWindows: { AppleDockReader.windows(pid: $0) }),
               let app = NSRunningApplication(processIdentifier: pid),
               app.activationPolicy == .regular else {
             content.windows = [card]
@@ -1999,7 +2003,11 @@ final class DockEnhanceController {
         content.icon = app.icon
         let rows = offRows.filter { $0.pid == pid && $0.title == itemTitle }
         let axWindows = AppleDockReader.windows(pid: pid)
-        let hits = rows.compactMap { DockSwitcherList.match(row: $0, in: axWindows) }
+        // A same-titled window parked on another Space shares the
+        // off-screen list; only a minimized one can be this tile.
+        let matched = rows.compactMap { DockSwitcherList.match(row: $0, in: axWindows) }
+        let minimizedHits = matched.filter(\.minimized)
+        let hits = minimizedHits.isEmpty ? matched : minimizedHits
         if hits.count == 1 {
             content.windows = [hits[0]]
         } else {

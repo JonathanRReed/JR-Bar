@@ -211,9 +211,26 @@ enum DockSwitcherList {
     /// no `AXURL`, so its title is matched against the off-screen
     /// window list — exactly one claimant pid is trusted; zero or
     /// several means the card stays tile-backed rather than guessing.
-    static func minimizedOwnerPID(title: String, rows: [SwitcherWindowRow]) -> pid_t? {
-        let claimants = Set(rows.filter { $0.title == title }.map(\.pid))
-        return claimants.count == 1 ? claimants.first : nil
+    ///
+    /// A title two apps share ("Untitled") is narrowed before giving up:
+    /// the off-screen list also holds windows parked on other Spaces,
+    /// which have no Dock tile. With `axWindows`, a claimant only stands
+    /// when its app's own AX list holds that exact row (native id, else
+    /// an unambiguous frame + title) minimized — the one window a tile
+    /// can be. Still several after that is real ambiguity.
+    static func minimizedOwnerPID(title: String, rows: [SwitcherWindowRow],
+                                  axWindows: ((pid_t) -> [DockPreviewWindow])? = nil) -> pid_t? {
+        let claiming = rows.filter { $0.title == title }
+        let claimants = Set(claiming.map(\.pid))
+        if claimants.count <= 1 { return claimants.first }
+        guard let axWindows else { return nil }
+        var listed: [pid_t: [DockPreviewWindow]] = [:]
+        let minimized = Set(claiming.filter { row in
+            let windows = listed[row.pid] ?? axWindows(row.pid)
+            listed[row.pid] = windows
+            return match(row: row, in: windows)?.minimized == true
+        }.map(\.pid))
+        return minimized.count == 1 ? minimized.first : nil
     }
 
     // MARK: Agents
