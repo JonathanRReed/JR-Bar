@@ -31,13 +31,19 @@ struct NotchShelfDragTests {
         try? await Task.sleep(for: .seconds(NotchToy.shelfDragLeaveGrace + 0.3))
     }
 
+    /// Giving up takes one more poll past the timeout. A main thread held
+    /// longer than the timeout wakes this poll ahead of the fold that
+    /// came due meanwhile — both were queued, the poll first — so the
+    /// deadline alone would call a fold that already landed missing.
+    /// The last sleep queues behind it, and the last look sees it.
     private func waitForFold(_ toy: NotchToy, timeout: Duration = .seconds(10)) async -> Bool {
         let start = ContinuousClock.now
         while ContinuousClock.now - start < timeout {
             if !toy.islandExpanded { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        return false
+        try? await Task.sleep(for: .milliseconds(10))
+        return !toy.islandExpanded
     }
 
     @Test("a drag crossing from the notch onto a session row keeps the card up")
