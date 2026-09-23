@@ -16,6 +16,11 @@ final class DeckRailController {
     private var label: RailLabelPanel?
     private var geometry: DeckRailGeometry?
     private var observing = false
+    /// The cell whose pill is up, and the pointer's grace to reach it
+    /// once the cell is left (`DeckRailPillHold`).
+    private var pillCell: Int?
+    private var pillGrace: DispatchWorkItem?
+    private var graceSpent = false
 
     init(store: DeckStore) {
         self.store = store
@@ -46,6 +51,7 @@ final class DeckRailController {
             _ = store.railShown
             _ = store.railEdge
             _ = store.railHoveredCell
+            _ = store.railPillHovered
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -94,7 +100,11 @@ final class DeckRailController {
     private func hide() {
         guard let panel, panel.isVisible else { return }
         store.railHoveredCell = nil
+        store.railPillHovered = false
         store.railDidChange(shown: false)
+        pillGrace?.cancel()
+        pillGrace = nil
+        pillCell = nil
         label?.dismiss()
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             panel.alphaValue = 0
@@ -119,12 +129,41 @@ final class DeckRailController {
     }
 
     /// The label pill follows the hovered cell; it sits toward the screen's
-    /// centre so it never leaves the edge.
+    /// centre so it never leaves the edge. An asking key's pill carries
+    /// the ask's verbs and holds while the pointer crosses the gap to it
+    /// and rests on it (`DeckRailPillHold`); a plain label goes the
+    /// moment the cell is left.
     private func updateLabel() {
-        guard let panel, let geometry, let cell = store.railHoveredCell, let rect = geometry.cellRects[safe: cell] else {
+        let interactive = label?.isInteractive ?? false
+        if store.railHoveredCell != nil || store.railPillHovered {
+            pillGrace?.cancel()
+            pillGrace = nil
+            graceSpent = false
+        } else if pillCell != nil, interactive, pillGrace == nil, !graceSpent {
+            // Left the cell toward the pill: give the pointer the gap.
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.pillGrace = nil
+                    self.graceSpent = true
+                    self.updateLabel()
+                }
+            }
+            pillGrace = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + DeckRailPillHold.grace, execute: work)
+        }
+        let hold = DeckRailPillHold.cell(hovered: store.railHoveredCell, pillCell: pillCell,
+                                         pillHovered: store.railPillHovered,
+                                         interactive: interactive, inGrace: pillGrace != nil)
+        guard let panel, let geometry, let cell = hold, let rect = geometry.cellRects[safe: cell] else {
+            pillCell = nil
             label?.dismiss()
             return
         }
+        // The pill on the pointer stays put: re-presenting it under the
+        // pointer would only shuffle its buttons.
+        if store.railHoveredCell == nil, pillCell == cell, label?.isVisible == true { return }
+        pillCell = cell
         let onScreen = NSRect(x: geometry.frame.minX + rect.minX, y: geometry.frame.minY + rect.minY, width: rect.width, height: rect.height)
         let label = self.label ?? RailLabelPanel()
         self.label = label
@@ -134,9 +173,27 @@ final class DeckRailController {
         } else {
             let slot = store.slots[safe: cell] ?? DeckSlot(index: cell)
             content = RailLabelView(title: slot.title, subtitle: slot.subtitle, provider: slot.provider, number: "\(cell + 1)",
-                                    detail: store.askDetail(for: slot))
+                                    detail: store.askDetail(for: slot),
+                                    ask: store.ask(for: slot), desk: AskAnswerDesk.shared,
+                                    onHover: { [weak store] inside in store?.railPillHovered = inside })
         }
         label.present(content, beside: onScreen, edge: geometry.edge, screen: panel.screen ?? screen)
+    }
+}
+
+/// Which cell's pill the rail shows. The hovered cell's, always; with
+/// no cell hovered, an ask pill with verbs holds for the pointer on its
+/// way over (`grace`) and for as long as the pointer rests on it — a
+/// label with nothing to click goes at once.
+enum DeckRailPillHold {
+    /// Time to cross from the cell to the pill beside it.
+    static let grace: TimeInterval = 0.35
+
+    static func cell(hovered: Int?, pillCell: Int?, pillHovered: Bool,
+                     interactive: Bool, inGrace: Bool) -> Int? {
+        if let hovered { return hovered }
+        guard let pillCell, interactive else { return nil }
+        return pillHovered || inGrace ? pillCell : nil
     }
 }
 
@@ -250,8 +307,15 @@ final class RailLabelPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    /// Whether the pill on screen takes clicks — an ask pill with verbs.
+    var isInteractive: Bool { !ignoresMouseEvents }
+
     func present(_ content: RailLabelView, beside rect: NSRect, edge: DeckRailEdge, screen: NSScreen?) {
         hosting.rootView = content
+        // A label is see-through to the pointer; an ask pill with verbs
+        // takes the click it offers.
+        ignoresMouseEvents = !content.isInteractive
+        acceptsMouseMovedEvents = content.isInteractive
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let width = max(80, size.width), height = max(28, size.height)
@@ -421,16 +485,31 @@ struct RailLabelView: View {
     /// What an asking key's session is asking — the card's own words, so
     /// the rail answers "what does it want?" without opening anything.
     var detail: String? = nil
+    /// The asking key's live ask, when the pill may answer it: what it
+    /// would run, the destructive mark, and its verbs.
+    var ask: CoreAsk? = nil
+    /// The desk the verbs answer through — the panel's, shared.
+    var desk: AskAnswerDesk? = nil
+    /// The pointer entered or left the pill.
+    var onHover: ((Bool) -> Void)? = nil
+
+    /// The pill takes clicks only while it has verbs to offer.
+    var isInteractive: Bool { desk != nil && DeckStore.pillAnswers(ask) }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: isInteractive ? .top : .center, spacing: 8) {
             if let provider, !provider.isEmpty {
                 ProviderTile(style: ProviderStyle.style(for: provider), size: 18)
             }
             VStack(alignment: .leading, spacing: 0) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    if ask?.isDestructive == true {
+                        AskRiskMark(size: 10)
+                    }
+                }
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 if let detail {
                     Text(detail)
@@ -441,6 +520,16 @@ struct RailLabelView: View {
                         .frame(width: 220, alignment: .leading)
                         .padding(.top, 2)
                 }
+                if let preview = ask?.previewLine {
+                    AskPreviewLine(text: preview, size: 10.5,
+                                   tint: ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+                        .frame(width: 220, alignment: .leading)
+                }
+                if isInteractive, let ask, let desk {
+                    RailAskVerbs(ask: ask, desk: desk)
+                        .frame(width: 220, alignment: .trailing)
+                        .padding(.top, 5)
+                }
             }
             Text(number)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -449,6 +538,57 @@ struct RailLabelView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .fixedSize()
+        .onHover { onHover?($0) }
+    }
+}
+
+/// The ask pill's verbs: Deny, Always Allow where the agent's hook
+/// offers it, Approve — or a held question's options — each only where
+/// the daemon says the answer can land. Every one is a click through
+/// the shared desk; the line it earns replaces the buttons.
+struct RailAskVerbs: View {
+    let ask: CoreAsk
+    let desk: AskAnswerDesk
+
+    private var choices: [CoreAskChoice] { ask.decision?.choices ?? [] }
+
+    var body: some View {
+        let busy = desk.isPending(ask.session)
+        HStack(spacing: 6) {
+            Spacer(minLength: 0)
+            if let note = desk.note(for: ask.session) {
+                Text(note.text)
+                    .font(.caption)
+                    .foregroundStyle(note.refused ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else {
+                if AskVerbs.denies(ask) {
+                    Button("Deny") { Task { await desk.answer(ask, .deny) } }
+                        .disabled(busy)
+                }
+                if AskVerbs.chooses(ask) {
+                    Menu(AskChoiceLayout.menuTitle(choices, picks: desk.picks(for: ask))) {
+                        AskChoiceMenuItems(choices: choices, picks: desk.picks(for: ask),
+                                           pick: { desk.pick($0, in: $1, of: ask) },
+                                           send: { Task { await desk.sendPicks(for: ask) } })
+                    }
+                    .fixedSize()
+                    .disabled(busy)
+                }
+                if AskVerbs.alwaysAllows(ask) {
+                    Button("Always Allow") { Task { await desk.answer(ask, .always) } }
+                        .disabled(busy)
+                        .help("Approve, and let the agent remember the rule it offered")
+                }
+                if AskVerbs.approves(ask) {
+                    Button("Approve") { Task { await desk.answer(ask, .approve) } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(busy)
+                }
+            }
+        }
+        .controlSize(.small)
     }
 }
 

@@ -55,4 +55,32 @@ struct AskSurfacesTests {
         #expect(store.toast == "This one has no rule to remember — approve it once instead")
     }
 
+    // MARK: Rail
+
+    @Test("the Rail's ask pill holds across the gap and while pointed at, and a plain label never does")
+    func railPillHold() {
+        #expect(DeckRailPillHold.cell(hovered: 3, pillCell: 1, pillHovered: true, interactive: true, inGrace: false) == 3)
+        #expect(DeckRailPillHold.cell(hovered: nil, pillCell: 1, pillHovered: false, interactive: true, inGrace: true) == 1)
+        #expect(DeckRailPillHold.cell(hovered: nil, pillCell: 1, pillHovered: true, interactive: true, inGrace: false) == 1)
+        #expect(DeckRailPillHold.cell(hovered: nil, pillCell: 1, pillHovered: false, interactive: true, inGrace: false) == nil)
+        #expect(DeckRailPillHold.cell(hovered: nil, pillCell: 1, pillHovered: true, interactive: false, inGrace: true) == nil)
+    }
+
+    @Test("an asking key's pill carries its live ask; a peer's or an unanswerable one draws no verbs")
+    func railPillAsk() {
+        let core = CoreModel()
+        let ask = CoreAsk(session: "claude:session:r", kind: "permission", summary: "Run", answerable: true,
+                          decision: CoreAskDecision(always: true))
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: "claude:session:r", provider: "claude", mode: "waiting")], asks: [ask])))
+        let store = DeckStore(core: core)
+        let asking = DeckSlot(index: 0, session: "claude:session:r", state: .inputRequired)
+        #expect(store.ask(for: asking)?.canAlwaysAllow == true)
+        #expect(store.ask(for: DeckSlot(index: 1, session: "claude:session:r", state: .active)) == nil)
+        #expect(DeckStore.pillAnswers(store.ask(for: asking)))
+        #expect(!DeckStore.pillAnswers(CoreAsk(session: "claude:x", summary: "Run", answerable: false)))
+        #expect(!DeckStore.pillAnswers(CoreAsk(session: "remote:studio:claude:x", summary: "Run", answerable: true)))
+        #expect(!DeckStore.pillAnswers(nil))
+    }
+
 }

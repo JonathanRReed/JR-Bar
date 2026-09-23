@@ -130,9 +130,29 @@ final class DeckStore {
     /// What an asking key's session is asking, for the rail's pill: the
     /// ask card's summary, one line, bounded; nil for any other key.
     func askDetail(for slot: DeckSlot) -> String? {
+        Self.askLine(ask(for: slot)?.summary)
+    }
+
+    /// The live ask an asking key's session waits on — pinned in
+    /// `state.asks` first, the session's own otherwise — with its
+    /// session filled in, so the pill's verbs have an id to send. nil
+    /// for any other key.
+    func ask(for slot: DeckSlot) -> CoreAsk? {
         guard slot.state == .inputRequired, let session = slot.session else { return nil }
-        let ask = core.asks.first { $0.session == session } ?? core.sessions.first { $0.id == session }?.ask
-        return Self.askLine(ask?.summary)
+        return NotchIsland.liveAsk(session: session, state: core.state)
+    }
+
+    /// The pointer is on the rail's ask pill: the pill holds while it
+    /// is, so its buttons can be reached from the cell.
+    var railPillHovered = false
+
+    /// The verbs the pill may draw for `ask`: none for a peer's session
+    /// or an ask the daemon says cannot be answered from outside.
+    nonisolated static func pillAnswers(_ ask: CoreAsk?) -> Bool {
+        guard let ask, let session = ask.session, !session.isEmpty, !CoreSession.isRemoteID(session) else {
+            return false
+        }
+        return AskVerbs.any(ask)
     }
 
     nonisolated static func askLine(_ summary: String?, limit: Int = 90) -> String? {
