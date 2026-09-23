@@ -98,6 +98,11 @@ final class DockEnhancePreferences {
         get { read().scrollGestures }
         set { write?({ var s = read(); s.scrollGestures = newValue; return s }()) }
     }
+    /// Clicking the front app's own Dock icon minimizes its windows.
+    var clickToMinimize: Bool {
+        get { read().clickToMinimize }
+        set { write?({ var s = read(); s.clickToMinimize = newValue; return s }()) }
+    }
 
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
     static let defaultDelay: Double = DockEnhanceSettings.defaultDelay
@@ -444,6 +449,20 @@ enum DockEnhanceMath {
     /// keep-open-after-activating. ⌘ and ⌃ stay the system's.
     static func keepsPanelOpen(_ flags: NSEvent.ModifierFlags) -> Bool {
         flags.intersection([.option, .command, .control]) == .option
+    }
+
+    /// Whether a click on an app's Dock icon should minimize it: the app
+    /// was already in front before the click landed. The Dock activates
+    /// a background app on the same click, so an activation stamped
+    /// after the click is that click's own — never a minimize. An app
+    /// whose activation was never seen (front since before launch) is
+    /// judged by the front app alone.
+    static func clickMinimizes(appPID: pid_t, frontmostPID: pid_t?,
+                               lastActivation: (pid: pid_t, at: TimeInterval)?,
+                               clickAt: TimeInterval) -> Bool {
+        guard frontmostPID == appPID else { return false }
+        guard let lastActivation, lastActivation.pid == appPID else { return true }
+        return lastActivation.at < clickAt
     }
 
     /// A Dock-icon scroll in the flick's units: a trackpad's points as
@@ -1432,6 +1451,12 @@ final class DockEnhanceController {
     @ObservationIgnored private var middleClickMonitor: Any?
     /// Scroll on a Dock icon — only while scroll gestures are on.
     @ObservationIgnored private var scrollMonitor: Any?
+    /// Click the front app's icon — only while click-to-minimize is on.
+    @ObservationIgnored private var clickMonitor: Any?
+    /// The last app activation seen, stamped in system uptime — the
+    /// click-to-minimize rule's "was it already in front".
+    @ObservationIgnored private var lastActivation: (pid: pid_t, at: TimeInterval)?
+    @ObservationIgnored private var activationObserver: NSObjectProtocol?
     /// The scroll gesture's running total, per tile.
     @ObservationIgnored private var scrollFlick = DockEnhanceMath.SwipeAccumulator()
     @ObservationIgnored private var scrollTile: String?
@@ -1570,6 +1595,31 @@ final class DockEnhanceController {
         } else if !wantsScroll, let monitor = scrollMonitor {
             NSEvent.removeMonitor(monitor)
             scrollMonitor = nil
+        }
+        let wantsMinimize = running && preferences.clickToMinimize
+        if wantsMinimize, clickMonitor == nil {
+            activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                let pid = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?
+                    .processIdentifier
+                let at = ProcessInfo.processInfo.systemUptime
+                MainActor.assumeIsolated {
+                    if let pid { self?.lastActivation = (pid, at) }
+                }
+            }
+            clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return }
+                let point = NSEvent.mouseLocation
+                let at = event.timestamp
+                Task { @MainActor [weak self] in self?.clickToMinimize(at: point, clickAt: at) }
+            }
+        } else if !wantsMinimize, let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+            if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+            activationObserver = nil
+            lastActivation = nil
         }
     }
 
@@ -2852,6 +2902,29 @@ final class DockEnhanceController {
             app.hide()
         case nil:
             break
+        }
+    }
+
+    /// Click the front app's own Dock icon: its visible windows minimize
+    /// through AX — the Windows-taskbar habit, on the Dock you already
+    /// use. A click on a background app is the Dock's own activation; an
+    /// app with nothing visible left is the Dock's own restore; neither
+    /// is touched. Only plain clicks — a modified click is the Dock's.
+    private func clickToMinimize(at point: NSPoint, clickAt: TimeInterval) {
+        guard running, preferences.clickToMinimize, let item = tile(at: point), item.kind == .app,
+              let url = item.url, let bundleID = Bundle(url: url)?.bundleIdentifier,
+              !MenuBarUtility.isOwnFamily(bundleID),
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+              DockEnhanceMath.clickMinimizes(
+                appPID: app.processIdentifier,
+                frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                lastActivation: lastActivation, clickAt: clickAt) else { return }
+        let visible = AppleDockReader.windows(pid: app.processIdentifier).filter { !$0.minimized }
+        guard !visible.isEmpty else { return }
+        for window in visible { AppleDockReader.setMinimized(window, true) }
+        if tracker.shown == item.hoverID {
+            tracker.reset()
+            hidePreview()
         }
     }
 

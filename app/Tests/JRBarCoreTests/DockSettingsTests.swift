@@ -72,7 +72,10 @@ struct DockSettingsTests {
         var round = DockSettings()
         round.enhance.previewTrigger = .optionHover
         round.enhance.scrollGestures = true
+        round.enhance.clickToMinimize = true
         #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(DockSettings().enhance.clickToMinimize == false)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"clickToMinimize": 1}}"#).enhance.clickToMinimize == false)
     }
 
     @Test("the switcher pick and hover previews decode tolerantly and default to JR-Bar, on")

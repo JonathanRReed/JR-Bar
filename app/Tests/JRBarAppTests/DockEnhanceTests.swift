@@ -95,6 +95,21 @@ import Testing
         #expect(T.trackedItem(nil, shown: "Safari", trigger: .hover, optionHeld: true) == nil)
     }
 
+    @Test("only a click on the app already in front minimizes it")
+    func clickToMinimizeNeedsTheFrontApp() {
+        #expect(DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7,
+                                               lastActivation: (7, 10), clickAt: 20))
+        #expect(!DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7,
+                                                lastActivation: (7, 20.05), clickAt: 20),
+                "an activation stamped after the click is the click's own — the Dock just brought it forward")
+        #expect(!DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 3,
+                                                lastActivation: (3, 10), clickAt: 20))
+        #expect(DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7,
+                                               lastActivation: (3, 10), clickAt: 20),
+                "front since before we watched — judged by the front app alone")
+        #expect(DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7, lastActivation: nil, clickAt: 20))
+    }
+
     @Test("a wheel's notches and a trackpad's points meet one flick threshold")
     func scrollUnits() {
         #expect(DockEnhanceMath.scrollAmount(12, precise: true) == 12)

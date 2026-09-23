@@ -93,6 +93,10 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Scroll on an icon",
                              subtitle: "Scroll up on a Dock icon to open its preview at once; scroll down to hide the app.")
             }
+            Toggle(isOn: clickToMinimize) {
+                SettingLabel(title: "Click the front app's icon to minimize",
+                             subtitle: "Clicking the Dock icon of the app you're in minimizes its windows, like a Windows taskbar; click again and the Dock brings one back.")
+            }
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute (needs Screen Recording — each fresh capture flashes macOS's recording dot); off shows icon + title cards.")
@@ -277,6 +281,10 @@ struct DockUtilityControls: View {
     private var scrollGestures: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.scrollGestures },
                 set: { utility.enhance.preferences.scrollGestures = $0 })
+    }
+    private var clickToMinimize: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.clickToMinimize },
+                set: { utility.enhance.preferences.clickToMinimize = $0 })
     }
     private var previewThisDisplay: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.previewThisDisplay },

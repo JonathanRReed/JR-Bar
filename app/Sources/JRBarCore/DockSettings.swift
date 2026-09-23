@@ -141,6 +141,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Scrolling on a Dock icon: up opens its preview at once, down
     /// hides the app — HyperDock's classic. Off by default.
     public var scrollGestures: Bool
+    /// Clicking the front app's own Dock icon minimizes its windows —
+    /// the Windows-taskbar habit DockDoor offers. Off by default.
+    public var clickToMinimize: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -160,7 +163,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 switcherThisDisplay: Bool = false,
                 previewThisDisplay: Bool = false,
                 previewTrigger: DockPreviewTrigger = .hover,
-                scrollGestures: Bool = false) {
+                scrollGestures: Bool = false,
+                clickToMinimize: Bool = false) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -175,6 +179,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.previewThisDisplay = previewThisDisplay
         self.previewTrigger = previewTrigger
         self.scrollGestures = scrollGestures
+        self.clickToMinimize = clickToMinimize
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -190,7 +195,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
-        case previewTrigger, scrollGestures
+        case previewTrigger, scrollGestures, clickToMinimize
     }
 
     public init(from decoder: any Decoder) throws {
@@ -211,6 +216,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         previewThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .previewThisDisplay)) ?? false
         previewTrigger = (try? c.decodeIfPresent(DockPreviewTrigger.self, forKey: .previewTrigger)) ?? .hover
         scrollGestures = (try? c.decodeIfPresent(Bool.self, forKey: .scrollGestures)) ?? false
+        clickToMinimize = (try? c.decodeIfPresent(Bool.self, forKey: .clickToMinimize)) ?? false
     }
 }
 
