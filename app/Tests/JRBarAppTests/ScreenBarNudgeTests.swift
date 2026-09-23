@@ -91,6 +91,31 @@ struct ScreenBarNudgeTests {
         #expect(MenuBarUtility.earUpdate(changed: [clock], watch: ["com.example.vpn"]) == nil)
     }
 
+    @Test func aPictureChangeInTheFirstSecondsIsTimeGoneByNotNews() {
+        // The launch photographs, held against the last run's: a battery
+        // level or a sync badge that moved since then raises nothing.
+        #expect(!MenuBarUtility.pictureChangeNudges(settling: true, revealed: false, barOpen: false,
+                                                    lifted: false, hidden: true, watched: true))
+        // Settled, a watched hidden item's change is the ear's to say.
+        #expect(MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
+                                                   lifted: false, hidden: true, watched: true))
+        // Never while the person is looking at it already, never for an
+        // item no longer tucked away, never past the watch list.
+        #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: true, barOpen: false,
+                                                    lifted: false, hidden: true, watched: true))
+        #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: true,
+                                                    lifted: false, hidden: true, watched: true))
+        #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
+                                                    lifted: true, hidden: true, watched: true))
+        #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
+                                                    lifted: false, hidden: false, watched: true))
+        #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
+                                                    lifted: false, hidden: true, watched: false))
+        // The settle is the newcomers' own window: the pre-photograph
+        // lands within the engine's start grace, well inside it.
+        #expect(MenuBarUtility.startSettle > MenuBarUtility.adoptionGrace)
+    }
+
     // MARK: The answers
 
     @Test func theThreeAnswersAreTheThreeSections() {
