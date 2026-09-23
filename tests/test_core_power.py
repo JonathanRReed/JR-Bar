@@ -134,6 +134,18 @@ def test_until_these_agents_finish_waits_on_the_live_main_sessions(powered) -> N
     assert last["kind"] == "lease_ended" and last["reason"] == "finished"
 
 
+def test_an_agents_lease_outlives_a_restart_that_has_not_read_the_sessions(powered) -> None:
+    controller = powered
+    core_runtime._cmd_hold_awake(controller, {"until_agents_idle": True})
+    # A restarted daemon restores the lease before its first refresh lands
+    # (or while that refresh keeps failing): no snapshot is not "all done".
+    controller.last_snapshot = None
+    controller.sync_keep_awake(AgentMode.WORKING)
+    assert controller.keep_awake.lease is not None
+    assert controller.keep_awake.pending_ids is None
+    assert controller._core_build_state()["power"]["last_release"] is None
+
+
 @pytest.mark.parametrize(
     "args",
     [{}, {"seconds": "soon"}, {"seconds": 60, "indefinite": True}, {"until": 1}],

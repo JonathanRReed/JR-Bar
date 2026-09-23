@@ -125,11 +125,15 @@ def observe_environment(controller: Any) -> None:
     observe = getattr(keep, "observe_environment", None)
     if not callable(observe):
         return
-    pending, working = session_facts(getattr(controller, "last_snapshot", None))
+    snapshot = getattr(controller, "last_snapshot", None)
+    pending, working = session_facts(snapshot)
     battery = getattr(getattr(controller, "_production_battery_observation", None), "snapshot", None)
     lid_closed = getattr(controller, "last_lid_closed", None)
     observe(
-        pending_ids=pending,
+        # No snapshot yet (a restarted daemon whose first refresh failed) is
+        # no observation at all: a restored agents lease must not read the
+        # empty set as "every session finished".
+        pending_ids=None if snapshot is None else pending,
         working_count=working,
         battery_floor=battery_yields_hold(battery, getattr(controller, "settings", None)),
         thermal_state=keep_awake_module.read_thermal_state(),
