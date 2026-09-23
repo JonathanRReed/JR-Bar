@@ -1410,6 +1410,7 @@ struct DevicesSection: View {
     var body: some View {
         VStack(spacing: 0) {
             SectionLabel(text: "Devices", trailing: store.isLive ? nil : "from files")
+                .overlay(alignment: .bottomTrailing) { KeepAwakeFooter(power: store.isLive ? store.core.state?.power : nil) }
             HStack(spacing: 6) {
                 ForEach(chips, id: \.id) { chip in
                     if chip.id == "dot", let glyph = linkGlyph {
