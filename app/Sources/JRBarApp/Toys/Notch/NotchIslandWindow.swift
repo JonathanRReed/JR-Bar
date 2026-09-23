@@ -92,6 +92,13 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     /// offered first to a level capsule that can take it: true when it
     /// set the level, and the scroll is not a swipe.
     var onLevelScroll: (_ fingerDelta: CGFloat, _ precise: Bool) -> Bool = { _, _ in false }
+    /// ⌘-drag sideways sets a timer (`NotchTimerDrag`): the pull and the
+    /// tap stand aside for it. Travel is screen points, rightward
+    /// positive; the end hands the toy the last travel to commit.
+    var timerDragAllowed: () -> Bool = { false }
+    var onTimerDrag: (_ travel: CGFloat) -> Void = { _ in }
+    var onTimerDragEnd: (_ travel: CGFloat) -> Void = { _ in }
+    private var timerDragStart: NSPoint?
 
     override func magnify(with event: NSEvent) {
         guard pullsEnabled() else { return }
@@ -107,6 +114,11 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     // MARK: Pull
 
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), timerDragAllowed() {
+            timerDragStart = NSEvent.mouseLocation
+            onTimerDrag(0)
+            return
+        }
         if pullsEnabled() {
             pullStart = NSEvent.mouseLocation
             pull = NotchPullGesture()
@@ -116,6 +128,10 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if let start = timerDragStart {
+            onTimerDrag(NSEvent.mouseLocation.x - start.x)
+            return
+        }
         if let start = pullStart {
             pull.move(translation: NSEvent.mouseLocation.y - start.y, at: event.timestamp)
             if !pullLive, pull.engaged {
@@ -128,6 +144,11 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let start = timerDragStart {
+            timerDragStart = nil
+            onTimerDragEnd(NSEvent.mouseLocation.x - start.x)
+            return
+        }
         if pullLive {
             onPullEnded(pull.release(at: event.timestamp, surface: pullSurface()))
         }
@@ -296,6 +317,9 @@ final class NotchIslandWindow: NSPanel {
             toy?.scrubLevel(fingerDelta: delta, precise: precise) ?? false
         }
         hosting.pullsEnabled = { [weak toy] in toy?.settings.pullGestures ?? true }
+        hosting.timerDragAllowed = { [weak toy] in toy?.timerDragAllowed ?? false }
+        hosting.onTimerDrag = { [weak toy] travel in toy?.timerDragChanged(travel: travel) }
+        hosting.onTimerDragEnd = { [weak toy] travel in toy?.timerDragEnded(travel: travel) }
         hosting.pullSurface = { [weak toy] in toy?.islandExpanded == true ? .card : .rest }
         hosting.onPullBegan = { [weak self, weak toy] in
             guard let self else { return }

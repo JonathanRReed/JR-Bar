@@ -2118,6 +2118,45 @@ final class NotchToy: Toy {
         }
     }
 
+    // MARK: ⌘-drag timer
+
+    /// Whether a ⌘-press on the island starts a timer drag: the resting
+    /// island (or news on it), never the card or an ask's buttons, and
+    /// behind the same gestures switch as pull and pinch.
+    var timerDragAllowed: Bool {
+        guard settings.pullGestures, isDrawingIsland, !foldEngaged, !islandExpanded else { return false }
+        return !(activeCapsule?.kind.hasVerbs ?? false)
+    }
+
+    /// The readout while the drag runs, and its word when it lands: the
+    /// level face's continuous fill toward three hours, the minutes in
+    /// place of a percent. Never a scrub target — its key names no level.
+    static func timerDragNotice(minutes: Int?, set: Bool) -> AlcoveNotice {
+        let words = minutes.map(NotchTimerDrag.label)
+        return AlcoveNotice(id: "timer-drag", kind: .level, title: "Timer",
+                            subtitle: words.map { set ? "\($0) set" : $0 } ?? "Drag right",
+                            key: "timer-drag", glyph: set ? "timer.circle.fill" : "timer",
+                            fraction: NotchTimerDrag.fraction(minutes))
+    }
+
+    func timerDragChanged(travel: CGFloat) {
+        guard timerDragAllowed else { return }
+        presentFeedback(Self.timerDragNotice(minutes: NotchTimerDrag.minutes(forTravel: travel), set: false))
+    }
+
+    /// Let go: a drag that reached a minute starts that timer (the card's
+    /// own timer model — the chip, the capsule and the strips follow); one
+    /// that didn't puts the readout away.
+    func timerDragEnded(travel: CGFloat) {
+        guard let minutes = NotchTimerDrag.minutes(forTravel: travel) else {
+            endOverlay(settle: true)
+            return
+        }
+        cardModel.timers.add(label: "\(NotchTimerDrag.label(minutes)) timer",
+                             duration: TimeInterval(minutes) * 60)
+        presentFeedback(Self.timerDragNotice(minutes: minutes, set: true))
+    }
+
     /// The swipe's fold of the grown card — and it is a dismissal, so
     /// a capsule shelved beneath it goes with it: collapsing alone
     /// would only replay the shelf as a fresh notice where the card
@@ -2268,7 +2307,7 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.pullGestures)) {
                 SettingLabel(title: "Pull & swipe gestures",
-                             subtitle: "Drag the island down to open it; swipe or pull down to fold it away.")
+                             subtitle: "Pull the island down (or spread two fingers) to open it; push up or squeeze to fold it. ⌘-drag sideways on the notch sets a timer.")
             }
             Toggle(isOn: toy.bind(\.showUsage)) {
                 SettingLabel(title: "Usage meters",

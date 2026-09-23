@@ -462,10 +462,15 @@ struct NotchIslandView: View {
                 }
             }
             .frame(height: 5)
-            Text(notice.muted ? "Muted" : "\(Int((fraction * 100).rounded()))")
+            // A level reads its percent; a readout with words of its own
+            // (the ⌘-drag timer's minutes) reads those.
+            Text(notice.muted ? "Muted"
+                 : notice.subtitle.isEmpty ? "\(Int((fraction * 100).rounded()))" : notice.subtitle)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white.opacity(0.7))
+                .lineLimit(1)
+                .fixedSize()
                 .frame(minWidth: 24, alignment: .trailing)
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: fraction)
@@ -477,7 +482,8 @@ struct NotchIslandView: View {
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(notice.title)
-        .accessibilityValue(notice.muted ? "Muted" : "\(Int((fraction * 100).rounded())) percent")
+        .accessibilityValue(notice.muted ? "Muted"
+                            : notice.subtitle.isEmpty ? "\(Int((fraction * 100).rounded())) percent" : notice.subtitle)
     }
 
     /// The ask, where it can be answered: who (the glyph, "Claude ·

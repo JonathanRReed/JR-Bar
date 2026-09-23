@@ -810,6 +810,43 @@ public struct NotchPinch: Equatable, Sendable {
     }
 }
 
+/// ⌘-drag sideways on the resting island sets a timer — DynamicLake's
+/// quickest timer, on the notch's own black. Travel to the right counts
+/// up: a minute per step to half an hour, then five-minute steps to
+/// three hours. Back under one step (or left of where it started) is
+/// no timer, so letting go there cancels.
+public enum NotchTimerDrag {
+    /// Points of travel per step — small enough that half an hour sits
+    /// within the notch's own width plus its shoulders.
+    public static let pointsPerStep: CGFloat = 6
+    public static let fineSteps = 30
+    public static let coarseStep = 5
+    public static let maxMinutes = 180
+
+    /// The minutes a drag of `travel` points (rightward positive) sets,
+    /// or nil for none.
+    public static func minutes(forTravel travel: CGFloat) -> Int? {
+        let steps = Int((travel / pointsPerStep).rounded(.down))
+        guard steps >= 1 else { return nil }
+        if steps <= fineSteps { return steps }
+        return min(maxMinutes, fineSteps + (steps - fineSteps) * coarseStep)
+    }
+
+    /// "5 min", "1 h", "1 h 30 min".
+    public static func label(_ minutes: Int) -> String {
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if hours == 0 { return "\(rest) min" }
+        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
+    }
+
+    /// The readout's fill: how far toward the longest timer.
+    public static func fraction(_ minutes: Int?) -> Double {
+        guard let minutes else { return 0 }
+        return min(1, Double(minutes) / Double(maxMinutes))
+    }
+}
+
 /// A due timer across the room: three soft orange beats on the LED
 /// strips (`preview_program` on the `hardware` surface), then the live
 /// light comes back on its own. Only where a strip is connected, never
