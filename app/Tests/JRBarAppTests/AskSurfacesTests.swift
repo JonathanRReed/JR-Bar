@@ -147,6 +147,23 @@ struct AskSurfacesTests {
         #expect(PaletteRanking.promoting("clear", in: clear).primary?.id == "open")
     }
 
+    @Test("typing \"allow fix\" finds the row through Always Allow but Return stays Open")
+    func paletteAlwaysNeverPromoted() {
+        let log = Log()
+        let ask = held(always: true)
+        let item = AgentPaletteRows.askItem(row: row("fix-ci", ask: ask), ask: ask, now: now, verbs: verbs(log))
+        for query in ["allow fix", "always fix", "al fix"] {
+            #expect(PaletteRanking.match(item, query: query)?.verbID == "always",
+                    "\(query) reaches the row only through Always Allow")
+            let typed = PaletteRanking.rank([item], query: query, usage: PaletteUsage(), now: now)
+            #expect(typed.first?.id == item.id, "\(query) still lists the row")
+            #expect(typed.first?.primary?.id == "open", "\(query): Return stays the safe verb")
+            #expect(typed.first?.action(for: .primary)?.id != "always")
+            #expect(typed.first?.action(for: .secondary)?.id == "approve", "⌘↩ keeps Approve, once")
+        }
+        #expect(log.calls.isEmpty)
+    }
+
     @Test("two menu items with the same path and title get ids of their own, stable across queries")
     func menuIDs() {
         let app = AppMenuPaletteSource.MenuApp(pid: 1, name: "Safari", bundleID: "com.apple.Safari")

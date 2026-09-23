@@ -115,9 +115,12 @@ enum AgentPaletteRows {
                 return nil
             })
             if AskVerbs.alwaysAllows(ask) {
-                // Its own verb, never a chord: remembering a rule is a
-                // choice made by reading it in the action panel.
-                actions.append(PaletteAction(id: "always", title: "Always Allow", symbol: "checkmark.seal") {
+                // Its own verb, never a chord and never Return: remembering
+                // a rule is a choice made by reading it in the action
+                // panel, so "allow fix" finds the row but Return still
+                // opens it.
+                actions.append(PaletteAction(id: "always", title: "Always Allow", symbol: "checkmark.seal",
+                                             promotable: false) {
                     verbs.alwaysAllow(ask)
                     return nil
                 })

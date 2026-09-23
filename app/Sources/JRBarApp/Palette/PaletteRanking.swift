@@ -163,10 +163,12 @@ enum PaletteRanking {
     /// query finds the row through it — "deny fix" still lists fix-ci's
     /// ask first — but Return keeps its safe first verb, and the
     /// destructive one stays on its own chord. Words typed in a hurry
-    /// must never turn Return into a no.
+    /// must never turn Return into a no. Nor into a lasting yes: a verb
+    /// marked not `promotable` (Always Allow) runs only when picked by
+    /// name, so "allow fix" meaning once never remembers a rule.
     static func promoting(_ verbID: String?, in item: PaletteItem) -> PaletteItem {
         guard let verbID, let index = item.actions.firstIndex(where: { $0.id == verbID }),
-              !item.actions[index].isDestructive else {
+              !item.actions[index].isDestructive, item.actions[index].promotable else {
             return item
         }
         var promoted = item
