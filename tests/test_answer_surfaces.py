@@ -663,3 +663,109 @@ def test_session_in_front_is_a_socket_thread_command__and_1_more() -> None:
     with pytest.raises(CommandError) as error:
         _cmd_session_in_front(controller, {"session": "claude:session:nobody"})
     assert error.value.code == "not_found"
+
+
+def test_history_resumes_a_session_the_list_no_longer_shows__and_5_more(tmp_path: Path) -> None:
+    from jrbar.answer_surfaces import resume_ended_session
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    ended = SimpleNamespace(cwd=str(repo), pid=500, ended_at_epoch=1.0)
+    recorder = SurfaceRecorder(path=tmp_path / "surfaces.json", runner=FakeRunner(permitted=None), synchronous=True)
+    recorder._store("codex", "s-1", host_bundle="com.mitchellh.ghostty", terminal_id="T1", cwd=str(repo))
+
+    def resume(agent_id="codex:session:s-1", record=ended, runner=None, **kwargs):
+        return resume_ended_session(
+            agent_id,
+            runner=runner or FakeRunner(),
+            recorder=kwargs.pop("recorder", recorder),
+            load_record=lambda provider, session_id: record,
+            process_table=lambda: GHOSTTY_CODEX,
+            **kwargs,
+        )
+
+    # --- scenario: an ended session resumes in a new tab of the terminal it ran in
+    runner = FakeRunner()
+    reply = resume(runner=runner)
+    assert (reply["raised"], reply["app"], reply["detail"], reply["cwd"]) == ("new_tab", "Ghostty", "resumed", str(repo))
+    assert runner.calls == [("ghostty-new-tab", str(repo), "codex resume s-1\n")]
+
+    # --- scenario: the terminal named wins; with no record, the owner's latest terminal
+    runner = FakeRunner()
+    assert resume(runner=runner, terminal="com.apple.Terminal")["app"] == "Terminal"
+    assert runner.calls == [("launch", "com.apple.Terminal", f"cd {repo} && codex resume s-1")]
+    fresh = SurfaceRecorder(path=tmp_path / "other.json", runner=FakeRunner(permitted=None), synchronous=True)
+    fresh._store("claude", "x-9", host_bundle="com.googlecode.iterm2", terminal_id=None, cwd=str(repo))
+    runner = FakeRunner()
+    assert resume(runner=runner, recorder=fresh)["app"] == "iTerm"
+
+    # --- scenario: cleared from the list but still running: its own window is raised, nothing started
+    alive = SimpleNamespace(cwd=str(repo), pid=500, ended_at_epoch=None)
+    runner = FakeRunner(ghostty_terminals=f"T1\t{repo}\tcodex\n")
+    reply = resume(record=alive, runner=runner, record_is_live=lambda record: True)
+    assert (reply["raised"], reply["detail"]) == ("terminal", "T1")
+    assert not any(call[0] in ("ghostty-new-tab", "launch") for call in runner.calls)
+    with pytest.raises(CommandError) as error:
+        resume_ended_session(
+            "codex:session:s-1",
+            runner=FakeRunner(activate=False),
+            recorder=recorder,
+            load_record=lambda provider, session_id: alive,
+            record_is_live=lambda record: True,
+            process_table=lambda: _table(_entry(500, 1, "/bin/codex")),
+        )
+    assert error.value.code == "not_found" and "nothing new was started" in str(error.value)
+
+    # --- scenario: a registry record that was left open but whose process is gone resumes
+    runner = FakeRunner()
+    assert resume(record=alive, runner=runner, record_is_live=lambda record: False)["detail"] == "resumed"
+
+    # --- scenario: no record, a directory that is gone, or not a resumable session refuses
+    with pytest.raises(CommandError) as error:
+        resume(record=None)
+    assert error.value.code == "not_found"
+    with pytest.raises(CommandError) as error:
+        resume(record=SimpleNamespace(cwd=str(tmp_path / "gone"), pid=500, ended_at_epoch=1.0))
+    assert error.value.code == "not_found"
+    for agent_id, code in (
+        ("remote:studio:codex:session:s-1", "unsupported"),
+        ("codex:agent:worker-1", "unsupported"),
+        ("pi:session:s-1", "unsupported"),
+        ("", "invalid_args"),
+    ):
+        with pytest.raises(CommandError) as error:
+            resume(agent_id)
+        assert error.value.code == code, agent_id
+
+    # --- scenario: only the terminals JR-Bar can open are accepted by name
+    with pytest.raises(CommandError) as error:
+        resume(terminal="net.kovidgoyal.kitty")
+    assert error.value.code == "invalid_args"
+
+
+def test_resume_session_opens_a_listed_row_and_resumes_a_gone_one__and_1_more(monkeypatch) -> None:
+    from jrbar import answer_surfaces as surfaces_module
+    from jrbar import core_runtime
+
+    listed = SimpleNamespace(agent_id="codex:session:s-1", provider="codex", session_id="s-1")
+    controller = SimpleNamespace(last_snapshot=SimpleNamespace(statuses=[listed], stale_statuses=[]))
+    opened: list = []
+    resumed: list = []
+    monkeypatch.setattr(core_runtime, "_cmd_open_session", lambda self, args: opened.append(args) or {"via": "open"})
+    monkeypatch.setattr(
+        surfaces_module,
+        "resume_ended_session",
+        lambda session, terminal=None: resumed.append((session, terminal)) or {"via": "registry"},
+    )
+
+    # --- scenario: a row the list still shows opens exactly as open_session would
+    assert core_runtime._cmd_resume_session(controller, {"session": "codex:session:s-1"}) == {"via": "open"}
+    assert opened == [{"session": "codex:session:s-1"}] and resumed == []
+
+    # --- scenario: one it no longer shows is resumed from the registry, in the terminal named
+    reply = core_runtime._cmd_resume_session(
+        controller, {"session": "claude:session:gone", "terminal": "com.apple.Terminal"}
+    )
+    assert reply == {"via": "registry"}
+    assert resumed == [("claude:session:gone", "com.apple.Terminal")]
+    assert core_runtime._MAIN_THREAD_COMMANDS["resume_session"].main_thread is False

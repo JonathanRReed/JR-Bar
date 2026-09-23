@@ -1060,6 +1060,20 @@ def _resolved_open_action(controller: object, status: object, args: Mapping[str,
         return None
 
 
+def _open_in_terminal(runner: SurfaceRunner, bundle_id: str, directory: str, typed: str) -> str | None:
+    """``typed`` in a new tab of Ghostty's front window at ``directory``,
+    typed into the owner's own shell (``new_tab``), else in a new window of
+    that terminal through the reviewed launch plan, as ``cd <directory> &&
+    <typed>`` (``new_window``); ``None`` when neither opened."""
+    if bundle_id == GHOSTTY_BUNDLE_ID:
+        code, output = runner.osascript(_GHOSTTY_NEW_TAB, directory, typed + "\n")
+        if code == 0 and output == "tab":
+            return "new_tab"
+    if runner.launch_in_terminal(bundle_id, f"cd {shlex.quote(directory)} && {typed}"):
+        return "new_window"
+    return None
+
+
 def resume_in_own_terminal(
     controller: object,
     status: object,
@@ -1074,7 +1088,7 @@ def resume_in_own_terminal(
     whichever app happened to be in front. ``None`` leaves it to the
     controller's ladder (no record of the terminal, a live or remote
     session, an app or VS Code open, a terminal with no reviewed plan)."""
-    from .session_actions import SESSION_OPEN_TERMINAL, session_resume_command, session_resume_parts
+    from .session_actions import SESSION_OPEN_TERMINAL, session_resume_parts
 
     agent_id = getattr(status, "agent_id", "") or ""
     provider = getattr(status, "provider", None)
@@ -1091,19 +1105,11 @@ def resume_in_own_terminal(
     runner = runner or SurfaceRunner()
     try:
         parts = session_resume_parts(status)  # type: ignore[arg-type]
-        command = session_resume_command(status)  # type: ignore[arg-type]
     except Exception:
         return None
-    if parts is None or command is None:
+    if parts is None:
         return None
-    opened = None
-    if host == GHOSTTY_BUNDLE_ID:
-        cwd, typed = parts
-        code, output = runner.osascript(_GHOSTTY_NEW_TAB, cwd, typed + "\n")
-        if code == 0 and output == "tab":
-            opened = "new_tab"
-    if opened is None and runner.launch_in_terminal(host, command):
-        opened = "new_window"
+    opened = _open_in_terminal(runner, host, *parts)
     if opened is None:
         return None
     names = {GHOSTTY_BUNDLE_ID: "Ghostty", TERMINAL_BUNDLE_ID: "Terminal", ITERM_BUNDLE_ID: "iTerm"}
@@ -1154,13 +1160,7 @@ def start_session_in_terminal(
     if chosen is None:
         chosen = GHOSTTY_BUNDLE_ID if _GHOSTTY_APP.exists() else TERMINAL_BUNDLE_ID
     runner = runner or SurfaceRunner()
-    opened = None
-    if chosen == GHOSTTY_BUNDLE_ID:
-        code, output = runner.osascript(_GHOSTTY_NEW_TAB, directory, command + "\n")
-        if code == 0 and output == "tab":
-            opened = "new_tab"
-    if opened is None and runner.launch_in_terminal(str(chosen), f"cd {shlex.quote(directory)} && {command}"):
-        opened = "new_window"
+    opened = _open_in_terminal(runner, str(chosen), directory, command)
     if opened is None:
         raise CommandError("unsupported", "that terminal could not be opened")
     return {
@@ -1169,6 +1169,113 @@ def start_session_in_terminal(
         "raised": opened,
         "app": _STARTABLE_TERMINALS[str(chosen)],
         "bundle_id": chosen,
+    }
+
+
+def resume_ended_session(
+    agent_id: object,
+    *,
+    terminal: object = None,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+    load_record: Callable[[str, str], Any] | None = None,
+    record_is_live: Callable[[Any], bool] | None = None,
+    process_table: Callable[[], Mapping[int, Any]] | None = None,
+) -> dict[str, Any]:
+    """``resume_session`` for a session the list no longer shows -- a
+    History row's Resume. The session is found by its agent id in the
+    process registry, which knows its directory: an ended one resumes in the
+    terminal it ran in (else the one named, else the owner's latest, else
+    Ghostty when installed), and one still running -- cleared from the list
+    but alive -- has its own window raised instead. A second process on a
+    live session is never started. Explicit only; nothing calls it on its own.
+    """
+    from .core_server import CommandError
+    from .session_actions import SESSION_TERMINAL_OPENERS, session_resume_parts_for
+
+    if type(agent_id) is not str or not agent_id:
+        raise CommandError("invalid_args", "session is required")
+    if agent_id.startswith("remote:"):
+        raise CommandError("unsupported", "A session on another Mac resumes on that Mac.")
+    provider, sep, session_id = agent_id.partition(":session:")
+    if not sep or provider not in SESSION_TERMINAL_OPENERS or not session_id:
+        raise CommandError("unsupported", "JR-Bar can resume only an agent CLI's main session.")
+    if terminal is not None and terminal not in _STARTABLE_TERMINALS:
+        raise CommandError("invalid_args", "terminal must be Ghostty, Terminal or iTerm")
+    try:
+        if load_record is None:
+            from .process_registry import load_record as load_registry_record
+
+            record = load_registry_record(provider, session_id)
+        else:
+            record = load_record(provider, session_id)
+    except Exception:
+        record = None
+    directory = getattr(record, "cwd", None)
+    if record is None or type(directory) is not str or not directory:
+        raise CommandError("not_found", "JR-Bar has no record of where that session ran.")
+    recorder = recorder or default_surface_recorder()
+    runner = runner or SurfaceRunner()
+    if getattr(record, "ended_at_epoch", None) is None:
+        try:
+            if record_is_live is None:
+                from .process_registry import process_is_live
+
+                alive = process_is_live(record)[0]
+            else:
+                alive = bool(record_is_live(record))
+        except Exception:
+            alive = True  # unknown is not "ended": never start a second copy on a guess
+        if alive:
+            pid = getattr(record, "pid", None)
+            try:
+                if process_table is not None:
+                    table = process_table()
+                else:
+                    from .process_registry import list_processes
+
+                    table = list_processes()
+            except Exception:
+                table = {}
+            from .answer_local import tty_for_pid
+
+            app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
+            outcome = raise_session_host(
+                SessionHost(pid=pid, tty=tty_for_pid(pid), app_name=app_name, bundle_id=bundle_id, in_tmux=in_tmux),
+                cwd=directory,
+                title=None,
+                recorded_ghostty_id=recorder.recorded(provider, session_id),
+                runner=runner,
+            )
+            if outcome.raised == "none":
+                raise CommandError(
+                    "not_found",
+                    "That session is still running, but JR-Bar can't find its window; "
+                    "nothing new was started.",
+                )
+            return {"session": agent_id, "provider": provider, "cwd": directory, **outcome.document()}
+    parts = session_resume_parts_for(provider, session_id, directory)
+    if parts is None:
+        raise CommandError("unsupported", "That session can't be resumed from here.")
+    if not os.path.isdir(directory):
+        raise CommandError("not_found", "That session's directory is gone.")
+    chosen = terminal
+    if chosen is None:
+        recorded = recorder.recorded_host(provider, session_id)
+        chosen = recorded if recorded in _STARTABLE_TERMINALS else recorder.latest_host(frozenset(_STARTABLE_TERMINALS))
+    if chosen is None:
+        chosen = GHOSTTY_BUNDLE_ID if _GHOSTTY_APP.exists() else TERMINAL_BUNDLE_ID
+    opened = _open_in_terminal(runner, str(chosen), *parts)
+    if opened is None:
+        raise CommandError("unsupported", "that terminal could not be opened")
+    return {
+        "session": agent_id,
+        "provider": provider,
+        "cwd": directory,
+        "raised": opened,
+        "app": _STARTABLE_TERMINALS[str(chosen)],
+        "bundle_id": chosen,
+        "detail": "resumed",
     }
 
 
@@ -1289,6 +1396,7 @@ __all__ = [
     "parse_tmux_pane_for_tty",
     "raise_for_answer",
     "raise_session_host",
+    "resume_ended_session",
     "resume_in_own_terminal",
     "session_in_front",
     "start_session_in_terminal",

@@ -2915,6 +2915,29 @@ def _cmd_new_session(self, args):
     )
 
 
+@command("resume_session", main_thread=False)
+def _cmd_resume_session(self, args):
+    """History's Resume, by agent id: a session the list still shows opens
+    exactly as ``open_session`` would (raised while it runs, resumed once it
+    has ended); one the list no longer shows is found in the process
+    registry and resumed in the terminal it ran in, or raised when it turns
+    out to be running still (answer_surfaces.py). Explicit only."""
+    from .answer_surfaces import resume_ended_session
+
+    session = args.get("session")
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+
+    def listed():
+        try:
+            return _find_status(self, session)
+        except CommandError:
+            return None
+
+    if on_main(listed) is not None:
+        return on_main(lambda: _cmd_open_session(self, {"session": session}))
+    return resume_ended_session(session, terminal=args.get("terminal"))
+
+
 @command("session_in_front", main_thread=False)
 def _cmd_session_in_front(self, args):
     """Whether the owner is looking at that session's own tab, pane or

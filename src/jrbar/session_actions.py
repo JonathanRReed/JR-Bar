@@ -222,13 +222,19 @@ def session_resume_parts(status: AgentStatus) -> tuple[str, str] | None:
     """``(cwd, command)`` for resuming an ended CLI session in a terminal
     that is already in ``cwd`` -- ``session_resume_command`` without its
     ``cd``, for a terminal tab opened in the session's own directory."""
-    if not _valid_session_id(status.session_id) or not _valid_session_cwd(status.cwd):
+    return session_resume_parts_for(status.provider, status.session_id, status.cwd)
+
+
+def session_resume_parts_for(provider: object, session_id: object, cwd: object) -> tuple[str, str] | None:
+    """``session_resume_parts`` for a session known only by its provider,
+    id and directory -- a History row whose session has left the list."""
+    if type(provider) is not str or not _valid_session_id(session_id) or not _valid_session_cwd(cwd):
         return None
-    opener = SESSION_TERMINAL_OPENERS.get(status.provider.lower())
+    opener = SESSION_TERMINAL_OPENERS.get(provider.lower())
     if opener is None:
         return None
     executable, resume_argument = opener
-    return status.cwd, f"{executable} {resume_argument} {shlex.quote(status.session_id)}"
+    return str(cwd), f"{executable} {resume_argument} {shlex.quote(str(session_id))}"
 
 
 def new_session_parts(provider: object, cwd: object) -> tuple[str, str] | None:
