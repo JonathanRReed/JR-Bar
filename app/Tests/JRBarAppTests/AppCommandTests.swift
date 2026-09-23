@@ -158,6 +158,23 @@ import Testing
         #expect(other.chord(for: AppShortcutCatalog.revealAskID) == nil)
     }
 
+    @Test func theShortcutsParametersCoverTheVocabulary() {
+        // Every chip is pickable in Shortcuts, and every pick is a chip.
+        #expect(Set(QuickToggleOption.allCases.compactMap(\.toggle)) == Set(SystemToggle.allCases))
+        #expect(QuickToggleOption.allCases.count == SystemToggle.allCases.count)
+        // Every quiet mode Shortcuts offers is one the daemon takes.
+        #expect(Set(QuietModeOption.allCases.map(\.rawValue)) == AppCommand.quietModes)
+    }
+
+    @MainActor
+    @Test func aShortcutsActionThrowsTheRoutersRefusal() {
+        let router = AppCommandRouter.shared
+        let saved = router.revealAsk
+        defer { router.revealAsk = saved }
+        router.revealAsk = { "No agent is waiting on you." }
+        #expect(throws: JRBarIntentError.self) { try JRBarIntentBridge.run(.revealAsk) }
+    }
+
     @Test func everyChipHasAnActionAndEveryIDIsUnique() {
         let ids = AppShortcutCatalog.all.map(\.id)
         #expect(Set(ids).count == ids.count)
