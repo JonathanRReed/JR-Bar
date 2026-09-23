@@ -46,12 +46,14 @@ struct NotchAskFlowTests {
     }
 
     @Test("an ask capsule holds past a capsule's life — nothing times it out")
-    func askLatches() async throws {
+    func askLatches() {
         let (toy, store, _) = makeToy(state: liveState())
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers.driving(toy)
         toy.offer(askNotice())
         #expect(toy.activeCapsule?.id == "a")
-        try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.life + 0.4))
+        #expect(timers.live == 0, "a latched ask arms no life to time it out")
+        timers.advance(by: AlcoveCapsuleQueue.life + 0.4)
         #expect(toy.activeCapsule?.id == "a", "an ask waits for its answer")
     }
 

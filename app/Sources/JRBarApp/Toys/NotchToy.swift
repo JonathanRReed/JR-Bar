@@ -120,6 +120,16 @@ final class NotchToy: Toy {
     @ObservationIgnored private(set) var capsuleQueue = AlcoveCapsuleQueue()
     /// The pending capsule timer — the show-delay gap or the 2.4 s life.
     @ObservationIgnored private var capsuleWork: DispatchWorkItem?
+    /// Where the line's timers are armed — a shown capsule's life and
+    /// the gap before the next — and the clock the line runs on: the
+    /// queue's gaps and cooldowns, a shelved capsule's freshness. The
+    /// main queue and the wall clock; the tests hand in a manual pair
+    /// and step the line by hand, so a proof about it never waits on a
+    /// main queue the suite is crowding.
+    @ObservationIgnored var capsuleTimer: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    @ObservationIgnored var capsuleClock: () -> Date = { Date() }
     /// A capsule promoted into its show-gap the moment the island grew:
     /// it could never draw over the card, so `expand` shelves it here
     /// and `collapseIsland` re-shows it while it is still fresh.
@@ -724,7 +734,7 @@ final class NotchToy: Toy {
                 bandExpandPending = true
                 return
             }
-            shelvedCapsule = (capsule, Date())
+            shelvedCapsule = (capsule, capsuleClock())
             activeCapsule = nil
             capsuleWork?.cancel()
             capsuleWork = nil
@@ -953,7 +963,7 @@ final class NotchToy: Toy {
         // re-shows it while it is still fresh.
         if activeCapsule == nil, let promoted = capsuleQueue.current,
            shelvedCapsule?.notice != promoted {
-            shelvedCapsule = (promoted, Date())
+            shelvedCapsule = (promoted, capsuleClock())
             capsuleWork?.cancel()
             capsuleWork = nil
         }
@@ -1009,11 +1019,11 @@ final class NotchToy: Toy {
             if let shelved, current == shelved.notice,
                current.kind.life == nil
                 ? askHolds(current)
-                : Date().timeIntervalSince(shelved.at) < (current.kind.life ?? AlcoveCapsuleQueue.life) {
+                : capsuleClock().timeIntervalSince(shelved.at) < (current.kind.life ?? AlcoveCapsuleQueue.life) {
                 showCurrentCapsule()
                 return
             }
-            capsuleQueue.cancel(at: Date())
+            capsuleQueue.cancel(at: capsuleClock())
         }
         reframe(currentFace,
                 animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -1390,7 +1400,7 @@ final class NotchToy: Toy {
         if let pending = capsuleQueue.pending,
            notice.kind.queueRank > pending.kind.queueRank { return false }
         if notice.kind == .ask { askTrack[notice.id] = (Date(), false) }
-        switch capsuleQueue.offer(notice, at: Date()) {
+        switch capsuleQueue.offer(notice, at: capsuleClock()) {
         case .now: showCurrentCapsule()
         case .after(let delay): scheduleCapsuleShow(after: delay)
         case .queued: break
@@ -1427,7 +1437,7 @@ final class NotchToy: Toy {
             MainActor.assumeIsolated { self?.finishCapsule() }
         }
         capsuleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
+        capsuleTimer(life, work)
     }
 
     // MARK: Asks
@@ -1680,7 +1690,7 @@ final class NotchToy: Toy {
         capsuleWork = nil
         shelvedCapsule = nil
         bandExpandPending = false
-        capsuleQueue.takeOver(notice, at: Date())
+        capsuleQueue.takeOver(notice, at: capsuleClock())
         if let current = capsuleQueue.current, askTrack[current.id] == nil {
             askTrack[current.id] = (Date(), true)
         }
@@ -1818,7 +1828,7 @@ final class NotchToy: Toy {
             MainActor.assumeIsolated { self?.showCurrentCapsule() }
         }
         capsuleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        capsuleTimer(delay, work)
     }
 
     /// The shown capsule's life ended: the queue promotes whatever was
@@ -1832,7 +1842,7 @@ final class NotchToy: Toy {
         // (tests, dismiss paths) must not leave the life timer armed.
         capsuleWork?.cancel()
         capsuleWork = nil
-        switch capsuleQueue.finish(at: Date()) {
+        switch capsuleQueue.finish(at: capsuleClock()) {
         case .idle:
             activeCapsule = nil
             settleToRest()
@@ -1867,7 +1877,7 @@ final class NotchToy: Toy {
         endOverlay(settle: false)
         capsuleWork?.cancel()
         capsuleWork = nil
-        capsuleQueue.cancel(at: Date())
+        capsuleQueue.cancel(at: capsuleClock())
         activeCapsule = nil
         shelvedCapsule = nil
         hoverHeld = false
@@ -2293,7 +2303,7 @@ final class NotchToy: Toy {
         if capsuleQueue.current != nil || shelvedCapsule != nil {
             capsuleWork?.cancel()
             capsuleWork = nil
-            capsuleQueue.cancel(at: Date())
+            capsuleQueue.cancel(at: capsuleClock())
             shelvedCapsule = nil
         }
         collapseIsland()
