@@ -11,11 +11,12 @@ import SwiftUI
 /// whose `lane` is `"weekly"` or ends `-weekly`); the rest are opt-in.
 /// Off by default; Reduce Motion gets a soft radial bloom instead.
 ///
-/// It minds the room: while JR-Bar is quiet, a Focus is on or a call has
-/// the mic (`ToysStore.hushReason`), a burst is held and played smaller
-/// once the room clears — or let go, the card's pick — and a screen a
-/// fullscreen app owns is skipped, so a celebration never lands on a
-/// Keynote or a video call. Anything outside JR-Bar that wants a burst
+/// It minds the room: while JR-Bar is quiet or a Focus is on
+/// (`ToysStore.hushReason`), a burst is held and played smaller once the
+/// room clears — or let go, the card's pick — and a screen a fullscreen
+/// app owns is skipped, so a celebration never lands on a Keynote or a
+/// fullscreen video call. (A call on the mic joins the room once call
+/// presence is wired — `ToysStore.noteCallPresence`.) Anything outside JR-Bar that wants a burst
 /// asks through `fire(reason: .request)`.
 @MainActor
 @Observable
@@ -404,8 +405,8 @@ private struct ConfettiControlsView: View {
                 .padding(.vertical, 4)
 
             Toggle(isOn: toy.hushBinding) {
-                SettingLabel(title: "Quiet the toys during Focus and calls",
-                             subtitle: "While JR-Bar is quiet, a Focus is on or a call has the mic, bursts wait and screens a fullscreen app owns are skipped. The buddy keeps its completion hop to itself too.")
+                SettingLabel(title: "Quiet the toys during Focus and quiet hours",
+                             subtitle: "While JR-Bar is quiet or a Focus is on, bursts wait and screens a fullscreen app owns are skipped. The buddy skips its completion hop, the tank saves its reward cards for later and the hinge stays silent.")
             }
 
             if toy.hushBinding.wrappedValue {

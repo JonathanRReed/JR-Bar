@@ -13,10 +13,11 @@ public struct ToysState: Codable, Equatable, Sendable {
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
     public var notch: NotchSettings
-    /// "Quiet the toys during Focus and calls": while JR-Bar is quiet, a
-    /// Focus is on or a call has the mic, confetti holds its burst (and
-    /// skips screens a fullscreen app owns) and the buddy keeps its
-    /// completion hop to itself. On by default — calm first.
+    /// "Quiet the toys during Focus and quiet hours": while JR-Bar is
+    /// quiet or a Focus is on, confetti holds its burst (and skips
+    /// screens a fullscreen app owns), the buddy keeps its completion
+    /// hop to itself, the tank holds its reward cards and the hinge
+    /// stays silent. On by default — calm first.
     public var hushDuringQuiet: Bool = true
 
     public init(fold: FoldSettings = FoldSettings(), aquarium: AquariumSettings = AquariumSettings(),

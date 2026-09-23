@@ -62,8 +62,8 @@ final class AquariumToy: Toy {
     }
 
     /// The Toys page's room rule (`ToysStore.hushReason`): while JR-Bar
-    /// is quiet, a Focus is on or a call has the mic, the tank keeps its
-    /// game moments to itself — no toast, no reward card sliding in, no
+    /// is quiet or a Focus is on, the tank keeps its game moments to
+    /// itself — no toast, no reward card sliding in, no
     /// visitor parade. The game still counts every one of them: a
     /// visitor waits in its queue, a reward card waits in `heldNotice`,
     /// and both come out once the room clears.
@@ -533,9 +533,10 @@ final class AquariumToy: Toy {
         persist()
     }
 
-    /// The room may have cleared: a held reward card comes out. The
-    /// store calls this on the call-presence edge; quiet and Focus
-    /// changes arrive with the daemon's document, and the tick looks.
+    /// The room may have cleared: a held reward card comes out. Quiet
+    /// and Focus changes arrive with the daemon's document and the tick
+    /// looks; the store also calls this on the call-presence edge, once
+    /// something feeds it.
     func roomChanged(at now: Date = Date()) {
         guard let held = heldNotice, !hushed else { return }
         heldNotice = nil

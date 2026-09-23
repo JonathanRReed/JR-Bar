@@ -910,8 +910,8 @@ final class NotchBuddyToy: Toy {
         guard event.kind == "completed" || event.session != nil else { return }
         wakeForActivity()
         guard event.kind == "completed" else { return }
-        // Hushed — JR-Bar quiet, a Focus, a call (the Toys page's
-        // switch) — the crumb still counts, but the hop stays put.
+        // Hushed — JR-Bar quiet or a Focus (the Toys page's switch) —
+        // the crumb still counts, but the hop stays put.
         if store?.hushReason(now: now) == nil {
             hopUntil = now.addingTimeInterval(1.1)
         }
