@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import JRBarLEDS
 import Testing
 @testable import JRBarCore
 @testable import JRBarApp
@@ -88,6 +89,40 @@ struct ScreenBarHardwareNoticeTests {
     @Test func anUnnamedDeviceStillHasAName() {
         let slot = ScreenBarNotices.hardwareSlot(Self.pro(true, name: nil), present: true)
         #expect(slot.text == "SidePulse Pro connected")
+    }
+
+    // MARK: Unplug grace
+
+    @Test func aStripLeavingIsNoticedOnlyWhenItWasLit() {
+        #expect(ScreenBarController.stripLeft(from: [Self.pro(true)], to: [Self.pro(false)]))
+        #expect(ScreenBarController.stripLeft(from: [Self.pro(true), Self.bar], to: [Self.bar]))
+        #expect(!ScreenBarController.stripLeft(from: nil, to: []), "a baseline is not a departure")
+        #expect(!ScreenBarController.stripLeft(from: [Self.pro(false)], to: []))
+        #expect(!ScreenBarController.stripLeft(from: [Self.dot(true)], to: [Self.dot(false)]),
+                "the band mirrors the strip; a Dot leaving changes nothing it plays")
+        #expect(!ScreenBarController.stripLeft(from: [Self.pro(true)], to: [Self.pro(true)]))
+    }
+
+    @Test func theOfflineFeedWaitsOutAnUnplugBeforeTheIdleBreath() {
+        let device = LEDFeed.Source.device("/Volumes/SidePulse/LEDS.LED")
+        #expect(LEDFeed.readDelay(from: device, to: .builtInIdle) == LEDFeed.unplugGrace)
+        #expect(LEDFeed.readDelay(from: .builtInIdle, to: device) < 0.5, "an arrival reads at once")
+        #expect(LEDFeed.readDelay(from: device, to: device) < 0.5)
+        #expect(LEDFeed.readDelay(from: .stateFile("/tmp/x.led"), to: .builtInIdle) < 0.5,
+                "an emptied override file is not an unplug")
+    }
+
+    @Test func anArmedCrossfadeIsUsedByTheNextChangeOnly() {
+        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
+        view.relayout()
+        view.crossfadeNextChange(over: 1.2)
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            #expect(!view.hasPendingCrossfade, "Reduce Motion keeps the cut")
+            return
+        }
+        #expect(view.hasPendingCrossfade)
+        view.display(colors: Array(repeating: RGB(r: 1, g: 0.5, b: 0), count: 8))
+        #expect(!view.hasPendingCrossfade)
     }
 
     @Test func everyMarkIsARealSymbol() {

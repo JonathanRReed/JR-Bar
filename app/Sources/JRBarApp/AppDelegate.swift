@@ -512,6 +512,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source, anchor in
             guard let self else { return }
+            // A strip giving way to the idle breath fades rather than cuts.
+            if case .device = self.lastFileProgram?.source, source == .builtInIdle {
+                self.screenBar?.crossfadeNextProgram()
+            }
             self.lastFileProgram = (text, source, anchor)
             self.store?.feedDescription = source.description
             if self.core?.isLive != true { self.applyFileProgram() }

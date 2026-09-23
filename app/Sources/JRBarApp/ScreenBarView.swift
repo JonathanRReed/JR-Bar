@@ -450,6 +450,34 @@ final class ScreenBarView: NSView {
     /// A repeat call with the same plan at the same phase is a no-op:
     /// re-arming the same animations just re-renders every keyframe's
     /// colours on the main thread for a window move the band cannot see.
+    /// A cross-fade the next program change plays instead of a cut —
+    /// armed by the controller when a strip leaves, used once.
+    private var pendingCrossfade: CFTimeInterval?
+
+    /// The next `play` or `display` that changes the colours fades from
+    /// what is on the band to the new program over `seconds`. Reduce
+    /// Motion keeps the cut, as every other band transition does.
+    func crossfadeNextChange(over seconds: CFTimeInterval) {
+        pendingCrossfade = Self.reduceMotion ? nil : seconds
+    }
+
+    /// Inside the caller's transaction: hands the layers a fade from their
+    /// current presentation to whatever this transaction sets.
+    private func consumeCrossfade() {
+        guard let seconds = pendingCrossfade else { return }
+        pendingCrossfade = nil
+        for layer in [bandLayer, haloLayer] {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = seconds
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(fade, forKey: kCATransition)
+        }
+    }
+
+    /// Whether a cross-fade is armed and not yet used (tests).
+    var hasPendingCrossfade: Bool { pendingCrossfade != nil }
+
     func play(plan: LEDSKeyframePlan, anchor: CFTimeInterval) {
         let width = bandRect.width
         guard width > 0 else { return }
@@ -474,6 +502,7 @@ final class ScreenBarView: NSView {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        consumeCrossfade()
         for layer in [bandLayer, haloLayer] {
             layer.removeAnimation(forKey: Self.leadKey)
             layer.removeAnimation(forKey: Self.loopKey)
@@ -581,6 +610,7 @@ final class ScreenBarView: NSView {
         let locations = stops.map { NSNumber(value: Double($0.location)) }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        consumeCrossfade()
         if stops.isEmpty {
             bandLayer.colors = nil
             haloLayer.colors = nil

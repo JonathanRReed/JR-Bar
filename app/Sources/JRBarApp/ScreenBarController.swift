@@ -183,11 +183,33 @@ final class ScreenBarController {
     var hardware: [CoreDevice]? {
         didSet {
             guard let hardware, hardware != oldValue else { return }
+            if Self.stripLeft(from: oldValue, to: hardware) { crossfadeNextProgram() }
             let result = ScreenBarNotices.hardware(from: oldValue, to: hardware,
                                                    recent: recentDeviceNotices, now: Date())
             recentDeviceNotices = result.recent
             if noticeMonitorsRunning, let slot = result.slot { presentWingNotice(.right, slot: slot) }
         }
+    }
+
+    /// Whether a strip that was lit in `old` is gone from `new` — the
+    /// moment the band stops mirroring it. A baseline (`old` nil) is not.
+    nonisolated static func stripLeft(from old: [CoreDevice]?, to new: [CoreDevice]) -> Bool {
+        guard let old else { return false }
+        let present = Set(new.filter { $0.kind == "pro" && $0.isPresent }.map(\.id))
+        return old.contains { $0.kind == "pro" && $0.isPresent && !present.contains($0.id) }
+    }
+
+    /// A strip leaving makes the band's next program change a cross-fade
+    /// instead of a cut, for a few seconds: the MacBook's SD reader can
+    /// power the Pro off on its own, and a snap from the strip's program
+    /// to the band's own display reads as a glitch where a fade reads as
+    /// meant. The fade is armed on the view when the program lands.
+    private var crossfadeUntil: Date?
+    static let unplugCrossfadeWindow: TimeInterval = 5
+    static let unplugCrossfadeSeconds: CFTimeInterval = 1.2
+
+    func crossfadeNextProgram() {
+        crossfadeUntil = Date().addingTimeInterval(Self.unplugCrossfadeWindow)
     }
     private let powerMonitor = AlcovePowerMonitor()
     private let audioMonitor = ScreenBarAudioMonitor()
@@ -919,6 +941,10 @@ final class ScreenBarController {
             return
         }
         lastRawText = text
+        if let until = crossfadeUntil {
+            crossfadeUntil = nil
+            if until > Date() { view.crossfadeNextChange(over: Self.unplugCrossfadeSeconds) }
+        }
         // The firmware starts a new program from the colours currently showing.
         let now = CACurrentMediaTime()
         if let sampler {
