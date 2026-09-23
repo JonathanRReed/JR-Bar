@@ -3869,8 +3869,10 @@ PREVIEW_SCENARIO_CHOICES: tuple[str, ...] = (
     PREVIEW_SCENARIO_PAIR,
     PREVIEW_SCENARIO_FULL_TEAM,
     PREVIEW_SCENARIO_BUSY_TEAM,
-    PREVIEW_SCENARIO_FLEET,
 )
+#: The blend-mode preview's own desk (``preview_fleet``). Kept out of the
+#: legacy window's picker above, whose catalogue is pinned.
+FLEET_PREVIEW_SCENARIOS: tuple[str, ...] = (*PREVIEW_SCENARIO_CHOICES, PREVIEW_SCENARIO_FLEET)
 
 PREVIEW_SCENARIO_LABELS: dict[str, str] = {
     PREVIEW_SCENARIO_LIVE: "Live Activity",

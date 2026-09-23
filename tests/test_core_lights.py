@@ -446,3 +446,15 @@ def test_a_fleet_preview_follows_a_devices_own_blend_and_refuses_nonsense() -> N
         with pytest.raises(CommandError):
             core_runtime._cmd_preview_fleet(daemon, bad)
     assert "preview_fleet" in core_runtime.command_names()
+
+
+def test_the_fleet_desk_stays_out_of_the_legacy_picker_but_renders_on_every_device() -> None:
+    from jrbar import colors as colors_module
+
+    assert colors_module.PREVIEW_SCENARIO_FLEET not in colors_module.PREVIEW_SCENARIO_CHOICES
+    statuses = colors_module.preview_statuses_for_scenario(colors_module.PREVIEW_SCENARIO_FLEET)
+    for led_count in (2, 8):
+        for blend in colors_module.BLEND_MODE_CHOICES:
+            palette = colors_module.ColorSettings.defaults().with_blend_mode(blend)
+            _state, program = colors_module.program_for_snapshot(statuses, led_count=led_count, colors=palette)
+            assert len(program.encode()) <= 512

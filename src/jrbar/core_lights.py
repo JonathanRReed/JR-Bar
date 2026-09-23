@@ -383,7 +383,7 @@ def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     from .presentation_compiler import compile_presentation_program
 
     scenario = args.get("scenario", colors_module.PREVIEW_SCENARIO_FLEET)
-    if scenario not in colors_module.PREVIEW_SCENARIO_CHOICES or scenario == colors_module.PREVIEW_SCENARIO_LIVE:
+    if scenario not in colors_module.FLEET_PREVIEW_SCENARIOS or scenario == colors_module.PREVIEW_SCENARIO_LIVE:
         raise _command_error("invalid_args", "scenario must name a preview scenario (fleet, pair, busy_team, ...)")
     led_count = args.get("led_count", 8)
     if isinstance(led_count, bool) or led_count not in _PREVIEW_LED_COUNTS:
