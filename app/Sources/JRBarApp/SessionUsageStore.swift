@@ -29,9 +29,15 @@ final class SessionUsageStore {
     private(set) var generation = 0
 
     @ObservationIgnored private(set) var fetchedAt: [String: Date] = [:]
+    /// When each id was last put on the wire — what `rememberLimit`
+    /// forgets by.
+    @ObservationIgnored private var askedAt: [String: Date] = [:]
     @ObservationIgnored private var inFlight: Set<String> = []
+    /// When a surface last named each id, due or not — what keeps the
+    /// rows on screen out of `rememberLimit`'s reach (`wantedFor`).
+    @ObservationIgnored private var wantedAt: [String: Date] = [:]
     /// Consecutive gaps that will not change soon, per id, for the backoff.
-    @ObservationIgnored private var settledGaps: [String: Int] = [:]
+    @ObservationIgnored private(set) var settledGaps: [String: Int] = [:]
 
     nonisolated static let freshFor: TimeInterval = 15
     nonisolated static let batchLimit = 64
@@ -44,9 +50,69 @@ final class SessionUsageStore {
     nonisolated static let settledBackoff: TimeInterval = 60
     nonisolated static let settledBackoffCap: TimeInterval = 600
     nonisolated static let settledGapKinds: Set<String> = ["transcript_not_found", "not_found", "unsupported_provider", "remote"]
+    /// The most sessions the store remembers. A long uptime sees
+    /// thousands come and go; past this, the ones no surface has asked
+    /// about for longest are forgotten, stamps, backoff, readings and
+    /// all. A row that scrolls back into view is simply read again.
+    nonisolated static let rememberLimit = 512
+    /// An id a surface named this recently is one it still shows, and is
+    /// never forgotten, however many there are: the bound is for the
+    /// sessions nobody asks about any more, not for a working set. A
+    /// forgotten row is due again, so a ⌘A over a two-thousand-row roster
+    /// that the limit trimmed was put back on the wire every second.
+    /// Surfaces name their rows each second; the rest is slack for a
+    /// main thread that fell behind.
+    nonisolated static let wantedFor: TimeInterval = freshFor
 
     init(core: CoreModel) {
         self.core = core
+    }
+
+    /// The ids to forget so at most `limit` stay: the ones asked about
+    /// longest ago first (never asked counts as longest), never a kept
+    /// one — on the wire (its answer is coming) or still on a surface.
+    /// Kept ids can hold the store past `limit`. Ties go in id order, so
+    /// the choice is the same every time. `askedAt`, not `fetchedAt`: a
+    /// settled gap's stamp sits minutes in the future, and ordering by
+    /// it would forget the rows on screen before the ones nobody shows.
+    nonisolated static func forgettable(known: Set<String>, askedAt: [String: Date],
+                                        keeping kept: Set<String>, limit: Int) -> [String] {
+        guard known.count > limit else { return [] }
+        func lastAsked(_ id: String) -> Date { askedAt[id] ?? .distantPast }
+        let candidates = known.subtracting(kept).sorted { lhs, rhs in
+            let (left, right) = (lastAsked(lhs), lastAsked(rhs))
+            return left != right ? left < right : lhs < rhs
+        }
+        return Array(candidates.prefix(known.count - limit))
+    }
+
+    /// Hold every per-id map to `rememberLimit` (`forgettable`), keeping
+    /// what is on the wire and what a surface named inside `wantedFor`.
+    private func forgetOldest(now: Date) {
+        var known = Set(askedAt.keys)
+        known.formUnion(fetchedAt.keys)
+        known.formUnion(usage.keys)
+        known.formUnion(gaps.keys)
+        known.formUnion(settledGaps.keys)
+        known.formUnion(wantedAt.keys)
+        guard known.count > Self.rememberLimit else { return }
+        var kept = inFlight
+        for (id, at) in wantedAt where now.timeIntervalSince(at) < Self.wantedFor {
+            kept.insert(id)
+        }
+        let forgotten = Self.forgettable(known: known, askedAt: askedAt,
+                                         keeping: kept, limit: Self.rememberLimit)
+        guard !forgotten.isEmpty else { return }
+        var readingsChanged = false
+        for id in forgotten {
+            askedAt[id] = nil
+            fetchedAt[id] = nil
+            wantedAt[id] = nil
+            settledGaps[id] = nil
+            gaps[id] = nil
+            if usage.removeValue(forKey: id) != nil { readingsChanged = true }
+        }
+        if readingsChanged { generation &+= 1 }
     }
 
     func usage(for id: String) -> SessionUsage? { usage[id] }
@@ -68,18 +134,10 @@ final class SessionUsageStore {
     /// Ask for the ids that are due; the answers land in `usage`/`gaps`.
     func refresh(ids: [String], force: Bool = false) {
         guard core.isLive else { return }
-        let now = Date()
-        let due = Self.due(ids, fetchedAt: fetchedAt, inFlight: inFlight, now: now, force: force)
-        guard !due.isEmpty else { return }
-        for start in stride(from: 0, to: due.count, by: Self.batchLimit) {
-            let batch = Array(due[start..<min(due.count, start + Self.batchLimit)])
-            for id in batch {
-                fetchedAt[id] = now
-                inFlight.insert(id)
-            }
+        for batch in plan(ids: ids, force: force, now: Date()) {
             Task { [weak self] in
                 guard let self else { return }
-                defer { for id in batch { self.inFlight.remove(id) } }
+                defer { self.landed(batch) }
                 do {
                     let document = try await self.core.sessionUsage(ids: batch)
                     self.apply(document, asked: batch)
@@ -90,6 +148,32 @@ final class SessionUsageStore {
                 }
             }
         }
+    }
+
+    /// `refresh` without the wire: every id named is marked wanted, the
+    /// due ones are stamped and put in flight, and they come back in
+    /// requests of at most `batchLimit`. Internal for the tests.
+    func plan(ids: [String], force: Bool = false, now: Date) -> [[String]] {
+        for id in ids where !CoreSession.isRemoteID(id) { wantedAt[id] = now }
+        let due = Self.due(ids, fetchedAt: fetchedAt, inFlight: inFlight, now: now, force: force)
+        guard !due.isEmpty else { return [] }
+        var batches: [[String]] = []
+        for start in stride(from: 0, to: due.count, by: Self.batchLimit) {
+            let batch = Array(due[start..<min(due.count, start + Self.batchLimit)])
+            for id in batch {
+                fetchedAt[id] = now
+                askedAt[id] = now
+                inFlight.insert(id)
+            }
+            batches.append(batch)
+        }
+        forgetOldest(now: now)
+        return batches
+    }
+
+    /// A request's answer (or failure) is in: its ids are off the wire.
+    func landed(_ batch: [String]) {
+        inFlight.subtract(batch)
     }
 
     /// The `fetchedAt` stamp an answer leaves — `due` asks again once
@@ -136,6 +220,7 @@ final class SessionUsageStore {
             generation &+= 1
             SessionUsageIndex.shared.update(usage)
         }
+        forgetOldest(now: now)
     }
 }
 
@@ -145,9 +230,22 @@ final class SessionUsageStore {
 final class SessionUsageIndex: @unchecked Sendable {
     static let shared = SessionUsageIndex()
 
+    /// Two stores' worth of rows (`SessionUsageStore.rememberLimit`
+    /// each): the ones neither store has passed in longest are forgotten
+    /// first, so an id a store let go ages out here too.
+    static let limit = 2 * SessionUsageStore.rememberLimit
+
+    private struct Facts: Sendable {
+        var cost: Double?
+        var model: String?
+    }
+
     private let lock = NSLock()
-    private var costs: [String: Double] = [:]
-    private var models: [String: String] = [:]
+    private var rows: RecencyCache<String, Facts>
+
+    init(limit: Int = SessionUsageIndex.limit) {
+        rows = RecencyCache(limit: limit)
+    }
 
     /// Merges readings in: two stores (a window opened before the app
     /// shared one) must add to the index, never erase each other's rows.
@@ -155,20 +253,28 @@ final class SessionUsageIndex: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         for (id, row) in usage {
-            costs[id] = row.estimatedCostUSD
-            models[id] = row.modelName
+            rows.set(Facts(cost: row.estimatedCostUSD, model: row.modelName), for: id)
         }
     }
 
+    /// The sort keys read without marking: a sort asks every row many
+    /// times, and that is not a store passing the row in.
     func cost(for id: String) -> Double? {
         lock.lock()
         defer { lock.unlock() }
-        return costs[id]
+        return rows.peek(id)?.cost
     }
 
     func model(for id: String) -> String? {
         lock.lock()
         defer { lock.unlock() }
-        return models[id]
+        return rows.peek(id)?.model
+    }
+
+    /// How many rows the index holds — the tests' view of its bound.
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return rows.count
     }
 }

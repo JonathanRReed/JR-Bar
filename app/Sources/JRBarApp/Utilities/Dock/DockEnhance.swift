@@ -950,7 +950,6 @@ enum AppleDockReader {
 
     /// Repeated AX references are one window; matching titles and frames
     /// are not. Stacked untitled windows must each keep their own card.
-    @MainActor
     static func uniqueWindowsByIdentity(_ windows: [DockPreviewWindow]) -> [DockPreviewWindow] {
         var seen = Set<AXUIElement>()
         var seenWindowIDs = Set<CGWindowID>()
@@ -980,6 +979,14 @@ enum AppleDockReader {
     /// asking for a while instead of paying the wait on every open.
     @MainActor
     static func windowsReading(pid: pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool) {
+        rowStamp &+= 1
+        return windowsReading(pid: pid, stamp: rowStamp << 20)
+    }
+
+    /// The read itself, callable off the main thread (`DockAXWorker`):
+    /// `stamp` is folded into each row's id — a caller that never shows
+    /// the rows as cards (a ⌘⇥ commit's restore check) passes 0.
+    static func windowsReading(pid: pid_t, stamp: Int) -> (windows: [DockPreviewWindow], unresponsive: Bool) {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
         var value: AnyObject?
@@ -987,8 +994,6 @@ enum AppleDockReader {
         guard status == .success, let elements = value as? [AXUIElement] else {
             return ([], status == .cannotComplete)
         }
-        rowStamp &+= 1
-        let stamp = rowStamp << 20
         let windows: [DockPreviewWindow] = elements.enumerated().compactMap { index, element in
             // Sheets, drawers, floating palettes: not windows a person
             // switches to.
@@ -1021,18 +1026,23 @@ enum AppleDockReader {
     /// row) answers only `AXPress` — the system's own restore — so the
     /// press goes out too; on a real window the action is unsupported.
     static func raise(_ window: DockPreviewWindow, app: NSRunningApplication?) {
-        if let element = window.element {
-            if window.minimized {
-                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
-                                             false as CFTypeRef)
-                AXUIElementPerformAction(element, kAXPressAction as CFString)
-            }
-            AXUIElementPerformAction(element, "AXRaise" as CFString)
-            AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, true as CFTypeRef)
-        }
+        raiseWindow(window)
         // Plain activate: `.activateAllWindows` brought every window of
         // the app forward and buried the one that was picked.
         app?.activate()
+    }
+
+    /// `raise`'s AX half — the writes alone, so a commit can run them on
+    /// `DockAXWorker` and activate from main after.
+    static func raiseWindow(_ window: DockPreviewWindow) {
+        guard let element = window.element else { return }
+        if window.minimized {
+            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
+                                         false as CFTypeRef)
+            AXUIElementPerformAction(element, kAXPressAction as CFString)
+        }
+        AXUIElementPerformAction(element, "AXRaise" as CFString)
+        AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, true as CFTypeRef)
     }
 
     /// The card's ×: press the window's close button. Returns false
@@ -1177,10 +1187,20 @@ enum AppleDockReader {
     /// through AX — it works where ⌘N means New Document or isn't bound,
     /// and never types into whatever window has focus. Only when the
     /// menu offers neither does the old path run: post ⌘N to the app.
+    /// The menu walk is dozens of AX reads against an app that may be
+    /// busy — up to half a second each — so it runs on `DockAXWorker`;
+    /// the activation it follows stays here.
     static func newWindow(app: NSRunningApplication?) {
         guard let app else { return }
         app.activate()
-        if let item = newWindowMenuItem(pid: app.processIdentifier),
+        let pid = app.processIdentifier
+        DockAXWorker.run { pressNewWindow(pid: pid) }
+    }
+
+    /// `newWindow`'s AX half: press the menu's New-window item, else
+    /// post ⌘N to the app.
+    static func pressNewWindow(pid: pid_t) {
+        if let item = newWindowMenuItem(pid: pid),
            AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {
             return
         }
@@ -1191,8 +1211,8 @@ enum AppleDockReader {
               let up = CGEvent(keyboardEventSource: nil, virtualKey: 45, keyDown: false) else { return }
         down.flags = .maskCommand
         up.flags = .maskCommand
-        down.postToPid(app.processIdentifier)
-        up.postToPid(app.processIdentifier)
+        down.postToPid(pid)
+        up.postToPid(pid)
     }
 
     // MARK: Primitives
@@ -1262,8 +1282,9 @@ struct DockPreviewWindow: Identifiable {
     /// a card carrying a document drags it onto another app's Dock tile.
     var documentURL: URL? = nil
     var thumbnail: NSImage?
-    /// The AX window element — the raise/close/minimize target. AX
-    /// handles only ever touch the main actor here.
+    /// The AX window element — the raise/close/minimize target. A card
+    /// lives on the main actor; the switcher's commits carry the bare
+    /// handle to `DockAXWorker` (`DockAXElement`) instead of the card.
     let element: AXUIElement?
     /// Native capture identity, when the OS exposes it.
     var windowID: CGWindowID? = nil

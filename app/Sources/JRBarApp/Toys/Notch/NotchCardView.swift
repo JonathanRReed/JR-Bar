@@ -920,19 +920,37 @@ private struct ShelfMediaRow: View {
 /// The synced lyrics under the transport — Atoll's sweep in the card's
 /// own restraint: the current line bright with a soft highlight
 /// travelling through it in time, the next line faint beneath. The
-/// clock runs on the display (30 fps) only while the row is mounted
-/// and the track plays; paused, or under Reduce Motion, it steps at a
-/// calm rate and the sweep stands still. Silent between stamps.
-private struct LyricLines: View {
+/// clock runs on the display (30 fps) only while the track plays and
+/// the row can be seen: its window on screen and uncovered, the row
+/// scrolled into the card. Out of sight or paused the clock stops;
+/// under Reduce Motion it steps at a calm rate and the sweep stands
+/// still. Silent between stamps.
+struct LyricLines: View {
     let lyrics: SyncedLyrics
     let utility: ShelfUtilityModel
     let playing: Bool
     let style: NotchCardStyle
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The window's say (`WindowVisibilityReader`) and the scroll
+    /// view's: either false stops the clock — a sweep nobody can see is
+    /// thirty redraws a second for nothing.
+    @ViewState private var windowShowing = true
+    @ViewState private var scrolledIn = true
+
+    /// The clock the row runs: the display's 30 fps while the sweep
+    /// plays and can be seen, a half-second step when it cannot sweep,
+    /// stopped while paused or out of sight.
+    nonisolated static func clock(playing: Bool, reduceMotion: Bool,
+                                  visible: Bool) -> (interval: TimeInterval, paused: Bool, sweeps: Bool) {
+        let sweeps = playing && !reduceMotion && visible
+        return (sweeps ? 1.0 / 30.0 : 0.5, !playing || !visible, sweeps)
+    }
 
     var body: some View {
-        let live = playing && !reduceMotion
-        TimelineView(.animation(minimumInterval: live ? 1.0 / 30.0 : 0.5, paused: !playing)) { context in
+        let clock = Self.clock(playing: playing, reduceMotion: reduceMotion,
+                               visible: windowShowing && scrolledIn)
+        let live = clock.sweeps
+        TimelineView(.animation(minimumInterval: clock.interval, paused: clock.paused)) { context in
             let at = utility.elapsedShown(at: context.date)
             let position = lyrics.position(at: at)
             VStack(alignment: .leading, spacing: 1) {
@@ -966,6 +984,12 @@ private struct LyricLines: View {
                 }
             }
         }
+        // The window's occlusion — another Space, a full-screen app over
+        // the notch, a display asleep — the reader the buddy pauses by.
+        .background(WindowVisibilityReader { windowShowing = $0 })
+        // The island's grown card scrolls; a row scrolled out of it is
+        // out of sight too. Outside a scroll view this never fires.
+        .onScrollVisibilityChange(threshold: 0.01) { scrolledIn = $0 }
         .accessibilityHidden(true)
     }
 }

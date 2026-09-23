@@ -58,6 +58,14 @@ final class DockUtility {
         SessionWindowLocator.raise(sessionID: sessionID, marks: agentMarks())
     }
 
+    /// The same, for an async caller: the window lists and the walk for
+    /// another Space's window run on `DockAXWorker`, so a hung host app
+    /// never holds the main thread.
+    @discardableResult
+    func raiseSessionWindow(_ sessionID: String) async -> SessionWindowLocator.Outcome {
+        await SessionWindowLocator.raise(sessionID: sessionID, marks: agentMarks())
+    }
+
     /// A preview's Approve / Deny — `PanelStore.answer`'s guards, and the
     /// daemon's own verdict as the line the row shows. `only_if_frontmost`
     /// stays false: the daemon raises the session's terminal first.

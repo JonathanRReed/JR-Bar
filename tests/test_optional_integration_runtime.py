@@ -381,19 +381,13 @@ def test_hold_reasserts_our_layer_and_foreign_layers_are_left_alone() -> None:
 
     # --- scenario: a_layer_handed_to_another_app_is_neither_painted_nor_defended
     adapter = Adapter()
+    # The pad sits on layer 2 (assigned to codex) until the test moves it.
+    # The switch back is the test's step, not a poll count: scripted by
+    # polls, a runner that stalled one 50 ms status interval between the
+    # external_layer receipt and the submit had already reached layer 1,
+    # and the paint it then saw was correct behaviour, not a leak.
     adapter.status = {"layer_index": 2, "profile_index": 0}
-    adapter.layers = iter([{"layer_index": 2, "profile_index": 0}, {"layer_index": 1, "profile_index": 0}])
     receipts = []
-
-    def query():
-        # The pad reports layer 2 first (assigned to codex), then the user
-        # switches back to layer 1.
-        try:
-            return next(adapter.layers)
-        except StopIteration:
-            return {"layer_index": 1, "profile_index": 0}
-
-    adapter.query_status = query
     service = CreatorMicroOutputService(
         adapter_factory=lambda: adapter, callback=receipts.append,
         ownership="hold", layer_owners={1: "codex"}, status_poll_seconds=0.05,
@@ -404,11 +398,15 @@ def test_hold_reasserts_our_layer_and_foreign_layers_are_left_alone() -> None:
         service.submit(AgentMode.WORKING)
         assert service.wait_until_idle(1)
         assert adapter.writes == [], "a foreign-owned layer must not be painted"
-        # Foreign traffic there is the design, not a conflict to retry.
+        # Foreign traffic there is the design, not a conflict to retry: the
+        # accusation is consumed and dropped, and nothing is painted over it.
         adapter.foreign_pending = True
-        assert until(lambda: not adapter.conflict.active)
+        assert until(lambda: not adapter.foreign_pending and not adapter.conflict.active)
         assert not any(receipt.reason == "device_conflict" for receipt in receipts)
-        # Back on layer 1 the remembered frame is repainted on its own.
+        assert adapter.writes == [], "foreign traffic on a foreign layer must not be answered"
+        # The user switches back to layer 1: the remembered frame is
+        # repainted on its own.
+        adapter.status = {"layer_index": 1, "profile_index": 0}
         assert until(lambda: adapter.writes == ["active"])
     finally:
         service.close()

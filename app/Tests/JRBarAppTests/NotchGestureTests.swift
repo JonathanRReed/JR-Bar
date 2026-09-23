@@ -187,9 +187,10 @@ struct NotchGestureTests {
     }
 
     @Test("a refused offer spends nothing — its key can still arrive later")
-    func refusedOfferKeepsItsKey() async throws {
+    func refusedOfferKeepsItsKey() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers.driving(toy)
         toy.offer(notice(.completed, key: "completed:a", id: "a"))
         toy.offer(notice(.ask, key: "ask:b", id: "b"))
         // Refused at the door — never queued, never cooled down.
@@ -198,13 +199,12 @@ struct NotchGestureTests {
         // Once the queue drains, the same key offers cleanly.
         toy.finishCapsule()
         #expect(toy.activeCapsule == nil)
-        try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.minGap + 0.2))
-        // The ask draws after its gap; then the refused key is fresh.
-        // Where it lands depends on timing — queued behind the ask
-        // still living its `life`, or straight into `current` if the
-        // sleep slid past that run — either way, it arrived.
-        toy.offer(notice(.charging, key: "power", id: "c"))
-        #expect(toy.capsuleQueue.pending?.id == "c"
-                || toy.capsuleQueue.current?.id == "c")
+        // The ask draws after its gap — the one timer armed — and holds.
+        #expect(timers.fireNext())
+        #expect(toy.activeCapsule?.id == "b")
+        // The refused key is fresh: it queues behind the ask instead of
+        // being turned away as a repeat.
+        #expect(toy.offer(notice(.charging, key: "power", id: "c")))
+        #expect(toy.capsuleQueue.pending?.id == "c")
     }
 }

@@ -151,6 +151,103 @@ struct AlcoveEventsTests {
         #expect(q.offer(notice(.ask, key: "ask:a", id: "1x"), at: t0 + 1) == .suppressed)
     }
 
+    /// What the queue reported evicting — the closure is `@Sendable`, and
+    /// the queue calls it synchronously inside the mutating call.
+    private final class Evictions: @unchecked Sendable {
+        var ids: [String] = []
+    }
+
+    @Test("a waiting notice a newer one pushes out of the slot is reported, not dropped")
+    func evictionReported() {
+        var q = AlcoveCapsuleQueue()
+        let seen = Evictions()
+        q.onEvict = { seen.ids.append($0.id) }
+        _ = q.offer(notice(.failed, key: "failed:a", id: "1"), at: t0)
+        #expect(q.offer(notice(.device, key: "toast:x", id: "2"), at: t0) == .queued)
+        #expect(seen.ids.isEmpty, "queuing into an empty slot displaces nothing")
+        #expect(q.offer(notice(.completed, key: "completed:c", id: "3"), at: t0 + 1) == .queued)
+        #expect(seen.ids == ["2"], ".queued promised the island would say it — the lapse is heard")
+
+        // Stepping down, dismissing and parking are not displacements.
+        _ = q.finish(at: t0 + AlcoveCapsuleQueue.life)
+        _ = q.offer(notice(.failed, key: "failed:d", id: "4"), at: t0 + 10)
+        q.cancel(at: t0 + 11)
+        _ = q.offer(notice(.failed, key: "failed:e", id: "5"), at: t0 + 12)
+        _ = q.offer(notice(.completed, key: "completed:f", id: "6"), at: t0 + 12)
+        q.clear()
+        #expect(seen.ids == ["2"])
+    }
+
+    @Test("a waiting notice already past its staleness goes quietly; a waiting ask never goes stale")
+    func staleEvictionIsQuiet() {
+        var q = AlcoveCapsuleQueue()
+        let seen = Evictions()
+        q.onEvict = { seen.ids.append($0.id) }
+        _ = q.offer(notice(.ask, key: "ask:a", id: "1"), at: t0)
+        _ = q.offer(notice(.device, key: "toast:x", id: "2"), at: t0)
+        let late = t0 + AlcoveCapsuleQueue.pendingStaleAfter + 1
+        _ = q.offer(notice(.completed, key: "completed:c", id: "3"), at: late)
+        #expect(seen.ids.isEmpty, "history by now — `finish` would have dropped it too")
+        _ = q.offer(notice(.ask, key: "ask:b", id: "4"), at: late)
+        #expect(seen.ids == ["3"], "a fresh one is reported")
+        _ = q.offer(notice(.ask, key: "ask:c", id: "5"), at: late + AlcoveCapsuleQueue.pendingStaleAfter + 1)
+        #expect(seen.ids == ["3", "4"], "an ask is never history")
+    }
+
+    @Test("a waiting announcement its own next state replaces goes quietly — the older half is no longer true")
+    func supersededGoesQuietly() {
+        var q = AlcoveCapsuleQueue()
+        let seen = Evictions()
+        q.onEvict = { seen.ids.append($0.id) }
+        _ = q.offer(notice(.failed, key: "failed:a", id: "1"), at: t0)
+        _ = q.offer(notice(.device, key: "device:AirPods:on", id: "2"), at: t0)
+        #expect(q.offer(notice(.device, key: "device:AirPods:off", id: "3"), at: t0 + 1) == .queued)
+        #expect(q.pending?.id == "3")
+        #expect(seen.ids.isEmpty, "\"AirPods · Connected\" is not said as they disconnect")
+        _ = q.offer(notice(.focus, key: "focus:on", id: "4"), at: t0 + 2)
+        #expect(seen.ids == ["3"], "another subject's news still reports the displaced one")
+        _ = q.offer(notice(.focus, key: "focus:off", id: "5"), at: t0 + 3)
+        #expect(seen.ids == ["3"])
+        _ = q.offer(notice(.completed, key: "completed:c", id: "6"), at: t0 + 4)
+        #expect(seen.ids == ["3", "5"])
+        #expect(AlcoveCapsuleQueue.subject(of: "device:Magic Keyboard:off") == "device:Magic Keyboard")
+        #expect(AlcoveCapsuleQueue.subject(of: "toast:Sound on") == "toast:Sound on",
+                "only a trailing state word is stripped")
+        #expect(AlcoveCapsuleQueue.subject(of: "display:on") == AlcoveCapsuleQueue.subject(of: "display:off"))
+    }
+
+    @Test("a takeover parking the shown ask reports the notice it pushed out")
+    func takeoverEvictionReported() {
+        var q = AlcoveCapsuleQueue()
+        let seen = Evictions()
+        q.onEvict = { seen.ids.append($0.id) }
+        var shown = notice(.ask, key: "ask:s1", id: "1")
+        shown.session = "s1"
+        var escalated = notice(.ask, key: "ask:s2", id: "3")
+        escalated.session = "s2"
+        _ = q.offer(shown, at: t0)
+        _ = q.offer(notice(.failed, key: "failed:b", id: "2"), at: t0)
+        q.takeOver(escalated, at: t0 + 1)
+        #expect(q.current?.id == "3")
+        #expect(q.pending?.id == "1", "the shown ask keeps its place behind the takeover")
+        #expect(seen.ids == ["2"])
+    }
+
+    @Test("the queue's equality is its line, not who listens to it")
+    func equalityIgnoresListener() {
+        var listening = AlcoveCapsuleQueue()
+        listening.onEvict = { _ in }
+        #expect(listening == AlcoveCapsuleQueue())
+        _ = listening.offer(notice(.failed, key: "failed:a", id: "1"), at: t0)
+        #expect(listening != AlcoveCapsuleQueue())
+    }
+
+    @Test("the Mac's announcements are the kinds that wait in the line")
+    func macAnnouncements() {
+        #expect(AlcoveNoticeKind.allCases.filter(\.isMacAnnouncement) == [.focus, .device, .display])
+        #expect(!AlcoveNoticeKind.allCases.contains { $0.isMacAnnouncement && $0.isFeedback })
+    }
+
     // MARK: Media
 
     @Test("a now-playing dict with no title is nothing; the rate says paused")

@@ -31,17 +31,20 @@ struct NotchCapsuleTests {
         return (toy, store)
     }
 
-    /// Poll for a capsule's draw — every hop in its lifecycle rides a
-    /// main-queue `asyncAfter` whose deadline slides under a parallel
-    /// suite, so the tests sample a window, not one slept instant.
-    private func waitForCapsule(_ toy: NotchToy, id: String,
-                              timeout: Duration = .seconds(8)) async -> Bool {
-        let start = ContinuousClock.now
-        while ContinuousClock.now - start < timeout {
+    /// The line's timers and the shelf's clock on a hand-cranked pair:
+    /// every hop in a capsule's lifecycle is a timer, and on the real
+    /// main queue a parallel suite could hold one past a minute.
+    private func crank(_ toy: NotchToy) -> ManualTimers { .driving(toy) }
+
+    /// Fire the line's timers in order until `id` is the drawn capsule.
+    /// False when the line runs dry first — nothing armed while the
+    /// capsule still waits is the wedge itself, not a slow machine.
+    private func runLine(_ timers: ManualTimers, until toy: NotchToy, draws id: String) -> Bool {
+        for _ in 0..<8 {
             if toy.activeCapsule?.id == id { return true }
-            try? await Task.sleep(for: .milliseconds(10))
+            guard timers.fireNext() else { return false }
         }
-        return false
+        return toy.activeCapsule?.id == id
     }
 
     @Test("the owner releases a headless toy with pending work")
@@ -59,9 +62,10 @@ struct NotchCapsuleTests {
     }
 
     @Test("a grow mid-gap shelves the capsule; the fold replays it and the queue unwedges")
-    func expandDuringGapShelvesAndCollapseRestores() async throws {
+    func expandDuringGapShelvesAndCollapseRestores() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = crank(toy)
 
         // A is up; B waits behind it.
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
@@ -74,12 +78,14 @@ struct NotchCapsuleTests {
         toy.finishCapsule()
         #expect(toy.capsuleQueue.current?.id == "b")
         #expect(toy.activeCapsule == nil)
+        #expect(timers.live == 1, "B's gap timer is armed")
 
         // The band grows the island inside that gap: B shelves, its gap
         // timer dies, but the queue keeps the notice for the fold.
         toy.expandFromBand()
         #expect(toy.islandExpanded)
         #expect(toy.shelvedCapsule?.notice.id == "b")
+        #expect(timers.live == 0, "the gap timer would fire into the card and park B for good")
 
         // The fold replays the still-fresh capsule instead of leaving
         // `current` parked behind the card.
@@ -88,20 +94,14 @@ struct NotchCapsuleTests {
         #expect(toy.shelvedCapsule == nil)
 
         // A new offer queues behind the replayed capsule, then draws —
-        // the slot is not wedged. B's replay ends after its `life`, C
-        // promotes past the gap: every hop is a timer that slides, so
-        // the test waits for the draw itself.
+        // the slot is not wedged. B's replay holds its `life`, then C
+        // promotes past the minimum gap: two timers, fired in order.
         toy.offer(notice(.completed, key: "completed:c", id: "c"))
         #expect(toy.capsuleQueue.pending?.id == "c")
-        // The longest chain in the file — B's replay `life` plus the
-        // minimum gap plus C's promotion, every hop a main-queue
-        // `asyncAfter`. Under the parallel suite the main queue itself
-        // backlogs (a blocked main thread starves every queued block,
-        // not just timers), so the bound outlasts the suite's whole
-        // congestion window, not just slide. The claim is still "the
-        // queued capsule draws" — a real wedge still fails, slowly.
-        #expect(await waitForCapsule(toy, id: "c", timeout: .seconds(60)),
+        #expect(timers.nextDue == AlcoveCapsuleQueue.life, "the replay arms B's own life")
+        #expect(runLine(timers, until: toy, draws: "c"),
                 "the queued capsule draws after the replay")
+        #expect(toy.capsuleQueue.pending == nil)
     }
 
     @Test("the utility switched off owns no surface — the island read and the glass card agree")
@@ -148,9 +148,10 @@ struct NotchCapsuleTests {
     }
 
     @Test("a shelf that outlives its capsule's freshness is dropped, not replayed")
-    func staleShelfDropsOnCollapse() async throws {
+    func staleShelfDropsOnCollapse() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = crank(toy)
 
         toy.offer(notice(.ask, key: "ask:a", id: "a"))
         toy.offer(notice(.failed, key: "failed:b", id: "b"))
@@ -160,7 +161,7 @@ struct NotchCapsuleTests {
 
         // Held past the capsule's own TTL the fold lets it go — and
         // clears the slot so the queue still answers new offers.
-        try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.life + 0.4))
+        timers.advance(by: AlcoveCapsuleQueue.life + 0.4)
         toy.collapseFromBand()
         #expect(toy.activeCapsule == nil)
         #expect(toy.capsuleQueue.current == nil)
@@ -240,16 +241,31 @@ struct NotchCapsuleTests {
     }
 
     @Test("a meeting shelved past news's beat is still fresh on the fold")
-    func meetingFreshForItsOwnLife() async throws {
+    func meetingFreshForItsOwnLife() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = crank(toy)
 
         toy.offer(notice(.meeting, key: "meeting:a", id: "a"))
         toy.expandFromBand()
         #expect(toy.shelvedCapsule?.notice.id == "a")
-        try await Task.sleep(for: .seconds(AlcoveCapsuleQueue.life + 0.4))
+        timers.advance(by: AlcoveCapsuleQueue.life + 0.4)
         toy.collapseFromBand()
         #expect(toy.activeCapsule?.id == "a", "a thirty-second heads-up outlives news's freshness")
+    }
+
+    @Test("a meeting shelved past its own thirty seconds is dropped on the fold")
+    func meetingStaleAfterItsOwnLife() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        let timers = crank(toy)
+
+        toy.offer(notice(.meeting, key: "meeting:a", id: "a"))
+        toy.expandFromBand()
+        timers.advance(by: AlcoveCapsuleQueue.meetingLife + 0.4)
+        toy.collapseFromBand()
+        #expect(toy.activeCapsule == nil, "the card's calendar row keeps Join; the heads-up has had its turn")
+        #expect(toy.capsuleQueue.current == nil)
     }
 
     @Test("a folded card stays folded when a later capsule steps down")

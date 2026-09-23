@@ -183,15 +183,22 @@ final class AgentUtility: Toy {
     /// The repository a session works in: git's own answer (a linked
     /// worktree names its main repository), read once per folder from
     /// the `.git` files — no git process — and the folder heuristic when
-    /// the folder is not in a repository.
-    @ObservationIgnored private var repositories: [String: GitWorkspace?] = [:]
+    /// the folder is not in a repository. A working set, not a history:
+    /// the folders no session has named lately are forgotten first, and
+    /// one wanted again is read again.
+    @ObservationIgnored private(set) var repositories = RecencyCache<String, GitWorkspace?>(limit: 256)
 
-    private func projectName(_ session: CoreSession) -> String? {
+    /// Internal for the tests, which walk it past the memo's limit.
+    func projectName(_ session: CoreSession) -> String? {
         guard !session.isRemote, let cwd = session.cwd, !cwd.isEmpty else { return AgentProject.name(of: session.cwd) }
-        if repositories[cwd] == nil {
-            repositories[cwd] = .some(GitWorkspace.resolve(cwd: cwd))
+        let workspace: GitWorkspace?
+        if let known = repositories.value(for: cwd) {
+            workspace = known
+        } else {
+            workspace = GitWorkspace.resolve(cwd: cwd)
+            repositories.set(workspace, for: cwd)
         }
-        return AgentProject.name(of: cwd, workspace: repositories[cwd] ?? nil)
+        return AgentProject.name(of: cwd, workspace: workspace)
     }
 
     /// "1 waiting on you · 2 working" — the organizer's counts over the

@@ -79,6 +79,11 @@ import Testing
         while dock.sets.isEmpty, Date() < deadline {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
+        // One more re-check's worth past the deadline: a main thread held
+        // longer than it wakes this loop ahead of the re-check that came
+        // due meanwhile, and the deadline alone would miss a flip that
+        // is next in line.
+        if dock.sets.isEmpty { try await Task.sleep(nanoseconds: 300_000_000) }
         #expect(dock.sets == [true])
         #expect(store.isOn[.dockAutoHide] == true)
     }

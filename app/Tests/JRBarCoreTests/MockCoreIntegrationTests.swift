@@ -40,6 +40,10 @@ struct MockCoreIntegrationTests {
         return false
     }
 
+    /// Giving up takes one more poll past the deadline: the model's
+    /// updates land on the main actor, and a main thread held longer than
+    /// the deadline wakes this poll ahead of the update that arrived
+    /// meanwhile. The last sleep queues behind it.
     @MainActor
     static func wait(timeout: TimeInterval = 10, until condition: @MainActor () -> Bool) async -> Bool {
         let deadline = Date(timeIntervalSinceNow: timeout)
@@ -47,6 +51,7 @@ struct MockCoreIntegrationTests {
             if condition() { return true }
             try? await Task.sleep(for: .milliseconds(20))
         }
+        try? await Task.sleep(for: .milliseconds(20))
         return condition()
     }
 
