@@ -287,6 +287,23 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         for mode in modes {
             keys.append(SettingsKey(.lighting, "colors.mode_colors.\(mode)", .string))
         }
+        // Preferences only the retiring PyObjC window used to write: the
+        // calendar and reminder glows, the closed-lid grace, the charging
+        // fill and power-change preview, the Rainstick's night consent, the
+        // odometer's steps and the per-device blend. Saved data (calibration
+        // slots, Focus rules) stays out of the catalogue so a page reset
+        // never wipes it.
+        keys += [
+            SettingsKey(.notifications, "calendar_alerts_enabled", .bool),
+            SettingsKey(.notifications, "calendar_lead_minutes", .number),
+            SettingsKey(.notifications, "reminder_alerts_enabled", .bool),
+            SettingsKey(.notifications, "closed_lid_grace_minutes", .number),
+            SettingsKey(.notifications, "battery_monitoring.charging_idle_enabled", .bool),
+            SettingsKey(.notifications, "battery_monitoring.show_on_power_change", .bool),
+            SettingsKey(.lighting, "rainstick_night_enabled", .bool),
+            SettingsKey(.lighting, "milestone_odometer_steps", .numberList),
+            SettingsKey(.devices, "devices[].blend_mode", .nullableString),
+        ]
         return keys
     }()
 

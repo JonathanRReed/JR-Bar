@@ -107,6 +107,21 @@ struct PowerCodecTests {
         #expect(odd.presence == nil)
     }
 
+    @Test("the preferences only the legacy window wrote are in the catalogue, saved data is not")
+    func legacyWindowKeys() {
+        let kinds = Dictionary(uniqueKeysWithValues: SettingsKey.all.map { ($0.path, $0.kind) })
+        #expect(kinds["calendar_alerts_enabled"] == .bool)
+        #expect(kinds["calendar_lead_minutes"] == .number)
+        #expect(kinds["reminder_alerts_enabled"] == .bool)
+        #expect(kinds["battery_monitoring.charging_idle_enabled"] == .bool)
+        #expect(kinds["rainstick_night_enabled"] == .bool)
+        #expect(kinds["milestone_odometer_steps"] == .numberList)
+        #expect(kinds["devices[].blend_mode"] == .nullableString)
+        #expect(kinds["calibration_profiles"] == nil, "a page reset must not wipe saved slots")
+        #expect(kinds["focus_profile_rules"] == nil)
+        #expect(SettingsKey.all.count == Set(SettingsKey.all.map(\.path)).count, "no path listed twice")
+    }
+
     @Test("the hold_awake and presence arguments say exactly what the daemon parses")
     func requestArguments() {
         #expect(CoreAwakeRequest(.seconds(3600), source: "chip").arguments == [
