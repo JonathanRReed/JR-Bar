@@ -129,9 +129,20 @@ final class AlcovePowerMonitor {
             let charging = (description[kIOPSIsChargingKey] as? Bool) ?? false
             let percent = description[kIOPSCurrentCapacityKey] as? Int
             let charged = (description[kIOPSIsChargedKey] as? Bool) ?? false
+            // The system's estimate: minutes to full while charging (-1
+            // while it is still measuring), seconds to empty on battery
+            // (negative for "unknown" and "unlimited").
+            var minutes: Int?
+            if charging {
+                minutes = (description[kIOPSTimeToFullChargeKey] as? Int).flatMap { $0 > 0 ? $0 : nil }
+            } else if !onAC {
+                let seconds = IOPSGetTimeRemainingEstimate()
+                minutes = seconds > 0 ? Int(seconds / 60) : nil
+            }
             return AlcovePowerState(hasBattery: true, onAC: onAC, charging: charging,
                                     percent: percent,
-                                    fullyCharged: charged || (onAC && (percent ?? 0) >= 100))
+                                    fullyCharged: charged || (onAC && (percent ?? 0) >= 100),
+                                    minutesRemaining: minutes)
         }
         return empty
     }

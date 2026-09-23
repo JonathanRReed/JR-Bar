@@ -283,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.model.utility.lyrics.enabled = { [weak toysStore] in
             toysStore?.state.notch.lyrics ?? true
         }
+        notchCard.model.heldAwake = { [weak self] in self?.core?.state?.power?.keepAwake == true }
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.

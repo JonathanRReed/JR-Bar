@@ -80,6 +80,11 @@ final class NotchCardModel {
     /// The headline quota meters (`NotchIsland.meters`); empty while
     /// the toy's `showUsage` is off.
     var meters: [NotchIslandMeter] = []
+    /// Sessions working right now — the battery line says whether a run
+    /// is riding on the charge.
+    var workingCount = 0
+    /// Whether the daemon holds the Mac awake (`state.power.keep_awake`).
+    var heldAwake: () -> Bool = { false }
     /// Media/device utility facts — monitored only while pinned.
     let utility = ShelfUtilityModel()
     /// The file tray — paths persist in defaults; revalidated on pin.
@@ -234,7 +239,8 @@ struct NotchCardView: View {
                 }
             }
             revealRow(9, ShelfMediaRow(utility: model.utility, style: style))
-            revealRow(10, ShelfBatteryRow(power: model.utility.power, style: style))
+            revealRow(10, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
+                                          heldAwake: model.heldAwake(), style: style))
             revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
             revealRow(12, ShelfTrayRow(tray: model.tray, style: style))
             if !model.timers.entries.isEmpty {
@@ -848,38 +854,30 @@ private struct LiveEqualizer: View {
 
 /// The card's battery row: the internal battery's observed state,
 /// hidden entirely on machines without one — never an invented charge.
-/// Volume/brightness controls are intentionally not here: macOS owns
-/// those HUDs.
+/// The glyph holds the charge it reads, and the line is agent-aware:
+/// the system's time estimate, how many runs ride on it, and whether
+/// the Mac is held awake (`AlcovePower.batteryLine`) — whether a long
+/// run survives unplugged is the question only this card can answer.
 private struct ShelfBatteryRow: View {
     let power: AlcovePowerState
+    let working: Int
+    let heldAwake: Bool
     let style: NotchCardStyle
 
     var body: some View {
         if power.hasBattery {
+            let low = !power.onAC && (power.percent ?? 100) < AlcovePower.lowThreshold
             HStack(spacing: 6) {
-                Image(systemName: power.charging ? "battery.100.bolt" : "battery.50")
+                Image(systemName: power.symbol)
                     .font(.system(size: 10))
-                    .foregroundStyle(style.subColor)
+                    .foregroundStyle(low ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.subColor))
                     .frame(width: 18)
-                Text(label)
+                Text(AlcovePower.batteryLine(power, working: working, heldAwake: heldAwake))
                     .font(.system(size: 11))
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
             }
         }
-    }
-
-    private var label: String {
-        var parts: [String] = []
-        if let percent = power.percent { parts.append("\(percent)%") }
-        if power.fullyCharged {
-            parts.append("Charged")
-        } else if power.charging {
-            parts.append("Charging")
-        } else {
-            parts.append(power.onAC ? "On AC" : "On battery")
-        }
-        return parts.isEmpty ? "Battery" : parts.joined(separator: " · ")
     }
 }
 

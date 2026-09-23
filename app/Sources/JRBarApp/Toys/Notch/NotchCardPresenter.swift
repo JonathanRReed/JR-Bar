@@ -148,7 +148,9 @@ final class NotchCardPresenter {
         lastFocus = focus
         model.focus = focus
         // The focus's own session is the header, not a row.
-        model.rows = sessionRows().filter { $0.id != focus.focusSession }
+        let rows = sessionRows()
+        model.rows = rows.filter { $0.id != focus.focusSession }
+        model.workingCount = rows.filter { $0.activity == .working }.count
         model.meters = meters()
         panel.present(under: anchor, clearance: clearance())
         isShown = true

@@ -656,19 +656,52 @@ public struct AlcovePowerState: Equatable, Sendable {
     public var percent: Int?
     /// `Is Charged`, or full on AC.
     public var fullyCharged: Bool
+    /// The system's own estimate in minutes: to empty on battery
+    /// (`IOPSGetTimeRemainingEstimate`), to full while charging (`Time
+    /// to Full Charge`). nil while macOS is still working it out.
+    public var minutesRemaining: Int?
 
     public init(hasBattery: Bool, onAC: Bool, charging: Bool,
-                percent: Int?, fullyCharged: Bool) {
+                percent: Int?, fullyCharged: Bool, minutesRemaining: Int? = nil) {
         self.hasBattery = hasBattery
         self.onAC = onAC
         self.charging = charging
         self.percent = percent
         self.fullyCharged = fullyCharged
+        self.minutesRemaining = minutesRemaining
     }
 
     /// The percent rendered for a subtitle — "· 84%" or nothing.
     public var percentText: String {
         percent.map { " · \($0)%" } ?? ""
+    }
+
+    /// The battery glyph for the charge it actually holds — a bolt while
+    /// charging, else the nearest quarter — never a fixed half battery.
+    public var symbol: String {
+        if charging { return "battery.100percent.bolt" }
+        guard let percent else { return "battery.50percent" }
+        switch percent {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
+    }
+
+    /// "1h 50m", "35m" — nil without an estimate.
+    public var remainingText: String? {
+        guard let minutes = minutesRemaining, minutes > 0 else { return nil }
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+
+    /// Everything but the estimate — the part a transition is about.
+    /// The estimate moves on nearly every read and is never news.
+    public var withoutEstimate: AlcovePowerState {
+        var copy = self
+        copy.minutesRemaining = nil
+        return copy
     }
 }
 
@@ -708,6 +741,51 @@ public enum AlcovePower {
         }
         return AlcoveNotice(id: id, kind: .charging, title: "Power",
                             subtitle: subtitle, key: noticeKey)
+    }
+
+    /// The charge below which a battery running agents is worth a word.
+    public static let lowThreshold = 20
+    public static let lowKey = "charging:low"
+
+    /// The one power notice only JR-Bar can give: the battery crossing
+    /// under `lowThreshold` on battery while agents are working — will
+    /// the long run survive unplugged? Silent with no agents working,
+    /// on AC, or on any read that did not cross.
+    public static func lowBatteryNotice(from old: AlcovePowerState, to new: AlcovePowerState,
+                                        working: Int, id: String) -> AlcoveNotice? {
+        guard working > 0, new.hasBattery, !new.onAC,
+              let before = old.percent, let now = new.percent,
+              before >= lowThreshold, now < lowThreshold else { return nil }
+        var parts = ["\(now)%"]
+        if let left = new.remainingText { parts.append("~\(left) left") }
+        parts.append(working == 1 ? "1 agent working" : "\(working) agents working")
+        return AlcoveNotice(id: id, kind: .charging, title: "Battery low",
+                            subtitle: parts.joined(separator: " · "), key: lowKey,
+                            glyph: "battery.25percent")
+    }
+
+    /// The card's battery line, agent-aware: "41% · ~1h 50m left · 3
+    /// agents working · held awake" on battery; "84% · Charging · full
+    /// in 35m" plugged in. The agent half only speaks while agents work.
+    public static func batteryLine(_ state: AlcovePowerState, working: Int,
+                                   heldAwake: Bool) -> String {
+        var parts: [String] = []
+        if let percent = state.percent { parts.append("\(percent)%") }
+        if state.fullyCharged {
+            parts.append("Charged")
+        } else if state.charging {
+            parts.append("Charging")
+            if let left = state.remainingText { parts.append("full in \(left)") }
+        } else if state.onAC {
+            parts.append("On AC")
+        } else {
+            parts.append(state.remainingText.map { "~\($0) left" } ?? "On battery")
+        }
+        if working > 0 {
+            parts.append(working == 1 ? "1 agent working" : "\(working) agents working")
+        }
+        if heldAwake { parts.append("held awake") }
+        return parts.joined(separator: " · ")
     }
 }
 

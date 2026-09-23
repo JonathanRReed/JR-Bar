@@ -131,8 +131,8 @@ final class NotchToy: Toy {
     /// The shared Now Playing source — one helper for every surface.
     @ObservationIgnored private let mediaFeed: MediaFeed
     /// The island's subscription to the shared power feed; exists only
-    /// while the island is ours, shown, `capsuleNotifications` +
-    /// `capsuleKinds.charging` are on, and no ear announces power.
+    /// while the island is ours, shown, and `capsuleNotifications` +
+    /// `capsuleKinds.charging` are on.
     @ObservationIgnored private var powerMonitor: AlcovePowerMonitor?
     /// The mic/camera poller; exists only while the island is ours,
     /// shown, and the indicators switch is on.
@@ -204,6 +204,7 @@ final class NotchToy: Toy {
             self?.settings.weatherUseIPLocation ?? false
         }
         cardModel.utility.lyrics.enabled = { [weak self] in self?.settings.lyrics ?? true }
+        cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
         cardModel.timers.onFireNotice = { [weak self] entry in self?.noteTimerFired(entry) }
@@ -973,7 +974,9 @@ final class NotchToy: Toy {
     /// glass card's presenter would hand it.
     private func feedCard() {
         if let focus = cardFocus() { cardModel.focus = focus }
-        cardModel.rows = islandSummary.rows.filter { $0.id != cardModel.focus.focusSession }
+        let summary = islandSummary
+        cardModel.rows = summary.rows.filter { $0.id != cardModel.focus.focusSession }
+        cardModel.workingCount = summary.working
         cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
     }
 
@@ -1236,13 +1239,21 @@ final class NotchToy: Toy {
 
     /// A battery transition the power monitor saw — `AlcovePower.notice`
     /// shapes it; the same queue and gate as daemon events. An ear that
-    /// speaks for power keeps the island quiet.
+    /// speaks for power keeps the island quiet about plugs and charge
+    /// states — but not about the one thing the ear can't know: the
+    /// battery running low while agents work on it.
     private func notePowerTransition(from old: AlcovePowerState, to new: AlcovePowerState) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
-              s.capsuleNotifications, islandVisible, !islandExpanded,
-              !earNoticesLive else { return }
-        guard let notice = AlcovePower.notice(from: old, to: new,
+              s.capsuleNotifications, islandVisible, !islandExpanded else { return }
+        if let low = AlcovePower.lowBatteryNotice(from: old, to: new,
+                                                  working: islandSummary.working,
+                                                  id: UUID().uuidString) {
+            offer(low)
+            return
+        }
+        guard !earNoticesLive,
+              let notice = AlcovePower.notice(from: old, to: new,
                                               id: UUID().uuidString,
                                               kinds: s.capsuleKinds) else { return }
         offer(notice)
@@ -1685,12 +1696,13 @@ final class NotchToy: Toy {
     }
 
     /// The island's subscription to the shared power feed lives exactly
-    /// as long as the island is shown with both capsule switches on and
-    /// no ear speaking for it; `reconcile`/`parkIsland` land here.
+    /// as long as the island is shown with both capsule switches on —
+    /// with the ears speaking for power it stays only for the low-battery
+    /// word; `reconcile`/`parkIsland` land here. The feed is one poll
+    /// whoever listens.
     private func syncPowerMonitor() {
         let s = settings
         let want = islandVisible && s.capsuleNotifications && s.capsuleKinds.charging
-            && !earNoticesLive
         if want {
             if powerMonitor == nil {
                 let monitor = AlcovePowerMonitor()
