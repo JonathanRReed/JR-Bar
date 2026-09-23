@@ -194,9 +194,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.askDesk.onAnswered = { [weak toysStore] session, request in
             toysStore?.notch.resolveAsk(session: session, request: request)
         }
-        // A live session the daemon cannot find opens through the Dock's
-        // window locator instead of stopping at "not found".
-        store.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
+        // One way to open a session: a live session the daemon cannot find
+        // opens through the Dock's window locator, off main, instead of
+        // stopping at "not found".
+        SessionOpener.wiring = SessionOpener.Wiring(core: core, utilities: utilitiesStore)
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater

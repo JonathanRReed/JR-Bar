@@ -5,10 +5,10 @@ import Testing
 @testable import JRBarCore
 
 /// Asks answered from every surface: the palette's ask rows, the panel's
-/// guards and its Open fallback, the Rail's pill, History's Resume, the
-/// Overview's New Session Here, the hook doctor's line, and "quiet while
-/// watching" taking the daemon's tab-level word. Nothing here opens a
-/// window, plays a sound or reaches a daemon.
+/// guards, the Rail's pill, History's Resume, the Overview's New Session
+/// Here, the hook doctor's line, and "quiet while watching" taking the
+/// daemon's tab-level word. Nothing here opens a window, plays a sound
+/// or reaches a daemon.
 @Suite("Ask surfaces")
 @MainActor
 struct AskSurfacesTests {
@@ -284,19 +284,6 @@ struct AskSurfacesTests {
     }
 
     // MARK: Panel
-
-    @Test("a refused open tries the window locator only for a live local row the daemon could not find")
-    func openFallbackGate() {
-        let notFound = CoreReplyError(code: "not_found", message: "can't find its window")
-        let live = row("claude:w", ask: nil, mode: "working")
-        #expect(PanelStore.raisesWindowInstead(notFound, row: live))
-        #expect(!PanelStore.raisesWindowInstead(CoreReplyError(code: "unsupported"), row: live))
-        let ended = SessionRow(session: CoreSession(id: "claude:e", provider: "claude", mode: "completed",
-                                                    lifecycle: "completed"), pinnedAsk: nil)
-        #expect(!PanelStore.raisesWindowInstead(notFound, row: ended))
-        #expect(!PanelStore.raisesWindowInstead(notFound, row: row("remote:studio:claude:x", ask: nil,
-                                                                   remote: true, mode: "working")))
-    }
 
     @Test("⌘↩ on a held question sends nothing and says to pick an option")
     func panelApproveOnQuestion() {

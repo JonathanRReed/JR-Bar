@@ -255,10 +255,6 @@ final class PanelStore {
     /// the Dock preview and the Rail share with the panel (the app
     /// delegate publishes it as `AskAnswerDesk.shared`).
     let askDesk: AskAnswerDesk
-    /// The exact window a live session runs in, raised through the
-    /// Dock's window locator (`UtilitiesStore.raiseSessionWindow`) — the
-    /// fallback when the daemon cannot find it. True when it came up.
-    var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     // Fallback (file feeds) and app-owned state.
     var fallbackState: AgentAggregateState = .idle
@@ -1432,45 +1428,19 @@ final class PanelStore {
         }
     }
 
-    /// `open_session`, awaited so its refusal is heard: an ended session
+    /// `SessionOpener`, awaited so its refusal is heard: an ended session
     /// answers `not_found` and the panel must say so rather than closing
-    /// as if a window had just been raised. Success closes the panel as
-    /// the row's click always did.
+    /// as if a window had just been raised, and a running one the daemon
+    /// cannot find is raised by the Dock's window locator. Success closes
+    /// the panel as the row's click always did.
     func open(_ row: SessionRow) {
         selectedID = row.id
         selectionByKeyboard = false
-        if row.isRemote {
-            // A mirrored peer session has no local window to raise.
-            show(toast: row.remoteMachine.map { "Running on \($0) — open it there" }
-                         ?? "A remote session — open it on the machine it runs on")
-            return
-        }
         Task { [weak self] in
+            let refusal = await SessionOpener.open(row.id)
             guard let self else { return }
-            do {
-                let reply = try await self.core.send("open_session", args: ["session": .string(row.id)])
-                if reply.ok {
-                    self.onClose?()
-                } else if Self.raisesWindowInstead(reply.error, row: row),
-                          self.raiseSessionWindow?(row.id) == true {
-                    // The daemon could not find the window of a session
-                    // that is still running; the Dock's window locator
-                    // could, and raised it.
-                    self.onClose?()
-                } else {
-                    self.show(toast: reply.error?.message ?? "Could not open \(row.label)")
-                }
-            } catch {
-                self.show(toast: "The monitor is not answering — the panel stays open")
-            }
+            if let refusal { self.show(toast: refusal) } else { self.onClose?() }
         }
-    }
-
-    /// Whether a refused open is worth the window locator's try: the
-    /// daemon's `not_found` for a local session that is still live. An
-    /// ended row has no window left to find — its refusal stands.
-    nonisolated static func raisesWindowInstead(_ error: CoreReplyError?, row: SessionRow) -> Bool {
-        error?.code == "not_found" && !row.isRemote && !row.activity.isClearable && row.activity != .failed
     }
 
     /// `dismiss_session {session}` for a stuck or quiet row: the daemon
