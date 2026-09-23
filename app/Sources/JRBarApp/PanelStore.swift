@@ -690,6 +690,64 @@ final class PanelStore {
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
 
+    // MARK: Notify when done
+
+    /// Sessions the user asked to hear about when they end — one banner
+    /// each, the long refactor pinging without turning completion banners
+    /// on for every run and sub-agent. In memory: a watch is for this run
+    /// of this session, and it is spent when it fires.
+    private(set) var doneWatches: Set<String> = []
+
+    func isWatchedForDone(_ row: SessionRow) -> Bool { doneWatches.contains(row.id) }
+
+    // MARK: Reaching a peer
+
+    /// The host a remote row's machine answers on (`state.peers`), for
+    /// "Open Screen Sharing to …"; nil when the peer never named one.
+    func screenSharingHost(for row: SessionRow) -> String? {
+        guard row.isRemote, let machine = row.remoteMachine else { return nil }
+        let peer = core.state?.peers?.first { $0.machine == machine }
+        return Self.screenSharingHost(peerHost: peer?.host, machine: machine)
+    }
+
+    /// The peer's published host (its Tailscale name), else the machine
+    /// name itself when it is a plausible host name; never a string with
+    /// characters a `vnc://` URL would have to smuggle.
+    nonisolated static func screenSharingHost(peerHost: String?, machine: String) -> String? {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        for candidate in [peerHost, machine] {
+            guard let text = candidate?.trimmingCharacters(in: .whitespaces), !text.isEmpty,
+                  text.unicodeScalars.allSatisfy(allowed.contains) else { continue }
+            return text
+        }
+        return nil
+    }
+
+    /// Screen Sharing to the peer: macOS's own client asks for the
+    /// credentials; JR-Bar sends nothing and runs nothing there.
+    func openScreenSharing(host: String) {
+        guard let url = URL(string: "vnc://\(host)") else { return }
+        NSWorkspace.shared.open(url)
+        onClose?()
+    }
+
+    func toggleDoneWatch(_ row: SessionRow) {
+        guard !row.isRemote else { return }
+        if doneWatches.remove(row.id) == nil {
+            doneWatches.insert(row.id)
+            show(toast: "Will tell you when \(row.label) is done")
+        } else {
+            show(toast: "Won't ping for \(row.label)")
+        }
+    }
+
+    /// A run-ending event for a watched session spends the watch; true
+    /// means the caller should make sure a banner lands.
+    func consumeDoneWatch(for event: CoreEvent) -> Bool {
+        guard AgentAlertRules.doneKinds.contains(event.kind), let session = event.session else { return false }
+        return doneWatches.remove(session) != nil
+    }
+
     // MARK: Type to find
 
     /// What the user typed while the panel was open — Raycast's defining

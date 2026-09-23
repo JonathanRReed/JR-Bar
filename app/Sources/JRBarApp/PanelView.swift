@@ -630,6 +630,13 @@ struct SessionRowView: View {
                             Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
+                        if store.isWatchedForDone(row) {
+                            Image(systemName: "bell")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .help("You'll get a banner when this run ends")
+                                .accessibilityLabel("Notify when done is on")
+                        }
                         if let quiet = store.quietFeedText(for: row) {
                             // The provider's hook feed stopped arriving
                             // while the row still claims to be live: the
@@ -735,6 +742,11 @@ struct SessionContextMenu: View {
     var body: some View {
         if row.isRemote {
             Text(row.remoteMachine.map { "Runs on \($0)" } ?? "Runs on a peer Mac")
+            if let host = store.screenSharingHost(for: row) {
+                // Reaching the peer is the local verb a remote row can
+                // have: Screen Sharing to it — nothing runs on the peer.
+                Button("Open Screen Sharing to \(row.remoteMachine ?? host)") { store.openScreenSharing(host: host) }
+            }
             if row.activity.isClearable || row.stale {
                 Divider()
                 Button("Clear") { store.clear(row) }
@@ -748,6 +760,13 @@ struct SessionContextMenu: View {
                 Divider()
             }
             Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+            if !row.activity.isClearable, row.activity != .failed {
+                // One banner when this run ends — without turning
+                // completion banners on for every run and sub-agent.
+                Button(store.isWatchedForDone(row) ? "Stop Notifying When Done" : "Notify When Done") {
+                    store.toggleDoneWatch(row)
+                }
+            }
             if row.isSnoozed(now: store.now) {
                 Button("Unsnooze") { store.snooze(row, seconds: 0) }
             } else if row.ask != nil || row.activity == .waiting {

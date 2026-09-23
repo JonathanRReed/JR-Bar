@@ -69,6 +69,30 @@ import JRBarCore
         #expect(panel.recentEvents.count == PanelStore.recentEventLimit)
     }
 
+    @Test("a done watch is spent by the run's ending and only by it")
+    func doneWatch() {
+        let panel = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.test.done.\(UUID().uuidString)")!,
+                               screenBarShown: false)
+        let row = SessionRow(session: CoreSession(id: "claude:run", provider: "claude", mode: "working"), pinnedAsk: nil)
+        panel.toggleDoneWatch(row)
+        #expect(panel.isWatchedForDone(row))
+        #expect(!panel.consumeDoneWatch(for: CoreEvent(id: "1", kind: "ask_opened", session: "claude:run")))
+        #expect(panel.consumeDoneWatch(for: CoreEvent(id: "2", kind: "completed", session: "claude:run")))
+        #expect(!panel.isWatchedForDone(row))
+        #expect(!panel.consumeDoneWatch(for: CoreEvent(id: "3", kind: "completed", session: "claude:run")))
+
+        let remote = SessionRow(session: CoreSession(id: "remote:studio:claude:x", provider: "claude", mode: "working"), pinnedAsk: nil)
+        panel.toggleDoneWatch(remote)
+        #expect(!panel.isWatchedForDone(remote))
+    }
+
+    @Test("Screen Sharing reaches a peer by a clean host name only")
+    func screenSharingHost() {
+        #expect(PanelStore.screenSharingHost(peerHost: "studio.tail1234.ts.net", machine: "studio") == "studio.tail1234.ts.net")
+        #expect(PanelStore.screenSharingHost(peerHost: nil, machine: "studio-mac") == "studio-mac")
+        #expect(PanelStore.screenSharingHost(peerHost: "evil host/../x", machine: "bad name?") == nil)
+    }
+
     @Test("the log's ages are narrow")
     func ages() {
         let now = Date(timeIntervalSince1970: 100_000)

@@ -69,6 +69,23 @@ struct AgentAlertRulesTests {
                                       state: Self.state, rules: ["grok": AgentAlertRule(sounds: false)]) == toast)
     }
 
+    @Test("a notify-when-done watch banners the ending, whatever the switches decided")
+    func notifyWhenDone() {
+        let finished = AgentAlertRules.notifyWhenDone(EventDelivery(sound: "Hero"),
+                                                      event: CoreEvent(id: "c", kind: "completed", session: "codex:2"),
+                                                      state: Self.state)
+        #expect(finished.notification?.title == "core finished")
+        #expect(finished.notification?.session == "codex:2")
+        let ended = AgentAlertRules.notifyWhenDone(.nothing, event: CoreEvent(id: "e", kind: "ended", session: "grok:1"),
+                                                   state: Self.state)
+        #expect(ended.notification?.title == "grok run ended")
+        let existing = EventDelivery(notification: .init(identifier: "failed:x", title: "already", body: ""))
+        #expect(AgentAlertRules.notifyWhenDone(existing, event: CoreEvent(id: "f", kind: "failed", session: "codex:2"),
+                                               state: Self.state) == existing)
+        #expect(AgentAlertRules.notifyWhenDone(.nothing, event: CoreEvent(id: "a", kind: "ask_opened", session: "codex:2"),
+                                               state: Self.state) == .nothing)
+    }
+
     @Test("rules persist inside the organizer settings, missing keys follow the global policy")
     func persistence() throws {
         var settings = AgentOrganizerSettings()

@@ -63,6 +63,29 @@ public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
 }
 
 public enum AgentAlertRules {
+    /// The kinds that end a run — what a "notify when done" watch waits for.
+    public static let doneKinds: Set<String> = ["completed", "failed", "ended"]
+
+    /// A session the user asked to hear about finished (or failed, or went
+    /// away): make sure a banner says so, whatever the global completion
+    /// switch or the provider's rule decided — the watch is the explicit
+    /// ask. Other kinds pass through.
+    public static func notifyWhenDone(_ delivery: EventDelivery, event: CoreEvent, state: CoreState?) -> EventDelivery {
+        guard doneKinds.contains(event.kind), delivery.notification == nil else { return delivery }
+        let session = event.session.flatMap { state?.session(withID: $0) }
+        let name = provider(of: event, state: state).map(LightExplainer.providerName) ?? "An agent"
+        let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? name
+        let (title, body): (String, String) = switch event.kind {
+        case "completed": ("\(label) finished", event.detail ?? "\(name) is done — you asked to hear. Click to open the session.")
+        case "failed": ("\(label) failed", event.detail ?? "\(name) stopped with an error. Click to open the session.")
+        default: ("\(label) ended", event.detail ?? "\(name) went away without confirming it finished.")
+        }
+        var out = delivery
+        out.notification = .init(identifier: "\(event.kind):\(event.session ?? event.id)", title: title, body: body,
+                                 session: event.session)
+        return out
+    }
+
     /// "none", "the light", "the pulse", "the chime".
     public static func stageWord(_ stage: Int) -> String {
         switch stage {

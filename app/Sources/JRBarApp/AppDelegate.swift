@@ -475,10 +475,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // The Agent Overview card's per-provider alert rules: how loud
         // each provider's asks, finishes, failures and escalation may be.
-        events.deliveryRules = { [weak utilitiesStore, weak core] delivery, event in
-            guard let rules = utilitiesStore?.agents.settings().alertRules, !rules.isEmpty else { return delivery }
-            return AgentAlertRules.apply(delivery, to: event, state: core?.state, rules: rules,
-                                         currentStage: core?.state?.escalation?.stageNumber)
+        events.deliveryRules = { [weak utilitiesStore, weak core, weak store] delivery, event in
+            var delivery = delivery
+            if let rules = utilitiesStore?.agents.settings().alertRules, !rules.isEmpty {
+                delivery = AgentAlertRules.apply(delivery, to: event, state: core?.state, rules: rules,
+                                                 currentStage: core?.state?.escalation?.stageNumber)
+            }
+            // A panel row's "Notify when done" is the explicit ask: it
+            // banners that one ending whatever the switches say.
+            if store?.consumeDoneWatch(for: event) == true {
+                delivery = AgentAlertRules.notifyWhenDone(delivery, event: event, state: core?.state)
+            }
+            return delivery
         }
         // The HUD panel is the Notch Buddy's home: it lives there between
         // toasts and steps aside while one is up.
