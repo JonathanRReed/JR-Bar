@@ -140,6 +140,23 @@ struct AskSurfacesTests {
         #expect(PaletteRanking.promoting("clear", in: clear).primary?.id == "open")
     }
 
+    @Test("two menu items with the same path and title get ids of their own, stable across queries")
+    func menuIDs() {
+        let app = AppMenuPaletteSource.MenuApp(pid: 1, name: "Safari", bundleID: "com.apple.Safari")
+        let entries = [
+            AppMenuEntry(indexPath: [5, 0], parents: ["Window"], title: "Untitled", shortcut: nil),
+            AppMenuEntry(indexPath: [5, 1], parents: ["Window"], title: "Untitled", shortcut: nil),
+            AppMenuEntry(indexPath: [1, 0], parents: ["File"], title: "Untitled", shortcut: nil),
+        ]
+        let ids = AppMenuPaletteSource.rowIDs(for: entries, app: app)
+        #expect(Set(ids).count == 3)
+        #expect(ids[0] == "menu.com.apple.Safari.Window/Untitled")
+        #expect(ids[1] == "menu.com.apple.Safari.Window/Untitled#2")
+        let rows = AppMenuPaletteSource.items(for: "untitled", entries: entries, app: app, press: { _, _ in })
+        #expect(Set(rows.map(\.id)).count == rows.count)
+        #expect(Set(rows.map(\.id)) == Set(ids))
+    }
+
     @Test("slower sources land in source order as each answers; searching holds until the last")
     func searchAnswers() {
         func item(_ id: String) -> PaletteItem {
