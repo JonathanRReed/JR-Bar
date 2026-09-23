@@ -1761,8 +1761,12 @@ def _cmd_import_effect_pack(self, args):
     if not isinstance(raw, str) or not raw.strip():
         raise CommandError("invalid_args", "path is required")
     path = Path(raw).expanduser()
+    # ``update: true`` is the explicit replace the Studio offers after a
+    # conflict (and the one "Save as Effect…" uses to grow Yours); it used
+    # to be dropped here, so the retry met the same conflict again.
+    update = args.get("update") is True
     try:
-        receipt = EffectPackStore().install(path)
+        receipt = EffectPackStore().install(path, update=update)
     except EffectPackStoreError as error:
         raise CommandError("invalid_pack", str(error)) from error
     except OSError as error:
