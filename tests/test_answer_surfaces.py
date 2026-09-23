@@ -294,7 +294,15 @@ def test_session_start_records_the_ghostty_terminal__and_4_more(tmp_path: Path) 
     assert later.recorded("codex", "s-1") is None and later.recorded_host("codex", "s-1") is None
 
 
-def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> None:
+def _recorded(tmp_path: Path, terminal_id: str | None, *, provider: str = "codex", session_id: str = "s-1", cwd: str = "/Users/me/repo"):
+    """A recorder whose SessionStart for ``provider``/``session_id`` found
+    ``terminal_id`` (``None``: Ghostty, but no surface proven)."""
+    recorder = SurfaceRecorder(path=tmp_path / f"surfaces-{terminal_id}.json", runner=FakeRunner(), synchronous=True)
+    recorder._store(provider, session_id, host_bundle="com.mitchellh.ghostty", terminal_id=terminal_id, cwd=cwd)
+    return recorder
+
+
+def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch, tmp_path: Path) -> None:
     import os
     import signal
     import subprocess
@@ -318,36 +326,148 @@ def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> 
     assert answer_local.process_cwd(None) is None and answer_local.process_stopped(-1) is None
 
     monkeypatch.setattr(answer_local, "process_cwd", lambda pid: "/Users/me/repo")
+    recorder = _recorded(tmp_path, "T1")
 
-    # --- scenario: the focused terminal, alone in the session's directory, is proof
+    def proven(runner, *, recorder=recorder, agent_id="codex:session:s-1"):
+        return answer_local.ghostty_focused_surface_proven(
+            500, runner, provider="codex", agent_id=agent_id, recorder=recorder
+        )
+
+    # --- scenario: the focused terminal is the one the session started in: proof
     runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tclaude\nT2\t/tmp\tzsh\n")
-    assert answer_local.ghostty_focused_surface_proven(500, runner) is True
+    assert proven(runner) is True
 
-    # --- scenario: focus elsewhere is a definite no; a shared directory is unknown
+    # --- scenario: focus elsewhere is a definite no; another terminal in the directory too, while the record is open
     runner = FakeRunner(focused="T2\t/tmp", ghostty_terminals="T1\t/Users/me/repo\tx\nT2\t/tmp\ty\n")
-    assert answer_local.ghostty_focused_surface_proven(500, runner) is False
-    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tx\nT3\t/Users/me/repo\ty\n")
-    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+    assert proven(runner) is False
+    runner = FakeRunner(focused="T3\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tx\nT3\t/Users/me/repo\ty\n")
+    assert proven(runner) is False
 
     # --- scenario: no directory to compare, or Ghostty will not say, is unknown
-    runner = FakeRunner(focused="")
-    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+    assert proven(FakeRunner(focused="")) is None
     monkeypatch.setattr(answer_local, "process_cwd", lambda pid: None)
-    assert answer_local.ghostty_focused_surface_proven(500, FakeRunner(focused="T1\t/x")) is None
+    assert proven(FakeRunner(focused="T1\t/x")) is None
 
 
-def test_a_ghostty_terminal_with_no_directory_leaves_the_proof_unknown__and_1_more(monkeypatch) -> None:
+def test_a_ghostty_directory_alone_never_proves_the_session__and_3_more(monkeypatch, tmp_path: Path) -> None:
     from jrbar import answer_local
 
     monkeypatch.setattr(answer_local, "process_cwd", lambda pid: "/Users/me/repo")
+    alone = "T1\t/Users/me/repo\tzsh\nT2\t/tmp\tx\n"
 
-    # --- scenario: a terminal that names no directory could be the session's own
-    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tzsh\nT2\t\tclaude\n")
-    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+    def proven(runner, recorder, agent_id="codex:session:s-1"):
+        return answer_local.ghostty_focused_surface_proven(
+            500, runner, provider="codex", agent_id=agent_id, recorder=recorder
+        )
 
-    # --- scenario: the one terminal in the directory must be the focused one
-    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T3\t/Users/me/repo\tzsh\nT2\t/tmp\tx\n")
-    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+    # --- scenario: the only terminal in the session's directory, focused, but no record: unknown
+    assert proven(FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals=alone), _recorded(tmp_path, None)) is None
+
+    # --- scenario: a record Ghostty no longer lists proves nothing either way
+    assert proven(FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals=alone), _recorded(tmp_path, "T9")) is None
+
+    # --- scenario: a focused terminal that names no directory is unknown, never a no or a yes
+    assert proven(FakeRunner(focused="T1\t", ghostty_terminals="T1\t\tclaude\n"), _recorded(tmp_path, "T1")) is None
+
+    # --- scenario: another session's record, or a row that is not a session, is no record
+    recorder = _recorded(tmp_path, "T1")
+    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals=alone)
+    assert proven(runner, recorder, agent_id="codex:session:s-2") is None
+    assert proven(runner, recorder, agent_id="claude:session:s-1") is None
+    assert proven(runner, recorder, agent_id="codex:agent:worker-1") is None
+
+
+def test_a_plain_shell_in_the_agents_worktree_is_never_its_terminal__and_3_more(monkeypatch, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from jrbar import answer_local
+    from jrbar.answer_local import AnswerHostFacts, AnswerRefusal, plan_local_reply
+
+    # Claude moved itself into a worktree (EnterWorktree, --worktree): the
+    # process's directory is the worktree, while its own terminal T1 still
+    # reports the repo its shell last named. The owner opened T2 in the
+    # worktree to read the diff, and T2 is focused.
+    worktree = "/Users/me/repo/.claude/worktrees/x"
+    monkeypatch.setattr(answer_local, "process_cwd", lambda pid: worktree)
+    listing = f"T1\t/Users/me/repo\tclaude\nT2\t{worktree}\tzsh\n"
+    shell_in_front = FakeRunner(focused=f"T2\t{worktree}", ghostty_terminals=listing)
+    own_in_front = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals=listing)
+    unrecorded = _recorded(tmp_path, None, provider="claude")
+    recorded = _recorded(tmp_path, "T1", provider="claude")
+
+    def proven(runner, recorder):
+        return answer_local.ghostty_focused_surface_proven(
+            500, runner, provider="claude", agent_id="claude:session:s-1", recorder=recorder
+        )
+
+    ghostty = AnswerHostFacts(
+        session_pid=500,
+        session_alive=True,
+        session_tty="/dev/ttys004",
+        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        frontmost_bundle_id="com.mitchellh.ghostty",
+        frontmost_pid=200,
+        frontmost_ancestor_of_session=True,
+        focused_tab_tty=None,
+        accessibility_trusted=True,
+    )
+
+    # --- scenario: the shell is the only terminal in the process's directory, and still not the session's
+    assert proven(shell_in_front, unrecorded) is None
+    # --- scenario: with the session's own terminal recorded, the shell is a definite no
+    assert proven(shell_in_front, recorded) is False
+    # --- scenario: the reply is refused either way, before anything is typed
+    for verdict in (proven(shell_in_front, unrecorded), proven(shell_in_front, recorded)):
+        with pytest.raises(AnswerRefusal) as raised:
+            plan_local_reply(
+                provider="claude",
+                reply_text="use the staging db",
+                ask_live=True,
+                facts=replace(ghostty, focused_surface_proven=verdict),
+            )
+        assert raised.value.code == "not_frontmost"
+    # --- scenario: the session's own terminal, still on the directory it started in, is the proof
+    assert proven(own_in_front, recorded) is True
+    # Without the record nothing ties it to the session, so even it is not a yes.
+    assert proven(own_in_front, unrecorded) is not True
+
+
+def test_the_in_place_answer_asks_for_its_own_sessions_surface__and_1_more() -> None:
+    from jrbar.answer_local import AnswerRefusal, LocalAnswerDelivery, LocalAnswerSurface, LocalAnswerTarget
+
+    seen: list = []
+
+    def observer(**kwargs):
+        seen.append(kwargs)
+        raise AnswerRefusal("not_frontmost", "nothing proven in this test", "probe")
+
+    typed: list = []
+    surface = LocalAnswerSurface(
+        resolve_target=lambda decision: LocalAnswerTarget(
+            provider="claude",
+            session_id="claude:session:s-1",
+            session_pid=500,
+            session_tty=None,
+            expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+            is_live=lambda: True,
+        ),
+        delivery=LocalAnswerDelivery(
+            sender=lambda pid, code: typed.append(code),
+            text_sender=lambda pid, text: typed.append(text),
+            observer=observer,
+        ),
+    )
+
+    # --- scenario: a typed reply's host facts are read for that session's recorded surface
+    with pytest.raises(AnswerRefusal):
+        surface.handle(object(), request_kind=None, answer_kind=SimpleNamespace(value="reply"), reply_text="yes")
+    assert (seen[-1]["provider"], seen[-1]["agent_id"]) == ("claude", "claude:session:s-1")
+
+    # --- scenario: and so are a key's
+    with pytest.raises(AnswerRefusal):
+        surface.handle(object(), request_kind=None, answer_kind=SimpleNamespace(value="approve"), reply_text=None)
+    assert (seen[-1]["provider"], seen[-1]["agent_id"]) == ("claude", "claude:session:s-1")
+    assert typed == []
 
 
 def test_answer_raise_brings_the_exact_surface_forward(tmp_path: Path) -> None:
@@ -581,11 +701,12 @@ class _FrontRunner(FakeRunner):
         return super().osascript(script, *arguments)
 
 
-def test_session_in_front_says_yes_only_on_proof__and_6_more(tmp_path: Path, monkeypatch) -> None:
+def test_session_in_front_says_yes_only_on_proof__and_7_more(tmp_path: Path, monkeypatch) -> None:
     from jrbar import answer_local
 
     monkeypatch.setattr(answer_local, "process_cwd", lambda pid: "/Users/me/repo")
     no_record = SimpleNamespace(recorded=lambda provider, session_id: None)
+    started_in_t1 = _recorded(tmp_path, "T1")
 
     def ask(runner, *, table=GHOSTTY_CODEX, recorder=no_record, pid=500, agent_id=None):
         controller, status = _live(pid=pid)
@@ -597,13 +718,17 @@ def test_session_in_front_says_yes_only_on_proof__and_6_more(tmp_path: Path, mon
 
     one = "T1\t/Users/me/repo\tcodex\nT2\t/tmp\tzsh\n"
 
-    # --- scenario: the only Ghostty terminal in the session's directory, focused, is in front
-    assert ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=one)) == {
+    # --- scenario: the Ghostty terminal the session started in, focused, is in front
+    assert ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=one), recorder=started_in_t1) == {
         "session": "codex:session:s-1",
         "in_front": True,
-        "evidence": "focused_surface_cwd",
+        "evidence": "recorded_surface",
         "app": "Ghostty",
     }
+
+    # --- scenario: with no record, being the only terminal in the directory proves nothing
+    reply = ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=one))
+    assert (reply["in_front"], reply["evidence"]) == (None, "focused_surface_unproven")
 
     # --- scenario: another Ghostty tab in front is a no -- the case the app alone cannot see
     reply = ask(_FrontRunner(focused="T2\t/tmp", ghostty_terminals=one))
@@ -611,7 +736,7 @@ def test_session_in_front_says_yes_only_on_proof__and_6_more(tmp_path: Path, mon
 
     # --- scenario: two terminals in the directory: the surface the session started in decides
     both = "T1\t/Users/me/repo\tzsh\nT3\t/Users/me/repo\tcodex\n"
-    started_in_t3 = SimpleNamespace(recorded=lambda provider, session_id: "T3")
+    started_in_t3 = _recorded(tmp_path, "T3")
     reply = ask(_FrontRunner(focused="T3\t/Users/me/repo", ghostty_terminals=both), recorder=started_in_t3)
     assert (reply["in_front"], reply["evidence"]) == (True, "recorded_surface")
     reply = ask(_FrontRunner(focused="T1\t/Users/me/repo", ghostty_terminals=both), recorder=started_in_t3)

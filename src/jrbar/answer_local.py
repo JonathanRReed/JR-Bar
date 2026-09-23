@@ -26,13 +26,15 @@ therefore the whole risk, and every check below exists to refuse instead:
   tell this session's window from a sibling's;
 * the terminal names its focused tab's tty and that tty IS the session's.
   Terminal.app and iTerm2 expose that proof. Ghostty names no tty, so its
-  proof is the focused terminal of its front window being in the session
-  process's working directory while no other Ghostty terminal is; two
-  terminals in one directory cannot be told apart and refuse, and so does
-  a terminal that names no directory, which could be the session's. A session
-  hosted anywhere else -- or whose own tty could not be resolved -- has no
-  safe in-place answer and refuses, leaving Open-in-terminal as the honest
-  path;
+  proof is the focused terminal of its front window being the very surface
+  recorded when the session started (answer_surfaces.SurfaceRecorder),
+  still in the session's directory. A directory alone is never the proof:
+  a plain shell the owner opened where the agent works reports the same
+  directory, and a reply typed there runs as a shell command. No record,
+  another surface, or two terminals that cannot be told apart refuse. A
+  session hosted anywhere else -- or whose own tty could not be resolved --
+  has no safe in-place answer and refuses, leaving Open-in-terminal as the
+  honest path;
 * the session's process is not stopped (a Ctrl-Z'd job's terminal shows the
   shell, and a key there is a shell command);
 * Accessibility is granted, without which the keystroke silently goes nowhere.
@@ -244,11 +246,11 @@ class AnswerHostFacts:
     #: nothing.
     accessibility_app_name: str | None = None
     #: Ghostty's stand-in for ``focused_tab_tty``, which it cannot name:
-    #: ``True`` when the focused terminal of its front window is in the
-    #: session process's working directory AND is the only Ghostty terminal
-    #: there; ``False`` when the focused terminal is somewhere else; ``None``
-    #: when that cannot be told (two terminals in one directory, no Apple
-    #: events, not Ghostty).
+    #: ``True`` when the focused terminal of its front window IS the surface
+    #: recorded when the session started, still in the session's directory;
+    #: ``False`` when the focused terminal is somewhere else; ``None`` when
+    #: that cannot be told (no recorded surface, no Apple events, not
+    #: Ghostty).
     focused_surface_proven: bool | None = None
     #: The session's process is stopped (Ctrl-Z): its prompt is not what the
     #: terminal is showing, the shell is, and a key would go to the shell.
@@ -299,7 +301,7 @@ class AnswerHostFacts:
         ):
             return "focused_tab_tty"
         if self.focused_surface_proven is True and self.frontmost_bundle_id == GHOSTTY_BUNDLE_ID:
-            return "focused_surface_cwd"
+            return "recorded_surface"
         if self.frontmost_ancestor_of_session:
             return "host_process_ancestry"
         return "frontmost_application_only"
@@ -441,9 +443,9 @@ def _checked_answer_host(
     # ``focused_tab_tty`` is ``None`` both for terminals with no scripting
     # call (kitty, WezTerm, Alacritty -- where ancestry cannot pick a
     # window) and for a probe that failed; neither is affirmative proof.
-    # Ghostty names no tty, but it names its focused terminal's working
-    # directory: the only Ghostty terminal in the session's own directory,
-    # focused, is the same proof by other means.
+    # Ghostty names no tty, but it names its focused terminal's id: the
+    # surface recorded when the session started, focused and still in the
+    # session's directory, is the same proof by other means.
     ghostty_in_front = facts.frontmost_bundle_id == GHOSTTY_BUNDLE_ID
     if ghostty_in_front and facts.focused_surface_proven is False:
         raise AnswerRefusal(
@@ -788,38 +790,75 @@ def process_stopped(pid: object) -> bool | None:
     return int.from_bytes(raw[4:8], "little") == _SSTOP
 
 
-def ghostty_focused_surface_proven(session_pid: object, runner: object = None) -> bool | None:
-    """Ghostty's focused-target proof: ``True`` when the focused terminal of
-    its front window is in the session process's working directory and no
-    other Ghostty terminal is; ``False`` when the focused terminal is in
-    another directory; ``None`` when it cannot be told -- two terminals in
-    that directory, an Apple event macOS refused, no directory to compare.
-    Ghostty 1.3 names no tty, so a directory only it holds is the proof.
+def _session_id_of(provider: object, agent_id: object) -> str | None:
+    """The provider's own session id inside ``<provider>:session:<id>``."""
+    if type(provider) is not str or type(agent_id) is not str:
+        return None
+    head, sep, session_id = agent_id.partition(":session:")
+    if not sep or not session_id or head.lower() != provider.lower():
+        return None
+    return session_id
 
-    "Only it" has to cover every terminal: one that names no directory at
-    all (started with a command instead of a shell, or with no shell
-    integration) could be the session's own, leaving the focused terminal
-    a plain shell that merely shares its directory -- so any such terminal
-    makes the proof unknown, never a yes."""
+
+def ghostty_focused_surface_proven(
+    session_pid: object,
+    runner: object = None,
+    *,
+    provider: object = None,
+    agent_id: object = None,
+    recorder: object = None,
+) -> bool | None:
+    """Ghostty's focused-target proof: ``True`` only when the focused
+    terminal of its front window IS the surface recorded when this session
+    started, still in the session's directory; ``False`` when the focused
+    terminal is somewhere else; ``None`` when it cannot be told -- no
+    recorded surface, an Apple event macOS refused, no directory to compare.
+
+    Ghostty 1.3 names no tty, and a directory is not a stand-in for one:
+    Ghostty learns a terminal's directory from its shell, the agents report
+    none, and an agent that moves itself into a worktree leaves its own
+    terminal on the old directory -- so a plain shell the owner opened in
+    that worktree would be the only terminal "in the session's directory".
+    Only the record ties a terminal to the session (answer_surfaces.py)."""
     session_cwd = process_cwd(session_pid)
     if not session_cwd:
         return None
-    from .answer_surfaces import SurfaceRunner, ghostty_focus_verdict
+    from .answer_surfaces import (
+        SurfaceRunner,
+        default_surface_recorder,
+        ghostty_focus_verdict,
+        recorded_ghostty_surface,
+    )
 
+    session_id = _session_id_of(provider, agent_id)
+    recorded_id, recorded_cwd = (
+        recorded_ghostty_surface(
+            recorder if recorder is not None else default_surface_recorder(),
+            str(provider).lower(),
+            session_id,
+        )
+        if session_id is not None
+        else (None, None)
+    )
     scripts = runner if runner is not None else SurfaceRunner()
-    verdict, _evidence = ghostty_focus_verdict(scripts, session_cwd)  # type: ignore[arg-type]
+    verdict, _evidence = ghostty_focus_verdict(
+        scripts,  # type: ignore[arg-type]
+        session_cwd,
+        recorded_id=recorded_id,
+        recorded_cwd=recorded_cwd,
+    )
     return verdict
 
 
 #: The hosts that can satisfy the fence's exact focused-target proof:
 #: Terminal.app and iTerm2 by the focused tab's tty, Ghostty by its focused
-#: terminal being the only one in the session's directory.
+#: terminal being the one the session was recorded starting in.
 FOCUSED_TAB_PROOF_BUNDLES: Final = frozenset({*_FOCUSED_TTY_SCRIPTS, GHOSTTY_BUNDLE_ID})
 
 
 def host_offers_focused_tab_proof(bundle_ids: object) -> bool:
     """Whether any expected host can prove which tab or terminal is focused:
-    by its tty (Terminal.app, iTerm2) or by its working directory (Ghostty).
+    by its tty (Terminal.app, iTerm2) or by its recorded surface (Ghostty).
 
     The projection uses this to keep ``answerable`` honest: a session hosted
     by a terminal with no scripting call can never pass the delivery fence,
@@ -978,8 +1017,13 @@ def observe_host_facts(
     session_pid: int | None,
     expected_bundle_ids: Iterable[str],
     session_tty: str | None = None,
+    provider: str | None = None,
+    agent_id: str | None = None,
 ) -> AnswerHostFacts:
-    """Read every fact ``plan_local_answer`` decides on, right now."""
+    """Read every fact ``plan_local_answer`` decides on, right now.
+
+    ``provider`` and ``agent_id`` name the session whose recorded Ghostty
+    surface is the only thing that can prove a Ghostty terminal is its own."""
     pid = session_pid if type(session_pid) is int and session_pid > 0 else None
     alive = process_alive(pid) if pid is not None else None
     tty = session_tty if type(session_tty) is str and session_tty else None
@@ -994,7 +1038,7 @@ def observe_host_facts(
             ancestry_verdict = frontmost_pid in ancestors or frontmost_pid == pid
     focused_tty = focused_tab_tty(frontmost_bundle) if frontmost_bundle else None
     surface_proven = (
-        ghostty_focused_surface_proven(pid)
+        ghostty_focused_surface_proven(pid, provider=provider, agent_id=agent_id)
         if frontmost_bundle == GHOSTTY_BUNDLE_ID and pid is not None
         else None
     )
@@ -1155,6 +1199,7 @@ class LocalAnswerDelivery:
         expected_bundle_ids: Iterable[str],
         session_tty: str | None,
         is_live: Callable[[], bool],
+        agent_id: str | None = None,
     ) -> AnswerDeliveryOutcome:
         started = self._clock()
         with self._lock:
@@ -1163,6 +1208,8 @@ class LocalAnswerDelivery:
                     session_pid=session_pid,
                     expected_bundle_ids=expected_bundle_ids,
                     session_tty=session_tty,
+                    provider=provider,
+                    agent_id=agent_id,
                 )
                 if reply_text is not None:
                     plan: AnswerPlan | AnswerReplyPlan = plan_local_reply(
@@ -1227,6 +1274,7 @@ class LocalAnswerTarget:
     """The one session a handler run is allowed to type into."""
 
     provider: str
+    #: The row's agent id, ``<provider>:session:<id>``.
     session_id: str
     session_pid: int | None
     session_tty: str | None
@@ -1317,6 +1365,7 @@ class LocalAnswerSurface:
                     expected_bundle_ids=target.expected_bundle_ids,
                     session_tty=target.session_tty,
                     is_live=target.is_live,
+                    agent_id=target.session_id,
                 )
             else:
                 if decision is None:
@@ -1347,6 +1396,7 @@ class LocalAnswerSurface:
                     expected_bundle_ids=target.expected_bundle_ids,
                     session_tty=target.session_tty,
                     is_live=target.is_live,
+                    agent_id=target.session_id,
                 )
         except AnswerRefusal as refusal:
             outcome = AnswerDeliveryOutcome(

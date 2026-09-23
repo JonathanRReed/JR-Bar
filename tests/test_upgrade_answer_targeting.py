@@ -228,7 +228,7 @@ def test_ghostty_answers_only_on_its_own_focused_terminal__and_4_more():
         provider="claude", decision="approve", ask_live=True, facts=ghostty_facts(focused_surface_proven=True)
     )
     assert plan.key.label == "1"
-    assert plan.document()["host"]["window_evidence"] == "focused_surface_cwd"
+    assert plan.document()["host"]["window_evidence"] == "recorded_surface"
     # And the same proof carries a typed reply.
     reply = plan_local_reply(
         provider="claude", reply_text="use the staging db", ask_live=True, facts=ghostty_facts(focused_surface_proven=True)

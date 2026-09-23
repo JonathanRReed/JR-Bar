@@ -302,41 +302,43 @@ def ghostty_focus_verdict(
     session_cwd: str,
     *,
     recorded_id: str | None = None,
+    recorded_cwd: str | None = None,
 ) -> tuple[bool | None, str]:
     """Whether the focused terminal of Ghostty's front window is the
-    session's, and why: ``(False, "other_surface")`` when it is in another
-    directory; ``(True, "focused_surface_cwd")`` when it is the only Ghostty
-    terminal in the session's directory and every terminal names one (a
-    terminal that names none could be the session's own); else unknown.
+    session's own, and why.
 
-    ``recorded_id`` -- the surface the session started in -- decides between
-    terminals that share the directory: focused, it is the session's; still
-    there but not focused, the session is not in front. The in-place answer
-    never passes it: a key needs the stricter proof, a chime does not."""
+    ``True`` needs positive evidence: the focused terminal IS the surface
+    recorded when the session started (``recorded_id``), and it is still in
+    the session's directory -- the process's live one, or ``recorded_cwd``,
+    the one it started in, since an agent that moves itself into a worktree
+    leaves its own terminal reporting the old one. A directory alone never
+    proves it. Ghostty learns a terminal's directory from its shell and the
+    agents report none, so a plain shell the owner opened in the agent's
+    directory reads exactly like the agent's own terminal -- and a reply
+    typed there runs as a shell command.
+
+    ``(False, "other_surface")`` when the focused terminal is in neither
+    directory, or when the recorded surface is still open and something
+    else is focused; otherwise unknown (``focused_surface_unproven``): no
+    record, a record Ghostty no longer lists, a terminal that names no
+    directory."""
     code, output = runner.osascript(_GHOSTTY_FOCUSED_TERMINAL)
     if code != 0 or not output:
         return None, "focused_surface_unproven"
     focused_id, _sep, focused_cwd = output.partition(_SEP)
     focused_id = focused_id.strip()
-    if not _same_directory(focused_cwd.strip(), session_cwd):
+    focused_cwd = focused_cwd.strip()
+    if not focused_id or not focused_cwd:
+        return None, "focused_surface_unproven"
+    if not any(_same_directory(focused_cwd, directory) for directory in (session_cwd, recorded_cwd)):
         return False, "other_surface"
+    if not recorded_id:
+        return None, "focused_surface_unproven"
+    if focused_id == recorded_id:
+        return True, "recorded_surface"
     code, output = runner.osascript(_GHOSTTY_LIST_TERMINALS)
-    if code != 0:
-        return None, "focused_surface_unproven"
-    terminals = parse_ghostty_terminals(output)
-    if recorded_id:
-        if focused_id == recorded_id:
-            return True, "recorded_surface"
-        if any(
-            terminal.id == recorded_id and _same_directory(terminal.working_directory, session_cwd)
-            for terminal in terminals
-        ):
-            return False, "other_surface"
-    if any(not terminal.working_directory for terminal in terminals):
-        return None, "focused_surface_unproven"
-    sharing = [terminal for terminal in terminals if _same_directory(terminal.working_directory, session_cwd)]
-    if len(sharing) == 1 and sharing[0].id == focused_id:
-        return True, "focused_surface_cwd"
+    if code == 0 and any(terminal.id == recorded_id for terminal in parse_ghostty_terminals(output)):
+        return False, "other_surface"
     return None, "focused_surface_unproven"
 
 
@@ -646,6 +648,10 @@ class SurfaceRecorder:
         """The bundle id of the terminal app the session started in."""
         return self._field(provider, session_id, "host_bundle")
 
+    def recorded_cwd(self, provider: object, session_id: object) -> str | None:
+        """The directory the session started in, as its SessionStart said."""
+        return self._field(provider, session_id, "cwd")
+
     def latest_host(self, among: frozenset[str] | None = None) -> str | None:
         """The terminal app the most recent recorded session started in."""
         with self._lock:
@@ -840,6 +846,21 @@ def default_surface_recorder() -> SurfaceRecorder:
         return _DEFAULT_RECORDER
 
 
+def recorded_ghostty_surface(
+    recorder: object, provider: object, session_id: object
+) -> tuple[str | None, str | None]:
+    """``(terminal id, the directory the session started in)`` when the
+    session's SessionStart recorded a Ghostty surface, else ``(None,
+    None)`` -- the evidence ``ghostty_focus_verdict`` needs for a yes."""
+    try:
+        terminal_id = recorder.recorded(provider, session_id)  # type: ignore[attr-defined]
+        if not terminal_id:
+            return None, None
+        return terminal_id, recorder.recorded_cwd(provider, session_id)  # type: ignore[attr-defined]
+    except Exception:
+        return None, None
+
+
 # --- open_session --------------------------------------------------------------
 
 #: Open actions that mean "take me to the session's terminal".
@@ -1009,12 +1030,13 @@ def session_in_front(
         session_cwd = process_cwd(pid)
         if not session_cwd:
             return {**reply, "evidence": "focused_surface_unproven"}
+        recorded_id, recorded_cwd = recorded_ghostty_surface(
+            recorder or default_surface_recorder(),
+            getattr(status, "provider", None),
+            getattr(status, "session_id", None),
+        )
         verdict, evidence = ghostty_focus_verdict(
-            runner,
-            session_cwd,
-            recorded_id=(recorder or default_surface_recorder()).recorded(
-                getattr(status, "provider", None), getattr(status, "session_id", None)
-            ),
+            runner, session_cwd, recorded_id=recorded_id, recorded_cwd=recorded_cwd
         )
         return {**reply, "in_front": verdict, "evidence": evidence}
     from .answer_local import _FOCUSED_TTY_SCRIPTS
@@ -1396,6 +1418,7 @@ __all__ = [
     "parse_tmux_pane_for_tty",
     "raise_for_answer",
     "raise_session_host",
+    "recorded_ghostty_surface",
     "resume_ended_session",
     "resume_in_own_terminal",
     "session_in_front",
