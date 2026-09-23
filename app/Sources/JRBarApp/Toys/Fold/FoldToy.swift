@@ -1138,7 +1138,7 @@ struct FoldLidGlyph: View {
 
     /// The lid's far end for an opening `degrees` (0 shut on the deck,
     /// 90 upright, past that leaning back), from a hinge at `hinge`.
-    static func lidEnd(hinge: CGPoint, length: Double, degrees: Double) -> CGPoint {
+    nonisolated static func lidEnd(hinge: CGPoint, length: Double, degrees: Double) -> CGPoint {
         let radians = min(180, max(0, degrees)) * .pi / 180
         return CGPoint(x: hinge.x + length * cos(radians), y: hinge.y - length * sin(radians))
     }
