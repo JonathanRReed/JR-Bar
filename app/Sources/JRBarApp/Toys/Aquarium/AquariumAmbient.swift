@@ -263,6 +263,40 @@ enum AquariumWallpaper {
     }
 }
 
+/// The tank as scenery, plus the screensaver's quiet clock — the
+/// SereneScreen touch: a lit screen you can still read the time off.
+struct AquariumSceneryView: View {
+    let toy: AquariumToy
+    /// Screensaver panels may wear the clock; the wallpaper never does.
+    let clock: Bool
+
+    /// A screensaver panel, with the card's clock switch on.
+    static func wearsClock(panel clock: Bool, settings: AquariumSettings?) -> Bool {
+        clock && (settings?.saverClock ?? true)
+    }
+
+    var body: some View {
+        AquariumView(toy: toy, ambient: true)
+            .overlay(alignment: .bottomLeading) {
+                if Self.wearsClock(panel: clock, settings: toy.store?.state.aquarium) {
+                    TimelineView(.everyMinute) { context in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(context.date, format: .dateTime.hour().minute())
+                                .font(.system(size: 46, weight: .ultraLight, design: .rounded))
+                                .monospacedDigit()
+                            Text(context.date, format: .dateTime.weekday(.wide).month(.wide).day())
+                                .font(.system(size: 14, weight: .regular, design: .rounded))
+                        }
+                        .foregroundStyle(.white.opacity(0.58))
+                        .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                        .padding(48)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
 /// One screen's worth of scenery tank: borderless, never key, sharing
 /// nothing with screen capture. The wallpaper sits a level above the
 /// desktop icons, behind every window and click-through; the
@@ -278,7 +312,8 @@ final class AquariumAmbientPanel: NSPanel {
         super.init(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
         let host = TouchView(frame: NSRect(origin: .zero, size: screen.frame.size))
-        let hosting = NSHostingView(rootView: AquariumView(toy: toy, ambient: true))
+        let hosting = NSHostingView(rootView: AquariumSceneryView(
+            toy: toy, clock: mode == .screensaver))
         hosting.frame = host.bounds
         hosting.autoresizingMask = [.width, .height]
         host.addSubview(hosting)

@@ -251,6 +251,8 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     /// The live wallpaper: the display (by its name) the tank lives on
     /// behind every window, click-through. nil is off.
     public var ambientDisplay: String? = nil
+    /// The screensaver wears a quiet clock in its corner. On by default.
+    public var saverClock: Bool = true
 
     /// The screensaver's choices, in minutes; 0 is off.
     public static let idleFillChoices = [0, 5, 10, 15, 30]
@@ -267,7 +269,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, showLabels, density, speciesOverrides, dayNight
-        case idleFillMinutes, ambientDisplay
+        case idleFillMinutes, ambientDisplay, saverClock
     }
 
     public init(from decoder: any Decoder) throws {
@@ -283,6 +285,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         idleFillMinutes = Self.idleFillChoices.contains(idle) ? idle : 0
         let display = (try? c.decodeIfPresent(String.self, forKey: .ambientDisplay)) ?? nil
         ambientDisplay = display?.isEmpty == false ? display : nil
+        saverClock = (try? c.decodeIfPresent(Bool.self, forKey: .saverClock)) ?? true
     }
 
     /// What `provider` swims as: the user's pick when one is stored,

@@ -236,6 +236,11 @@ final class AquariumToy: Toy {
                 } label: {
                     SettingLabel(title: "Screensaver", subtitle: "Idle that long, the tank fills your screens until you're back — never over a video, a call or a fullscreen app.")
                 }
+                if (store?.state.aquarium.idleFillMinutes ?? 0) > 0 {
+                    Toggle(isOn: saverClock) {
+                        SettingLabel(title: "Clock on the screensaver", subtitle: "The time and date, quietly, in a corner.")
+                    }
+                }
                 LabeledContent {
                     Text(fact)
                         .font(.callout)
@@ -288,6 +293,11 @@ final class AquariumToy: Toy {
     private var ambientDisplay: Binding<String?> {
         Binding(get: { self.store?.state.aquarium.ambientDisplay },
                 set: { self.store?.state.aquarium.ambientDisplay = $0 })
+    }
+
+    private var saverClock: Binding<Bool> {
+        Binding(get: { self.store?.state.aquarium.saverClock ?? true },
+                set: { self.store?.state.aquarium.saverClock = $0 })
     }
 
     private var idleFillMinutes: Binding<Int> {

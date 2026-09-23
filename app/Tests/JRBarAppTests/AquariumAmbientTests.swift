@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
@@ -67,6 +69,34 @@ struct AquariumAmbientTests {
                 == ["Built-in", "Studio Display"])
         #expect(AquariumWallpaper.displayChoices(connected: ["Built-in", "LG"], saved: "LG")
                 == ["Built-in", "LG"])
+    }
+
+    @Test("the screensaver's clock defaults on and reads tolerantly")
+    func clockSetting() throws {
+        #expect(AquariumSettings().saverClock)
+        let off = try JSONDecoder().decode(AquariumSettings.self, from: Data(#"{"saverClock": false}"#.utf8))
+        #expect(!off.saverClock)
+        let junk = try JSONDecoder().decode(AquariumSettings.self, from: Data(#"{"saverClock": 2}"#.utf8))
+        #expect(junk.saverClock)
+    }
+
+    @MainActor
+    @Test("the screensaver wears the clock; the wallpaper never does")
+    func clockGate() throws {
+        var settings = AquariumSettings()
+        #expect(AquariumSceneryView.wearsClock(panel: true, settings: settings))
+        #expect(!AquariumSceneryView.wearsClock(panel: false, settings: settings), "the wallpaper")
+        settings.saverClock = false
+        #expect(!AquariumSceneryView.wearsClock(panel: true, settings: settings))
+        // And the scenery draws with it on.
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        let tank = try #require(store.aquarium)
+        let renderer = ImageRenderer(content: AquariumSceneryView(toy: tank, clock: true)
+            .frame(width: 480, height: 300))
+        renderer.scale = 1
+        #expect(renderer.cgImage != nil)
     }
 
     @Test("both switches default off, round-trip, and read tolerantly")
