@@ -49,6 +49,23 @@ struct LightsSettingsRowsTests {
         #expect(ScenePackPicker.sceneList([]) == "")
     }
 
+    @Test func theAmbientCurveSaysWhatItHasLearned() throws {
+        let ready = try JSONDecoder().decode(AutoDimLearning.self, from: Data("""
+        {"mode": "ambient", "votes": 6, "ready": true, "reason": null,
+         "suggested": {"brightness": 0.8, "min_fraction": 0.25, "lux_floor": 5.0, "lux_ceiling": 300.0},
+         "error_now": 0.21, "error_suggested": 0.04, "samples": []}
+        """.utf8))
+        #expect(ready.sentence == "From 6 slider moves, a curve that fits you better: never below 25 %, dark below 5.0 lux, bright above 300 lux, at 80 % overall.")
+        func waiting(_ votes: Int, _ reason: String) -> String {
+            AutoDimLearning(votes: votes, ready: false, reason: reason, suggested: nil).sentence
+        }
+        #expect(waiting(0, "needs_votes").hasPrefix("Move the panel's brightness slider"))
+        #expect(waiting(2, "needs_votes") == "2 slider moves so far; three are needed before the curve can learn from you.")
+        #expect(waiting(4, "needs_range").contains("three times brighter or darker"))
+        #expect(waiting(5, "already_fits") == "5 slider moves, and the curve set now already fits them.")
+        #expect(waiting(1, "no_fit") == "1 slider move that no single curve fits yet.")
+    }
+
     @Test func refusedEventKitGrantsAreNamed() {
         #expect(EventKitAccessNote.isRefused(.denied))
         #expect(EventKitAccessNote.isRefused(.restricted))

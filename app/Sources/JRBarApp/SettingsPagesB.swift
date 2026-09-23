@@ -415,6 +415,7 @@ struct AutoDimSection: View {
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxFloor, unit: "lux")
                 SettingNumberField(store, "Bright above", subtitle: "Full brightness at this reading; must be above the dark mark.", path: AutoDimSettings.ambientLuxCeilingPath.description,
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxCeiling, unit: "lux")
+                AutoDimLearningRow(store: store)
                 Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
                     SettingRow("Marks from room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.") {
                         Button("Use current light") { useRoomLight() }
@@ -453,8 +454,112 @@ struct AutoDimSection: View {
 
     private func useRoomLight() {
         guard let marks = roomMarks else { return }
-        store.set(AutoDimSettings.ambientLuxFloorPath.description, .number(marks.floor))
-        store.set(AutoDimSettings.ambientLuxCeilingPath.description, .number(marks.ceiling))
+        // Both marks in one write: a new floor above the old ceiling,
+        // written alone, is a pair the loader drops back to defaults.
+        store.set("auto_dim.ambient", .object([
+            "min_fraction": .number(settings.ambientMinFraction),
+            "lux_floor": .number(marks.floor),
+            "lux_ceiling": .number(marks.ceiling),
+        ]))
+    }
+}
+
+/// `auto_dim_learning`: what the panel's brightness slider has taught the
+/// ambient curve. Every slider move in Ambient mode is a vote — at this
+/// light, this level — and once the votes span enough light the monitor
+/// offers a curve that fits them better than the one set now. It is only
+/// ever offered: "Use it" writes the three marks and the level, "Forget"
+/// clears the votes. A monitor without the command shows nothing.
+struct AutoDimLearning: Decodable, Equatable {
+    struct Suggestion: Decodable, Equatable {
+        let brightness: Double
+        let minFraction: Double
+        let luxFloor: Double
+        let luxCeiling: Double
+
+        enum CodingKeys: String, CodingKey {
+            case brightness
+            case minFraction = "min_fraction"
+            case luxFloor = "lux_floor"
+            case luxCeiling = "lux_ceiling"
+        }
+    }
+
+    let votes: Int
+    let ready: Bool
+    let reason: String?
+    let suggested: Suggestion?
+
+    /// The row's sentence for where the learning stands.
+    var sentence: String {
+        let moves = votes == 1 ? "1 slider move" : "\(votes) slider moves"
+        if ready, let suggested {
+            return "From \(moves), a curve that fits you better: never below \(Int((suggested.minFraction * 100).rounded())) %, "
+                + "dark below \(Self.lux(suggested.luxFloor)), bright above \(Self.lux(suggested.luxCeiling)), "
+                + "at \(Int((suggested.brightness * 100).rounded())) % overall."
+        }
+        switch reason {
+        case "needs_votes":
+            return votes == 0
+                ? "Move the panel's brightness slider in the light you have; after three moves the curve can learn from you."
+                : "\(moves) so far; three are needed before the curve can learn from you."
+        case "needs_range":
+            return "\(moves), all in similar light. A move in a room at least three times brighter or darker lets it learn."
+        case "already_fits":
+            return "\(moves), and the curve set now already fits them."
+        default:
+            return "\(moves) that no single curve fits yet."
+        }
+    }
+
+    static func lux(_ value: Double) -> String {
+        value < 10 ? String(format: "%.1f lux", value) : "\(Int(value.rounded())) lux"
+    }
+}
+
+struct AutoDimLearningRow: View {
+    @Bindable var store: SettingsStore
+    @ViewState private var learning: AutoDimLearning?
+
+    var body: some View {
+        Group {
+            if let learning {
+                SettingRow("Learned from you", subtitle: learning.sentence) {
+                    HStack(spacing: 6) {
+                        if learning.ready, learning.suggested != nil {
+                            Button("Use it") { apply() }
+                        }
+                        if learning.votes > 0 {
+                            Button("Forget") { Task { await load(clear: true) } }
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+        // A vote lands with every slider move, which moves the lights.
+        .task(id: "\(store.core.isLive)-\(store.core.settings?.generation ?? 0)-\(store.core.lights?.autoDim?.factor ?? -1)") {
+            await load(clear: false)
+        }
+    }
+
+    private func load(clear: Bool) async {
+        guard store.core.isLive else { learning = nil; return }
+        learning = try? await store.core.request("auto_dim_learning", args: clear ? ["clear": .bool(true)] : [:],
+                                                 as: AutoDimLearning.self)
+    }
+
+    private func apply() {
+        guard let suggested = learning?.suggested else { return }
+        // One write for the three marks: the loader drops a ceiling that
+        // is not above the floor, which two separate writes could pass
+        // through on the way.
+        store.set("auto_dim.ambient", .object([
+            "min_fraction": .number(suggested.minFraction),
+            "lux_floor": .number(suggested.luxFloor),
+            "lux_ceiling": .number(suggested.luxCeiling),
+        ]))
+        store.core.setBrightness(value: suggested.brightness)
     }
 }
 
