@@ -174,6 +174,7 @@ def usage_history_document(
     estimated_records = 0
     unpriced_records = 0
     unpriced_models: list[str] = []
+    model_rows: dict[str, dict[str, Any]] = {}
     for record in records:
         try:
             record_provider, _session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
@@ -206,6 +207,11 @@ def usage_history_document(
         cost = quote_cost(provider, quote, int(inp), int(cached_in), int(cache_create), int(out))
         total = int(inp) + int(cached_in) + int(cache_create) + int(out)
         model_tokens[model_name] = model_tokens.get(model_name, 0) + total
+        # The per-model split the Usage Center's breakdown draws.
+        model_split = model_rows.setdefault(model_name, {"tokens": 0, "cost_usd": 0.0, "records": 0})
+        model_split["tokens"] += total
+        model_split["cost_usd"] += cost
+        model_split["records"] += 1
         for bucket in (day_bucket, hours.get(stamp.strftime("%Y-%m-%dT%H:00"))):
             if bucket is None:
                 continue
@@ -243,6 +249,21 @@ def usage_history_document(
         # never silently folded into the total (T24).
         "unpriced_records": unpriced_records,
         "unpriced_models": sorted(unpriced_models),
+        # Tokens, estimated dollars and record count per model over the
+        # range, most tokens first -- "why did cost double this week?"
+        # answered by which model the week ran on. `priced` false marks a
+        # model whose dollars are a real absence, `estimated` a stand-in.
+        "models": [
+            {
+                "model": name,
+                "tokens": row["tokens"],
+                "cost_usd": round(row["cost_usd"], 4),
+                "records": row["records"],
+                "priced": quotes.get(name) is not None,
+                "estimated": bool(quotes.get(name) and quotes[name].estimated),
+            }
+            for name, row in sorted(model_rows.items(), key=lambda item: -item[1]["tokens"])
+        ],
     }
 
 

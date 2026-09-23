@@ -159,6 +159,32 @@ def test_codex_records_are_priced_at_the_configured_default_model(tmp_path) -> N
     assert history.default_codex_model(tmp_path / "nowhere") is None
 
 
+def test_models_split_tokens_and_dollars_by_model_most_tokens_first() -> None:
+    hour_ago = NOW - timedelta(hours=1)
+    records = [
+        _record("claude", "fable", hour_ago, dedupe="a"),
+        _record("claude", "fable", NOW - timedelta(days=1), dedupe="b"),
+        _record("claude", "haiku", hour_ago, inp=10, cached=0, create=0, out=5, dedupe="c"),
+        _record("claude", "mystery", hour_ago, inp=1, cached=0, create=0, out=1, dedupe="d"),
+        _record("claude", "fable", NOW - timedelta(days=40), dedupe="old"),
+    ]
+    document = history.usage_history_document(records, provider="claude", range_name="7d", now=NOW.timestamp())
+    models = document["models"]
+    assert [row["model"] for row in models] == ["fable", "haiku", "mystery"]
+    fable = models[0]
+    assert fable["tokens"] == 2 * 2000 and fable["records"] == 2
+    assert fable["priced"] is True and fable["estimated"] is False
+    # The split adds up to the days it was cut from.
+    assert sum(row["tokens"] for row in models) == sum(
+        day["tokens_in"] + day["tokens_out"] + day["cache_read"] for day in document["days"]
+    )
+    assert sum(row["cost_usd"] for row in models) == pytest.approx(
+        sum(day["cost_usd"] for day in document["days"]), abs=1e-3
+    )
+    # A model with no table row is priced at the reference stand-in, and says so.
+    assert models[2]["estimated"] is True
+
+
 def test_gemini_answers_a_reference_quote_without_transcripts() -> None:
     document = history.usage_history_document([], provider="gemini", range_name="7d", now=NOW.timestamp())
     assert document["records"] == 0 and all(row["cost_usd"] == 0.0 for row in document["days"])
