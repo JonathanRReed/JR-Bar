@@ -215,8 +215,16 @@ final class SettingsStore {
                 utilities?.menuBar.setHotkeyChord(chord, for: action)
             } else {
                 onSetActionShortcut?(chord, id)
+                hotkeyChordVersion += 1
             }
         }
+    }
+
+    /// An app action's chord (Settings › Shortcuts › Actions and Quick
+    /// toggles) — nil until one is recorded.
+    func actionShortcut(_ id: String) -> HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: id, fallback: nil)
     }
 
     /// Where an app-action shortcut's write goes — the delegate's

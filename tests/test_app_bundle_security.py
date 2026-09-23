@@ -1029,6 +1029,10 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert info["SURequireSignedFeed"] is True
     assert info["SUVerifyUpdateBeforeExtraction"] is True
     assert "JRBarCommit" in info
+    # jrbar:// links reach the app: exactly one scheme, owned by the app id.
+    assert info["CFBundleURLTypes"] == [
+        {"CFBundleURLName": "com.jonathanreed.jrbar", "CFBundleURLSchemes": ["jrbar"]}
+    ]
     assert info["NSAppleEventsUsageDescription"] == (
         "JR-Bar uses Automation only to open a reviewed resume command in "
         "Terminal or iTerm2 when you choose Open."

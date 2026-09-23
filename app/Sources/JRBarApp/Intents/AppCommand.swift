@@ -1,0 +1,220 @@
+import Foundation
+import JRBarCore
+
+/// A verb JR-Bar performs on request from outside its own surfaces: a
+/// `jrbar://` link (Raycast Quicklinks, Alfred, Shortcuts' Open URL, a
+/// deck key, `open` in a script), a global shortcut bound on Settings ›
+/// Shortcuts, or a Shortcuts action. One vocabulary for all of them, so
+/// every route does exactly what the others do.
+///
+/// Deliberately absent: answering an ask. Approve and Deny stay on the
+/// panel, the banner and the island, where the ask itself is on screen —
+/// a link that could approve would let any page that opens a URL answer
+/// for you. So are the menu bar's Hide all / Show all, which rewrite the
+/// curated item map.
+enum AppCommand: Equatable, Sendable {
+    /// The panel: open it, or toggle it (a shortcut's second press).
+    case panel(toggle: Bool)
+    /// Settings, on a page (a `SettingsStore.Page` raw value) or where it was.
+    case settings(page: String?)
+    case window(AppWindow)
+    /// A Control Center chip: flip it, or set it (`on`) — a verb chip
+    /// (Lock, Saver) just fires.
+    case toggle(SystemToggle, on: Bool?)
+    /// Keep the Mac awake for that many seconds, indefinitely (nil), or
+    /// release the hold (0).
+    case keepAwake(seconds: Int?)
+    /// JR-Bar's quiet override: a mode (`pause`, `dim`, `mute`,
+    /// `asks_only`, `dark`; nil keeps the panel's last one) for seconds.
+    case quiet(mode: String?, seconds: Int)
+    case endQuiet
+    /// The Screen Bar on, off, or flipped (nil).
+    case screenBar(on: Bool?)
+    case confetti
+    case menuBar(MenuBarVerb)
+    /// A session by its daemon id — raises its terminal or app.
+    case openSession(String)
+    /// The ask that has waited longest, on the panel where it can be
+    /// answered.
+    case revealAsk
+    /// The notch's shelf: open it, or fold it when it is open.
+    case shelf
+
+    enum AppWindow: String, CaseIterable, Sendable {
+        case overview, history, usage, effects, controlCenter = "control-center", setup
+    }
+
+    /// The menu-bar verbs safe to trigger from outside: reveals and the
+    /// palette, never the curation-rewriting Hide all / Show all.
+    enum MenuBarVerb: String, CaseIterable, Sendable {
+        case reveal, toggle, alwaysHidden = "always-hidden", commandBar = "command-bar"
+    }
+
+    /// The quiet modes the daemon's `quiet` command takes.
+    nonisolated static let quietModes: Set<String> = ["pause", "dim", "mute", "asks_only", "dark"]
+
+    /// An hour of quiet when a link names no length.
+    nonisolated static let defaultQuietSeconds = 3600
+    /// A day: the longest quiet or hold a link may ask for.
+    nonisolated static let maximumSeconds = 86_400
+
+    // MARK: jrbar:// links
+
+    nonisolated static let scheme = "jrbar"
+
+    /// The command a `jrbar://` URL names, or nil for anything else. The
+    /// first component is the verb (`jrbar://toggle/dark` reads the same
+    /// as `jrbar:///toggle/dark`), the rest its object, the query its
+    /// options. Unknown verbs, objects and option values are refused
+    /// whole — a link never half-runs.
+    nonisolated static func parse(_ url: URL) -> AppCommand? {
+        guard url.scheme?.lowercased() == scheme,
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        var path = parts.path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
+        if let host = parts.host, !host.isEmpty { path.insert(host, at: 0) }
+        guard let verb = path.first?.lowercased() else { return nil }
+        let object = path.dropFirst().first
+        var query: [String: String] = [:]
+        for item in parts.queryItems ?? [] { query[item.name.lowercased()] = item.value ?? "" }
+
+        switch verb {
+        case "panel":
+            switch object?.lowercased() {
+            case nil, "open", "show": return .panel(toggle: false)
+            case "toggle": return .panel(toggle: true)
+            default: return nil
+            }
+        case "settings":
+            guard let object else { return .settings(page: nil) }
+            let page = object.lowercased()
+            return SettingsPageName.known.contains(page) ? .settings(page: page) : nil
+        case "open":
+            guard let object, let window = AppWindow(rawValue: object.lowercased()) else { return nil }
+            return .window(window)
+        case "overview", "history", "usage", "effects", "control-center", "setup":
+            return AppWindow(rawValue: verb).map(AppCommand.window)
+        case "toggle":
+            guard let object, let toggle = SystemToggle(name: object) else { return nil }
+            guard let raw = query["on"] else { return .toggle(toggle, on: nil) }
+            guard let on = flag(raw) else { return nil }
+            return .toggle(toggle, on: on)
+        case "awake":
+            guard let raw = query["for"] else { return .keepAwake(seconds: nil) }
+            if let off = flag(raw), !off { return .keepAwake(seconds: 0) }
+            guard let seconds = duration(raw), seconds <= maximumSeconds else { return nil }
+            return .keepAwake(seconds: seconds)
+        case "quiet":
+            if object?.lowercased() == "end" { return .endQuiet }
+            guard object == nil else { return nil }
+            var mode: String?
+            if let raw = query["mode"]?.lowercased().replacingOccurrences(of: "-", with: "_") {
+                let normalized = raw == "dnd" ? "pause" : raw
+                guard quietModes.contains(normalized) else { return nil }
+                mode = normalized
+            }
+            guard let raw = query["for"] else { return .quiet(mode: mode, seconds: defaultQuietSeconds) }
+            if let on = flag(raw), !on { return .endQuiet }
+            guard let seconds = duration(raw), seconds <= maximumSeconds else { return nil }
+            return seconds == 0 ? .endQuiet : .quiet(mode: mode, seconds: seconds)
+        case "screenbar", "screen-bar":
+            switch object?.lowercased() {
+            case nil, "toggle": return .screenBar(on: nil)
+            case let value?:
+                return flag(value).map { .screenBar(on: $0) }
+            }
+        case "confetti":
+            return object == nil ? .confetti : nil
+        case "menubar", "menu-bar":
+            guard let object, let menuVerb = MenuBarVerb(rawValue: object.lowercased()) else { return nil }
+            return .menuBar(menuVerb)
+        case "session":
+            let id = query["id"] ?? object
+            guard let id, !id.isEmpty, id.count <= 512 else { return nil }
+            return .openSession(id)
+        case "ask":
+            return object == nil ? .revealAsk : nil
+        case "shelf":
+            return object == nil ? .shelf : nil
+        default:
+            return nil
+        }
+    }
+
+    /// `1/0`, `true/false`, `on/off`, `yes/no`.
+    nonisolated static func flag(_ raw: String) -> Bool? {
+        switch raw.lowercased() {
+        case "1", "true", "on", "yes": return true
+        case "0", "false", "off", "no": return false
+        default: return nil
+        }
+    }
+
+    /// Seconds from `7200`, `90s`, `15m`, `2h`, `1d` or a run of them
+    /// (`1h30m`). nil for anything else — including a zero-length unit
+    /// or an overflow — so a typo is refused rather than read as zero.
+    nonisolated static func duration(_ raw: String) -> Int? {
+        let text = raw.lowercased().replacingOccurrences(of: " ", with: "")
+        guard !text.isEmpty else { return nil }
+        if let plain = Int(text) { return plain >= 0 ? plain : nil }
+        var total = 0
+        var digits = ""
+        for character in text {
+            if character.isASCII, character.isNumber {
+                digits.append(character)
+                continue
+            }
+            let unit: Int
+            switch character {
+            case "s": unit = 1
+            case "m": unit = 60
+            case "h": unit = 3600
+            case "d": unit = 86_400
+            default: return nil
+            }
+            guard let value = Int(digits) else { return nil }
+            let (product, overflow) = value.multipliedReportingOverflow(by: unit)
+            guard !overflow else { return nil }
+            let (sum, sumOverflow) = total.addingReportingOverflow(product)
+            guard !sumOverflow else { return nil }
+            total = sum
+            digits = ""
+        }
+        return digits.isEmpty ? total : nil
+    }
+}
+
+/// The Settings pages a link may name — `SettingsStore.Page`'s raw
+/// values, listed here so the pure parser needs no main-actor type.
+enum SettingsPageName {
+    nonisolated static let known: Set<String> = [
+        "general", "agents", "usage", "devices", "utilities", "lighting", "toys",
+        "notifications", "shortcuts", "remote", "advanced",
+    ]
+}
+
+extension SystemToggle {
+    /// A chip by the name a link or a script would use: its raw value
+    /// (`darkMode`), or the word on the chip and its obvious synonyms
+    /// (`dark`, `awake`, `caffeinate`), case- and dash-insensitive.
+    init?(name: String) {
+        let key = name.lowercased().replacingOccurrences(of: "-", with: "").replacingOccurrences(of: "_", with: "")
+        if let exact = SystemToggle.allCases.first(where: { $0.rawValue.lowercased() == key }) {
+            self = exact
+            return
+        }
+        switch key {
+        case "awake", "caffeinate", "keepawake": self = .keepAwake
+        case "dark", "darkmode", "appearance": self = .darkMode
+        case "desktop", "desktopicons", "icons": self = .desktopIcons
+        case "hidden", "hiddenfiles", "dotfiles": self = .hiddenFiles
+        case "mute", "sound", "output": self = .mute
+        case "saver", "screensaver": self = .screenSaver
+        case "lock", "lockscreen": self = .lock
+        case "dock", "dockautohide", "autohide": self = .dockAutoHide
+        case "mic", "microphone", "micmute", "mutemic": self = .micMute
+        case "unmount", "ejectall": self = .eject
+        case "sleepnow", "suspend": self = .sleep
+        default: return nil
+        }
+    }
+}

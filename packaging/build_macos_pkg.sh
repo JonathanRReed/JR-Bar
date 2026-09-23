@@ -445,6 +445,17 @@ fi
 # in-app SingleInstanceLock is the guard for every non-bundle path.
 /usr/libexec/PlistBuddy -c "Add :LSMultipleInstancesProhibited bool true" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :LSMultipleInstancesProhibited true" "$APP_PATH/Contents/Info.plist"
+# jrbar:// links (Raycast Quicklinks, Alfred, Shortcuts' Open URL, a deck
+# key): the one scheme, written whole so a rebuilt bundle never carries a
+# stale or doubled entry.
+/usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy \
+    -c "Add :CFBundleURLTypes array" \
+    -c "Add :CFBundleURLTypes:0 dict" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLName string $APP_ID" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string jrbar" \
+    "$APP_PATH/Contents/Info.plist"
 # The app hands this to the daemon as JRBAR_COMMIT (the doctor reply's commit).
 /usr/libexec/PlistBuddy -c "Add :JRBarCommit string $COMMIT" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :JRBarCommit $COMMIT" "$APP_PATH/Contents/Info.plist"

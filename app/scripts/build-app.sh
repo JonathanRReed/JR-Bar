@@ -105,6 +105,17 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$VERSION</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.jonathanreed.jrbar</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>jrbar</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$BUILD_NUMBER</string>
 	<key>LSApplicationCategoryType</key>

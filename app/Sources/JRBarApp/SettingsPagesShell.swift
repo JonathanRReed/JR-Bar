@@ -1,3 +1,4 @@
+import AppKit
 import JRBarCore
 import SwiftUI
 
@@ -28,6 +29,17 @@ struct ShortcutsPage: View {
                         onTakeOver: { store.setShortcut(nil, for: $0) })
         }
 
+        SettingGroup("Actions", note: "No key until you record one. The same actions answer to jrbar:// links, below.") {
+            ForEach(AppShortcutCatalog.actions) { action in
+                ShortcutRow(title: action.title, id: action.id,
+                            chord: store.actionShortcut(action.id), center: center,
+                            onChange: { store.setShortcut($0, for: action.id) },
+                            onTakeOver: { store.setShortcut(nil, for: $0) })
+            }
+        }
+
+        QuickTogglesGroup(store: store, center: center)
+
         if let menuBar = store.utilities?.menuBar {
             SettingGroup("Menu bar", note: menuBar.isOn
                          ? "Held while the Menu Bar utility runs."
@@ -42,6 +54,92 @@ struct ShortcutsPage: View {
                                 onChange: { menuBar.setHotkeyChord($0, for: binding.action) },
                                 onTakeOver: { store.setShortcut(nil, for: $0) })
                 }
+            }
+        }
+
+        LinksGroup()
+    }
+}
+
+/// Every chip the notch strip can show: whether it is on the strip, and
+/// a key for it — OnlySwitch's hotkey for every switch, on the one
+/// store the card, links and Shortcuts share.
+private struct QuickTogglesGroup: View {
+    @Bindable var store: SettingsStore
+    let center: HotkeyCenter
+    private var toggles: SystemTogglesStore { .shared }
+
+    var body: some View {
+        SettingGroup("Quick toggles", note: "Checked chips show on the notch card's strip, in this order. Each can have its own key.") {
+            ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
+                let id = AppShortcutCatalog.toggleID(toggle)
+                LabeledContent {
+                    HStack(alignment: .top, spacing: 10) {
+                        ShortcutRecorderField(id: id, chord: store.actionShortcut(id), center: center,
+                                              onChange: { store.setShortcut($0, for: id) },
+                                              onTakeOver: { store.setShortcut(nil, for: $0) })
+                        Toggle("Strip", isOn: Binding(get: { toggles.strip.contains(toggle) },
+                                                      set: { toggles.setInStrip(toggle, $0) }))
+                            .toggleStyle(.checkbox)
+                            .help("Show this chip on the notch card")
+                    }
+                } label: {
+                    Label {
+                        Text(toggle.longTitle)
+                    } icon: {
+                        Image(systemName: toggle.symbol)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .settingRowStyle()
+            }
+            Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
+                                 set: { toggles.setAwakeKeepsDisplay($0) })) {
+                SettingLabel(title: "Keep awake holds the display too",
+                             subtitle: "No screen saver and no lock while held — for a talk or a long build log. Off keeps only the Mac awake.")
+            }
+            .settingRowStyle()
+        }
+    }
+}
+
+/// The `jrbar://` vocabulary, copyable — for Raycast Quicklinks, Alfred,
+/// Shortcuts' Open URL, a deck key, or `open` in a script.
+private struct LinksGroup: View {
+    static let examples: [(link: String, what: String)] = [
+        ("jrbar://panel/toggle", "Show or hide the panel"),
+        ("jrbar://toggle/dark", "Flip a quick toggle (add ?on=1 or ?on=0 to set it)"),
+        ("jrbar://awake?for=2h", "Keep awake for a while (for=off lets go)"),
+        ("jrbar://quiet?mode=dim&for=1h", "Quiet JR-Bar (jrbar://quiet/end ends it)"),
+        ("jrbar://ask", "Open the panel on the waiting ask"),
+        ("jrbar://menubar/reveal", "Reveal the hidden menu bar items"),
+        ("jrbar://settings/shortcuts", "Open Settings on a page"),
+    ]
+
+    var body: some View {
+        SettingGroup("Links", note: "Links never answer an ask — Approve and Deny stay where the ask is on screen.") {
+            ForEach(Self.examples, id: \.link) { example in
+                LabeledContent {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(example.link, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy \(example.link)")
+                    .accessibilityLabel("Copy \(example.link)")
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(example.link)
+                            .font(.system(.callout, design: .monospaced))
+                            .textSelection(.enabled)
+                        Text(example.what)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .settingRowStyle()
             }
         }
     }
