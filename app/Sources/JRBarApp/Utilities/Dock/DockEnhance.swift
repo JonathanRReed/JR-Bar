@@ -1230,6 +1230,8 @@ final class DockEnhanceController {
     @ObservationIgnored private let windowObserver = DockWindowObserver()
     /// The Dock reach last mirrored into the switcher's tap.
     @ObservationIgnored private var mirroredReach: CGRect?
+    /// The preview action keys last mirrored into the tap.
+    @ObservationIgnored private var mirroredChars: Set<String> = []
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1264,6 +1266,9 @@ final class DockEnhanceController {
         }
         self.switcher.onQuickQuit = { [weak self] point, force in
             self?.quickQuit(axPoint: point, force: force)
+        }
+        self.switcher.onPreviewAction = { [weak self] action in
+            self?.previewAction(action)
         }
         windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
     }
@@ -1431,6 +1436,13 @@ final class DockEnhanceController {
         if reach != mirroredReach {
             mirroredReach = reach
             switcher.setDockReach(reach)
+        }
+        let chars = tracker.shown == nil ? [] : Self.previewChars(
+            walked: preview.selectedWindowID != nil, media: preview.media != nil,
+            pointerInPanel: inPanel)
+        if chars != mirroredChars {
+            mirroredChars = chars
+            switcher.setPreviewChars(chars)
         }
         let action = tracker.note(hovered: hovered?.hoverID, pointerInPanel: inPanel,
                                   now: CACurrentMediaTime(), delay: preferences.previewDelay)
@@ -1968,6 +1980,37 @@ final class DockEnhanceController {
         } else {
             _ = panelKey(UInt16(code))
         }
+    }
+
+    /// An action key the tap ate for the preview: W closes the walked
+    /// card (agent-guarded like ×), M minimizes or restores it, F flips
+    /// full screen, ⌥←/⌥→ tile it into a half, Space plays or pauses
+    /// the player row.
+    private func previewAction(_ action: String) {
+        if action == " " {
+            MediaFeed.shared.send(.togglePlayPause)
+            return
+        }
+        guard let id = preview.selectedWindowID,
+              let window = preview.windows.first(where: { $0.id == id }) else { return }
+        switch action {
+        case "w": close(window)
+        case "m": toggleMinimized(window)
+        case "f": toggleFullScreen(window)
+        case "tile-left": tile(window, .leftHalf)
+        case "tile-right": tile(window, .rightHalf)
+        default: break
+        }
+    }
+
+    /// The action keys to ask the tap for: the window verbs only once a
+    /// card is walked (the arrows are already the preview's), Space only
+    /// while the pointer rests on a panel showing a player. Anything
+    /// else keeps typing into the front app.
+    static func previewChars(walked: Bool, media: Bool, pointerInPanel: Bool) -> Set<String> {
+        var chars: Set<String> = walked ? ["w", "m", "f", "tile"] : []
+        if media && pointerInPanel { chars.insert(" ") }
+        return chars
     }
 
     /// Arrows walk the window cards while the pointer rests on the

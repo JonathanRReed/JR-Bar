@@ -116,6 +116,26 @@ struct DockSwitcherKeysTests {
         #expect(try !click(.rightMouseDown, at: outside, command: true), "outside the Dock, ⌘-right-click is the app's")
     }
 
+    @Test("the preview's action keys are eaten only while it asked for them")
+    func previewActionKeys() throws {
+        let tap = SwitcherKeyTap()
+        let keyboard = DockKeyboardLayout()
+        keyboard.set(layout: DockKeyboardLayout.layoutData(id: "com.apple.keylayout.US"))
+        tap.keyboard = keyboard
+        tap.setPreviewOpen(true)
+        #expect(try !eaten(tap, 13), "no card walked: W types into the front app")
+        tap.setPreviewChars(DockEnhanceController.previewChars(walked: true, media: false, pointerInPanel: false))
+        #expect(try eaten(tap, 13), "a walked card: W closes it")
+        #expect(try eaten(tap, 123, flags: .maskAlternate), "⌥← tiles it")
+        #expect(try !eaten(tap, 49), "Space is only the player's, with the pointer on it")
+        #expect(try !eaten(tap, 13, flags: .maskCommand), "⌘W is never the preview's")
+        tap.setPreviewChars(DockEnhanceController.previewChars(walked: false, media: true, pointerInPanel: true))
+        #expect(try eaten(tap, 49))
+        #expect(try !eaten(tap, 13))
+        tap.setPreviewOpen(false)
+        #expect(try !eaten(tap, 49), "a closed preview owns nothing")
+    }
+
     @Test("hover selects only once the pointer has moved since the strip opened")
     func hoverGate() {
         var gate = SwitcherHoverGate()

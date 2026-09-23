@@ -498,6 +498,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// ⌘-right-click inside the Dock's reach (Quartz point, force with
     /// ⌥): eaten here so Apple's Dock menu never pops over the quit.
     var onQuickQuit: (_ point: CGPoint, _ force: Bool) -> Void = { _, _ in }
+    /// A preview action key — a letter the floating preview asked for
+    /// right now (W/M/F once a card is walked, Space over a player), or
+    /// ⌥← / ⌥→ as "tile left" / "tile right".
+    var onPreviewAction: (_ action: String) -> Void = { _ in }
     /// The preview panel's keys — Esc/arrows/Return — while its flag is
     /// set. The events are eaten either way: the panel can't take key
     /// status, so a pass-through would land them in the front app too.
@@ -547,6 +551,16 @@ final class SwitcherKeyTap: @unchecked Sendable {
 
     func setDockReach(_ reach: CGRect?) {
         lock.lock(); dockReach = reach; lock.unlock()
+    }
+
+    /// The letters the floating preview wants beyond its arrows — empty
+    /// unless a card is walked (W/M/F, ⌥←/⌥→ tiling) or the pointer
+    /// rests on a player's row (Space). Mirrored by the watcher; every
+    /// other key keeps reaching the front app.
+    nonisolated(unsafe) private var previewChars: Set<String> = []
+
+    func setPreviewChars(_ chars: Set<String>) {
+        lock.lock(); previewChars = chars; lock.unlock()
     }
 
     func setEnabled(_ value: Bool) {
@@ -712,8 +726,20 @@ final class SwitcherKeyTap: @unchecked Sendable {
             // lands, and nothing leaks into the front app. The strip's
             // own keys are all consumed above, so an open strip keeps
             // precedence.
-            if isPreviewOpen, Self.previewKeyCodes.contains(code) {
-                return swallow { self.onPreviewKey(code) }
+            if isPreviewOpen {
+                lock.lock(); let wanted = previewChars; lock.unlock()
+                let plain = !flags.contains(.maskCommand) && !flags.contains(.maskControl)
+                if plain, flags.contains(.maskAlternate), wanted.contains("tile"),
+                   code == 123 || code == 124 {
+                    return swallow { self.onPreviewAction(code == 123 ? "tile-left" : "tile-right") }
+                }
+                if Self.previewKeyCodes.contains(code) {
+                    return swallow { self.onPreviewKey(code) }
+                }
+                if plain, !wanted.isEmpty,
+                   let char = keyboard.character(for: code)?.lowercased(), wanted.contains(char) {
+                    return swallow { self.onPreviewAction(char) }
+                }
             }
             return Unmanaged.passRetained(event)
         }
@@ -863,6 +889,10 @@ final class DockSwitcherController {
     var onQuickQuit: ((CGPoint, Bool) -> Void)?
     /// The Dock's reach (Quartz), mirrored into the tap by the watcher.
     func setDockReach(_ reach: CGRect?) { tap.setDockReach(reach) }
+    /// The preview's action keys (W/M/F/Space/⌥-arrow tiling) — what
+    /// the watcher wants the tap to eat right now, and where they go.
+    var onPreviewAction: ((String) -> Void)?
+    func setPreviewChars(_ chars: Set<String>) { tap.setPreviewChars(chars) }
     /// An open can land while the last open's captures still run —
     /// the generation tells a stale async batch from the live strip.
     private var thumbGeneration = 0
@@ -903,6 +933,7 @@ final class DockSwitcherController {
         tap.onTile = { [weak self] code in self?.tile(code) }
         tap.onCommandHeld = { [weak self] held in self?.commandHeld(held) }
         tap.onQuickQuit = { [weak self] point, force in self?.onQuickQuit?(point, force) }
+        tap.onPreviewAction = { [weak self] action in self?.onPreviewAction?(action) }
         // The layout the type-ahead spells through — read now on the
         // main thread and again on every input-source switch.
         tap.keyboard.startWatching()
