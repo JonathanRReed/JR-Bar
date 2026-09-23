@@ -2003,12 +2003,14 @@ final class NotchToy: Toy {
 
     // MARK: Sensors
 
-    /// Another taker for the reading: the Screen Bar's ears, which draw
-    /// the dots while the island rests bare under them, and the daemon's
-    /// presence report, which needs the mic and camera whether or not
-    /// anything draws them — a call is a call with the island off. Asked
-    /// on every sync; the delegate re-syncs when its answer moves.
+    /// Another surface that draws the privacy dots — the Screen Bar's
+    /// ears, which carry them while the island rests bare under them.
+    /// Asked on every sync; the delegate re-syncs when its answer moves.
     var sensorsWantedElsewhere: @MainActor () -> Bool = { false }
+    /// The daemon's presence report, which needs the mic and camera
+    /// whether or not anything draws them — a call is a call with the
+    /// island off and the dots switched off. Re-synced the same way.
+    var sensorsWantedForPresence: @MainActor () -> Bool = { false }
     /// Every edge the monitor reads, for those takers — the raw reading,
     /// whatever the dots' own switch says.
     var onSensorsChanged: (@MainActor (NotchSensorState) -> Void)?
@@ -2026,13 +2028,16 @@ final class NotchToy: Toy {
         !earsDrawn || wantedElsewhere
     }
 
-    /// Whether the monitor runs: the island's own face drawing the dots
-    /// (shown, the switch on, no ears over its shoulders), or a taker
-    /// elsewhere. `runtimeEnabled` is folded in, so state-machine tests
-    /// never build a CoreAudio/CoreMediaIO read.
+    /// Whether the monitor runs: with the dots' switch on, a surface that
+    /// draws them — the island's own face (shown, no ears over its
+    /// shoulders) or one elsewhere; and the presence report, switch or
+    /// not. `runtimeEnabled` is folded in, so state-machine tests never
+    /// build a CoreAudio/CoreMediaIO read.
     static func wantsSensorMonitor(runtimeEnabled: Bool, islandVisible: Bool, indicatorsOn: Bool,
-                                   earsDrawn: Bool, wantedElsewhere: Bool) -> Bool {
-        runtimeEnabled && ((islandVisible && indicatorsOn && !earsDrawn) || wantedElsewhere)
+                                   earsDrawn: Bool, wantedElsewhere: Bool,
+                                   wantedForPresence: Bool) -> Bool {
+        let drawn = indicatorsOn && ((islandVisible && !earsDrawn) || wantedElsewhere)
+        return runtimeEnabled && (drawn || wantedForPresence)
     }
 
     /// The mic/camera monitor lives exactly as long as somebody takes
@@ -2041,7 +2046,8 @@ final class NotchToy: Toy {
     func syncSensorMonitor() {
         let want = Self.wantsSensorMonitor(runtimeEnabled: runtimeEnabled, islandVisible: islandVisible,
                                            indicatorsOn: sensorIndicatorsEnabled, earsDrawn: earsDrawn,
-                                           wantedElsewhere: sensorsWantedElsewhere())
+                                           wantedElsewhere: sensorsWantedElsewhere(),
+                                           wantedForPresence: sensorsWantedForPresence())
         if sensorsReading != want { sensorsReading = want }
         if want {
             if sensorMonitor == nil {
@@ -2500,7 +2506,7 @@ private struct NotchControlsView: View {
                 SettingLabel(title: "Mic & camera indicators",
                              subtitle: toy.sensorsDrawable
                                 ? "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar listens for the system saying they started; it never opens the mic or camera itself."
-                                : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots — nothing watches the mic or camera until a surface can show them.")
+                                : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots.")
             }
             Toggle(isOn: toy.bind(\.mediaEnabled)) {
                 SettingLabel(title: "Now Playing",

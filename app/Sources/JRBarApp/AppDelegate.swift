@@ -357,10 +357,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // daemon as `presence` and comes back for the toys. The monitor
         // runs for that report while the daemon is there, and for the
         // ears while they can draw the dots — with the island off too.
+        // What moves those answers re-syncs it: the daemon coming or
+        // going, the band shown or hidden, a capsule on its flanks, the
+        // wings setting.
         let presence = PresenceReporter(core: core)
         self.presence = presence
         toysStore.notch.onSensorsChanged = { [weak presence] in presence?.noteSensors($0) }
-        toysStore.notch.sensorsWantedElsewhere = { [weak self] in self?.sensorsWantedElsewhere() ?? false }
+        toysStore.notch.sensorsWantedForPresence = { [weak presence] in presence?.wantsSensors ?? false }
+        toysStore.notch.sensorsWantedElsewhere = { [weak self] in self?.screenBar?.drawsSensorDots ?? false }
         presence.onDemandChanged = { [weak toysStore] in toysStore?.notch.syncSensorMonitor() }
         // The toys hush for a call: Confetti holds its burst and its
         // pop, the tank its cards, the buddy its hop.
@@ -1258,18 +1262,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observeSensorDots() }
         }
-    }
-
-    /// Whether the mic/camera monitor must run for something other than
-    /// the island's own face: the daemon's presence report, or the ears
-    /// while they can draw the dots and the dots' switch is on. The
-    /// island re-asks on every sync; the places that move the answer —
-    /// the daemon coming or going, the band shown or hidden, a capsule
-    /// taking the flanks — call `syncSensorMonitor`.
-    private func sensorsWantedElsewhere() -> Bool {
-        if presence?.wantsSensors == true { return true }
-        guard toysStore?.notch.sensorIndicatorsEnabled == true else { return false }
-        return screenBar?.drawsSensorDots ?? false
     }
 
     private func coreDidChange() {
