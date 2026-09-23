@@ -176,9 +176,12 @@ final class ScreenBarPeekModel {
     @ObservationIgnored var onOpen: @MainActor (String) -> Void = { _ in }
     /// A nudge's answer was clicked — the only way one is ever answered.
     @ObservationIgnored var onChoose: @MainActor (MenuBarEarChoice, String) -> Void = { _, _ in }
+    /// The keep-awake hold the ear's cup or moon stands for — its words
+    /// at the peek's foot, since the ear itself never spells them.
+    var awake: ScreenBarEarMarks.Awake?
 
     /// Whether the peek carries sentences, which set its floor width.
-    var hasWords: Bool { failure != nil || nudge != nil }
+    var hasWords: Bool { failure != nil || nudge != nil || awake != nil }
 }
 
 /// The peek's face: notch black — the reason hiding stopped, when it
@@ -210,6 +213,19 @@ struct ScreenBarPeekView: View {
             }
             if !model.tiles.isEmpty {
                 tileRow
+            }
+            if let awake = model.awake {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: awake.symbol)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(ScreenBarWingSlot(text: "", tone: awake.tone).textColor)
+                        .accessibilityHidden(true)
+                    Text(awake.text)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
             }
         }
         .padding(ScreenBarPeekLayout.padding)

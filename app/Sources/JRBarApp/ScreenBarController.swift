@@ -109,6 +109,8 @@ final class ScreenBarController {
             guard earMarks != oldValue else { return }
             reconcileDismissals()
             pushWings()
+            // A hanging peek names the keep-awake hold at its foot.
+            if earMarks.awake != oldValue.awake { syncPeek() }
         }
     }
     /// The island's mic/camera reading. With the ears drawn the island
@@ -1119,6 +1121,7 @@ final class ScreenBarController {
         if peek.model.tiles != tiles { peek.model.tiles = tiles }
         if peek.model.failure != menuBarFeed?.failure { peek.model.failure = menuBarFeed?.failure }
         if peek.model.nudge != menuBarFeed?.nudge { peek.model.nudge = menuBarFeed?.nudge }
+        if peek.model.awake != earMarks.awake { peek.model.awake = earMarks.awake }
         let width = ScreenBarPeekLayout.width(tileWidths: tiles.map(\.width), hasWords: peek.model.hasWords)
         if peek.model.width != width { peek.model.width = width }
     }

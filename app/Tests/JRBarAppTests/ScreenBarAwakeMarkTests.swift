@@ -91,6 +91,15 @@ struct ScreenBarAwakeMarkTests {
         #expect(alone.right?.accessory == nil)
     }
 
+    @Test func thePeekSpellsTheHoldTheEarOnlyMarks() {
+        let model = ScreenBarPeekModel()
+        #expect(!model.hasWords)
+        model.awake = .init(symbol: ScreenBarEarMarks.leaseSymbol, text: "Held awake until you turn it off")
+        #expect(model.hasWords, "a sentence at the peek's foot sets its reading width")
+        #expect(ScreenBarPeekLayout.width(tileWidths: [22], hasWords: model.hasWords)
+                == ScreenBarPeekLayout.wordsWidth + 2 * ScreenBarPeekLayout.padding)
+    }
+
     @Test func theAccessoryWidensItsEarBySlice() {
         let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
         var cupped = meter
