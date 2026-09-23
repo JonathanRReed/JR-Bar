@@ -97,6 +97,42 @@ struct UsageBreadthTests {
         #expect(older.models.isEmpty)
     }
 
+    @Test("the punch card puts each real hour in its weekday row and hour column")
+    func punchCard() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.utc
+        calendar.firstWeekday = 2   // Monday first
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        // 2026-09-21 is a Monday.
+        let monday9 = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21, hour: 9)))
+        let sunday23 = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 23)))
+        let card = UsagePunchCard.build(hours: [
+            UsageHistoryHour(hour: "a", at: monday9.timeIntervalSince1970, tokensIn: 300),
+            UsageHistoryHour(hour: "b", at: sunday23.timeIntervalSince1970, tokensIn: 100, cacheRead: 50),
+        ], calendar: calendar)
+        #expect(card.weekdayLabels.first == "Mon")
+        #expect(card.weekdayLabels.last == "Sun")
+        #expect(card.cells[0][9] == 300)
+        #expect(card.cells[6][23] == 150)
+        #expect(card.peak == 300)
+        #expect(card.intensity(6, 23) == 0.5)
+        #expect(UsagePunchCard.cell(of: monday9, calendar: calendar) == .init(weekday: 0, hour: 9))
+    }
+
+    @Test("a window's outline covers every hour it touched, the one it is in now included")
+    func punchCardWindow() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.utc
+        calendar.firstWeekday = 2
+        let monday = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 21, hour: 10, minute: 30)))
+        let start = monday.timeIntervalSince1970
+        // Opened 10:30, now 12:10: hours 10, 11 and 12 — stepping by an
+        // hour from 10:30 alone would stop at 11.
+        let cells = UsagePunchCard.cells(from: start, to: start + 100 * 60, calendar: calendar)
+        #expect(cells == [.init(weekday: 0, hour: 10), .init(weekday: 0, hour: 11), .init(weekday: 0, hour: 12)])
+        #expect(UsagePunchCard.cells(from: start, to: start - 1, calendar: calendar).isEmpty)
+    }
+
     @Test("History's day filter keeps one calendar day, and parses the heatmap's key")
     func historyDay() throws {
         let day = try #require(HistoryDayParse.date("2026-09-16"))

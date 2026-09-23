@@ -573,6 +573,9 @@ struct ProviderUsageCard: View {
             if !history.models.isEmpty {
                 UsageModelBreakdown(history: history, metric: store.metric, accent: style.accent)
             }
+            if history.hours.contains(where: { $0.totalTokens > 0 }) {
+                UsagePunchCardView(history: history, accent: style.accent, window: primary, now: store.now)
+            }
             if !history.activeDaysNewestFirst.isEmpty {
                 UsageDailyTable(history: history)
             }
@@ -1239,6 +1242,78 @@ struct UsageModelBreakdown: View {
         }
         .padding(.top, 4)
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// "When you burn it": the last week's hours as a weekday × hour punch
+/// card, with the headline window's current span outlined — the rhythm
+/// to plan a long run around the next reset by. Dots, not bars: each is
+/// one real hour of the week, sized by its share of the busiest hour.
+struct UsagePunchCardView: View {
+    let history: UsageHistory
+    let accent: Color
+    /// The window whose span is outlined (the card's headline window).
+    let window: CoreUsageWindow?
+    let now: Date
+
+    static let dot: CGFloat = 9
+
+    private var card: UsagePunchCard { UsagePunchCard.build(hours: history.hours) }
+
+    /// The cells the headline window has covered so far.
+    private var windowCells: Set<UsagePunchCard.Cell> {
+        guard let window, let resetsAt = window.resetsAt,
+              let span = UsageWindowLabel.windowSpan(id: window.key, name: window.name), span <= 24 * 3600 else { return [] }
+        return UsagePunchCard.cells(from: resetsAt - span, to: min(resetsAt, now.timeIntervalSince1970))
+    }
+
+    var body: some View {
+        let card = card
+        let outlined = windowCells
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("When you burn it").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if let window, !outlined.isEmpty {
+                    Text("· outlined: the current \(window.shortName) window")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            Grid(alignment: .center, horizontalSpacing: 2, verticalSpacing: 2) {
+                ForEach(0..<7, id: \.self) { weekday in
+                    GridRow {
+                        Text(card.weekdayLabels[weekday])
+                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .frame(width: 26, alignment: .trailing)
+                        ForEach(0..<24, id: \.self) { hour in
+                            let intensity = card.intensity(weekday, hour)
+                            ZStack {
+                                Circle().fill(Color.primary.opacity(0.05))
+                                if intensity > 0 {
+                                    Circle().fill(accent.opacity(0.35 + 0.6 * intensity))
+                                        .scaleEffect(0.35 + 0.65 * intensity)
+                                }
+                                if outlined.contains(UsagePunchCard.Cell(weekday: weekday, hour: hour)) {
+                                    Circle().strokeBorder(accent.opacity(0.8), lineWidth: 1)
+                                }
+                            }
+                            .frame(width: Self.dot, height: Self.dot)
+                            .help("\(card.weekdayLabels[weekday]) \(String(format: "%02d:00", hour)) · \(UsageFormat.tokens(card.cells[weekday][hour])) tokens")
+                        }
+                    }
+                }
+                GridRow {
+                    Text("").frame(width: 26)
+                    ForEach(0..<24, id: \.self) { hour in
+                        Text(hour % 6 == 0 ? "\(hour)" : "")
+                            .font(.system(size: 7)).foregroundStyle(.quaternary)
+                            .frame(width: Self.dot)
+                    }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Tokens by weekday and hour over the last week; busiest hour \(UsageFormat.tokens(card.peak)) tokens")
+        }
+        .padding(.top, 4)
     }
 }
 
