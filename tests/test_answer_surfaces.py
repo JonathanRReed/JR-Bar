@@ -273,7 +273,6 @@ def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> 
     import os
     import signal
     import subprocess
-    import time
 
     from jrbar import answer_local
 
@@ -285,9 +284,8 @@ def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> 
         # --- scenario: a stopped (Ctrl-Z'd) process is seen as stopped
         assert answer_local.process_stopped(child.pid) is False
         os.kill(child.pid, signal.SIGSTOP)
-        deadline = time.monotonic() + 5
-        while answer_local.process_stopped(child.pid) is not True and time.monotonic() < deadline:
-            time.sleep(0.02)
+        # Returns once the kernel has stopped it: no polling.
+        assert os.WIFSTOPPED(os.waitpid(child.pid, os.WUNTRACED)[1])
         assert answer_local.process_stopped(child.pid) is True
     finally:
         child.kill()

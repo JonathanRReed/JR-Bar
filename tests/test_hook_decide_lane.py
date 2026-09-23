@@ -67,9 +67,30 @@ def shim() -> Path:
     return SHIM
 
 
-def _service(sock_dir: Path, broker: DecisionBroker, seen: list) -> HookIngressService:
+#: Far below the 45 s hold: a hook back inside this was never held.
+NOT_HELD_SECONDS = 10.0
+
+
+class _Seen(list):
+    """The payloads the service processed; a test waits for a count."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._condition = threading.Condition()
+
+    def __call__(self, request) -> None:
+        with self._condition:
+            self.append(request)
+            self._condition.notify_all()
+
+    def wait_for(self, count: int) -> bool:
+        with self._condition:
+            return self._condition.wait_for(lambda: len(self) >= count, timeout=5.0)
+
+
+def _service(sock_dir: Path, broker: DecisionBroker, seen: _Seen) -> HookIngressService:
     service = HookIngressService(
-        process=lambda request: seen.append(request),
+        process=seen,
         socket_path=sock_dir / "hook-ingress.sock",
         rejection_path=sock_dir / "rejections.jsonl",
         decision_broker=broker,
@@ -78,8 +99,31 @@ def _service(sock_dir: Path, broker: DecisionBroker, seen: list) -> HookIngressS
     return service
 
 
-def _broker() -> DecisionBroker:
-    return DecisionBroker(watching=lambda _facts, _pid: False)
+class _Broker(DecisionBroker):
+    """The daemon's broker, signalling each park so a test waits on the
+    event instead of polling."""
+
+    def __init__(self) -> None:
+        super().__init__(watching=lambda _facts, _pid: False)
+        self.parked_event = threading.Event()
+        self.last_request_id: str | None = None
+
+    def park(self, facts, **kwargs):
+        slot = super().park(facts, **kwargs)
+        if slot is not None:
+            self.last_request_id = facts.request_id
+            self.parked_event.set()
+        return slot
+
+    def next_parked(self) -> str:
+        assert self.parked_event.wait(5.0), "nothing was parked"
+        self.parked_event.clear()
+        assert self.last_request_id is not None
+        return self.last_request_id
+
+
+def _broker() -> _Broker:
+    return _Broker()
 
 
 def _spawn(shim: Path, sock_dir: Path, provider: str, payload: dict, *extra: str) -> subprocess.Popen:
@@ -98,27 +142,17 @@ def _spawn(shim: Path, sock_dir: Path, provider: str, payload: dict, *extra: str
     return process
 
 
-def _wait_until(predicate, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.02)
-    return predicate()
-
-
 def test_the_shim_prints_the_verdict_a_click_sends__and_2_more(shim: Path, sock_dir: Path) -> None:
     # --- scenario: approve reaches the agent as its documented allow
     broker = _broker()
-    seen: list = []
+    seen = _Seen()
     service = _service(sock_dir, broker, seen)
     try:
         process = _spawn(shim, sock_dir, "claude", PERMISSION, "--decide")
-        assert _wait_until(lambda: broker.parked_count() == 1)
+        request_id = broker.next_parked()
         # Parked before it was queued, and queued as an ordinary hook.
-        assert _wait_until(lambda: len(seen) == 1)
+        assert seen.wait_for(1)
         assert seen[0].decide_ms == HOOK_DECISION_WAIT_MS
-        request_id = next(iter(broker._slots.values())).facts.request_id
         assert broker.decide("claude", request_id, DecisionVerb.ALLOW) is DecisionResult.SENT
         stdout, _ = process.communicate(timeout=5)
         assert process.returncode == 0
@@ -127,8 +161,7 @@ def test_the_shim_prints_the_verdict_a_click_sends__and_2_more(shim: Path, sock_
 
         # --- scenario: always allow carries the agent's own rule back
         process = _spawn(shim, sock_dir, "claude", PERMISSION, "--decide")
-        assert _wait_until(lambda: broker.parked_count() == 1)
-        request_id = next(iter(broker._slots.values())).facts.request_id
+        request_id = broker.next_parked()
         assert broker.decide("claude", request_id, DecisionVerb.ALWAYS) is DecisionResult.SENT
         stdout, _ = process.communicate(timeout=5)
         decision = json.loads(stdout)["hookSpecificOutput"]["decision"]
@@ -137,32 +170,31 @@ def test_the_shim_prints_the_verdict_a_click_sends__and_2_more(shim: Path, sock_
 
         # --- scenario: a released hold prints nothing, so the agent's own prompt stays
         process = _spawn(shim, sock_dir, "claude", PERMISSION, "--decide")
-        assert _wait_until(lambda: broker.parked_count() == 1)
+        broker.next_parked()
         started = time.monotonic()
         assert broker.release("claude", session_id="decide-session") == 1
-        stdout, _ = process.communicate(timeout=5)
+        stdout, _ = process.communicate(timeout=NOT_HELD_SECONDS)
         assert process.returncode == 0 and stdout == b""
-        assert time.monotonic() - started < 3.0
+        assert time.monotonic() - started < NOT_HELD_SECONDS
     finally:
         assert service.close(timeout_seconds=2.0)
 
 
 def test_what_the_decide_mode_never_holds__and_2_more(shim: Path, sock_dir: Path) -> None:
     broker = _broker()
-    seen: list = []
-    service = _service(sock_dir, broker, seen)
+    service = _service(sock_dir, broker, _Seen())
     try:
         # --- scenario: any other event returns at once and prints nothing
         started = time.monotonic()
         process = _spawn(shim, sock_dir, "claude", {"hook_event_name": "PreToolUse", "session_id": "x"}, "--decide")
-        stdout, _ = process.communicate(timeout=5)
+        stdout, _ = process.communicate(timeout=NOT_HELD_SECONDS)
         assert stdout == b"" and process.returncode == 0
-        assert time.monotonic() - started < 2.0
+        assert time.monotonic() - started < NOT_HELD_SECONDS
         assert broker.parked_count() == 0
 
         # --- scenario: a provider the lane does not answer for is not held
         process = _spawn(shim, sock_dir, "grok", PERMISSION, "--decide")
-        stdout, _ = process.communicate(timeout=5)
+        stdout, _ = process.communicate(timeout=NOT_HELD_SECONDS)
         assert stdout == b"" and broker.parked_count() == 0
     finally:
         assert service.close(timeout_seconds=2.0)
@@ -170,23 +202,23 @@ def test_what_the_decide_mode_never_holds__and_2_more(shim: Path, sock_dir: Path
     # --- scenario: with the daemon down the payload is spooled and nothing printed
     started = time.monotonic()
     process = _spawn(shim, sock_dir, "claude", PERMISSION, "--decide")
-    stdout, _ = process.communicate(timeout=5)
+    stdout, _ = process.communicate(timeout=NOT_HELD_SECONDS)
     assert stdout == b"" and process.returncode == 0
-    assert time.monotonic() - started < 2.0
+    assert time.monotonic() - started < NOT_HELD_SECONDS
     rows = (sock_dir / "claude.pending.jsonl").read_text().splitlines()
     assert json.loads(json.loads(rows[-1])["payload"]) == PERMISSION
 
 
 def test_a_stopping_daemon_lets_parked_hooks_fall_through(shim: Path, sock_dir: Path) -> None:
     broker = _broker()
-    service = _service(sock_dir, broker, [])
+    service = _service(sock_dir, broker, _Seen())
     process = _spawn(shim, sock_dir, "codex", {**PERMISSION, "turn_id": "t-1"}, "--decide")
-    assert _wait_until(lambda: broker.parked_count() == 1)
+    broker.next_parked()
     started = time.monotonic()
     assert service.close(timeout_seconds=3.0)
-    stdout, _ = process.communicate(timeout=5)
+    stdout, _ = process.communicate(timeout=NOT_HELD_SECONDS)
     assert stdout == b"" and process.returncode == 0
-    assert time.monotonic() - started < 3.0
+    assert time.monotonic() - started < NOT_HELD_SECONDS
     assert broker.parked_count() == 0
 
 
@@ -211,7 +243,7 @@ def test_the_wire_carries_the_decide_wait_and_the_verdict_line__and_2_more(sock_
 
     # --- scenario: the Python client waits for the verdict and prints it
     broker = _broker()
-    service = _service(sock_dir, broker, [])
+    service = _service(sock_dir, broker, _Seen())
     try:
         result: list = []
         thread = threading.Thread(
@@ -230,8 +262,7 @@ def test_the_wire_carries_the_decide_wait_and_the_verdict_line__and_2_more(sock_
             daemon=True,
         )
         thread.start()
-        assert _wait_until(lambda: broker.parked_count() == 1)
-        request_id = next(iter(broker._slots.values())).facts.request_id
+        request_id = broker.next_parked()
         assert broker.decide("claude", request_id, DecisionVerb.DENY) is DecisionResult.SENT
         thread.join(5.0)
         disposition, printed = result[0]
@@ -243,14 +274,16 @@ def test_the_wire_carries_the_decide_wait_and_the_verdict_line__and_2_more(sock_
 
 def test_a_session_start_from_the_shim_reaches_the_surface_recorder(shim: Path, sock_dir: Path) -> None:
     noted: list = []
+    told = threading.Event()
 
     class Recorder:
         def note_session_start(self, provider, payload_text, ppid):
             noted.append((provider, json.loads(payload_text)["session_id"], ppid))
+            told.set()
             return True
 
     service = HookIngressService(
-        process=lambda request: None,
+        process=_Seen(),
         socket_path=sock_dir / "hook-ingress.sock",
         rejection_path=sock_dir / "rejections.jsonl",
         decision_broker=_broker(),
@@ -260,8 +293,7 @@ def test_a_session_start_from_the_shim_reaches_the_surface_recorder(shim: Path, 
     try:
         start = {"hook_event_name": "SessionStart", "session_id": "surface-1", "cwd": "/tmp"}
         _spawn(shim, sock_dir, "claude", start).communicate(timeout=5)
-        _spawn(shim, sock_dir, "claude", {"hook_event_name": "Stop", "session_id": "surface-1"}).communicate(timeout=5)
-        assert _wait_until(lambda: len(noted) == 1)
+        assert told.wait(5.0)
         # The shim's parent is this test process: the pid the probe walks up from.
         assert noted == [("claude", "surface-1", os.getpid())]
     finally:
