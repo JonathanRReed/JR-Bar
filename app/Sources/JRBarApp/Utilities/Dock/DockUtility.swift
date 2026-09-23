@@ -350,6 +350,13 @@ final class DockUtility {
         (settings.previewsWanted, settings.previewsWanted || settings.switcherWanted)
     }
 
+    /// Whether the card's watcher-borne knobs (the trigger, the icon
+    /// gestures, ⌥`) can act: JR-Bar draws the previews and hover
+    /// previews are on. The card's own switch is judged separately.
+    static func ownsPreviews(_ settings: DockSettings) -> Bool {
+        settings.provider == .jrbar && settings.enhance.hoverPreviews
+    }
+
     private func reconcile() {
         let wanted = Self.halves(for: settings())
         if wanted.watcher { enhance.start() } else { enhance.stop() }

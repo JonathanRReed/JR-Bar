@@ -50,6 +50,17 @@ struct DockUtilityTests {
         }
     }
 
+    @Test("the watcher's knobs stand down with the previews parked or handed off")
+    func watcherKnobs() {
+        var s = DockSettings(enabled: true)
+        #expect(DockUtility.ownsPreviews(s))
+        s.provider = .dockDoor
+        #expect(!DockUtility.ownsPreviews(s), "DockDoor draws — our icon gestures would do nothing")
+        s.provider = .jrbar
+        s.enhance.hoverPreviews = false
+        #expect(!DockUtility.ownsPreviews(s))
+    }
+
     @Test("Never Preview adds an app once, from wherever it's asked")
     func excludeOnce() {
         #expect(DockEnhanceMath.excluding("com.a", from: []) == ["com.a"])

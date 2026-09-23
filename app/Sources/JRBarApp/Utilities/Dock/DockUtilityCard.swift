@@ -81,6 +81,7 @@ struct DockUtilityControls: View {
             }
             .pickerStyle(.menu)
             .fixedSize()
+            .disabled(!ownPreviews)
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: previewDelay, in: DockEnhancePreferences.delayRange)
@@ -92,14 +93,19 @@ struct DockUtilityControls: View {
                              subtitle: "How long the pointer rests before the preview opens.")
             }
             .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
+            // The icon gestures ride JR-Bar's own watcher — with the
+            // previews off or handed to a counterpart they'd do nothing,
+            // so they say so by standing down.
             Toggle(isOn: scrollGestures) {
                 SettingLabel(title: "Scroll on an icon",
                              subtitle: "Scroll up on a Dock icon to open its preview at once; scroll down to hide the app.")
             }
+            .disabled(!ownPreviews)
             Toggle(isOn: clickToMinimize) {
                 SettingLabel(title: "Click the front app's icon to minimize",
                              subtitle: "Clicking the Dock icon of the app you're in minimizes its windows, like a Windows taskbar; click again and the Dock brings one back.")
             }
+            .disabled(!ownPreviews)
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute (needs Screen Recording — each fresh capture flashes macOS's recording dot); off shows icon + title cards.")
@@ -147,6 +153,7 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "⌥` previews the front app",
                              subtitle: "Option-backtick opens the front app's windows on its Dock tile with the next one picked — arrows walk, Return raises, W, M and F act. Takes the accent key ⌥` types on US layouts.")
             }
+            .disabled(!ownPreviews)
             Toggle(isOn: previewThisDisplay) {
                 SettingLabel(title: "Only windows on this display",
                              subtitle: "A preview lists the windows on the Dock's own screen; minimized ones always list.")
@@ -289,6 +296,10 @@ struct DockUtilityControls: View {
         .onAppear { utility.enhance.refreshPermissions(force: true) }
         .task { installed = await DockInstalledApps.load() }
     }
+
+    /// Whether JR-Bar's own hover watcher is the one running — the
+    /// trigger, the icon gestures and ⌥` all ride it.
+    private var ownPreviews: Bool { DockUtility.ownsPreviews(utility.settings()) }
 
     // Nested settings structs get their own bindings — `bind` only
     // reaches top-level key paths cleanly through the write path.
