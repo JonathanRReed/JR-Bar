@@ -810,6 +810,28 @@ public struct NotchPinch: Equatable, Sendable {
     }
 }
 
+/// A due timer across the room: three soft orange beats on the LED
+/// strips (`preview_program` on the `hardware` surface), then the live
+/// light comes back on its own. Only where a strip is connected, never
+/// while the Mac is quiet — the island's capsule still says it.
+public enum NotchTimerLights {
+    /// The timer capsule's orange, breathed three times.
+    public static let program = """
+    off
+    #FF9F0A 300ms cosine
+    off 300ms cosine
+    repeat 3
+    """
+    /// The preview's hold: the beats and a breath of dark after them.
+    public static let seconds: Double = 2.2
+
+    /// Whether a due timer flashes the strips now.
+    public static func shouldFlash(enabled: Bool, devices: [CoreDevice], quiet: Bool) -> Bool {
+        guard enabled, !quiet else { return false }
+        return devices.contains { $0.connected == true && !$0.id.hasPrefix("virtual:") }
+    }
+}
+
 /// A scroll event's deltas as the fingers moved: right and up positive.
 /// Under natural scrolling (`isDirectionInvertedFromDevice`) AppKit's
 /// deltas follow the content, which follows the fingers — in a y-down

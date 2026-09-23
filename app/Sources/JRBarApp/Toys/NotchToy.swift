@@ -213,7 +213,10 @@ final class NotchToy: Toy {
         cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
-        cardModel.timers.onFireNotice = { [weak self] entry in self?.noteTimerFired(entry) }
+        cardModel.timers.onFireNotice = { [weak self] entry in
+            self?.flashLightsForTimer()
+            self?.noteTimerFired(entry)
+        }
         cardModel.timers.firePredicate = { [weak self] entry in
             guard let session = entry.watchSession else { return true }
             return self?.sessionStillWorking(session) ?? true
@@ -1529,6 +1532,15 @@ final class NotchToy: Toy {
                            key: "timer:\(entry.id):\(Int(entry.deadline.timeIntervalSince1970))"))
     }
 
+    /// A due timer breathes the strips, whether or not the island can
+    /// say it — the lights are how it reaches across the room.
+    func flashLightsForTimer() {
+        guard NotchTimerLights.shouldFlash(enabled: settings.timerLights, devices: core.devices,
+                                           quiet: quietContext != nil) else { return }
+        core.previewProgram(surface: "hardware", program: NotchTimerLights.program,
+                            seconds: NotchTimerLights.seconds)
+    }
+
     /// Whether a session is still working — a nudge's condition.
     func sessionStillWorking(_ id: String) -> Bool {
         guard let session = core.state?.session(withID: id) else { return false }
@@ -2315,6 +2327,10 @@ private struct NotchControlsView: View {
                     SettingLabel(title: "Replace the system volume & brightness overlay",
                                  subtitle: "The volume and brightness keys get our capsule instead of Apple's — needs the Accessibility permission. Changes made from Control Center still show Apple's overlay; JR-Bar never touches OSDUIHelper.")
                 }
+            }
+            Toggle(isOn: toy.bind(\.timerLights)) {
+                SettingLabel(title: "Timers flash the lights",
+                             subtitle: "A timer coming due breathes the SidePulse strips orange three times, then the live light returns. Only with a strip connected, and never while the Mac is quiet.")
             }
             Toggle(isOn: toy.bind(\.shelfShakeToSummon)) {
                 SettingLabel(title: "Shake to summon the shelf",

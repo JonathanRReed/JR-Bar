@@ -774,6 +774,10 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// Focus. Off by default: it reads the calendar in the background,
     /// not only while the card is open.
     public var meetingAlerts: Bool = false
+    /// A due timer breathes the LED strips orange three times, so it is
+    /// noticed across the room — only where a strip is connected, never
+    /// while the Mac is quiet.
+    public var timerLights: Bool = true
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -820,6 +824,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case lyrics
         case holdNewsWhileQuiet
         case meetingAlerts
+        case timerLights
     }
 
     public init(from decoder: any Decoder) throws {
@@ -852,6 +857,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? true
         holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
         meetingAlerts = (try? c.decodeIfPresent(Bool.self, forKey: .meetingAlerts)) ?? false
+        timerLights = (try? c.decodeIfPresent(Bool.self, forKey: .timerLights)) ?? true
     }
 }
 
