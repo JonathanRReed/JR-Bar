@@ -49,6 +49,15 @@ final class DockUtility {
         DockAgentMark.marks(from: sessions(), asks: asks())
     }
 
+    /// Raise the window a live session runs in — the shared locator the
+    /// panel's Open, the Agent Overview and a Screen Bar notice can try
+    /// before the daemon's `open_session` (which resumes rather than
+    /// raises). Needs only Accessibility, not the Dock card.
+    @discardableResult
+    func raiseSessionWindow(_ sessionID: String) -> SessionWindowLocator.Outcome {
+        SessionWindowLocator.raise(sessionID: sessionID, marks: agentMarks())
+    }
+
     /// A preview's Approve / Deny — `PanelStore.answer`'s guards, and the
     /// daemon's own verdict as the line the row shows. `only_if_frontmost`
     /// stays false: the daemon raises the session's terminal first.

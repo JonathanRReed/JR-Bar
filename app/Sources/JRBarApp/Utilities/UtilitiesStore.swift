@@ -134,6 +134,15 @@ final class UtilitiesStore {
         dock.applySettings()
     }
 
+    /// Raise the exact window a live agent session runs in, if one
+    /// window exclusively hosts it (`SessionWindowLocator`). True when
+    /// that window is now in front; false leaves the caller's fallback
+    /// (`open_session`) to act — it resumes, it doesn't raise.
+    @discardableResult
+    func raiseSessionWindow(_ sessionID: String) -> Bool {
+        dock.raiseSessionWindow(sessionID) == .raised
+    }
+
     /// `applicationWillTerminate`'s stop: collapses the menu bar's
     /// spacers before they vanish with the process, and hands Apple's
     /// Dock its autohide value back if an old build's bar hid it.

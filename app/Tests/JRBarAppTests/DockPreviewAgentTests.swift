@@ -81,6 +81,29 @@ struct DockPreviewAgentTests {
         #expect(await DockUtility.answer(ask, approve: true, send: nil) == "The monitor is not answering")
     }
 
+    @Test("the locator finds the one window hosting a session, and nothing when two claim it")
+    func locator() {
+        let marks = DockAgentMark.marks(from: [
+            session("a", label: "Ship the dock"), session("b", label: "Write docs"),
+        ])
+        func item(_ id: String, _ title: String) -> SwitcherItem {
+            SwitcherItem(id: id, pid: 7, appName: "Ghostty", icon: nil, title: title,
+                         minimized: false, onScreen: id != "off", element: nil, windowID: 1)
+        }
+        let items = [item("w1", "zsh"), item("off", "✳ Ship the dock"), item("w3", "Write docs")]
+        let hit = SessionWindowLocator.locate(sessionID: "claude:session:a", marks: marks,
+                                              items: items, bundleID: { _ in Self.ghostty })
+        #expect(hit?.id == "off", "a window on another Space is still found by its title")
+        #expect(SessionWindowLocator.locate(sessionID: "claude:session:b", marks: marks,
+                                            items: items, bundleID: { _ in Self.ghostty })?.id == "w3")
+        let twins = [item("x", "Write docs"), item("y", "Write docs")]
+        #expect(SessionWindowLocator.locate(sessionID: "claude:session:b", marks: marks,
+                                            items: twins, bundleID: { _ in Self.ghostty }) == nil,
+                "two windows claim it — the caller falls back to open_session")
+        #expect(SessionWindowLocator.locate(sessionID: "claude:session:zzz", marks: marks,
+                                            items: items, bundleID: { _ in Self.ghostty }) == nil)
+    }
+
     @Test("an ask the daemon can't type into, or one with no session, never sends")
     func answerRefusals() async {
         var calls = 0
