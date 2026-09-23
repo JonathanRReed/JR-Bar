@@ -430,11 +430,22 @@ def test_an_agent_younger_than_the_cached_table_is_found__and_4_more(monkeypatch
     fresh_table = {500: _entry(500, 1, "/bin/codex")}
     monkeypatch.setattr(process_registry, "_list_processes_uncached", lambda runner: uncached.append(1) or fresh_table)
     monkeypatch.setattr(process_registry, "_table_cache", (process_registry.time.monotonic(), dict(before)))
-    assert 500 not in process_registry.list_processes()
+    # The cache serves only the real ``subprocess.run``, which the suite's
+    # launchctl guard has replaced: name the current one.
+    run = process_registry.subprocess.run
+    assert 500 not in process_registry.list_processes(run)
     assert uncached == []
-    assert surfaces.process_table_holding(500) is fresh_table
+    assert process_registry.list_processes(run, fresh=True) is fresh_table
     assert uncached == [1]
-    assert process_registry.list_processes() is fresh_table
+    assert process_registry.list_processes(run) is fresh_table
+    reads_asked: list = []
+    monkeypatch.setattr(
+        process_registry,
+        "list_processes",
+        lambda *, fresh=False: reads_asked.append(fresh) or (fresh_table if fresh else before),
+    )
+    assert surfaces.process_table_holding(500) is fresh_table
+    assert reads_asked == [False, True]
 
 
 def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch, tmp_path: Path) -> None:
