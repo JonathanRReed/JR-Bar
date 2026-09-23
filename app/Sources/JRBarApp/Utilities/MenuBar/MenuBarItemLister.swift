@@ -375,6 +375,22 @@ enum MenuBarItemLister {
         return scanned.0
     }
 
+    /// A listing begun after this call — never the snapshot a scan
+    /// already under way hands back, which can predate the caller's
+    /// moment. Waits that scan out (up to `timeout`), then takes one of
+    /// its own; nil when none could be had.
+    @MainActor
+    static func freshAXItems(timeout: TimeInterval = 3) async -> [MenuBarItem]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while axScanInFlight {
+            guard Date() < deadline else { return nil }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let generation = axGeneration
+        let listed = await refreshAXItems()
+        return axGeneration != generation ? listed : nil
+    }
+
     /// The live list: the AX snapshot when Accessibility is granted,
     /// else the window-list fallback (still useful on systems whose
     /// items draw in per-item status-layer windows).

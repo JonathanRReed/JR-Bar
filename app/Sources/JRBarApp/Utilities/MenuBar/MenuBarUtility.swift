@@ -2640,10 +2640,12 @@ final class MenuBarUtility: Toy {
             }
             // Each frame is bracketed by a fresh listing: the item must
             // still be drawn, unmoved, and alone in its rect, or the
-            // photograph is someone else's.
+            // photograph is someone else's. Fresh means begun after the
+            // frame — the hider's scan in flight would hand back a list
+            // older than it, and the check would compare it to itself.
             glyphCamera?.locate = { [weak self] item in
-                let listed = await MenuBarItemLister.refreshAXItems()
-                guard let self, let fresh = listed.first(where: { $0.id == item.id }) else { return nil }
+                guard let listed = await MenuBarItemLister.freshAXItems(),
+                      let self, let fresh = listed.first(where: { $0.id == item.id }) else { return nil }
                 return Self.photographable(fresh, among: listed,
                                            rows: MenuBarItemLister.menuBarRows(),
                                            concealed: self.concealer?.concealedApps ?? [])
