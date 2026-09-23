@@ -17,6 +17,7 @@ from .mailbox_preferences import (
     LegacyMailboxPreference,
     MailboxPreference,
     MailboxPreferenceMode,
+    MailboxSnoozeScope,
 )
 from .private_io import atomic_private_write, read_private_bytes, read_private_text
 from .provider_facts import WorkKey, work_key_from_payload, work_key_to_payload
@@ -38,6 +39,9 @@ _PREFERENCE_KEYS = frozenset(
     }
 )
 _V2_PREFERENCE_KEYS = (_PREFERENCE_KEYS - {"agent_id"}) | {"work_key"}
+#: A run's own snooze ("Quiet this run") writes its scope; a family's never
+#: does, so a file with no run snoozes stays byte-for-byte what it was.
+_V2_SCOPED_PREFERENCE_KEYS = _V2_PREFERENCE_KEYS | {"snooze_scope"}
 
 
 class MailboxSnoozePreset(str, Enum):
@@ -125,6 +129,7 @@ def save_mailbox_preferences_v2(
                     payload["snoozed_at"],  # type: ignore[arg-type]
                     payload["snoozed_until"],  # type: ignore[arg-type]
                     payload["last_visited_at"],  # type: ignore[arg-type]
+                    MailboxSnoozeScope(payload.get("snooze_scope", MailboxSnoozeScope.FAMILY.value)),
                 )
             )
             payloads.append(payload)
@@ -292,7 +297,9 @@ def _v2_payload_from_preference(preference: object) -> dict[str, object]:
     last_visited_at = _valid_epoch(preference.last_visited_at)
     if preference.last_visited_at is not None and last_visited_at is None:
         raise _InvalidPreference
-    return {
+    if type(preference.snooze_scope) is not MailboxSnoozeScope:
+        raise _InvalidPreference
+    payload: dict[str, object] = {
         "work_key": work_key_to_payload(preference.work_key),
         "mode": preference.mode.value,
         "pin_order": pin_order,
@@ -300,10 +307,17 @@ def _v2_payload_from_preference(preference: object) -> dict[str, object]:
         "snoozed_until": snoozed_until,
         "last_visited_at": last_visited_at,
     }
+    # A run scope means something only while that run is snoozed.
+    if preference.snooze_scope is MailboxSnoozeScope.RUN and snoozed_at is not None:
+        payload["snooze_scope"] = MailboxSnoozeScope.RUN.value
+    return payload
 
 
 def _v2_preference_from_payload(payload: object) -> MailboxPreference:
-    if type(payload) is not dict or frozenset(payload) != _V2_PREFERENCE_KEYS:
+    if type(payload) is not dict or frozenset(payload) not in (
+        _V2_PREFERENCE_KEYS,
+        _V2_SCOPED_PREFERENCE_KEYS,
+    ):
         raise _InvalidPreference
     work_key = work_key_from_payload(payload["work_key"])
     if work_key is None:
@@ -334,6 +348,12 @@ def _v2_preference_from_payload(payload: object) -> MailboxPreference:
     last_visited_at = _valid_epoch(raw_last_visited_at)
     if raw_last_visited_at is not None and last_visited_at is None:
         raise _InvalidPreference
+    scope = MailboxSnoozeScope.FAMILY
+    if "snooze_scope" in payload:
+        # Only a snoozed run writes its scope, and only as "run".
+        if payload["snooze_scope"] != MailboxSnoozeScope.RUN.value or snoozed_at is None:
+            raise _InvalidPreference
+        scope = MailboxSnoozeScope.RUN
     return MailboxPreference(
         work_key,
         mode,
@@ -341,6 +361,7 @@ def _v2_preference_from_payload(payload: object) -> MailboxPreference:
         snoozed_at,
         snoozed_until,
         last_visited_at,
+        scope,
     )
 
 

@@ -10,13 +10,25 @@ surface. The Agent Browser window deliberately keeps showing snoozed
 sessions; the mailbox keeps its own richer wake semantics in
 mailbox_preferences. This module owns only the lights/notifications
 scope, so the rule lives once for both consumers.
+
+A snooze has a scope (``MailboxSnoozeScope``). The mailbox's own snooze is
+the family's: it sits on the root key and quiets every run in it. "Quiet
+this run" is one row's: it sits on that run's exact key -- a main session
+or one worker -- and quiets that run alone, so quieting a sub-agent never
+silences the session that spawned it (nor the other way round).
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
-from .mailbox_preferences import LegacyMailboxPreference, MailboxPreference
+from .mailbox_preferences import (
+    LegacyMailboxPreference,
+    MailboxPreference,
+    MailboxPreferenceMode,
+    MailboxSnoozeScope,
+)
 from .provider_facts import WorkKey
 
 
@@ -35,10 +47,11 @@ def _snoozed_scopes(
     preferences,
     now: float,
 ) -> tuple[frozenset[WorkKey], frozenset[tuple[str, str]], frozenset[str]]:
-    """Currently snoozed (work keys, (provider, family id) pairs, legacy
-    agent ids). The family pair covers live-path statuses whose own work
-    key is a child of (or older than) the snoozed family key: a status's
-    session_id is its family's work id."""
+    """Currently snoozed (work keys, (provider, family id) pairs, agent
+    ids). The family pair covers live-path statuses whose own work key is a
+    child of (or older than) the snoozed family key: a status's session_id
+    is its family's work id. A run's own snooze adds only its exact key and
+    the agent ids that run's row can carry -- never the family pair."""
     try:
         values = tuple(preferences)
     except TypeError:
@@ -50,6 +63,9 @@ def _snoozed_scopes(
         if isinstance(preference, MailboxPreference):
             if type(preference.work_key) is WorkKey and _active_snooze(preference, now):
                 work_keys.add(preference.work_key)
+                if preference.snooze_scope is MailboxSnoozeScope.RUN:
+                    agent_ids.update(run_agent_ids(preference.work_key))
+                    continue
                 family_ids.add(
                     (
                         preference.work_key.source_key.provider_id,
@@ -81,6 +97,100 @@ def _status_covered(status, work_keys, family_ids, agent_ids) -> bool:
     return getattr(status, "agent_id", None) in agent_ids
 
 
+def run_agent_ids(work_key: WorkKey) -> tuple[str, str]:
+    """The row ids one run's key can surface as: ``<provider>:session:<id>``
+    for a main session, ``<provider>:agent:<id>`` for a worker -- so a run's
+    snooze also covers a legacy-path row of the same run that carries no
+    work key."""
+    provider = work_key.source_key.provider_id
+    work_id = work_key.work_id.value
+    return (f"{provider}:session:{work_id}", f"{provider}:agent:{work_id}")
+
+
+def active_snooze_until(preference, now: float) -> float | None:
+    """The preference's snooze deadline while it is in force, else None."""
+    if preference is None or not _active_snooze(preference, now):
+        return None
+    return float(preference.snoozed_until)
+
+
+def _lapsed_run(preference: MailboxPreference, now: float) -> bool:
+    return (
+        preference.snooze_scope is MailboxSnoozeScope.RUN
+        and not _active_snooze(preference, now)
+    )
+
+
+def _without_lapsed_runs(preferences, now: float) -> list[MailboxPreference]:
+    """Drop run snoozes that have run out: a worker's key keeps nothing
+    else worth storing, and a root's pin or watch survives as a plain
+    family preference."""
+    kept: list[MailboxPreference] = []
+    for preference in preferences:
+        if type(preference) is not MailboxPreference:
+            continue
+        if _lapsed_run(preference, now):
+            if (
+                preference.mode is MailboxPreferenceMode.DEFAULT
+                and preference.pin_order is None
+                and preference.last_visited_at is None
+            ):
+                continue
+            preference = replace(
+                preference,
+                snoozed_at=None,
+                snoozed_until=None,
+                snooze_scope=MailboxSnoozeScope.FAMILY,
+            )
+        kept.append(preference)
+    return kept
+
+
+def with_run_snooze(preferences, work_key: WorkKey, *, now: float, until: float):
+    """``preferences`` with ``work_key``'s run quiet until ``until``.
+
+    A family snooze already in force on the same key lasts at least as
+    long and covers more, so it is kept as it is. Returns a new tuple.
+    """
+    if type(work_key) is not WorkKey or not until > now:
+        raise ValueError("a run snooze needs a work key and a deadline after now")
+    kept = _without_lapsed_runs(preferences, now)
+    existing = next((item for item in kept if item.work_key == work_key), None)
+    if existing is not None and existing.snooze_scope is MailboxSnoozeScope.FAMILY:
+        family_until = active_snooze_until(existing, now)
+        if family_until is not None and family_until >= until:
+            return tuple(kept)
+    updated = replace(
+        existing or MailboxPreference(work_key),
+        snoozed_at=now,
+        snoozed_until=until,
+        snooze_scope=MailboxSnoozeScope.RUN,
+    )
+    return tuple((*(item for item in kept if item.work_key != work_key), updated))
+
+
+def without_run_snooze(preferences, work_key: WorkKey, *, now: float):
+    """``preferences`` with any run snooze on ``work_key`` lifted (a family
+    snooze on the same key is the family's to lift). Returns a new tuple."""
+    kept = []
+    for preference in _without_lapsed_runs(preferences, now):
+        if preference.work_key == work_key and preference.snooze_scope is MailboxSnoozeScope.RUN:
+            if (
+                preference.mode is MailboxPreferenceMode.DEFAULT
+                and preference.pin_order is None
+                and preference.last_visited_at is None
+            ):
+                continue
+            preference = replace(
+                preference,
+                snoozed_at=None,
+                snoozed_until=None,
+                snooze_scope=MailboxSnoozeScope.FAMILY,
+            )
+        kept.append(preference)
+    return tuple(kept)
+
+
 def status_snoozed(status, preferences, *, now: float) -> bool:
     """Whether this status is silenced for lights and notifications."""
     scopes = _snoozed_scopes(preferences, float(now))
@@ -105,4 +215,11 @@ def filter_snoozed_statuses(statuses, preferences, *, now: float):
     return values if len(kept) == len(values) else kept
 
 
-__all__ = ["filter_snoozed_statuses", "status_snoozed"]
+__all__ = [
+    "active_snooze_until",
+    "filter_snoozed_statuses",
+    "run_agent_ids",
+    "status_snoozed",
+    "with_run_snooze",
+    "without_run_snooze",
+]

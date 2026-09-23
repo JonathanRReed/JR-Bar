@@ -383,6 +383,19 @@ public final class CoreModel {
         post("snooze", args: ["session": .string(session ?? "all"), "seconds": .number(Double(seconds))])
     }
 
+    /// "Quiet this run": `snooze {session, seconds, scope: "run"}` quiets
+    /// that one row — a main session or a single worker — for exactly
+    /// `seconds` (a live ask still gets through), never its whole family
+    /// the way `snooze` does. `seconds: 0` lifts it.
+    public func quietRun(session: String, seconds: Int) {
+        post("snooze", args: Self.quietRunArgs(session: session, seconds: seconds))
+    }
+
+    /// The `snooze` args `quietRun` sends — the protocol's `scope` field.
+    public nonisolated static func quietRunArgs(session: String, seconds: Int) -> [String: JSONValue] {
+        ["session": .string(session), "seconds": .number(Double(max(0, seconds))), "scope": .string("run")]
+    }
+
     /// A validated settings write; the daemon echoes a new `settings`
     /// document and replies with its generation.
     @discardableResult

@@ -488,6 +488,7 @@ from .mailbox_preferences import (
     MailboxPreference,
     MailboxPreferenceMode,
     MailboxPreferenceProjection,
+    MailboxSnoozeScope,
     apply_mailbox_preferences,
 )
 from .snooze_scope import filter_snoozed_statuses, status_snoozed
@@ -10243,16 +10244,19 @@ class StatusBarController(NSObject):
                 if duration is None:
                     return False
                 snoozed_until = now + duration
+            # The family's snooze, even over a run's own quiet on the root.
             preference = dataclass_replace(
                 preference,
                 snoozed_at=now,
                 snoozed_until=snoozed_until,
+                snooze_scope=MailboxSnoozeScope.FAMILY,
             )
         elif payload.kind is OperatorActionKind.UNSNOOZE:
             preference = dataclass_replace(
                 preference,
                 snoozed_at=None,
                 snoozed_until=None,
+                snooze_scope=MailboxSnoozeScope.FAMILY,
             )
         else:
             return False
@@ -17639,6 +17643,7 @@ def _canonical_operator_actions(state, target):
                 snoozed=(
                     preference is not None
                     and preference.snoozed_at is not None
+                    and preference.snooze_scope is MailboxSnoozeScope.FAMILY
                 ),
                 acknowledged=(
                     request is not None and request.key in acknowledged
