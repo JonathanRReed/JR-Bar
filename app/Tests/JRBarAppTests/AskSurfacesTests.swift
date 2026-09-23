@@ -48,11 +48,18 @@ struct AskSurfacesTests {
                 preview: preview, risk: risk)
     }
 
-    /// Polls until `done` or ten seconds pass — generous, because the
-    /// whole suite shares one main actor, and each hop lands in a blink.
+    /// Polls until `done`, counting turns as well as seconds: the whole
+    /// suite shares one main actor, and a loaded machine can stall it
+    /// for longer than any clock budget — once it is free again the
+    /// hops queued behind the stall still get their turns before this
+    /// gives up. Each hop lands in a blink when nothing is in the way.
     static func waitFor(_ done: () -> Bool) async {
-        let deadline = Date().addingTimeInterval(10)
-        while !done(), Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        let deadline = Date().addingTimeInterval(30)
+        var turns = 0
+        while !done(), turns < 300 || Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+            turns += 1
+        }
     }
 
     // MARK: Palette
