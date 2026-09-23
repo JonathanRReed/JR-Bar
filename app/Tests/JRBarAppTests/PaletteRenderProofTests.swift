@@ -6,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 /// Render proof for the palette: the list, a selected row, tags, the
-/// footer, the ⌘K panel and an ask's reply field at 2×, over a dark and a light backdrop, so
+/// footer, the ⌘K panel, a typed argument and an ask's reply field at 2×, over a dark and a light backdrop, so
 /// a human can eyeball the Raycast-grade layout. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write /tmp/palette-proof PNGs (or
 /// `JRBAR_RENDER_PROOF_DIR` to pick the folder).
@@ -61,10 +61,12 @@ struct PaletteRenderProofTests {
         usage.record("system.darkMode", at: now)
         let shots: [(name: String, query: String, actions: Bool, reply: Bool)] = [
             ("home", "", false, false), ("query", "hide 1p", false, false), ("actions", "", true, false),
-            ("reply", "", false, true),
+            ("reply", "", false, true), ("typed", "dim 1h30", false, false),
         ]
+        let quietVerbs = QuietPaletteVerbs(quiet: { _, _ in }, end: {})
         for shot in shots {
             let model = PaletteModel()
+            model.typedRows = { QuietPaletteRows.typedItems(query: $0, mode: "pause", now: now, verbs: quietVerbs) }
             model.load(items: items, usage: usage, now: now)
             model.query = shot.query
             if shot.actions { model.openActions() }
