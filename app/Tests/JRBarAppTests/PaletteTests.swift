@@ -283,6 +283,28 @@ struct PaletteTests {
         #expect(recorded.ran == ["m", "m", "m", "s"])
     }
 
+    @Test("a slower source's hit runs but is never recorded — its id carries another app's words")
+    func controllerSearchHitUnrecorded() {
+        let log = Log()
+        let controller = PaletteController()
+        let recorded = Log()
+        controller.recordUse = { recorded.ran.append($0) }
+        controller.model.load(items: [row("open.history", "History", log: log)],
+                              usage: PaletteUsage(), now: now)
+        controller.model.query = "hist"
+        let menu = PaletteSection(id: "appMenu", title: "Safari", order: 95)
+        let page = "menu.com.apple.Safari.History/A Private Page Title"
+        controller.model.setSearchResults([row(page, "A Private Page Title", section: menu, log: log),
+                                           row("archive.7", "history notes", section: .archive, log: log)],
+                                          for: "hist")
+        controller.run(rowID: page, actionID: "open")
+        controller.run(rowID: "archive.7", actionID: "open")
+        #expect(log.ran == ["\(page):Open", "archive.7:Open"], "the hits still run")
+        #expect(recorded.ran.isEmpty, "no ranking reads them, so nothing is written")
+        controller.run(rowID: "open.history", actionID: "open")
+        #expect(recorded.ran == ["open.history"], "a gathered row is still a habit")
+    }
+
     @Test("⌘K opens the panel, arrows walk it, Return runs its pick, ⎋ backs out")
     func controllerActionPanel() {
         let log = Log()

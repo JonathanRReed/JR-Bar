@@ -365,12 +365,20 @@ final class PaletteController {
 
     /// Fold, record, listen, run — the tail every verb shares, the
     /// field's submit included.
+    ///
+    /// Only a gathered row is recorded: habit ranks `model.items` and
+    /// nothing else. A slower source's hit carries other apps' words in
+    /// its id — a Safari page title, a recent document's name — so
+    /// saving it would write a third-party title to app-state.json that
+    /// no ranking ever reads, and push real habits out of the capped
+    /// table. The log keeps the id private for the same reason.
     private func finish(item: PaletteItem, action: PaletteAction, run: () -> String?) {
         let anchor = panel?.frame
+        let ranked = model.items.contains { $0.id == item.id }
         close()
-        recordUse(item.id)
+        if ranked { recordUse(item.id) }
         listenForToast(until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)
-        Self.log.debug("run \(item.id, privacy: .public) · \(action.id, privacy: .public)")
+        Self.log.debug("run \(item.id, privacy: .private) · \(action.id, privacy: .public)")
         if let line = run() {
             hud.show(line, near: anchor)
         }
