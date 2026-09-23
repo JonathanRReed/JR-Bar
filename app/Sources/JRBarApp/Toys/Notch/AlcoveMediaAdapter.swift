@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import OSLog
 
 /// The entitled Now Playing reader. Since macOS 15.4 `mediaremoted`
 /// refuses unentitled clients — `MRMediaRemoteGetNowPlayingInfo` called
@@ -56,8 +57,24 @@ final class AlcoveMediaAdapter {
     /// so silence past this means the path is dead.
     private var watchdog: DispatchWorkItem?
     private var sawFirstLine = false
+    /// When this helper was launched, and whether it has carried a real
+    /// track yet — the evidence lines say how long each took, so the
+    /// log shows whether Now Playing actually works on this build.
+    private var startedAt: Date?
+    private var sawTrack = false
 
     private(set) var running = false
+
+    /// The helper's evidence trail: live, first track, or why it fell
+    /// back. `log show --predicate 'subsystem == "devin.jrbar" AND
+    /// category == "media"'` reads it.
+    static let log = Logger(subsystem: "devin.jrbar", category: "media")
+
+    /// One evidence line for the helper's first answer. Pure for the
+    /// tests: milliseconds since launch, and whether it was a track.
+    static func firstLineNote(after seconds: TimeInterval, track: Bool) -> String {
+        "helper live after \(Int((seconds * 1000).rounded())) ms — \(track ? "a track is playing" : "nothing playing")"
+    }
 
     /// Writes the embedded dylib beside the temp dir, keyed by its sha —
     /// a new build is a new file, never an overwrite of a mapped image.
@@ -92,7 +109,7 @@ final class AlcoveMediaAdapter {
         running = true
         pending = Data()
         guard perlIsInstalled, let dylib = materialize() else {
-            fail()
+            fail(perlIsInstalled ? "the helper dylib could not be written" : "no /usr/bin/perl")
             return
         }
         let process = Process()
@@ -118,17 +135,19 @@ final class AlcoveMediaAdapter {
             try process.run()
         } catch {
             out.fileHandleForReading.readabilityHandler = nil
-            fail()
+            fail("the helper did not launch: \(error.localizedDescription)")
             return
         }
         self.process = process
         self.stdin = input.fileHandleForWriting
         self.stdout = out.fileHandleForReading
         sawFirstLine = false
+        sawTrack = false
+        startedAt = Date()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.running, !self.sawFirstLine else { return }
-                self.fail()
+                self.fail("the helper stayed silent for 4 s")
             }
         }
         watchdog = work
@@ -174,11 +193,12 @@ final class AlcoveMediaAdapter {
     /// moves to the in-process path for the rest of this run.
     private func terminated() {
         guard running else { return }
-        fail()
+        fail(sawFirstLine ? "the helper exited mid-run" : "the helper exited before answering")
     }
 
-    private func fail() {
+    private func fail(_ reason: String) {
         guard running else { return }
+        Self.log.error("Now Playing: \(reason, privacy: .public) — in-process MediaRemote from here")
         running = false
         watchdog?.cancel()
         watchdog = nil
@@ -198,10 +218,21 @@ final class AlcoveMediaAdapter {
         while let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
             let line = pending.prefix(upTo: newline)
             pending = pending.subdata(in: pending.index(after: newline)..<pending.endIndex)
+            let media = Self.parse(line)
+            let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+            if !sawFirstLine {
+                Self.log.info("Now Playing: \(Self.firstLineNote(after: elapsed, track: media != nil), privacy: .public)")
+            }
+            if media != nil, !sawTrack {
+                sawTrack = true
+                if sawFirstLine {
+                    Self.log.info("Now Playing: first track \(Int(elapsed.rounded())) s after launch")
+                }
+            }
             sawFirstLine = true
             watchdog?.cancel()
             watchdog = nil
-            onChange?(Self.parse(line))
+            onChange?(media)
         }
     }
 
