@@ -66,7 +66,11 @@ enum PaletteWiring {
                     windows.history()
                 },
                 isLive: { store.isLiveSession($0) },
-                openSession: { store.core.openSession($0) }))
+                openSession: { store.core.openSession($0) },
+                canResume: { store.canResume($0) },
+                // History's notice is the HUD's line: it reports through
+                // the verb's ticket like the panel's toast.
+                resume: { store.resume($0) }))
     }
 
     /// Asks and sessions, through the panel's own verbs — `approve` and

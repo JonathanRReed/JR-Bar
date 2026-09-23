@@ -281,4 +281,27 @@ struct AskSurfacesTests {
         #expect(!DeckStore.pillAnswers(nil))
     }
 
+    // MARK: History and Overview
+
+    @Test("Resume is offered on an ended local row of an agent that can resume, never on a live or peer one")
+    func historyResume() {
+        let core = CoreModel()
+        core.apply(.state(CoreState(sessions: [CoreSession(id: "claude:live", provider: "claude", mode: "working")],
+                                    asks: [])))
+        let store = HistoryStore(core: core)
+        #expect(store.canResume(CoreHistoryRow(at: 1, kind: "completed", provider: "claude", session: "claude:done")))
+        #expect(store.canResume(CoreHistoryRow(at: 1, kind: "ended", session: "codex:session:z")),
+                "the provider read off the agent id")
+        #expect(!store.canResume(CoreHistoryRow(at: 1, kind: "started", provider: "claude", session: "claude:live")),
+                "a running session opens instead")
+        #expect(!store.canResume(CoreHistoryRow(at: 1, kind: "ended", provider: "gemini", session: "gemini:x")))
+        #expect(!store.canResume(CoreHistoryRow(at: 1, kind: "ended", provider: "claude",
+                                                session: "remote:studio:claude:x")))
+        #expect(!store.canResume(CoreHistoryRow(at: 1, kind: "quota_crossed", provider: "claude")))
+        #expect(HistoryStore.resumedText(.object(["raised": .string("new_tab"), "app": .string("Ghostty")]),
+                                         title: "fix-ci") == "Resumed fix-ci in a new Ghostty tab")
+        #expect(HistoryStore.resumedText(.object(["raised": .string("tab"), "app": .string("Terminal")]),
+                                         title: "fix-ci") == "fix-ci was still running — raised it in Terminal")
+    }
+
 }

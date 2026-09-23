@@ -50,6 +50,20 @@ struct HistoryView: View {
                 .padding(.vertical, 5)
                 .accessibilityElement(children: .combine)
             }
+            if let notice = store.notice {
+                // Resume's or Open's outcome, in the monitor's words.
+                HStack(spacing: 8) {
+                    Image(systemName: notice.isError ? "exclamationmark.triangle" : "arrow.uturn.forward.circle")
+                        .foregroundStyle(notice.isError ? Color.orange : Color.accentColor)
+                    Text(notice.text).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 5)
+                .accessibilityElement(children: .combine)
+                .transition(.opacity)
+            }
             Divider()
             if store.rows.isEmpty {
                 HistoryEmptyState(store: store)
@@ -301,6 +315,8 @@ struct HistoryRowView: View {
     private var openable: Bool { store.isLiveSession(row.session) }
     /// The row can open its session's transcript timeline in place.
     private var expandable: Bool { store.canExpand(row) }
+    /// An ended run whose agent can pick it back up.
+    private var resumable: Bool { store.canResume(row) }
     private var expanded: Bool { store.expandedID == row.id }
 
     var body: some View {
@@ -402,9 +418,16 @@ struct HistoryRowView: View {
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .trailing)
                     .help(row.duration.map { "Took \(Int($0.rounded())) s" } ?? "")
-                Image(systemName: "arrow.up.forward.square")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
-                    .opacity(hovering && openable ? 1 : 0)
+                if resumable, hovering || selected {
+                    // An ended run picks back up where it ran.
+                    Button("Resume") { store.resume(row) }
+                        .controlSize(.mini)
+                        .help("Resume this session in the terminal it ran in")
+                } else {
+                    Image(systemName: "arrow.up.forward.square")
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .opacity(hovering && openable ? 1 : 0)
+                }
                 if expandable {
                     Button {
                         store.toggleExpanded(row)
@@ -439,10 +462,25 @@ struct HistoryRowView: View {
         .onTapGesture {
             if openable { store.open(row) } else if expandable { store.toggleExpanded(row) }
         }
+        .contextMenu {
+            if openable {
+                Button("Open Session") { store.open(row) }
+            }
+            if resumable {
+                Button("Resume Session") { store.resume(row) }
+            }
+            if expandable {
+                Button(expanded ? "Hide Timeline" : "Show Timeline") { store.toggleExpanded(row) }
+            }
+            if let session = row.session, store.onRevealSession != nil {
+                Button("Open in Overview") { store.onRevealSession?(session) }
+            }
+        }
         .help(openable
               ? "Open the session"
               : (expandable ? "Ended — click to see what it did"
-                            : "Ended; the session is gone from the daemon so there is nothing to open"))
+                            : (resumable ? "Ended — Resume picks it back up where it ran"
+                                         : "Ended; the session is gone from the daemon so there is nothing to open")))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))")
     }

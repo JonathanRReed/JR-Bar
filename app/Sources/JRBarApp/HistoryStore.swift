@@ -306,9 +306,105 @@ final class HistoryStore {
     func open(_ row: CoreHistoryRow) {
         selectedID = row.id
         // Only a session still live in the daemon's state can be opened;
-        // an ended row keeps its history but has nothing to show.
-        guard isLiveSession(row.session) else { return }
-        core.openSession(row.session!)
+        // an ended row keeps its history but has nothing to show — Resume
+        // is its verb.
+        guard isLiveSession(row.session), let session = row.session else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.send("open_session", args: ["session": .string(session)])
+                guard !reply.ok else { return }
+                // The daemon could not find a running session's window;
+                // the Dock's window locator may still raise it.
+                if reply.error?.code == "not_found", self.raiseSessionWindow?(session) == true { return }
+                self.say(reply.error?.message ?? "Could not open \(row.displayTitle)", isError: true)
+            } catch {
+                self.say("The monitor is not answering", isError: true)
+            }
+        }
+    }
+
+    // MARK: Resume
+
+    /// The exact window a live session runs in, through the Dock's window
+    /// locator — Open's fallback when the daemon cannot find it.
+    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
+
+    /// The last Open or Resume's outcome, in the daemon's words — a
+    /// receipt or a refusal — for a few seconds under the filter bar.
+    struct Notice: Equatable {
+        let text: String
+        let isError: Bool
+    }
+    private(set) var notice: Notice?
+    @ObservationIgnored private var noticeToken: UUID?
+    static let noticeLife: TimeInterval = 5
+
+    /// The agents whose CLIs `resume_session` can pick back up.
+    static let resumableProviders: Set<String> = ["claude", "codex", "devin", "grok", "cursor", "hermes"]
+
+    /// The provider a row belongs to: its own, else its agent id's first
+    /// part (`claude:session:…`).
+    nonisolated static func provider(of row: CoreHistoryRow) -> String? {
+        row.provider ?? row.session?.split(separator: ":").first.map(String.init)
+    }
+
+    /// Resume is offered on a row whose session is no longer running —
+    /// a live one opens instead — of an agent whose CLI can resume, on
+    /// this Mac. The daemon has the last word (a worker, a directory that
+    /// is gone), and its refusal is the notice.
+    func canResume(_ row: CoreHistoryRow) -> Bool {
+        guard let session = row.session, !session.isEmpty, !CoreSession.isRemoteID(session),
+              let provider = Self.provider(of: row) else { return false }
+        return Self.resumableProviders.contains(provider) && !isLiveSession(session)
+    }
+
+    /// `resume_session {session}` — explicit only: the ended session
+    /// picks back up in the terminal it ran in (a new tab or window at
+    /// its folder, the resume typed into your own shell); one still
+    /// running is raised instead, never started twice.
+    func resume(_ row: CoreHistoryRow) {
+        selectedID = row.id
+        guard canResume(row), let session = row.session else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.send("resume_session", args: ["session": .string(session)])
+                if reply.ok {
+                    self.say(Self.resumedText(reply.result, title: row.displayTitle), isError: false)
+                } else {
+                    self.say(reply.error?.message ?? "Could not resume \(row.displayTitle)", isError: true)
+                }
+            } catch {
+                self.say("The monitor is not answering", isError: true)
+            }
+        }
+    }
+
+    /// "Resumed fix-ci in a new Ghostty tab", or, for a session that
+    /// turned out to be running, "Raised fix-ci in Terminal".
+    nonisolated static func resumedText(_ result: JSONValue?, title: String) -> String {
+        let app = result?["app"]?.stringValue
+        switch result?["raised"]?.stringValue {
+        case "new_tab": return "Resumed \(title) in a new \(app ?? "terminal") tab"
+        case "new_window": return "Resumed \(title) in a new \(app ?? "terminal") window"
+        case .some: return "\(title) was still running — raised it\(app.map { " in \($0)" } ?? "")"
+        case nil: return "Resumed \(title)"
+        }
+    }
+
+    private func say(_ text: String, isError: Bool) {
+        notice = Notice(text: text, isError: isError)
+        // A Resume run from the palette: its HUD says this line.
+        PaletteVerbScope.ticket?.hear(text)
+        let token = UUID()
+        noticeToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.noticeLife) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.noticeToken == token else { return }
+                self.notice = nil
+            }
+        }
     }
 
     // MARK: Keyboard
