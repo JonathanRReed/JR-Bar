@@ -96,6 +96,16 @@ final class NotchBuddyToy: Toy {
         return isTucked ? .paused("Tucked away") : .on
     }
 
+    /// Frames the notch (or floating) buddy actually drew — its view's
+    /// timeline ticks it; the card's roster strip doesn't.
+    @ObservationIgnored let meter = ToyMeter()
+
+    func cost(at now: TimeInterval) -> String? {
+        guard store?.state.notchBuddy.enabled == true else { return nil }
+        let drawing = meter.drawing(at: now) ?? "Not drawing right now"
+        return "\(drawing) · 30 while agents work, \(Int(Self.restingFPS)) at rest, none when covered"
+    }
+
     var controls: AnyView {
         AnyView(BuddyControlsView(toy: self))
     }

@@ -147,6 +147,18 @@ final class AquariumToy: Toy {
         }
     }
 
+    /// Frames the tank actually drew, window and scenery panels alike —
+    /// the fish timeline ticks it.
+    @ObservationIgnored let meter = ToyMeter()
+
+    func cost(at now: TimeInterval) -> String? {
+        let drawing = meter.drawing(at: now) ?? "Not drawing right now"
+        var parts = [drawing, "30 fps while the tank shows, none when covered"]
+        if isOn { parts.append("the game's beat every \(Int(AquariumRules.tickInterval)) s") }
+        if (store?.state.aquarium.idleFillMinutes ?? 0) > 0 { parts.append("an idle check every 5 s") }
+        return parts.joined(separator: " · ")
+    }
+
     /// Off still watches: `observeSessions` and `noteEvent` keep the
     /// game's accrual alive while the tank is closed (the away summary
     /// needs it), so the chip never claims a fully-off state.

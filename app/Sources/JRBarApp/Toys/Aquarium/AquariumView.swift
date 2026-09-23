@@ -143,6 +143,8 @@ struct AquariumView: View {
             TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 30.0,
                                     paused: paused)) { context in
                 let t = context.date.timeIntervalSince1970
+                // The card's measured frame rate.
+                let _ = toy?.meter.tick()
                 // Memoized on the fish array: the timeline ticks 30×/s
                 // but the roster only moves with the sessions, so an
                 // unchanged roster reuses the last sort instead of

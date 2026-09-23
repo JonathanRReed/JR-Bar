@@ -50,6 +50,8 @@ struct NotchBuddyView: View {
                                 paused: reduceMotion || !visible)) { context in
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.
+            // The tick is also the card's measured frame rate.
+            let _ = toy.meter.tick()
             let summary = toy.summary(at: context.date)
             let dress = dragDress(at: context.date)
             // The band's colour is worn only in the docked slot, right

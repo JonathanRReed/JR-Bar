@@ -298,6 +298,22 @@ final class FoldToy: Toy {
         return .on
     }
 
+    /// Every sensor sample that reached the toy — the card's measured
+    /// read rate.
+    @ObservationIgnored let meter = ToyMeter()
+
+    /// The sensor's measured pace and whether capture is live. Bendy or
+    /// Lid Plane rendering it costs them, not us — no line.
+    func cost(at now: TimeInterval) -> String? {
+        guard settings.provider == .jrbar else { return nil }
+        let reads = meter.rate(at: now)
+        return [
+            reads < 0.5 ? "Lid sensor idle" : "Lid sensor \(Int(reads.rounded())) reads/s",
+            "10 at rest, 120 near the fold",
+            capture != nil ? "capturing now" : "capture only while folding",
+        ].joined(separator: " · ")
+    }
+
     /// Frames can come from somewhere: the capture with Screen Recording,
     /// or the wallpaper without it when the card allows.
     private var canFold: Bool {
@@ -823,6 +839,7 @@ final class FoldToy: Toy {
     /// same glide the simulate slider gets — then the filter and tracker
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
+        meter.tick()
         rawAngle = sample.angle
         // The clamshell flag is the one pause input that changes on
         // this path with no trigger of its own — the angle reconciles

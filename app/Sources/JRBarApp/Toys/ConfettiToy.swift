@@ -26,6 +26,13 @@ final class ConfettiToy: Toy {
     /// each living & dying on its own timer. A new burst replaces all
     /// of them — the single-burst policy holds per screen.
     @ObservationIgnored private var windows: [ConfettiWindow] = []
+
+    /// Nothing runs between bursts; a burst's windows close themselves.
+    func cost(at now: TimeInterval) -> String? {
+        windows.isEmpty
+            ? "Nothing runs between bursts · a burst draws for a few seconds, then its window closes"
+            : "Drawing a burst on \(windows.count) screen\(windows.count == 1 ? "" : "s")"
+    }
     /// The state-edge memory for the triggers no event carries (banked
     /// credits growing, the ask set emptying).
     @ObservationIgnored private var edges = ConfettiEdgeTracker()

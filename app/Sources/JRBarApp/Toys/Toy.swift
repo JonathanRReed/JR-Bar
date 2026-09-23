@@ -57,6 +57,53 @@ protocol Toy: AnyObject, Observable {
     var status: ToyStatus { get }
     /// The card's disclosure body.
     @ViewBuilder var controls: AnyView { get }
+    /// What the toy costs right now, measured where it can be: "Drawing
+    /// 30 fps · none when covered". nil hides the line. `now` is system
+    /// uptime, the clock `ToyMeter` stamps with.
+    func cost(at now: TimeInterval) -> String?
+}
+
+extension Toy {
+    func cost(at now: TimeInterval) -> String? { nil }
+}
+
+/// A toy's measured background work (docs/TOYS.md): every frame drawn
+/// or sensor read ticks it, and the card reads the rate back over the
+/// last few seconds — so a regression like an uncapped timeline shows
+/// up on the card, next to the switch. Deliberately not observable: a
+/// tick per frame must invalidate nothing; the card re-reads it on its
+/// own slow clock, and only while it is open.
+@MainActor
+final class ToyMeter {
+    /// The span a rate is measured over.
+    static let window: TimeInterval = 3
+    private var stamps: [TimeInterval]
+    private var next = 0
+
+    /// Room for 170 events a second over the window — past any rate a
+    /// toy should ever run at.
+    init(capacity: Int = 512) {
+        stamps = Array(repeating: -.infinity, count: max(1, capacity))
+    }
+
+    static var uptime: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    func tick(at now: TimeInterval = ToyMeter.uptime) {
+        stamps[next] = now
+        next = (next + 1) % stamps.count
+    }
+
+    /// Events a second over the last `window`.
+    func rate(at now: TimeInterval = ToyMeter.uptime) -> Double {
+        let since = now - Self.window
+        return Double(stamps.lazy.filter { $0 > since && $0 <= now }.count) / Self.window
+    }
+
+    /// "Drawing 30 fps", or nil when nothing drew in the window.
+    func drawing(at now: TimeInterval) -> String? {
+        let fps = rate(at: now)
+        return fps < 0.5 ? nil : "Drawing \(Int(fps.rounded())) fps"
+    }
 }
 
 /// One toy on the page: the symbol tile in the page tint, name, blurb,
@@ -117,9 +164,32 @@ struct ToyCard: View {
             }
             .padding(.vertical, 2)
             if expanded {
+                ToyCostLine(toy: toy)
+                    .padding(.leading, 20)
+                    .padding(.top, 2)
                 toy.controls
                     .padding(.leading, 20)
                     .padding(.top, 2)
+            }
+        }
+    }
+}
+
+/// The toy's measured cost, re-read once a second while the card is
+/// open — a closed card runs no clock for it.
+private struct ToyCostLine: View {
+    let toy: any Toy
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            if let line = toy.cost(at: ToyMeter.uptime) {
+                Label(line, systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Cost: \(line)")
             }
         }
     }
