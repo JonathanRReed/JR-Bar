@@ -141,7 +141,8 @@ struct PaletteSourcesTests {
         let working = AgentPaletteRows.sessionItem(row: session("claude:w"), now: now, verbs: agentVerbs(log))
         #expect(working.section == .sessions)
         #expect(working.tags.first == PaletteTag(text: "Working", tone: .accent))
-        #expect(working.actions.map(\.id) == ["open", "copyPath", "reveal", "snooze", "snoozeMorning", "dismiss"])
+        #expect(working.actions.map(\.id)
+                == ["open", "copyPath", "reveal", "snooze", "snoozeMorning", "snoozeFor", "dismiss"])
         #expect(working.action(for: PaletteShortcut(.delete, .command))?.id == "dismiss")
         let done = AgentPaletteRows.sessionItem(row: session("claude:d", mode: "completed", lifecycle: "completed"),
                                                 now: now, verbs: agentVerbs(log))
@@ -151,6 +152,26 @@ struct PaletteSourcesTests {
         _ = done.action(for: PaletteShortcut(.delete, .command))?.run()
         _ = done.action(for: .commandShift("c"))?.run()
         #expect(log.calls == ["clear:claude:d", "copy:claude:d"])
+    }
+
+    @Test("Snooze For… takes a typed length on sessions and asks, and refuses anything else")
+    func snoozeForTypedLength() {
+        let log = Log()
+        let working = AgentPaletteRows.sessionItem(row: session("claude:w"), now: now, verbs: agentVerbs(log))
+        let field = working.actions.first { $0.id == "snoozeFor" }?.input
+        #expect(field?.prompt == "Snooze claude:w for… 45m, 2h, 1:30")
+        #expect(field?.accepts("2h") == true)
+        #expect(field?.accepts("soon") == false)
+        #expect(field?.accepts("30h") == false, "a day at most")
+        _ = field?.submit("1:30")
+        let ask = CoreAsk(session: "claude:a", summary: "Run", answerable: true)
+        let asking = AgentPaletteRows.askItem(row: session("claude:a", mode: "waiting", ask: ask), ask: ask,
+                                              now: now, verbs: agentVerbs(log))
+        _ = asking.actions.first { $0.id == "snoozeFor" }?.input?.submit("45m")
+        #expect(log.calls == ["snooze:claude:w:5400", "snooze:claude:a:2700"])
+        let peer = AgentPaletteRows.sessionItem(row: session("remote:studio:claude:p", remote: true),
+                                                now: now, verbs: agentVerbs(log))
+        #expect(!peer.actions.contains { $0.id == "snoozeFor" }, "a peer's session is not ours to snooze")
     }
 
     @Test("roster verbs appear only when they would do something; a dead daemon gets one honest row")

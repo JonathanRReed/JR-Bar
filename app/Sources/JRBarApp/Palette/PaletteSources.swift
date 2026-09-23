@@ -94,6 +94,7 @@ enum AgentPaletteRows {
                 verbs.snooze(row, 3600)
                 return nil
             })
+            actions.append(snoozeFor(row: row, verbs: verbs))
         }
         var tags = [PaletteTag(text: "Needs You", tone: .attention)]
         if let age = PanelStore.elapsed(since: ask.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since,
@@ -141,6 +142,7 @@ enum AgentPaletteRows {
                     verbs.snooze(row, PanelStore.secondsUntilMorning(from: now))
                     return nil
                 })
+                actions.append(snoozeFor(row: row, verbs: verbs))
             }
         }
         if row.activity.isClearable || row.stale {
@@ -171,6 +173,21 @@ enum AgentPaletteRows {
             keywords: [row.style.name] + (row.cwdTail.map { [$0] } ?? []),
             icon: .provider(row.style.id), tags: tags, kind: "Session", section: .sessions,
             actions: actions)
+    }
+
+    /// Snooze for a length you type — "45m", "2h", "1:30" — past the
+    /// hour and the morning the menu offers. The panel's own snooze
+    /// runs it, and its toast is the HUD.
+    @MainActor
+    static func snoozeFor(row: SessionRow, verbs: AgentPaletteVerbs) -> PaletteAction {
+        PaletteAction(id: "snoozeFor", title: "Snooze For…", symbol: "timer",
+                      input: PaletteInput(
+                        prompt: "Snooze \(row.label) for… 45m, 2h, 1:30", submitTitle: "Snooze",
+                        accepts: { PaletteArguments.duration($0) != nil },
+                        submit: { words in
+                            if let seconds = PaletteArguments.duration(words) { verbs.snooze(row, seconds) }
+                            return nil
+                        }))
     }
 
     @MainActor
