@@ -137,6 +137,12 @@ struct MenuBarLayoutEditorView: View {
                     utility.setSection(target, for: subject.item.id)
                 }
             }
+            if utility.settings().showForUpdates {
+                Divider()
+                Toggle("Show When It Changes", isOn: Binding(
+                    get: { utility.watchesUpdates(of: subject.item) },
+                    set: { utility.setWatchesUpdates($0, for: subject.item) }))
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(subject.title)

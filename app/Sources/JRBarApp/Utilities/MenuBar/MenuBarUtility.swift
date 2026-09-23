@@ -426,6 +426,13 @@ final class MenuBarUtility: Toy {
         bar.onMoveItem = { [weak self] item, section in
             self?.setSection(section, for: item.id)
         }
+        // "Show when it changes" — offered only while show for updates is
+        // on, so the menu never promises what the feature won't do.
+        bar.updateWatch = { [weak self] item in
+            guard let self, self.settings().showForUpdates else { return nil }
+            return self.watchesUpdates(of: item)
+        }
+        bar.onUpdateWatch = { [weak self] item, on in self?.setWatchesUpdates(on, for: item) }
         bar.onOpenChange = { [weak self] open in
             guard let self else { return }
             self.reveal.holdOpen = open
@@ -1765,8 +1772,47 @@ final class MenuBarUtility: Toy {
     /// live reveal — our own family never, whatever a stale map says
     /// (the daemon's meter hid itself once).
     private func concealTarget() -> Set<String> {
-        MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed)
-            .filter { !Self.isOwnFamily($0) }
+        let now = Date()
+        lifts = lifts.filter { $0.value > now }
+        return Self.liveTarget(
+            MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed),
+            lifts: lifts, now: now)
+    }
+
+    /// Apps lifted out of the assertion for a moment, and until when: a
+    /// tile's press stands its app alone while its menu is read, a
+    /// watched item that changed stands alone for the rehide clock.
+    /// Every plan pass re-applies the target, so a lift lives here, not
+    /// in a one-off apply the next pass would undo within the second.
+    @ObservationIgnored private var lifts: [String: Date] = [:]
+
+    /// The target with the live lifts left out — never our own family.
+    /// Pure so a test pins it.
+    nonisolated static func liveTarget(_ concealed: Set<String>, lifts: [String: Date],
+                                       now: Date) -> Set<String> {
+        concealed.filter { !isOwnFamily($0) && !(lifts[$0].map { $0 > now } ?? false) }
+    }
+
+    /// Stand `app` alone on the row until `until` (a later lift wins),
+    /// and converge now.
+    private func lift(_ app: String, until: Date) {
+        lifts[app] = max(until, lifts[app] ?? until)
+        syncConcealer()
+    }
+
+    /// End a lift once nothing of the app's is open — a menu the person
+    /// is reading keeps it standing, polled each second for up to five
+    /// minutes — then put the full target back.
+    private func releaseLift(_ app: String, ownerPID: pid_t) async {
+        for _ in 0..<300 {
+            guard MenuBarItemLister.menuOpen(ownerPIDs: [ownerPID],
+                                             infos: MenuBarItemLister.windowInfos()) else { break }
+            lifts[app] = Date().addingTimeInterval(2)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        lifts[app] = nil
+        runningApps.invalidate()
+        syncConcealer()
     }
 
     /// Settle who draws the icon and, while the mirror does, where it
@@ -2886,18 +2932,17 @@ final class MenuBarUtility: Toy {
             item.owner?.activate()
             return
         }
-        if let concealer, let id = item.bundleID,
+        if concealer != nil, let id = item.bundleID,
            MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed).contains(id) {
             // Concealed: only this app stands. The assertion's target
             // narrows by exactly this bundle — every other hidden app
             // stays concealed, so the bar never lifts — then the item
             // gets a beat to draw, the press lands on its fresh frame,
             // and the full target goes back up after the rehide window.
-            let target = MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps,
-                                                    revealed: hider.revealed)
-            concealer.apply(concealed: target.subtracting([id]),
-                            running: runningApps.snapshot())
             let rehide = settings().rehideSeconds
+            // Held past the press and the rehide window; `releaseLift`
+            // ends it once the app's menu is closed.
+            lift(id, until: Date().addingTimeInterval(3 + rehide))
             Task { [weak self] in
                 guard let self else { return }
                 var fresh = item
@@ -2924,8 +2969,7 @@ final class MenuBarUtility: Toy {
                     await MainActor.run { self.clickFallback(fresh) }
                 }
                 try? await Task.sleep(nanoseconds: UInt64(rehide * 1e9))
-                self.runningApps.invalidate()
-                self.syncConcealer()
+                await self.releaseLift(id, ownerPID: fresh.ownerPID)
             }
             return
         }
@@ -3524,15 +3568,75 @@ final class MenuBarUtility: Toy {
             hidden: plan.hidden,
             alwaysHidden: plan.alwaysHidden)
         let seeded = !updateSignatures.isEmpty
+        let previous = updateSignatures
         updateSignatures = result.signatures
         guard seeded, !result.sections.isEmpty, hider.revealed.isEmpty else { return }
-        hider.reveal(result.sections)
-        updateHideTask?.cancel()
+        let changed = plan.hidden.map { ($0, MenuBarItemSection.hidden) }
+            + plan.alwaysHidden.map { ($0, MenuBarItemSection.alwaysHidden) }
+        let reveal = Self.updateReveal(
+            changed: changed.filter { item, _ in
+                previous[item.id].map { $0 != result.signatures[item.id] } ?? false
+            },
+            watch: Set(settings().curation.updateWatch),
+            concealing: concealer != nil)
         let seconds = settings().rehideSeconds
+        // Under the concealer the changed app stands alone for the clock
+        // — one item joins the row, not the whole run.
+        for app in reveal.lifts {
+            lift(app, until: Date().addingTimeInterval(seconds))
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+                self?.syncConcealer()
+            }
+        }
+        guard !reveal.sections.isEmpty else { return }
+        hider.reveal(reveal.sections)
+        updateHideTask?.cancel()
         updateHideTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
             guard !Task.isCancelled else { return }
             self?.hider.hide()
+        }
+    }
+
+    /// The owner key "show for updates" watches an item by: its bundle,
+    /// or its own id for a helper without one.
+    nonisolated static func updateWatchKey(_ item: MenuBarItem) -> String {
+        item.bundleID ?? item.id
+    }
+
+    /// What one show-for-updates pass acts on: the changed hidden items
+    /// the watch list lets through (all of them while it is empty). An
+    /// app the concealer takes is lifted alone; anything else — a covered
+    /// extra, any item under the spacer engine — reveals its section.
+    /// Pure so a test pins it.
+    nonisolated static func updateReveal(changed: [(MenuBarItem, MenuBarItemSection)],
+                                         watch: Set<String>,
+                                         concealing: Bool) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
+        var lifts = Set<String>()
+        var sections = Set<MenuBarItemSection>()
+        for (item, section) in changed where watch.isEmpty || watch.contains(updateWatchKey(item)) {
+            if concealing, let app = item.bundleID, MenuBarConcealPlan.canConcealApp(app) {
+                lifts.insert(app)
+            } else {
+                sections.insert(section)
+            }
+        }
+        return (lifts, sections)
+    }
+
+    /// Whether "show for updates" watches `item` by name — false while
+    /// the watch list is empty (then it watches everything).
+    func watchesUpdates(of item: MenuBarItem) -> Bool {
+        settings().curation.updateWatch.contains(Self.updateWatchKey(item))
+    }
+
+    /// Mark or unmark an item's owner for "show for updates".
+    func setWatchesUpdates(_ on: Bool, for item: MenuBarItem) {
+        let key = Self.updateWatchKey(item)
+        update { draft in
+            draft.curation.updateWatch.removeAll { $0 == key }
+            if on { draft.curation.updateWatch.append(key) }
         }
     }
 

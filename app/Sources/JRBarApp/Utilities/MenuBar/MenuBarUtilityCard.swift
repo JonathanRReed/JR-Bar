@@ -192,7 +192,7 @@ struct MenuBarUtilityControls: View {
             }
             Toggle(isOn: utility.bind(\.showForUpdates)) {
                 SettingLabel(title: "Show for updates",
-                             subtitle: "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen.")
+                             subtitle: showForUpdatesNote)
             }
             LabeledContent {
                 Button("Show Item Bar") { utility.bar.toggle() }
@@ -362,6 +362,19 @@ struct MenuBarUtilityControls: View {
                     .controlSize(.small)
             }
         }
+    }
+
+    /// What "show for updates" can honestly promise on this engine, and
+    /// which items it listens to.
+    private var showForUpdatesNote: String {
+        let watched = utility.settings().curation.updateWatch.count
+        let scope = watched == 0
+            ? "Every hidden item counts; mark the ones that matter with Show When It Changes in a tile's menu and only those interrupt."
+            : "Only the \(watched == 1 ? "item" : "\(watched) items") marked Show When It Changes interrupt."
+        if utility.concealing {
+            return "A hidden item whose text changes stands alone on the bar for a moment. macOS hides a concealed app's text too, so this mostly hears Apple's own extras; a changed glyph gets a dot in the Item Bar instead. " + scope
+        }
+        return "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen. " + scope
     }
 
     /// Every listed item the utility could hide, in bar order.

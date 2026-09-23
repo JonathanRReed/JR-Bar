@@ -282,11 +282,14 @@ final class MenuBarBarPanel: NSPanel {
          onTrigger: @escaping @MainActor (MenuBarItem) -> Void,
          onRevealItem: @escaping @MainActor (MenuBarItem) -> Void,
          itemSection: @escaping @MainActor (MenuBarItem) -> MenuBarItemSection,
-         onMoveItem: @escaping @MainActor (MenuBarItem, MenuBarItemSection) -> Void) {
+         onMoveItem: @escaping @MainActor (MenuBarItem, MenuBarItemSection) -> Void,
+         updateWatch: @escaping @MainActor (MenuBarItem) -> Bool? = { _ in nil },
+         onUpdateWatch: @escaping @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }) {
         let hosting = NSHostingView(rootView: MenuBarBarView(
             model: model, tiles: tiles,
             onTrigger: onTrigger, onRevealItem: onRevealItem,
-            itemSection: itemSection, onMoveItem: onMoveItem))
+            itemSection: itemSection, onMoveItem: onMoveItem,
+            updateWatch: updateWatch, onUpdateWatch: onUpdateWatch))
         self.hosting = hosting
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
         glass.cornerRadius = Self.cornerRadius
@@ -343,6 +346,10 @@ struct MenuBarBarView: View {
     /// A context-menu move — the same section write the card's pickers
     /// make; the tile itself never drags anything.
     let onMoveItem: @MainActor (MenuBarItem, MenuBarItemSection) -> Void
+    /// Whether show for updates watches the item by name — nil while the
+    /// feature is off, and the menu leaves the row out.
+    var updateWatch: @MainActor (MenuBarItem) -> Bool? = { _ in nil }
+    var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
 
     private var items: [MenuBarItem] { model.visibleItems }
 
@@ -489,6 +496,12 @@ struct MenuBarBarView: View {
         if section != .shown {
             Button("Move to Shown") { onMoveItem(item, .shown) }
         }
+        if let watched = updateWatch(item) {
+            Divider()
+            Toggle("Show When It Changes", isOn: Binding(
+                get: { watched },
+                set: { onUpdateWatch(item, $0) }))
+        }
     }
 
     private func tooltip(for item: MenuBarItem) -> String {
@@ -514,6 +527,9 @@ final class MenuBarBar {
     /// write a "Move to…" row makes.
     var itemSection: @MainActor (MenuBarItem) -> MenuBarItemSection = { _ in .hidden }
     var onMoveItem: @MainActor (MenuBarItem, MenuBarItemSection) -> Void = { _, _ in }
+    /// The tile menu's "Show When It Changes": nil hides the row.
+    var updateWatch: @MainActor (MenuBarItem) -> Bool? = { _ in nil }
+    var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
     /// Open changes, so the reveal can hold while the pointer is on it
     /// and start a short clock when it folds.
     var onOpenChange: @MainActor (Bool) -> Void = { _ in }
@@ -587,7 +603,9 @@ final class MenuBarBar {
             },
             onMoveItem: { [weak self] item, section in
                 self?.onMoveItem(item, section)
-            })
+            },
+            updateWatch: { [weak self] item in self?.updateWatch(item) ?? nil },
+            onUpdateWatch: { [weak self] item, on in self?.onUpdateWatch(item, on) })
         panel.setFrame(frame(on: screen), display: false)
         if keyboard {
             panel.takesKeys = true

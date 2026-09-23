@@ -309,6 +309,11 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// The desk the bar last saw, so a set of displays that changed while
     /// JR-Bar was not running still counts as an arrival.
     public var lastDeskKey: String?
+    /// The items "show for updates" watches, by owner (the bundle id, or
+    /// the item's id for a helper without one). Empty watches every
+    /// hidden item; once one is marked, only the marked ones interrupt —
+    /// a VPN can, a clock can't.
+    public var updateWatch: [String]
 
     /// The profile model this build writes.
     public static let currentProfileModel = 1
@@ -317,7 +322,7 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
                 profileModel: Int = MenuBarCuration.currentProfileModel,
                 stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil,
                 forceSpacerEngine: Bool = false, deskProfiles: [MenuBarDeskProfile] = [],
-                lastDeskKey: String? = nil) {
+                lastDeskKey: String? = nil, updateWatch: [String] = []) {
         self.overlay = overlay
         self.activeProfileID = activeProfileID
         self.profileModel = profileModel
@@ -326,11 +331,12 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
         self.forceSpacerEngine = forceSpacerEngine
         self.deskProfiles = deskProfiles
         self.lastDeskKey = lastDeskKey
+        self.updateWatch = updateWatch
     }
 
     private enum CodingKeys: String, CodingKey {
         case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule, forceSpacerEngine
-        case deskProfiles, lastDeskKey
+        case deskProfiles, lastDeskKey, updateWatch
     }
 
     /// One element that swallows its own decode failure — a rule written
@@ -353,6 +359,7 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
         deskProfiles = ((try? c.decodeIfPresent([Lossy<MenuBarDeskProfile>].self,
                                                 forKey: .deskProfiles)) ?? []).compactMap(\.value)
         lastDeskKey = (try? c.decodeIfPresent(String.self, forKey: .lastDeskKey)) ?? nil
+        updateWatch = (try? c.decodeIfPresent([String].self, forKey: .updateWatch)) ?? []
     }
 }
 
