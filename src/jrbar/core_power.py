@@ -415,24 +415,33 @@ def _apply_presence(controller: Any, facts: PresenceFacts | None) -> None:
     apply_escalation = getattr(controller, "apply_escalation", None)
     if callable(apply_escalation):
         apply_escalation(allow_refresh=False)
-    # A call or an empty desk ends on its own when the reports stop; arm the
-    # moment that happens so the quiet does not outlive its evidence.
-    if facts is not None and (facts.sensing_call or facts.away(time.time())):
-        from . import core_runtime
-
-        previous = getattr(controller, "_core_presence_timer", None)
-        invalidate = getattr(previous, "invalidate", None)
-        if callable(invalidate):
-            invalidate()
-        controller._core_presence_timer = core_runtime._schedule_timer(
-            max(1.0, facts.expires_at() - time.time()),
-            controller,
-            "corePresenceExpired:",
-            False,
-        )
+    _arm_presence_expiry(controller, facts, time.time())
     publish = getattr(controller, "_core_publish_state", None)
     if callable(publish):
         publish()
+
+
+def _arm_presence_expiry(controller: Any, facts: PresenceFacts | None, now: float) -> None:
+    """A call, an empty desk and the app's Focus reading all end on their own
+    when the reports stop; arm the moment this report goes stale so the quiet
+    does not outlive its evidence. Only a fresh report arms it: the stale one
+    the timer re-applies arms nothing, so the timer fires once per report
+    rather than every second until the next one arrives."""
+    previous = getattr(controller, "_core_presence_timer", None)
+    invalidate = getattr(previous, "invalidate", None)
+    if callable(invalidate):
+        invalidate()
+    controller._core_presence_timer = None
+    if facts is None or not facts.fresh(now):
+        return
+    from . import core_runtime
+
+    controller._core_presence_timer = core_runtime._schedule_timer(
+        max(1.0, facts.expires_at() - now),
+        controller,
+        "corePresenceExpired:",
+        False,
+    )
 
 
 def set_presence(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -469,7 +478,10 @@ def presence_expired(controller: Any) -> None:
     facts = presence_facts(controller)
     if facts is None:
         return
-    if facts.fresh(time.time()):
+    now = time.time()
+    if facts.fresh(now):
+        # Early by the wall clock (it stepped back): wait out the rest.
+        _arm_presence_expiry(controller, facts, now)
         return
     _apply_presence(controller, facts)
 

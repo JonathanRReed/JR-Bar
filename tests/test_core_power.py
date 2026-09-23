@@ -268,9 +268,58 @@ def test_presence_quiets_a_call_and_holds_the_ladder_at_the_light(powered, monke
     stale_at = time.time() + presence_module.PRESENCE_TTL_SECONDS + 1
     monkeypatch.setattr(core_power.time, "time", lambda: stale_at)
     controller.dnd_controller._wall_clock = lambda: stale_at
+    armed = len(_TimerAPI.calls)
     controller.corePresenceExpired_(None)
     assert controller.current_escalation_stage() == 3
     assert controller._core_build_state()["focus"]["source"] is None
+    # ...and arms nothing more: a stale report is judged once, not every second.
+    assert not any(
+        selector == "corePresenceExpired:" for _interval, selector, _repeats in _TimerAPI.calls[armed:]
+    )
+
+
+def test_the_apps_focus_reading_expires_with_its_report(powered, monkeypatch) -> None:
+    from jrbar import presence as presence_module
+    from tests.test_core_runtime import _TimerAPI
+
+    controller = powered
+    controller.settings = controller.settings.with_focus_sync_enabled(True)
+    controller.dnd_controller.start()
+    armed = len(_TimerAPI.calls)
+    core_runtime._cmd_presence(controller, {"focus": True})
+    assert controller._core_build_state()["focus"]["source"] == "focus"
+    expiries = [
+        interval
+        for interval, selector, _repeats in _TimerAPI.calls[armed:]
+        if selector == "corePresenceExpired:"
+    ]
+    assert expiries == [pytest.approx(presence_module.PRESENCE_TTL_SECONDS, abs=5)]
+
+    # The app quits and stops reporting: its Focus reading does not keep
+    # JR-Bar quiet past the report's own life.
+    stale_at = time.time() + presence_module.PRESENCE_TTL_SECONDS + 1
+    monkeypatch.setattr(core_power.time, "time", lambda: stale_at)
+    controller.dnd_controller._wall_clock = lambda: stale_at
+    controller.corePresenceExpired_(None)
+    assert controller._core_build_state()["focus"]["source"] is None
+
+
+def test_an_early_expiry_waits_out_the_rest_of_the_report(powered, monkeypatch) -> None:
+    from tests.test_core_runtime import _TimerAPI
+
+    controller = powered
+    controller.dnd_controller.start()
+    core_runtime._cmd_presence(controller, {"camera": True})
+    published = len(controller._core.published)
+    armed = len(_TimerAPI.calls)
+    # The wall clock stepped back under the timer: the report still stands,
+    # so the timer re-arms for what is left and nothing is re-judged.
+    controller.corePresenceExpired_(None)
+    assert [
+        selector for _interval, selector, _repeats in _TimerAPI.calls[armed:]
+    ] == ["corePresenceExpired:"]
+    assert len(controller._core.published) == published
+    assert controller._core_build_state()["presence"]["on_call"] is True
 
 
 def test_the_focus_document_says_whether_the_helper_can_read_focus(powered) -> None:
