@@ -11,8 +11,11 @@ from types import SimpleNamespace
 import pytest
 
 from jrbar.answer_decisions import (
+    ASK_PREVIEW_TTL_SECONDS,
     DECIDED_TOMBSTONE_SECONDS,
     DENY_MESSAGE,
+    MAX_ASK_PREVIEWS,
+    AskPreviews,
     DecisionBroker,
     DecisionResult,
     DecisionVerb,
@@ -479,3 +482,47 @@ def test_answer_ask_answers_a_held_request_by_its_hook__and_4_more() -> None:
     thread.join(2.0)
     assert error.value.code == "stale_ask"
     assert journal.settled[-1]["error"]["code"] == "stale_ask"
+
+
+# --- previews for every PermissionRequest ----------------------------------------
+
+
+def test_every_permission_request_leaves_its_card_a_preview__and_3_more() -> None:
+    from jrbar.core_projection import ask_document
+
+    clock = _Clock()
+    previews = AskPreviews(clock=clock)
+    text = _claude_payload(tool_input={"command": "git push --force origin main"})
+    request_id = permission_facts("claude", text).request_id
+
+    # --- scenario: noted by its canonical id, with the risk mark
+    assert previews.note("claude", text)
+    assert previews.lookup("claude", request_id) == ("git push --force origin main", "destructive")
+
+    # --- scenario: the card of an ask the lane does not hold still shows it
+    controller, status, _request, _ = _controller(request_id=request_id)
+    document = ask_document(
+        status,
+        controller.current_operator_state,
+        with_session=False,
+        decision_lane=_broker(),
+        ask_previews=previews,
+    )
+    assert document["decision"] is None
+    assert document["preview"] == "git push --force origin main"
+    assert document["risk"] == "destructive"
+
+    # --- scenario: only PermissionRequests with a tool are noted
+    assert not previews.note("claude", _claude_payload(hook_event_name="PreToolUse"))
+    assert not previews.note("claude", _claude_payload(tool_input="nope"))
+    assert not previews.note("hermes", text)
+
+    # --- scenario: bounded, and forgotten after an hour
+    for index in range(MAX_ASK_PREVIEWS + 5):
+        clock.now += 1
+        previews.note("claude", _claude_payload(tool_input={"command": f"echo {index}"}))
+    assert previews.lookup("claude", request_id) == (None, None)
+    newest = permission_facts("claude", _claude_payload(tool_input={"command": f"echo {MAX_ASK_PREVIEWS + 4}"}))
+    assert previews.lookup("claude", newest.request_id)[0] == f"echo {MAX_ASK_PREVIEWS + 4}"
+    clock.now += ASK_PREVIEW_TTL_SECONDS + 1
+    assert previews.lookup("claude", newest.request_id) == (None, None)

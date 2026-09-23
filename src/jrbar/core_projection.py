@@ -879,6 +879,7 @@ def ask_document(
     has_answer_handler: object = None,
     host_bundle_ids: object = None,
     decision_lane: object = None,
+    ask_previews: object = None,
 ) -> dict[str, Any]:
     request = _request_for_status(operator_state, status)
     kind = getattr(getattr(request, "request_kind", None), "value", None)
@@ -895,10 +896,17 @@ def ask_document(
     )
     summary = getattr(status, "message", None) or getattr(status, "tool_name", None)
     parked = None
+    preview: str | None = None
+    risk: str | None = None
     if request is not None:
-        from .answer_decisions import parked_decision_for_request
+        from .answer_decisions import ask_preview_for_request, parked_decision_for_request
 
         parked = parked_decision_for_request(request, decision_lane)
+        if parked is not None:
+            if not parked.decided:
+                preview, risk = parked.preview, parked.risk
+        else:
+            preview, risk = ask_preview_for_request(request, ask_previews)  # type: ignore[arg-type]
     answerable, replyable = _answer_flags(
         request,
         answer_contracts,
@@ -932,9 +940,11 @@ def ask_document(
         # an Always allow can be sent, and whether it was just answered.
         "decision": parked.document() if parked is not None else None,
         # What the agent wants to run, one bounded line, and a mark when it
-        # is the kind of command that loses work if it runs by mistake.
-        "preview": parked.preview if parked is not None and not parked.decided else None,
-        "risk": parked.risk if parked is not None and not parked.decided else None,
+        # is the kind of command that loses work if it runs by mistake --
+        # from the held request, or from the PermissionRequest the ingress
+        # saw for this exact request id.
+        "preview": preview,
+        "risk": risk,
     }
     if with_session:
         document = {"session": getattr(status, "agent_id", None), **document}

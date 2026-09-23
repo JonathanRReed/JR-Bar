@@ -684,8 +684,92 @@ class DecisionBroker:
                 del self._decided[key]
 
 
+#: How many ask previews are remembered, and for how long: an ask card
+#: lives as long as its prompt, and a prompt nobody answers for an hour
+#: has been answered in the terminal or abandoned.
+MAX_ASK_PREVIEWS: Final = 64
+ASK_PREVIEW_TTL_SECONDS: Final = 3600.0
+#: Providers whose PermissionRequest carries ``tool_name``/``tool_input``.
+PREVIEW_PROVIDERS: Final = frozenset({"claude", "codex", "devin", "grok", "opencode", "pi"})
+
+
+class AskPreviews:
+    """What every PermissionRequest the ingress sees wants to run, by its
+    canonical request id -- so an ask card shows the command, the file or
+    the URL whether or not the decide lane holds it (a hook installed
+    before the lane existed, a provider the lane does not answer for)."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._rows: dict[tuple[str, str], tuple[float, str | None, str | None]] = {}
+
+    def note(self, provider: object, payload_text: object) -> bool:
+        if (
+            type(provider) is not str
+            or provider not in PREVIEW_PROVIDERS
+            or type(payload_text) is not str
+            or '"PermissionRequest"' not in payload_text
+        ):
+            return False
+        from .provider_adapters import hook_request_identity
+
+        routed = _request_identity(provider, payload_text)
+        if routed is None or routed[1].event_name != "PermissionRequest":
+            return False
+        actual, record = routed
+        raw = record.raw if isinstance(record.raw, dict) else {}
+        request_id = hook_request_identity(record)
+        tool_name = record.tool_name or raw.get("tool_name")
+        tool_input = raw.get("tool_input")
+        if request_id is None or not isinstance(tool_input, dict):
+            return False
+        preview = tool_preview(tool_name, tool_input)
+        risk = tool_risk(tool_name, tool_input)
+        if preview is None and risk is None:
+            return False
+        now = self._clock()
+        with self._lock:
+            self._rows[(actual, request_id)] = (now, preview, risk)
+            if len(self._rows) > MAX_ASK_PREVIEWS:
+                for key in sorted(self._rows, key=lambda key: self._rows[key][0])[
+                    : len(self._rows) - MAX_ASK_PREVIEWS
+                ]:
+                    del self._rows[key]
+        return True
+
+    def lookup(self, provider: object, request_id: object) -> tuple[str | None, str | None]:
+        if type(provider) is not str or type(request_id) is not str:
+            return None, None
+        with self._lock:
+            row = self._rows.get((provider, request_id))
+            if row is None:
+                return None, None
+            if self._clock() - row[0] > ASK_PREVIEW_TTL_SECONDS:
+                del self._rows[(provider, request_id)]
+                return None, None
+            return row[1], row[2]
+
+
 _DEFAULT_BROKER: DecisionBroker | None = None
+_DEFAULT_PREVIEWS: AskPreviews | None = None
 _DEFAULT_LOCK = threading.Lock()
+
+
+def default_ask_previews() -> AskPreviews:
+    global _DEFAULT_PREVIEWS
+    with _DEFAULT_LOCK:
+        if _DEFAULT_PREVIEWS is None:
+            _DEFAULT_PREVIEWS = AskPreviews()
+        return _DEFAULT_PREVIEWS
+
+
+def ask_preview_for_request(request: object, previews: AskPreviews | None = None) -> tuple[str | None, str | None]:
+    """``(preview, risk)`` for one operator-state request, by its exact key."""
+    parts = _request_key_parts(request)
+    if parts is None:
+        return None, None
+    return (previews or default_ask_previews()).lookup(*parts)
 
 
 def default_decision_broker() -> DecisionBroker:
@@ -875,6 +959,7 @@ __all__ = [
     "DENY_MESSAGE",
     "MAX_PARKED_DECISIONS",
     "UNDECIDABLE_TOOLS",
+    "AskPreviews",
     "DecisionBroker",
     "DecisionResult",
     "DecisionVerb",
@@ -882,7 +967,9 @@ __all__ = [
     "PermissionFacts",
     "always_allow_rules",
     "answer_through_decision_lane",
+    "ask_preview_for_request",
     "decision_document",
+    "default_ask_previews",
     "default_decision_broker",
     "parked_decision_for_request",
     "permission_facts",

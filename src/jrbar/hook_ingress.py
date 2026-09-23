@@ -669,9 +669,18 @@ class HookIngressService:
         return self._decision_broker
 
     def _observe_for_decisions(self, request: HookIngressRequest) -> None:
-        """Every arriving hook may prove a parked prompt is gone."""
+        """Every arriving hook may prove a parked prompt is gone, and every
+        PermissionRequest leaves the card a preview of what it wants to run."""
         try:
             self._broker().observe(request.provider, request.payload_text)
+        except Exception:
+            pass
+        if '"PermissionRequest"' not in request.payload_text:
+            return
+        try:
+            from .answer_decisions import default_ask_previews
+
+            default_ask_previews().note(request.provider, request.payload_text)
         except Exception:
             pass
 
