@@ -14,8 +14,9 @@ import Observation
 final class PaletteModel {
     /// Every row the sources offered at open.
     private(set) var items: [PaletteItem] = []
-    /// Rows a slower source found for the current query — the archive's
-    /// full-text hits. Listed after the ranked results.
+    /// Rows a slower source found for the current query — the front
+    /// app's menu items, the archive's full-text hits. Listed after the
+    /// ranked results, each source under its own heading.
     private(set) var searchResults: [PaletteItem] = []
     /// The query the search results belong to; a late answer for an
     /// older query is dropped rather than shown under the wrong words.
@@ -92,7 +93,15 @@ final class PaletteModel {
         let previous = selectedID
         var arranged = PaletteRanking.arrange(items, query: query, usage: usage, now: now)
         if !Self.trimmed(query).isEmpty, !searchResults.isEmpty {
-            arranged.append(PaletteListSection(section: .archive, items: searchResults))
+            // Each slower source's hits under its own heading — the
+            // frontmost app's menus, then the archive — in source order.
+            var order: [PaletteSection] = []
+            var groups: [PaletteSection: [PaletteItem]] = [:]
+            for item in searchResults {
+                if groups[item.section] == nil { order.append(item.section) }
+                groups[item.section, default: []].append(item)
+            }
+            arranged += order.map { PaletteListSection(section: $0, items: groups[$0] ?? []) }
         }
         sections = arranged
         rows = arranged.flatMap(\.items)

@@ -290,6 +290,103 @@ struct PaletteSourcesTests {
                 "too short to search")
     }
 
+    // MARK: The frontmost app's menus
+
+    @Test("a key equivalent reads the way the menu draws it")
+    func menuShortcutText() {
+        #expect(AppMenuReader.shortcutText(char: "s", modifiers: 0, glyph: nil) == "⌘S")
+        #expect(AppMenuReader.shortcutText(char: "S", modifiers: 1, glyph: nil) == "⇧⌘S")
+        #expect(AppMenuReader.shortcutText(char: "f", modifiers: 4 | 2, glyph: nil) == "⌃⌥⌘F")
+        #expect(AppMenuReader.shortcutText(char: "q", modifiers: 8 | 4, glyph: nil) == "⌃Q", "no-command bit")
+        #expect(AppMenuReader.shortcutText(char: nil, modifiers: 0, glyph: 0x17) == "⌘⌫")
+        #expect(AppMenuReader.shortcutText(char: nil, modifiers: 0, glyph: 0x999) == nil)
+        #expect(AppMenuReader.shortcutText(char: nil, modifiers: nil, glyph: nil) == nil)
+    }
+
+    /// The pressed paths, for a menu source's verbs.
+    final class PressLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _pressed: [[Int]] = []
+        var pressed: [[Int]] { lock.lock(); defer { lock.unlock() }; return _pressed }
+        func add(_ path: [Int]) { lock.lock(); _pressed.append(path); lock.unlock() }
+    }
+
+    @Test("menu items rank by title, then by path; a pick presses its own path")
+    func menuItems() {
+        let entries = [
+            AppMenuEntry(indexPath: [1, 0], parents: ["File"], title: "New Window", shortcut: "⌘N"),
+            AppMenuEntry(indexPath: [1, 4, 2], parents: ["File", "Export"], title: "PDF…", shortcut: nil),
+            AppMenuEntry(indexPath: [2, 3], parents: ["Edit"], title: "Paste and Match Style",
+                         shortcut: "⌥⇧⌘V"),
+        ]
+        let log = PressLog()
+        let app = AppMenuPaletteSource.MenuApp(pid: 42, name: "Pages", bundleID: "com.apple.iWork.Pages")
+        let hits = AppMenuPaletteSource.items(for: "export pdf", entries: entries, app: app) { _, path in
+            log.add(path)
+        }
+        #expect(hits.map(\.title) == ["PDF…"])
+        #expect(hits.first?.subtitle == "File › Export")
+        #expect(hits.first?.section.title == "Pages Menus")
+        #expect(hits.first?.kind == "Menu Item")
+        _ = hits.first?.primary?.run()
+        #expect(log.pressed == [[1, 4, 2]])
+        let paste = AppMenuPaletteSource.items(for: "paste", entries: entries, app: app) { _, _ in }
+        #expect(paste.first?.tags == [PaletteTag(text: "⌥⇧⌘V")])
+    }
+
+    /// The reads a menu source made.
+    actor ReadCount {
+        var count = 0
+        func add() { count += 1 }
+    }
+
+    @Test("the menu source reads once per open, only once a query is long enough, and never JR-Bar's own")
+    func menuSourceReads() async {
+        let reads = ReadCount()
+        let source = AppMenuPaletteSource()
+        source.trusted = { true }
+        source.frontmost = { .init(pid: 4242, name: "Pages", bundleID: "com.apple.iWork.Pages") }
+        source.read = { _ in
+            await reads.add()
+            return [AppMenuEntry(indexPath: [1, 0], parents: ["File"], title: "Save", shortcut: "⌘S")]
+        }
+        source.prepare()
+        #expect(await source.results(for: "s").isEmpty, "one letter is too short")
+        #expect(await source.results(for: "sa").map(\.title) == ["Save"])
+        #expect(await source.results(for: "sav").map(\.title) == ["Save"])
+        #expect(await reads.count == 1, "the read is shared by the open's queries")
+        source.prepare()
+        _ = await source.results(for: "save")
+        #expect(await reads.count == 2, "a new open reads afresh")
+        source.frontmost = { .init(pid: ProcessInfo.processInfo.processIdentifier, name: "JR-Bar", bundleID: nil) }
+        source.prepare()
+        #expect(await source.results(for: "save").isEmpty, "JR-Bar's own menus are not listed")
+        source.trusted = { false }
+        source.frontmost = { .init(pid: 4242, name: "Pages", bundleID: "com.apple.iWork.Pages") }
+        source.prepare()
+        #expect(await source.results(for: "save").isEmpty, "no Accessibility, no read")
+    }
+
+    @Test("slower sources' hits group under their own headings after the ranked results")
+    func modelGroupsSearchResults() {
+        let model = PaletteModel()
+        model.load(items: [PaletteItem(id: "a", title: "Save Scene", icon: .symbol("circle", .gray),
+                                       kind: "Scene", section: .lights, actions: [])],
+                   usage: PaletteUsage(), now: now)
+        model.query = "sav"
+        let menu = PaletteSection(id: "appMenu", title: "Pages Menus", order: 95)
+        model.setSearchResults([
+            PaletteItem(id: "menu.1", title: "Save", icon: .symbol("circle", .gray), kind: "Menu Item",
+                        section: menu, actions: []),
+            PaletteItem(id: "archive.1", title: "saved notes", icon: .symbol("circle", .gray),
+                        kind: "Archive", section: .archive, actions: []),
+            PaletteItem(id: "menu.2", title: "Save As…", icon: .symbol("circle", .gray), kind: "Menu Item",
+                        section: menu, actions: []),
+        ], for: "sav")
+        #expect(model.sections.map(\.section.id) == ["results", "appMenu", "archive"])
+        #expect(model.sections[1].items.map(\.id) == ["menu.1", "menu.2"])
+    }
+
     // MARK: Windows and Settings
 
     @Test("every window and Settings page is a row; the archive only while the hoarder is on")

@@ -35,6 +35,7 @@ enum PaletteWiring {
             controlCenter(toggles: toggles),
             usage(panel: panel, windows: windows),
             tank(aquarium: aquarium),
+            AppMenuPaletteSource(),
             archive(hoarder: hoarder),
             open(hoarder: hoarder, windows: windows),
         ]

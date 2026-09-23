@@ -161,10 +161,10 @@ struct PaletteView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: model.searching ? "archivebox" : "magnifyingglass")
+            Image(systemName: model.searching ? "hourglass" : "magnifyingglass")
                 .font(.system(size: 26, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text(model.searching ? "Searching the archive…" : "No results")
+            Text(model.searching ? "Searching menus and the archive…" : "No results")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
             if !model.searching {
