@@ -91,6 +91,12 @@ struct OverviewView: View {
             ExportPreviewSheet(store: store)
         }
         .sheet(isPresented: Binding(
+            get: { store.runExportPreview != nil },
+            set: { if !$0 { store.runExportPreview = nil } }
+        )) {
+            RunExportSheet(store: store)
+        }
+        .sheet(isPresented: Binding(
             get: { store.comparison != nil },
             set: { if !$0 { store.comparison = nil } }
         )) {
@@ -1004,6 +1010,15 @@ struct OverviewView: View {
                 .disabled(store.timelineLoading || store.timelinePage == nil)
                 .help("Reload the newest page")
                 .accessibilityLabel("Refresh timeline")
+                Button {
+                    store.prepareRunExport(entry)
+                } label: {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 9))
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                .disabled(store.timelinePage == nil || store.timelineSessionID != entry.id)
+                .help("Export this run as Markdown: its facts, what happened and the timeline")
+                .accessibilityLabel("Export this run as Markdown")
                 if let page = store.timelinePage, store.timelineSessionID == entry.id, page.hasMore {
                     Button("Load earlier") { Task { await store.loadEarlierTimeline() } }
                         .controlSize(.mini)
@@ -1397,6 +1412,54 @@ private struct ExportPreviewSheet: View {
         do {
             try store.saveExport(to: url, markdown: markdown)
             store.exportPreview = nil
+        } catch {
+            store.error = OverviewStore.describe(error)
+        }
+    }
+}
+
+/// "Export this run": the Markdown previewed, then saved as-is.
+private struct RunExportSheet: View {
+    @Bindable var store: OverviewStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Export this run").font(.system(size: 15, weight: .semibold))
+            if let preview = store.runExportPreview {
+                ScrollView {
+                    Text(preview.markdown)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 260)
+                .padding(8)
+                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+            }
+            HStack {
+                Text("What you see is what is saved.").font(.system(size: 11)).foregroundStyle(.tertiary)
+                Spacer()
+                Button("Cancel") { store.runExportPreview = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save Markdown…") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 560, height: 480)
+    }
+
+    private func save() {
+        guard let preview = store.runExportPreview else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = preview.name
+        panel.allowedContentTypes = [.plainText]
+        panel.message = "The previewed run is written as-is."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.saveRunExport(to: url)
+            store.runExportPreview = nil
         } catch {
             store.error = OverviewStore.describe(error)
         }

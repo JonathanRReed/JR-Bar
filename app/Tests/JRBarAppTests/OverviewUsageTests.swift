@@ -83,6 +83,41 @@ import JRBarCore
         #expect(store.previousRun(for: entry("x", cwd: "/r/none", mode: "working", lifecycle: "active", since: 1)) == nil)
     }
 
+    @Test("Export this run writes the loaded timeline with the row's facts, and only for that row")
+    func runExport() throws {
+        let store = OverviewStore(core: CoreModel())
+        let entry = CoreRosterEntry(session: CoreSession(id: "claude:session:run-1", provider: "claude", label: "Fix the build",
+                                                         cwd: "/tmp/jr-bar", mode: "completed", lifecycle: "completed", since: 100),
+                                    schema: 1, visibility: "live")
+        store.roster = [entry]
+        #expect(store.runMarkdown(for: entry) == nil)
+        store.sessionUsage.apply(SessionUsageDocument(sessions: [
+            entry.id: SessionUsage(model: "claude-opus-4-5", estimatedCostUSD: 1.25),
+        ]), asked: [entry.id])
+        store.timelineSessionID = entry.id
+        store.timeline = [
+            CoreTimelineItem(seq: 1, at: 100, kind: "message", role: "user", text: "make it green"),
+            CoreTimelineItem(seq: 2, at: 101, kind: "tool_use", name: "Bash", text: "swift test"),
+            CoreTimelineItem(seq: 3, at: 102, kind: "turn_end", name: "end_turn"),
+        ]
+        store.timelinePage = CoreTimelinePage(events: store.timeline, hasMore: true, total: 9)
+        let text = try #require(store.runMarkdown(for: entry))
+        #expect(text.hasPrefix("# Fix the build\n"))
+        #expect(text.contains("- **Provider:** Claude"))
+        #expect(text.contains("- **State:** Done"))
+        #expect(text.contains("- **Model:** Opus 4.5"))
+        #expect(text.contains("- **Session:** claude:session:run-1"))
+        #expect(text.contains("> make it green"))
+        #expect(text.contains("tool `Bash`"))
+        #expect(text.contains("Load earlier"))
+        store.prepareRunExport(entry)
+        #expect(store.runExportPreview?.name == "fix-the-build.md")
+        #expect(store.runExportPreview?.markdown.contains("## Timeline") == true)
+
+        let other = CoreRosterEntry(session: CoreSession(id: "claude:session:run-2", provider: "claude"), schema: 1, visibility: "live")
+        #expect(store.runMarkdown(for: other) == nil)
+    }
+
     @Test("a heatmap day lists the rows last active that day, from a provider's row only its own")
     func heatmapDay() throws {
         let store = OverviewStore(core: CoreModel())
