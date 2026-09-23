@@ -10,19 +10,24 @@ import Foundation
 /// provider behaves exactly as before; a rule only ever narrows or widens
 /// what the global policy already decided for that provider's events.
 public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
-    /// Ask banners and the ask sound burst. Off keeps the ask on every
-    /// surface (the panel card, the light) but never interrupts.
+    /// Ask banners, the ask sound burst and the escalation's pulse and
+    /// chime. Off keeps the ask on every surface (the panel card, the
+    /// light) but never interrupts.
     public var asks: Bool
     /// Completion banners: nil follows `completion_notification_enabled`,
     /// true always banners this provider's finishes, false never does.
     public var completions: Bool?
     /// Failure banners and the failure sound.
     public var failures: Bool
-    /// Every sound this provider's events would make; banners stay.
+    /// Every sound this provider's events would make, the escalation's
+    /// repeating chime included; banners stay.
     public var sounds: Bool
     /// The highest escalation stage this provider's asks may reach
-    /// (0 none, 1 light, 2 menu-bar pulse, 3 chime); nil follows
-    /// `escalation_tier`. A rule can only lower the global ceiling.
+    /// (1 the light, 2 menu-bar pulse, 3 chime); nil follows
+    /// `escalation_tier`. A rule can only lower the global ceiling. There
+    /// is no stage 0: the light's ramp is the daemon's, and rules apply in
+    /// the app, so "nothing" would have promised a quiet light it cannot
+    /// keep.
     public var escalationCeiling: Int?
 
     public init(asks: Bool = true, completions: Bool? = nil, failures: Bool = true,
@@ -31,7 +36,7 @@ public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
         self.completions = completions
         self.failures = failures
         self.sounds = sounds
-        self.escalationCeiling = escalationCeiling.map { min(3, max(0, $0)) }
+        self.escalationCeiling = escalationCeiling.map(Self.clampCeiling)
     }
 
     /// The rule nobody changed: every field follows the global policy.
@@ -46,8 +51,11 @@ public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
         completions = (try? c.decodeIfPresent(Bool.self, forKey: .completions)) ?? nil
         failures = (try? c.decodeIfPresent(Bool.self, forKey: .failures)) ?? true
         sounds = (try? c.decodeIfPresent(Bool.self, forKey: .sounds)) ?? true
-        escalationCeiling = ((try? c.decodeIfPresent(Int.self, forKey: .escalationCeiling)) ?? nil).map { min(3, max(0, $0)) }
+        escalationCeiling = ((try? c.decodeIfPresent(Int.self, forKey: .escalationCeiling)) ?? nil).map(Self.clampCeiling)
     }
+
+    /// 1...3: a saved "nothing" (0) reads as the light it always was.
+    static func clampCeiling(_ stage: Int) -> Int { min(3, max(1, stage)) }
 
     /// "Asks off · done always · no sounds · up to the pulse" — the row's
     /// summary when the table is folded; nil for a default rule.
@@ -146,6 +154,11 @@ public enum AgentAlertRules {
                 if stage < 2 { out.statusPulse = false }
                 if stage < 3 { out.chime = .stop }
             }
+            // The stage-3 chime is the loudest sound JR-Bar makes; a rule
+            // that silences this provider's sounds or asks silences it too,
+            // and a provider whose asks never interrupt never pulses.
+            if !rule.sounds || !rule.asks { out.chime = .stop }
+            if !rule.asks { out.statusPulse = false }
         default:
             return delivery
         }

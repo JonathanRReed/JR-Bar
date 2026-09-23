@@ -62,6 +62,32 @@ struct AgentAlertRulesTests {
         #expect(pulseOnly.chime == .stop)
     }
 
+    @Test("sounds off silences the stage-3 chime; the pulse still climbs")
+    func quietSoundsStopTheChime() {
+        let loud = EventDelivery(statusPulse: true, chime: .start)
+        let event = CoreEvent(id: "s", kind: "escalation_stage", stage: 3)
+        let quiet = AgentAlertRules.apply(loud, to: event, state: Self.state, rules: ["grok": AgentAlertRule(sounds: false)])
+        #expect(quiet.chime == .stop)
+        #expect(quiet.statusPulse == true)
+    }
+
+    @Test("asks off: the escalation neither chimes nor pulses for that provider")
+    func quietAsksNeverEscalate() {
+        let loud = EventDelivery(statusPulse: true, chime: .start)
+        let event = CoreEvent(id: "s", kind: "escalation_stage", stage: 3)
+        let quiet = AgentAlertRules.apply(loud, to: event, state: Self.state, rules: ["grok": AgentAlertRule(asks: false)])
+        #expect(quiet.chime == .stop)
+        #expect(quiet.statusPulse == false)
+    }
+
+    @Test("the ceiling starts at the light: a saved 'nothing' reads as the light it always was")
+    func ceilingFloor() throws {
+        #expect(AgentAlertRule(escalationCeiling: 0).escalationCeiling == 1)
+        let saved = try JSONDecoder().decode(AgentAlertRule.self, from: Data(#"{"escalationCeiling":0}"#.utf8))
+        #expect(saved.escalationCeiling == 1)
+        #expect(saved.summary == "escalates to the light")
+    }
+
     @Test("device toasts and quota banners are not one agent's to silence")
     func otherKinds() {
         let toast = EventDelivery(toast: "SidePulse connected")

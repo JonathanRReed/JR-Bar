@@ -54,7 +54,7 @@ struct AgentAlertRulesTable: View {
             Toggle("", isOn: utility.bindRule(provider, \.asks))
                 .labelsHidden()
                 .toggleStyle(.checkbox)
-                .help("Ask banners and the ask sound; off keeps the ask on the panel and the light but never interrupts")
+                .help("Ask banners, the ask sound and the escalation's pulse and chime; off keeps the ask on the panel and the light but never interrupts")
             Picker("", selection: utility.bindRule(provider, \.completions)) {
                 Text("Follow").tag(Bool?.none)
                 Text("Always").tag(Bool?.some(true))
@@ -70,17 +70,16 @@ struct AgentAlertRulesTable: View {
             Toggle("", isOn: utility.bindRule(provider, \.sounds))
                 .labelsHidden()
                 .toggleStyle(.checkbox)
-                .help("Every sound this agent's events make — banners stay")
+                .help("Every sound this agent's events make, the escalation chime included — banners stay")
             Picker("", selection: utility.bindRule(provider, \.escalationCeiling)) {
                 Text("Follow").tag(Int?.none)
-                Text("Nothing").tag(Int?.some(0))
                 Text("The light").tag(Int?.some(1))
                 Text("The pulse").tag(Int?.some(2))
                 Text("The chime").tag(Int?.some(3))
             }
             .labelsHidden()
             .fixedSize()
-            .help("How far an unanswered ask from this agent may climb; a rule can only lower Settings' ceiling")
+            .help("How far an unanswered ask from this agent may climb past the light, which always ramps; a rule can only lower Settings' ceiling")
             if rule.isDefault {
                 Text("")
             } else {
