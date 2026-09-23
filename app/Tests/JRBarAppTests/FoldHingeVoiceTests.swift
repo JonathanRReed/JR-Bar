@@ -20,6 +20,26 @@ struct FoldHingeVoiceTests {
         return last
     }
 
+    @Test("a failed engine start backs off instead of retrying every reading")
+    func startBacksOff() {
+        var retry = HingeVoiceRetry()
+        #expect(retry.mayStart(at: 100))
+        retry.noteFailure(at: 100)
+        // A second of loud readings at 120 Hz: not one more attempt.
+        var attempts = 0
+        var t = 100.0
+        while t < 101 {
+            if retry.mayStart(at: t) { attempts += 1 }
+            t += 1.0 / 120
+        }
+        #expect(attempts == 0)
+        #expect(!retry.mayStart(at: 100 + HingeVoiceRetry.backOff - 0.01))
+        #expect(retry.mayStart(at: 100 + HingeVoiceRetry.backOff))
+        #expect(retry.mayStart(at: 50), "a clock that ran backwards retries")
+        retry.noteSuccess()
+        #expect(retry.mayStart(at: 100.1))
+    }
+
     @Test("a still lid's wobble reads as still")
     func stillLid() {
         var speed = HingeSpeed()

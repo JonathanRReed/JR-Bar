@@ -22,6 +22,8 @@ final class FoldHingeVoice {
     /// hear — the engine stands down after a quiet stretch.
     private var lastFeedAt: TimeInterval = 0
     private var lastLoudAt: TimeInterval = 0
+    /// A failed engine start waits before trying again.
+    private var retry = HingeVoiceRetry()
 
     /// How long the engine idles on silence before it stops.
     static let standDownAfter: TimeInterval = 1.5
@@ -36,7 +38,7 @@ final class FoldHingeVoice {
                      kind: voice == .rustle ? .rustle : .creak)
         if gain > 0.02 {
             lastLoudAt = t
-            startIfNeeded()
+            startIfNeeded(at: t)
         }
     }
 
@@ -53,17 +55,26 @@ final class FoldHingeVoice {
 
     var isRunning: Bool { engine != nil }
 
-    private func startIfNeeded() {
-        guard engine == nil else { return }
+    private func startIfNeeded(at t: TimeInterval) {
+        guard engine == nil, retry.mayStart(at: t) else { return }
         let engine = AVAudioEngine()
         let rate = engine.outputNode.outputFormat(forBus: 0).sampleRate
         guard let format = AVAudioFormat(standardFormatWithSampleRate: rate > 0 ? rate : 44_100,
-                                         channels: 1) else { return }
+                                         channels: 1) else {
+            retry.noteFailure(at: t)
+            return
+        }
         let synth = HingeVoiceSynth(controls: controls, sampleRate: format.sampleRate)
         let node = Self.sourceNode(format: format, synth: synth)
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
-        do { try engine.start() } catch { return }
+        do { try engine.start() } catch {
+            // No output device, or one mid-switch: a lid moving at 120
+            // readings a second must not build an engine per reading.
+            retry.noteFailure(at: t)
+            return
+        }
+        retry.noteSuccess()
         self.engine = engine
         // The engine's only clock: a slow look for a quiet stretch or a
         // sensor that stopped talking.
@@ -97,6 +108,22 @@ final class FoldHingeVoice {
         if now - lastFeedAt > 0.5 { controls.set(gain: 0, rate: 0, kind: .creak) }
         if now - max(lastLoudAt, 0) > Self.standDownAfter { stop() }
     }
+}
+
+/// When a failed engine start may try again: not before `backOff` has
+/// passed on the sensor's clock. Pure, so the pace can be pinned.
+struct HingeVoiceRetry {
+    static let backOff: TimeInterval = 5
+    private var failedAt: TimeInterval?
+
+    func mayStart(at t: TimeInterval) -> Bool {
+        guard let failedAt else { return true }
+        // A clock that ran backwards (a new host-time base) retries.
+        return t - failedAt >= Self.backOff || t < failedAt
+    }
+
+    mutating func noteFailure(at t: TimeInterval) { failedAt = t }
+    mutating func noteSuccess() { failedAt = nil }
 }
 
 /// The lid's speed from raw readings: degrees a second, eased over about
