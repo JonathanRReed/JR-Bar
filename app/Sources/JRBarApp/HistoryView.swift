@@ -167,6 +167,18 @@ struct HistoryFilterBar: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                if let day = store.filter.day {
+                    // A day the Overview's heatmap sent here: one chip,
+                    // and clicking it lets every day back in.
+                    FilterChip(selected: true, accent: .accentColor) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar").font(.system(size: 9, weight: .bold))
+                            Text(HistoryDayParse.title(day))
+                            Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        }
+                    } action: { store.filter.day = nil }
+                    .help("Showing one day — click to show every day")
+                }
                 ForEach(store.providers, id: \.self) { provider in
                     let style = ProviderStyle.style(for: provider, document: store.document)
                     FilterChip(selected: store.filter.providers.contains(provider), accent: style.accent) {

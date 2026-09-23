@@ -126,6 +126,7 @@ struct OverviewView: View {
                 } else {
                     store.pane = .roster
                     store.workerFilter = nil
+                    store.dayFilter = nil
                     // A saved view is applied as a definition: the filter
                     // it stored, the highlight on its name, and a cleared
                     // search — same semantics as `apply(_:)`, never a
@@ -264,6 +265,26 @@ struct OverviewView: View {
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Dismiss status")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .accessibilityElement(children: .combine)
+            }
+            if let day = store.dayFilter {
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar").foregroundStyle(.secondary)
+                    Text("Last active \(HistoryDayParse.title(day.day))" + (day.provider.map { " · \(ProviderStyle.style(for: $0).name)" } ?? ""))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    if store.onOpenHistoryDay != nil {
+                        Button("That day in History") { store.onOpenHistoryDay?(day.day) }
+                            .buttonStyle(.link).font(.system(size: 11))
+                            .help("Every started, finished, asked and failed row of that day")
+                    }
+                    Button { store.dayFilter = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .accessibilityLabel("Show every day")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 5)
                 .accessibilityElement(children: .combine)

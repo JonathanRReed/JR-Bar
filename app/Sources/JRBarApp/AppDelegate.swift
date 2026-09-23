@@ -387,6 +387,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let overviewStore = OverviewStore(core: core)
         // One per-session usage reader for the panel and the Overview.
         overviewStore.sessionUsage = store.sessionUsage
+        // The Usage heatmap's day click, one window over.
+        overviewStore.onOpenHistoryDay = { [weak historyWindow] day in historyWindow?.show(day: day) }
         // Data Hoarder honesty for the inspector's Source line: the
         // archive's own capture table answers "is this transcript
         // kept", and a missing transcript seeds an archive search by

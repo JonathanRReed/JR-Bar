@@ -65,7 +65,9 @@ struct UsageGraphView: View {
                         }
                         disclosures(graph)
                         if let heatmap = graph.heatmap {
-                            UsageHeatmapGrid(heatmap: heatmap, providers: graph.providers)
+                            UsageHeatmapGrid(heatmap: heatmap, providers: graph.providers) { day, provider in
+                                store.showDay(day, provider: provider)
+                            }
                         }
                     }
                     .padding(14)
@@ -526,6 +528,9 @@ struct UsageHeatmapGrid: View {
     let heatmap: CoreUsageHeatmap
     /// Provider ids in the reply's resolved order.
     let providers: [String]
+    /// A cell click: the day (ISO) and the row's provider id ("all" for
+    /// the aggregate) — the grid as a way into the past, not decoration.
+    var onSelectDay: ((String, String) -> Void)? = nil
 
     private var rows: [(id: String, label: String, provider: CoreUsageHeatmap.Provider)] {
         var out: [(String, String, CoreUsageHeatmap.Provider)] =
@@ -564,13 +569,16 @@ struct UsageHeatmapGrid: View {
                                 RoundedRectangle(cornerRadius: 1.5)
                                     .fill(Self.color(cell.color))
                                     .frame(width: 9, height: 9)
-                                    .help(cell.accessibilityLabel)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { onSelectDay?(cell.day, row.id) }
+                                    .help(cell.accessibilityLabel + (onSelectDay == nil ? "" : " · click for that day's runs"))
                                     // Each cell is its own AX element
                                     // with the daemon's own day+value
                                     // label — the grid is data, not
                                     // decoration.
                                     .accessibilityElement()
                                     .accessibilityLabel("\(row.label): \(cell.accessibilityLabel)")
+                                    .accessibilityAddTraits(onSelectDay == nil ? [] : .isButton)
                             }
                         }
                     }

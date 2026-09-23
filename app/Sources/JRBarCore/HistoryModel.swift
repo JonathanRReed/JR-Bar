@@ -102,16 +102,23 @@ public struct HistoryFilter: Equatable, Sendable {
     public var providers: Set<String> = []
     public var kinds: Set<String> = []
     public var text: String = ""
+    /// One calendar day (local midnight), when the Overview's heatmap
+    /// sent History to it; nil is every day.
+    public var day: Date?
 
-    public init(providers: Set<String> = [], kinds: Set<String> = [], text: String = "") {
+    public init(providers: Set<String> = [], kinds: Set<String> = [], text: String = "", day: Date? = nil) {
         self.providers = providers
         self.kinds = kinds
         self.text = text
+        self.day = day
     }
 
-    public var isEmpty: Bool { providers.isEmpty && kinds.isEmpty && text.trimmingCharacters(in: .whitespaces).isEmpty }
+    public var isEmpty: Bool {
+        providers.isEmpty && kinds.isEmpty && text.trimmingCharacters(in: .whitespaces).isEmpty && day == nil
+    }
 
     public func matches(_ row: CoreHistoryRow) -> Bool {
+        if let day, !Calendar.current.isDate(row.date, inSameDayAs: day) { return false }
         if !providers.isEmpty, !providers.contains(row.provider ?? "") { return false }
         if !kinds.isEmpty, !kinds.contains(row.kind) { return false }
         let needle = text.trimmingCharacters(in: .whitespaces).lowercased()

@@ -83,6 +83,25 @@ import JRBarCore
         #expect(store.previousRun(for: entry("x", cwd: "/r/none", mode: "working", lifecycle: "active", since: 1)) == nil)
     }
 
+    @Test("a heatmap day lists the rows last active that day, from a provider's row only its own")
+    func heatmapDay() throws {
+        let store = OverviewStore(core: CoreModel())
+        let day = try #require(HistoryDayParse.date("2026-09-16"))
+        let noon = day.timeIntervalSince1970 + 12 * 3600
+        store.roster = [
+            CoreRosterEntry(session: CoreSession(id: "d-claude", provider: "claude", mode: "completed", lifecycle: "completed", since: noon)),
+            CoreRosterEntry(session: CoreSession(id: "d-codex", provider: "codex", mode: "completed", lifecycle: "completed", since: noon)),
+            CoreRosterEntry(session: CoreSession(id: "d-other", provider: "claude", mode: "completed", lifecycle: "completed", since: noon + 86_400)),
+        ]
+        store.showDay("2026-09-16", provider: "all")
+        #expect(Set(store.rows.map(\.id)) == ["d-claude", "d-codex"])
+        store.showDay("2026-09-16", provider: "codex")
+        #expect(store.rows.map(\.id) == ["d-codex"])
+        #expect(store.viewLabel.contains("active"))
+        store.reveal("d-other")
+        #expect(store.dayFilter == nil)
+    }
+
     @Test("a reading that lands re-sorts a usage column, and only a usage column")
     func generationInvalidatesOnlyUsageSorts() {
         let store = OverviewStore(core: CoreModel())

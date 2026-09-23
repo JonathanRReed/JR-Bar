@@ -148,6 +148,25 @@ public enum LightLog {
     }
 }
 
+// MARK: - Days
+
+public enum HistoryDayParse {
+    /// `2026-09-16` (the heatmap's day key) → local midnight; nil for
+    /// anything else.
+    public static func date(_ iso: String, calendar: Calendar = .current) -> Date? {
+        let parts = iso.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
+    /// "Tue 16 Sep" — a day as the filter banners name it.
+    public static func title(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+        return formatter.string(from: date)
+    }
+}
+
 // MARK: - History row timelines
 
 public enum HistoryTimelineRequest {

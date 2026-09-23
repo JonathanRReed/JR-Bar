@@ -39,6 +39,13 @@ final class OverviewStore {
     /// set by the "+N workers" affordance on a parent row, cleared by
     /// the banner's × or any sidebar pick.
     var workerFilter: String?
+    /// A day the Usage pane's heatmap sent the roster to (local
+    /// midnight), with the provider row it was clicked on; rows whose
+    /// last activity fell on that day are listed. Cleared by the banner's
+    /// × or any sidebar pick.
+    var dayFilter: (day: Date, provider: String?)?
+    /// Opens History on one day — the same click, one window over.
+    var onOpenHistoryDay: ((Date) -> Void)?
     var savedFilters: [SavedOverviewFilter] = OverviewSavedFilters.load()
     /// The selected saved view's name while it is applied; an edit to the
     /// live filter clears the highlight without deleting the definition.
@@ -241,6 +248,8 @@ final class OverviewStore {
         var usageGeneration: Int
         /// A branch cut filters on git lookups that land after the rows.
         var gitGeneration: Int
+        var day: Date?
+        var dayProvider: String?
     }
     @ObservationIgnored private var derivedCache: (key: DerivedKey, value: DerivedResult)?
     /// Recompute count — a test hook proving the memo holds across
@@ -253,14 +262,17 @@ final class OverviewStore {
             sortDescription: sortOrder.map { "\($0.keyPath)|\($0.order)" }.joined(separator: ";"),
             workerFilter: workerFilter,
             usageGeneration: sortsByUsage ? sessionUsage.generation : 0,
-            gitGeneration: filter.preset == .thisBranch ? gitGeneration : 0
+            gitGeneration: filter.preset == .thisBranch ? gitGeneration : 0,
+            day: dayFilter?.day, dayProvider: dayFilter?.provider
         )
         if let cached = derivedCache, cached.key == key { return cached.value }
         var result = DerivedResult()
         let workspaces = gitWorkspaces
         let branchKey: (String?) -> String? = { cwd in cwd.flatMap { workspaces[$0]?.branchKey } }
+        let day = dayFilter
         result.rows = roster.filter { row in
-            filter.matches(row, branchKey: branchKey)
+            (day.map { Self.activeOn($0.day, provider: $0.provider, row) } ?? true)
+                && filter.matches(row, branchKey: branchKey)
                 && (workerFilter == nil || row.session.parent == workerFilter)
                 && (search.isEmpty || OverviewStore.matchesSearch(row, search))
         }
@@ -412,6 +424,30 @@ final class OverviewStore {
         }
     }
 
+    // MARK: A day from the heatmap
+
+    /// The heatmap's cell click: every row whose last activity fell on
+    /// that day (and, from a provider's row, that provider's), in the
+    /// roster pane.
+    func showDay(_ iso: String, provider: String?) {
+        guard let day = HistoryDayParse.date(iso) else { return }
+        pane = .roster
+        workerFilter = nil
+        activeSavedFilter = nil
+        filter = OverviewFilter(preset: .all)
+        search = ""
+        dayFilter = (day, provider == "all" ? nil : provider)
+    }
+
+    /// A row's last activity (`since`, the roster's last-event stamp)
+    /// fell on `day`, for `provider` when one is named.
+    nonisolated static func activeOn(_ day: Date, provider: String?, _ entry: CoreRosterEntry,
+                                     calendar: Calendar = .current) -> Bool {
+        guard let since = entry.session.since else { return false }
+        if let provider, entry.session.provider != provider { return false }
+        return calendar.isDate(Date(timeIntervalSince1970: since), inSameDayAs: day)
+    }
+
     // MARK: Reveal
 
     /// A session another window pointed at; selected as soon as the
@@ -423,6 +459,7 @@ final class OverviewStore {
     func reveal(_ id: String) {
         pane = .roster
         workerFilter = nil
+        dayFilter = nil
         activeSavedFilter = nil
         filter = OverviewFilter(preset: .all)
         search = ""
@@ -825,6 +862,9 @@ final class OverviewStore {
         if let parent = workerFilter {
             let name = roster.first { $0.id == parent }.map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
             parts.append("workers of \(name)")
+        }
+        if let day = dayFilter {
+            parts.append("active \(HistoryDayParse.title(day.day))" + (day.provider.map { " · \(SessionLabel.providerName($0))" } ?? ""))
         }
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty { parts.append("search “\(query)”") }

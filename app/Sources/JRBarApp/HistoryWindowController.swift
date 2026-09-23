@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 /// A standard titled window for the activity history (⌘Y from the panel).
@@ -28,6 +29,13 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
     /// status menu's Event Replay item lands here.
     func showEvents() {
         store.mode = .events
+        show()
+    }
+
+    /// History on one day — the Overview heatmap's "that day in History".
+    func show(day: Date) {
+        store.mode = .activity
+        store.filter = HistoryFilter(day: day)
         show()
     }
 

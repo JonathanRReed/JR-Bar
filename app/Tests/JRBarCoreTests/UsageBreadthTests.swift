@@ -97,6 +97,16 @@ struct UsageBreadthTests {
         #expect(older.models.isEmpty)
     }
 
+    @Test("History's day filter keeps one calendar day, and parses the heatmap's key")
+    func historyDay() throws {
+        let day = try #require(HistoryDayParse.date("2026-09-16"))
+        let filter = HistoryFilter(day: day)
+        #expect(!filter.isEmpty)
+        #expect(filter.matches(CoreHistoryRow(at: day.timeIntervalSince1970 + 3600, kind: "completed")))
+        #expect(!filter.matches(CoreHistoryRow(at: day.timeIntervalSince1970 - 3600, kind: "completed")))
+        #expect(HistoryDayParse.date("16 Sep") == nil)
+    }
+
     @Test("the daily report lists the days that carried anything, newest first")
     func daily() {
         let history = UsageHistory(provider: "claude", range: "7d", days: [
