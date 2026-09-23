@@ -188,6 +188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.askDesk.onAnswered = { [weak toysStore] session, request in
             toysStore?.notch.resolveAsk(session: session, request: request)
         }
+        // A live session the daemon cannot find opens through the Dock's
+        // window locator instead of stopping at "not found".
+        store.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
@@ -289,6 +292,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.onOpenSession = { [weak self] session in
             self?.core?.openSession(session)
         }
+        // …awaited, so a live session the daemon cannot find still comes
+        // up through the Dock's window locator.
+        notchCard.openSessionNow = { [weak core] session in
+            try? await core?.send("open_session", args: ["session": .string(session)])
+        }
+        notchCard.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         // The glass card's waiting rows answer through the island's own
         // answerer — one pending set, one refusal line per session.
         notchCard.model.answerer = toysStore.notch.answerer
@@ -416,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // History window (⌘Y).
         let historyStore = HistoryStore(core: core)
+        historyStore.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         let historyWindow = HistoryWindowController(store: historyStore)
         self.historyStore = historyStore
         self.historyWindow = historyWindow
@@ -435,6 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let overviewStore = OverviewStore(core: core)
         // One per-session usage reader for the panel and the Overview.
         overviewStore.sessionUsage = store.sessionUsage
+        overviewStore.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         // The Usage heatmap's day click, one window over.
         overviewStore.onOpenHistoryDay = { [weak historyWindow] day in historyWindow?.show(day: day) }
         // Data Hoarder honesty for the inspector's Source line: the

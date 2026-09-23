@@ -50,6 +50,13 @@ final class NotchCardPresenter {
     var surface: @MainActor () -> NotchSurface = { NotchCardPresenter.publishedSurface }
     var onOpenSession: @MainActor (String) -> Void = { _ in }
     var onOpenOverview: @MainActor () -> Void = {}
+    /// `open_session` awaited, so a refusal is heard; nil when the
+    /// monitor did not answer. Unset, a click posts `onOpenSession`.
+    var openSessionNow: (@MainActor (String) async -> CoreReply?)?
+    /// The exact window a live session runs in, raised through the
+    /// Dock's window locator — the fallback when the daemon answers
+    /// `not_found` for a session that is still running.
+    var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     /// The last focus presented, so a re-anchor can re-show what was up
     /// even when the provider is momentarily empty.
@@ -64,17 +71,36 @@ final class NotchCardPresenter {
         model.onOpenSession = { [weak self] in
             guard let self, let session = self.model.focus.clickSession else { return }
             self.hide()
-            self.onOpenSession(session)
+            self.open(session)
         }
         // A click on any session row opens it — the same raise the
         // header's Open does for the focus session.
         model.onOpenRow = { [weak self] session in
             guard let self else { return }
             self.hide()
-            self.onOpenSession(session)
+            self.open(session)
         }
         model.onClose = { [weak self] in self?.hide() }
         model.onOpenOverview = { [weak self] in self?.onOpenOverview() }
+    }
+
+    /// Open a session from the card: the daemon's raise, and when it
+    /// cannot find a still-running session's window, the Dock's window
+    /// locator's. A remote session has no window here at all.
+    func open(_ session: String) {
+        guard !CoreSession.isRemoteID(session) else { return }
+        guard let openSessionNow else {
+            onOpenSession(session)
+            return
+        }
+        let raise = raiseSessionWindow
+        let stillRunning = sessionRows().contains {
+            $0.id == session && !$0.activity.isClearable && $0.activity != .failed
+        }
+        Task {
+            let reply = await openSessionNow(session)
+            if reply?.error?.code == "not_found", stillRunning { _ = raise?(session) }
+        }
     }
 
     /// The transient glance — the header only. A card already pinned

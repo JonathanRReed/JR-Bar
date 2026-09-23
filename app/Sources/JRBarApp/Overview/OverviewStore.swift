@@ -75,6 +75,9 @@ final class OverviewStore {
     /// this store's own only until the app delegate publishes that one.
     private let ownDesk: AskAnswerDesk
     var askDesk: AskAnswerDesk { AskAnswerDesk.shared ?? ownDesk }
+    /// The exact window a live session runs in, through the Dock's
+    /// window locator — Open's fallback when the daemon cannot find it.
+    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     /// Reads usage for the rows the table leads with and the selection.
     func refreshSessionUsage(force: Bool = false) {
@@ -647,12 +650,24 @@ final class OverviewStore {
             if reply.ok {
                 let app = reply.result?["activated"]?.stringValue
                 report(app.map { "Opened in \($0)" } ?? "Open request sent")
+            } else if reply.error?.code == "not_found", isLiveLocal(id), raiseSessionWindow?(id) == true {
+                // The daemon could not find a running session's window;
+                // the Dock's window locator could, and raised it.
+                report("Raised its window")
             } else {
                 report(reply.error?.message ?? "Open refused", isError: true)
             }
         } catch {
             report(Self.describe(error), isError: true)
         }
+    }
+
+    /// A local row still running — the only kind whose window a refused
+    /// open is worth looking for.
+    private func isLiveLocal(_ id: String) -> Bool {
+        guard let entry = roster.first(where: { $0.id == id }) else { return false }
+        let activity = SessionActivity.reduce(entry.session)
+        return !entry.session.remote && !activity.isClearable && activity != .failed
     }
 
     // MARK: New session here

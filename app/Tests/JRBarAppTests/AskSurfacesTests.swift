@@ -242,6 +242,19 @@ struct AskSurfacesTests {
 
     // MARK: Panel
 
+    @Test("a refused open tries the window locator only for a live local row the daemon could not find")
+    func openFallbackGate() {
+        let notFound = CoreReplyError(code: "not_found", message: "can't find its window")
+        let live = row("claude:w", ask: nil, mode: "working")
+        #expect(PanelStore.raisesWindowInstead(notFound, row: live))
+        #expect(!PanelStore.raisesWindowInstead(CoreReplyError(code: "unsupported"), row: live))
+        let ended = SessionRow(session: CoreSession(id: "claude:e", provider: "claude", mode: "completed",
+                                                    lifecycle: "completed"), pinnedAsk: nil)
+        #expect(!PanelStore.raisesWindowInstead(notFound, row: ended))
+        #expect(!PanelStore.raisesWindowInstead(notFound, row: row("remote:studio:claude:x", ask: nil,
+                                                                   remote: true, mode: "working")))
+    }
+
     @Test("⌘↩ on a held question sends nothing and says to pick an option")
     func panelApproveOnQuestion() {
         let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
@@ -251,6 +264,29 @@ struct AskSurfacesTests {
         #expect(!store.isAnswerPending(held(choices: [Self.single])))
         store.alwaysAllow(held(always: false))
         #expect(store.toast == "This one has no rule to remember — approve it once instead")
+    }
+
+    @Test("the notch card's Open falls back to the window locator only for a running session")
+    func notchCardOpenFallback() async {
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        let log = Log()
+        presenter.sessionRows = {
+            [NotchIslandRow(id: "claude:run", label: "run", provider: "claude", activity: .working),
+             NotchIslandRow(id: "claude:done", label: "done", provider: "claude", activity: .done)]
+        }
+        presenter.openSessionNow = { id in
+            log.calls.append("open:\(id)")
+            return CoreReply(id: "1", ok: false, error: CoreReplyError(code: "not_found"))
+        }
+        presenter.raiseSessionWindow = { id in
+            log.calls.append("raise:\(id)")
+            return true
+        }
+        presenter.open("claude:run")
+        presenter.open("claude:done")
+        presenter.open("remote:studio:claude:x")
+        await Self.waitFor { log.calls.count >= 3 }
+        #expect(log.calls.sorted() == ["open:claude:done", "open:claude:run", "raise:claude:run"])
     }
 
     // MARK: Rail
