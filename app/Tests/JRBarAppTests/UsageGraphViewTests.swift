@@ -24,6 +24,20 @@ import JRBarCore
         return row
     }
 
+    @Test func percentModeMarksTheDaysAProviderStoodAtItsLimit() {
+        var percent = graph(series: [
+            series("claude", values: [40, 100, -1, 99.7, 12]),
+            series("claude", instance: "work", values: [100, 100, 3, 5, 6]),
+            series("codex", values: [101, 20, 30, 40, 50]),
+        ], days: 5)
+        percent.metric = "percent"
+        let hits = UsageGraphView.limitDays(percent)
+        // One mark per provider per day, even with two accounts at 100 %.
+        #expect(hits.map { "\($0.day)\($0.providerId)" } == ["0claude", "0codex", "1claude", "3claude"])
+        percent.metric = "tokens"
+        #expect(UsageGraphView.limitDays(percent).isEmpty, "tokens have no ceiling")
+    }
+
     @Test func gapDaysBreakTheLineIntoRuns() {
         let points = UsageGraphView.splitPoints(graph(
             series: [series("codex", values: [-1, -1, 5, 6, -1, 7])],

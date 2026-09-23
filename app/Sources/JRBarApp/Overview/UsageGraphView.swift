@@ -209,6 +209,25 @@ struct UsageGraphView: View {
         return out
     }
 
+    /// Percent mode's quota overlay: each day a series stood at its limit
+    /// (100 % used or more), with the provider it belongs to — the chart
+    /// marks those days on the ceiling so spend lines up with the limits
+    /// it ran into.
+    /// Empty for every other metric, whose numbers have no ceiling.
+    nonisolated static func limitDays(_ graph: CoreUsageGraph) -> [(day: Int, providerId: String)] {
+        guard graph.metric == "percent" else { return [] }
+        var out: [(day: Int, providerId: String)] = []
+        var seen = Set<String>()
+        for series in graph.series {
+            for (index, value) in series.values.enumerated() where index < graph.days && value >= 99.5 {
+                if seen.insert("\(index)|\(series.providerId)").inserted {
+                    out.append((index, series.providerId))
+                }
+            }
+        }
+        return out.sorted { $0.day == $1.day ? $0.providerId < $1.providerId : $0.day < $1.day }
+    }
+
     /// A series that exists only as isolated days still needs a mark —
     /// a one-point run draws no line.
     private func runLengths(_ points: [Point]) -> [String: Int] {
@@ -226,6 +245,15 @@ struct UsageGraphView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             Chart {
+                // The ceiling percent mode climbs toward, under the lines.
+                if graph.metric == "percent" {
+                    RuleMark(y: .value("Limit", 100))
+                        .foregroundStyle(.secondary.opacity(0.45))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .annotation(position: .top, alignment: .leading, spacing: 1) {
+                            Text("limit").font(.system(size: 8)).foregroundStyle(.tertiary)
+                        }
+                }
                 ForEach(points, id: \.self) { point in
                     let accent = ProviderStyle.style(for: point.providerId).accent
                     LineMark(x: .value("Day", point.day), y: .value("Value", point.value),
@@ -241,13 +269,23 @@ struct UsageGraphView: View {
                             .symbolSize(14)
                     }
                 }
+                // The days a provider stood at its limit: a small mark on
+                // the ceiling in its colour, over the lines.
+                ForEach(Array(Self.limitDays(graph).enumerated()), id: \.offset) { _, hit in
+                    PointMark(x: .value("Day", hit.day), y: .value("Value", 100))
+                        .foregroundStyle(ProviderStyle.style(for: hit.providerId).accent)
+                        .symbol(.triangle)
+                        .symbolSize(22)
+                        .accessibilityLabel("\(ProviderStyle.style(for: hit.providerId).name) at its limit")
+                }
                 if let hoverDay {
                     RuleMark(x: .value("Day", hoverDay))
                         .foregroundStyle(.secondary.opacity(0.35))
                         .lineStyle(StrokeStyle(lineWidth: 1))
                 }
             }
-            .chartYScale(domain: 0...max(1, graph.scaleMax))
+            // Percent mode always shows its ceiling, even on a quiet range.
+            .chartYScale(domain: 0...max(graph.metric == "percent" ? 100 : 1, graph.scaleMax))
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                     AxisGridLine()
