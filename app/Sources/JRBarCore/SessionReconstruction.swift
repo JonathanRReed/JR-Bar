@@ -95,14 +95,33 @@ public struct SessionReconstruction: Sendable, Equatable {
     public let gaps: [String]
     public let totalLines: Int
     public let redactedLines: Int
+    /// The CLIProxyAPI requests logged under the same session id, in time
+    /// order — evidence the timeline interleaves with `items`
+    /// (`SessionProxyEvidence`); empty when no proxy carried the session.
+    public let proxyRequests: [CLIProxyRequest]
 
     public init(items: [ReconstructedItem], story: FailureStory,
-                gaps: [String], totalLines: Int, redactedLines: Int) {
+                gaps: [String], totalLines: Int, redactedLines: Int,
+                proxyRequests: [CLIProxyRequest] = []) {
         self.items = items
         self.story = story
         self.gaps = gaps
         self.totalLines = totalLines
         self.redactedLines = redactedLines
+        self.proxyRequests = proxyRequests
+    }
+
+    /// The same rebuild with the proxy's requests attached (sorted and
+    /// capped by `SessionProxyEvidence.sorted`).
+    public func withProxyRequests(_ requests: [CLIProxyRequest]) -> SessionReconstruction {
+        SessionReconstruction(items: items, story: story, gaps: gaps, totalLines: totalLines,
+                              redactedLines: redactedLines,
+                              proxyRequests: SessionProxyEvidence.sorted(requests))
+    }
+
+    /// `items` with the proxy's requests placed between them by time.
+    public var entries: [SessionProxyEvidence.Entry] {
+        SessionProxyEvidence.interleave(items, requests: proxyRequests)
     }
 }
 

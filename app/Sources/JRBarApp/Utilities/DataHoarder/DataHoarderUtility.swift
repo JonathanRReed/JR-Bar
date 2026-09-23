@@ -389,9 +389,13 @@ final class DataHoarderModel {
                     SessionReconstructor.reconstruct(segments: payloads, provider: provider,
                                                      epochFallback: epochFallback)
                 }.value
+                // The proxy's requests for the same session sit between
+                // the turns: retries and refusals the transcript never
+                // records.
+                let requests = await Self.proxyRequests(in: archive, records: related)
                 guard !Task.isCancelled, revision == detailRevision,
                       selectedID == id, requestedTrash == showTrash else { return }
-                reconstruction = rebuilt
+                reconstruction = rebuilt.withProxyRequests(requests)
             } catch {
                 guard !Task.isCancelled, revision == detailRevision else { return }
                 detailError = "Timeline unavailable: \(error.localizedDescription)"
@@ -928,7 +932,41 @@ final class DataHoarderModel {
         let rebuilt = await Task.detached(priority: .userInitiated) {
             SessionReconstructor.reconstruct(segments: payloads, provider: provider, epochFallback: startedAt)
         }.value
-        return (rebuilt, record)
+        return (rebuilt.withProxyRequests(await proxyRequests(in: archive, records: records)), record)
+    }
+
+    /// The CLIProxyAPI requests a session's saved records include, parsed
+    /// off-main from hash-verified segments — the newest
+    /// `SessionProxyEvidence.requestLimit`, since a long session behind a
+    /// proxy logs one file per request. A record that no longer parses
+    /// is left out, never guessed at.
+    nonisolated static func proxyRequests(in archive: DataHoarderArchive,
+                                          records: [ArchiveRecord]) async -> [CLIProxyRequest] {
+        let proxied = records
+            .filter { $0.provider == "cliproxy" }
+            .sorted { ($0.lastActivityAt ?? $0.importedAt) > ($1.lastActivityAt ?? $1.importedAt) }
+            .prefix(SessionProxyEvidence.requestLimit)
+        guard !proxied.isEmpty else { return [] }
+        var logs: [Data] = []
+        for record in proxied {
+            guard !Task.isCancelled, let payloads = try? await archive.segmentData(id: record.id) else { continue }
+            var data = Data()
+            for payload in payloads { data.append(payload) }
+            logs.append(data)
+        }
+        let captured = logs
+        return await Task.detached(priority: .userInitiated) {
+            captured.compactMap(CLIProxyLogParser.parse)
+        }.value
+    }
+
+    /// The proxy's requests for one session id, for a timeline built
+    /// elsewhere (the Overview's live transcript).
+    nonisolated static func proxyRequests(in archive: DataHoarderArchive,
+                                          sessionID: String) async -> [CLIProxyRequest] {
+        guard !sessionID.isEmpty,
+              let records = try? await archive.relatedRecords(sessionID: sessionID) else { return [] }
+        return await proxyRequests(in: archive, records: records)
     }
 
     /// The transcript record a session's timeline should come from: a

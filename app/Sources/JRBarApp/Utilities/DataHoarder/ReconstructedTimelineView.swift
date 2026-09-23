@@ -17,7 +17,8 @@ final class ReconstructedTimelineViewState {
 /// (`SessionReconstructor.reconstruction(from:running:)`), and History's
 /// expanded rows. It takes a `SessionReconstruction` (produced off-main)
 /// and stays provider-agnostic, so a fix to how a tool call or a failure
-/// reads lands everywhere at once.
+/// reads lands everywhere at once. When a CLIProxyAPI proxy logged the
+/// session's requests, they sit between the turns as evidence rows.
 struct ReconstructedTimelineView: View {
     let reconstruction: SessionReconstruction
     @Bindable var viewState: ReconstructedTimelineViewState
@@ -33,6 +34,8 @@ struct ReconstructedTimelineView: View {
         case messages = "Messages"
         case tools = "Tools"
         case errors = "Errors"
+        /// The proxy's requests alone; offered only when there are some.
+        case requests = "Requests"
     }
 
     private var kind: KindFilter {
@@ -41,6 +44,7 @@ struct ReconstructedTimelineView: View {
     }
 
     var body: some View {
+        let entries = reconstruction.entries
         VStack(alignment: .leading, spacing: 8) {
             if let sourceNote {
                 Label(sourceNote, systemImage: "archivebox")
@@ -48,13 +52,21 @@ struct ReconstructedTimelineView: View {
                     .foregroundStyle(.secondary)
             }
             storyCard
+            if let upstream = SessionProxyEvidence.summary(reconstruction.proxyRequests) {
+                // The proxy's side of the story: retries and refusals
+                // the transcript never records.
+                Label("Upstream: \(upstream)", systemImage: "network")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .help("From the CLIProxyAPI request logs filed under this session")
+            }
             if !reconstruction.gaps.isEmpty || reconstruction.redactedLines > 0 {
                 gapsDisclosure
             }
-            if !reconstruction.items.isEmpty {
-                filterChips
+            if !entries.isEmpty {
+                filterChips(entries)
             }
-            listArea
+            listArea(entries)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -166,41 +178,53 @@ struct ReconstructedTimelineView: View {
 
     // MARK: Kind chips + jump
 
-    private var filteredItems: [ReconstructedItem] {
+    static func filtered(_ entries: [SessionProxyEvidence.Entry],
+                         by kind: KindFilter) -> [SessionProxyEvidence.Entry] {
         switch kind {
-        case .all: return reconstruction.items
-        case .messages: return reconstruction.items.filter { $0.kind == .message }
-        case .tools: return reconstruction.items.filter { $0.kind == .toolUse || $0.kind == .toolResult }
-        case .errors: return reconstruction.items.filter(\.isError)
-        }
-    }
-
-    private var kindCounts: (messages: Int, tools: Int, errors: Int) {
-        var messages = 0, tools = 0, errors = 0
-        for item in reconstruction.items {
-            switch item.kind {
-            case .message: messages += 1
-            case .toolUse, .toolResult: tools += 1
-            case .turnEnd: break
+        case .all: return entries
+        case .errors: return entries.filter(\.isError)
+        case .messages, .tools, .requests:
+            return entries.filter { entry in
+                switch entry {
+                case .item(let item):
+                    return kind == .messages ? item.kind == .message
+                        : kind == .tools && (item.kind == .toolUse || item.kind == .toolResult)
+                case .request:
+                    return kind == .requests
+                }
             }
-            if item.isError { errors += 1 }
         }
-        return (messages, tools, errors)
     }
 
-    private var firstErrorSeq: Int? {
-        reconstruction.items.first(where: \.isError)?.seq
+    private static func kindCounts(_ entries: [SessionProxyEvidence.Entry])
+        -> (messages: Int, tools: Int, errors: Int, requests: Int) {
+        var messages = 0, tools = 0, errors = 0, requests = 0
+        for entry in entries {
+            switch entry {
+            case .item(let item):
+                switch item.kind {
+                case .message: messages += 1
+                case .toolUse, .toolResult: tools += 1
+                case .turnEnd: break
+                }
+            case .request:
+                requests += 1
+            }
+            if entry.isError { errors += 1 }
+        }
+        return (messages, tools, errors, requests)
     }
 
-    private var filterChips: some View {
+    private func filterChips(_ entries: [SessionProxyEvidence.Entry]) -> some View {
         HStack(spacing: 5) {
-            let counts = kindCounts
-            ForEach(KindFilter.allCases, id: \.self) { filter in
+            let counts = Self.kindCounts(entries)
+            ForEach(KindFilter.allCases.filter { $0 != .requests || counts.requests > 0 }, id: \.self) { filter in
                 let label: String = switch filter {
-                case .all: "All \(reconstruction.items.count)"
+                case .all: "All \(entries.count)"
                 case .messages: "Messages \(counts.messages)"
                 case .tools: "Tools \(counts.tools)"
                 case .errors: "Errors \(counts.errors)"
+                case .requests: "Requests \(counts.requests)"
                 }
                 Button {
                     kind = filter
@@ -219,25 +243,25 @@ struct ReconstructedTimelineView: View {
         }
     }
 
-    @ViewBuilder private var listArea: some View {
-        if filteredItems.isEmpty {
-            Text(reconstruction.items.isEmpty
+    @ViewBuilder private func listArea(_ entries: [SessionProxyEvidence.Entry]) -> some View {
+        let shown = Self.filtered(entries, by: kind)
+        if shown.isEmpty {
+            Text(entries.isEmpty
                  ? "No timeline rows could be rebuilt from the stored segments."
                  : "No \(kind.rawValue.lowercased()) rows.")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         } else {
+            let firstError = entries.first(where: \.isError)?.id
             ScrollViewReader { proxy in
                 VStack(alignment: .leading, spacing: 5) {
-                    if firstErrorSeq != nil {
+                    if let firstError {
                         Button {
-                            if let seq = firstErrorSeq {
-                                // A kind filter can leave the error row
-                                // unrendered — scrollTo needs a live
-                                // target, so switch first.
-                                if kind != .all && kind != .errors { kind = .errors }
-                                withAnimation { proxy.scrollTo(seq, anchor: .top) }
-                            }
+                            // A kind filter can leave the error row
+                            // unrendered — scrollTo needs a live
+                            // target, so switch first.
+                            if kind != .all && kind != .errors { kind = .errors }
+                            withAnimation { proxy.scrollTo(firstError, anchor: .top) }
                         } label: {
                             Label("Jump to error", systemImage: "arrow.down.to.line")
                                 .font(.system(size: 10))
@@ -245,10 +269,10 @@ struct ReconstructedTimelineView: View {
                         .buttonStyle(.plain).foregroundStyle(.red)
                     }
                     if embedded {
-                        rows
+                        rows(shown)
                     } else {
                         ScrollView {
-                            rows.padding(.bottom, 4)
+                            rows(shown).padding(.bottom, 4)
                         }
                     }
                 }
@@ -256,13 +280,55 @@ struct ReconstructedTimelineView: View {
         }
     }
 
-    private var rows: some View {
+    private func rows(_ shown: [SessionProxyEvidence.Entry]) -> some View {
         LazyVStack(alignment: .leading, spacing: 5) {
-            ForEach(filteredItems, id: \.seq) { item in
-                row(item).id(item.seq)
+            ForEach(shown) { entry in
+                Group {
+                    switch entry {
+                    case .item(let item): row(item)
+                    case .request(_, let request): requestRow(request)
+                    }
+                }
+                .id(entry.id)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A proxied request between the turns: the request line, the model,
+    /// retries, and the upstream's error text when it refused.
+    private func requestRow(_ request: CLIProxyRequest) -> some View {
+        let failed = SessionProxyEvidence.failed(request)
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(request.timestamp.map { Self.clock.string(from: $0) } ?? "—")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.quaternary)
+                .frame(width: 40, alignment: .leading)
+            Image(systemName: "network")
+                .font(.system(size: 9))
+                .foregroundStyle(failed ? Color.red : Color.secondary)
+                .frame(width: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(SessionProxyEvidence.line(request))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(failed ? Color.red : Color.secondary)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+                if failed, let summary = request.errorSummary {
+                    Text(summary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+            }
+            Text("proxy")
+                .font(.system(size: 8, weight: .medium))
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.12), in: .capsule)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Rows

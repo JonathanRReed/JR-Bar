@@ -938,6 +938,8 @@ final class OverviewStore {
             timelinePage = page
             if page.gaps.contains("transcript_not_found") {
                 await loadArchivedTimeline(for: id)
+            } else {
+                await loadProxyEvidence(for: id)
             }
         } catch {
             guard timelineSessionID == id else { return }
@@ -1060,11 +1062,14 @@ final class OverviewStore {
             let activity = SessionActivity.reduce(entry.session)
             return activity == .working || activity == .waiting || activity == .idle
         } ?? false
+        let requests = proxyEvidence?.id == timelineSessionID ? proxyEvidence?.requests ?? [] : []
         let key = TimelineReconstructionKey(
             session: timelineSessionID, count: timeline.count, first: timeline.first?.seq,
-            last: timeline.last?.seq, gaps: timelinePage?.gaps ?? [], running: running)
+            last: timeline.last?.seq, gaps: timelinePage?.gaps ?? [], running: running,
+            requests: requests.count)
         if let cached = timelineReconstructionCache, cached.key == key { return cached.value }
         let value = SessionReconstructor.reconstruction(from: timeline, gaps: key.gaps, running: running)
+            .withProxyRequests(requests)
         timelineReconstructionCache = (key, value)
         return value
     }
@@ -1074,6 +1079,7 @@ final class OverviewStore {
         var first, last: Int?
         var gaps: [String]
         var running: Bool
+        var requests: Int
     }
     @ObservationIgnored private var timelineReconstructionCache: (key: TimelineReconstructionKey, value: SessionReconstruction)?
 
@@ -1083,6 +1089,9 @@ final class OverviewStore {
         case .messages: return timeline.filter { $0.kind == "message" }
         case .tools: return timeline.filter { $0.kind == "tool_use" || $0.kind == "tool_result" }
         case .errors: return timeline.filter { $0.isError == true }
+        // Proxy requests ride on the reconstruction, never on the
+        // transcript's own items.
+        case .requests: return []
         }
     }
 
@@ -1129,6 +1138,21 @@ final class OverviewStore {
     /// Rebuilds a session's archived transcript by its uuid — set by the
     /// app delegate to the Data Hoarder's reader; nil hides the fallback.
     var archiveTimeline: ((String) async -> (SessionReconstruction, ArchiveRecord)?)?
+    /// The CLIProxyAPI requests the archive holds under a session uuid —
+    /// set by the app delegate; nil leaves the live timeline as it is.
+    var archiveProxyEvidence: ((String) async -> [CLIProxyRequest])?
+    /// The proxy evidence for the timeline on screen, keyed by row id.
+    private(set) var proxyEvidence: (id: String, requests: [CLIProxyRequest])?
+
+    /// The proxy's side of the selected run, when the archive kept it:
+    /// the live timeline interleaves those requests between its turns.
+    func loadProxyEvidence(for id: String) async {
+        guard let archiveProxyEvidence,
+              let entry = rows.first(where: { $0.id == id }) ?? roster.first(where: { $0.id == id }) else { return }
+        let requests = await archiveProxyEvidence(Self.archiveSearchTerm(for: entry))
+        guard timelineSessionID == id else { return }
+        proxyEvidence = (id, requests)
+    }
     /// The archived copy standing in for a transcript that is gone: the
     /// row it belongs to, the rebuilt timeline and the record it came from.
     private(set) var archivedTimeline: (id: String, reconstruction: SessionReconstruction, record: ArchiveRecord)?

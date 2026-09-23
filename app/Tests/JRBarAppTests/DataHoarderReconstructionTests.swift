@@ -21,13 +21,13 @@ struct DataHoarderReconstructionTests {
         """.utf8)
     }
 
-    private func cliproxyLog(status: Int) -> Data {
+    private func cliproxyLog(status: Int, at stamp: String = "2026-09-19T10:00:00Z") -> Data {
         Data("""
         === REQUEST INFO ===
         Version: 1.0
         URL: http://localhost:8317/v1/messages?x=1
         Method: POST
-        Timestamp: 2026-09-19T10:00:00Z
+        Timestamp: \(stamp)
         === HEADERS ===
         User-Agent: claude-cli/2.1.222 (external)
         X-Claude-Code-Session-Id: sess-1
@@ -159,6 +159,40 @@ struct DataHoarderReconstructionTests {
         // Clicking a related row selects that record in the saved list.
         model.openRelated(transcript)
         #expect(model.selectedID == transcript.id)
+    }
+
+    @Test func aTranscriptCarriesItsProxiedRequestsBetweenTheTurns() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let transcript = try await transcriptRecord(in: archive, intent: "ask")
+        for (index, (status, stamp)) in [(529, "2026-09-19T10:00:00.500Z"), (200, "2026-09-19T10:00:01.500Z")].enumerated() {
+            let proxy = try await archive.createLiveRecord(
+                name: "req-\(index).log", sourcePath: "/tmp/req-\(index).log",
+                provider: "cliproxy", sessionID: "sess-1")
+            _ = try await archive.appendSegment(
+                recordID: proxy.id, data: cliproxyLog(status: status, at: stamp), byteOffset: 0)
+        }
+        let model = DataHoarderModel(archive: archive)
+        await model.reload()
+        model.selectedID = transcript.id
+        await model.loadDetail()
+        let reconstruction = try #require(model.reconstruction)
+        #expect(reconstruction.proxyRequests.map(\.status) == [529, 200])
+        #expect(SessionProxyEvidence.summary(reconstruction.proxyRequests) == "1 × HTTP 529, then it went through")
+        // The 529 lands after the ask and before the reply's tool call.
+        let kinds = reconstruction.entries.map { entry -> String in
+            switch entry {
+            case .item(let item): item.kind.rawValue
+            case .request(_, let request): "request:\(request.status ?? 0)"
+            }
+        }
+        #expect(kinds == ["message", "request:529", "toolUse", "request:200", "toolResult"])
+
+        // The Overview's archived fallback carries the same evidence.
+        let archived = try #require(await DataHoarderModel.archivedTimeline(in: archive, sessionID: "sess-1"))
+        #expect(archived.0.proxyRequests.count == 2)
+        #expect(await DataHoarderModel.proxyRequests(in: archive, sessionID: "sess-1").count == 2)
+        #expect(await DataHoarderModel.proxyRequests(in: archive, sessionID: "nobody").isEmpty)
     }
 
     @Test func gapStateAndSegmentNotesAreSurfaced() async throws {
