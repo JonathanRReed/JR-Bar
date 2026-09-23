@@ -433,6 +433,9 @@ final class MenuBarUtility: Toy {
             return self.watchesUpdates(of: item)
         }
         bar.onUpdateWatch = { [weak self] item, on in self?.setWatchesUpdates(on, for: item) }
+        // The combined readout's popover carries the agents' line too —
+        // the promised Agent variant, one click from the face.
+        combinedItem.agentLine = { [weak self] in self?.combinedAgentLine() }
         bar.onOpenChange = { [weak self] open in
             guard let self else { return }
             self.reveal.holdOpen = open
@@ -3597,6 +3600,14 @@ final class MenuBarUtility: Toy {
             guard !Task.isCancelled else { return }
             self?.hider.hide()
         }
+    }
+
+    /// The combined popover's agents line: the feed's combined state,
+    /// its detail, its tint.
+    func combinedAgentLine() -> MenuBarSystemModel.AgentLine {
+        let read = agentState()
+        return MenuBarSystemModel.AgentLine(label: "Agents — \(read.state.label)",
+                                            detail: read.detail, tintHex: read.state.tintHex)
     }
 
     /// The owner key "show for updates" watches an item by: its bundle,

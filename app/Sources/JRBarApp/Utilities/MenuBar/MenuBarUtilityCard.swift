@@ -262,8 +262,8 @@ struct MenuBarUtilityControls: View {
                     Toggle(isOn: utility.bind(\.combinedSystemItem)) {
                         SettingLabel(title: "One system item",
                                      subtitle: utility.concealing
-                                        ? "Battery, Wi-Fi and Focus drawn beside the JR-Bar icon as part of its face, with a popover. Control Center's own items hide only once that face is on screen, and come back the moment it isn't."
-                                        : "Battery, Wi-Fi, sound and Focus in a single item with a popover — the matching Control Center items hide only while it is on screen.")
+                                        ? "Battery, Wi-Fi and Focus drawn beside the JR-Bar icon as part of its face. Its popover adds your agents, connected Bluetooth devices, what's playing and the volume. Control Center's own items hide only once that face is on screen, and come back the moment it isn't."
+                                        : "Battery, Wi-Fi, sound and Focus in a single item. Its popover adds your agents, connected Bluetooth devices and what's playing — the matching Control Center items hide only while it is on screen.")
                     }
                     Divider()
                         .padding(.vertical, 4)
