@@ -2700,22 +2700,15 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// Drop the photographs of apps long gone: an owner that neither
-    /// runs nor resolves on disk, photographed more than a month ago. A
-    /// helper bundled inside another app resolves neither lookup, so the
-    /// age is what keeps its glyph through a quiet spell. Launch-time
-    /// housekeeping, a beat after the camera is set.
+    /// Drop every photograph more than a month old, whoever owns it — a
+    /// glyph still in use is re-taken each launch before the first
+    /// conceal, so only the forgotten ones reach the cap. Launch-time
+    /// housekeeping, a beat after the camera is set; each photograph
+    /// pass holds the same cap after that.
     private func pruneGlyphs() {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard let camera = self?.glyphCamera else { return }
-            let now = Date()
-            camera.cache.prune { owner, capturedAt in
-                now.timeIntervalSince(capturedAt) < MenuBarGlyphCache.pruneAge
-                    || !owner.contains(".")
-                    || !NSRunningApplication.runningApplications(withBundleIdentifier: owner).isEmpty
-                    || NSWorkspace.shared.urlForApplication(withBundleIdentifier: owner) != nil
-            }
+            self?.glyphCamera?.cache.expire()
         }
     }
 
