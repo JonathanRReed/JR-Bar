@@ -105,6 +105,25 @@ struct DockPreviewAgentTests {
                                             items: items, bundleID: { _ in Self.ghostty }) == nil)
     }
 
+    @Test("no running host, no search: both raises answer notFound without reading a window")
+    func locatorWithoutHosts() async {
+        // A terminal nobody runs: the hosts list is empty, so neither the
+        // synchronous raise nor the worker's ever lists a window.
+        let marks = DockAgentMark.marks(from: [session("a", label: "Ship the dock",
+                                                       host: "com.example.jrbar.absent-terminal")])
+        #expect(SessionWindowLocator.hosts(sessionID: "claude:session:a", marks: marks).isEmpty)
+        #expect(SessionWindowLocator.hosts(sessionID: "claude:session:zzz", marks: marks).isEmpty)
+        let landed = SessionWindowLocator.land(sessionID: "claude:session:a", marks: marks, hosts: [])
+        #expect(landed.outcome == .notFound && landed.pid == nil, "nothing to activate either")
+        // A synchronous context picks the synchronous raise.
+        func raiseNow(_ id: String) -> SessionWindowLocator.Outcome {
+            SessionWindowLocator.raise(sessionID: id, marks: marks)
+        }
+        #expect(raiseNow("claude:session:a") == .notFound)
+        #expect(await SessionWindowLocator.raise(sessionID: "claude:session:a", marks: marks) == .notFound)
+        #expect(await SessionWindowLocator.raise(sessionID: "claude:session:zzz", marks: marks) == .notFound)
+    }
+
     @Test("a live refresh keeps surviving cards' ids and stills and adds newcomers")
     func liveMerge() {
         let still = NSImage(size: NSSize(width: 4, height: 4))
