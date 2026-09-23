@@ -237,7 +237,7 @@ struct AskSurfacesTests {
         let ticket = PaletteVerbTicket()
         PaletteVerbScope.$ticket.withValue(ticket) {
             store.show(toast: "now")
-            Task { store.show(toast: "later") }
+            _ = Task { @MainActor in store.show(toast: "later") }
         }
         store.show(toast: "unrelated")
         await Self.waitFor { ticket.lines.count >= 2 }
@@ -253,7 +253,7 @@ struct AskSurfacesTests {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     PaletteVerbScope.$ticket.withValue(ticket) {
-                        Task {
+                        _ = Task { @MainActor in
                             store.show(toast: "from the task")
                             done.resume()
                         }
