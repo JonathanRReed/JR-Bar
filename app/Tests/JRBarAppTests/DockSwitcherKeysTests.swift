@@ -48,7 +48,24 @@ struct DockSwitcherKeysTests {
     private func eaten(_ tap: SwitcherKeyTap, _ code: CGKeyCode, flags: CGEventFlags = []) throws -> Bool {
         let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true))
         event.flags = flags
-        return tap.handle(type: .keyDown, event: event)?.takeRetainedValue() == nil
+        return tap.handle(type: .keyDown, event: event)?.takeUnretainedValue() == nil
+    }
+
+    @Test("a passed event goes back at +0 — the tap keeps nothing of the keys it lets through")
+    func passesWithoutRetaining() throws {
+        let tap = SwitcherKeyTap()
+        tap.keyboard = DockKeyboardLayout()
+        let key = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 96, keyDown: true))
+        let click = try #require(CGEvent(mouseEventSource: nil, mouseType: .rightMouseDown,
+                                         mouseCursorPosition: CGPoint(x: 10, y: 10), mouseButton: .right))
+        let keyCount = CFGetRetainCount(key), clickCount = CFGetRetainCount(click)
+        for _ in 0..<50 {
+            #expect(tap.handle(type: .keyDown, event: key) != nil)
+            #expect(tap.handle(type: .flagsChanged, event: key) != nil)
+            #expect(tap.handle(type: .rightMouseDown, event: click) != nil)
+        }
+        #expect(CFGetRetainCount(key) == keyCount, "a retain per pass-through was a leaked event per key")
+        #expect(CFGetRetainCount(click) == clickCount)
     }
 
     @Test("an open strip eats every key — nothing typed while switching reaches the app")
@@ -104,7 +121,7 @@ struct DockSwitcherKeysTests {
             let event = try #require(CGEvent(mouseEventSource: nil, mouseType: type,
                                              mouseCursorPosition: point, mouseButton: .right))
             event.flags = command ? .maskCommand : []
-            return tap.handle(type: type, event: event)?.takeRetainedValue() == nil
+            return tap.handle(type: type, event: event)?.takeUnretainedValue() == nil
         }
         // Two app tiles on a bottom Dock whose list spans 400–1040 × 1110–1170.
         let tiles = [CGRect(x: 420, y: 1112, width: 56, height: 56),

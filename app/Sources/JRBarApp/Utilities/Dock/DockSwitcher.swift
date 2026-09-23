@@ -735,7 +735,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
         guard let created = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                                               options: .defaultTap, eventsOfInterest: mask,
                                               callback: { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passRetained(event) }
+            guard let refcon else { return Unmanaged.passUnretained(event) }
             return Unmanaged<SwitcherKeyTap>.fromOpaque(refcon)
                 .takeUnretainedValue().handle(type: type, event: event)
         }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
@@ -774,13 +774,16 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// at freed memory.
     deinit { stop() }
 
-    /// nil return eats the event; passRetained hands it on. Internal
-    /// for the tests, which drive it with synthetic CGEvents. Runs on
-    /// the tap's thread: nothing here may wait on the main thread.
+    /// nil return eats the event; passUnretained hands it on. The event
+    /// is the system's: a tap returns the one it was given at +0, and a
+    /// passRetained here was a retain nobody released, one leaked event
+    /// per key and click on the Mac. Internal for the tests, which drive
+    /// it with synthetic CGEvents. Runs on the tap's thread: nothing
+    /// here may wait on the main thread.
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = lock.withLock({ tap }) { CGEvent.tapEnable(tap: tap, enable: true) }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
         lock.lock()
         let isOpen = open, isCmdOpen = cmdOpen
@@ -896,7 +899,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
                     return swallow { self.onPreviewAction(char) }
                 }
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         // ⌘'s edge is tracked on every modifier change, open or not, so
@@ -928,7 +931,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
                 DispatchQueue.main.async { [weak self] in self?.onCommit() }
             }
         }
-        return Unmanaged.passRetained(event)
+        return Unmanaged.passUnretained(event)
     }
 
     /// DockDoor's quick quit without Apple's menu flashing over it: a
@@ -944,11 +947,11 @@ final class SwitcherKeyTap: @unchecked Sendable {
         if type == .rightMouseUp { eatRightUp = false }
         lock.unlock()
         if type == .rightMouseUp {
-            return eatUp ? nil : Unmanaged.passRetained(event)
+            return eatUp ? nil : Unmanaged.passUnretained(event)
         }
         let point = event.location
         guard event.flags.contains(.maskCommand), targets.contains(where: { $0.contains(point) }) else {
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
         let force = event.flags.contains(.maskAlternate)
         lock.lock(); eatRightUp = true; lock.unlock()

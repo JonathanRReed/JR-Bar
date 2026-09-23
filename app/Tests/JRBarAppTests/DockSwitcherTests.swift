@@ -342,7 +342,7 @@ struct DockSwitcherTests {
 
     /// nil from `handle` is an eaten event; a returned event passed.
     private func passes(_ tap: SwitcherKeyTap, _ event: CGEvent) -> Bool {
-        tap.handle(type: .keyDown, event: event)?.takeRetainedValue() != nil
+        tap.handle(type: .keyDown, event: event)?.takeUnretainedValue() != nil
     }
 
     @Test("the preview's keys are the tap's while its panel floats")
