@@ -285,6 +285,14 @@ struct DockSwitcherTests {
         #expect(passes(tap, arrow), "closing the panel hands the keys back")
     }
 
+    @Test("stills capture the selected card first, then the strip in order")
+    func captureOrder() {
+        let items = ["a", "b", "c", "d"].map { named("App", $0) }
+        #expect(DockSwitcherThumbs.captureOrder(items, selectedID: "App-c").map(\.title) == ["c", "a", "b", "d"])
+        #expect(DockSwitcherThumbs.captureOrder(items, selectedID: nil).map(\.title) == ["a", "b", "c", "d"])
+        #expect(DockSwitcherThumbs.captureOrder(items, selectedID: "gone").map(\.title) == ["a", "b", "c", "d"])
+    }
+
     @MainActor
     @Test("the strip joins fullscreen spaces like the preview panel")
     func stripIsFullScreenAuxiliary() {

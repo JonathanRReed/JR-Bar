@@ -791,8 +791,30 @@ final class DockSwitcherController {
             },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
-        return DockSwitcherList.annotate(items, marks: agentMarks(),
+        // The Dock's unread badges ride the window cards too — Mail's 3
+        // shows on each Mail window, the way the tile shows it.
+        let badges = Self.dockBadges()
+        let badged = badges.isEmpty ? items : items.map { item in
+            var item = item
+            item.badge = apps[item.pid]?.bundleURL.flatMap { badges[$0.path] }
+            return item
+        }
+        return DockSwitcherList.annotate(badged, marks: agentMarks(),
                                          bundleID: { apps[$0]?.bundleIdentifier })
+    }
+
+    /// The unread counts live on the Dock's tiles — one AX walk maps
+    /// bundle path → badge, the same walk the previews do per tick.
+    private static func dockBadges() -> [String: String] {
+        var badges: [String: String] = [:]
+        guard let pid = AppleDockReader.dockPID(),
+              let list = AppleDockReader.dockList(pid: pid) else { return badges }
+        for tile in AppleDockReader.items(list: list) where tile.kind == .app {
+            if let badge = tile.badge, let path = tile.url?.path {
+                badges[path] = badge
+            }
+        }
+        return badges
     }
 
     // MARK: ⌘⇥ — the app strip
@@ -836,17 +858,7 @@ final class DockSwitcherController {
         for app in apps where seen.insert(app.processIdentifier).inserted {
             ordered.append(app.processIdentifier)
         }
-        // The unread counts live on the Dock's tiles — one AX walk maps
-        // bundle path → badge, the same walk the previews do per tick.
-        var badges: [String: String] = [:]
-        if let pid = AppleDockReader.dockPID(), let list = AppleDockReader.dockList(pid: pid) {
-            for tile in AppleDockReader.items(list: list)
-            where tile.kind == .app {
-                if let badge = tile.badge, let path = tile.url?.path {
-                    badges[path] = badge
-                }
-            }
-        }
+        let badges = Self.dockBadges()
         let marks = agentMarks()
         return ordered.compactMap { pid -> SwitcherItem? in
             guard let app = byPID[pid] else { return nil }
@@ -1067,16 +1079,23 @@ final class DockSwitcherController {
         let offscreen = offscreenAllowed()
         // The unfiltered list: typing a letter shouldn't lose stills
         // already on the card.
-        let items = model.allItems
+        // Selection first, then the strip's own order: the card being
+        // looked at fills before the far end of the row.
+        let items = DockSwitcherThumbs.captureOrder(model.allItems, selectedID: model.selected?.id)
         Task { [weak self] in
-            let thumbs = await DockSwitcherThumbs.stills(
-                for: items, offscreen: offscreen) { [weak self] in
+            await DockSwitcherThumbs.stills(
+                for: items, offscreen: offscreen,
+                isStale: { [weak self] in
                     guard let self else { return true }
                     return self.thumbGeneration != generation
                         || self.panel?.isVisible != true
-                }
-            guard let self, self.thumbGeneration == generation else { return }
-            self.panel?.apply(thumbnails: thumbs)
+                },
+                onStill: { [weak self] id, image in
+                    // Each still lands as it's captured — the strip fills
+                    // card by card instead of after the slowest window.
+                    guard let self, self.thumbGeneration == generation else { return }
+                    self.panel?.apply(thumbnails: [id: image])
+                })
         }
     }
 }
@@ -1085,26 +1104,39 @@ final class DockSwitcherController {
 /// each row's CG window id to its `SCWindow`, then the shared preview
 /// capture (cache + trim + transparency probe) does the still.
 enum DockSwitcherThumbs {
-    /// `item.id` → still. `isStale` mirrors the preview's contract —
-    /// a closed or re-opened strip drops the in-flight batch.
+    /// Captures stream through `onStill` (`item.id`, still) as each one
+    /// lands. `isStale` mirrors the preview's contract — a closed or
+    /// re-opened strip stops the pass mid-flight.
     @MainActor
     static func stills(for items: [SwitcherItem], offscreen: Bool,
-                       isStale: @MainActor () -> Bool) async -> [String: NSImage] {
+                       isStale: @MainActor () -> Bool,
+                       onStill: @MainActor (String, NSImage) -> Void) async {
         guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: !offscreen) else { return [:] }
-        guard !isStale() else { return [:] }
+            false, onScreenWindowsOnly: !offscreen) else { return }
+        guard !isStale() else { return }
         let byID = Dictionary(uniqueKeysWithValues:
             shareable.windows.map { ($0.windowID, $0) })
         let scale = NSScreen.main?.backingScaleFactor ?? 2
-        var stills: [String: NSImage] = [:]
         for item in items {
-            guard !isStale() else { return [:] }
+            guard !isStale() else { return }
             guard let windowID = item.windowID, let scWindow = byID[windowID],
                   let image = await DockThumbnailer.capture(
                     scWindow: scWindow, pid: item.pid, scale: scale) else { continue }
-            stills[item.id] = image
+            guard !isStale() else { return }
+            onStill(item.id, image)
         }
-        return stills
+    }
+
+    /// The capture queue: the selected card first, the rest in strip
+    /// order — the pick is what the zoom pane shows at once.
+    static func captureOrder(_ items: [SwitcherItem], selectedID: String?) -> [SwitcherItem] {
+        guard let selectedID, let index = items.firstIndex(where: { $0.id == selectedID }) else {
+            return items
+        }
+        var ordered = items
+        let pick = ordered.remove(at: index)
+        ordered.insert(pick, at: 0)
+        return ordered
     }
 }
 
@@ -1413,6 +1445,14 @@ struct DockSwitcherView: View {
                         Image(nsImage: item.icon ?? NSImage())
                             .resizable()
                             .frame(width: 18, height: 18)
+                            .overlay(alignment: .topTrailing) {
+                                // The corner icon keeps the Dock's badge —
+                                // a still must not hide Mail's unread.
+                                if let badge = item.badge {
+                                    badgePill(badge, size: 8)
+                                        .offset(x: 6, y: -5)
+                                }
+                            }
                             .padding(3)
                     }
                     .frame(height: 76)
@@ -1424,12 +1464,7 @@ struct DockSwitcherView: View {
                         // The Dock tile's badge — Witch draws the same
                         // unread pill on its app cards.
                         if let badge = item.badge {
-                            Text(badge)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(.red, in: Capsule())
+                            badgePill(badge, size: 10)
                                 .offset(x: 8, y: -6)
                         }
                     }
@@ -1474,6 +1509,16 @@ struct DockSwitcherView: View {
             }
         }
         .help(help(for: item))
+    }
+
+    /// The Dock tile's unread pill, verbatim.
+    private func badgePill(_ badge: String, size: CGFloat) -> some View {
+        Text(badge)
+            .font(.system(size: size, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, size * 0.4)
+            .padding(.vertical, 1)
+            .background(.red, in: Capsule())
     }
 
     private func help(for item: SwitcherItem) -> String {
