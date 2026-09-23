@@ -187,6 +187,13 @@ def hook_doctor_report(home: Path | None = None) -> dict[str, Any]:
         except Exception as exc:
             entry["would_install"] = "unknown"
             entry["would_install_command"] = exc.__class__.__name__
+        # When this provider's hook last reached the daemon: the event log's
+        # modification time, never its contents. A provider that is
+        # installed but silent for days is the one that needs a repair.
+        try:
+            entry["last_event_at"] = round(detect_log_path(spec.provider, home).stat().st_mtime, 3)
+        except (OSError, ValueError):
+            entry["last_event_at"] = None
         providers.append(entry)
     pending = []
     for path in pending_hook_files(state_dir):
@@ -195,6 +202,12 @@ def hook_doctor_report(home: Path | None = None) -> dict[str, Any]:
         except OSError:
             lines = -1
         pending.append({"file": path.name, "lines": lines})
+    for entry in providers:
+        entry["pending_lines"] = sum(
+            max(0, item["lines"])
+            for item in pending
+            if item["file"].split(".", 1)[0] == entry["provider"]
+        )
     ingress = state_dir / "hook-ingress.sock"
     core = default_core_socket_path()
     return {

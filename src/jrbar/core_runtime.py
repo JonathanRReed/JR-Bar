@@ -2895,6 +2895,18 @@ def _cmd_doctor(self, args):
     return self._core_doctor_document()
 
 
+@command("hooks_doctor", main_thread=False)
+def _cmd_hooks_doctor(self, args):
+    """``jrbar hooks doctor`` as data, for Settings > Agents: per provider,
+    whether its hooks are installed and in which shape, whether the decide
+    lane is, when its last event arrived and how many are queued. Content
+    free: paths, shapes, counts and times, never a payload. Repair is
+    ``install_hooks``."""
+    from .hook_doctor import hook_doctor_report
+
+    return hook_doctor_report()
+
+
 @command("open_legacy_window")
 def _cmd_open_legacy_window(self, args):
     name = str(args.get("name") or "")

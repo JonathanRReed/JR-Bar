@@ -120,9 +120,23 @@ def test_doctor_says_whether_the_decide_lane_is_installed(tmp_path: Path, shim: 
     (home / ".claude").mkdir(parents=True)
     log = tmp_path / "state" / "claude.jsonl"
     install_claude_hooks(log_path=log, config_path=home / ".claude" / "settings.json")
+    # With an explicit home the doctor reads that home's state directory.
+    state_dir = home / ".local" / "state" / "jrbar"
+    state_dir.mkdir(parents=True)
+    (state_dir / "claude.pending.jsonl").write_text('{"payload":"{}"}\n{"payload":"{}"}\n')
     report = hook_doctor_report(home)
     providers = {entry["provider"]: entry for entry in report["providers"]}
     assert providers["claude"]["decide"] == "installed"
     assert providers["codex"]["decide"] == "not_installed"
     assert "decide" not in providers["gemini"]
     assert "decide=installed" in render_hook_doctor(report)
+    # Content-free liveness for the Settings row: when the last event
+    # arrived (the log's mtime) and how many are waiting to be drained.
+    assert providers["claude"]["last_event_at"] == pytest.approx(log.stat().st_mtime, abs=0.01)
+    assert providers["claude"]["pending_lines"] == 2
+    assert providers["codex"]["pending_lines"] == 0
+
+    # The same report is a core command, for the app's Settings row.
+    from jrbar.core_runtime import command_names
+
+    assert "hooks_doctor" in command_names()
