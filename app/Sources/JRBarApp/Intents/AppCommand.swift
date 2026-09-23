@@ -188,7 +188,7 @@ enum AppCommand: Equatable, Sendable {
 enum SettingsPageName {
     nonisolated static let known: Set<String> = [
         "general", "agents", "usage", "devices", "utilities", "lighting", "toys",
-        "notifications", "shortcuts", "remote", "advanced",
+        "notifications", "sounds", "shortcuts", "remote", "advanced",
     ]
 }
 

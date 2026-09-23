@@ -14,7 +14,7 @@ import UserNotifications
 @Observable
 final class SettingsStore {
     enum Page: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, usage, devices, utilities, lighting, toys, notifications, shortcuts, remote, advanced
+        case general, agents, usage, devices, utilities, lighting, toys, notifications, sounds, shortcuts, remote, advanced
 
         var id: String { rawValue }
 
@@ -28,6 +28,7 @@ final class SettingsStore {
             case .lighting: return "Lighting"
             case .toys: return "Toys"
             case .notifications: return "Notifications & Focus"
+            case .sounds: return "Sounds"
             case .shortcuts: return "Shortcuts"
             case .remote: return "Remote"
             case .advanced: return "Advanced"
@@ -44,6 +45,7 @@ final class SettingsStore {
             case .lighting: return "paintpalette.fill"
             case .toys: return "party.popper.fill"
             case .notifications: return "bell.badge.fill"
+            case .sounds: return "speaker.wave.2.fill"
             case .shortcuts: return "command"
             case .remote: return "antenna.radiowaves.left.and.right"
             case .advanced: return "wrench.and.screwdriver.fill"
@@ -63,6 +65,7 @@ final class SettingsStore {
             // palette's pink — Lighting already owns that one.
             case .toys: return Color(red: 0.93, green: 0.30, blue: 0.62)
             case .notifications: return Color(nsColor: .systemRed)
+            case .sounds: return Color(nsColor: .systemPurple)
             case .shortcuts: return Color(nsColor: .systemBlue)
             case .remote: return Color(nsColor: .systemTeal)
             case .advanced: return Color(nsColor: .systemGray)
@@ -234,6 +237,22 @@ final class SettingsStore {
     /// Where an app-action shortcut's write goes — the delegate's
     /// `AppHotkeys`, which persists it and re-registers.
     var onSetActionShortcut: (@MainActor (HotkeyChord?, String) -> Void)?
+
+    // MARK: Sounds
+
+    /// Settings › Sounds — app-local, since the app plays the sounds.
+    /// Every write persists at once; the event player reads them at each
+    /// sound, so a change lands on the next one.
+    var soundPreferences: SoundPreferences = SoundPreferences.load() {
+        didSet { if soundPreferences != oldValue { soundPreferences.save() } }
+    }
+
+    /// The page's preview voice — the same player, the same choices.
+    @ObservationIgnored private lazy var soundPreview = SoundPlayer()
+
+    func previewSound(_ name: String) {
+        soundPreview.preview(name)
+    }
 
     // MARK: Search
 

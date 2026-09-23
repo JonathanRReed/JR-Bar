@@ -2,6 +2,89 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
+// MARK: - Sounds
+
+/// What JR-Bar sounds like: a sound (or silence) per moment with a
+/// preview, one volume, and whether sounds follow macOS's alert device
+/// so a chime stays on the speakers while a call runs in AirPods. The
+/// person's own sounds in ~/Library/Sounds are offered beside the
+/// system's.
+struct SoundsPage: View {
+    @Bindable var store: SettingsStore
+
+    private func choice(_ role: SoundRole) -> Binding<String> {
+        Binding(get: { store.soundPreferences.choices[role] ?? "" },
+                set: { store.soundPreferences.choices[role] = $0.isEmpty ? nil : $0 })
+    }
+
+    var body: some View {
+        let available = SoundPlayer.availableSounds()
+        SettingGroup("Event sounds", note: "Sounds stay silent in Pause, Dim and Dark quiet, and when the asking session is already in front.") {
+            ForEach(SoundRole.allCases, id: \.self) { role in
+                SettingRow(role.title, subtitle: role.subtitle) {
+                    HStack(spacing: 6) {
+                        Picker(role.title, selection: choice(role)) {
+                            Text("\(role.defaultSound) (default)").tag("")
+                            Text("None").tag(SoundPreferences.silent)
+                            Divider()
+                            ForEach(available.system, id: \.self) { Text($0).tag($0) }
+                            if !available.custom.isEmpty {
+                                Divider()
+                                ForEach(available.custom, id: \.self) { Text($0).tag($0) }
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        Button {
+                            store.previewSound(store.soundPreferences.choices[role] ?? role.defaultSound)
+                        } label: {
+                            Image(systemName: "play.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(store.soundPreferences.choices[role] == SoundPreferences.silent)
+                        .help("Play it")
+                        .accessibilityLabel("Preview \(role.title)")
+                    }
+                }
+            }
+        }
+
+        SettingGroup("Volume") {
+            SettingRow("JR-Bar sounds", subtitle: "Every sound above, apart from the Mac's own volume.") {
+                HStack(spacing: 10) {
+                    Slider(value: $store.soundPreferences.volume, in: 0...1) { editing in
+                        if !editing { store.previewSound(SoundRole.completion.defaultSound) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                    .accessibilityLabel("JR-Bar sound volume")
+                    ValueText(text: SettingsStore.percent(store.soundPreferences.volume))
+                }
+            }
+        }
+
+        SettingGroup("Output", note: "The alert device is System Settings › Sound › Play sound effects through.") {
+            Toggle(isOn: $store.soundPreferences.useAlertDevice) {
+                SettingLabel(title: "Play through the alert device",
+                             subtitle: "Sounds go where macOS plays its own alerts, not to the current output — a chime stays off your AirPods on a call.")
+            }
+            .settingRowStyle()
+        }
+
+        SettingGroup("Your own sounds", note: "Drop .aiff, .caf, .wav or .m4a files here and they join the menus above.") {
+            SettingRow("Sounds folder", subtitle: "~/Library/Sounds, where macOS keeps custom alerts.") {
+                Button("Show in Finder") {
+                    let folder = URL(fileURLWithPath: SoundPlayer.userSoundsFolder)
+                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+}
+
 // MARK: - Shortcuts
 
 /// Every global shortcut JR-Bar holds, on one page, each with a real

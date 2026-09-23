@@ -146,8 +146,9 @@ enum SettingsSearch {
         .utilities: ["menu bar", "dock", "hide icons", "bartender", "ice", "switcher", "data hoarder", "archive"],
         .lighting: ["colors", "colours", "led", "brightness", "dim", "scene", "effects", "animation"],
         .toys: ["fold", "aquarium", "confetti", "buddy", "fun"],
-        .notifications: ["sound", "banner", "focus", "do not disturb", "dnd", "quiet", "sleep", "keep awake",
-                         "caffeinate", "lid", "battery", "escalation", "chime"],
+        .notifications: ["banner", "focus", "do not disturb", "dnd", "quiet", "sleep", "keep awake",
+                         "caffeinate", "lid", "battery", "escalation"],
+        .sounds: ["sound", "chime", "alert", "volume", "airpods", "speaker", "audio"],
         .shortcuts: ["hotkey", "keyboard", "key", "chord", "links", "url", "jrbar://", "toggles", "raycast", "alfred"],
         .remote: ["peers", "tailscale", "webhook", "serve", "ingest", "token", "fleet"],
         .advanced: ["doctor", "logs", "reset", "diagnostics", "socket", "debug"],
@@ -162,11 +163,16 @@ enum SettingsSearch {
     }
 
     /// The shortcut page's catalogue rows: every app action and quick
-    /// toggle, with the chip's own search words.
+    /// toggle, with the chip's own search words — and the Sounds page's
+    /// moments, built from the same roles the page draws.
     nonisolated static var shortcutRows: [SettingsSearchEntry] {
         AppShortcutCatalog.actions.map { SettingsSearchEntry(.shortcuts, "Actions", $0.title) }
             + SystemToggle.allCases.map {
                 SettingsSearchEntry(.shortcuts, "Quick toggles", $0.longTitle, keywords: $0.keywords)
+            }
+            + SoundRole.allCases.map {
+                SettingsSearchEntry(.sounds, "Event sounds", $0.title, subtitle: $0.subtitle,
+                                    keywords: [$0.defaultSound])
             }
     }
 

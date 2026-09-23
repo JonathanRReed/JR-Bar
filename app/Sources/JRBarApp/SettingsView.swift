@@ -182,6 +182,7 @@ struct SettingsPageContainer: View {
             case .lighting: LightingPage(store: store)
             case .toys: ToysPage(store: store)
             case .notifications: NotificationsPage(store: store)
+            case .sounds: SoundsPage(store: store)
             case .shortcuts: ShortcutsPage(store: store)
             case .remote: RemotePage(store: store)
             case .advanced: AdvancedPage(store: store)

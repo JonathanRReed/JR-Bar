@@ -25,7 +25,8 @@ import Testing
     }
 
     @Test func aPagesSynonymsLandOnThePage() {
-        #expect(SettingsSearch.search("sound", in: entries).contains { $0.page == .notifications && $0.title == SettingsStore.Page.notifications.title })
+        #expect(SettingsSearch.search("sound", in: entries).first?.page == .sounds)
+        #expect(SettingsSearch.search("dnd", in: entries).contains { $0.page == .notifications && $0.title == SettingsStore.Page.notifications.title })
         #expect(SettingsSearch.search("hotkey", in: entries).contains { $0.page == .shortcuts })
     }
 
