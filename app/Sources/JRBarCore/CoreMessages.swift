@@ -157,6 +157,15 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
 
     /// The agent's hook is holding this ask for JR-Bar's Approve/Deny.
     public var isHeldForDecision: Bool { decision.map { !$0.decided } ?? false }
+    /// Still held at `now`: false once `hold_until` has come, when the
+    /// agent's own prompt carries on and Always and the choices lapse
+    /// with the hold. A hold with no deadline lasts until the daemon
+    /// says it was decided.
+    public func isHeld(at now: Date) -> Bool {
+        guard isHeldForDecision else { return false }
+        guard let holdUntil = decision?.holdUntil else { return true }
+        return holdUntil > now.timeIntervalSince1970
+    }
     /// Whether an "Always allow" (`answer_ask` decision `always`) can be sent.
     public var canAlwaysAllow: Bool { isHeldForDecision && (decision?.always ?? false) }
     /// A held multiple-choice ask: its options can be picked from any

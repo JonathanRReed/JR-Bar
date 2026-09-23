@@ -38,6 +38,26 @@ struct DecideLaneCodecTests {
         #expect(!answered.isDestructive)
     }
 
+    @Test("a hold lapses at hold_until; one with no deadline, or none at all, reads as before")
+    func holdLapses() throws {
+        let held = try ask("""
+        {"session":"s","answerable":true,"decision":{"hold_until":1788982845.5,"always":true,"decided":false}}
+        """)
+        let deadline = Date(timeIntervalSince1970: 1788982845.5)
+        #expect(held.isHeld(at: deadline.addingTimeInterval(-44.5)))
+        #expect(held.isHeld(at: deadline.addingTimeInterval(-0.001)))
+        #expect(!held.isHeld(at: deadline), "the hold is over the moment hold_until comes")
+        #expect(!held.isHeld(at: deadline.addingTimeInterval(60)))
+        #expect(held.isHeldForDecision, "the daemon's word is unchanged; only the clock says it lapsed")
+
+        let open = try ask(#"{"session":"s","decision":{"always":false,"decided":false}}"#)
+        #expect(open.isHeld(at: deadline.addingTimeInterval(86_400)), "no deadline: held until decided")
+        let decided = try ask(#"{"session":"s","decision":{"hold_until":1788982845.5,"decided":true}}"#)
+        #expect(!decided.isHeld(at: deadline.addingTimeInterval(-10)))
+        let plain = try ask(#"{"session":"s","answerable":true}"#)
+        #expect(!plain.isHeld(at: deadline))
+    }
+
     @Test("an older daemon, or an ask the lane does not hold, reads as before")
     func unheldAsk() throws {
         let plain = try ask(#"{"session":"s","kind":"input","answerable":false,"replyable":true}"#)
