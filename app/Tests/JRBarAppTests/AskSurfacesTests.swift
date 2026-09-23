@@ -351,4 +351,65 @@ struct AskSurfacesTests {
         #expect(HooksDoctor.repairReason(entries["grok"]!) == nil, "Install, not Repair")
     }
 
+    // MARK: Quiet while watching
+
+    @Test("the daemon's word decides when it has one; nil keeps the app's own rule")
+    func watchingRule() {
+        #expect(AskingPane.watching(local: false, inFront: true))
+        #expect(!AskingPane.watching(local: true, inFront: false))
+        #expect(AskingPane.watching(local: true, inFront: nil))
+        #expect(!AskingPane.watching(local: false, inFront: nil))
+        #expect(AskingPane.inFront(from: CoreReply(id: "1", ok: true, result: .object(["in_front": .bool(true)]))) == true)
+        #expect(AskingPane.inFront(from: CoreReply(id: "1", ok: true, result: .object(["in_front": .bool(false)]))) == false)
+        #expect(AskingPane.inFront(from: CoreReply(id: "1", ok: true, result: .object(["in_front": .null]))) == nil)
+        #expect(AskingPane.inFront(from: CoreReply(id: "1", ok: false)) == nil)
+        #expect(AskingPane.inFront(from: nil) == nil)
+        let verdict = AskingPane.Verdict(session: "s", inFront: false, frontmostPID: 7, at: now)
+        #expect(verdict.speaks(for: "s", frontmostPID: 7, now: now.addingTimeInterval(1)))
+        #expect(!verdict.speaks(for: "s", frontmostPID: 8, now: now), "another app came forward")
+        #expect(!verdict.speaks(for: "t", frontmostPID: 7, now: now))
+        #expect(!verdict.speaks(for: "s", frontmostPID: 7, now: now.addingTimeInterval(AskingPane.verdictLife)))
+    }
+
+    private func watchedCoordinator(inFront: Bool?, frontmostIsHost: Bool) -> EventCoordinator {
+        let core = CoreModel()
+        let session = "claude:session:w"
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: session, provider: "claude", mode: "waiting", pid: Int(getpid()),
+                                   terminal: CoreTerminal(app: "Tests", bundleId: "dev.jr.tests"))],
+            asks: [CoreAsk(session: session, summary: "Run")])))
+        let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
+        let parent = AskingPane.parentPID(getpid())
+        coordinator.frontmostApp = { frontmostIsHost ? ("dev.jr.tests", parent) : ("com.apple.Safari", 4242) }
+        coordinator.sessionInFront = { _ in inFront }
+        return coordinator
+    }
+
+    private func settle(_ coordinator: EventCoordinator, until: () -> Bool) async {
+        await Self.waitFor(until)
+    }
+
+    @Test("the terminal app is in front but the daemon proves another tab: the stage's pulse comes back")
+    func otherTabKeepsNoise() async {
+        let coordinator = watchedCoordinator(inFront: false, frontmostIsHost: true)
+        coordinator.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        #expect(!coordinator.isPulsing, "the app's rule quiets it at first")
+        await settle(coordinator) { coordinator.isPulsing }
+        #expect(coordinator.isPulsing, "the owner is in another tab — the pulse speaks up")
+        #expect(coordinator.inFrontVerdict?.inFront == false)
+    }
+
+    @Test("proof the session's own tab is in front quiets the stage; no word keeps the app's rule")
+    func ownTabQuiets() async {
+        let proven = watchedCoordinator(inFront: true, frontmostIsHost: false)
+        proven.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        #expect(proven.isPulsing)
+        await settle(proven) { !proven.isPulsing }
+        #expect(!proven.isPulsing)
+        let unknown = watchedCoordinator(inFront: nil, frontmostIsHost: true)
+        unknown.handle(CoreEvent(id: "e2", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        await settle(unknown) { unknown.inFrontVerdict != nil }
+        #expect(unknown.inFrontVerdict?.inFront == nil)
+        #expect(!unknown.isPulsing, "cannot be told: the app's rule stands")
+    }
 }
