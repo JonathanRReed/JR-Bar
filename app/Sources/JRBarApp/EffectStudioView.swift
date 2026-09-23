@@ -59,6 +59,20 @@ struct EffectStudioView: View {
         } message: {
             Text("The monitor will play this on the connected SidePulse hardware for a few seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
         }
+        .alert("Save as Effect", isPresented: Binding(
+            get: { store.savingEffect != nil },
+            set: { if !$0 { store.savingEffect = nil } }
+        )) {
+            TextField("Name", text: $store.saveName)
+            Button("Save") {
+                if let effect = store.savingEffect { store.saveAsEffect(effect, name: store.saveName) }
+                store.savingEffect = nil
+            }
+            .disabled(store.saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { store.savingEffect = nil }
+        } message: {
+            Text("Keeps \(store.savingEffect?.label ?? "this effect") with the parameters you set as a new effect in Yours. Assign it like any other; the original stays as it was.")
+        }
         .alert("Pack already installed", isPresented: Binding(
             get: { store.packConflict != nil },
             set: { if !$0 { store.packConflict = nil } }
@@ -285,6 +299,17 @@ struct EffectLibraryRow: View {
             }
             .disabled(!store.hasHardware)
             Divider()
+            if EffectStudioYours.canSave(effect), !effect.parameters.isEmpty {
+                Button("Save as Effect…") {
+                    store.selectedID = effect.id
+                    store.beginSaving(effect)
+                }
+                .disabled(store.yoursBusy)
+            }
+            if EffectStudioYours.isYours(effect) {
+                Button("Delete from Yours") { store.deleteFromYours(effect) }
+                    .disabled(store.yoursBusy)
+            }
             Button("Export “\(effect.label)”…") { store.exportPack(ids: [effect.id], suggestedName: effect.label) }
             if let pack = effect.pack, let entry = store.catalog?.pack(pack) {
                 Button("Export pack “\(entry.name)”…") { store.exportPack(ids: entry.effectIDs, suggestedName: entry.name) }
@@ -465,6 +490,12 @@ struct EffectInspectorPane: View {
             Spacer()
             if store.hasEdits(effect) {
                 Button("Reset to defaults") { store.resetParameters(effect) }.controlSize(.small)
+            }
+            if EffectStudioYours.canSave(effect), !effect.parameters.isEmpty {
+                Button("Save as Effect…") { store.beginSaving(effect) }
+                    .controlSize(.small)
+                    .disabled(store.yoursBusy)
+                    .help("Keep these parameters as a new effect of your own, in Yours")
             }
         }
         if effect.parameters.isEmpty {

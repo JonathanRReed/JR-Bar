@@ -921,6 +921,97 @@ final class EffectStudioStore {
         }
     }
 
+    // MARK: Yours
+
+    /// The effect "Save as Effect…" is naming, and the name so far —
+    /// the alert's state.
+    var savingEffect: EffectDefinition?
+    var saveName = ""
+    /// A save or delete in flight; the buttons wait for it.
+    private(set) var yoursBusy = false
+
+    func beginSaving(_ effect: EffectDefinition) {
+        saveName = effect.label
+        savingEffect = effect
+    }
+
+    /// Keeps `effect` with its tuned parameters as a new effect in Yours:
+    /// Yours and the source are exported by the monitor, the source's row
+    /// is copied under the new name with these values, and the pack goes
+    /// back in (`update` when Yours already exists). Two exports, not one,
+    /// so a source whose row id Yours already uses cannot collide.
+    func saveAsEffect(_ effect: EffectDefinition, name: String) {
+        let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, !yoursBusy else { return }
+        let values = values(for: effect)
+        let yours = catalog?.pack(EffectStudioYours.packID)
+        yoursBusy = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.yoursBusy = false }
+            let scratch = FileManager.default.temporaryDirectory
+            let yoursURL = scratch.appendingPathComponent("jrbar-yours-\(UUID().uuidString).json")
+            let sourceURL = scratch.appendingPathComponent("jrbar-source-\(UUID().uuidString).json")
+            defer {
+                try? FileManager.default.removeItem(at: yoursURL)
+                try? FileManager.default.removeItem(at: sourceURL)
+            }
+            do {
+                var installed: JSONValue?
+                if let yours, !yours.effectIDs.isEmpty {
+                    try await self.core.exportEffectPack(ids: yours.effectIDs, path: yoursURL.path, name: EffectStudioYours.packName)
+                    installed = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: yoursURL))
+                }
+                try await self.core.exportEffectPack(ids: [effect.id], path: sourceURL.path, name: EffectStudioYours.packName)
+                let source = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: sourceURL))
+                let newID = EffectStudioYours.slug(label, taken: Set(EffectStudioYours.rowIDs(installed)))
+                let pack = try EffectStudioYours.pack(yours: installed, source: source, sourceLabel: effect.label,
+                                                      newID: newID, label: label, values: values)
+                let text = EffectStudioYours.text(pack) { [catalog = self.catalog] row in
+                    row == newID ? EffectStudioYours.floatKeys(of: effect)
+                        : EffectStudioYours.floatKeys(of: catalog?.effect(EffectStudioYours.effectID(local: row)))
+                }
+                try Data(text.utf8).write(to: yoursURL)
+                self.catalog = try await self.core.importEffectPack(path: yoursURL.path, update: installed != nil)
+                self.catalogDidChange()
+                self.selectedID = EffectStudioYours.effectID(local: newID)
+                self.show(status: "Saved “\(label)” to Yours")
+            } catch {
+                self.fail("Save refused: \(Self.describe(error))")
+            }
+        }
+    }
+
+    /// Takes one effect out of Yours; the last one removes the pack.
+    func deleteFromYours(_ effect: EffectDefinition) {
+        guard EffectStudioYours.isYours(effect), !yoursBusy,
+              let yours = catalog?.pack(EffectStudioYours.packID) else { return }
+        yoursBusy = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.yoursBusy = false }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-yours-\(UUID().uuidString).json")
+            defer { try? FileManager.default.removeItem(at: url) }
+            do {
+                try await self.core.exportEffectPack(ids: yours.effectIDs, path: url.path, name: EffectStudioYours.packName)
+                let installed = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+                if let rest = EffectStudioYours.pack(yours: installed, removing: EffectStudioYours.localID(effect.id)) {
+                    let text = EffectStudioYours.text(rest) { [catalog = self.catalog] row in
+                        EffectStudioYours.floatKeys(of: catalog?.effect(EffectStudioYours.effectID(local: row)))
+                    }
+                    try Data(text.utf8).write(to: url)
+                    self.catalog = try await self.core.importEffectPack(path: url.path, update: true)
+                } else {
+                    self.catalog = try await self.core.removeEffectPack(packID: EffectStudioYours.packID)
+                }
+                self.catalogDidChange()
+                self.show(status: "Deleted “\(effect.label)” from Yours")
+            } catch {
+                self.fail("Delete refused: \(Self.describe(error))")
+            }
+        }
+    }
+
     // MARK: Messages
 
     func show(status text: String) {
