@@ -459,8 +459,15 @@ struct KeyCap: View {
 
     private var accessibilityText: String {
         var parts = ["Key \(slot.index + 1)", slot.title, slot.subtitle]
+        if askAge != nil { parts.append("waiting on you") }
         if slot.pinned { parts.append("pinned") }
         return parts.joined(separator: ", ")
+    }
+
+    /// The key's open ask, as the ears ring it.
+    private var askAge: ScreenBarAskAge? {
+        DeckAskAge.make(slot: slot, asks: store.core.asks, sessions: store.core.state?.sessions ?? [],
+                        document: store.document ?? SettingsDocument())
     }
 
     @ViewBuilder
@@ -470,6 +477,9 @@ struct KeyCap: View {
                 if let provider = slot.provider, !provider.isEmpty {
                     ProviderTile(style: ProviderStyle.style(for: provider, document: store.document), size: 22)
                         .opacity(dim ? 0.5 : 1)
+                        .overlay {
+                            if let age = askAge { DeckAskAgeRing(age: age) }
+                        }
                 } else {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
@@ -525,6 +535,39 @@ struct KeyCap: View {
         }
         .padding(7)
         .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+}
+
+/// A key's ask, aged the way the Screen Bar's left ear ages it: the same
+/// ring, filling from the ask's `opened_at` toward the loudest stage the
+/// escalation tier (and the provider's own ceiling) allows — one grammar
+/// for "how long has it waited" on the notch and on the pad.
+enum DeckAskAge {
+    static func make(slot: DeckSlot, asks: [CoreAsk], sessions: [CoreSession], document: SettingsDocument) -> ScreenBarAskAge? {
+        guard let session = slot.session, let provider = slot.provider, !provider.isEmpty else { return nil }
+        let ask = asks.first { $0.session == session } ?? sessions.first { $0.id == session }?.ask
+        return ScreenBarAskAge.make(ask: ask, provider: provider, document: document)
+    }
+}
+
+/// The ring round an asking key's provider tile, redrawn on the ear's
+/// own schedule and resting once full.
+struct DeckAskAgeRing: View {
+    let age: ScreenBarAskAge
+
+    var body: some View {
+        TimelineView(ScreenBarAskAgeSchedule(age: age)) { context in
+            ZStack {
+                Circle().stroke(Color.orange.opacity(0.22), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: age.fraction(at: context.date))
+                    .stroke(Color.orange, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+        }
+        .frame(width: 32, height: 32)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
