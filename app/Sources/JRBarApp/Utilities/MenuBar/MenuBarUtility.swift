@@ -2753,7 +2753,13 @@ final class MenuBarUtility: Toy {
         revealPhotoWatch = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
             while !Task.isCancelled {
-                guard let self, self.concealer != nil, !self.hider.revealed.isEmpty else { return }
+                guard let self else { return }
+                guard self.concealer != nil, !self.hider.revealed.isEmpty else {
+                    // The reveal (or the engine) went first: the next
+                    // one starts a watch of its own.
+                    self.revealPhotoWatch = nil
+                    return
+                }
                 if !self.reveal.pointerOnRevealSurface(), !self.listedItemMenuOpen() {
                     self.revealPhotographed = true
                     self.revealPhotoWatch = nil
