@@ -128,6 +128,102 @@ final class ShelfRemindersModel {
         load(from: store)
     }
 
+    // MARK: Quick add
+
+    /// A typed line read as a reminder: the words, and the due date the
+    /// line names — "Call Sam tomorrow at 3pm" is "Call Sam", due
+    /// tomorrow at 15:00; "Pay rent Friday" is due Friday, no time.
+    struct QuickAdd: Equatable {
+        let title: String
+        /// Day only, or day and time when the line named one.
+        let due: DateComponents?
+    }
+
+    /// The line's reminder, or nil when nothing is left to title it.
+    /// NSDataDetector finds the date; its words leave the title, with
+    /// the connector before them ("at", "by", "on") and a leading
+    /// "remind me to". A phrase with no time in it ("tomorrow",
+    /// "Friday") stays a day — the detector's own noon would be a lie.
+    nonisolated static func quickAdd(_ text: String, calendar: Calendar = .current) -> QuickAdd? {
+        var title = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        var due: DateComponents?
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue)
+        let range = NSRange(title.startIndex..., in: title)
+        if let match = detector?.firstMatch(in: title, range: range), let date = match.date,
+           let found = Range(match.range, in: title) {
+            let phrase = String(title[found])
+            let fields: Set<Calendar.Component> = hasTime(phrase)
+                ? [.year, .month, .day, .hour, .minute] : [.year, .month, .day]
+            due = calendar.dateComponents(fields, from: date)
+            title.removeSubrange(found)
+        }
+        title = cleanTitle(title)
+        guard !title.isEmpty else { return nil }
+        return QuickAdd(title: title, due: due)
+    }
+
+    /// A due date as the quick add's preview says it: "Today, 15:00",
+    /// "Tomorrow", "Fri 26 Sep, 09:00".
+    nonisolated static func whenText(_ date: Date, hasTime: Bool, calendar: Calendar = .current) -> String {
+        let day: String
+        if calendar.isDateInToday(date) {
+            day = "Today"
+        } else if calendar.isDateInTomorrow(date) {
+            day = "Tomorrow"
+        } else {
+            day = date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        }
+        guard hasTime else { return day }
+        return "\(day), \(date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    nonisolated static func hasTime(_ phrase: String) -> Bool {
+        let lower = phrase.lowercased()
+        if lower.contains(where: \.isNumber) { return true }
+        return ["noon", "midnight", "morning", "afternoon", "evening", "tonight", "hour", "minute"]
+            .contains { lower.contains($0) }
+    }
+
+    private nonisolated static func cleanTitle(_ raw: String) -> String {
+        var words = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        let connectors: Set<String> = ["at", "by", "on", "due"]
+        while let last = words.last, connectors.contains(last.lowercased()) { words.removeLast() }
+        var title = words.joined(separator: " ")
+        for lead in ["remind me to ", "remind me "] where title.lowercased().hasPrefix(lead) {
+            title = String(title.dropFirst(lead.count))
+            break
+        }
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: " ,.;:-–—"))
+        guard let first = title.first else { return "" }
+        return first.uppercased() + title.dropFirst()
+    }
+
+    /// Save a typed line into the default Reminders list, with an alert
+    /// at its time when it named one, and reload. False when there is
+    /// nothing to add, no access, or the save failed.
+    @discardableResult
+    func add(_ text: String) -> Bool {
+        guard let store, let parsed = Self.quickAdd(text),
+              let list = store.defaultCalendarForNewReminders() else { return false }
+        let reminder = EKReminder(eventStore: store)
+        reminder.title = parsed.title
+        reminder.calendar = list
+        if let due = parsed.due {
+            reminder.dueDateComponents = due
+            if due.hour != nil, let when = Calendar.current.date(from: due) {
+                reminder.addAlarm(EKAlarm(absoluteDate: when))
+            }
+        }
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            return false
+        }
+        load(from: store)
+        return true
+    }
+
     /// The row's action without a check-off: open Reminders.app on the
     /// item — `x-apple-reminderkit://` names it by identifier.
     func openInReminders(_ entry: Entry) {

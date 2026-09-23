@@ -1409,28 +1409,92 @@ private struct ShelfCalendarRow: View {
 private struct ShelfRemindersRow: View {
     let reminders: ShelfRemindersModel
     let style: NotchCardStyle
+    @ViewState private var adding = false
+    @ViewState private var draft = ""
 
     var body: some View {
         switch reminders.state {
         case .hidden, .needsPermission:
             EmptyView()
         case .idle:
-            Label("No reminders due", systemImage: "checklist")
-                .font(.system(size: 10))
-                .foregroundStyle(style.faintColor)
+            HStack(spacing: 6) {
+                Label("No reminders due", systemImage: "checklist")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.faintColor)
+                Spacer(minLength: 4)
+                addButton
+            }
         case .items(let items):
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(items.prefix(ShelfRemindersModel.rowLimit)) { entry in
                     row(entry)
                 }
-                if items.count > ShelfRemindersModel.rowLimit {
-                    Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
-                        .font(.system(size: 9))
-                        .foregroundStyle(style.faintColor)
-                        .padding(.leading, 20)
+                HStack(spacing: 6) {
+                    if items.count > ShelfRemindersModel.rowLimit {
+                        Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
+                            .font(.system(size: 9))
+                            .foregroundStyle(style.faintColor)
+                            .padding(.leading, 20)
+                    }
+                    Spacer(minLength: 4)
+                    addButton
                 }
             }
         }
+    }
+
+    /// Quick add: one typed line, its date read out of the words ("Call
+    /// Sam tomorrow at 3pm"), saved to the default Reminders list. The
+    /// field lives in a popover — the card's panel never takes keys.
+    private var addButton: some View {
+        Button { adding = true } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(style.faintColor)
+                .frame(width: 16, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Add a reminder")
+        .accessibilityLabel("Add a reminder")
+        .popover(isPresented: $adding, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New reminder")
+                    .font(.system(size: 11, weight: .semibold))
+                TextField("Call Sam tomorrow at 3pm", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .onSubmit(save)
+                Text(Self.preview(draft))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                HStack {
+                    Spacer()
+                    Button("Add", action: save)
+                        .keyboardShortcut(.defaultAction)
+                        .controlSize(.small)
+                        .disabled(ShelfRemindersModel.quickAdd(draft) == nil)
+                }
+            }
+            .padding(10)
+            .frame(width: 230)
+        }
+    }
+
+    private func save() {
+        guard reminders.add(draft) else { return }
+        draft = ""
+        adding = false
+    }
+
+    /// What the line will save as: "Call Sam · Tomorrow, 15:00".
+    static func preview(_ draft: String) -> String {
+        guard let parsed = ShelfRemindersModel.quickAdd(draft) else { return "Type what, and when" }
+        guard let due = parsed.due, let date = Calendar.current.date(from: due) else {
+            return "\(parsed.title) · no date"
+        }
+        return "\(parsed.title) · \(ShelfRemindersModel.whenText(date, hasTime: due.hour != nil))"
     }
 
     private func row(_ entry: ShelfRemindersModel.Entry) -> some View {
