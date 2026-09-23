@@ -1435,8 +1435,12 @@ final class NotchToy: Toy {
             MainActor.assumeIsolated { self?.endOverlay(settle: true) }
         }
         overlayWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (notice.kind.life ?? AlcoveCapsuleQueue.feedbackLife),
-                                      execute: work)
+        // A level holds for the person's HUD duration; Caps Lock keeps
+        // the system's own beat.
+        let life = notice.kind == .level
+            ? settings.hudDuration
+            : (notice.kind.life ?? AlcoveCapsuleQueue.feedbackLife)
+        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
         // A held key updates the fill in place — the face is already
         // the notice, so only a first press morphs.
         if !wasUp {
@@ -1984,9 +1988,15 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.mediaHUD)) {
                 SettingLabel(title: "Volume & brightness capsules",
-                             subtitle: "The level keys hang a metered capsule under the notch — the Alcove HUD. The key still does its job; we only draw it.")
+                             subtitle: "The level keys grow the level out of the notch as one continuous fill, with the device the sound is going to — the Alcove HUD. The key still does its job; we only draw it.")
             }
             if toy.settings.mediaHUD {
+                Stepper(value: toy.bind(\.hudDuration),
+                        in: NotchSettings.hudDurationRange, step: 0.5) {
+                    SettingLabel(title: "Show for \(toy.settings.hudDuration.formatted(.number.precision(.fractionLength(0...1)))) s",
+                                 subtitle: "How long a level and a system notice hold at the notch.")
+                }
+                .padding(.leading, 28)
                 Toggle(isOn: toy.bind(\.replaceSystemHUD)) {
                     SettingLabel(title: "Replace the system volume & brightness overlay",
                                  subtitle: "The volume and brightness keys get our capsule instead of Apple's — needs the Accessibility permission. Changes made from Control Center still show Apple's overlay; JR-Bar never touches OSDUIHelper.")
@@ -1998,7 +2008,7 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.alerts)) {
                 SettingLabel(title: "System alerts",
-                             subtitle: "A Focus mode turning on or a Bluetooth device connecting gets the pill.")
+                             subtitle: "A Focus mode, a Bluetooth device joining or leaving, Caps Lock and displays speak in the island, one at a time with the agents' news. Headphones the Screen Bar's ear already names stay quiet here.")
             }
             Toggle(isOn: toy.bind(\.soundEffects)) {
                 SettingLabel(title: "Capsule tick",

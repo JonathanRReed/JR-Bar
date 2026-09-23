@@ -38,6 +38,15 @@ final class EventCoordinator {
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
         notifications.onOpenSession = { [weak core] session in core?.openSession(session) }
         notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
+        // One announcer at the top of the screen: the Mac's own news is
+        // offered to the island first and takes the pill only when the
+        // island can't; a headphone the ear already names is not said
+        // twice.
+        hud.islandPresent = { [weak self] notice in
+            self?.toys?.notch.presentSystemNotice(notice) ?? false
+        }
+        hud.hudLife = { [weak self] in self?.toys?.state.notch.hudDuration ?? NotchHUD.life }
+        hud.earAnnouncesAudioRoute = { [weak self] in self?.toys?.notch.earNoticesLive ?? false }
         // The coordinator lives for the app's lifetime; the observer's
         // weak self is cleanup enough (a nonisolated deinit could not
         // touch the isolated token anyway).

@@ -413,7 +413,7 @@ struct NotchIslandView: View {
             Image(systemName: notice.symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(noticeTint(notice))
-            Text("\(notice.title) · \(notice.subtitle)")
+            Text(notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.white.opacity(0.85))
                 .lineLimit(1)

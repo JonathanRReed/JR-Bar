@@ -746,6 +746,11 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// Shake the pointer while dragging files and the shelf pulls open
     /// under the notch as a drop target — Alcove's summon gesture.
     public var shelfShakeToSummon: Bool
+    /// Seconds a level (volume, brightness, backlight) and a toast hold
+    /// at the notch — MediaMate's HUD duration. A saved value outside
+    /// `hudDurationRange` is clamped when the file is read.
+    public var hudDuration: Double = 2.0
+    public static let hudDurationRange: ClosedRange<Double> = 1...6
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -786,6 +791,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case hapticTick, mediaHUD, alerts, soundEffects, weather, weatherCity
         case simulateNotch, mirror, audioVisualizer, replaceSystemHUD
         case shelfShakeToSummon
+        case hudDuration
     }
 
     public init(from decoder: any Decoder) throws {
@@ -810,6 +816,8 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         audioVisualizer = (try? c.decodeIfPresent(Bool.self, forKey: .audioVisualizer)) ?? false
         replaceSystemHUD = (try? c.decodeIfPresent(Bool.self, forKey: .replaceSystemHUD)) ?? false
         shelfShakeToSummon = (try? c.decodeIfPresent(Bool.self, forKey: .shelfShakeToSummon)) ?? true
+        let hud = (try? c.decodeIfPresent(Double.self, forKey: .hudDuration)) ?? 2.0
+        hudDuration = min(Self.hudDurationRange.upperBound, max(Self.hudDurationRange.lowerBound, hud))
     }
 }
 

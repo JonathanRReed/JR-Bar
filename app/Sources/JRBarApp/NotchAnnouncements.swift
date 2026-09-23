@@ -1,11 +1,15 @@
 import AppKit
 import IOBluetooth
+import JRBarCore
 import OSLog
 
 /// The system announcements Alcove surfaces in the island: a Focus
-/// mode turning on or off, a Bluetooth device connecting. Each watcher
-/// is quiet until something actually changes — no polling, no
-/// entitlement asks.
+/// mode turning on or off, a Bluetooth device joining or leaving, Caps
+/// Lock, a display arriving or going. Each watcher is quiet until
+/// something actually changes — no polling, no entitlement asks — and
+/// each change becomes an `AlcoveNotice` of its own kind, so the island
+/// speaks it through the same queue as the agents' news (the HUD's pill
+/// only when the island can't).
 @MainActor
 final class NotchAnnouncements {
     static let log = Logger(subsystem: "devin.jrbar", category: "announce")
@@ -13,8 +17,11 @@ final class NotchAnnouncements {
     /// The notch settings' vote — consulted per announcement so a
     /// mid-flight change never strands a watcher.
     var isAllowed: () -> Bool = { true }
-    /// What to do with one — the HUD's toast.
-    var announce: (_ text: String, _ symbol: String) -> Void = { _, _ in }
+    /// Whether the Screen Bar's ear already names the audio route — a
+    /// headphone joining is then its news, not ours.
+    var earAnnouncesAudioRoute: () -> Bool = { false }
+    /// What to do with one — the HUD's announcer.
+    var announce: (AlcoveNotice) -> Void = { _ in }
 
     private let focus = FocusWatcher()
     private let bluetooth = BluetoothWatcher()
@@ -27,26 +34,88 @@ final class NotchAnnouncements {
         started = true
         focus.onChange = { [weak self] name, on in
             guard let self, self.isAllowed() else { return }
-            self.announce(name, Self.focusSymbol(for: name))
+            self.announce(Self.focusNotice(name: name, on: on))
         }
-        bluetooth.onConnect = { [weak self] name, battery in
+        bluetooth.onChange = { [weak self] change in
             guard let self, self.isAllowed() else { return }
-            let suffix = battery.map { " — \($0)%" } ?? ""
-            self.announce("\(name) connected\(suffix)", "headphones")
+            guard let notice = Self.deviceNotice(change,
+                                                 earAnnouncesAudioRoute: self.earAnnouncesAudioRoute())
+            else { return }
+            self.announce(notice)
         }
         capsLock.onToggle = { [weak self] on in
             guard let self, self.isAllowed() else { return }
-            self.announce(on ? "Caps Lock on" : "Caps Lock off", "capslock.fill")
+            self.announce(Self.capsLockNotice(on: on))
         }
         displays.onChange = { [weak self] connected in
             guard let self, self.isAllowed() else { return }
-            self.announce(connected ? "Display connected" : "Display disconnected",
-                          connected ? "display" : "display.trianglebadge.exclamationmark")
+            self.announce(Self.displayNotice(connected: connected))
         }
         focus.start()
         bluetooth.start()
         capsLock.start()
         displays.start()
+    }
+
+    // MARK: Notices
+
+    /// "Work · Focus on" with the mode's own glyph; off names the mode
+    /// that ended when the watcher knew it.
+    static func focusNotice(name: String, on: Bool) -> AlcoveNotice {
+        AlcoveNotice(id: UUID().uuidString, kind: .focus, title: name,
+                     subtitle: on ? "Focus on" : "Focus off",
+                     key: "focus:\(on ? "on" : "off")",
+                     glyph: on ? focusSymbol(for: name) : "moon")
+    }
+
+    /// A device joining or leaving. A headphone joining while the ear
+    /// announces the audio route is the ear's news — nil here, so the
+    /// top of the screen never says "AirPods" twice. Leaving is never
+    /// the ear's (the route notice only speaks for where the sound
+    /// goes), so a disconnect always speaks.
+    static func deviceNotice(_ change: BluetoothWatcher.Change,
+                             earAnnouncesAudioRoute: Bool) -> AlcoveNotice? {
+        if change.connected, change.isAudio, earAnnouncesAudioRoute { return nil }
+        let subtitle: String
+        if change.connected {
+            subtitle = change.battery.map { "Connected · \($0)%" } ?? "Connected"
+        } else {
+            subtitle = "Disconnected"
+        }
+        return AlcoveNotice(id: UUID().uuidString, kind: .device, title: change.name,
+                            subtitle: subtitle,
+                            key: "device:\(change.name):\(change.connected ? "on" : "off")",
+                            glyph: deviceSymbol(name: change.name, isAudio: change.isAudio,
+                                                connected: change.connected))
+    }
+
+    static func capsLockNotice(on: Bool) -> AlcoveNotice {
+        AlcoveNotice(id: UUID().uuidString, kind: .capsLock, title: "Caps Lock",
+                     subtitle: on ? "On" : "Off", key: "capslock",
+                     glyph: on ? "capslock.fill" : "capslock")
+    }
+
+    static func displayNotice(connected: Bool) -> AlcoveNotice {
+        AlcoveNotice(id: UUID().uuidString, kind: .display, title: "Display",
+                     subtitle: connected ? "Connected" : "Disconnected",
+                     key: "display:\(connected ? "on" : "off")",
+                     glyph: connected ? "display" : "display.trianglebadge.exclamationmark")
+    }
+
+    /// The device's own glyph where its name says what it is — AirPods,
+    /// Beats, a keyboard, a mouse or trackpad — else headphones for
+    /// audio and a plain Bluetooth mark for the rest.
+    static func deviceSymbol(name: String, isAudio: Bool, connected: Bool) -> String {
+        let lower = name.lowercased()
+        if lower.contains("airpods max") { return "airpodsmax" }
+        if lower.contains("airpods pro") { return "airpodspro" }
+        if lower.contains("airpods") { return "airpods" }
+        if lower.contains("beats") { return "beats.headphones" }
+        if lower.contains("keyboard") { return "keyboard" }
+        if lower.contains("trackpad") { return "rectangle.and.hand.point.up.left" }
+        if lower.contains("mouse") { return "magicmouse" }
+        if isAudio { return "headphones" }
+        return connected ? "wave.3.right" : "wave.3.right.circle"
     }
 
     /// The daemon's `focus_sync` reading of the same assertions DB —
@@ -115,9 +184,18 @@ final class FocusWatcher {
         let same = (now?.on == active?.on && now?.mode == active?.mode)
             || (now == nil && active == nil)
         guard !same else { return }
+        let before = active
         active = now
         guard let now else { return }
-        onChange(now.mode, now.on)
+        onChange(Self.announcedName(now: now, before: before), now.on)
+    }
+
+    /// Off reads as the mode that just ended ("Work · Focus off"), not
+    /// the empty set's generic "Focus".
+    static func announcedName(now: (on: Bool, mode: String),
+                              before: (on: Bool, mode: String)?) -> String {
+        guard !now.on, let before, before.on else { return now.mode }
+        return before.mode
     }
 
     /// The daemon's view of the same DB. Used only when our own read
@@ -129,8 +207,9 @@ final class FocusWatcher {
         let name = on ? (source.map { Self.modeName(for: $0) } ?? "Focus") : "Focus"
         let same = (on == active?.on && name == active?.mode)
         guard !same else { return }
+        let before = active
         active = (on, name)
-        onChange(name, on)
+        onChange(Self.announcedName(now: (on, name), before: before), on)
     }
 
     /// `(mode name, focused)` — nil when the file is missing or
@@ -178,14 +257,28 @@ final class FocusWatcher {
     }
 }
 
-/// A device joined the Mac — IOBluetooth's own connect notification.
-/// The first couple of seconds' worth are ignored: registration
-/// replays the devices that are already connected, and announcing a
-/// desk's worth of hardware at launch is not an announcement.
+/// A device joined or left the Mac — IOBluetooth's own connect
+/// notification, and a disconnect notification registered on each
+/// device as it connects (the one IOBluetooth offers; there is no
+/// global disconnect). The first couple of seconds' worth of connects
+/// are not announced: registration replays the devices that are
+/// already connected, and announcing a desk's worth of hardware at
+/// launch is not an announcement — but their disconnects are still
+/// registered, so a device that was there at launch still says goodbye.
 @MainActor
 final class BluetoothWatcher: NSObject {
-    /// The device's name plus a battery percent when it reports one.
-    var onConnect: (_ name: String, _ batteryPercent: Int?) -> Void = { _, _ in }
+    /// One device's arrival or departure.
+    struct Change: Equatable, Sendable {
+        var name: String
+        /// The percent the device reported on connect, when it did.
+        var battery: Int?
+        var connected: Bool
+        /// The Bluetooth major class says audio (headphones, speakers)
+        /// — the ear's audio-route notice speaks for these.
+        var isAudio: Bool
+    }
+
+    var onChange: (Change) -> Void = { _ in }
 
     /// The thread that owns registration and its delivery runloop —
     /// see `BluetoothNotificationThread` for why it exists.
@@ -195,6 +288,12 @@ final class BluetoothWatcher: NSObject {
     /// behind its own lock.
     private let armedLock = NSLock()
     nonisolated(unsafe) private var armedAt = Date.distantFuture
+    /// Each connected device's disconnect registration, by address —
+    /// held so the notification stays alive, dropped when it fires.
+    /// Touched only on the notification thread, behind the lock anyway.
+    nonisolated(unsafe) private var disconnects: [String: IOBluetoothUserNotification] = [:]
+    /// Bluetooth's major device class for audio/video equipment.
+    nonisolated static let audioMajorClass: UInt32 = 0x04
 
     func start() {
         armedLock.lock(); armedAt = Date().addingTimeInterval(3); armedLock.unlock()
@@ -234,12 +333,59 @@ final class BluetoothWatcher: NSObject {
                     .flatMap { (0...100).contains($0) ? $0 : nil }
             }
         }
+        let isAudio = Self.isAudio(device)
+        // The goodbye is registered for every device, replayed ones
+        // included — IOBluetooth has no global disconnect to listen to.
+        watchDisconnect(of: device)
         let at = Date()
         armedLock.lock(); let armed = armedAt; armedLock.unlock()
         guard at >= armed else { return }
+        let change = Change(name: name, battery: battery, connected: true, isAudio: isAudio)
         Task { @MainActor [weak self] in
-            self?.onConnect(name, battery)
+            self?.onChange(change)
         }
+    }
+
+    /// Register this device's own disconnect notification, once per
+    /// address. Runs on the notification thread (the connect callback's
+    /// runloop), so the disconnect delivers there too.
+    nonisolated private func watchDisconnect(of device: IOBluetoothDevice) {
+        guard let address = device.addressString else { return }
+        armedLock.lock()
+        let known = disconnects[address] != nil
+        armedLock.unlock()
+        guard !known,
+              let note = device.register(forDisconnectNotification: self,
+                                         selector: #selector(deviceDisconnected(_:device:)))
+        else { return }
+        armedLock.lock()
+        disconnects[address] = note
+        armedLock.unlock()
+    }
+
+    /// The device left. Both arguments optional for the same reason the
+    /// connect callback's device is: a nil the framework hands over must
+    /// not be dereferenced during bridging.
+    @objc nonisolated fileprivate func deviceDisconnected(_ note: IOBluetoothUserNotification?,
+                                                          device: IOBluetoothDevice?) {
+        note?.unregister()
+        guard let device else { return }
+        if let address = device.addressString {
+            armedLock.lock()
+            disconnects[address] = nil
+            armedLock.unlock()
+        }
+        let change = Change(name: device.name ?? device.addressString ?? "Bluetooth device",
+                            battery: nil, connected: false, isAudio: Self.isAudio(device))
+        Task { @MainActor [weak self] in
+            self?.onChange(change)
+        }
+    }
+
+    /// The major class read off the device's class-of-device — audio
+    /// and video equipment is 0x04.
+    nonisolated private static func isAudio(_ device: IOBluetoothDevice) -> Bool {
+        UInt32(device.deviceClassMajor) == audioMajorClass
     }
 }
 
