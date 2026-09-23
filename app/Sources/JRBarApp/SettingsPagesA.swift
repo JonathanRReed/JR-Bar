@@ -1,5 +1,6 @@
 import JRBarUI
 import JRBarCore
+import JRBarLEDS
 import SwiftUI
 
 // MARK: - General
@@ -544,6 +545,14 @@ struct DeviceCard: View {
 
     var body: some View {
         SettingGroup {
+            if state?.isPresent == true {
+                // The age ticks between core pushes; a coarse clock is
+                // enough for "written 40 s ago".
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    SettingRow("Right now", subtitle: DeviceHealthLine.describe(
+                        device: state, surface: surface, now: context.date)) { EmptyView() }
+                }
+            }
             SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
             SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
             SettingToggle(store, "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight.",
@@ -603,6 +612,12 @@ struct DeviceCard: View {
         SettingsStore.calibrationSummary(document: store.document, prefix: device.prefix)
     }
 
+    /// The program this device was last sent, from the `lights` push.
+    private var surface: CoreLightSurface? {
+        guard let state else { return nil }
+        return DeviceHealthLine.surface(for: state, lights: store.core.lights, devices: store.core.devices)
+    }
+
     /// The per-device blend's note: what it does, and the case for it —
     /// on eight discrete LEDs per-agent blocks read cleanly even while
     /// the Screen Bar keeps Smooth, where they would turn to mud.
@@ -633,6 +648,62 @@ extension SettingsStore {
             summary += String(format: " · %d%%", Int((brightness / 255 * 100).rounded()))
         }
         return summary
+    }
+}
+
+/// A device card's "Right now" line — blink(1)'s device status, for a
+/// light that says "Connected" and nothing else: why it is lit, whether
+/// the last write failed, how long ago the monitor last wrote it (the
+/// firmware restarts on every write, and a keepalive rewrites it), the
+/// program's size against the firmware's 512-byte / 20-line budget, the
+/// firmware's own verdict when it would refuse the text, and the drive
+/// the device is actually at. nil while the device is away — the header
+/// already says so.
+enum DeviceHealthLine {
+    /// The `lights` surface a device plays: the Dot's own; a strip's own
+    /// `hardware:<id>` when it is not the first; the first connected
+    /// strip's `hardware`.
+    static func surface(for device: CoreDevice, lights: CoreLights?, devices: [CoreDevice]) -> CoreLightSurface? {
+        guard let lights else { return nil }
+        if device.kind == "dot" { return lights.dot }
+        if let own = lights.surfaces["hardware:\(device.id)"] { return own }
+        let first = devices.first { $0.kind == "pro" && $0.isPresent }
+        return first?.id == device.id ? lights.hardware : nil
+    }
+
+    static func describe(device: CoreDevice?, surface: CoreLightSurface?, now: Date) -> String? {
+        guard let device, device.isPresent else { return nil }
+        var parts: [String] = []
+        if let why = surface?.why, !why.isEmpty {
+            let words = why.replacingOccurrences(of: "_", with: " ")
+            parts.append(words.prefix(1).uppercased() + words.dropFirst())
+        }
+        if let error = device.error, !error.isEmpty {
+            parts.append("the last write failed (\(error.replacingOccurrences(of: "_", with: " ")))")
+        }
+        if let written = device.lastWrite {
+            parts.append("written \(age(now.timeIntervalSince1970 - written)) ago")
+        } else {
+            parts.append("not written since the monitor started")
+        }
+        if let program = surface?.program, !program.isEmpty {
+            let analysis = LEDSStudioAnalysis(program)
+            parts.append("\(analysis.lines) line\(analysis.lines == 1 ? "" : "s"), \(analysis.bytes) of \(LEDSLimits.maxProgramBytes) bytes")
+            let verdict = device.kind == "dot" ? analysis.dot : analysis.strip
+            if let error = verdict.error { parts.append(error.description) }
+        }
+        if let drive = surface?.brightness {
+            parts.append("driven at \(Int((min(1, max(0, drive)) * 100).rounded()))%")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "4 s", "12 min", "3 h" — a clock step behind is harmless.
+    static func age(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        if seconds < 60 { return "\(Int(seconds)) s" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) min" }
+        return "\(Int(seconds / 3600)) h"
     }
 }
 
