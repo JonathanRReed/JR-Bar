@@ -166,6 +166,9 @@ final class PaletteController {
     /// Pin or unpin a row by id — the frecency table's favorites. nil
     /// leaves the verb off every row.
     var toggleFavorite: (@MainActor (String) -> Void)?
+    /// Drop a row's habit — Raycast's Reset Ranking. nil leaves the verb
+    /// off every row.
+    var forgetUse: (@MainActor (String) -> Void)?
     /// A store that reports through its own toast (the panel's): after
     /// a verb runs, the palette listens to it for a few seconds and
     /// shows what it says in the HUD, so "Approved · typed into the
@@ -240,7 +243,25 @@ final class PaletteController {
             Task { @MainActor [weak self] in self?.regather() }
         }
         let table = usage()
-        return items.map { withFavoriteVerb($0, pinned: table.isFavorite($0.id)) }
+        let now = Date()
+        return items.map {
+            withResetVerb(withFavoriteVerb($0, pinned: table.isFavorite($0.id)),
+                          used: table.score(for: $0.id, at: now) > 0)
+        }
+    }
+
+    /// A row with a habit takes Reset Ranking last: it runs with the
+    /// palette up, and the row leaves Suggestions where it stood.
+    private func withResetVerb(_ item: PaletteItem, used: Bool) -> PaletteItem {
+        guard let forgetUse, used else { return item }
+        var reset = item
+        reset.actions.append(PaletteAction(
+            id: "palette.resetRanking", title: "Reset Ranking", symbol: "arrow.counterclockwise",
+            keepsOpen: true) {
+            forgetUse(item.id)
+            return nil
+        })
+        return reset
     }
 
     /// ⌘⇧P — pin or unpin the row.

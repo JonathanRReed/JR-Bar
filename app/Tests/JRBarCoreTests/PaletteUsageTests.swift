@@ -20,6 +20,20 @@ struct PaletteUsageTests {
         #expect(usage.entries["quiet.1h"]?.count == 1)
     }
 
+    @Test("forgetting a key drops its habit and keeps its pin")
+    func forget() {
+        var usage = PaletteUsage()
+        usage.record("a", at: t0)
+        usage.record("b", at: t0)
+        usage.toggleFavorite("a")
+        usage.forget("a")
+        #expect(usage.score(for: "a", at: t0) == 0)
+        #expect(usage.top(5, at: t0) == ["b"])
+        #expect(usage.isFavorite("a"), "a pin is a choice, not a habit")
+        usage.forget("never")
+        #expect(usage.entries.count == 1)
+    }
+
     @Test("a second run adds to the decayed score, not the raw one")
     func accumulate() {
         var usage = PaletteUsage()

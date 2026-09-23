@@ -479,6 +479,34 @@ struct PaletteTests {
         #expect(!log.ran.contains { $0.hasPrefix("send:") })
     }
 
+    @Test("Reset Ranking drops a row's habit with the palette still up; a row with none has no such verb")
+    func controllerResetRanking() {
+        let table = Table()
+        table.usage.record("scene.focus", at: Date())
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.usage = { table.usage }
+        controller.forgetUse = { table.usage.forget($0) }
+        controller.sources = {
+            [PaletteClosureSource(build: {
+                ["scene.focus", "scene.calm"].map { id in
+                    PaletteItem(id: id, title: id, icon: .symbol("circle", .gray), kind: "Scene",
+                                section: .lights,
+                                actions: [PaletteAction(id: "switch", title: "Switch", symbol: "circle") { nil }])
+                }
+            })]
+        }
+        controller.open()
+        defer { controller.close() }
+        #expect(controller.model.sections.first?.section == .suggestions)
+        #expect(controller.model.rows.first { $0.id == "scene.calm" }?.actions.map(\.id) == ["switch"])
+        controller.run(rowID: "scene.focus", actionID: "palette.resetRanking")
+        #expect(controller.isOpen, "a reset keeps the palette up")
+        #expect(table.usage.score(for: "scene.focus") == 0)
+        #expect(!controller.model.sections.contains { $0.section == .suggestions })
+        #expect(controller.model.rows.first { $0.id == "scene.focus" }?.actions.map(\.id) == ["switch"])
+    }
+
     @Test("⎋ clears the query first, and only then folds")
     func controllerEscape() {
         let controller = PaletteController()

@@ -832,6 +832,13 @@ public struct PaletteUsage: Codable, Equatable, Sendable {
         }
     }
 
+    /// Raycast's Reset Ranking: the key's habit is dropped, so it leaves
+    /// Suggestions and ranks on its words alone. A pin is a choice, not
+    /// a habit, and stays.
+    public mutating func forget(_ key: String) {
+        entries.removeValue(forKey: key)
+    }
+
     /// The key's score decayed to `now`; zero for a key never used.
     public func score(for key: String, at now: Date = Date()) -> Double {
         guard let entry = entries[key] else { return 0 }
