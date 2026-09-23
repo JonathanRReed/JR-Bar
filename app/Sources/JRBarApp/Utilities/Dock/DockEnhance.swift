@@ -1484,6 +1484,21 @@ final class DockEnhanceController {
     @ObservationIgnored private var mediaToken: UUID?
     /// The daemon's live sessions as marks — wired by `DockUtility`.
     @ObservationIgnored var agentMarks: @MainActor () -> [DockAgentMark] = { [] }
+    /// The notch Shelf's tray — wired by the app delegate. A folder
+    /// chip or a document card's "Send to Shelf" stages the file there.
+    @ObservationIgnored var sendToShelf: (@MainActor ([URL]) -> Void)? {
+        didSet { wireShelf() }
+    }
+
+    private func wireShelf() {
+        guard let panel else { return }
+        guard let send = sendToShelf else {
+            panel.actions.onSendToShelf = nil
+            return
+        }
+        panel.actions.onSendToShelf = { url in send([url]) }
+    }
+
     /// The notch Shelf's synced lyrics for the playing track — wired by
     /// the app delegate; the player row shows its current line.
     @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil } {
@@ -2131,7 +2146,9 @@ final class DockEnhanceController {
         }
     }
 
-    private func ensurePanel() -> DockPreviewPanel {
+    /// The retained panel, built once with its actions wired — internal
+    /// (not private) so a test can read the wiring without a hover.
+    func ensurePanel() -> DockPreviewPanel {
         if let panel { return panel }
         let panel = DockPreviewPanel(content: preview)
         panel.actions.onPick = { [weak self] window in self?.pick(window) }
@@ -2149,6 +2166,7 @@ final class DockEnhanceController {
         panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
         panel.actions.onMediaSeek = { MediaFeed.shared.seek(to: $0) }
         panel.actions.lyrics = lyrics
+        panel.actions.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
         panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
         panel.actions.onSwipeMinimize = { [weak self] window, minimize in
             self?.swipeMinimize(window, minimize)
@@ -2166,6 +2184,7 @@ final class DockEnhanceController {
         panel.actions.onHoverCard = { [weak self] window in self?.freshenStill(window) }
         panel.actions.onExcludeApp = { [weak self] in self?.excludePreviewedApp() }
         self.panel = panel
+        wireShelf()
         return panel
     }
 

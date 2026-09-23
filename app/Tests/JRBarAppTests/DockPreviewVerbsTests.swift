@@ -71,6 +71,23 @@ struct DockPreviewVerbsTests {
         #expect(actions.lyrics()?.line(at: 6) == "second")
     }
 
+    @Test("Send to Shelf exists only once a Shelf is wired, before or after the panel is built")
+    @MainActor
+    func sendToShelfWiring() {
+        let controller = DockEnhanceController()
+        var sent: [URL] = []
+        controller.sendToShelf = { sent += $0 }
+        let panel = controller.ensurePanel()
+        let file = URL(fileURLWithPath: "/tmp/report.pdf")
+        panel.actions.onSendToShelf?(file)
+        #expect(sent == [file])
+        controller.sendToShelf = nil
+        #expect(panel.actions.onSendToShelf == nil, "no Shelf, no verb")
+        controller.sendToShelf = { sent += $0 }
+        panel.actions.onSendToShelf?(file)
+        #expect(sent == [file, file])
+    }
+
     @Test("the scrubber prints playheads the way players do")
     func clock() {
         #expect(DockEnhanceMath.clock(0) == "0:00")

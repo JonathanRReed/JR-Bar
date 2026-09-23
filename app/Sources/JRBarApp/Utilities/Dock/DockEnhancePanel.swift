@@ -107,6 +107,11 @@ final class DockPreviewActions {
     /// The header's "Never Preview <App>" — the app joins the card's
     /// exclusion list from where it bothered you.
     var onExcludeApp: (@MainActor () -> Void)?
+    /// "Send to Shelf" — the file joins the notch Shelf's tray. nil (no
+    /// Shelf wired) hides the verb.
+    var onSendToShelf: (@MainActor (URL) -> Void)?
+    /// "Show in Finder" — the file's folder opens with it selected.
+    var onReveal: (@MainActor (URL) -> Void)?
 }
 
 /// The Macs' displays as the Move To menu names them.
@@ -506,7 +511,7 @@ struct DockPreviewView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(content.folderEntries) { entry in
-                                    DockFolderChip(entry: entry) { actions.onOpen?($0) }
+                                    DockFolderChip(entry: entry, actions: actions)
                                 }
                             }
                             .padding(2)
@@ -733,6 +738,10 @@ struct DockPreviewCard: View {
                             }
                         }
                     }
+                    if let document = window.documentURL, let send = actions.onSendToShelf {
+                        Divider()
+                        Button("Send Document to Shelf") { send(document) }
+                    }
                     Divider()
                     Button("Close Window") { actions.performWindowAction(window, actions.onClose) }
                 }
@@ -915,14 +924,14 @@ struct DockPreviewCompactList: View {
 /// pop's nesting is visible at a glance.
 private struct DockFolderChip: View {
     let entry: DockFolderEntry
-    let onOpen: (URL) -> Void
+    let actions: DockPreviewActions
     @ViewState private var hovering = false
     /// The file's Quick Look thumbnail once it lands — a screenshot or
     /// a PDF reads at a glance instead of as one more document icon.
     @ViewState private var thumbnail: NSImage?
 
     var body: some View {
-        Button { onOpen(entry.url) } label: {
+        Button { actions.onOpen?(entry.url) } label: {
             VStack(spacing: 4) {
                 Image(nsImage: thumbnail ?? entry.icon)
                     .resizable()
@@ -948,6 +957,16 @@ private struct DockFolderChip: View {
         // drag preview. The click still opens; a drag only arms once
         // the press moves.
         .draggable(entry.url)
+        // The chip's verbs past the click: reveal it, or stage it on the
+        // notch Shelf for the next drag — one app owns both surfaces.
+        .contextMenu {
+            Button("Open") { actions.onOpen?(entry.url) }
+            Button("Show in Finder") { actions.onReveal?(entry.url) }
+            if let send = actions.onSendToShelf {
+                Divider()
+                Button("Send to Shelf") { send(entry.url) }
+            }
+        }
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(entry.url.path)

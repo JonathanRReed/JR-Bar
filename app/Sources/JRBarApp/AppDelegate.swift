@@ -253,6 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         utilitiesStore.dock.enhance.lyrics = { [weak notchCard, weak toysStore] in
             notchCard?.model.utility.lyrics.lyrics ?? toysStore?.notch.cardModel.utility.lyrics.lyrics
         }
+        // …and its "Send to Shelf" lands in the one shared tray.
+        utilitiesStore.dock.enhance.sendToShelf = { [weak cardTray] urls in cardTray?.add(urls) }
         notchCard.model.mirrorEnabled = { [weak toysStore] in toysStore?.state.notch.mirror ?? false }
         notchCard.focus = { [weak self] in self?.store?.screenBarFocus }
         notchCard.sessionRows = { [weak self] in
