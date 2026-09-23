@@ -40,8 +40,10 @@ final class PresenceReporter {
     /// counts as the new one's first report.
     private var generation = 0
     private var wasConnected = false
-    /// The sleeping renewal or retry.
+    /// The sleeping renewal or retry, and when it wakes — a state frame
+    /// that owes nothing new leaves it sleeping.
     private var check: Task<Void, Never>?
+    private var checkAt: Date?
 
     init(isConnected: @escaping @MainActor () -> Bool,
          presence: @escaping @MainActor () -> CorePresence?,
@@ -116,14 +118,13 @@ final class PresenceReporter {
 
     /// Send what is owed, or sleep until something will be.
     private func pump() {
-        check?.cancel()
-        check = nil
         guard !sending else { return }
         let connected = isConnected()
         guard let report = reporting.due(reading: reading, connected: connected, now: clock()) else {
             schedule(at: reporting.nextCheck(connected: connected))
             return
         }
+        schedule(at: nil)
         sending = true
         let sentFor = generation
         Task { @MainActor [weak self] in
@@ -139,12 +140,18 @@ final class PresenceReporter {
     }
 
     private func schedule(at date: Date?) {
+        guard date != checkAt else { return }
+        check?.cancel()
+        check = nil
+        checkAt = date
         guard let date else { return }
         let delay = max(0, date.timeIntervalSince(clock()))
         check = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
-            self?.pump()
+            guard !Task.isCancelled, let self else { return }
+            self.check = nil
+            self.checkAt = nil
+            self.pump()
         }
     }
 }

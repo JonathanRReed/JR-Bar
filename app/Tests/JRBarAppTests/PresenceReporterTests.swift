@@ -75,6 +75,32 @@ struct PresenceReporterTests {
         #expect(daemon.sent.count == 3)
     }
 
+    @Test("a live call is renewed on the minute, and state frames between add nothing")
+    func renewal() async {
+        let daemon = FakeDaemon()
+        daemon.connected = true
+        final class Clock { var now = Date(timeIntervalSince1970: 1_800_000_000) }
+        let clock = Clock()
+        let presence = PresenceReporter(isConnected: { daemon.connected }, presence: { nil },
+                                        send: { daemon.sent.append($0); return true },
+                                        clock: { clock.now })
+        presence.noteSensors(NotchSensorState(microphoneInUse: true))
+        await settle { daemon.sent.count == 1 }
+        // The daemon's frames keep coming; none of them is a reason to
+        // repeat the report inside the minute.
+        for _ in 0..<5 {
+            clock.now += 10
+            presence.coreChanged()
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(daemon.sent.count == 1)
+        clock.now += 11
+        presence.coreChanged()
+        await settle { daemon.sent.count == 2 }
+        #expect(daemon.sent.count == 2)
+        #expect(daemon.sent.filter { !$0.mic }.isEmpty)
+    }
+
     @Test("a reconnect sends the reading again, even a quiet one")
     func reconnect() async {
         let daemon = FakeDaemon()
