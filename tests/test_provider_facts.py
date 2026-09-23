@@ -579,5 +579,7 @@ def test_poison_subclasses_are_rejected_without_executing_attacker_behavior__and
     assert len(set(WorkLifecycle)) == 6
     assert len(set(NextActor)) == 4
     assert len(set(ProviderRequestState)) == 3
-    assert len(set(RequestKind)) == 5
+    # permission, input, approval, review, unknown -- and dialog, a form the
+    # agent draws that only the owner can fill (Claude's MCP elicitation).
+    assert len(set(RequestKind)) == 6
 

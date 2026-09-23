@@ -203,8 +203,20 @@ Vocabulary:
   An acknowledgement is bound to the event it acknowledged, so a cleared
   session that starts working again is listed again straight away.
 - `ask.kind` is the canonical request kind (`permission`, `input`,
-  `approval`, `review`) with a fallback from the hook event; `summary` is
-  the hook's message or tool name; `opened_at` the request's opening epoch.
+  `approval`, `review`, `dialog`) with a fallback from the hook event;
+  `summary` is the hook's message or tool name; `opened_at` the request's
+  opening epoch. `dialog` is a form the agent draws that only the owner can
+  fill -- Claude Code's MCP `Elicitation` hook (an MCP server asking for
+  input, or for a link to be opened), keyed by its `elicitation_id` and
+  resolved by the matching `ElicitationResult` (or the turn ending). It
+  lights, escalates and holds a card like any ask, and is never
+  `answerable` or `replyable`: the panel opens the session instead. Claude's
+  `Notification` types `elicitation_dialog`, `elicitation_url_dialog` and
+  `agent_needs_input` (a background agent or teammate blocked on the owner,
+  a computer-use action to allow) put the session in `waiting` with
+  `next_actor: "user"` whatever their words -- they name no request, so
+  they carry no card of their own -- and never count as the source going
+  quiet.
   `answerable` means the `answer_ask` chain can actually deliver a decision
   to this session -- the provider's negotiated contract declares the
   `answering` capability, the invocation binds the reviewed local surface,

@@ -398,6 +398,11 @@ class RequestKind(str, Enum):
     APPROVAL = "approval"
     REVIEW = "review"
     UNKNOWN = "unknown"
+    #: A dialog the agent draws and only the owner can fill -- an MCP
+    #: server's form or link (Claude Code's elicitation). A real ask for the
+    #: light, escalation and the panel, but never answered in place: it
+    #: takes neither a yes/no key nor one line of text.
+    DIALOG = "dialog"
 
 
 @dataclass(frozen=True, slots=True)

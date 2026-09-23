@@ -791,6 +791,7 @@ class AgentMonitor(LiveSessionMemory):
                     previous,
                     status,
                     pending_permissions_by_key.get(status.agent_id, set()),
+                    requests_input=notification_requests_input(record),
                 )
                 if keep_status:
                     compatibility_statuses_by_agent_id[status.agent_id] = status
@@ -904,6 +905,7 @@ class AgentMonitor(LiveSessionMemory):
                     previous,
                     status,
                     pending_permissions_by_key.get(status.agent_id, set()),
+                    requests_input=notification_requests_input(record),
                 ):
                     continue
                 statuses_by_key[status.agent_id] = status
@@ -1201,6 +1203,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                     previous,
                     status,
                     self._pending_permissions_by_key.get(status.agent_id, set()),
+                    requests_input=notification_requests_input(record),
                 )
                 transcript_source = record.raw.get("source") in {
                     CODEX_TRANSCRIPT_PROVIDER,
@@ -2950,6 +2953,14 @@ def mode_for_event(record: HookEvent) -> AgentMode | None:
         return AgentMode.WORKING
     if event == "PermissionRequest":
         return AgentMode.WAITING_FOR_INPUT
+    if event == "Elicitation":
+        # An MCP server's form or link, drawn by Claude mid tool call.
+        return AgentMode.WAITING_FOR_INPUT
+    if event == "ElicitationResult":
+        return AgentMode.WORKING
+    if notification_requests_input(record):
+        # Asks by name, whatever their words ("…your message is waiting").
+        return AgentMode.WAITING_FOR_INPUT
     if event == "Notification":
         notification_type = str(raw.get("notification_type", "")).strip().lower()
         message = str(raw.get("message", "")).strip().lower()
@@ -2997,6 +3008,26 @@ def explicit_mode_for_record(record: HookEvent) -> AgentMode | None:
     return explicit_mode_from_message(
         raw.get("last_assistant_message") or raw.get("message")
     )
+
+
+#: Notification types that mean "waiting on the owner" by name, whatever
+#: their words: an MCP server's form or link dialog (Claude Code's
+#: ``elicitation_dialog`` / ``elicitation_url_dialog``) and a dialog of
+#: Claude's own -- a background agent or teammate blocked on the owner, a
+#: computer-use action to allow, a notice to acknowledge
+#: (``agent_needs_input``).
+INPUT_NOTIFICATION_TYPES = frozenset(
+    {"elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"}
+)
+
+
+def notification_requests_input(record: HookEvent) -> bool:
+    """A Notification whose type alone says the agent waits on the owner."""
+    if record.event_name != "Notification":
+        return False
+    raw = record.raw
+    kind = raw.get("notification_type") or raw.get("notificationType") or ""
+    return isinstance(kind, str) and kind.strip().lower() in INPUT_NOTIFICATION_TYPES
 
 
 def notification_text_indicates_completion(notification_type: str, message: str) -> bool:
@@ -3288,11 +3319,17 @@ def should_ignore_status_transition(
     previous: AgentStatus | None,
     current: AgentStatus,
     pending_permission_signatures: set[str],
+    *,
+    requests_input: bool = False,
 ) -> bool:
+    # The idle nudge after a Stop is not news -- but a dialog that waits on
+    # the owner (``requests_input``: a background agent blocked after the
+    # turn ended) is, finished turn or not.
     if (
         previous is not None
         and previous.mode == AgentMode.COMPLETED
         and current.event_name == "Notification"
+        and not requests_input
     ):
         return True
 
