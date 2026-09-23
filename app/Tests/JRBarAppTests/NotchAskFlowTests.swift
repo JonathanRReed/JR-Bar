@@ -273,6 +273,36 @@ struct NotchAskFlowTests {
         #expect(!toy.presentSystemNotice(news(.display, id: "x")))
     }
 
+    @Test("a toast the island would never say goes to the pill")
+    func announcementsNeverVanish() {
+        // A latched ask holds the line: a device notice queued behind it
+        // would sit there until it went stale.
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        toy.offer(askNotice())
+        #expect(!toy.presentSystemNotice(news(.device, id: "d")))
+        #expect(toy.capsuleQueue.pending == nil, "nothing parked behind the ask")
+        #expect(toy.activeCapsule?.id == "a")
+
+        // News up, an ask waiting behind it: the device notice is
+        // outranked at the door, so the island will not say it.
+        let (other, store2, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store2) {} }
+        other.offer(news(.completed, id: "c"))
+        other.offer(askNotice())
+        #expect(other.capsuleQueue.pending?.kind == .ask)
+        #expect(!other.presentSystemNotice(news(.device, id: "d")))
+        #expect(other.capsuleQueue.pending?.kind == .ask)
+
+        // A repeat inside the cooldown is not the island's to say again —
+        // the pill carries it.
+        other.finishCapsule()
+        other.finishCapsule()
+        #expect(other.presentSystemNotice(news(.display, id: "x")))
+        other.finishCapsule()
+        #expect(!other.presentSystemNotice(news(.display, id: "x")))
+    }
+
     @Test("the amber count opens the longest-waiting session")
     func oldestAsk() {
         let older = CoreSession(id: "claude:old", provider: "claude", since: 1,

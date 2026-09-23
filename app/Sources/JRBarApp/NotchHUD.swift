@@ -9,8 +9,9 @@ import SwiftUI
 /// to it first (`islandPresent`), where it morphs out of the notch in
 /// black through the same capsule queue as the agents' news. Only when
 /// the island cannot take it — not ours, parked, grown into the card, an
-/// ask's buttons holding it — does the brief glass pill hang under the
-/// band instead. Click-through, never key, gone after its beat.
+/// ask's buttons holding it, a waiting capsule that outranks it — does
+/// the brief glass pill hang under the band instead. Click-through,
+/// never key, gone after its beat.
 @MainActor
 final class NotchHUD {
     static let life: TimeInterval = 2.0
@@ -29,8 +30,9 @@ final class NotchHUD {
     var alertsAllowed: () -> Bool = { true }
     var soundEffectsAllowed: () -> Bool = { true }
     /// The island's door (`NotchToy.presentSystemNotice`): true when it
-    /// took the notice, and the pill stays down. The coordinator wires
-    /// it; unwired, everything takes the pill.
+    /// will say the notice, and the pill stays down; false whenever it
+    /// would not, so nothing falls between the two. The coordinator
+    /// wires it; unwired, everything takes the pill.
     var islandPresent: @MainActor (AlcoveNotice) -> Bool = { _ in false }
     /// How long a level or toast holds — the notch's "HUD duration".
     var hudLife: @MainActor () -> TimeInterval = { NotchHUD.life }

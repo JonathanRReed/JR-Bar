@@ -1305,22 +1305,31 @@ final class NotchToy: Toy {
     /// Internal so tests can drive the queue straight — `noteEvent` and
     /// the power path both land here. Key feedback never queues: it goes
     /// to the overlay (`presentSystemNotice`).
-    func offer(_ notice: AlcoveNotice) {
+    ///
+    /// True when the island has the notice — shown, due after the gap,
+    /// waiting its turn, or held for a quiet stretch's summary. False
+    /// when it will never say it: turned away at the door by a waiting
+    /// capsule that outranks it, or a repeat inside the cooldown. The
+    /// agents' news can let that go (the card's rows still tell it);
+    /// the Mac's announcements take the pill instead.
+    @discardableResult
+    func offer(_ notice: AlcoveNotice) -> Bool {
         if notice.kind.isFeedback {
-            presentFeedback(notice)
-            return
+            return presentFeedback(notice)
         }
         // A quiet stretch holds good news back for one summary later;
         // asks and failures are not held.
-        if settings.holdNewsWhileQuiet, quietContext != nil, capsuleQueue.hold(notice) { return }
+        if settings.holdNewsWhileQuiet, quietContext != nil, capsuleQueue.hold(notice) { return true }
         if let pending = capsuleQueue.pending,
-           notice.kind.queueRank > pending.kind.queueRank { return }
+           notice.kind.queueRank > pending.kind.queueRank { return false }
         if notice.kind == .ask { askTrack[notice.id] = (Date(), false) }
         switch capsuleQueue.offer(notice, at: Date()) {
         case .now: showCurrentCapsule()
         case .after(let delay): scheduleCapsuleShow(after: delay)
-        case .queued, .suppressed: break
+        case .queued: break
+        case .suppressed: return false
         }
+        return true
     }
 
     /// Draw `capsuleQueue.current` as the island's face and arm its life
@@ -1611,18 +1620,24 @@ final class NotchToy: Toy {
     // MARK: Feedback overlay
 
     /// The Mac's own announcements (`NotchHUD`): the level keys, Caps
-    /// Lock, Focus, devices, displays. True when the island took it —
-    /// ours, shown, not grown, not under Fold — so the HUD's glass pill
-    /// stays down and nothing is said twice. Key feedback overlays at
-    /// once; news joins the capsule line. False sends it to the pill.
+    /// Lock, Focus, devices, displays and the app's toasts. True when
+    /// the island will say it — ours, shown, not grown, not under Fold,
+    /// and the line open to it — so the HUD's glass pill stays down and
+    /// nothing is said twice. Key feedback overlays at once; news joins
+    /// the capsule line. False sends it to the pill: "SidePulse
+    /// disconnected" must never vanish between the two.
     @discardableResult
     func presentSystemNotice(_ notice: AlcoveNotice) -> Bool {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
               !islandExpanded, !foldEngaged else { return false }
         if notice.kind.isFeedback { return presentFeedback(notice) }
-        offer(Self.focusPolicyNotice(notice, holding: s.holdNewsWhileQuiet && s.capsuleNotifications))
-        return true
+        // A latched ask holds the line for as long as it is open: news
+        // offered behind it would wait there and go stale unsaid. The
+        // pill speaks now instead, the same as for key feedback.
+        guard capsuleQueue.acceptsOverlay else { return false }
+        return offer(Self.focusPolicyNotice(notice,
+                                            holding: s.holdNewsWhileQuiet && s.capsuleNotifications))
     }
 
     /// Draw key feedback over the island for its beat. A latched ask
