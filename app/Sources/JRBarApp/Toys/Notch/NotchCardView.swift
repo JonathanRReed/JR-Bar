@@ -114,6 +114,8 @@ final class NotchCardModel {
     /// every pin, so a flip lands on the next open.
     var calendarEnabled: () -> Bool = { true }
     var remindersEnabled: () -> Bool = { true }
+    /// Where a session works — a reminder about it says so.
+    var sessionCwd: (String) -> String? = { _ in nil }
 
     /// On a day with nothing on the calendar the weather takes the
     /// calendar's place — Alcove's empty-day conditions — instead of a
@@ -535,6 +537,18 @@ struct NotchCardView: View {
                 Button("Nudge Me in 20 Min If Still Working") {
                     model.timers.add(label: "\(row.label) still working", duration: 20 * 60,
                                      watchSession: row.id)
+                }
+            }
+            // "I'll look at that later", kept: a reminder that names the
+            // run and where it ran, due when the person says.
+            if model.reminders.canWrite {
+                Menu("Remind Me About This") {
+                    ForEach(ShelfRemindersModel.Later.allCases, id: \.self) { later in
+                        Button(later.title) {
+                            model.reminders.remind(about: row.label, provider: row.provider,
+                                                   cwd: model.sessionCwd(row.id), later: later)
+                        }
+                    }
                 }
             }
         }

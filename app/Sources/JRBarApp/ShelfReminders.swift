@@ -1,5 +1,6 @@
 import AppKit
 import EventKit
+import JRBarCore
 
 /// The shelf's reminders glance — Alcove's Reminders row: the next few
 /// incomplete reminders with their due times and a check-off circle
@@ -222,6 +223,83 @@ final class ShelfRemindersModel {
         }
         load(from: store)
         return true
+    }
+
+    // MARK: About a session
+
+    /// When "Remind Me About This" comes back.
+    enum Later: CaseIterable {
+        case inAnHour, thisEvening, tomorrowMorning
+
+        var title: String {
+            switch self {
+            case .inAnHour: return "In an Hour"
+            case .thisEvening: return "This Evening"
+            case .tomorrowMorning: return "Tomorrow Morning"
+            }
+        }
+    }
+
+    /// The due moment for `later`: an hour from now; 18:00 today (an
+    /// hour from now once that has passed); 09:00 tomorrow.
+    nonisolated static func due(_ later: Later, now: Date, calendar: Calendar = .current) -> DateComponents {
+        let fields: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute]
+        let hourOn = now.addingTimeInterval(3600)
+        switch later {
+        case .inAnHour:
+            return calendar.dateComponents(fields, from: hourOn)
+        case .thisEvening:
+            let evening = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: now) ?? hourOn
+            return calendar.dateComponents(fields, from: evening > now ? evening : hourOn)
+        case .tomorrowMorning:
+            let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) ?? now
+            let morning = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? hourOn
+            return calendar.dateComponents(fields, from: morning)
+        }
+    }
+
+    /// The reminder a session leaves: its name to look at, and where it
+    /// ran so the person can find it again.
+    nonisolated static func sessionReminder(label: String, provider: String,
+                                            cwd: String?) -> (title: String, notes: String) {
+        let name = SessionLabel.providerName(provider)
+        var notes = "\(name) session"
+        if let cwd, !cwd.isEmpty {
+            notes += " in \((cwd as NSString).abbreviatingWithTildeInPath)"
+        }
+        return ("Look at \(label)", notes + ". Left from JR-Bar's notch.")
+    }
+
+    /// "Remind Me About This" on a session: a reminder in the default
+    /// list, due and alerted at `later`. False without access or when
+    /// the save failed.
+    @discardableResult
+    func remind(about label: String, provider: String, cwd: String?, later: Later,
+                now: Date = Date()) -> Bool {
+        guard let store, let list = store.defaultCalendarForNewReminders() else { return false }
+        let made = Self.sessionReminder(label: label, provider: provider, cwd: cwd)
+        let due = Self.due(later, now: now)
+        let reminder = EKReminder(eventStore: store)
+        reminder.title = made.title
+        reminder.notes = made.notes
+        reminder.calendar = list
+        reminder.dueDateComponents = due
+        if let when = Calendar.current.date(from: due) { reminder.addAlarm(EKAlarm(absoluteDate: when)) }
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            return false
+        }
+        load(from: store)
+        return true
+    }
+
+    /// Whether the glance can write now — access granted and read.
+    var canWrite: Bool {
+        switch state {
+        case .idle, .items: return store != nil
+        case .hidden, .needsPermission: return false
+        }
     }
 
     /// The row's action without a check-off: open Reminders.app on the

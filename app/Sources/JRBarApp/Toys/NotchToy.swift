@@ -223,6 +223,7 @@ final class NotchToy: Toy {
         }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
+        cardModel.sessionCwd = { [weak self] id in self?.core.state?.session(withID: id)?.cwd }
         // A meeting about to start says so; one running is a quiet
         // stretch, and its end may replay what it held.
         meetingWatch.onSoon = { [weak self] event in self?.noteMeetingSoon(event) }
