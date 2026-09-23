@@ -901,6 +901,21 @@ import Testing
 // MARK: - Card gestures
 
 extension DockEnhanceTests {
+    @Test("a shake minimises the siblings still up, or brings them all back once they're all down")
+    func shakePlans() {
+        func card(_ id: Int, _ minimized: Bool) -> DockPreviewWindow {
+            DockPreviewWindow(id: id, title: "w\(id)", minimized: minimized, fullScreen: nil,
+                              frame: nil, thumbnail: nil, element: nil)
+        }
+        let mixed = DockEnhanceMath.shakePlan([card(1, false), card(2, false), card(3, true)], shaken: 1)
+        #expect(mixed?.minimize == true)
+        #expect(mixed?.targets.map(\.id) == [2], "an already-minimised sibling isn't touched — and doesn't pulse")
+        let down = DockEnhanceMath.shakePlan([card(1, false), card(2, true), card(3, true)], shaken: 1)
+        #expect(down?.minimize == false)
+        #expect(down?.targets.map(\.id) == [2, 3])
+        #expect(DockEnhanceMath.shakePlan([card(1, false)], shaken: 1) == nil)
+    }
+
     @Test("a fast left-right-left wiggle is one shake; a slow drift is not")
     func shakeDetects() {
         var shake = DockEnhanceMath.ShakeDetector()

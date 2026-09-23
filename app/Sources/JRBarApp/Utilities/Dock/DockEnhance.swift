@@ -731,6 +731,16 @@ enum DockEnhanceMath {
         }
     }
 
+    /// Aero shake's plan: minimise the shaken card's siblings, or — when
+    /// every sibling is already down — bring them all back. nil with no
+    /// sibling to move. `minimize` is the value each target is set to.
+    static func shakePlan(_ windows: [DockPreviewWindow], shaken id: Int) -> (targets: [DockPreviewWindow], minimize: Bool)? {
+        let others = windows.filter { $0.id != id }
+        guard !others.isEmpty else { return nil }
+        let restore = others.allSatisfy(\.minimized)
+        return (others.filter { $0.minimized == restore }, !restore)
+    }
+
     /// Close-all's split: windows hosting a working or waiting agent are
     /// kept — tidying terminals from the Dock must not end a run.
     static func closable(_ windows: [DockPreviewWindow],
@@ -1335,6 +1345,8 @@ final class DockPreviewContent {
     var askNotes: [String: String] = [:]
     /// Asks with an answer in flight — their buttons disable.
     var answering: Set<String> = []
+    /// Cards a shake or flick just moved — they dip for a beat.
+    var pulsedWindowIDs: Set<Int> = []
     /// A guarded close's first press: the card that rings and its line.
     var armedWindowID: Int?
     var armedNote: String?
@@ -2188,6 +2200,7 @@ final class DockEnhanceController {
         content.answering = []
         content.armedWindowID = nil
         content.armedNote = nil
+        content.pulsedWindowIDs = []
         content.headerNote = nil
         content.stillRunning = false
         agentGuard.reset()
@@ -2641,18 +2654,17 @@ final class DockEnhanceController {
     /// Aero shake — minimise the rest of the app's windows, or bring
     /// them all back when the shaken card is the only one left up.
     private func shakeOthers(_ window: DockPreviewWindow) {
-        let others = preview.windows.filter { $0.id != window.id }
-        guard !others.isEmpty else { return }
-        let restore = others.allSatisfy(\.minimized)
-        var changed = false
-        for other in others {
-            guard AppleDockReader.setMinimized(other, !restore),
+        guard let plan = DockEnhanceMath.shakePlan(preview.windows, shaken: window.id) else { return }
+        var changed = Set<Int>()
+        for other in plan.targets {
+            guard AppleDockReader.setMinimized(other, plan.minimize),
                   let index = preview.windows.firstIndex(where: { $0.id == other.id })
             else { continue }
-            preview.windows[index].minimized = !restore
-            changed = true
+            preview.windows[index].minimized = plan.minimize
+            changed.insert(other.id)
         }
-        if changed { reframe() }
+        acknowledge(changed)
+        if !changed.isEmpty { reframe() }
     }
 
     /// A vertical flick on a card — down minimises, up restores.
@@ -2662,7 +2674,26 @@ final class DockEnhanceController {
               let index = preview.windows.firstIndex(where: { $0.id == window.id })
         else { return }
         preview.windows[index].minimized = minimize
+        acknowledge([window.id])
     }
+
+    /// A shake or flick landed: a level-change tick under the trackpad
+    /// and a brief dip on the cards it moved — a hidden gesture says it
+    /// worked, and on which windows, without a word on screen.
+    private func acknowledge(_ ids: Set<Int>) {
+        guard !ids.isEmpty else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        pulseToken &+= 1
+        let token = pulseToken
+        preview.pulsedWindowIDs = ids
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pulseLength) { [weak self] in
+            guard let self, self.pulseToken == token else { return }
+            self.preview.pulsedWindowIDs = []
+        }
+    }
+
+    static let pulseLength: TimeInterval = 0.3
+    @ObservationIgnored private var pulseToken = 0
 
     /// A folder pop click — the entry (or the folder itself) opens.
     private func openItem(_ url: URL) {

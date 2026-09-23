@@ -581,6 +581,7 @@ struct DockPreviewView: View {
                                 && window.title != appTitle.base,
                             agent: content.agents[window.id],
                             armedNote: content.armedWindowID == window.id ? content.armedNote : nil,
+                            pulsed: content.pulsedWindowIDs.contains(window.id),
                             actions: actions)
         }
     }
@@ -671,6 +672,8 @@ struct DockPreviewCard: View {
     /// A guarded close's first press: the card rings in the agent's
     /// colour and this line replaces the title until it lapses.
     var armedNote: String? = nil
+    /// A shake or flick just moved this window — the card dips a beat.
+    var pulsed = false
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
@@ -827,6 +830,8 @@ struct DockPreviewCard: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .opacity(pulsed ? 0.45 : 1)
+        .animation(.easeOut(duration: 0.18), value: pulsed)
         .help(window.title)
     }
 
