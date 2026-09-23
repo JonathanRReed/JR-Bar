@@ -746,6 +746,11 @@ final class NotchBuddyToy: Toy {
         rosterItem.submenu = roster
         menu.addItem(rosterItem)
         menu.addItem(menuActions.item(title: "About \(buddyName)…", action: #selector(BuddyMenuActions.about)))
+        // The tank's residents starve through a busy week with the
+        // window shut — the buddy can drop a round in on its way past.
+        if let aquarium = store?.aquarium, !aquarium.fish.isEmpty {
+            menu.addItem(menuActions.item(title: "Feed the tank", action: #selector(BuddyMenuActions.feedTank)))
+        }
         menu.addItem(.separator())
         if let asking = askingSession {
             let label = SessionLabel.display(label: asking.label, shortId: asking.shortId,
@@ -1080,6 +1085,7 @@ final class BuddyMenuActions: NSObject {
     @objc func treat(_ sender: Any?) { toy?.giveTreat() }
     @objc func rename(_ sender: Any?) { toy?.promptRename(near: panelFrame) }
     @objc func about(_ sender: Any?) { toy?.presentCard(near: panelFrame) }
+    @objc func feedTank(_ sender: Any?) { toy?.store?.aquarium?.feedAll() }
 
     @objc func pickCharacter(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }

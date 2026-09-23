@@ -28,7 +28,9 @@ final class AquariumToy: Toy {
     /// written back after every batch. The game reads the session
     /// list and answers taps — it never touches the agent.
     private(set) var game: AquariumGame
-    @ObservationIgnored private let saveFile = AquariumSaveFile()
+    /// Where the game lives on disk — the real state directory in the
+    /// app, a scratch file in the tests.
+    @ObservationIgnored private let saveFile: AquariumSaveFile
     /// The "while you were away" summary the tank shows once, when the
     /// window reopens after earning with it closed.
     private(set) var awayNotice: AquariumAwaySummary?
@@ -48,9 +50,10 @@ final class AquariumToy: Toy {
     @ObservationIgnored private var windowController: AquariumWindowController?
     @ObservationIgnored private var gameTimer: Timer?
 
-    init(core: CoreModel, store: ToysStore) {
+    init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumSaveFile()) {
         self.core = core
         self.store = store
+        self.saveFile = saveFile
         game = saveFile.load().game
         knownLevel = game.tankLevel
         // A relaunched app starts with the tank closed: if the save
@@ -287,6 +290,24 @@ final class AquariumToy: Toy {
         let now = Date()
         note(game.apply(.pelletEaten(fishID: fishID), now: now), now: now)
         persist()
+    }
+
+    /// "Feed the tank" from outside the window — the buddy's menu today,
+    /// the notch card or the command bar tomorrow: one pellet round to
+    /// every fish in the tank, residents included, exactly as if each
+    /// were tapped. The game's per-fish daily cap still counts, so a
+    /// round from afar can't out-earn a day's work; it just keeps the
+    /// residents from starving through a week with the window shut.
+    /// Returns how many fish ate.
+    @discardableResult
+    func feedAll(at now: Date = Date()) -> Int {
+        let eaters = fish.filter { !$0.isFry && !$0.isRetired(at: now) && $0.state != .sinking }
+        guard !eaters.isEmpty else { return 0 }
+        for fish in eaters {
+            note(game.apply(.pelletEaten(fishID: fish.id), now: now), now: now)
+        }
+        persist()
+        return eaters.count
     }
 
     /// A clicked pearl drop on the sand.
