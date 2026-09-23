@@ -102,6 +102,17 @@ struct MenuBarGateTests {
         #expect(gate.release() == false)
     }
 
+    @Test("after a crash that left Control Center's items hidden, a face that never draws gives them back")
+    func gateAfterCrash() {
+        var gate = MenuBarDrawnGate(hidden: true)
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        #expect(gate.step(wanted: true, drawn: false, now: t0) == nil)
+        #expect(gate.step(wanted: true, drawn: false, now: t0.addingTimeInterval(3)) == false)
+        // With the item off the originals come back at once.
+        var off = MenuBarDrawnGate(hidden: true)
+        #expect(off.step(wanted: false, drawn: false, now: t0) == false)
+    }
+
     // MARK: The compound face
 
     @Test("the compound face's segments sit right of the face and take their own clicks")

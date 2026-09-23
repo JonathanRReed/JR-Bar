@@ -139,6 +139,13 @@ final class MenuBarCombinedItem {
     /// "was never set" (a missing key).
     nonisolated static let savedKey = "jrbar.menubar.ccOriginals"
 
+    /// Whether Control Center's items stand hidden through us now — the
+    /// saved originals are written with the hide and removed with the
+    /// restore, so they outlive a crash that skipped the restore.
+    nonisolated static func coveredExtrasSaved() -> Bool {
+        UserDefaults.standard.dictionary(forKey: savedKey) != nil
+    }
+
     private(set) var item: NSStatusItem?
     private var popover: NSPopover?
     private var lastSignature = ""
@@ -195,6 +202,10 @@ final class MenuBarCombinedItem {
     }
 
     func remove() {
+        // The pane's live feeds stop with the item, not only with a
+        // SwiftUI disappear the closing popover may never deliver.
+        (popover?.contentViewController as? NSHostingController<MenuBarSystemPane>)?
+            .rootView.model.stopLive()
         popover?.close()
         popover = nil
         if let item { NSStatusBar.system.removeStatusItem(item) }
@@ -354,6 +365,13 @@ final class MenuBarCombinedItem {
 struct MenuBarDrawnGate: Equatable, Sendable {
     /// Whether Control Center's items are hidden through the gate now.
     private(set) var hidden = false
+
+    /// A gate that starts from what stands: `hidden` when a run that
+    /// never restored (a crash) left Control Center's items hidden, so a
+    /// face that never draws still gives them back.
+    init(hidden: Bool = false) {
+        self.hidden = hidden
+    }
     private var drawnSince: Date?
     private var undrawnSince: Date?
     private var lastHide: Date = .distantPast

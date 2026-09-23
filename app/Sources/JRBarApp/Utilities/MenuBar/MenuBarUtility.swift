@@ -121,8 +121,9 @@ final class MenuBarUtility: Toy {
     /// The combined system item — battery/Wi-Fi/sound/Focus in one.
     @ObservationIgnored private let combinedItem = MenuBarCombinedItem()
     /// Whether the CC extras are hidden through our item right now —
-    /// the defaults write and the `killall` only run on the flip.
-    @ObservationIgnored private var coveredExtrasHidden = false
+    /// the defaults write and the `killall` only run on the flip. Seeded
+    /// from the saved originals: a crash can leave them hidden.
+    @ObservationIgnored private var coveredExtrasHidden = MenuBarCombinedItem.coveredExtrasSaved()
     /// The full-bar tint underlay.
     @ObservationIgnored private let underlay = MenuBarUnderlay()
     /// The agent feed's read — wired by the app delegate; the item
@@ -1471,7 +1472,8 @@ final class MenuBarUtility: Toy {
     }
 
     /// The gate on Control Center's items — see `MenuBarDrawnGate`.
-    @ObservationIgnored private var combinedGate = MenuBarDrawnGate()
+    @ObservationIgnored private var combinedGate =
+        MenuBarDrawnGate(hidden: MenuBarCombinedItem.coveredExtrasSaved())
 
     private func stepCombinedGate(now: Date = Date()) {
         let wanted = running && settings().combinedSystemItem
