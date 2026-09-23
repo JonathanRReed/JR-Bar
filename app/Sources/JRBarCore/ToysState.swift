@@ -217,6 +217,9 @@ public enum DayNightMode: String, Codable, CaseIterable, Sendable {
     case realTime
     /// The classic behaviour: a slow four-minute breathe.
     case cycle
+    /// Sunrise and sunset for the time zone's city, worked out locally;
+    /// a zone without a city keeps `realTime`'s hours.
+    case sun
 }
 
 /// Aquarium: every live session is a fish.

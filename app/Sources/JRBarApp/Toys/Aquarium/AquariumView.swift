@@ -52,16 +52,21 @@ struct AquariumView: View {
     /// The day/night wash's depth (0 bright … 1 deepest). `cycle`
     /// keeps the original four-minute breathe; `realTime` follows the
     /// clock — night from 21:00 to 06:00, dawn & dusk blending the
-    /// edges. Reduce Motion holds a soft dusk; a fixture can pin it.
+    /// edges; `sun` blends at the real sunrise and sunset, or keeps the
+    /// clock's hours where the time zone has no city. Reduce Motion
+    /// holds a soft dusk; a fixture can pin it.
     private func nightFactor(t: Double) -> Double {
         if let pinned = fixture?.night { return pinned }
         if reduceMotion { return 0.4 }
+        let date = Date(timeIntervalSince1970: t)
         switch toy?.store?.state.aquarium.dayNight ?? .cycle {
         case .cycle:
             return AquariumBehavior.night(at: t)
         case .realTime:
-            return AquariumBehavior.realTimeNight(
-                at: Date(timeIntervalSince1970: t), calendar: .current)
+            return AquariumBehavior.realTimeNight(at: date, calendar: .current)
+        case .sun:
+            return AquariumSun.night(at: date)
+                ?? AquariumBehavior.realTimeNight(at: date, calendar: .current)
         }
     }
 

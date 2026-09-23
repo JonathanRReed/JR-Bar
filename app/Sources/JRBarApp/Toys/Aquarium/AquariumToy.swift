@@ -159,12 +159,13 @@ final class AquariumToy: Toy {
                 LabeledContent {
                     Picker("", selection: dayNight) {
                         Text("Follow the clock").tag(DayNightMode.realTime)
+                        Text("Follow the sun").tag(DayNightMode.sun)
                         Text("4-minute cycle").tag(DayNightMode.cycle)
                     }
                     .labelsHidden()
                     .frame(width: 170)
                 } label: {
-                    SettingLabel(title: "Day & night", subtitle: "The tank's night wash — the real clock or a quick loop.")
+                    SettingLabel(title: "Day & night", subtitle: dayNightSubtitle)
                 }
                 LabeledContent {
                     Button("Fill screen") { self.fillScreen() }
@@ -255,6 +256,20 @@ final class AquariumToy: Toy {
     private var idleFillMinutes: Binding<Int> {
         Binding(get: { self.store?.state.aquarium.idleFillMinutes ?? 0 },
                 set: { self.store?.state.aquarium.idleFillMinutes = $0 })
+    }
+
+    /// The picker's caption names the sun's source, so "Follow the
+    /// sun" never pretends to know more than the time zone.
+    private var dayNightSubtitle: String {
+        guard store?.state.aquarium.dayNight == .sun else {
+            return "The tank's night wash — the real clock, the sun, or a quick loop."
+        }
+        guard AquariumSun.coordinate(for: .current) != nil else {
+            return "Your time zone names no city, so the tank keeps the clock's hours."
+        }
+        let city = TimeZone.current.identifier.split(separator: "/").last
+            .map { $0.replacingOccurrences(of: "_", with: " ") } ?? ""
+        return "Sunrise & sunset for \(city), worked out on this Mac from your time zone."
     }
 
     private var dayNight: Binding<DayNightMode> {
