@@ -101,6 +101,9 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// cards) instead of nothing. On by default: a first try should do
     /// something.
     public var wallpaperFallback: Bool = true
+    /// The hinge voice: the lid's speed plays a creak or a softer paper
+    /// rustle. Off by default.
+    public var hingeVoice: HingeVoice = .off
 
     public init(enabled: Bool = false, anchor: FoldAnchor = .angle,
                 activationAngle: Double = 65,
@@ -128,7 +131,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // reads it now and a stale value like "fog" decodes fine.
         case enabled, anchor, activationAngle, style, perspective, blur, shade, jitterTolerance
         case provider, frost, holdPicture, dwellTimeout, restoreSound
-        case wallpaperFallback
+        case wallpaperFallback, hingeVoice
     }
 
     public init(from decoder: any Decoder) throws {
@@ -157,6 +160,8 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
         restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
         wallpaperFallback = (try? c.decodeIfPresent(Bool.self, forKey: .wallpaperFallback)) ?? true
+        let voiceRaw = (try? c.decodeIfPresent(String.self, forKey: .hingeVoice)) ?? nil
+        hingeVoice = voiceRaw.flatMap(HingeVoice.init(rawValue:)) ?? .off
         // Each past default set is treated as untouched and moved to the
         // current one; any deliberate change means the file survives.
         // A file old enough to migrate never wrote `frost`, so the knob
@@ -194,7 +199,13 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(dwellTimeout, forKey: .dwellTimeout)
         try c.encode(restoreSound, forKey: .restoreSound)
         try c.encode(wallpaperFallback, forKey: .wallpaperFallback)
+        try c.encode(hingeVoice, forKey: .hingeVoice)
     }
+}
+
+/// Fold's hinge voice: what the lid's movement sounds like, if anything.
+public enum HingeVoice: String, Codable, CaseIterable, Sendable {
+    case off, creak, rustle
 }
 
 /// Who renders the fold.

@@ -302,6 +302,22 @@ final class FoldToy: Toy {
     /// read rate.
     @ObservationIgnored let meter = ToyMeter()
 
+    /// The optional creak (`FoldHingeVoice`): it only listens to the
+    /// readings the fold already takes.
+    @ObservationIgnored private let hingeVoice = FoldHingeVoice()
+
+    /// One reading to the voice. It plays only while the fold is on,
+    /// JR-Bar renders it, and the room isn't hushed; otherwise any
+    /// running engine stands down.
+    private func voice(_ angle: Double, at t: TimeInterval) {
+        let settings = settings
+        let allowed = settings.enabled && settings.provider == .jrbar
+            && settings.hingeVoice != .off && store?.hushReason() == nil
+        guard allowed || hingeVoice.isRunning else { return }
+        if !allowed { hingeVoice.stop(); return }
+        hingeVoice.feed(angle: angle, at: t, voice: settings.hingeVoice, allowed: true)
+    }
+
     /// The sensor's measured pace and whether capture is live. Bendy or
     /// Lid Plane rendering it costs them, not us — no line.
     func cost(at now: TimeInterval) -> String? {
@@ -841,6 +857,7 @@ final class FoldToy: Toy {
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
         meter.tick()
         rawAngle = sample.angle
+        if let angle = sample.angle, simulatedAngle == nil { voice(angle, at: sample.at) }
         // The clamshell flag is the one pause input that changes on
         // this path with no trigger of its own — the angle reconciles
         // on accepted samples, the display facts through observed
@@ -920,6 +937,8 @@ final class FoldToy: Toy {
             get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
             set: {
                 self.simulatedAngle = $0
+                // The card's demo and the slider preview the voice too.
+                self.voice($0, at: CACurrentMediaTime())
                 // The tracker turns the slider's jumps into the same
                 // capped glide the hinge gets.
                 self.tracker.feed($0)
@@ -1276,6 +1295,18 @@ private struct FoldControlsView: View {
                     .labelsHidden()
             } label: {
                 SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
+            }
+
+            LabeledContent {
+                Picker("", selection: toy.bind(\.hingeVoice)) {
+                    Text("Off").tag(HingeVoice.off)
+                    Text("Creak").tag(HingeVoice.creak)
+                    Text("Paper rustle").tag(HingeVoice.rustle)
+                }
+                .labelsHidden()
+                .frame(width: 150)
+            } label: {
+                SettingLabel(title: "Hinge voice", subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
             }
 
             LabeledContent {
