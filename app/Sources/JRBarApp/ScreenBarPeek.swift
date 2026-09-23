@@ -442,6 +442,7 @@ final class ScreenBarPeek {
         isPinned = isPinned || pinned
         guard !isShown else { relayout(); return }
         isShown = true
+        panel.ignoresMouseEvents = false
         relayout()
         if Self.reduceMotion {
             panel.alphaValue = 1
@@ -461,6 +462,10 @@ final class ScreenBarPeek {
         isPinned = false
         guard isShown, let panel else { isShown = false; return }
         isShown = false
+        // A folding peek answers nothing: the second click of a double
+        // click on a glyph lands on a fading panel and must not open the
+        // item twice.
+        panel.ignoresMouseEvents = true
         if Self.reduceMotion {
             panel.orderOut(nil)
         } else {
