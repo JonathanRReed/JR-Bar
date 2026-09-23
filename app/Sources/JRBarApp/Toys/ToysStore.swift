@@ -167,11 +167,11 @@ final class ToysStore {
 
     // MARK: The room
 
-    /// A call has the mic or the camera. Whoever senses presence feeds
-    /// it here (`noteCallPresence`); nothing does yet — the mic and
-    /// camera sensors live with the notch — so it stays false, the
-    /// toys go by the daemon's quiet and Focus alone, and the card
-    /// promises only that.
+    /// A call has the mic or the camera: `PresenceReporter`'s call
+    /// fact, fed here (`noteCallPresence`) — the notch's own mic and
+    /// camera reading the moment it moves, carried by the daemon's
+    /// `state.presence` while it is connected. It outranks the daemon's
+    /// quiet and Focus, the most specific reason there is.
     private(set) var onCall = false
 
     /// The presence edge — mic or camera in use by a call. A held burst
@@ -186,7 +186,7 @@ final class ToysStore {
     /// Why the toys are keeping it down right now, or nil when they may
     /// play: nil whenever the page's switch is off. Read from the
     /// daemon's `focus` — the same reading that quiets the lights — plus
-    /// call presence once it is wired.
+    /// call presence.
     func hushReason(now: Date = Date()) -> ToysHush.Reason? {
         guard state.hushDuringQuiet else { return nil }
         let focus = core.state?.focus

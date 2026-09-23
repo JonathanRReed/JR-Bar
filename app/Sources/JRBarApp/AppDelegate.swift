@@ -362,6 +362,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         toysStore.notch.onSensorsChanged = { [weak presence] in presence?.noteSensors($0) }
         toysStore.notch.sensorsWantedElsewhere = { [weak self] in self?.sensorsWantedElsewhere() ?? false }
         presence.onDemandChanged = { [weak toysStore] in toysStore?.notch.syncSensorMonitor() }
+        // The toys hush for a call: Confetti holds its burst and its
+        // pop, the tank its cards, the buddy its hop.
+        presence.onCallChanged = { [weak toysStore] in toysStore?.noteCallPresence($0) }
         presence.coreChanged()
         observeSensorDots()
         // Wing gestures: an outward flick dismisses a side, a horizontal

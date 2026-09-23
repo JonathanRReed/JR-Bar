@@ -5,13 +5,14 @@ import Foundation
 /// quiet or a macOS Focus is on — and what a celebration does about it.
 /// One rule for every toy, read from what the daemon already decides for
 /// the lights, so the toys and the lights always agree about when to
-/// keep it down. A call on the mic or camera outranks both once the app
-/// feeds call presence in; nothing does yet.
+/// keep it down. A call on the mic or camera outranks both: the app's
+/// presence fact (`PresenceReporting.onCall`, fed through
+/// `ToysStore.noteCallPresence`).
 public enum ToysHush {
     /// Why the toys are keeping it down, most specific first.
     public enum Reason: String, Equatable, Sendable, CaseIterable {
-        /// A call has the mic or camera — only once call presence is
-        /// wired (`ToysStore.noteCallPresence` has no sensor yet).
+        /// A call has the mic or camera — the notch's own reading,
+        /// carried by the daemon's `state.presence`.
         case call
         /// A macOS Focus the daemon reads.
         case focus
