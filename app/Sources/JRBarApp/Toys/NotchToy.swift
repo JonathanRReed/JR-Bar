@@ -2003,13 +2003,18 @@ final class NotchToy: Toy {
 
     // MARK: Sensors
 
-    /// Another surface that draws the privacy dots — the Screen Bar's
-    /// ears, once they carry them. Under the ears the island's resting
-    /// face is a bare housing and its own dots never draw, so without a
-    /// taker here the monitor would watch the mic for nobody.
+    /// Another taker for the reading: the Screen Bar's ears, which draw
+    /// the dots while the island rests bare under them, and the daemon's
+    /// presence report, which needs the mic and camera whether or not
+    /// anything draws them — a call is a call with the island off. Asked
+    /// on every sync; the delegate re-syncs when its answer moves.
     var sensorsWantedElsewhere: @MainActor () -> Bool = { false }
-    /// Every sensor edge, for that other surface.
+    /// Every edge the monitor reads, for those takers — the raw reading,
+    /// whatever the dots' own switch says.
     var onSensorsChanged: (@MainActor (NotchSensorState) -> Void)?
+    /// Whether the monitor is reading right now, for whichever taker —
+    /// the Screen Bar's camera hold has a camera to hold on only then.
+    private(set) var sensorsReading = false
 
     /// Whether any surface can draw the dots right now: the island's own
     /// face when the ears are not drawn, or a surface that asked.
@@ -2021,26 +2026,48 @@ final class NotchToy: Toy {
         !earsDrawn || wantedElsewhere
     }
 
-    /// The mic/camera monitor lives exactly as long as the island is
-    /// shown with the indicators switch on and some surface can draw
-    /// the dots; `reconcile`/`parkIsland` land here. `runtimeEnabled` is
-    /// folded in, so state-machine tests never build a
-    /// CoreAudio/CoreMediaIO read.
-    private func syncSensorMonitor() {
-        let want = runtimeEnabled && islandVisible && sensorIndicatorsEnabled && sensorsDrawable
+    /// Whether the monitor runs: the island's own face drawing the dots
+    /// (shown, the switch on, no ears over its shoulders), or a taker
+    /// elsewhere. `runtimeEnabled` is folded in, so state-machine tests
+    /// never build a CoreAudio/CoreMediaIO read.
+    static func wantsSensorMonitor(runtimeEnabled: Bool, islandVisible: Bool, indicatorsOn: Bool,
+                                   earsDrawn: Bool, wantedElsewhere: Bool) -> Bool {
+        runtimeEnabled && ((islandVisible && indicatorsOn && !earsDrawn) || wantedElsewhere)
+    }
+
+    /// The mic/camera monitor lives exactly as long as somebody takes
+    /// the reading; `reconcile`/`parkIsland` land here, and the delegate
+    /// calls it when a taker elsewhere comes or goes.
+    func syncSensorMonitor() {
+        let want = Self.wantsSensorMonitor(runtimeEnabled: runtimeEnabled, islandVisible: islandVisible,
+                                           indicatorsOn: sensorIndicatorsEnabled, earsDrawn: earsDrawn,
+                                           wantedElsewhere: sensorsWantedElsewhere())
+        if sensorsReading != want { sensorsReading = want }
         if want {
             if sensorMonitor == nil {
                 let monitor = NotchSensorMonitor()
-                monitor.onChange = { [weak self] state in self?.noteSensors(state) }
+                // Every taker hears every edge; the dots take theirs
+                // through `noteSensors`, which the switch can blank.
+                monitor.onChange = { [weak self] state in
+                    self?.onSensorsChanged?(state)
+                    self?.noteSensors(state)
+                }
                 sensorMonitor = monitor
             }
             sensorMonitor?.start()
+            // The dots switched back on while the monitor kept reading
+            // for another taker: pick its reading up now rather than at
+            // the next edge.
+            if sensorIndicatorsEnabled, let monitor = sensorMonitor, monitor.state != sensorState {
+                noteSensors(monitor.state)
+            }
         } else {
+            let wasReading = sensorMonitor != nil
             sensorMonitor?.stop()
             sensorMonitor = nil
+            if wasReading { onSensorsChanged?(NotchSensorState()) }
             if sensorState.anyInUse {
                 sensorState = NotchSensorState()
-                onSensorsChanged?(sensorState)
                 if islandVisible, currentFace == .idle {
                     reframeCurrent(animated: false)
                 }
@@ -2054,7 +2081,6 @@ final class NotchToy: Toy {
     private func noteSensors(_ state: NotchSensorState) {
         guard state != sensorState else { return }
         sensorState = state
-        onSensorsChanged?(state)
         // An open card names who is listening; an edge re-reads it.
         if cardModel.pinned { cardModel.refreshPrivacy() }
         if currentFace == .idle {

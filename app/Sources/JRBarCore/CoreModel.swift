@@ -946,3 +946,15 @@ extension CoreModel {
         return try await send("burn_init", args: args)
     }
 }
+
+// MARK: - Presence and the keep-awake lease (presence lane)
+
+extension CoreModel {
+    /// `presence`: what the app's sensors see — a live microphone or
+    /// camera is a call (`CorePresenceReport`). The daemon holds a report
+    /// for 180 s; `PresenceReporting` decides when one is owed.
+    @discardableResult
+    public func reportPresence(_ report: CorePresenceReport) async throws -> CoreReply {
+        try await send("presence", args: report.arguments)
+    }
+}

@@ -98,6 +98,44 @@ struct NotchSensorMonitorTests {
         #expect(toy.sensorsDrawable, "no bar, no ears")
     }
 
+    @Test("the monitor runs for the island's face or for a taker elsewhere")
+    func monitorDemand() {
+        func wants(runtime: Bool = true, island: Bool = false, on: Bool = true,
+                   ears: Bool = false, elsewhere: Bool = false) -> Bool {
+            NotchToy.wantsSensorMonitor(runtimeEnabled: runtime, islandVisible: island, indicatorsOn: on,
+                                        earsDrawn: ears, wantedElsewhere: elsewhere)
+        }
+        #expect(wants(island: true), "the island's own shoulders draw the dots")
+        #expect(!wants(island: true, on: false), "the island with its dots off reads for nobody")
+        #expect(!wants(island: true, ears: true), "a bare housing under the ears draws nothing")
+        // The ears or the presence report take the reading with the island
+        // off, another provider drawing, or the dots' switch off — the
+        // switch is the delegate's to weigh for the ears; a call is a call.
+        #expect(wants(elsewhere: true))
+        #expect(wants(on: false, ears: true, elsewhere: true))
+        #expect(!wants())
+        #expect(!wants(runtime: false, island: true, elsewhere: true),
+                "tests never build a CoreAudio read")
+    }
+
+    @Test("the toy reads for nobody in a test, whoever asks")
+    func noReadInTests() {
+        var state = ToysState()
+        state.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy: NotchToy = store.notch
+        var edges: [NotchSensorState] = []
+        toy.onSensorsChanged = { edges.append($0) }
+        toy.sensorsWantedElsewhere = { true }
+        toy.syncSensorMonitor()
+        #expect(!toy.sensorsReading)
+        #expect(edges.isEmpty)
+    }
+
     @Test("the toggle's default is on and the toy honours the write")
     func toggleDefault() {
         let key = NotchToy.sensorIndicatorsDefaultsKey
