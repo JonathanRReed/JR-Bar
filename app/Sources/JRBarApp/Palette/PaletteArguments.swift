@@ -22,8 +22,11 @@ enum PaletteArguments {
         var minutes: Double
         if compact.contains(":") {
             let parts = compact.split(separator: ":", omittingEmptySubsequences: false)
+            // Bounded before the multiply: a held digit key makes an
+            // hour count no Int can carry sixty of.
             guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]),
-                  parts[1].count == 2, m < 60 else { return nil }
+                  parts[1].count == 2, (0..<60).contains(m),
+                  (0...durationRange.upperBound / 3600).contains(h) else { return nil }
             minutes = Double(h * 60 + m)
         } else {
             guard let pairs = pairs(compact) else { return nil }
@@ -48,6 +51,10 @@ enum PaletteArguments {
             }
             guard pairs.count <= 2 else { return nil }
         }
+        // Bounded before `Int(_:)`, which traps past Int.max: this runs
+        // on every keystroke, and twenty nines is a keystroke away.
+        guard minutes.isFinite, minutes > 0,
+              minutes.rounded() * 60 <= Double(durationRange.upperBound) else { return nil }
         let seconds = Int(minutes.rounded()) * 60
         return durationRange.contains(seconds) ? seconds : nil
     }

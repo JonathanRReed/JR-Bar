@@ -251,8 +251,14 @@ struct PaletteSourcesTests {
         #expect(PaletteArguments.duration("1:30") == 90 * 60)
         #expect(PaletteArguments.duration("24h") == 24 * 3600)
         for nonsense in ["", "0", "25h", "1:5", "1:75", "30m1h", "45m30", "2x", "h", "1h2h", "1h30m20",
-                         "-5", "1.2.3", "forty"] {
+                         "-5", "1.2.3", "forty", "1:-5", "-1:30"] {
             #expect(PaletteArguments.duration(nonsense) == nil, "“\(nonsense)”")
+        }
+        // Past Int.max as minutes, as hours, and as hours before a colon:
+        // each keystroke of a held digit key parses, so none may trap.
+        for huge in ["99999999999999999999", "99999999999999999999h", "999999999999999999:00",
+                     String(repeating: "9", count: 400), "1h" + String(repeating: "9", count: 400)] {
+            #expect(PaletteArguments.duration(huge) == nil, "“\(huge)”")
         }
         #expect(PaletteArguments.durationLabel(45 * 60) == "45 Minutes")
         #expect(PaletteArguments.durationLabel(60) == "1 Minute")
@@ -272,6 +278,8 @@ struct PaletteSourcesTests {
         #expect(PaletteArguments.quiet("quiet mode") == nil)
         #expect(PaletteArguments.quiet("dark mode") == nil, "Dark Mode is a toggle, not a quiet")
         #expect(PaletteArguments.quiet("hide 1p") == nil)
+        #expect(PaletteArguments.quiet("quiet 99999999999999999999") == nil)
+        #expect(PaletteArguments.quiet("dim for 999999999999999999:00") == nil)
     }
 
     @Test("a typed brightness is a whole percent after the command's name")
