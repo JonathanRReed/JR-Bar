@@ -294,7 +294,7 @@ def test_resolve_effect_walks_the_scope_ladder_before_it_happens(
     reply = core_runtime._cmd_resolve_effect(daemon, {"semantic": "work", "scene": "night", "provider": "codex"})
     assert reply["winner"] == {"scope": "provider", "target_id": "codex", "effect_id": "aurora"}
     ladder = {row["scope"]: row for row in reply["ladder"]}
-    assert [row["scope"] for row in reply["ladder"]][0] == "device"
+    assert reply["ladder"][0]["scope"] == "device"
     assert ladder["device"]["applicable"] is False
     assert ladder["provider"]["wins"] is True
     # The scene rung has an assignment too; the ladder shows it lost.

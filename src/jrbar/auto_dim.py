@@ -384,9 +384,10 @@ class LuxSmoother:
     def update(self, raw: float) -> float:
         now = self.clock()
         self.last_raw = raw
-        self._samples = [
+        recent = [
             sample for sample in self._samples if now - sample[0] <= LUX_MEDIAN_MAX_AGE_SECONDS
-        ][-(LUX_MEDIAN_WINDOW - 1) :] + [(now, raw)]
+        ][-(LUX_MEDIAN_WINDOW - 1) :]
+        self._samples = [*recent, (now, raw)]
         if self.value is None or self._at is None:
             self.value, self._at = raw, now
             return raw
