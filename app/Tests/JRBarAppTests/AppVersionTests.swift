@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import JRBarApp
 
@@ -33,5 +34,32 @@ import Testing
     @Test func aSwiftRunHasNoBundleVersionAtAll() {
         #expect(AppVersion.describe(shortVersion: nil, build: nil, commit: nil) == "dev")
         #expect(AppVersion.describe(shortVersion: "", build: "", commit: "") == "dev")
+    }
+}
+
+/// `InstalledCopies.stale`: another *installed* JR-Bar goes stale on the
+/// first update; the build folders a checkout leaves are not installs.
+@Suite struct InstalledCopiesTests {
+    let home = URL(fileURLWithPath: "/Users/j")
+    let running = URL(fileURLWithPath: "/Users/j/Applications/JR-Bar.app")
+
+    @Test func theOtherInstallLocationIsNamed() {
+        let copies = [
+            running,
+            URL(fileURLWithPath: "/Applications/JR-Bar.app"),
+            URL(fileURLWithPath: "/Users/j/Downloads/JR-Bar/build/macos-pkg/app/JR-Bar.app"),
+            URL(fileURLWithPath: "/Users/j/Downloads/JR-Bar/app/build/JR-Bar.app"),
+        ]
+        #expect(InstalledCopies.stale(among: copies, running: running, home: home)
+                == [URL(fileURLWithPath: "/Applications/JR-Bar.app")])
+    }
+
+    @Test func theRunningCopyAndDuplicatesAreNot() {
+        let copies = [running, URL(fileURLWithPath: "/Users/j/Applications/./JR-Bar.app"),
+                      URL(fileURLWithPath: "/Applications/Utilities/JR-Bar.app"),
+                      URL(fileURLWithPath: "/Applications/Utilities/JR-Bar.app")]
+        #expect(InstalledCopies.stale(among: copies, running: running, home: home)
+                == [URL(fileURLWithPath: "/Applications/Utilities/JR-Bar.app")])
+        #expect(InstalledCopies.stale(among: [running], running: running, home: home).isEmpty)
     }
 }

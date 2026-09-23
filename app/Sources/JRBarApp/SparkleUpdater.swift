@@ -47,6 +47,15 @@ final class SparkleUpdater: NSObject {
     /// The one updater the app owns; Settings reaches it through here.
     private(set) static var shared: SparkleUpdater?
 
+    /// A scheduled check found an update and Sparkle left the showing to
+    /// us (a gentle reminder): the display version. The delegate says so
+    /// on JR-Bar's own surfaces instead of a window stealing focus from
+    /// whatever the person is doing.
+    var onUpdateReady: ((String) -> Void)?
+    /// The person has looked at the update (or the session ended), so any
+    /// reminder can go.
+    var onUpdateAttended: (() -> Void)?
+
     let availability: Availability
     private let log: (String) -> Void
     #if canImport(Sparkle)
@@ -79,7 +88,7 @@ final class SparkleUpdater: NSObject {
             if defaults.object(forKey: Self.automaticChecksDefaultsKey) == nil {
                 defaults.set(false, forKey: Self.automaticChecksDefaultsKey)
             }
-            let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil)
+            let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
             self.controller = controller
             controller.startUpdater()
             log("updater: Sparkle \(Self.frameworkVersion ?? "?") on \(feed), channel \(selectedChannel), automatic checks \(automaticallyChecksForUpdates ? "on" : "off")")
@@ -208,6 +217,30 @@ enum AppVersion {
     }
 }
 
+/// Other installed copies of JR-Bar. An update replaces only the bundle
+/// that is running, so a second install — /Applications beside
+/// ~/Applications — goes stale, and Spotlight or a Login Item can start
+/// the old one. Only install locations count: the build folders a
+/// source checkout leaves behind are not installs.
+enum InstalledCopies {
+    /// The copies worth a word: under /Applications or ~/Applications,
+    /// not the running bundle, each once.
+    nonisolated static func stale(among copies: [URL], running: URL, home: URL) -> [URL] {
+        let runningPath = running.resolvingSymlinksInPath().standardizedFileURL.path
+        let roots = ["/Applications", home.appending(path: "Applications").standardizedFileURL.path]
+        var seen = Set<String>()
+        return copies.filter { url in
+            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+            guard path != runningPath, seen.insert(path).inserted else { return false }
+            return roots.contains { path.hasPrefix($0 + "/") }
+        }
+    }
+
+    /// Where the "already mentioned" marks live — one per stale path, so
+    /// a copy kept on purpose is named once, not on every launch.
+    nonisolated static func noticedKey(_ url: URL) -> String { "staleCopyNoticed.\(url.path)" }
+}
+
 #if canImport(Sparkle)
 extension SparkleUpdater: SPUUpdaterDelegate {
     nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {
@@ -217,6 +250,38 @@ extension SparkleUpdater: SPUUpdaterDelegate {
     nonisolated func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
         let message = error.map { "updater: check finished with \($0.localizedDescription)" } ?? "updater: check finished, nothing newer"
         Task { @MainActor [weak self] in self?.log(message) }
+    }
+}
+
+/// Gentle reminders: a menu-bar app has no window the person is looking
+/// at, so Sparkle's alert for a scheduled find either steals focus or
+/// sits behind everything. Unless Sparkle judges the moment right for
+/// immediate focus (just launched, or the Mac has been idle), JR-Bar
+/// shows the reminder itself and the alert waits for Check for Updates.
+extension SparkleUpdater: SPUStandardUserDriverDelegate {
+    nonisolated var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    nonisolated func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
+        immediateFocus
+    }
+
+    nonisolated func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        guard !handleShowingUpdate, !state.userInitiated else { return }
+        let version = update.displayVersionString
+        Task { @MainActor [weak self] in
+            self?.log("updater: \(version) is ready — reminding gently")
+            self?.onUpdateReady?(version)
+        }
+    }
+
+    nonisolated func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        Task { @MainActor [weak self] in self?.onUpdateAttended?() }
+    }
+
+    nonisolated func standardUserDriverWillFinishUpdateSession() {
+        Task { @MainActor [weak self] in self?.onUpdateAttended?() }
     }
 }
 #endif

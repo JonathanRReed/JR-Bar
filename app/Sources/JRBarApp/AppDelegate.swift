@@ -1409,6 +1409,44 @@ extension AppDelegate {
         AppHotkeys.shared.start()
         settingsStore?.onSetActionShortcut = { chord, id in AppHotkeys.shared.setChord(chord, for: id) }
         adoptLegacyShortcuts()
+        // A scheduled update Sparkle leaves to us: said on the panel and
+        // once in Notification Center, never a window over the work.
+        updater?.onUpdateReady = { [weak self] version in
+            self?.store?.show(toast: "JR-Bar \(version) is ready", actionTitle: "Update…") { [weak self] in
+                self?.checkForUpdates(nil)
+            }
+            self?.events?.notifications.deliver(.init(
+                identifier: "update-ready",
+                title: "JR-Bar \(version) is ready",
+                body: "Choose Check for Updates… when it suits you.",
+                category: .plain))
+        }
+        // Once Sparkle's own window has the person's attention, the
+        // banner has said its piece.
+        updater?.onUpdateAttended = { [weak self] in
+            self?.events?.notifications.withdraw(identifier: "update-ready")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            MainActor.assumeIsolated { self?.mentionStaleCopies() }
+        }
+    }
+
+    /// A second installed JR-Bar goes stale on the first update; name it
+    /// once so Spotlight or a Login Item never starts the old one unseen.
+    private func mentionStaleCopies() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let copies = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
+        let stale = InstalledCopies.stale(among: copies, running: Bundle.main.bundleURL,
+                                          home: FileManager.default.homeDirectoryForCurrentUser)
+        let defaults = UserDefaults.standard
+        guard let first = stale.first(where: { !defaults.bool(forKey: InstalledCopies.noticedKey($0)) }) else { return }
+        defaults.set(true, forKey: InstalledCopies.noticedKey(first))
+        let folder = first.deletingLastPathComponent().path
+            .replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+        store?.show(toast: "Another JR-Bar is installed in \(folder) — updates replace only this one",
+                    actionTitle: "Show") {
+            NSWorkspace.shared.activateFileViewerSelecting([first])
+        }
     }
 
     /// `jrbar://` links: every URL the scheme brings runs through the
