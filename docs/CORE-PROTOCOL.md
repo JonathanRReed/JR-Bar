@@ -235,8 +235,11 @@ Vocabulary:
   `server · tool` for MCP; token-shaped runs masked) and `risk` is
   `"destructive"` when a shell command matches a pattern that loses work
   if it runs by mistake (`rm -r`, `sudo`, a forced push, `reset --hard`,
-  `curl … | sh`, …) -- a mark, never a block. All three are `null` for an
-  ask the lane does not hold.
+  `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
+  ask the lane does not hold; `preview` and `risk` still come from the
+  `PermissionRequest` the ingress saw for that exact request id (Claude,
+  Codex, Devin, Grok, OpenCode, pi; remembered for an hour), and are `null`
+  when there was none.
 - `pid` is the process registry's live pid for that session (absent when
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
