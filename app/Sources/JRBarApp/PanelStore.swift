@@ -1279,7 +1279,9 @@ final class PanelStore {
     func deny(_ ask: CoreAsk) { answer(ask, approve: false) }
 
     /// `answer_ask`, awaited: the toast reports the daemon's verdict, not a
-    /// guess — a refused answer leaves the ask open and says why.
+    /// guess — a refused answer leaves the ask open and says why — and
+    /// how it went: through the agent's permission hook, or typed into
+    /// the terminal (the reply's `mechanism`).
     private func answer(_ ask: CoreAsk, approve: Bool) {
         guard let session = ask.session, !session.isEmpty else {
             show(toast: "This ask has no session left to answer")
@@ -1314,7 +1316,7 @@ final class PanelStore {
                 let reply = try await self.core.answerAskNow(session: session, approve: approve,
                                                              request: ask.request)
                 if reply.ok {
-                    self.show(toast: approve ? "Approved · typed into the session's terminal" : "Denied")
+                    self.show(toast: AskAnswerLine.sent(approve ? .approve : .deny, reply: reply))
                 } else {
                     self.answerRefused(reply.error)
                 }
@@ -1351,7 +1353,7 @@ final class PanelStore {
                     // Sent and confirmed — the draft's job is done. A
                     // refusal keeps the text so it isn't lost.
                     self.setReplyDraft("", for: ask)
-                    self.show(toast: "Reply sent · typed into the session's terminal")
+                    self.show(toast: AskAnswerLine.replied(reply))
                 } else {
                     self.answerRefused(reply.error)
                 }

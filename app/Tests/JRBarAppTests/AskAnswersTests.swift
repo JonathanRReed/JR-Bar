@@ -116,6 +116,23 @@ struct AskAnswersTests {
         CoreReply(id: "c1", ok: true, result: .object(mechanism.map { ["mechanism": .string($0)] } ?? [:]))
     }
 
+    @Test("the line says whether the agent's hook or the terminal took the answer")
+    func mechanismLine() {
+        #expect(AskAnswerLine.sent(.approve, reply: Self.reply(mechanism: "permission_hook"))
+                == "Approved · sent through the agent's permission hook")
+        #expect(AskAnswerLine.sent(.approve, reply: Self.reply(mechanism: "synthetic_keystroke"))
+                == "Approved · typed into the terminal")
+        #expect(AskAnswerLine.sent(.deny, reply: Self.reply(mechanism: "permission_hook"))
+                == "Denied · sent through the agent's permission hook")
+        #expect(AskAnswerLine.sent(.always, reply: Self.reply(mechanism: "permission_hook"))
+                == "Always allowed · sent through the agent's permission hook")
+        #expect(AskAnswerLine.sent(.choose(["Q": .string("Postgres")]), reply: Self.reply(mechanism: "permission_hook"))
+                == "Answered “Postgres” · sent through the agent's permission hook")
+        #expect(AskAnswerLine.sent(.approve, reply: Self.reply(mechanism: nil)) == "Approved",
+                "a daemon that does not say is not guessed at")
+        #expect(AskAnswerLine.replied(Self.reply(mechanism: "synthetic_text")) == "Reply sent · typed into the terminal")
+    }
+
     @Test("Always and a pick put their own decision word on the wire, pinned; answers ride only with answer")
     func wireArgs() {
         let always = CoreModel.answerAskArgs(session: Self.session, decision: "always", request: "r1")
