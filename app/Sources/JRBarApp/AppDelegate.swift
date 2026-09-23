@@ -1283,7 +1283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar?.sensors = indicatorsOn ? notch.sensorState : NotchSensorState()
         // A reading exists while the monitor runs, for the island, the
         // ears or the presence report alike — not only under the island.
-        let readable = ScreenBarCameraHold.readable(islandVisible: notch.sensorsReading,
+        let readable = ScreenBarCameraHold.readable(monitorReading: notch.sensorsReading,
                                                     indicatorsOn: indicatorsOn)
         let status = ScreenBarLiveStatus.shared
         if status.cameraReadable != readable { status.cameraReadable = readable }

@@ -1034,23 +1034,23 @@ struct ScreenBarCard: View {
 }
 
 /// "Hold still on camera" and what it leans on. The band has no camera
-/// reading of its own: the notch island's privacy-dot poll is the only
-/// one, and it runs only while JR-Bar draws the island with its Mic &
-/// camera indicators on. With the Notch toy off, Alcove or Boring Notch
-/// drawing, or the island hidden, the hold could never engage — so the
-/// row names the dependency and greys out rather than reading On.
+/// reading of its own: it borrows the notch's sensor monitor, which now
+/// runs for whichever surface needs it — the island's dots, the Screen
+/// Bar's ears or the presence report — not only under the island. The
+/// row greys out only while nothing is reading, or while the Mic &
+/// camera indicators are switched off, so it never reads On for a hold
+/// that could not engage.
 enum ScreenBarCameraHold {
-    /// Whether the camera hold can see a camera: the island shown (the
-    /// Notch toy on, rendered by JR-Bar, the island switch on) and its
-    /// indicators polling.
-    static func readable(islandVisible: Bool, indicatorsOn: Bool) -> Bool {
-        islandVisible && indicatorsOn
+    /// Whether the camera hold can see a camera: the sensor monitor is
+    /// reading, and the indicators it serves are switched on.
+    static func readable(monitorReading: Bool, indicatorsOn: Bool) -> Bool {
+        monitorReading && indicatorsOn
     }
 
     static func subtitle(cameraReadable: Bool) -> String {
         cameraReadable
-            ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber. Uses the notch island's camera reading."
-            : "Uses the notch island's camera reading, which is off. Under Toys › Notch, render with JR-Bar, then turn on Show the island and Mic & camera indicators."
+            ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber."
+            : "Needs a camera reading: turn on Mic & camera indicators under Toys › Notch."
     }
 }
 
