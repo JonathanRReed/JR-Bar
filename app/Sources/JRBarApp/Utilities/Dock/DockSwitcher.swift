@@ -279,6 +279,14 @@ enum DockSwitcherList {
         }
     }
 
+    /// The window a plain ⌘⇥ commit restores: when every window the app
+    /// has is minimized, the first (most recent) one — activation alone
+    /// would land on no window at all. nil when any window is up.
+    static func restoreTarget(_ windows: [DockPreviewWindow]) -> DockPreviewWindow? {
+        guard let first = windows.first, windows.allSatisfy(\.minimized) else { return nil }
+        return first
+    }
+
     /// A drilled app's windows: the waiting agent's window first, so
     /// ⌘⇥ ↓ release lands on it, the rest in their recency.
     static func waitingFirst(_ items: [SwitcherItem]) -> [SwitcherItem] {
@@ -884,15 +892,31 @@ final class DockSwitcherController {
         tap.setCmdOpen(false)
         panel?.dismiss()
         guard let item else { return }
-        if drilled, let element = item.element {
+        let app = NSRunningApplication(processIdentifier: item.pid)
+        if drilled, let element = resolvedElement(for: item) {
             let window = DockPreviewWindow(id: 0, title: item.title,
                                          minimized: item.minimized,
                                          fullScreen: nil, frame: nil,
                                          thumbnail: nil, element: element)
-            AppleDockReader.raise(window, app: NSRunningApplication(processIdentifier: item.pid))
+            AppleDockReader.raise(window, app: app)
+        } else if !drilled,
+                  let parked = DockSwitcherList.restoreTarget(AppleDockReader.windows(pid: item.pid)) {
+            // Every window of the pick is in the Dock: stock ⌘⇥ lands on
+            // nothing, this brings the most recent one back.
+            AppleDockReader.raise(parked, app: app)
         } else {
-            NSRunningApplication(processIdentifier: item.pid)?.activate()
+            app?.activate()
         }
+    }
+
+    /// The row's AX window: the one the list matched, else — for a row
+    /// on another Space, which `AXWindows` never lists — the element the
+    /// remote-token walk finds by its native id. nil leaves activation
+    /// as the only reach.
+    private func resolvedElement(for item: SwitcherItem) -> AXUIElement? {
+        if let element = item.element { return element }
+        guard let windowID = item.windowID, !item.onScreen else { return nil }
+        return DockRemoteWindows.element(pid: item.pid, windowID: windowID)
     }
 
     func advance(by step: Int) {
@@ -926,7 +950,7 @@ final class DockSwitcherController {
         drilledApp = nil
         tap.setOpen(false)
         panel?.dismiss()
-        if let element = item.element {
+        if let element = resolvedElement(for: item) {
             let window = DockPreviewWindow(id: 0, title: item.title,
                                          minimized: item.minimized,
                                          fullScreen: nil, frame: nil,
@@ -968,7 +992,7 @@ final class DockSwitcherController {
         case "q": app?.terminate()
         case "h": app?.hide()
         case "w", "m", "f":
-            guard let element = item.element else { return }
+            guard let element = resolvedElement(for: item) else { return }
             let window = DockPreviewWindow(id: 0, title: item.title,
                                          minimized: item.minimized,
                                          fullScreen: nil, frame: nil,
