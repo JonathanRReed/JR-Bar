@@ -803,6 +803,10 @@ public struct PaletteUsage: Codable, Equatable, Sendable {
     }
 
     public var entries: [String: Entry]
+    /// Rows pinned above everything but open asks — Raycast's
+    /// Favorites, in the order they were added. Never trimmed by the
+    /// frecency cap: a favorite is a choice, not a habit.
+    public var favorites: [String]
 
     /// Four days: a command used every workday stays near the top
     /// through a weekend; one used once a week ago sits at about a
@@ -811,8 +815,21 @@ public struct PaletteUsage: Codable, Equatable, Sendable {
     /// The most keys the table keeps.
     public static let limit = 200
 
-    public init(entries: [String: Entry] = [:]) {
+    public init(entries: [String: Entry] = [:], favorites: [String] = []) {
         self.entries = entries
+        self.favorites = favorites
+    }
+
+    public func isFavorite(_ key: String) -> Bool { favorites.contains(key) }
+
+    /// Pin a row, or unpin it; a new favorite goes to the end.
+    public mutating func toggleFavorite(_ key: String) {
+        guard !key.isEmpty else { return }
+        if let index = favorites.firstIndex(of: key) {
+            favorites.remove(at: index)
+        } else {
+            favorites.append(key)
+        }
     }
 
     /// The key's score decayed to `now`; zero for a key never used.
@@ -860,10 +877,11 @@ public struct PaletteUsage: Codable, Equatable, Sendable {
         return score * pow(0.5, age / halfLife)
     }
 
-    private enum CodingKeys: String, CodingKey { case entries }
+    private enum CodingKeys: String, CodingKey { case entries, favorites }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         entries = (try? c.decodeIfPresent([String: Entry].self, forKey: .entries)) ?? [:]
+        favorites = (try? c.decodeIfPresent([String].self, forKey: .favorites)) ?? []
     }
 }

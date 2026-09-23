@@ -62,6 +62,27 @@ struct PaletteTests {
         #expect(!sections.contains { $0.section == .quiet }, "its only row moved to Suggestions")
     }
 
+    @Test("favorites sit under Needs You in pin order, listed once, and win a query tie")
+    func homeFavorites() {
+        let items = [
+            row("m1", "Mail"), row("q1", "Quiet for 1 Hour", section: .quiet),
+            row("s1", "Slack"), row("a1", "fix-ci", section: .needsYou, urgent: true),
+        ]
+        var usage = PaletteUsage()
+        usage.toggleFavorite("s1")
+        usage.toggleFavorite("gone")
+        usage.toggleFavorite("q1")
+        usage.record("q1", at: now)
+        let sections = PaletteRanking.home(items, usage: usage, now: now)
+        #expect(sections.map(\.section) == [.needsYou, .favorites, .menuBar])
+        #expect(sections[1].items.map(\.id) == ["s1", "q1"], "pin order, not frecency")
+        #expect(sections[2].items.map(\.id) == ["m1"])
+        let tie = [row("a", "Slack"), row("b", "Slack")]
+        var pinned = PaletteUsage()
+        pinned.toggleFavorite("b")
+        #expect(PaletteRanking.rank(tie, query: "sl", usage: pinned, now: now).first?.id == "b")
+    }
+
     @Test("home without history has no Suggestions section")
     func homeNoHistory() {
         let sections = PaletteRanking.home([row("m1", "Mail")], usage: PaletteUsage(), now: now)
@@ -290,6 +311,52 @@ struct PaletteTests {
         controller.handle(.submit)
         #expect(controller.model.actionsOpen)
         #expect(log.ran.isEmpty)
+    }
+
+    /// A frecency table a test can pin into.
+    @MainActor
+    final class Table {
+        var usage = PaletteUsage()
+    }
+
+    @Test("⌘⇧P pins a row to Favorites with the palette still up, and unpins it")
+    func controllerFavorites() {
+        let table = Table()
+        let log = Log()
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.usage = { table.usage }
+        controller.toggleFavorite = { table.usage.toggleFavorite($0) }
+        controller.recordUse = { log.ran.append("use:\($0)") }
+        controller.sources = {
+            [PaletteClosureSource(build: {
+                [PaletteItem(id: "scene.focus", title: "Focus Scene", icon: .symbol("circle", .gray),
+                             kind: "Scene", section: .lights,
+                             actions: [PaletteAction(id: "switch", title: "Switch Scene", symbol: "circle") {
+                                 log.ran.append("switch")
+                                 return nil
+                             }]),
+                 PaletteItem(id: "session.x", title: "fix-ci", icon: .symbol("circle", .gray),
+                             kind: "Session", section: .sessions, actions: [])]
+            })]
+        }
+        controller.open()
+        defer { controller.close() }
+        let scene = controller.model.rows.first { $0.id == "scene.focus" }
+        #expect(scene?.actions.last?.title == "Add to Favorites")
+        #expect(controller.model.rows.first { $0.id == "session.x" }?.actions.isEmpty == true,
+                "a session comes and goes — no pin")
+        controller.model.select(id: "scene.focus")
+        #expect(controller.handle(.chord(PaletteController.favoriteChord)))
+        #expect(controller.isOpen, "pinning keeps the palette up")
+        #expect(table.usage.favorites == ["scene.focus"])
+        #expect(controller.model.sections.first?.section == .favorites)
+        #expect(controller.model.selectedID == "scene.focus", "the highlight follows the row")
+        #expect(controller.model.selected?.actions.last?.title == "Remove from Favorites")
+        #expect(log.ran.isEmpty, "a pin is not a run")
+        controller.handle(.chord(PaletteController.favoriteChord))
+        #expect(table.usage.favorites.isEmpty)
+        #expect(controller.model.sections.first?.section != .favorites)
     }
 
     @Test("⎋ clears the query first, and only then folds")

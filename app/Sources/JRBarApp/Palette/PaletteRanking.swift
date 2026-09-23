@@ -13,8 +13,9 @@ struct PaletteListSection: Identifiable {
 /// show first" is a test, not a screenshot.
 ///
 /// With no query the list is a home screen: open asks under Needs You,
-/// then Suggestions (the frecency top, each row listed once), then
-/// every section in its fixed order. With a query it is Raycast's one
+/// the rows you pinned under Favorites, Suggestions (the frecency top),
+/// then every section in its fixed order, each row listed once. With a
+/// query it is Raycast's one
 /// ranked Results list: the fuzzy score of the title — or, at a
 /// discount, a keyword, the subtitle or the kind — plus a frecency
 /// boost that breaks near-ties toward what you use, never past a
@@ -28,6 +29,8 @@ enum PaletteRanking {
     static let frecencyCeiling = 24
     /// What an open ask adds to its match — it wins a tie.
     static let urgencyBonus = 6
+    /// What a favorite adds — a tie, and a little more.
+    static let favoriteBonus = 8
 
     static func arrange(_ items: [PaletteItem], query: String, usage: PaletteUsage,
                         now: Date = Date()) -> [PaletteListSection] {
@@ -45,13 +48,21 @@ enum PaletteRanking {
         if !urgent.isEmpty { out.append(PaletteListSection(section: .needsYou, items: urgent)) }
         let byID = Dictionary(items.filter { !$0.urgent }.map { ($0.id, $0) },
                               uniquingKeysWith: { first, _ in first })
+        // Favorites in the order pinned; one not on offer right now (a
+        // profile since deleted) waits, invisible, for its row.
+        let favorites = usage.favorites.compactMap { byID[$0] }
+        if !favorites.isEmpty {
+            out.append(PaletteListSection(section: .favorites, items: favorites))
+        }
+        let favoriteIDs = Set(favorites.map(\.id))
         // Ask for more than the limit: a frecent key whose row is not
         // on offer right now (an ended session, a deleted rule) is
         // skipped, not a hole.
         let suggested = usage.top(suggestionLimit * 4, at: now)
             .compactMap { byID[$0] }
+            .filter { !favoriteIDs.contains($0.id) }
             .prefix(suggestionLimit)
-        let suggestedIDs = Set(suggested.map(\.id))
+        let suggestedIDs = Set(suggested.map(\.id)).union(favoriteIDs)
         if !suggested.isEmpty {
             out.append(PaletteListSection(section: .suggestions, items: Array(suggested)))
         }
@@ -83,6 +94,7 @@ enum PaletteRanking {
                 guard let match = match(item, query: query) else { return nil }
                 var total = match.score + boost(usage.score(for: item.id, at: now))
                 if item.urgent { total += urgencyBonus }
+                if usage.isFavorite(item.id) { total += favoriteBonus }
                 return (promoting(match.verbID, in: item), total, offset)
             }
             .sorted { $0.score != $1.score ? $0.score > $1.score : $0.offset < $1.offset }

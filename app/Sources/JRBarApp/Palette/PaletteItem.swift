@@ -19,6 +19,8 @@ struct PaletteSection: Hashable, Sendable {
 
     /// Open asks — always first, because they are costing you time.
     static let needsYou = PaletteSection(id: "needsYou", title: "Needs You", order: 0)
+    /// The rows you pinned, in the order you pinned them.
+    static let favorites = PaletteSection(id: "favorites", title: "Favorites", order: 1)
     /// The frecency pick: what you run most, lately.
     static let suggestions = PaletteSection(id: "suggestions", title: "Suggestions", order: 1)
     /// A query's ranked matches.
@@ -166,6 +168,9 @@ struct PaletteAction: Identifiable {
     /// Drawn in red in the action panel — a verb that throws something
     /// away or says no.
     var isDestructive = false
+    /// A verb about the palette itself (pin a favorite): it runs with
+    /// the palette still up, and the list redraws around it.
+    var keepsOpen = false
     /// Runs the verb. The returned line, if any, is the confirmation the
     /// palette's HUD shows after it folds ("1Password hidden"); nil for
     /// a verb whose result is its own proof (a menu opening, a window
@@ -173,12 +178,14 @@ struct PaletteAction: Identifiable {
     let run: @MainActor () -> String?
 
     init(id: String, title: String, symbol: String, shortcut: PaletteShortcut? = nil,
-         isDestructive: Bool = false, run: @escaping @MainActor () -> String?) {
+         isDestructive: Bool = false, keepsOpen: Bool = false,
+         run: @escaping @MainActor () -> String?) {
         self.id = id
         self.title = title
         self.symbol = symbol
         self.shortcut = shortcut
         self.isDestructive = isDestructive
+        self.keepsOpen = keepsOpen
         self.run = run
     }
 }

@@ -163,6 +163,9 @@ final class PaletteController {
     var usage: @MainActor () -> PaletteUsage = { PaletteUsage() }
     /// A row ran — record it against its id.
     var recordUse: @MainActor (String) -> Void = { _ in }
+    /// Pin or unpin a row by id — the frecency table's favorites. nil
+    /// leaves the verb off every row.
+    var toggleFavorite: (@MainActor (String) -> Void)?
     /// A store that reports through its own toast (the panel's): after
     /// a verb runs, the palette listens to it for a few seconds and
     /// shows what it says in the HUD, so "Approved · typed into the
@@ -225,11 +228,37 @@ final class PaletteController {
     /// palette is up.
     private func gather() -> [PaletteItem] {
         let sources = activeSources
-        return withObservationTracking {
+        let items = withObservationTracking {
             sources.flatMap { $0.items() }
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.regather() }
         }
+        let table = usage()
+        return items.map { withFavoriteVerb($0, pinned: table.isFavorite($0.id)) }
+    }
+
+    /// ⌘⇧P — pin or unpin the row.
+    static let favoriteChord = PaletteShortcut.commandShift("p")
+
+    /// Whether a row can be a favorite: not an ask, a session or an
+    /// archive hit — those come and go, and a pin would point at nothing
+    /// by tomorrow.
+    static func canPin(_ item: PaletteItem) -> Bool {
+        !item.urgent && item.section != .sessions && item.section != .archive
+    }
+
+    /// Every pinnable row gets the pin as its last verb. It runs with the
+    /// palette up: the row moves to (or out of) Favorites in place.
+    private func withFavoriteVerb(_ item: PaletteItem, pinned: Bool) -> PaletteItem {
+        guard let toggleFavorite, Self.canPin(item) else { return item }
+        var pinnable = item
+        pinnable.actions.append(PaletteAction(
+            id: "palette.favorite", title: pinned ? "Remove from Favorites" : "Add to Favorites",
+            symbol: pinned ? "star.slash" : "star", shortcut: Self.favoriteChord, keepsOpen: true) {
+            toggleFavorite(item.id)
+            return nil
+        })
+        return pinnable
     }
 
     private func regather() {
@@ -288,8 +317,14 @@ final class PaletteController {
     /// menu opens over it — then record the row, listen for the store's
     /// answer, run, and show the verb's own line if it has one.
     func run(_ action: PaletteAction, of item: PaletteItem) {
-        let anchor = panel?.frame
         model.closeActions()
+        if action.keepsOpen {
+            _ = action.run()
+            model.usage = usage()
+            if isOpen { model.reload(items: gather()) }
+            return
+        }
+        let anchor = panel?.frame
         close()
         recordUse(item.id)
         listenForToast(until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)

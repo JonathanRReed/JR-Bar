@@ -63,6 +63,24 @@ struct PaletteUsageTests {
         #expect(usage.entries["session.\(PaletteUsage.limit + 5)"] != nil)
     }
 
+    @Test("favorites pin and unpin in the order added, survive the cap, and round-trip")
+    func favorites() throws {
+        var usage = PaletteUsage()
+        usage.toggleFavorite("quiet.1h")
+        usage.toggleFavorite("scene.focus")
+        usage.toggleFavorite("")
+        #expect(usage.favorites == ["quiet.1h", "scene.focus"])
+        #expect(usage.isFavorite("scene.focus"))
+        usage.toggleFavorite("quiet.1h")
+        #expect(usage.favorites == ["scene.focus"])
+        for i in 0..<(PaletteUsage.limit + 3) { usage.record("k\(i)", at: t0) }
+        #expect(usage.favorites == ["scene.focus"], "the frecency cap never drops a favorite")
+        let back = try JSONDecoder().decode(PaletteUsage.self, from: JSONEncoder().encode(usage))
+        #expect(back == usage)
+        let older = try JSONDecoder().decode(PaletteUsage.self, from: Data(#"{"entries": {}}"#.utf8))
+        #expect(older.favorites.isEmpty)
+    }
+
     @Test("an empty key is never recorded")
     func emptyKey() {
         var usage = PaletteUsage()

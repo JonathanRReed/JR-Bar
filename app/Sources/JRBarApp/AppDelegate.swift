@@ -477,6 +477,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 settings: { [weak settingsWindow] page in settingsWindow?.show(page: page) }))
         commandBar.palette.usage = { [weak utilitiesStore] in utilitiesStore?.state.commandUses ?? PaletteUsage() }
         commandBar.palette.recordUse = { [weak utilitiesStore] key in utilitiesStore?.state.commandUses.record(key) }
+        commandBar.palette.toggleFavorite = { [weak utilitiesStore] key in
+            utilitiesStore?.state.commandUses.toggleFavorite(key)
+        }
         commandBar.palette.toastFeed = { [weak store] in store?.toast }
         utilitiesStore.menuBar.actions.paletteBinding = { [weak utilitiesStore] in
             utilitiesStore?.menuBar.resolvedHotkeyBindings().first { $0.action == .commandBar }
