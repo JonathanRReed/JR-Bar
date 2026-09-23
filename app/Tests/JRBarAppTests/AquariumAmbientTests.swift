@@ -99,6 +99,19 @@ struct AquariumAmbientTests {
         #expect(renderer.cgImage != nil)
     }
 
+    @MainActor
+    @Test("with the window closed, the chip names a scenery surface that still draws")
+    func closedChip() {
+        #expect(AquariumToy.closedStatus(wallpaper: nil, connected: ["Built-in"], saverMinutes: 0)
+                == .paused("Watching quietly"))
+        #expect(AquariumToy.closedStatus(wallpaper: "LG", connected: ["Built-in", "LG"], saverMinutes: 10)
+                == .paused("Live wallpaper on LG"), "drawing now outranks armed")
+        #expect(AquariumToy.closedStatus(wallpaper: "LG", connected: ["Built-in"], saverMinutes: 10)
+                == .paused("Screensaver after 10 min"), "an unplugged display draws nothing")
+        #expect(AquariumToy.closedStatus(wallpaper: "LG", connected: ["Built-in"], saverMinutes: 0)
+                == .paused("Watching quietly"))
+    }
+
     private final class Touches { var count = 0 }
 
     @MainActor

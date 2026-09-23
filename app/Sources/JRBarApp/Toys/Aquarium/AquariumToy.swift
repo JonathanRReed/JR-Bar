@@ -191,8 +191,28 @@ final class AquariumToy: Toy {
 
     /// Off still watches: `observeSessions` and `noteEvent` keep the
     /// game's accrual alive while the tank is closed (the away summary
-    /// needs it), so the chip never claims a fully-off state.
-    var status: ToyStatus { isOn ? .on : .paused("Watching quietly") }
+    /// needs it), so the chip never claims a fully-off state. The card's
+    /// switch is the tank window; the live wallpaper and the screensaver
+    /// have their own, and the chip says when one of them still draws.
+    var status: ToyStatus {
+        guard !isOn else { return .on }
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        return Self.closedStatus(wallpaper: settings.ambientDisplay,
+                                 connected: NSScreen.screens.map(\.localizedName),
+                                 saverMinutes: settings.idleFillMinutes)
+    }
+
+    /// The chip with the tank window closed: a wallpaper on a connected
+    /// display is drawing right now, so it comes first; an armed
+    /// screensaver next; otherwise the game just keeps count.
+    static func closedStatus(wallpaper: String?, connected: [String],
+                             saverMinutes: Int) -> ToyStatus {
+        if let wallpaper, connected.contains(wallpaper) {
+            return .paused("Live wallpaper on \(wallpaper)")
+        }
+        if saverMinutes > 0 { return .paused("Screensaver after \(saverMinutes) min") }
+        return .paused("Watching quietly")
+    }
 
     var controls: AnyView {
         AnyView(
