@@ -881,6 +881,23 @@ import Testing
         #expect(byKind.map(\.name) == ["mystery", "sub", "old.txt", "new.png"])
     }
 
+    @Test("the pop drills only into a subfolder of the folder showing, and grids five across")
+    func folderDrillAndGrid() {
+        let root = URL(fileURLWithPath: "/Users/me/Downloads/")
+        let sub = root.appendingPathComponent("Invoices")
+        let deeper = sub.appendingPathComponent("2026")
+        let trail = DockEnhanceMath.drilledTrail([], root: root, into: sub)
+        #expect(trail == [sub])
+        #expect(DockEnhanceMath.drilledTrail(trail ?? [], root: root, into: deeper) == [sub, deeper])
+        #expect(DockEnhanceMath.drilledTrail([], root: root, into: deeper) == nil,
+                "a chip from a listing the pop has left can't jump the trail")
+        #expect(DockEnhanceMath.drilledTrail([], root: root, into: URL(fileURLWithPath: "/tmp/x")) == nil)
+        #expect(DockEnhanceMath.folderGrid(count: 0) == (0, 0))
+        #expect(DockEnhanceMath.folderGrid(count: 3) == (3, 1), "a few entries stay one row, no dead columns")
+        #expect(DockEnhanceMath.folderGrid(count: 12) == (5, 3))
+        #expect(DockEnhanceMath.folderGrid(count: 60) == (5, 4), "past four rows the grid scrolls")
+    }
+
     @Test func aModifiedSortedPopListsTheLatestFileFirst() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")

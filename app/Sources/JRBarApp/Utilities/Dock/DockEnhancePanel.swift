@@ -112,6 +112,10 @@ final class DockPreviewActions {
     var onSendToShelf: (@MainActor (URL) -> Void)?
     /// "Show in Finder" — the file's folder opens with it selected.
     var onReveal: (@MainActor (URL) -> Void)?
+    /// A folder chip's click — browse into it in place.
+    var onDrillFolder: (@MainActor (URL) -> Void)?
+    /// The drilled pop's chevron — one folder back up.
+    var onFolderBack: (@MainActor () -> Void)?
 }
 
 /// The Macs' displays as the Move To menu names them.
@@ -349,6 +353,18 @@ struct DockPreviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                if !content.folderTrail.isEmpty {
+                    Button { actions.onFolderBack?() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Back to \(content.folderTrail.dropLast().last?.lastPathComponent ?? content.appName)")
+                    .accessibilityLabel("Back")
+                }
                 if let icon = content.icon {
                     Image(nsImage: icon)
                         .resizable()
@@ -407,10 +423,10 @@ struct DockPreviewView: View {
                 Spacer(minLength: 8)
                 // DockDoor's compact header: traffic-light circles, not
                 // spelled-out buttons — the row reclaims ~110pt of width.
-                if let folderURL = content.folderURL {
+                if let shown = content.folderShown {
                     headerVerb("folder", tint: .accentColor,
-                               label: "Open \(content.appName) in Finder") {
-                        actions.onOpen?(folderURL)
+                               label: "Open \(shown.lastPathComponent) in Finder") {
+                        actions.onOpen?(shown)
                     }
                 } else if content.isRunning {
                     HStack(spacing: 4) {
@@ -508,14 +524,21 @@ struct DockPreviewView: View {
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
+                        // Apple's Grid stack: five across, four rows
+                        // before it scrolls; a folder chip browses in.
+                        let grid = DockEnhanceMath.folderGrid(count: content.folderEntries.count)
+                        ScrollView(.vertical, showsIndicators: true) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width), spacing: 8),
+                                                     count: grid.columns),
+                                      spacing: 8) {
                                 ForEach(content.folderEntries) { entry in
                                     DockFolderChip(entry: entry, actions: actions)
                                 }
                             }
                             .padding(2)
                         }
+                        .frame(width: CGFloat(grid.columns) * (DockFolderChip.width + 8) + 4,
+                               height: CGFloat(grid.rows) * (DockFolderChip.height + 8) + 4)
                     }
                 }
             } else if !content.windows.isEmpty {
@@ -625,7 +648,11 @@ struct DockPreviewView: View {
     /// split into its own chip, so "T3 Code (Nightly)" lays out as slim
     /// as "T3 Code" — the tag still shows, just not on the title line.
     private var appTitle: (base: String, channel: String?) {
-        AppNameChannel.split(content.appName)
+        // A drilled pop names the folder it shows.
+        if !content.folderTrail.isEmpty, let shown = content.folderShown {
+            return (shown.lastPathComponent, nil)
+        }
+        return AppNameChannel.split(content.appName)
     }
 
     private var subtitle: String {
@@ -925,13 +952,23 @@ struct DockPreviewCompactList: View {
 private struct DockFolderChip: View {
     let entry: DockFolderEntry
     let actions: DockPreviewActions
+    /// The chip's box — the grid lays out on it.
+    static let width: CGFloat = 96
+    static let height: CGFloat = 64
     @ViewState private var hovering = false
     /// The file's Quick Look thumbnail once it lands — a screenshot or
     /// a PDF reads at a glance instead of as one more document icon.
     @ViewState private var thumbnail: NSImage?
 
     var body: some View {
-        Button { actions.onOpen?(entry.url) } label: {
+        Button {
+            // A folder browses in place; ⌘-click (or a file) opens it.
+            if entry.isDirectory, !NSEvent.modifierFlags.contains(.command) {
+                actions.onDrillFolder?(entry.url)
+            } else {
+                actions.onOpen?(entry.url)
+            }
+        } label: {
             VStack(spacing: 4) {
                 Image(nsImage: thumbnail ?? entry.icon)
                     .resizable()
@@ -942,7 +979,7 @@ private struct DockFolderChip: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .frame(width: 92)
+            .frame(width: Self.width - 4, height: Self.height - 12)
             .padding(.vertical, 6)
             .padding(.horizontal, 2)
             .background(

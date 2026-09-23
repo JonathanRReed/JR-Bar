@@ -445,6 +445,26 @@ enum DockEnhanceMath {
         return playerBundleIDs.contains(appBundleID)
     }
 
+    /// A Folder Pop drill: the trail with `child` appended — only a
+    /// direct subfolder of the folder showing, so a chip from a listing
+    /// the pop has since left can't jump the trail somewhere else.
+    static func drilledTrail(_ trail: [URL], root: URL, into child: URL) -> [URL]? {
+        let current = (trail.last ?? root).standardizedFileURL.path
+        guard child.deletingLastPathComponent().standardizedFileURL.path == current else { return nil }
+        return trail + [child]
+    }
+
+    /// The pop's grid: up to five columns, and as many rows as the
+    /// entries need up to four before it scrolls — about one screenful
+    /// of Apple's Grid stack, not sixty chips in one sideways row.
+    static func folderGrid(count: Int, columns maxColumns: Int = 5,
+                           visibleRows: Int = 4) -> (columns: Int, rows: Int) {
+        guard count > 0 else { return (0, 0) }
+        let columns = min(maxColumns, count)
+        let rows = (count + columns - 1) / columns
+        return (columns, min(rows, visibleRows))
+    }
+
     /// The exclusion list with `bundleID` added once — a second "Never
     /// Preview" on a stale panel doesn't list the app twice.
     static func excluding(_ bundleID: String, from list: [String]) -> [String] {
@@ -1310,6 +1330,13 @@ final class DockPreviewContent {
     /// Non-nil when the hovered tile is a folder: the panel pops the
     /// directory's entries instead of window cards.
     var folderURL: URL?
+    /// The folders drilled into below `folderURL`, outermost first — the
+    /// pop browses in place like Apple's Grid stack. Empty at the tile's
+    /// own folder.
+    var folderTrail: [URL] = []
+    /// The folder the pop shows now: the deepest drilled one, else the
+    /// tile's.
+    var folderShown: URL? { folderTrail.last ?? folderURL }
     var folderEntries: [DockFolderEntry] = []
     /// The entries load off the main actor — a directory can stall
     /// (file provider, dead mount, a pending TCC consent) and the pop
@@ -1958,38 +1985,13 @@ final class DockEnhanceController {
         // generation-guarded away.
         if let folderURL = preview.folderURL {
             // The tile's own Sort By — a read of the Dock's preferences,
-            // never a write — so the pop leads where the stack does.
-            let sort = DockFolderSort.of(
+            // never a write — so the pop leads where the stack does, and
+            // so does every folder drilled into from it.
+            folderSort = DockFolderSort.of(
                 folder: folderURL,
                 persistentOthers: UserDefaults(suiteName: AppleDockReader.dockBundleID)?
                     .array(forKey: "persistent-others"))
-            Task { @MainActor [weak self] in
-                let work = Task.detached(priority: .userInitiated) {
-                    Self.folderListing(of: folderURL, sort: sort)
-                }
-                let listing = await withTaskGroup(
-                    of: DockFolderListing?.self,
-                    returning: DockFolderListing?.self
-                ) { group in
-                    group.addTask { await work.value }
-                    group.addTask {
-                        try? await Task.sleep(for: .seconds(6))
-                        return nil
-                    }
-                    let first = await group.next() ?? nil
-                    group.cancelAll()
-                    return first
-                }
-                guard let self, self.generation == generationAtShow,
-                      self.preview.folderURL == folderURL else { return }
-                if let listing {
-                    self.preview.folderEntries = listing.entries
-                    if let icon = listing.folderIcon { self.preview.icon = icon }
-                    self.preview.folderState = listing.denied ? .denied : .ready
-                } else {
-                    self.preview.folderState = .failed
-                }
-            }
+            loadFolder(folderURL, generation: generationAtShow)
         }
 
         // A player tile subscribes to the shared Now Playing feed for
@@ -2057,6 +2059,69 @@ final class DockEnhanceController {
         switcher.setPreviewOpen(false)
         panel?.dismiss()
         autohideHold.release()
+    }
+
+    /// The open pop's sort — the tile's, read at show.
+    @ObservationIgnored private var folderSort: DockFolderSort = .name
+
+    /// List one folder into the pop. The generation check is the stale
+    /// guard the thumbnails use, and the folder check drops a listing
+    /// the pop has since drilled or backed away from. The sleep races
+    /// the read: a TCC consent that cannot prompt (~5s auth pend) or a
+    /// stuck vnode resolves to `failed` rather than an eternal spinner.
+    private func loadFolder(_ url: URL, generation generationAtLoad: Int) {
+        preview.folderState = .loading
+        preview.folderEntries = []
+        let sort = folderSort
+        Task { @MainActor [weak self] in
+            let work = Task.detached(priority: .userInitiated) {
+                Self.folderListing(of: url, sort: sort)
+            }
+            let listing = await withTaskGroup(
+                of: DockFolderListing?.self,
+                returning: DockFolderListing?.self
+            ) { group in
+                group.addTask { await work.value }
+                group.addTask {
+                    try? await Task.sleep(for: .seconds(6))
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                return first
+            }
+            guard let self, self.generation == generationAtLoad,
+                  self.preview.folderShown == url else { return }
+            if let listing {
+                self.preview.folderEntries = listing.entries
+                if let icon = listing.folderIcon { self.preview.icon = icon }
+                self.preview.folderState = listing.denied ? .denied : .ready
+            } else {
+                self.preview.folderState = .failed
+            }
+            // The pointer is on the grid, not the tile, so the tick's
+            // re-anchor won't refit it — the new size lands here.
+            self.reframe()
+        }
+    }
+
+    /// A folder chip's click: browse into it in place — Apple's Grid
+    /// stack, one level at a time, with the header's chevron back out.
+    private func drillFolder(_ url: URL) {
+        guard let root = preview.folderURL,
+              let trail = DockEnhanceMath.drilledTrail(preview.folderTrail, root: root, into: url) else { return }
+        preview.folderTrail = trail
+        loadFolder(url, generation: generation)
+        reframe()
+    }
+
+    /// The header's chevron: one folder back up the trail.
+    private func folderBack() {
+        guard !preview.folderTrail.isEmpty else { return }
+        preview.folderTrail.removeLast()
+        guard let shown = preview.folderShown else { return }
+        loadFolder(shown, generation: generation)
+        reframe()
     }
 
     /// The previewed app's windows changed under the open panel — a new
@@ -2167,6 +2232,8 @@ final class DockEnhanceController {
         panel.actions.onMediaSeek = { MediaFeed.shared.seek(to: $0) }
         panel.actions.lyrics = lyrics
         panel.actions.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        panel.actions.onDrillFolder = { [weak self] url in self?.drillFolder(url) }
+        panel.actions.onFolderBack = { [weak self] in self?.folderBack() }
         panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
         panel.actions.onSwipeMinimize = { [weak self] window, minimize in
             self?.swipeMinimize(window, minimize)
@@ -2209,6 +2276,7 @@ final class DockEnhanceController {
         defer { applyAgents(to: content) }
         let appURL = item.url
         content.folderURL = nil
+        content.folderTrail = []
         content.folderEntries = []
         content.media = nil
         content.calendarEvents = []
