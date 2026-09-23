@@ -596,7 +596,17 @@ final class ScreenBarController {
 
     @objc private func frontmostMayHaveChanged(_ note: Notification) {
         updateVideoGuard()
+        // A window entering or leaving full screen is still resizing when
+        // the Space change lands; look again once it has settled.
+        videoGuardRecheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.updateVideoGuard() }
+        }
+        videoGuardRecheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
+
+    private var videoGuardRecheck: DispatchWorkItem?
 
     // MARK: Full-screen video
 
@@ -965,7 +975,11 @@ final class ScreenBarController {
         }
         let previousText = lastRawText
         lastRawText = text
-        if let until = crossfadeUntil, until > Date() {
+        // Only a band on screen arms a fade: armed while hidden, it would
+        // wait for whatever change came after the next show.
+        if !isShown {
+            crossfadeUntil = nil
+        } else if let until = crossfadeUntil, until > Date() {
             crossfadeUntil = nil
             view.crossfadeNextChange(over: Self.unplugCrossfadeSeconds)
         } else if Self.onlyBrightnessChanged(from: previousText, to: text) {
