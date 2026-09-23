@@ -466,6 +466,32 @@ final class ShelfTrayModel {
 
     /// Mark missing entries by re-reading the filesystem — the same
     /// check the read path makes, so the strip and reads never disagree.
+    // MARK: Paste
+
+    /// Something copied the shelf could take, not yet pasted here — the
+    /// strip offers a Paste chip. Read off the pasteboard's types and
+    /// change count only; its contents are read on the click.
+    private(set) var pasteOffered = false
+    /// The pasteboard generation last pasted, so the same copy is not
+    /// offered twice.
+    private var pastedChangeCount: Int?
+
+    /// Look at the pasteboard as the card opens — types only.
+    func notePasteboard(_ pasteboard: NSPasteboard = .general) {
+        pasteOffered = pasteboard.changeCount != pastedChangeCount
+            && ShelfTrayDrop.hasShelfable(pasteboard.types ?? [])
+    }
+
+    /// The Paste chip: what was copied lands on the shelf the way a drop
+    /// does — files as themselves, links as `.webloc`s, text as a clip.
+    func paste(from pasteboard: NSPasteboard = .general) {
+        let urls = ShelfTrayDrop.pasteURLs(pasteboard)
+        pastedChangeCount = pasteboard.changeCount
+        pasteOffered = false
+        guard !urls.isEmpty else { return }
+        add(urls)
+    }
+
     func revalidate() {
         entries = entries.map { entry in
             switch entry {
@@ -606,6 +632,35 @@ struct ShelfTrayDrop {
         group.notify(queue: .main) {
             MainActor.assumeIsolated { completion(urls.withLock { $0 }) }
         }
+    }
+
+    /// Whether a pasteboard holding `types` has anything for the shelf:
+    /// files, a link, or text.
+    static func hasShelfable(_ types: [NSPasteboard.PasteboardType]) -> Bool {
+        types.contains(.fileURL) || types.contains(.URL) || types.contains(.string)
+    }
+
+    /// A pasteboard's shelf-able contents as tray-ready file URLs:
+    /// copied files first, else links (as `.webloc`s), else text (as a
+    /// `.txt` clip). Read only when the person asks for the paste.
+    static func pasteURLs(_ pasteboard: NSPasteboard) -> [URL] {
+        let fileOnly: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        if let files = pasteboard.readObjects(forClasses: [NSURL.self], options: fileOnly) as? [URL],
+           !files.isEmpty {
+            return files
+        }
+        if pasteboard.types?.contains(.URL) == true,
+           let links = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !links.isEmpty {
+            return trayURLs(from: links)
+        }
+        if let text = pasteboard.string(forType: .string) {
+            if let link = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+               link.scheme?.hasPrefix("http") == true, let loc = webLoc(for: link) {
+                return [loc]
+            }
+            return textLoc(for: text).map { [$0] } ?? []
+        }
+        return []
     }
 
     /// Pasteboard-read URLs → tray-ready file URLs: files pass

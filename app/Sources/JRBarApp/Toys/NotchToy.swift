@@ -2336,6 +2336,17 @@ private struct NotchControlsView: View {
                 SettingLabel(title: "Shake to summon the shelf",
                              subtitle: "While dragging files, shake the pointer and the card opens under the notch as a drop target.")
             }
+            if let settings = toy.store?.settings {
+                // The same switch as General's, where a shelf person
+                // looks for it: beside the other way to summon the shelf.
+                Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
+                                     set: { settings.shelfHotkeyEnabled = $0 })) {
+                    SettingLabel(title: "Shelf hotkey",
+                                 subtitle: settings.shelfHotkeyRegistrationFailed
+                                    ? "⌃⌥D is taken by another app."
+                                    : "⌃⌥D opens or folds the card from any app. Anything you copied waits there as a Paste chip.")
+                }
+            }
             Toggle(isOn: toy.bind(\.alerts)) {
                 SettingLabel(title: "System alerts",
                              subtitle: "A Focus mode, a Bluetooth device joining or leaving, Caps Lock and displays speak in the island, one at a time with the agents' news. Headphones the Screen Bar's ear already names stay quiet here.")

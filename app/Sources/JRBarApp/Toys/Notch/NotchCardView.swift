@@ -21,6 +21,7 @@ final class NotchCardModel {
             if pinned {
                 utility.start()
                 tray.revalidate()
+                tray.notePasteboard()
                 mirror.sync(enabled: mirrorEnabled() && mirrorSummoned)
                 calendar.sync(enabled: calendarEnabled())
                 reminders.sync(enabled: remindersEnabled())
@@ -1013,9 +1014,10 @@ private struct ShelfTrayRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if !tray.entries.isEmpty {
+            if !tray.entries.isEmpty || tray.pasteOffered {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
+                        if tray.pasteOffered { pasteChip }
                         ForEach(tray.entries) { entry in
                             trayChip(entry)
                         }
@@ -1038,6 +1040,27 @@ private struct ShelfTrayRow: View {
                     }
             }
         }
+    }
+
+    /// Yoink's keyboard-free save: something copied since the last
+    /// paste here can join the shelf in one click.
+    private var pasteChip: some View {
+        Button { tray.paste() } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 9))
+                Text("Paste")
+                    .font(.system(size: 9.5, weight: .medium))
+            }
+            .foregroundStyle(style.subColor)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Capsule(style: .continuous).fill(style.chipFill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Put what you copied on the shelf")
+        .accessibilityLabel("Paste to the shelf")
     }
 
     private func trayChip(_ entry: ShelfTrayModel.ShelfEntry) -> some View {
