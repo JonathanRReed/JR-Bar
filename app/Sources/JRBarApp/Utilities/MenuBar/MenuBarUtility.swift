@@ -968,11 +968,21 @@ final class MenuBarUtility: Toy {
         update { $0.arrangeOrder = order }
     }
 
+    /// Whether Arrange can do anything at all: only under the spacer
+    /// engine. Under the macOS 27 concealer MenuBarAgent orders the bar
+    /// itself and a concealed item cannot be ⌘-dragged, so a run would
+    /// move the real cursor and deliver nothing — the card hides the
+    /// section and the palette's row finds no order to drive. Pure so a
+    /// test pins the gate.
+    var arrangeAvailable: Bool { Self.arrangeAvailable(concealing: concealer != nil) }
+
+    nonisolated static func arrangeAvailable(concealing: Bool) -> Bool { !concealing }
+
     /// The explicit arrange action — the only caller of the synthetic
     /// ⌘-drag machinery. The banner, cursor restore and abort watcher
     /// are the coordinator's; this just runs it and reports.
     func arrangeNow() {
-        guard !arranging else { return }
+        guard !arranging, arrangeAvailable else { return }
         // An empty order is a no-op — materialize the editor's list so
         // the button always does what the list shows.
         if settings().arrangeOrder.isEmpty {
@@ -3093,8 +3103,11 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         return map
     }
 
+    /// Empty under the concealer — the palette's "Arrange…" row then has
+    /// no order to drive and never moves the cursor (see
+    /// `arrangeAvailable`).
     func menuBarArrangeOrder(for _: MenuBarActions) -> [String] {
-        settings().arrangeOrder
+        arrangeAvailable ? settings().arrangeOrder : []
     }
 
     func menuBarArrangeBoundary(for _: MenuBarActions) -> CGFloat {

@@ -1130,6 +1130,16 @@ private struct MenuBarAutomationControls: View {
 
     @ViewBuilder
     private var arrangeSection: some View {
+        if utility.arrangeAvailable {
+            arrangeEditor
+        } else {
+            SettingLabel(title: "Arrange",
+                         subtitle: "macOS orders the menu bar itself while it hides items for JR-Bar, so there is nothing to arrange — and nothing moves your cursor. Arrange comes back if the spacer engine stands in.")
+        }
+    }
+
+    @ViewBuilder
+    private var arrangeEditor: some View {
         SettingLabel(title: "Arrange",
                      subtitle: "Physically reorder the bar — ⌘-drags move the real cursor. Keep hands off while it runs; Esc or any input cancels.")
         ForEach(utility.arrangeItems, id: \.id) { item in
