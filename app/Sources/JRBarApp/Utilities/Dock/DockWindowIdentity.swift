@@ -5,8 +5,9 @@ import QuartzCore
 /// Resolves the native window number carried by an Accessibility window.
 /// HIServices does not publish this function in its Swift module, so the
 /// bridge resolves the verified C ABI at runtime and becomes unavailable if
-/// the symbol is absent on a future macOS release.
-@MainActor
+/// the symbol is absent on a future macOS release. Callable from any
+/// thread, like the AX calls it rides with: a window list read on
+/// `DockAXWorker` asks it too.
 enum DockWindowIdentity {
     typealias WindowIDFunction = @convention(c) (
         AXUIElement,
@@ -16,7 +17,9 @@ enum DockWindowIdentity {
     private static let frameworkPath =
         "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices"
 
-    private final class Resolver {
+    /// Immutable once resolved — the image handle and a C function
+    /// pointer — so any thread may read it.
+    private final class Resolver: @unchecked Sendable {
         let handle: UnsafeMutableRawPointer
         let function: WindowIDFunction
 
@@ -66,8 +69,8 @@ enum DockWindowIdentity {
 /// Read-only: it creates references and writes nothing, no SkyLight call
 /// is involved, and like the identity bridge it resolves at runtime and
 /// answers nil if the symbol is ever gone. Run lazily, per commit, never
-/// per open.
-@MainActor
+/// per open — and on `DockAXWorker`, since a hung app spends the whole
+/// time budget on it.
 enum DockRemoteWindows {
     typealias CreateFunction = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
 
@@ -78,7 +81,8 @@ enum DockRemoteWindows {
     /// Per-probe AX timeout: a live app answers in microseconds.
     static let probeTimeout: Float = 0.02
 
-    private final class Resolver {
+    /// Immutable once resolved, like the identity bridge's.
+    private final class Resolver: @unchecked Sendable {
         let handle: UnsafeMutableRawPointer
         let create: CreateFunction
 

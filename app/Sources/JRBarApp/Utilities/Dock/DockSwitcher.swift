@@ -566,8 +566,8 @@ struct SwitcherModel {
 
 // MARK: - The key tap
 
-/// The switcher's chord, ⌥⇥: a session event tap — the same shape as
-/// the media-key monitor — that eats option-Tab while held and
+/// The switcher's chord, ⌥⇥: a session event tap, serviced on a thread
+/// of its own (`DockTapThread`), that eats option-Tab while held and
 /// commits when option lifts. Tab+option is free (it only types a
 /// rare ⇥), so eating it costs the user nothing; every other key
 /// passes through untouched. While the switcher is open the tap also
@@ -691,8 +691,11 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock(); frontEnabled = value; lock.unlock()
     }
 
+    /// The tap, under the lock: written by `start`/`stop` on main, read
+    /// by the callback's re-enable on the tap's own thread.
     private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    /// The thread servicing the tap (`DockTapThread`) — main only.
+    private var thread: DockTapThread?
 
     static let log = Logger(subsystem: "devin.jrbar", category: "switcher")
 
@@ -718,40 +721,65 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock(); previewOpen = value; lock.unlock()
     }
 
+    /// The tap runs on a thread of its own (`DockTapThread`): it is
+    /// active, so every key and right click on the Mac waits on its
+    /// callback, and on the main run loop that meant waiting on whatever
+    /// JR-Bar's main thread was doing. The callback reads the copies
+    /// under `lock` and hops to main for everything it acts on.
     func start() {
-        guard tap == nil else { return }
+        guard lock.withLock({ tap == nil }) else { return }
         let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.rightMouseDown.rawValue)
             | (1 << CGEventType.rightMouseUp.rawValue)
-        tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-                                options: .defaultTap, eventsOfInterest: mask,
-                                callback: { _, type, event, refcon in
+        guard let created = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                              options: .defaultTap, eventsOfInterest: mask,
+                                              callback: { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passRetained(event) }
             return Unmanaged<SwitcherKeyTap>.fromOpaque(refcon)
                 .takeUnretainedValue().handle(type: type, event: event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque())
-        guard let tap else {
+        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
             Self.log.notice("switcher tap unavailable — accessibility permission missing")
             return
         }
-        source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        // An active tap nobody services holds every key until the system
+        // times it out — never leave one standing.
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, created, 0) else {
+            CFMachPortInvalidate(created)
+            Self.log.error("switcher tap has no run loop source — the chords stay the system's")
+            return
+        }
+        lock.withLock { tap = created }
+        let thread = DockTapThread(source: source, name: "JR-Bar dock keys")
+        thread.start()
+        self.thread = thread
+        CGEvent.tapEnable(tap: created, enable: true)
     }
 
     func stop() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        source = nil
-        tap = nil
+        let tap = lock.withLock { () -> CFMachPort? in
+            defer { self.tap = nil }
+            return self.tap
+        }
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        // Once the thread has returned no callback can still hold the
+        // tap's unretained pointer to this object.
+        thread?.stop()
+        thread = nil
+        CFMachPortInvalidate(tap)
     }
 
+    /// A tap dropped without `stop` must not leave a callback pointing
+    /// at freed memory.
+    deinit { stop() }
+
     /// nil return eats the event; passRetained hands it on. Internal
-    /// for the tests, which drive it with synthetic CGEvents.
+    /// for the tests, which drive it with synthetic CGEvents. Runs on
+    /// the tap's thread: nothing here may wait on the main thread.
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap = lock.withLock({ tap }) { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passRetained(event)
         }
         lock.lock()
@@ -1187,8 +1215,7 @@ final class DockSwitcherController {
     /// (a minimized one stands up first); the strip stays up and
     /// rebuilds around it, like the ⌘-verbs.
     func tile(_ code: Int64) {
-        guard let item = model.selected, !appMode,
-              let element = resolvedElement(for: item) else { return }
+        guard let item = model.selected, !appMode else { return }
         let tile: DockTile
         switch code {
         case 123: tile = .leftHalf
@@ -1196,15 +1223,20 @@ final class DockSwitcherController {
         case 126: tile = .topHalf
         default: tile = .bottomHalf
         }
-        let window = DockPreviewWindow(id: 0, title: item.title, minimized: item.minimized,
-                                       fullScreen: nil, frame: item.frame, thumbnail: nil,
-                                       element: element)
         guard let visible = Self.visibleQuartz(around: item.frame) else { return }
-        if item.minimized { _ = AppleDockReader.setMinimized(window, false) }
-        _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: visible))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.rebuild()
-        }
+        let frame = DockEnhanceMath.tileFrame(tile, in: visible)
+        // The screen is read here; the window's writes (and, for a row
+        // on another Space, the walk that finds it) run on the worker.
+        let target = SwitcherCommitTarget(item)
+        DockAXWorker.run({ () -> Bool in
+            guard let element = target.resolve() else { return false }
+            let window = target.window(element)
+            if target.minimized { _ = AppleDockReader.setMinimized(window, false) }
+            _ = AppleDockReader.setFrame(window, frame)
+            return true
+        }, then: { [weak self] acted in
+            if acted { self?.rebuildSoon() }
+        })
     }
 
     /// The visible frame (Quartz space) of the screen a window sits on —
@@ -1454,31 +1486,32 @@ final class DockSwitcherController {
         learn(item)
         closeStrip()
         guard let item else { return }
-        let app = NSRunningApplication(processIdentifier: item.pid)
-        if drilled, let element = resolvedElement(for: item) {
-            let window = DockPreviewWindow(id: 0, title: item.title,
-                                         minimized: item.minimized,
-                                         fullScreen: nil, frame: nil,
-                                         thumbnail: nil, element: element)
-            AppleDockReader.raise(window, app: app)
-        } else if !drilled,
-                  let parked = DockSwitcherList.restoreTarget(AppleDockReader.windows(pid: item.pid)) {
-            // Every window of the pick is in the Dock: stock ⌘⇥ lands on
-            // nothing, this brings the most recent one back.
-            AppleDockReader.raise(parked, app: app)
-        } else {
-            app?.activate()
-        }
+        Self.land(SwitcherCommitTarget(item), window: drilled)
     }
 
-    /// The row's AX window: the one the list matched, else — for a row
-    /// on another Space, which `AXWindows` never lists — the element the
-    /// remote-token walk finds by its native id. nil leaves activation
-    /// as the only reach.
-    private func resolvedElement(for item: SwitcherItem) -> AXUIElement? {
-        if let element = item.element { return element }
-        guard let windowID = item.windowID, !item.onScreen else { return nil }
-        return DockRemoteWindows.element(pid: item.pid, windowID: windowID)
+    /// A commit's landing. The AX half — finding a window on another
+    /// Space, reading an app's windows to see whether every one is in
+    /// the Dock, the raise's writes — runs on `DockAXWorker`: a hung app
+    /// costs it half a second, and on main that stalled the strip's
+    /// close and every surface after it. Activation follows on main, as
+    /// it always did after the raise. `window` lands the row's own
+    /// window; otherwise the app, and when every window it has is in the
+    /// Dock its most recent one comes back — stock ⌘⇥ lands on nothing.
+    private static func land(_ target: SwitcherCommitTarget, window: Bool) {
+        DockAXWorker.run({
+            if window {
+                if let element = target.resolve() {
+                    AppleDockReader.raiseWindow(target.window(element))
+                }
+            } else if let parked = DockSwitcherList.restoreTarget(
+                AppleDockReader.windowsReading(pid: target.pid, stamp: 0).windows) {
+                AppleDockReader.raiseWindow(parked)
+            }
+        }, then: {
+            // Plain activate: `.activateAllWindows` brought every window
+            // of the app forward and buried the one that was picked.
+            NSRunningApplication(processIdentifier: target.pid)?.activate()
+        })
     }
 
     func advance(by step: Int) {
@@ -1513,16 +1546,7 @@ final class DockSwitcherController {
         guard let item = model.selected else { return cancel() }
         learn(item)
         closeStrip()
-        if let element = resolvedElement(for: item) {
-            let window = DockPreviewWindow(id: 0, title: item.title,
-                                         minimized: item.minimized,
-                                         fullScreen: nil, frame: nil,
-                                         thumbnail: nil, element: element)
-            let app = NSRunningApplication(processIdentifier: item.pid)
-            AppleDockReader.raise(window, app: app)
-        } else {
-            NSRunningApplication(processIdentifier: item.pid)?.activate()
-        }
+        Self.land(SwitcherCommitTarget(item), window: true)
     }
 
     func cancel() {
@@ -1575,24 +1599,34 @@ final class DockSwitcherController {
         case "q": app?.terminate()
         case "h": app?.hide()
         case "w", "m", "f":
-            guard let element = resolvedElement(for: item) else { return }
-            let window = DockPreviewWindow(id: 0, title: item.title,
-                                         minimized: item.minimized,
-                                         fullScreen: nil, frame: nil,
-                                         thumbnail: nil, element: element)
-            switch char {
-            case "w": AppleDockReader.close(window)
-            case "m": AppleDockReader.setMinimized(window, !item.minimized)
-            default:
-                // f toggles, not forces: a fullscreen window comes
-                // back, not a second write of true.
-                let current = AppleDockReader.fullScreenState(of: element) ?? false
-                AppleDockReader.setFullScreen(window, !current)
-            }
+            // The window verbs are AX writes (and, for a row on another
+            // Space, the walk that finds it): the worker's, like a commit.
+            let target = SwitcherCommitTarget(item)
+            DockAXWorker.run({ () -> Bool in
+                guard let element = target.resolve() else { return false }
+                let window = target.window(element)
+                switch char {
+                case "w": AppleDockReader.close(window)
+                case "m": AppleDockReader.setMinimized(window, !target.minimized)
+                default:
+                    // f toggles, not forces: a fullscreen window comes
+                    // back, not a second write of true.
+                    let current = AppleDockReader.fullScreenState(of: element) ?? false
+                    AppleDockReader.setFullScreen(window, !current)
+                }
+                return true
+            }, then: { [weak self] acted in
+                if acted { self?.rebuildSoon() }
+            })
+            return
         default: return
         }
-        // The AX write lands before the window/app state does — a beat
-        // later the strip rebuilds so the closed or quit row is gone.
+        rebuildSoon()
+    }
+
+    /// The AX write lands before the window/app state does — a beat
+    /// later the strip rebuilds so the closed or quit row is gone.
+    private func rebuildSoon() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             self?.rebuild()
         }
