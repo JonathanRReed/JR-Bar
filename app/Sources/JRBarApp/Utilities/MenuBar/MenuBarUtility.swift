@@ -3115,7 +3115,7 @@ final class MenuBarUtility: Toy {
     /// reveal are mutually exclusive — a manual hide cancels the rehide
     /// clock outright rather than leaving it armed to fire a second
     /// `onHide` after the spacer already stands.
-    private func toggleHiddenSection() {
+    private func toggleHiddenSection(fromKeyboard: Bool = false) {
         let now = Date()
         guard now.timeIntervalSince(lastChevronToggleAt) > 0.3 else { return }
         lastChevronToggleAt = now
@@ -3146,7 +3146,7 @@ final class MenuBarUtility: Toy {
             case .inline:
                 hider.reveal([.hidden])
             case .bar:
-                bar.open()
+                bar.open(keyboard: fromKeyboard)
             }
             reveal.rearm()
         }
@@ -3550,7 +3550,10 @@ extension MenuBarUtility: MenuBarActionsDelegate {
     /// transition is — reveal when the run is parked, re-hide when a
     /// reveal is out — it happens.
     func menuBarActionsToggleReveal(_: MenuBarActions) {
-        toggleHiddenSection()
+        // The hotkey's bar is the keyboard's: it takes key, and the
+        // arrows, a typed filter and Return reach every hidden item
+        // without the pointer.
+        toggleHiddenSection(fromKeyboard: true)
     }
 
     /// The dedicated always-hidden gesture: drop that run's covers on

@@ -104,6 +104,119 @@ enum MenuBarBarLayout {
     }
 }
 
+/// The Item Bar's keyboard, pure so a test can pin it — Bartender 7's
+/// mouse-free bar. Opened from the hotkey the bar takes key: ← → (or
+/// Tab) walk the tiles, typing filters them by app and title, Return
+/// presses the selected one, ⌘1–⌘9 press the ninth-or-nearer directly,
+/// and Esc clears the filter before it folds the bar.
+enum MenuBarBarKeys {
+    enum Key: Equatable, Sendable {
+        case left, right, first, last, submit, cancel, backspace
+        case text(String)
+        /// ⌘1…⌘9 — the tile at that place in the (filtered) row.
+        case jump(Int)
+    }
+
+    enum Effect: Equatable, Sendable {
+        case none
+        case trigger(itemID: String)
+        case close
+    }
+
+    struct State: Equatable, Sendable {
+        var query = ""
+        var selection = 0
+    }
+
+    /// The tiles a query leaves, in bar order: every word of the query
+    /// found in the owner's name or the item's title, ignoring case and
+    /// diacritics. An empty query leaves them all.
+    nonisolated static func filter(_ items: [MenuBarItem], query: String) -> [MenuBarItem] {
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return items }
+        return items.filter { item in
+            let haystack = item.ownerName + " " + (item.title ?? "")
+            return words.allSatisfy { haystack.localizedStandardContains($0) }
+        }
+    }
+
+    /// The selection kept inside a row of `count` tiles.
+    nonisolated static func clamped(_ selection: Int, count: Int) -> Int {
+        count == 0 ? 0 : min(max(0, selection), count - 1)
+    }
+
+    /// One key against the bar: the next state and what the bar does.
+    nonisolated static func reduce(_ state: State, key: Key,
+                                   items: [MenuBarItem]) -> (State, Effect) {
+        var next = state
+        let visible = filter(items, query: state.query)
+        let selected = clamped(state.selection, count: visible.count)
+        switch key {
+        case .left:
+            next.selection = clamped(selected - 1, count: visible.count)
+        case .right:
+            next.selection = clamped(selected + 1, count: visible.count)
+        case .first:
+            next.selection = 0
+        case .last:
+            next.selection = clamped(visible.count - 1, count: visible.count)
+        case .text(let typed):
+            next.query += typed
+            next.selection = 0
+        case .backspace:
+            guard !next.query.isEmpty else { return (state, .none) }
+            next.query.removeLast()
+            next.selection = 0
+        case .submit:
+            guard visible.indices.contains(selected) else { return (state, .none) }
+            return (state, .trigger(itemID: visible[selected].id))
+        case .jump(let place):
+            guard visible.indices.contains(place - 1) else { return (state, .none) }
+            return (state, .trigger(itemID: visible[place - 1].id))
+        case .cancel:
+            guard !state.query.isEmpty else { return (state, .close) }
+            next = State()
+        }
+        return (next, .none)
+    }
+
+    /// A key event as a bar key — nil for anything the bar leaves alone
+    /// (⌃ and ⌥ chords, ⌘ with anything but a digit, bare modifiers).
+    nonisolated static func key(keyCode: UInt16, characters: String?,
+                                modifiers: NSEvent.ModifierFlags) -> Key? {
+        let flags = modifiers.intersection([.command, .control, .option, .shift])
+        switch Int(keyCode) {
+        case kVK_LeftArrow: return .left
+        case kVK_RightArrow: return .right
+        case kVK_Home: return .first
+        case kVK_End: return .last
+        case kVK_Tab: return flags.contains(.shift) ? .left : .right
+        case kVK_Return, kVK_ANSI_KeypadEnter: return .submit
+        case kVK_Escape: return .cancel
+        case kVK_Delete: return .backspace
+        default: break
+        }
+        guard let characters, !characters.isEmpty else { return nil }
+        if flags == .command {
+            if let digit = Int(characters), (1...9).contains(digit) { return .jump(digit) }
+            return nil
+        }
+        guard flags.isSubset(of: [.shift]),
+              characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0)
+                                                      && $0.value < 0xF700 }) else { return nil }
+        return .text(characters)
+    }
+
+    /// The typed filter's chip width — measured in the chip's own font,
+    /// so the glass grows by what the chip draws.
+    nonisolated static func chipWidth(_ query: String) -> CGFloat {
+        guard !query.isEmpty else { return 0 }
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let text = (query as NSString).size(withAttributes: [.font: font]).width
+        return min(160, max(28, ceil(text) + 20))
+    }
+}
+
 /// The bar's live contents — an `@Observable` model rather than a
 /// `let` snapshot so the open panel follows the reconcile: items that
 /// come and go under the pointer re-tile instead of listing ghosts.
@@ -120,13 +233,36 @@ final class MenuBarBarModel {
     /// Items whose picture changed since the bar last closed — a sync
     /// badge, a VPN's state — marked with a dot.
     var updatedIDs: Set<String> = []
+    /// The keyboard's state while the bar was opened from the keyboard;
+    /// nil for a pointer's bar, which never takes key.
+    var keys: MenuBarBarKeys.State?
 
-    /// Each tile's width, in order: a live capture's or a glyph's own
-    /// width, clamped; the square otherwise.
+    /// The tiles standing: all of them, or what the typed filter leaves.
+    var visibleItems: [MenuBarItem] {
+        keys.map { MenuBarBarKeys.filter(items, query: $0.query) } ?? items
+    }
+
+    /// The selected tile's id while the keyboard drives the bar.
+    var selectedID: String? {
+        guard let keys else { return nil }
+        let visible = visibleItems
+        guard !visible.isEmpty else { return nil }
+        return visible[MenuBarBarKeys.clamped(keys.selection, count: visible.count)].id
+    }
+
+    /// Each visible tile's width, in order: a live capture's or a
+    /// glyph's own width, clamped; the square otherwise.
     func tileWidths(liveWidths: [String: CGFloat]) -> [CGFloat] {
-        items.map { item in
+        visibleItems.map { item in
             MenuBarBarLayout.tileWidth(glyphWidth: liveWidths[item.id] ?? glyphs[item.id]?.width)
         }
+    }
+
+    /// The row's widths as the frame measures them: the typed filter's
+    /// chip, when there is one, leads the tiles.
+    func rowWidths(liveWidths: [String: CGFloat]) -> [CGFloat] {
+        let chip = MenuBarBarKeys.chipWidth(keys?.query ?? "")
+        return (chip > 0 ? [chip] : []) + tileWidths(liveWidths: liveWidths)
     }
 }
 
@@ -182,7 +318,11 @@ final class MenuBarBarPanel: NSPanel {
         }
     }
 
-    override var canBecomeKey: Bool { false }
+    /// Opened from the keyboard the bar takes key — nonactivating, so the
+    /// frontmost app keeps its focus, as the command bar does. A
+    /// pointer's bar never does.
+    var takesKeys = false
+    override var canBecomeKey: Bool { takesKeys }
     override var canBecomeMain: Bool { false }
 }
 
@@ -204,12 +344,14 @@ struct MenuBarBarView: View {
     /// make; the tile itself never drags anything.
     let onMoveItem: @MainActor (MenuBarItem, MenuBarItemSection) -> Void
 
-    private var items: [MenuBarItem] { model.items }
+    private var items: [MenuBarItem] { model.visibleItems }
 
     var body: some View {
         let widths = model.tileWidths(liveWidths: tiles.imageWidths)
+        let query = model.keys?.query ?? ""
+        let selectedID = model.selectedID
         Group {
-            if items.isEmpty {
+            if items.isEmpty && query.isEmpty {
                 Text("No hidden items")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -217,32 +359,62 @@ struct MenuBarBarView: View {
                     .frame(height: MenuBarBarLayout.tileSize)
             } else {
                 GeometryReader { geometry in
-                    let overflow = MenuBarBarLayout.rowWidth(widths: widths) > geometry.size.width
-                    ScrollView(.horizontal) {
-                        HStack(spacing: MenuBarBarLayout.tileGap) {
-                            ForEach(Array(zip(items, widths)), id: \.0.id) { item, width in
-                                Button {
-                                    if NSEvent.modifierFlags.contains(.command) {
-                                        onRevealItem(item)
-                                    } else {
-                                        onTrigger(item)
-                                    }
-                                } label: {
-                                    tileLabel(for: item, width: width)
+                    let overflow = MenuBarBarLayout.rowWidth(
+                        widths: model.rowWidths(liveWidths: tiles.imageWidths)) > geometry.size.width
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal) {
+                            HStack(spacing: MenuBarBarLayout.tileGap) {
+                                if !query.isEmpty {
+                                    queryChip(query)
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(itemLabel(for: item))
-                                .help(tooltip(for: item))
-                                .contextMenu { moveMenu(for: item) }
+                                ForEach(Array(zip(items, widths)), id: \.0.id) { item, width in
+                                    Button {
+                                        if NSEvent.modifierFlags.contains(.command) {
+                                            onRevealItem(item)
+                                        } else {
+                                            onTrigger(item)
+                                        }
+                                    } label: {
+                                        tileLabel(for: item, width: width)
+                                            .background {
+                                                if item.id == selectedID {
+                                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                                        .fill(Color.accentColor.opacity(0.22))
+                                                }
+                                            }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(item.id)
+                                    .accessibilityLabel(itemLabel(for: item))
+                                    .accessibilityAddTraits(item.id == selectedID ? .isSelected : [])
+                                    .help(tooltip(for: item))
+                                    .contextMenu { moveMenu(for: item) }
+                                }
                             }
                         }
+                        .scrollIndicators(overflow ? .visible : .hidden)
+                        .accessibilityLabel("Hidden menu bar items")
+                        .onChange(of: selectedID) { _, id in
+                            if let id { proxy.scrollTo(id, anchor: .center) }
+                        }
                     }
-                    .scrollIndicators(overflow ? .visible : .hidden)
-                    .accessibilityLabel("Hidden menu bar items")
                 }
             }
         }
         .padding(MenuBarBarLayout.padding)
+    }
+
+    /// What the keyboard has typed — the filter the row stands under.
+    private func queryChip(_ query: String) -> some View {
+        Text(query)
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
+            .truncationMode(.head)
+            .foregroundStyle(.secondary)
+            .frame(width: MenuBarBarKeys.chipWidth(query), height: 22)
+            .background(.quaternary, in: Capsule())
+            .frame(height: MenuBarBarLayout.tileSize)
+            .accessibilityLabel("Filter: \(query)")
     }
 
     private func itemLabel(for item: MenuBarItem) -> String {
@@ -377,6 +549,9 @@ final class MenuBarBar {
         if isOpen { close() } else { open() }
     }
 
+    /// Whether the open bar is the keyboard's.
+    var isKeyboardDriven: Bool { isOpen && model.keys != nil }
+
     /// The screen the bar hangs from — the pointer's, so a multi-
     /// display setup opens it where the hand is, falling back to the
     /// display carrying the menu bar.
@@ -384,10 +559,12 @@ final class MenuBarBar {
         NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
     }
 
-    /// Opens the bar under the menu bar's right end — or refreshes it
-    /// when it is already up. The tiles track the provider through
-    /// `model` for as long as the bar stands.
-    func open() {
+    /// Opens the bar under the icon's ‹ (or the menu bar's right end) —
+    /// or refreshes it when it is already up. The tiles track the
+    /// provider through `model` for as long as the bar stands.
+    /// `keyboard` is the hotkey's bar: it takes key and answers the
+    /// keys `MenuBarBarKeys` reads.
+    func open(keyboard: Bool = false) {
         if isOpen { close() }
         guard let screen = pointerScreen else { return }
         let listed = items()
@@ -399,6 +576,7 @@ final class MenuBarBar {
             !rows.contains { $0.intersects(item.bounds) }
         }.map(\.id))
         model.glyphs = glyphs(for: listed)
+        model.keys = keyboard ? MenuBarBarKeys.State() : nil
         let panel = MenuBarBarPanel(
             model: model,
             tiles: tiles,
@@ -411,7 +589,12 @@ final class MenuBarBar {
                 self?.onMoveItem(item, section)
             })
         panel.setFrame(frame(on: screen), display: false)
-        panel.orderFrontRegardless()
+        if keyboard {
+            panel.takesKeys = true
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            panel.orderFrontRegardless()
+        }
         self.panel = panel
         isOpen = true
         openedAtUptime = ProcessInfo.processInfo.systemUptime
@@ -440,7 +623,7 @@ final class MenuBarBar {
         let anchor = anchorFrame().flatMap { frame in
             screen.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) ? frame.maxX : nil
         }
-        return MenuBarBarLayout.frame(widths: model.tileWidths(liveWidths: tiles.imageWidths),
+        return MenuBarBarLayout.frame(widths: model.rowWidths(liveWidths: tiles.imageWidths),
                                       menuBarDepth: depth, on: screen.frame, anchorMaxX: anchor)
     }
 
@@ -477,6 +660,25 @@ final class MenuBarBar {
         panel.setFrame(frame(on: screen), display: true)
     }
 
+    /// One key against the keyboard's bar.
+    func press(_ key: MenuBarBarKeys.Key) {
+        guard isOpen, let state = model.keys else { return }
+        let (next, effect) = MenuBarBarKeys.reduce(state, key: key, items: model.items)
+        switch effect {
+        case .none:
+            model.keys = next
+            // The filter changed the row: the glass follows it.
+            if next.query != state.query, let panel,
+               let screen = panel.screen ?? pointerScreen {
+                panel.setFrame(frame(on: screen), display: true)
+            }
+        case .trigger(let id):
+            if let item = model.items.first(where: { $0.id == id }) { onTrigger(item) }
+        case .close:
+            close()
+        }
+    }
+
     func close() {
         guard isOpen else { return }
         for monitor in dismissMonitors { NSEvent.removeMonitor(monitor) }
@@ -485,8 +687,10 @@ final class MenuBarBar {
         panel?.orderOut(nil)
         panel = nil
         isOpen = false
-        // Seen: the change marks clear with the bar.
+        // Seen: the change marks clear with the bar, and the keyboard's
+        // filter with it.
         updatedIDs = []
+        model.keys = nil
         onOpenChange(false)
     }
 
@@ -525,8 +729,19 @@ final class MenuBarBar {
         if let localKeys = NSEvent.addLocalMonitorForEvents(
             matching: .keyDown,
             handler: { [weak self] event in
+                guard let self else { return event }
+                // The keyboard's bar answers its keys; a pointer's bar
+                // only folds on Esc.
+                if self.model.keys != nil {
+                    guard let key = MenuBarBarKeys.key(keyCode: event.keyCode,
+                                                       characters: event.charactersIgnoringModifiers,
+                                                       modifiers: event.modifierFlags)
+                    else { return event }
+                    self.press(key)
+                    return nil
+                }
                 guard event.keyCode == UInt16(kVK_Escape) else { return event }
-                self?.close()
+                self.close()
                 return nil
             }) {
             dismissMonitors.append(localKeys)
