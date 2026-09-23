@@ -95,6 +95,28 @@ import Testing
         #expect(plan.unknown == ["from_a_newer_monitor"])
     }
 
+    @Test func anImportedChordPassesTheRecordersGate() throws {
+        let json = #"""
+        {"format": "jrbar-settings", "version": 1,
+         "preferences": {"hotkeyChord.panel": "0:0", "hotkeyChord.shelf": "49:256",
+                         "hotkeyChord.a": "0:256", "hotkeyChord.b": "38:6144",
+                         "hotkeyChord.c": "", "hotkeyChord.d": "banana", "hotkeyChord.e": 7}}
+        """#
+        let read = try SettingsBundle.read(Data(json.utf8))
+        func gate(_ id: String) -> SettingsBundle.ImportedChord {
+            SettingsBundle.importedChord(read.preferences["hotkeyChord.\(id)"])
+        }
+        #expect(gate("panel") == .refused, "a bare A would be taken from typing everywhere")
+        #expect(gate("shelf") == .refused, "⌘Space is Spotlight's")
+        #expect(gate("a") == .refused, "⌘ alone is every app's menu shortcut")
+        #expect(gate("b") == .chord(HotkeyChord(keyCode: 38, modifiers: 6144)))
+        #expect(gate("c") == .unbound, "an empty chord is the recorder's Delete")
+        #expect(gate("d") == .refused)
+        #expect(gate("e") == .refused)
+        // The file keeps them, so the import can name what it skipped.
+        #expect(read.preferences["hotkeyChord.panel"] == .string("0:0"))
+    }
+
     @Test func aPagesStateReadsBackTolerantly() {
         let bundle = sample()
         #expect(SettingsBundle.decode(UtilitiesState.self, from: bundle.utilities)?.dataHoarderEnabled == true)

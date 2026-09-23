@@ -77,6 +77,25 @@ struct SettingsBundle: Equatable, Sendable {
         preferenceKeys.contains(key) || preferencePrefixes.contains { key.hasPrefix($0) }
     }
 
+    /// A shortcut read from a file, through the recorder's own gate
+    /// (`HotkeyChord.problem`). A hand-edited or shared export is not a
+    /// recording: a bare key, ⌘ alone or one of macOS's own chords would
+    /// be taken from every app the moment it registered.
+    enum ImportedChord: Equatable, Sendable {
+        /// The recorder's Delete: no shortcut.
+        case unbound
+        case chord(HotkeyChord)
+        /// Not a chord, or one the recorder would refuse.
+        case refused
+    }
+
+    nonisolated static func importedChord(_ value: JSONValue?) -> ImportedChord {
+        guard let stored = value?.stringValue else { return .refused }
+        if stored.isEmpty { return .unbound }
+        guard let chord = HotkeyChord(storageString: stored), chord.problem == nil else { return .refused }
+        return .chord(chord)
+    }
+
     /// A defaults value as JSON: bools stay bools (CFBoolean, not the
     /// number it bridges as), strings, numbers and string lists; anything
     /// else does not travel.

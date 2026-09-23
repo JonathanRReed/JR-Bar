@@ -907,7 +907,11 @@ final class SettingsStore {
                 }
             }
             if categories.contains(.preferences) {
-                done.append("\(self.applyPreferences(bundle.preferences)) preferences")
+                let preferences = self.applyPreferences(bundle.preferences)
+                done.append("\(preferences.applied) preferences")
+                if !preferences.refused.isEmpty {
+                    problems.append("skipped shortcuts the recorder would refuse: " + preferences.refused.joined(separator: ", "))
+                }
             }
             let summary = "Imported " + (done.isEmpty ? "nothing" : done.joined(separator: ", "))
             if problems.isEmpty {
@@ -931,15 +935,22 @@ final class SettingsStore {
     /// takes so it lands live: chords re-register (first, so the file's
     /// own on/off switches win after a recorded key turns one on), the
     /// switches flip their registrations, the channel and automatic
-    /// checks reach Sparkle, and sounds and the strip re-read.
-    private func applyPreferences(_ preferences: [String: JSONValue]) -> Int {
+    /// checks reach Sparkle, and sounds and the strip re-read. A chord
+    /// the recorder would refuse is not bound; its id comes back in
+    /// `refused` for the summary to name.
+    private func applyPreferences(_ preferences: [String: JSONValue]) -> (applied: Int, refused: [String]) {
         let chordPrefix = "hotkeyChord."
         var applied = 0
+        var refused: [String] = []
         for key in preferences.keys.sorted() where key.hasPrefix(chordPrefix) {
-            guard let stored = preferences[key]?.stringValue else { continue }
-            let chord = stored.isEmpty ? nil : HotkeyChord(storageString: stored)
-            guard stored.isEmpty || chord != nil else { continue }
-            setShortcut(chord, for: String(key.dropFirst(chordPrefix.count)))
+            let id = String(key.dropFirst(chordPrefix.count))
+            switch SettingsBundle.importedChord(preferences[key]) {
+            case .unbound: setShortcut(nil, for: id)
+            case .chord(let chord): setShortcut(chord, for: id)
+            case .refused:
+                refused.append(id)
+                continue
+            }
             applied += 1
         }
         let defaults = UserDefaults.standard
@@ -968,7 +979,7 @@ final class SettingsStore {
         }
         soundPreferences = SoundPreferences.load()
         SystemTogglesStore.shared.state.strip = SystemTogglesStore.loadStrip()
-        return applied
+        return (applied, refused)
     }
 
     /// The monitor's connection in words, as the Advanced page says it.
