@@ -37,7 +37,15 @@ final class AppCommandRouter {
     /// Deep work's hands: the live sessions (the snapshot at the start,
     /// the summary at the end) and where the closing line is said.
     var sessionsNow: (() -> [CoreSession])?
-    var onDeepWorkSummary: ((String) -> Void)?
+    /// The closing line: on the panel (Overview one click off) and in
+    /// Notification Center, unless a test listens instead.
+    lazy var onDeepWorkSummary: (String) -> Void = { [weak self] line in
+        let notices = LaunchNotices.shared
+        notices.say(.init(key: "deep-work", text: line, actionTitle: "Overview") { [weak self] in
+            self?.openWindow?(.overview)
+        })
+        notices.deliverBanner("deep-work", "Deep work", line)
+    }
 
     /// The stretch in progress: when it began, every session's state
     /// then, and the scheduled end.
@@ -146,7 +154,7 @@ final class AppCommandRouter {
         stretch.end.cancel()
         deepWork = nil
         let elapsed = Int(now().timeIntervalSince(stretch.started))
-        onDeepWorkSummary?(DeepWork.summary(before: stretch.before, after: sessionsNow?() ?? [],
+        onDeepWorkSummary(DeepWork.summary(before: stretch.before, after: sessionsNow?() ?? [],
                                             elapsedSeconds: elapsed, early: early))
     }
 

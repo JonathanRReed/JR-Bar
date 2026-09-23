@@ -108,8 +108,29 @@ import Testing
         notices.post(.init(key: "b", text: "two", actionTitle: "Go", action: {}))
         notices.post(.init(key: "a", text: "one again", actionTitle: "Go", action: {}))
         #expect(notices.waiting.map(\.text) == ["one again", "two"])
+        var withdrawn: [String] = []
+        notices.withdrawBanner = { withdrawn.append($0) }
         notices.withdraw(key: "b")
+        #expect(withdrawn == ["b"], "the banner goes with the notice")
         #expect(notices.next()?.text == "one again")
         #expect(notices.next() == nil)
+    }
+
+    @Test func anOpenPanelHearsAtOnceAShutOneOnOpening() {
+        let notices = LaunchNotices()
+        var open = false
+        var shown: [String] = []
+        notices.panelIsOpen = { open }
+        notices.showToast = { shown.append($0.text) }
+        notices.say(.init(key: "a", text: "held", actionTitle: "Go", action: {}))
+        notices.say(.init(key: "b", text: "held too", actionTitle: "Go", action: {}))
+        #expect(shown.isEmpty)
+        notices.panelOpened()
+        #expect(shown == ["held"], "one per opening")
+        open = true
+        notices.say(.init(key: "c", text: "now", actionTitle: "Go", action: {}))
+        #expect(shown == ["held", "now"])
+        notices.panelOpened()
+        #expect(shown == ["held", "now", "held too"])
     }
 }

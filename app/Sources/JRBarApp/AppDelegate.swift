@@ -196,9 +196,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // Status item ↔ panel.
         panel.setAnchorProvider { [weak statusItem] in statusItem?.anchorRect }
-        panel.onOpenStateChange = { [weak self, weak statusItem] open in
+        panel.onOpenStateChange = { [weak statusItem] open in
             statusItem?.setPanelOpen(open)
-            if open { self?.showWaitingNotice() }
+            if open { LaunchNotices.shared.panelOpened() }
         }
         statusItem.onTogglePanel = { [weak panel] in panel?.toggle() }
         statusItem.onUnsnoozeAll = { [weak core] in core?.snooze(session: nil, seconds: 0) }
@@ -1412,87 +1412,33 @@ extension AppDelegate {
         AppHotkeys.shared.start()
         settingsStore?.onSetActionShortcut = { chord, id in AppHotkeys.shared.setChord(chord, for: id) }
         adoptLegacyShortcuts()
-        // A scheduled update Sparkle leaves to us: said on the panel and
-        // once in Notification Center, never a window over the work.
-        updater?.onUpdateReady = { [weak self] version in
-            self?.notice(key: "update-ready", "JR-Bar \(version) is ready", actionTitle: "Update…") { [weak self] in
-                self?.checkForUpdates(nil)
-            }
-            self?.events?.notifications.deliver(.init(
-                identifier: "update-ready",
-                title: "JR-Bar \(version) is ready",
-                body: "Choose Check for Updates… when it suits you.",
-                category: .plain))
+        // Notices outside a click wait for the panel; the ones worth
+        // keeping also land once in Notification Center.
+        let notices = LaunchNotices.shared
+        notices.panelIsOpen = { [weak self] in self?.panel?.isOpen == true }
+        notices.showToast = { [weak self] in self?.store?.show(toast: $0.text, actionTitle: $0.actionTitle, action: $0.action) }
+        notices.deliverBanner = { [weak self] id, title, body in
+            self?.events?.notifications.deliver(.init(identifier: id, title: title, body: body, category: .plain))
         }
-        // A sound held for a live microphone says so in the log, so a
-        // quiet chime on a call is never a mystery.
+        notices.withdrawBanner = { [weak self] id in self?.events?.notifications.withdraw(identifier: id) }
+        // A scheduled update Sparkle leaves to us, never a window over
+        // the work; once Sparkle's own window is seen, the notice goes.
+        updater?.onUpdateReady = { [weak self] version in
+            notices.say(.init(key: "update-ready", text: "JR-Bar \(version) is ready", actionTitle: "Update…") {
+                self?.checkForUpdates(nil)
+            })
+            notices.deliverBanner("update-ready", "JR-Bar \(version) is ready", "Choose Check for Updates… when it suits you.")
+        }
+        updater?.onUpdateAttended = { notices.withdraw(key: "update-ready") }
+        // A sound held for a live microphone says so in the log.
         events?.sounds.onHeldForCall = { [weak self] name in
             self?.core?.appendLocalLog(level: "sound", "\(name) held: the microphone is live")
         }
-        // Once Sparkle's own window has the person's attention, the
-        // banner has said its piece.
-        updater?.onUpdateAttended = { [weak self] in
-            self?.events?.notifications.withdraw(identifier: "update-ready")
-            LaunchNotices.shared.withdraw(key: "update-ready")
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             MainActor.assumeIsolated {
-                self?.mentionStaleCopies()
-                self?.reviewPermissionHealth()
+                InstalledCopies.mentionOnce()
+                SetupWindowController.shared.reviewPermissionHealth { self?.core?.appendLocalLog(level: "setup", $0) }
             }
-        }
-    }
-
-    /// A notice for the panel: said now when it is open, else held for
-    /// the next opening — a toast posted while it is shut is never seen.
-    private func notice(key: String, _ text: String, actionTitle: String, action: @escaping @MainActor () -> Void) {
-        if panel?.isOpen == true {
-            store?.show(toast: text, actionTitle: actionTitle, action: action)
-        } else {
-            LaunchNotices.shared.post(.init(key: key, text: text, actionTitle: actionTitle, action: action))
-        }
-    }
-
-    /// The panel just opened: one waiting notice, the oldest.
-    private func showWaitingNotice() {
-        guard let notice = LaunchNotices.shared.next() else { return }
-        store?.show(toast: notice.text, actionTitle: notice.actionTitle, action: notice.action)
-    }
-
-    /// A grant an OS update or a re-signed build took away is named once,
-    /// on the panel and in Notification Center, with Setup one click off.
-    private func reviewPermissionHealth() {
-        let setup = SetupWindowController.shared
-        Task { @MainActor [weak self] in
-            let lost = await setup.store.reviewPermissionHealth()
-            guard let self, let text = PermissionHealth.notice(for: lost) else { return }
-            self.core?.appendLocalLog(level: "setup", "permissions lost: " + lost.map(\.rawValue).joined(separator: ", "))
-            self.notice(key: "permission-health", text, actionTitle: "Open Setup") {
-                SetupWindowController.shared.show(step: .permissions)
-            }
-            self.events?.notifications.deliver(.init(
-                identifier: "permission-health",
-                title: lost.count == 1 ? "JR-Bar lost a permission" : "JR-Bar lost \(lost.count) permissions",
-                body: text + " Setup (Settings › General) grants \(lost.count == 1 ? "it" : "them") back.",
-                category: .plain))
-        }
-    }
-
-    /// A second installed JR-Bar goes stale on the first update; name it
-    /// once so Spotlight or a Login Item never starts the old one unseen.
-    private func mentionStaleCopies() {
-        guard let bundleID = Bundle.main.bundleIdentifier else { return }
-        let copies = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
-        let stale = InstalledCopies.stale(among: copies, running: Bundle.main.bundleURL,
-                                          home: FileManager.default.homeDirectoryForCurrentUser)
-        let defaults = UserDefaults.standard
-        guard let first = stale.first(where: { !defaults.bool(forKey: InstalledCopies.noticedKey($0)) }) else { return }
-        defaults.set(true, forKey: InstalledCopies.noticedKey(first))
-        let folder = first.deletingLastPathComponent().path
-            .replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
-        notice(key: "stale-copy", "Another JR-Bar is installed in \(folder) — updates replace only this one",
-               actionTitle: "Show") {
-            NSWorkspace.shared.activateFileViewerSelecting([first])
         }
     }
 
@@ -1535,16 +1481,8 @@ extension AppDelegate {
             store.show(toast: "\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))")
             return nil
         }
-        // Deep work reads the live sessions at its start and end, and
-        // says its closing line on the panel and in Notification Center.
+        // Deep work reads the live sessions at its start and its end.
         router.sessionsNow = { [weak self] in self?.core?.sessions ?? [] }
-        router.onDeepWorkSummary = { [weak self] line in
-            self?.notice(key: "deep-work", line, actionTitle: "Overview") { [weak self] in
-                self?.openOverview(nil)
-            }
-            self?.events?.notifications.deliver(.init(identifier: "deep-work", title: "Deep work",
-                                                      body: line, category: .plain))
-        }
         router.endQuiet = { [weak self] in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
             guard core.isLive else { return "The monitor is not connected." }

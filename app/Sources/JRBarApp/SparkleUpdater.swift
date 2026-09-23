@@ -239,6 +239,24 @@ enum InstalledCopies {
     /// Where the "already mentioned" marks live — one per stale path, so
     /// a copy kept on purpose is named once, not on every launch.
     nonisolated static func noticedKey(_ url: URL) -> String { "staleCopyNoticed.\(url.path)" }
+
+    /// Names one not-yet-mentioned stale copy on the panel, with Show to
+    /// reveal it, so Spotlight or a Login Item never starts it unseen.
+    @MainActor
+    static func mentionOnce(notices: LaunchNotices = .shared, defaults: UserDefaults = .standard) {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let copies = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
+        let stale = stale(among: copies, running: Bundle.main.bundleURL, home: home)
+        guard let first = stale.first(where: { !defaults.bool(forKey: noticedKey($0)) }) else { return }
+        defaults.set(true, forKey: noticedKey(first))
+        let folder = first.deletingLastPathComponent().path.replacingOccurrences(of: home.path, with: "~")
+        notices.say(.init(key: "stale-copy",
+                          text: "Another JR-Bar is installed in \(folder) — updates replace only this one",
+                          actionTitle: "Show") {
+            NSWorkspace.shared.activateFileViewerSelecting([first])
+        })
+    }
 }
 
 #if canImport(Sparkle)
