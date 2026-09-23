@@ -173,11 +173,25 @@ final class AgentUtility: Toy {
         }
         let pinned = AgentOrganizerSettings.pinnedAsks(core.asks)
         let document = document
-        result += settings().grouped(capped, asks: core.asks).map { group in
+        result += settings().grouped(capped, asks: core.asks, project: projectName).map { group in
             (group.key, group.title,
              group.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id], document: document) })
         }
         return result
+    }
+
+    /// The repository a session works in: git's own answer (a linked
+    /// worktree names its main repository), read once per folder from
+    /// the `.git` files — no git process — and the folder heuristic when
+    /// the folder is not in a repository.
+    @ObservationIgnored private var repositories: [String: GitWorkspace?] = [:]
+
+    private func projectName(_ session: CoreSession) -> String? {
+        guard !session.isRemote, let cwd = session.cwd, !cwd.isEmpty else { return AgentProject.name(of: session.cwd) }
+        if repositories[cwd] == nil {
+            repositories[cwd] = .some(GitWorkspace.resolve(cwd: cwd))
+        }
+        return AgentProject.name(of: cwd, workspace: repositories[cwd] ?? nil)
     }
 
     /// "1 waiting on you · 2 working" — the organizer's counts over the

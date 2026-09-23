@@ -165,6 +165,37 @@ struct AgentOrganizerTests {
         #expect(rows[0].title == "Codex")
     }
 
+    @Test("by project: a repository's worktrees fold into one section, ranked like providers")
+    func groupByProject() {
+        func at(_ id: String, _ cwd: String?, mode: String? = "working", lifecycle: String? = "active") -> CoreSession {
+            CoreSession(id: id, provider: "claude", cwd: cwd, mode: mode, lifecycle: lifecycle)
+        }
+        let s = AgentOrganizerSettings(grouping: .project)
+        let rows = s.grouped([
+            at("a", "/Users/j/JR-Bar"),
+            at("b", "/Users/j/JR-Bar/.claude/worktrees/agent-3"),
+            at("c", "/Users/j/site", mode: "waiting"),
+            at("d", nil, lifecycle: "completed"),
+        ], asks: [])
+        #expect(rows.map(\.title) == ["site", "JR-Bar", "No folder"], "site leads — it holds the waiting row")
+        #expect(rows[1].sessions.map(\.id).sorted() == ["a", "b"])
+        #expect(Set(rows.map(\.key)).count == rows.count)
+        // An injected resolver (git's answer in the app) wins.
+        let named = s.grouped([at("a", "/x/one"), at("b", "/x/two")], asks: [], project: { _ in "Mono" })
+        #expect(named.map(\.title) == ["Mono"])
+    }
+
+    @Test("a folder names its project; a linked worktree names its repository")
+    func projectNames() {
+        #expect(AgentProject.name(of: "/Users/j/JR-Bar") == "JR-Bar")
+        #expect(AgentProject.name(of: "/Users/j/JR-Bar/.claude/worktrees/wf-1/app") == "JR-Bar")
+        #expect(AgentProject.name(of: "/src/api/.worktrees/fix-auth") == "api")
+        #expect(AgentProject.name(of: "") == nil)
+        #expect(AgentProject.name(of: nil) == nil)
+        let workspace = GitWorkspace(root: "/w/feature", branch: "feature", isLinkedWorktree: true, mainRoot: "/w/Mono")
+        #expect(AgentProject.name(of: "/w/feature/sub", workspace: workspace) == "Mono")
+    }
+
     @Test("flat: one untitled section keeps the precedence order")
     func groupFlat() {
         let s = AgentOrganizerSettings(grouping: .flat)

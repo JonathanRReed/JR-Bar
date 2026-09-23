@@ -45,6 +45,7 @@ struct AgentUtilityControls: View {
                 Picker(selection: utility.bind(\.grouping)) {
                     Text("By state").tag(AgentGrouping.state)
                     Text("By provider").tag(AgentGrouping.provider)
+                    Text("By project").tag(AgentGrouping.project)
                     Text("Flat").tag(AgentGrouping.flat)
                 } label: { EmptyView() }
                 .labelsHidden()
@@ -52,7 +53,7 @@ struct AgentUtilityControls: View {
                 .fixedSize()
             } label: {
                 SettingLabel(title: "Group by",
-                             subtitle: "By state leads with whoever needs you; by provider keeps each agent's rows together.")
+                             subtitle: "By state leads with whoever needs you; by provider keeps each agent's rows together; by project folds a repository's worktrees into one.")
             }
 
             Toggle(isOn: utility.bind(\.showRemote)) {
