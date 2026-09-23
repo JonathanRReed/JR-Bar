@@ -204,6 +204,22 @@ struct NotchGestureTests {
                 "late ticks land, they never explode")
     }
 
+    // MARK: Pinch
+
+    @Test("a pinch commits once at its threshold, either way")
+    func pinch() {
+        var spread = NotchPinch()
+        #expect(spread.add(0.1) == nil, "a wobble is not a pinch")
+        #expect(spread.add(0.1) == .grow)
+        #expect(spread.add(0.5) == nil, "one verdict per gesture")
+        var squeeze = NotchPinch()
+        #expect(squeeze.add(-0.2) == .fold)
+        var back = NotchPinch()
+        #expect(back.add(0.15) == nil)
+        #expect(back.add(-0.3) == nil, "out and back past zero: not yet a squeeze")
+        #expect(back.add(-0.1) == .fold)
+    }
+
     // MARK: The queue's door
 
     @Test("an ask outranks a failure and both outrun the ambient kinds")

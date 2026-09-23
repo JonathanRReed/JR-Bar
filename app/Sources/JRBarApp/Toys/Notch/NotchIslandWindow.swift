@@ -84,6 +84,18 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     private var pull = NotchPullGesture()
     private var pullLive = false
 
+    /// The pinch — spread to grow, squeeze to fold — one verdict per
+    /// gesture (`NotchPinch`).
+    var onPinch: (NotchPinch.Verdict) -> Void = { _ in }
+    private var pinch = NotchPinch()
+
+    override func magnify(with event: NSEvent) {
+        guard pullsEnabled() else { return }
+        if event.phase.contains(.began) { pinch = NotchPinch() }
+        if let verdict = pinch.add(event.magnification) { onPinch(verdict) }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) { pinch = NotchPinch() }
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         acceptsClicks() ? super.hitTest(point) : nil
     }
@@ -264,6 +276,7 @@ final class NotchIslandWindow: NSPanel {
         }
         hosting.acceptsClicks = { [weak toy] in !(toy?.foldEngaged ?? false) }
         hosting.onSwipe = { [weak toy] swipe in toy?.islandSwipe(swipe) }
+        hosting.onPinch = { [weak toy] verdict in toy?.islandPinch(verdict) }
         hosting.pullsEnabled = { [weak toy] in toy?.settings.pullGestures ?? true }
         hosting.pullSurface = { [weak toy] in toy?.islandExpanded == true ? .card : .rest }
         hosting.onPullBegan = { [weak self, weak toy] in

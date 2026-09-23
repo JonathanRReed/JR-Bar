@@ -1920,6 +1920,25 @@ final class NotchToy: Toy {
         }
     }
 
+    /// A pinch on the island: spreading two fingers grows the resting
+    /// island into the card (deliberately, like a band click);
+    /// squeezing folds the card back into the notch, or puts a capsule
+    /// away. Behind the same gestures switch as pull and swipe.
+    func islandPinch(_ verdict: NotchPinch.Verdict) {
+        guard settings.pullGestures, isDrawingIsland, !foldEngaged else { return }
+        switch verdict {
+        case .grow:
+            guard !islandExpanded else { return }
+            expandFromBand()
+        case .fold:
+            if islandExpanded {
+                foldExpandedCard()
+            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
+                dismissCapsule()
+            }
+        }
+    }
+
     /// The swipe's fold of the grown card — and it is a dismissal, so
     /// a capsule shelved beneath it goes with it: collapsing alone
     /// would only replay the shelf as a fresh notice where the card

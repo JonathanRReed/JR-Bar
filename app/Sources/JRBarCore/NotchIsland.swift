@@ -778,6 +778,33 @@ public struct NotchFrameSpring: Equatable, Sendable {
     }
 }
 
+/// The island's pinch, read off trackpad magnify events: spreading two
+/// fingers grows the resting island into the card, squeezing folds the
+/// card back into the notch (or puts a capsule away). One verdict per
+/// gesture, at the threshold — the way the swipe fires once.
+public struct NotchPinch: Equatable, Sendable {
+    public enum Verdict: Equatable, Sendable { case grow, fold }
+
+    /// Accumulated magnification that commits — a deliberate spread,
+    /// not a wobble while two fingers rest on the trackpad.
+    public static let threshold: CGFloat = 0.18
+
+    public private(set) var total: CGFloat = 0
+    public private(set) var fired = false
+
+    public init() {}
+
+    /// One magnify delta; the verdict once it crosses, nil otherwise
+    /// (and nil for the rest of the gesture after it fired).
+    public mutating func add(_ delta: CGFloat) -> Verdict? {
+        guard !fired else { return nil }
+        total += delta
+        if total >= Self.threshold { fired = true; return .grow }
+        if total <= -Self.threshold { fired = true; return .fold }
+        return nil
+    }
+}
+
 // MARK: - Asks at the notch
 
 extension NotchIsland {
