@@ -1186,18 +1186,45 @@ final class ScreenBarLiveStatus {
     /// Without it "Hold still on camera" has nothing to hold on, and the
     /// card says so instead of promising it.
     var cameraReadable = false
+    /// What the band plays while the monitor is offline — the file feed
+    /// the app fell back to — so the line names the idle breath as the
+    /// idle breath, not as the strip's last program.
+    var offlineFeed: ScreenBarSourceLine.OfflineFeed?
 }
 
 /// The Screen Bar card's "Right now" line: which source the band plays,
 /// whether a program was refused, and why it may be still — the answers
 /// the card never gave ("whose clock is it on?", "why is it frozen?").
 enum ScreenBarSourceLine {
+    /// The app's own fallback while the monitor is away (`LEDFeed`): the
+    /// strip's `LEDS.LED`, an override feed file, or the built-in breath.
+    enum OfflineFeed: Equatable {
+        case strip, file, idleBreath
+
+        init(_ source: LEDFeed.Source) {
+            switch source {
+            case .device: self = .strip
+            case .stateFile: self = .file
+            case .builtInIdle: self = .idleBreath
+            }
+        }
+
+        var playing: String {
+            switch self {
+            case .strip: return "playing the last program the strip was sent"
+            case .file: return "playing the feed file's program"
+            case .idleBreath: return "playing the built-in idle breath"
+            }
+        }
+    }
+
     static func describe(live: Bool, mirrorSetting: Bool, stripPresent: Bool, phaseOffsetMs: Double?,
                          why: String?, rejection: String?, motionNote: String?, followingAlcove: Bool,
-                         steppedAsideForVideo: Bool = false, cue: String? = nil) -> String {
+                         steppedAsideForVideo: Bool = false, cue: String? = nil,
+                         offlineFeed: OfflineFeed? = nil) -> String {
         var parts: [String] = []
         if !live {
-            parts.append("Monitor offline — playing the last program the strip was sent")
+            parts.append("Monitor offline — " + (offlineFeed ?? .strip).playing)
         } else if mirrorSetting, stripPresent {
             var mirror = "Mirroring the strip, phase-locked"
             if let offset = phaseOffsetMs, abs(offset) >= 1 {

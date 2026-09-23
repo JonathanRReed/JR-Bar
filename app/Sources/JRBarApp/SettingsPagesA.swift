@@ -978,7 +978,8 @@ struct ScreenBarCard: View {
             motionNote: status.motionNote,
             followingAlcove: status.followingAlcove,
             steppedAsideForVideo: status.steppedAsideForVideo,
-            cue: core.lights?.screenBar?.cue?.name)
+            cue: core.lights?.screenBar?.cue?.name,
+            offlineFeed: status.offlineFeed)
     }
 
     /// The picker's note: what the machine reports and what the tray's

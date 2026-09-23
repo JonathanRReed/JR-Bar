@@ -1385,6 +1385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // on every LEDS.LED write, so the bar phase-locks to that, not
         // to whenever this read landed.
         screenBar.apply(programText: last.text, anchorEpoch: last.anchor)
+        ScreenBarLiveStatus.shared.offlineFeed = ScreenBarSourceLine.OfflineFeed(last.source)
         let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
         if description != lastLightsSource {
             lastLightsSource = description
