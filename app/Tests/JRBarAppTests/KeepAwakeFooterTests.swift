@@ -36,12 +36,25 @@ struct KeepAwakeFooterTests {
     @Test func theLineTakesNoRoomInThePanel() throws {
         let width = CGFloat(PanelLayout.width)
         let until = Date().timeIntervalSince1970 + 5400
-        let held = try store(power: #"{"keep_awake":true,"hold":{"state":"manual","lease":{"kind":"duration","until":\#(until)}}}"#)
-        let bare = try store(power: nil)
+        let lease = try power(#"{"state":"manual","lease":{"kind":"duration","until":\#(until)}}"#)
         let proposal = CGSize(width: width, height: 400)
-        let heldSize = NSHostingController(rootView: DevicesSection(store: held)).sizeThatFits(in: proposal)
-        let bareSize = NSHostingController(rootView: DevicesSection(store: bare)).sizeThatFits(in: proposal)
-        #expect(heldSize == bareSize, "an overlay: no row moves, the computed height holds")
-        #expect(heldSize.height == CGFloat(PanelLayout.devicesHeight))
+        // The line is really drawn — a comparison of two bare headers
+        // would prove nothing.
+        let line = NSHostingView(rootView: KeepAwakeFooter(power: lease)).fittingSize
+        #expect(line.width > 0)
+        // The Devices header as the section draws it while the monitor is
+        // live (no "from files" word), with the line laid over it and
+        // without: the same size, so no row moves.
+        let held = NSHostingController(rootView: SectionLabel(text: "Devices")
+            .overlay(alignment: .bottomTrailing) { KeepAwakeFooter(power: lease) }).sizeThatFits(in: proposal)
+        let bare = NSHostingController(rootView: SectionLabel(text: "Devices")).sizeThatFits(in: proposal)
+        #expect(held == bare, "an overlay: no row moves, the computed height holds")
+        // It sits clear of the header's own word.
+        let word = NSHostingView(rootView: SectionLabel(text: "Devices")).fittingSize
+        #expect(word.width + line.width <= width)
+        // And the section keeps the panel's computed height.
+        let section = NSHostingController(rootView: DevicesSection(store: try store(power: nil)))
+            .sizeThatFits(in: proposal)
+        #expect(section.height == CGFloat(PanelLayout.devicesHeight))
     }
 }
