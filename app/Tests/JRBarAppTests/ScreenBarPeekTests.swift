@@ -1,0 +1,189 @@
+import AppKit
+import Foundation
+import Testing
+import JRBarCore
+@testable import JRBarApp
+
+/// The right ear as the menu bar's surface: the resting mark that gives
+/// the peek a home, where the peek hangs, and how the pointer reaches it
+/// — hover and scroll hang it, a click pins it, the ‹ keeps its own.
+@Suite("Screen Bar right-ear peek")
+@MainActor
+struct ScreenBarPeekTests {
+    private func item(_ id: String, owner: String = "Example", title: String? = nil,
+                      bundle: String? = "com.example.app") -> MenuBarItem {
+        MenuBarItem(id: id, ownerPID: 1, ownerName: owner,
+                    bounds: CGRect(x: 100, y: 0, width: 16, height: 24), title: title,
+                    windowID: 1, bundleID: bundle)
+    }
+
+    // MARK: The ear's marks
+
+    @Test func theRestingMarkIsAWeightNeverACount() {
+        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 0) == 0)
+        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 1) == 1)
+        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 3) == 1)
+        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 4) == 2)
+        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 8) == 2)
+        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 40) == 3)
+    }
+
+    @Test func tuckedAwayItemsGiveTheEmptyEarItsRestingMark() throws {
+        let marks = ScreenBarMenuBarMarks(hiddenCount: 5)
+        let dressed = ScreenBarMenuBarMarks.apply(marks, to: .empty)
+        let right = try #require(dressed.right)
+        #expect(right.dots == 2)
+        #expect(right.hasMark)
+        #expect(right.symbol == nil && right.provider == nil, "a mark, never a number or a word")
+        #expect(right.text == "5 menu bar items tucked away", "VoiceOver gets the count")
+        #expect(dressed.left == nil)
+        // Nothing hidden: no ear is conjured.
+        #expect(ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(), to: .empty).right == nil)
+    }
+
+    @Test func theMeterKeepsItsEarAndTheDotsNeverDisplaceIt() {
+        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
+        let dressed = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(hiddenCount: 9),
+                                                  to: ScreenBarWings(left: nil, right: meter))
+        #expect(dressed.right == meter)
+    }
+
+    @Test func theKeepAwakeCupRidesTheRestingMark() throws {
+        var marks = ScreenBarEarMarks()
+        marks.awake = .init(symbol: ScreenBarEarMarks.leaseSymbol, text: "Held awake")
+        let dressed = ScreenBarEarMarks.apply(marks, to: ScreenBarMenuBarMarks.apply(
+            ScreenBarMenuBarMarks(hiddenCount: 2), to: .empty))
+        let right = try #require(dressed.right)
+        #expect(right.dots == 1)
+        #expect(right.accessory?.symbol == ScreenBarEarMarks.leaseSymbol)
+    }
+
+    @Test func theRestingMarkIsItsOwnSubjectForADismissal() {
+        let dots = ScreenBarWingSlot(text: "tucked", dots: 1)
+        let sensorsOnly = ScreenBarWingSlot(text: "Microphone in use")
+        #expect(!ScreenBarController.sameWingSubject(dots, sensorsOnly))
+        #expect(ScreenBarController.sameWingSubject(dots, ScreenBarWingSlot(text: "more", dots: 3)),
+                "the run growing is the same ear still dismissed")
+    }
+
+    // MARK: The feed
+
+    @Test func theFeedTilesTheItemBarsItemsWithTheirFaces() {
+        let face = MenuBarGlyphCache.Face(image: NSImage(), width: 64, template: true)
+        let tiles = MenuBarEarFeed.tiles([item("a", title: "Connected"), item("b")],
+                                         face: { $0.id == "a" ? face : nil }, changed: ["b"])
+        #expect(tiles.map(\.id) == ["a", "b"])
+        #expect(tiles[0].width == 64, "a glyph takes its own width")
+        #expect(tiles[1].width == MenuBarBarLayout.tileSize, "an app icon stays square")
+        #expect(tiles[0].name == "Example · Connected")
+        #expect(tiles[1].name == "Example")
+        #expect(!tiles[0].changed && tiles[1].changed)
+        #expect(MenuBarEarFeed().isEmpty)
+        #expect(!MenuBarEarFeed(hidden: tiles).isEmpty)
+    }
+
+    @Test func aParkedUtilityPublishesNoFeed() {
+        let utility = MenuBarUtility()
+        utility.refreshEarFeed()
+        #expect(utility.earFeed == nil, "a stopped utility lends the ear nothing")
+        // An id it does not list opens nothing.
+        utility.openFromEar(itemID: "nobody")
+    }
+
+    // MARK: Where it hangs
+
+    @Test func thePeekIsAsWideAsItsRowWithinBounds() {
+        let tile = MenuBarBarLayout.tileSize
+        let pad = 2 * ScreenBarPeekLayout.padding
+        #expect(ScreenBarPeekLayout.width(tileWidths: [tile, tile], hasWords: false)
+                == MenuBarBarLayout.rowWidth(widths: [tile, tile]) + pad)
+        #expect(ScreenBarPeekLayout.width(tileWidths: [22], hasWords: false)
+                == ScreenBarPeekLayout.minContentWidth + pad, "a lone tile still reads as a lobe")
+        #expect(ScreenBarPeekLayout.width(tileWidths: [22], hasWords: true)
+                == ScreenBarPeekLayout.wordsWidth + pad, "sentences get room to read")
+        #expect(ScreenBarPeekLayout.width(tileWidths: Array(repeating: tile, count: 40), hasWords: false)
+                == ScreenBarPeekLayout.maxContentWidth + pad, "a long row scrolls instead")
+    }
+
+    @Test func itHangsBelowTheBandRightEdgeOnTheEar() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        // The right ear on a 14-inch notch: 32 pt deep, flush with the top.
+        let ear = CGRect(x: 850, y: 950, width: 36, height: 32)
+        let band = CGRect(x: 640, y: 944, width: 250, height: 4)
+        let frame = ScreenBarPeekLayout.frame(size: CGSize(width: 160, height: 48), ear: ear,
+                                              band: band, screen: screen)
+        #expect(frame.maxY == band.minY - ScreenBarPeekLayout.gapBelowBand,
+                "below the light, never over it — the band stays one strip")
+        #expect(frame.maxX == ear.maxX, "the ear's lobe grown down")
+        #expect(frame.width == 160 && frame.height == 48)
+        // No band under the ear: it hangs from the ear itself.
+        let bare = ScreenBarPeekLayout.frame(size: CGSize(width: 160, height: 48), ear: ear,
+                                             band: nil, screen: screen)
+        #expect(bare.maxY == ear.minY)
+    }
+
+    @Test func itNeverLeavesTheScreen() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let nearEdge = CGRect(x: 1500, y: 950, width: 36, height: 32)
+        let right = ScreenBarPeekLayout.frame(size: CGSize(width: 200, height: 40), ear: nearEdge,
+                                              band: nil, screen: screen)
+        #expect(right.maxX == screen.maxX - ScreenBarPeekLayout.edgeMargin)
+        let tooWide = ScreenBarPeekLayout.frame(size: CGSize(width: 1400, height: 40),
+                                                ear: CGRect(x: 800, y: 950, width: 36, height: 32),
+                                                band: nil, screen: screen)
+        #expect(tooWide.minX == screen.minX + ScreenBarPeekLayout.edgeMargin)
+    }
+
+    @Test func theZoneStopsShortOfTheHandleSliceSlackIncluded() throws {
+        let ear = CGRect(x: 300, y: 0, width: 52, height: 32)
+        let handle = CGRect(x: 336, y: 0, width: 16, height: 32)
+        let zone = try #require(ScreenBarController.peekZoneRect(ear: ear, handle: handle))
+        #expect(zone.minX == ear.minX)
+        // Both hit tests widen by 2 pt: they still never share a point.
+        #expect(zone.insetBy(dx: -2, dy: 0).maxX <= handle.insetBy(dx: -2, dy: 0).minX)
+        #expect(ScreenBarController.peekZoneRect(ear: ear, handle: nil) == ear)
+        #expect(ScreenBarController.peekZoneRect(ear: CGRect(x: 0, y: 0, width: 16, height: 32),
+                                                 handle: CGRect(x: 0, y: 0, width: 16, height: 32)) == nil,
+                "a handle-only ear is the handle's")
+    }
+
+    // MARK: The pointer
+
+    @Test func theEarZoneIsThePeeksAndNeverTheCards() {
+        #expect(ScreenBarInteraction.pointerRegion(onPeekZone: true, onPeek: false, inHitRegion: true) == .peek)
+        #expect(ScreenBarInteraction.pointerRegion(onPeekZone: false, onPeek: true, inHitRegion: true) == .peek,
+                "crossing the band to a glyph is still the peek's corridor")
+        #expect(ScreenBarInteraction.pointerRegion(onPeekZone: false, onPeek: false, inHitRegion: true) == .band)
+        #expect(ScreenBarInteraction.pointerRegion(onPeekZone: false, onPeek: false, inHitRegion: false) == .outside)
+    }
+
+    @Test func aPressOnThePeekIsItsOwnAndAPressElsewhereFoldsIt() {
+        #expect(ScreenBarInteraction.peekPress(onPanel: true, onZone: false, peekShown: true) == .panel)
+        #expect(ScreenBarInteraction.peekPress(onPanel: false, onZone: true, peekShown: true) == .ear)
+        #expect(ScreenBarInteraction.peekPress(onPanel: false, onZone: true, peekShown: false) == .ear)
+        #expect(ScreenBarInteraction.peekPress(onPanel: false, onZone: false, peekShown: true) == .foldAndContinue)
+        #expect(ScreenBarInteraction.peekPress(onPanel: false, onZone: false, peekShown: false) == .none)
+    }
+
+    @Test func aScrollOnTheEarHangsThePeek() {
+        // A wheel's notch answers at once, but only on the ear.
+        #expect(ScreenBarInteraction.scrollOpensPeek(precise: false, beganOnPeek: false, onPeekZone: true,
+                                                     accumX: 0, accumY: 0))
+        #expect(!ScreenBarInteraction.scrollOpensPeek(precise: false, beganOnPeek: false, onPeekZone: false,
+                                                      accumX: 0, accumY: 0))
+        // A trackpad's vertical travel, either way, past the threshold.
+        let t = ScreenBarInteraction.peekScrollThreshold
+        #expect(ScreenBarInteraction.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: true,
+                                                     accumX: 0, accumY: -t))
+        #expect(ScreenBarInteraction.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: false,
+                                                     accumX: 2, accumY: t + 4))
+        #expect(!ScreenBarInteraction.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: true,
+                                                      accumX: 0, accumY: t - 1))
+        // Sideways is still the ear's dismiss flick.
+        #expect(!ScreenBarInteraction.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: true,
+                                                      accumX: 30, accumY: 12))
+        // A gesture that began on the band never becomes the peek's.
+        #expect(!ScreenBarInteraction.scrollOpensPeek(precise: true, beganOnPeek: false, onPeekZone: true,
+                                                      accumX: 0, accumY: 30))
+    }
+}

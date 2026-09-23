@@ -266,6 +266,48 @@ final class MenuBarBarModel {
     }
 }
 
+/// What the menu bar tells the Screen Bar's right ear — its reveal,
+/// update and newcomer surface, the one spot beside the notch that never
+/// moves with the bar's reflow. `MenuBarUtility` publishes it while it
+/// renders the bar; `ScreenBarController` draws it: marks on the ear,
+/// and a black peek of the hidden glyphs hanging from the notch, where
+/// the words live. nil while the utility is parked or another manager
+/// renders.
+struct MenuBarEarFeed: Equatable {
+    /// One hidden item as the peek tiles it: the item, its photographed
+    /// face when the cache has one, and whether its picture or title
+    /// changed since the Item Bar last closed.
+    struct Tile: Equatable, Identifiable {
+        var item: MenuBarItem
+        var face: MenuBarGlyphCache.Face?
+        var changed = false
+
+        var id: String { item.id }
+        /// The Item Bar's rule: a glyph's own width, clamped; the square
+        /// for an app icon.
+        var width: CGFloat { MenuBarBarLayout.tileWidth(glyphWidth: face?.width) }
+        /// The tooltip's and VoiceOver's name for it.
+        var name: String {
+            guard let title = item.title, !title.isEmpty else { return item.ownerName }
+            return "\(item.ownerName) · \(title)"
+        }
+    }
+
+    /// The hidden and always-hidden runs, in the Item Bar's order.
+    var hidden: [Tile] = []
+
+    /// Whether there is anything of the menu bar's for the ear to show.
+    var isEmpty: Bool { hidden.isEmpty }
+
+    /// The feed for `items` — the Item Bar's own tiles, each wearing the
+    /// face the cache holds for it.
+    @MainActor
+    static func tiles(_ items: [MenuBarItem], face: (MenuBarItem) -> MenuBarGlyphCache.Face?,
+                      changed: Set<String>) -> [Tile] {
+        items.map { Tile(item: $0, face: face($0), changed: changed.contains($0.id)) }
+    }
+}
+
 /// The floating panel itself: borderless, nonactivating, glass-backed,
 /// a row of icon tiles — one per hidden or always-hidden item. The
 /// tile's click is reposted at the real item's frame (Accessibility

@@ -48,12 +48,16 @@ struct ScreenBarWingSlot: Equatable {
     /// so a hold that lasts all afternoon never takes the meter's place.
     /// nil draws none.
     var accessory: ScreenBarWingAccessory?
+    /// The menu bar's resting mark: one to three small dots for how much
+    /// is tucked away behind the icon — a weight, never a count. 0 draws
+    /// none.
+    var dots = 0
 
     /// Whether the slot draws a mark of its own beside any dots. A slot
     /// with neither still holds its claim with the lone resting dot.
     var hasMark: Bool {
         provider != nil || symbol != nil || meter != nil || visualizer
-            || artworkData != nil || askAge != nil
+            || artworkData != nil || askAge != nil || dots > 0
     }
 
     /// Whether the slot carries lit privacy dots.
@@ -540,6 +544,14 @@ struct ScreenBarWingsView: View {
                 }
             } else if let provider = slot.provider {
                 glyph(.style(for: provider), size: 13, tint: tint)
+            } else if slot.dots > 0 {
+                // The hidden run at rest: small dots in a row, as many
+                // as the run's weight — the ‹'s "more here", no number.
+                HStack(spacing: 2.5) {
+                    ForEach(0..<min(3, slot.dots), id: \.self) { _ in
+                        Circle().fill(slot.textColor.opacity(0.8)).frame(width: 3.5, height: 3.5)
+                    }
+                }
             } else if !slot.showsSensors {
                 // A slot with words but no mark still holds its claim —
                 // the lone dot is the resting grammar.

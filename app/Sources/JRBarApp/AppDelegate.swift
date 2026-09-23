@@ -382,6 +382,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction.onMenuHandle = { [weak self] in
             self?.utilitiesStore?.menuBar.toggleMenuHandle()
         }
+        // The right ear is the menu bar's reveal, update and newcomer
+        // surface: its marks, and the black peek of hidden glyphs.
+        screenBar.attachMenuBar(utilitiesStore.menuBar, interaction: interaction)
         // The card's timers: a due timer is one banner, never an agent
         // launch. Both card surfaces share `cardTimers`, so one wiring
         // covers the glass card and the grown island alike.

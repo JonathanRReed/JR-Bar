@@ -137,9 +137,30 @@ final class ScreenBarController {
     /// a poll worth stopping.
     var drawsSensorDots: Bool { isShown && notchWingsEnabled && capsule == nil }
     /// The slots as the ears present them: the store's pick, dressed
-    /// with the ears' own marks. Dismissal and the draw both read this,
-    /// so a flick on the moon dismisses the moon.
-    private var markedWings: ScreenBarWings { ScreenBarEarMarks.apply(earMarks, to: wings) }
+    /// with the menu bar's marks and the ears' own. Dismissal and the
+    /// draw both read this, so a flick on the moon dismisses the moon.
+    private var markedWings: ScreenBarWings {
+        ScreenBarEarMarks.apply(earMarks, to: ScreenBarMenuBarMarks.apply(
+            ScreenBarMenuBarMarks(feed: menuBarFeed), to: wings))
+    }
+
+    /// What the menu bar tells the right ear — its hidden runs' tiles —
+    /// pushed from the utility's feed (`attachMenuBar`). The ears re-lay
+    /// only when the marks it makes move; a new photograph only touches
+    /// the peek.
+    var menuBarFeed: MenuBarEarFeed? {
+        didSet {
+            guard menuBarFeed != oldValue else { return }
+            if ScreenBarMenuBarMarks(feed: menuBarFeed) != ScreenBarMenuBarMarks(feed: oldValue) {
+                reconcileDismissals()
+                pushWings()
+            }
+            syncPeek()
+        }
+    }
+    /// The black peek that hangs from the right ear — the menu bar's
+    /// reveal surface (`ScreenBarPeek`).
+    let peek = ScreenBarPeek()
 
     /// A dismissal survives only while the same subject still holds its
     /// side; a different subject claiming it is news that revives it.
@@ -167,6 +188,7 @@ final class ScreenBarController {
     nonisolated static func sameWingSubject(_ a: ScreenBarWingSlot, _ b: ScreenBarWingSlot) -> Bool {
         a.provider == b.provider && a.symbol == b.symbol && a.visualizer == b.visualizer
             && (a.artworkData != nil) == (b.artworkData != nil)
+            && (a.dots > 0) == (b.dots > 0)
     }
     /// The device notice holding a side, and when it lets go.
     private var wingNotice: (side: ScreenBarWingSide, slot: ScreenBarWingSlot, until: Date)?
@@ -375,6 +397,7 @@ final class ScreenBarController {
             guard let self, let slot = ScreenBarNotices.power(from: old, to: new) else { return }
             self.presentWingNotice(.right, slot: slot)
         }
+        peek.anchor = { [weak self] in self?.peekAnchor }
         audioMonitor.onChange = { [weak self] name, transport in
             guard let self else { return }
             let result = ScreenBarNotices.audio(name: name, transport: transport,
@@ -461,6 +484,7 @@ final class ScreenBarController {
     func hide() {
         isShown = false
         steppedAsideForVideo = false
+        peek.hide()
         publishStatus()
         ScreenBarGeometry.menuHandleScreenRect = nil
         updateNoticeMonitors()
@@ -645,6 +669,7 @@ final class ScreenBarController {
         let want = wantsVideoGuard()
         guard want != steppedAsideForVideo, isShown else { return }
         steppedAsideForVideo = want
+        if want { peek.hide() }
         publishStatus()
         onGeometryChange?()
         let alpha: CGFloat = want ? 0 : 1
@@ -939,6 +964,108 @@ final class ScreenBarController {
         if (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect, view.menuHandleRect) != oldRects {
             onGeometryChange?()
         }
+        // A peek hanging from the right ear follows it — or folds with it.
+        syncPeek()
+    }
+
+    // MARK: The menu bar's peek
+
+    /// Whether the ears are up to carry the menu bar's marks: shown, the
+    /// wings on, no external capsule holding the flanks, not stepped
+    /// aside for a video.
+    var carriesMenuBarMarks: Bool {
+        isShown && notchWingsEnabled && capsule == nil && !steppedAsideForVideo
+    }
+
+    /// Whether the right ear opens the peek right now: the ears carry
+    /// the menu bar, the feed has something to show, and the ear draws.
+    var peekAvailable: Bool {
+        carriesMenuBarMarks && panel.isVisible && view.rightWingRect != nil
+            && !(menuBarFeed?.isEmpty ?? true)
+    }
+
+    /// Whether a screen point is on the part of the right ear that
+    /// answers with the peek: the whole ear but the ‹ slice, which keeps
+    /// its own click and its own hover reveal. The two never overlap,
+    /// slack included. False while there is nothing to peek at.
+    func peekZone(atScreenPoint point: NSPoint) -> Bool {
+        guard peekAvailable, let ear = view.rightWingRect,
+              let zone = Self.peekZoneRect(ear: ear, handle: view.menuHandleRect) else { return false }
+        return panel.convertToScreen(view.convert(zone, to: nil))
+            .insetBy(dx: -2, dy: -3).contains(point)
+    }
+
+    /// The peek's zone of the right ear, view coordinates: the ear up to
+    /// four points short of the ‹ slice, so the zone's 2 pt of slack and
+    /// the handle's own never meet. nil when the handle leaves no room.
+    /// Pure so a test pins the seam.
+    nonisolated static func peekZoneRect(ear: CGRect, handle: CGRect?) -> CGRect? {
+        var zone = ear
+        if let handle { zone.size.width = max(0, handle.minX - 4 - ear.minX) }
+        return zone.width > 0 ? zone : nil
+    }
+
+    /// The hanging peek's frame, and the corridor from the ear down to
+    /// it — the band's stretch between them included, so crossing the
+    /// light on the way to a glyph never counts as leaving. nil while
+    /// the peek is down.
+    var peekRegion: (panel: NSRect, corridor: NSRect)? {
+        guard let frame = peek.frame else { return nil }
+        return (frame, rightEarScreenRect.map { frame.union($0) } ?? frame)
+    }
+
+    /// The right ear's drawn bounds in screen coordinates while it
+    /// stands.
+    private var rightEarScreenRect: NSRect? {
+        guard isShown, panel.isVisible, !steppedAsideForVideo, let rect = view.rightWingRect else { return nil }
+        return panel.convertToScreen(view.convert(rect, to: nil))
+    }
+
+    /// Where the peek hangs: the right ear, the band it stays under, the
+    /// band's screen.
+    private var peekAnchor: ScreenBarPeekAnchor? {
+        guard let ear = rightEarScreenRect,
+              let screen = panel.screen ?? ScreenBarGeometry.preferredScreen() else { return nil }
+        return ScreenBarPeekAnchor(ear: ear, band: bandScreenRect, screen: screen.frame)
+    }
+
+    /// The pointer's ask of the peek.
+    func handlePeek(_ intent: ScreenBarPeekIntent) {
+        switch intent {
+        case .hover:
+            guard peekAvailable, !peek.isShown else { return }
+            syncPeekModel()
+            peek.show(pinned: false)
+        case .pin:
+            guard peekAvailable else { return }
+            syncPeekModel()
+            peek.show(pinned: true)
+        case .toggle:
+            if peek.isShown, peek.isPinned {
+                peek.hide()
+            } else if peekAvailable {
+                syncPeekModel()
+                peek.show(pinned: true)
+            }
+        case .close:
+            peek.hide()
+        }
+    }
+
+    /// A hanging peek follows the feed and the ear, and folds once there
+    /// is nothing left to show or no ear to hang from.
+    private func syncPeek() {
+        guard peek.isShown else { return }
+        guard peekAvailable else { peek.hide(); return }
+        syncPeekModel()
+        peek.relayout()
+    }
+
+    private func syncPeekModel() {
+        let tiles = menuBarFeed?.hidden ?? []
+        if peek.model.tiles != tiles { peek.model.tiles = tiles }
+        let width = ScreenBarPeekLayout.width(tileWidths: tiles.map(\.width), hasWords: peek.model.hasWords)
+        if peek.model.width != width { peek.model.width = width }
     }
 
     // MARK: Programs

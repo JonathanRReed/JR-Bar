@@ -304,6 +304,7 @@ final class MenuBarUtility: Toy {
                 guard let self else { return }
                 self.noticeUpdates(in: self.lastPlan)
                 self.pruneUninstalledConcealedApps()
+                self.refreshEarFeed()
             }
         }
         // Our own control is never covered — its live frame splits
@@ -391,6 +392,9 @@ final class MenuBarUtility: Toy {
         // model.
         reveal.onReveal = { [weak self] in
             guard let self else { return }
+            // A gesture on the Screen Bar's right ear is its peek's —
+            // the ear answers it, the bar never opens a second surface.
+            guard !self.earAnswersGesture() else { return }
             switch self.settings().revealStyle {
             case .inline:
                 self.hider.reveal([.hidden])
@@ -1315,6 +1319,8 @@ final class MenuBarUtility: Toy {
         stopDeskWatch()
         failedHotkeyActions = []
         running = false
+        // The ear lets go of the menu bar with the utility.
+        refreshEarFeed()
         // A stopped utility holds nothing: the scene and the quiet go
         // back, the layers drop — after `running` falls, so the layers'
         // re-plan never reaches the hider that just stood down.
@@ -1907,7 +1913,7 @@ final class MenuBarUtility: Toy {
         if let camera = glyphCamera, let until = lifts[app], until > Date() {
             lifts[app] = max(until, Date().addingTimeInterval(Self.liftPhotographHold))
             let stored = await camera.photograph([item], rows: MenuBarItemLister.menuBarRows())
-            if !stored.isEmpty { bar.glyphsChanged() }
+            if !stored.isEmpty { bar.glyphsChanged(); refreshEarFeed() }
         }
         lifts[app] = nil
         runningApps.invalidate()
@@ -2723,7 +2729,7 @@ final class MenuBarUtility: Toy {
         guard let camera = glyphCamera, !items.isEmpty else { return }
         Task { [weak self] in
             let stored = await camera.photograph(items, rows: MenuBarItemLister.menuBarRows())
-            if !stored.isEmpty { self?.bar.glyphsChanged() }
+            if !stored.isEmpty { self?.bar.glyphsChanged(); self?.refreshEarFeed() }
         }
     }
 
@@ -3804,6 +3810,40 @@ final class MenuBarUtility: Toy {
         let height = CGDisplayBounds(CGMainDisplayID()).height
         return CGRect(x: frame.minX, y: height - frame.maxY,
                       width: frame.width, height: frame.height)
+    }
+
+    // MARK: The Screen Bar's right ear
+
+    /// What the right ear shows of the menu bar: the hidden runs' tiles
+    /// for its peek. nil while the utility is parked or another manager
+    /// renders. Observed by the Screen Bar; written only when it moves,
+    /// so a reconcile pass that changed nothing re-lays no ear.
+    private(set) var earFeed: MenuBarEarFeed?
+    /// Whether the Screen Bar's ears are up to carry the menu bar's
+    /// marks — wired by the Screen Bar.
+    @ObservationIgnored var earAvailable: @MainActor () -> Bool = { false }
+    /// Whether the pointer is on the ear's peek or the ear under it
+    /// right now — wired by the Screen Bar. The bar's own reveal
+    /// gestures stand down there: a scroll on the ear is the peek's.
+    @ObservationIgnored var earAnswersGesture: @MainActor () -> Bool = { false }
+
+    /// Re-read the feed: on every plan pass, and whenever a photograph
+    /// lands or the engine moves.
+    func refreshEarFeed() {
+        guard running, settings().provider == .jrbar else {
+            if earFeed != nil { earFeed = nil }
+            return
+        }
+        let feed = MenuBarEarFeed(hidden: MenuBarEarFeed.tiles(
+            barItems(), face: { self.glyphFace(for: $0) }, changed: bar.updatedIDs))
+        if feed != earFeed { earFeed = feed }
+    }
+
+    /// A glyph clicked in the ear's peek: the Item Bar's own tile press —
+    /// the app alone lifts, the press lands, the full target returns.
+    func openFromEar(itemID: String) {
+        guard let item = (barItems() + listedItems).first(where: { $0.id == itemID }) else { return }
+        trigger(item)
     }
 
     // MARK: Permissions
