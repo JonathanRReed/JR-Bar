@@ -89,7 +89,11 @@ enum PaletteWiring {
             clear: { panel.clear($0) },
             reply: { panel.reply($0, text: $1) },
             replyDraft: { panel.replyDraft(for: $0) },
-            setReplyDraft: { panel.setReplyDraft($1, for: $0) }))
+            setReplyDraft: { panel.setReplyDraft($1, for: $0) },
+            alwaysAllow: { panel.alwaysAllow($0) },
+            pick: { panel.pick($0, in: $1, of: $2) },
+            picks: { panel.picks(for: $0) },
+            sendPicks: { panel.sendPicks($0) }))
         // The panel's own `canUndoClear` reads a clock that only ticks
         // while the panel is open; the palette asks the real one.
         let undoable = panel.undoOffer.flatMap { offer in
