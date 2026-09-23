@@ -670,6 +670,7 @@ def test_a_fresh_milestone_crossing_is_one_event_for_the_toys(monkeypatch) -> No
                 "count": 1,
                 "reached": [1],
                 "next_count": 5,
+                "provider": "codex",
             },
         )
     ]

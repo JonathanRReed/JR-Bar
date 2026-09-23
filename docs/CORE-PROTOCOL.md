@@ -728,8 +728,10 @@ happened in the last two minutes -- history re-read after a restart
 never fires it: `count` is the step just reached (the latest, when one
 batch crossed several), `reached` every step this batch crossed,
 `next_count` the step above it (absent at the top of the ladder), `label`
-"Completion milestone" and `detail` "50 finished". The lights' own cue and
-the toys (Confetti, the Aquarium) celebrate the same number from it.
+"Completion milestone" and `detail` "50 finished"; `provider` names the
+agent whose completion crossed the step. The lights' own cue and
+the toys (Confetti, the Aquarium) celebrate the same number from it:
+Confetti fires it under its Milestones trigger, in that provider's colours.
 `confetti` goes out once per `confetti` command the daemon journals (a
 script, a hook or CI asking for a burst): `session` and `provider` when the
 caller named a watched session or a provider -- the burst wears that

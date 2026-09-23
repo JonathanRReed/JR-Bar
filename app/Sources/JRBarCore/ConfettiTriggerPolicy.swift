@@ -13,6 +13,9 @@ public enum ConfettiFireReason: String, Equatable, Sendable {
     case allClear
     /// Codex's banked-credit balance grew between state documents.
     case codexBanked
+    /// The daemon's Milestone Odometer crossed a step (a `milestone`
+    /// event) -- the lights' cue and the burst read one completion count.
+    case milestone
 }
 
 /// A firing decision: the reason, the dedup key `firedKeys` records so
@@ -65,6 +68,11 @@ public enum ConfettiTriggerPolicy {
         case "completed":
             guard settings.triggers.sessionCompleted else { return nil }
             return ConfettiFire(reason: .sessionCompleted, key: key, provider: event.provider)
+        case CoreEvent.milestoneKind:
+            // The odometer's step, under the same Milestones switch as the
+            // Aquarium's achievements: rare on purpose, never every run.
+            guard settings.triggers.milestones else { return nil }
+            return ConfettiFire(reason: .milestone, key: key, provider: event.provider)
         default:
             return nil
         }

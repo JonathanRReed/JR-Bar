@@ -1286,7 +1286,11 @@ def _milestone_odometer(
     setattr(controller, "_milestone_odometer_plan", plan)
     setattr(controller, "_milestone_odometer_state", plan.state)
     if plan.reached_milestones:
-        _publish_milestone(controller, plan, occurred_at=event.occurred_at_epoch)
+        work_key = _work_key_for_event(event)
+        provider = work_key.source_key.provider_id if work_key is not None else None
+        _publish_milestone(
+            controller, plan, occurred_at=event.occurred_at_epoch, provider=provider
+        )
 
 
 #: A crossing older than this is history being re-read (a restart, a
@@ -1299,10 +1303,13 @@ def _publish_milestone(
     plan: MilestoneOdometerPlan,
     *,
     occurred_at: float,
+    provider: str | None = None,
 ) -> None:
     """One ``milestone`` event per fresh crossing, so Confetti at the notch
     and the Aquarium's pearls celebrate the same count the lights do --
-    one completion counter behind every celebration, not one per toy."""
+    one completion counter behind every celebration, not one per toy. It
+    names the provider whose completion crossed the step, so the burst
+    wears that agent's colours."""
     publish = getattr(controller, "_core_publish_event", None)
     if not callable(publish):
         return
@@ -1322,6 +1329,7 @@ def _publish_milestone(
             count=latest,
             reached=list(plan.reached_milestones),
             next_count=plan.next_milestone,
+            provider=provider,
         )
     except Exception:
         # A dead socket must never cost the lights their cue.

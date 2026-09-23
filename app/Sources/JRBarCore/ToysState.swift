@@ -764,8 +764,9 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
     public var codexBankedReset: Bool
     /// The last open ask resolved — nothing left waiting on you.
     public var allClear: Bool
-    /// A rare moment JR-Bar itself noticed: an Aquarium achievement or a
-    /// new tank level. Opt-in like every trigger after the first.
+    /// A rare moment JR-Bar itself noticed: an Aquarium achievement, a
+    /// new tank level, or the daemon's Milestone Odometer crossing a step
+    /// (a `milestone` event). Opt-in like every trigger after the first.
     public var milestones: Bool = false
 
     public init(sessionCompleted: Bool = false, weeklyReset: Bool = true,
