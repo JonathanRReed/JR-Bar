@@ -767,8 +767,11 @@ struct MenuBarActionsTests {
     @MainActor
     private final class FakeDelegate: MenuBarActionsDelegate {
         var sections: [String: MenuBarItemSection] = [:]
+        var items: [MenuBarItem] = []
+        var running = true
         var calls: [String] = []
-        func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem] { [] }
+        func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem] { items }
+        func menuBarRunning(for actions: MenuBarActions) -> Bool { running }
         func menuBarSections(for actions: MenuBarActions) -> [String: MenuBarItemSection] { sections }
         func menuBarArrangeOrder(for actions: MenuBarActions) -> [String] {
             arrangeOrderReads += 1
@@ -911,6 +914,7 @@ struct MenuBarActionsTests {
         let actions = MenuBarActions(bindings: [])
         let delegate = MinimalDelegate()
         actions.delegate = delegate
+        #expect(actions.commandBar.running(), "a delegate that cannot say is taken as running")
         #expect(!actions.commandBar.concealing())
         #expect(actions.commandBar.profiles().isEmpty)
         // No-ops, not crashes.
@@ -948,6 +952,8 @@ struct MenuBarActionsTests {
         utility.actions.commandBar.onAction(.applyProfile(id: "gone"))
         #expect(box.settings.concealedApps == ["com.example.a": .hidden])
         #expect(!utility.actions.commandBar.concealing(), "a parked utility runs no concealer")
+        #expect(!utility.actions.commandBar.running(), "a switched-off utility answers parked")
+        #expect(utility.actions.commandBar.menuBarItems().map(\.id) == ["menubar.off"])
         #expect(utility.actions.commandBar.profiles().map(\.id) == ["p"])
         #expect(utility.actions.commandBar.activeProfileID() == "p", "the applied profile reads Current")
         // Save and rename are the card's own writes.
@@ -972,6 +978,39 @@ struct MenuBarActionsTests {
         actions.commandBar.onAction(.arrange)
         for _ in 0..<500 where delegate.arrangeOrderReads == 0 { await Task.yield() }
         #expect(delegate.arrangeOrderReads == 1, "the spacer engine still runs it")
+    }
+
+    @MainActor
+    @Test("a parked utility's palette offers no menu-bar verb the bar would ignore, and says why")
+    func paletteParked() async {
+        let actions = MenuBarActions(bindings: [])
+        let delegate = FakeDelegate()
+        delegate.items = [appItem("1p", owner: "1Password", bundle: "com.1password.1password", x: 900)]
+        delegate.profiles = [MenuBarSettings.Profile(id: "p", name: "Desk", sections: [:])]
+        actions.rules = {
+            [MenuBarTriggerRule(id: "r", enabled: true, trigger: .screenLocked, action: .hideAll)]
+        }
+        actions.delegate = delegate
+        // Running, the same listing makes the app's row.
+        #expect(actions.commandBar.menuBarItems().contains { $0.title == "1Password" })
+        // Parked (off, or handed to Bartender), the listing is the
+        // card's leftovers: nothing built from it would reach the bar.
+        delegate.running = false
+        let rows = actions.commandBar.menuBarItems()
+        #expect(rows.map(\.id) == ["menubar.off"])
+        let verbs = rows.flatMap(\.actions).map(\.title)
+        for word in ["Hide", "Show", "Always", "Reveal", "Toggle", "Arrange", "Apply", "Run", "Turn", "Save"] {
+            #expect(!verbs.contains { $0.hasPrefix(word) }, "no “\(word)” verb while parked")
+        }
+        var opened = 0
+        actions.commandBar.openSettings = { opened += 1 }
+        #expect(rows.first?.primary?.run() == nil, "the settings page is its own proof")
+        #expect(opened == 1)
+        #expect(delegate.calls.isEmpty)
+        // A stale Arrange is refused: no order read, no drag.
+        actions.commandBar.onAction(.arrange)
+        for _ in 0..<50 { await Task.yield() }
+        #expect(delegate.arrangeOrderReads == 0)
     }
 
     /// The parked key's binding, boxed so the test can flip it.

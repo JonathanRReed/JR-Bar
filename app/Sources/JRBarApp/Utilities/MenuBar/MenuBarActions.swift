@@ -69,6 +69,10 @@ protocol MenuBarActionsDelegate: AnyObject {
     // delegate that predates them compiling; `MenuBarUtility` answers
     // each for real at the bottom of this file.
 
+    /// Whether the utility runs — switched on and not handed to
+    /// Bartender, Ice or Hidden Bar. The parked ⌘⇧K still opens the
+    /// palette; its menu-bar verbs wait for this.
+    func menuBarRunning(for actions: MenuBarActions) -> Bool
     /// Whether the macOS 27 concealer drives hiding right now — the
     /// palette hides Arrange while it does.
     func menuBarConcealing(for actions: MenuBarActions) -> Bool
@@ -90,6 +94,7 @@ protocol MenuBarActionsDelegate: AnyObject {
 }
 
 extension MenuBarActionsDelegate {
+    func menuBarRunning(for _: MenuBarActions) -> Bool { true }
     func menuBarConcealing(for _: MenuBarActions) -> Bool { false }
     func menuBarProfiles(for _: MenuBarActions) -> [MenuBarSettings.Profile] { [] }
     func menuBarActiveProfileID(for _: MenuBarActions) -> String? { nil }
@@ -250,6 +255,10 @@ final class MenuBarActions {
             guard let self, let delegate = self.delegate else { return [:] }
             return delegate.menuBarSections(for: self)
         }
+        commandBar.running = { [weak self] in
+            guard let self, let delegate = self.delegate else { return true }
+            return delegate.menuBarRunning(for: self)
+        }
         commandBar.concealing = { [weak self] in
             guard let self, let delegate = self.delegate else { return false }
             return delegate.menuBarConcealing(for: self)
@@ -310,10 +319,12 @@ final class MenuBarActions {
         case .showAll:
             delegate.menuBarActionsShowAll(self)
         case .arrange:
-            // The palette never lists Arrange under the concealer; a
-            // stale row that lands here anyway is refused rather than
-            // dragging a pointer that cannot reorder anything.
-            guard !delegate.menuBarConcealing(for: self) else { return }
+            // The palette never lists Arrange under the concealer or
+            // with the utility parked; a stale row that lands here
+            // anyway is refused rather than dragging a pointer that
+            // cannot reorder anything.
+            guard delegate.menuBarRunning(for: self),
+                  !delegate.menuBarConcealing(for: self) else { return }
             Task { [weak self] in
                 guard let self else { return }
                 _ = await self.arrangeMenuBar()
@@ -335,6 +346,8 @@ final class MenuBarActions {
         case .renameProfile(let id, let name):
             guard MenuBarProfiles.validName(name) != nil else { return }
             delegate.menuBarActions(self, renameProfile: id, to: name)
+        case .openSettings:
+            commandBar.openSettings()
         }
     }
 
@@ -414,6 +427,8 @@ final class MenuBarActions {
 /// utility's settings write so the trigger feed re-arms, and a profile
 /// saved or renamed from the palette is the card's own save or rename.
 extension MenuBarUtility {
+    func menuBarRunning(for _: MenuBarActions) -> Bool { running }
+
     func menuBarConcealing(for _: MenuBarActions) -> Bool { concealing }
 
     func menuBarProfiles(for _: MenuBarActions) -> [MenuBarSettings.Profile] {

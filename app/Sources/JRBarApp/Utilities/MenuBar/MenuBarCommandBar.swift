@@ -38,6 +38,9 @@ enum MenuBarCommandAction: Equatable, Sendable {
     /// A rule's action, now — Bartender's "run now".
     case runRule(id: String)
     case setRuleEnabled(id: String, Bool)
+    /// The Utilities settings page — the parked palette's one menu-bar
+    /// row, where the utility switches back on.
+    case openSettings
 }
 
 extension MenuBarCommandAction {
@@ -308,6 +311,24 @@ enum MenuBarCommands {
         return rows
     }
 
+    /// The parked utility's one row. ⌘⇧K still opens the palette with
+    /// the Menu Bar utility off or handed to Bartender, Ice or Hidden
+    /// Bar, but nothing on the bar answers JR-Bar then: a Hide would
+    /// write maps no engine reads while the HUD said it worked, a
+    /// reveal would poke a stopped clock, and Arrange would drag the
+    /// pointer for nobody. So the verbs wait, and the row says where
+    /// the utility switches back on.
+    nonisolated static func parkedRows() -> [MenuBarCommand] {
+        [MenuBarCommand(
+            id: "menubar.off", kind: .command, title: "Menu Bar Utility Is Off",
+            subtitle: "Off or handed to another app — hiding, profiles and rules wait for it",
+            symbol: "menubar.rectangle", tint: .gray,
+            keywords: ["hide", "reveal", "show", "profile", "rule", "arrange",
+                       "bartender", "ice", "hidden bar"],
+            verbs: [MenuBarCommandVerb(id: "settings", title: "Open Utilities Settings",
+                                       symbol: "gearshape", action: .openSettings)])]
+    }
+
     /// The built-in "None" first, then the saved profiles in the card's
     /// order — each renameable by name — and last, saving the live
     /// layout as one. The subtitle says what a profile hides; the one
@@ -499,6 +520,9 @@ final class MenuBarCommandBar {
     var items: @MainActor () -> [MenuBarItem] = { [] }
     /// The effective section map — decides each app's Hide or Show.
     var sections: @MainActor () -> [String: MenuBarItemSection] = { [:] }
+    /// Whether the utility runs. Parked, the listing and maps are the
+    /// card's leftovers, so the rows built from them would lie.
+    var running: @MainActor () -> Bool = { true }
     /// Whether the concealer runs — Arrange's row hides while it does.
     var concealing: @MainActor () -> Bool = { false }
     var profiles: @MainActor () -> [MenuBarSettings.Profile] = { [] }
@@ -507,6 +531,8 @@ final class MenuBarCommandBar {
     var rules: @MainActor () -> [MenuBarTriggerRule] = { [] }
     /// Every menu-bar verb lands here.
     var onAction: @MainActor (MenuBarCommandAction) -> Void = { _ in }
+    /// The Utilities settings page, as the app delegate opens it.
+    var openSettings: @MainActor () -> Void = {}
     /// The rest of JR-Bar's rows, registered once by the app delegate.
     var sources: [any PaletteSource] = []
 
@@ -523,8 +549,11 @@ final class MenuBarCommandBar {
 
     /// The menu bar's rows at this moment.
     func menuBarItems() -> [PaletteItem] {
-        MenuBarCommands.build(items: items(), sections: sections(), concealing: concealing(),
-                              profiles: profiles(), activeProfileID: activeProfileID(), rules: rules())
+        let commands = running()
+            ? MenuBarCommands.build(items: items(), sections: sections(), concealing: concealing(),
+                                    profiles: profiles(), activeProfileID: activeProfileID(), rules: rules())
+            : MenuBarCommands.parkedRows()
+        return commands
             .map { command in
                 command.paletteItem { [weak self] action in self?.onAction(action) }
             }
