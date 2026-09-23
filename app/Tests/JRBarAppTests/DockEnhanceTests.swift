@@ -697,6 +697,27 @@ import Testing
                 "a stranded hold is worth one defaults write + Dock bounce")
     }
 
+    @Test func aRecoveredHoldSaysSoOnTheCardAndAMissingDriverIsNamed() {
+        let suite = freshPersistence("recoveredNote")
+        let driver = FakeAutohideDriver()
+        DockAutohideHold(driver: driver, persistence: suite).hold()
+        // …the next life boots with the marker still set.
+        let hold = DockAutohideHold(driver: driver, persistence: suite)
+        let utility = DockUtility(autohideHold: hold)
+        var stored = DockSettings()
+        utility.settings = { stored }
+        utility.onSettingsChange = { stored = $0 }
+        utility.applySettings()
+        #expect(utility.recoveredHoldNote == DockUtility.recoveredHoldLine)
+        utility.applySettings()
+        #expect(utility.recoveredHoldNote == DockUtility.recoveredHoldLine, "the note waits to be read")
+        utility.dismissRecoveredHoldNote()
+        #expect(utility.recoveredHoldNote == nil)
+        #expect(!hold.recoverIfNeeded(), "nothing stranded — nothing to report")
+        #expect(hold.available)
+        #expect(!DockAutohideHold(driver: nil, persistence: freshPersistence("noDriverCard")).available)
+    }
+
     // MARK: Compact list
 
     @Test func theCompactListTurnsOnPastTheLimit() {

@@ -114,6 +114,11 @@ final class DockAutohideHold {
     /// True while a hold this life is open.
     var holding: Bool { liveHold }
 
+    /// Whether this macOS resolved the CoreDock pair at all. Without it
+    /// `hold()` is a no-op and the Dock slides away with the pointer —
+    /// the card says so instead of offering a switch that does nothing.
+    var available: Bool { driver != nil }
+
     /// Called as each preview opens: pin the Dock out. A no-op when
     /// already held, when the driver is missing, or when `autohide`
     /// is off — a Dock that is always out needs no holding. A stale
@@ -150,9 +155,14 @@ final class DockAutohideHold {
     /// The launch-time sweep: a hold the last life never released gets
     /// its saved value written back once, then forgotten. Deliberately
     /// skips a live hold — `applySettings()` runs on every card edit,
-    /// which lands here mid-preview.
-    func recoverIfNeeded() {
-        guard !liveHold else { return }
+    /// which lands here mid-preview. True when a stranded value was
+    /// actually handed back, so the card can say an unclean quit
+    /// touched `com.apple.dock` instead of fixing it silently.
+    @discardableResult
+    func recoverIfNeeded() -> Bool {
+        guard !liveHold else { return false }
+        let stranded = savedAutohide != nil
         release()
+        return stranded
     }
 }

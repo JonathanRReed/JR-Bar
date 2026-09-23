@@ -92,7 +92,29 @@ struct DockUtilityControls: View {
             }
             Toggle(isOn: holdOpen) {
                 SettingLabel(title: "Hold the Dock out",
-                             subtitle: "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes.")
+                             subtitle: utility.enhance.autohideHold.available
+                                ? "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes."
+                                : "Not available on this macOS — an auto-hiding Dock slides away when the pointer steps onto the cards.")
+            }
+            .disabled(!utility.enhance.autohideHold.available)
+            if let note = utility.recoveredHoldNote {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.uturn.backward.circle")
+                        .foregroundStyle(.secondary)
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button {
+                        utility.dismissRecoveredHoldNote()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss")
+                }
             }
             Toggle(isOn: previewThisDisplay) {
                 SettingLabel(title: "Only windows on this display",

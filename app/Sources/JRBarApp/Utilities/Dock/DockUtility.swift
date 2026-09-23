@@ -84,6 +84,15 @@ final class DockUtility {
     /// switcher, or both run under it.
     private(set) var running = false
 
+    /// Set when a launch found a Dock hold an unclean quit never
+    /// released and handed the auto-hide back — the card's one line,
+    /// until it is dismissed.
+    private(set) var recoveredHoldNote: String?
+
+    static let recoveredHoldLine = "Put your Dock's auto-hide back after an unclean quit"
+
+    func dismissRecoveredHoldNote() { recoveredHoldNote = nil }
+
     // MARK: Provider — who renders
 
     /// Re-resolved on every workspace launch/terminate so an external
@@ -306,8 +315,12 @@ final class DockUtility {
     func applySettings() {
         migrateLegacyEnhanceDefaults()
         // A preview hold the last life never released left `autohide`
-        // off in `com.apple.dock` — hand it back before anything else.
-        enhance.autohideHold.recoverIfNeeded()
+        // off in `com.apple.dock` — hand it back before anything else,
+        // and say so on the card.
+        if enhance.autohideHold.recoverIfNeeded() {
+            recoveredHoldNote = Self.recoveredHoldLine
+            DockEnhanceController.log.notice("recovered a Dock hold an unclean quit left behind")
+        }
         // A previous life's Replace bar may have left Apple's Dock
         // hidden under our saved values — hand them back regardless of
         // whether the watcher is running.
