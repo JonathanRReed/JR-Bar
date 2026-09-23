@@ -647,6 +647,13 @@ struct NotificationsPage: View {
             SettingNumberField(store, "Final stage after", path: "escalation_final_seconds", in: 5...14400, default: 300, unit: "s")
             SettingStepper(store, "Alert burst", subtitle: "Repetitions a courtesy signal gets before it settles; critical signals ignore this.",
                            path: "alert_burst", in: 1...10, default: 3, unit: "×")
+            Provided(store, "escalation_tier_by_provider") {
+                DisclosureRow("Per provider", subtitle: "Hold one agent's asks lower than the stage above — Claude's may chime while another's never pass the light.") {
+                    ForEach(escalationProviders, id: \.self) { provider in
+                        EscalationCeilingRow(store: store, provider: provider)
+                    }
+                }
+            }
         }
 
         SettingGroup("Quiet hours") {
@@ -699,6 +706,16 @@ struct NotificationsPage: View {
         .task { store.refreshNotificationPermission() }
     }
 
+    /// The providers worth a ceiling row: the ones this Mac runs (a live
+    /// session or an installed hook) and any that already has one.
+    private var escalationProviders: [String] {
+        let running = Set(store.core.sessions.map(\.provider))
+        let ceilings = store.document.object("escalation_tier_by_provider") ?? [:]
+        return SettingsKey.providers.filter {
+            running.contains($0) || ceilings[$0] != nil || (store.hookStatus($0).map { $0 != "missing" } ?? false)
+        }
+    }
+
     private var closedLidNote: String {
         let lid = store.core.state?.power?.closedLid
         switch lid?.helperInstalled {
@@ -706,6 +723,47 @@ struct NotificationsPage: View {
         case false?: return "Needs the privileged sleep helper, which is not installed. The monitor will offer to install it."
         default: return "Needs the privileged sleep helper; the monitor reports whether it is installed."
         }
+    }
+}
+
+/// One provider's escalation ceiling (`escalation_tier_by_provider`):
+/// "Same as above" or a lower stage. The object is written whole, like
+/// the Focus rules, so clearing a row removes its entry.
+struct EscalationCeilingRow: View {
+    @Bindable var store: SettingsStore
+    let provider: String
+
+    static let stages: [(value: String, label: String)] = [
+        ("light", "Light only"), ("menu_bar", "Menu bar"), ("chime", "Chime"), ("takeover", "Take over"),
+    ]
+
+    var body: some View {
+        let ceilings = store.document.object("escalation_tier_by_provider")
+        let current = ceilings?[provider]?.stringValue ?? ""
+        Picker(selection: Binding(
+            get: { current },
+            set: { value in
+                store.set("escalation_tier_by_provider",
+                          LightProfiles.rules(ceilings, setting: provider, to: value.isEmpty ? nil : .string(value)))
+            }
+        )) {
+            Text("Same as above").tag("")
+            Divider()
+            ForEach(Self.stages, id: \.value) { Text($0.label).tag($0.value) }
+        } label: {
+            SettingLabel(title: ProviderStyle.style(for: provider).name, subtitle: note(current))
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+        .settingRowStyle()
+    }
+
+    /// A ceiling at or above the global stage changes nothing; say so.
+    private func note(_ current: String) -> String? {
+        guard !current.isEmpty else { return nil }
+        let global = store.document.string("escalation_tier") ?? "menu_bar"
+        return EventPolicy.escalationCeiling(current) >= EventPolicy.escalationCeiling(global)
+            ? "No lower than the stage above, so it changes nothing." : nil
     }
 }
 

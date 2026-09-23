@@ -37,6 +37,23 @@ struct ScreenBarEarMarksTests {
         #expect(age.fraction(at: Self.opened.addingTimeInterval(3000)) == 1)
     }
 
+    @Test func aProvidersCeilingOnlyEverLowersTheRing() {
+        #expect(ScreenBarAskAge.tier(global: "chime", provider: "light") == "light")
+        #expect(ScreenBarAskAge.tier(global: "menu_bar", provider: "takeover") == "menu_bar", "a ceiling never raises the stage")
+        #expect(ScreenBarAskAge.tier(global: "off", provider: "light") == "off", "nothing escalates with the ladder off")
+        #expect(ScreenBarAskAge.tier(global: "chime", provider: nil) == "chime")
+        let document = SettingsDocument(.object([
+            "escalation_tier": .string("chime"),
+            "escalation_ramp_seconds": .number(20),
+            "escalation_final_seconds": .number(400),
+            "escalation_tier_by_provider": .object(["codex": .string("light")]),
+        ]))
+        let codex = ScreenBarAskAge.make(ask: CoreAsk(session: "s", openedAt: 100), provider: "codex", document: document)
+        let claude = ScreenBarAskAge.make(ask: CoreAsk(session: "s", openedAt: 100), provider: "claude", document: document)
+        #expect(codex?.fullAfter == 20, "Codex's asks stop at the light, so its ring is full at the ramp")
+        #expect(claude?.fullAfter == 400)
+    }
+
     @Test func undatedAskHasNoRing() {
         let document = SettingsDocument()
         #expect(ScreenBarAskAge.make(ask: CoreAsk(session: "s"), provider: "claude", document: document) == nil)

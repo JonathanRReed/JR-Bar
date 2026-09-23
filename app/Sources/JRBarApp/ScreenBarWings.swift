@@ -165,13 +165,24 @@ struct ScreenBarAskAge: Equatable {
         }
     }
 
+    /// The tier that governs one provider's asks: the global
+    /// `escalation_tier`, lowered by that provider's own ceiling in
+    /// `escalation_tier_by_provider` — which only ever lowers the stage,
+    /// never arms one the global tier does not.
+    static func tier(global: String?, provider: String?) -> String? {
+        guard let provider, EventPolicy.escalationCeiling(global) > 0,
+              EventPolicy.escalationCeiling(provider) < EventPolicy.escalationCeiling(global) else { return global }
+        return provider
+    }
+
     /// The ring for `ask`, or nil when the daemon never dated it — an
     /// undated ask has no age to show, and a guess would be a lie.
     static func make(ask: CoreAsk?, provider: String, document: SettingsDocument) -> ScreenBarAskAge? {
         guard let opened = ask?.openedAt else { return nil }
+        let ceiling = document.object("escalation_tier_by_provider")?[provider]?.stringValue
         return ScreenBarAskAge(
             openedAt: Date(timeIntervalSince1970: opened),
-            fullAfter: span(tier: document.string("escalation_tier"),
+            fullAfter: span(tier: tier(global: document.string("escalation_tier"), provider: ceiling),
                             ramp: document.double("escalation_ramp_seconds"),
                             menuBar: document.double("escalation_menu_bar_seconds"),
                             final: document.double("escalation_final_seconds")),
