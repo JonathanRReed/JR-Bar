@@ -754,8 +754,19 @@ struct SessionContextMenu: View {
         } else {
             // The card's buttons, also on the menu — behind the daemon's
             // own answerability gate, never an offer it would refuse.
-            if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil {
+            if let ask = row.ask, ask.session != nil, AskVerbs.chooses(ask) {
+                Menu(AskChoiceLayout.menuTitle(ask.decision?.choices ?? [], picks: store.picks(for: ask))) {
+                    AskChoiceMenuItems(choices: ask.decision?.choices ?? [], picks: store.picks(for: ask),
+                                       pick: { store.pick($0, in: $1, of: ask) },
+                                       send: { store.sendPicks(ask) })
+                }
+                Button("Deny") { store.deny(ask) }
+                Divider()
+            } else if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil {
                 Button("Approve") { store.approve(ask) }
+                if AskVerbs.alwaysAllows(ask) {
+                    Button("Always Allow") { store.alwaysAllow(ask) }
+                }
                 Button("Deny") { store.deny(ask) }
                 Divider()
             }
@@ -830,34 +841,8 @@ struct AskRow: View {
             HStack(alignment: .top, spacing: 9) {
                 ProviderTile(style: row.style)
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                        Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.orange)
-                            .lineLimit(1)
-                            .padding(.horizontal, 5).padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.orange.opacity(0.14)))
-                        if snoozed, let until = row.snoozedUntil {
-                            Text("snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
-                                .font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
-                        } else if snoozed {
-                            Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
-                        }
-                        if let quiet = store.quietFeedText(for: row) {
-                            // Same once-per-provider marker as the plain
-                            // rows: an ask can be the provider's topmost
-                            // live row.
-                            Text(quiet).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
-                                .help("\(row.style.name)'s hook feed has not delivered — this row may be behind")
-                        }
-                    }
-                    Text(row.ask?.summary ?? "Needs your answer")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(height: 30, alignment: .topLeading)
+                    titleLine
+                    question
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
@@ -867,59 +852,7 @@ struct AskRow: View {
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
-            HStack(spacing: 6) {
-                Spacer()
-                if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
-                    // A reply-kind ask wants words, not a verdict: a field
-                    // and Send; `reply_text` rides the same answer_ask. A
-                    // daemon that cannot take text for it says so, and the
-                    // toast carries that.
-                    TextField("Reply…", text: replyText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 9).padding(.vertical, 3.5)
-                        .background(Capsule().fill(Color.primary.opacity(0.08)))
-                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-                        .frame(maxWidth: 200)
-                        .disabled(store.isAnswerPending(ask))
-                        .onSubmit { send(ask) }
-                    Button("Send") { send(ask) }
-                        .buttonStyle(PillButtonStyle(prominent: true))
-                        .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
-                        .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
-                } else if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil, !row.isRemote {
-                    // Approve/Deny type the answer into the session's own
-                    // terminal (the daemon raises it first); the refusal —
-                    // not a guess — is what the toast then shows. Both go
-                    // quiet while the answer is on the wire so a double
-                    // click cannot post twice.
-                    Button("Deny") { store.deny(ask) }
-                        .buttonStyle(PillButtonStyle(prominent: false))
-                        .disabled(store.isAnswerPending(ask))
-                        .help("Answer no (⌘D)")
-                    Button("Approve") { store.approve(ask) }
-                        .buttonStyle(PillButtonStyle(prominent: true))
-                        .disabled(store.isAnswerPending(ask))
-                        .help("Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)")
-                } else if row.isRemote {
-                    // A peer's ask: nothing local can type into it.
-                    Text("on \(row.remoteMachine ?? "a peer")")
-                        .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
-                } else if row.ask?.session != nil {
-                    // Not answerable from the panel (the daemon said so, or
-                    // it wants a reply this core will not take): the honest
-                    // action is the session's own window.
-                    Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
-                        .buttonStyle(PillButtonStyle(prominent: false))
-                        .help(row.ask?.wantsTextReply == true
-                              ? "This ask wants a typed reply — answer it in the session's window"
-                              : "The panel cannot answer this one — answer it in the session's window")
-                } else {
-                    // No session left to open or answer: just say so.
-                    Text("answer it in its own window")
-                        .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
-                }
-            }
+            verbRow
         }
         .opacity(snoozed ? 0.55 : 1)
         .padding(.horizontal, 8)
@@ -944,16 +877,188 @@ struct AskRow: View {
         .help(row.help(now: store.now) ?? "")
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(row.label) asks: \(row.ask?.summary ?? "")")
-        .accessibilityHint(row.ask?.canAnswer == true && !row.isRemote
-            ? "Approve with ⌘Return, deny with ⌘D"
-            : "Answer it in the session's own window")
+        .accessibilityLabel("\(row.label) asks: \(row.ask?.summary ?? "")"
+            + (row.ask?.previewLine.map { ", runs \($0)" } ?? "")
+            + (row.ask?.isDestructive == true ? ", destructive" : ""))
+        .accessibilityHint(accessibilityHint)
+    }
+
+    /// Who asks and what kind of ask, the destructive mark, and the
+    /// row's quiet states.
+    private var titleLine: some View {
+        HStack(spacing: 6) {
+            Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+            Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.orange)
+                .lineLimit(1)
+                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                .background(Capsule().fill(Color.orange.opacity(0.14)))
+            if row.ask?.isDestructive == true {
+                AskRiskMark(size: 10)
+            }
+            if snoozed, let until = row.snoozedUntil {
+                Text("snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+            } else if snoozed {
+                Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if let quiet = store.quietFeedText(for: row) {
+                // Same once-per-provider marker as the plain
+                // rows: an ask can be the provider's topmost
+                // live row.
+                Text(quiet).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                    .help("\(row.style.name)'s hook feed has not delivered — this row may be behind")
+            }
+        }
+    }
+
+    /// The question, and under it what would run — a line each when
+    /// there is a preview, so the card keeps its height.
+    private var question: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(row.ask?.summary ?? "Needs your answer")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(row.ask?.previewLine == nil ? 2 : 1)
+            if let preview = row.ask?.previewLine {
+                AskPreviewLine(text: preview, size: 11,
+                               tint: row.ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 30, alignment: .topLeading)
+    }
+
+    /// The card's verbs: a reply field, a held question's options, or
+    /// Deny · Always Allow · Approve — each only where the daemon says
+    /// it can land — else the honest way to the session's own window.
+    private var verbRow: some View {
+        HStack(spacing: 6) {
+            Spacer()
+            if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
+                // A reply-kind ask wants words, not a verdict: a field
+                // and Send; `reply_text` rides the same answer_ask. A
+                // daemon that cannot take text for it says so, and the
+                // toast carries that.
+                TextField("Reply…", text: replyText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 9).padding(.vertical, 3.5)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+                    .frame(maxWidth: 200)
+                    .disabled(store.isAnswerPending(ask))
+                    .onSubmit { send(ask) }
+                Button("Send") { send(ask) }
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
+                    .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
+            } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask) {
+                // A held question: its options are the answer, sent
+                // through the agent's own hook — Deny declines it.
+                Button("Deny") { store.deny(ask) }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .disabled(store.isAnswerPending(ask))
+                    .help("Decline the question (⌘D)")
+                AskRowChoices(ask: ask, store: store)
+            } else if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil, !row.isRemote {
+                // Approve/Deny go through the agent's permission hook
+                // when it holds the ask, else type the answer into the
+                // session's own terminal (the daemon raises it first);
+                // the refusal — not a guess — is what the toast then
+                // shows. All go quiet while the answer is on the wire
+                // so a double click cannot post twice.
+                Button("Deny") { store.deny(ask) }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .disabled(store.isAnswerPending(ask))
+                    .help("Answer no (⌘D)")
+                if AskVerbs.alwaysAllows(ask) {
+                    // Its own button, never a chord: the agent will
+                    // remember this rule and stop asking.
+                    Button("Always Allow") { store.alwaysAllow(ask) }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .disabled(store.isAnswerPending(ask))
+                        .help("Approve, and let \(row.style.name) remember the rule it offered")
+                }
+                Button("Approve") { store.approve(ask) }
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .disabled(store.isAnswerPending(ask))
+                    .help(ask.isHeldForDecision
+                          ? "Approve through \(row.style.name)'s own permission hook (⌘↩)"
+                          : "Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)")
+            } else if row.isRemote {
+                // A peer's ask: nothing local can type into it.
+                Text("on \(row.remoteMachine ?? "a peer")")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+            } else if row.ask?.session != nil {
+                // Not answerable from the panel (the daemon said so, or
+                // it wants a reply this core will not take): the honest
+                // action is the session's own window.
+                Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .help(row.ask?.wantsTextReply == true
+                          ? "This ask wants a typed reply — answer it in the session's window"
+                          : "The panel cannot answer this one — answer it in the session's window")
+            } else {
+                // No session left to open or answer: just say so.
+                Text("answer it in its own window")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+            }
+        }
+    }
+
+    private var accessibilityHint: String {
+        guard let ask = row.ask, !row.isRemote else { return "Answer it in the session's own window" }
+        if AskVerbs.chooses(ask) { return "Pick one of its options, or deny with ⌘D" }
+        return ask.canAnswer ? "Approve with ⌘Return, deny with ⌘D" : "Answer it in the session's own window"
     }
 
     private func send(_ ask: CoreAsk) {
         // No eager clear: the draft clears when the send confirms, so a
         // refused reply keeps its text.
         store.reply(ask, text: store.replyDraft(for: ask))
+    }
+}
+
+/// A held question's options on the ask card: a pill each for one short
+/// single-pick question — a click is the answer — else one menu that
+/// holds every question, with Send once each has a pick.
+struct AskRowChoices: View {
+    let ask: CoreAsk
+    @Bindable var store: PanelStore
+
+    private var choices: [CoreAskChoice] { ask.decision?.choices ?? [] }
+
+    var body: some View {
+        switch AskChoiceLayout.layout(choices) {
+        case .buttons(let labels):
+            ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
+                Button(label) {
+                    if let choice = choices.first { store.pick(label, in: choice, of: ask) }
+                }
+                .buttonStyle(PillButtonStyle(prominent: index == 0))
+                .disabled(store.isAnswerPending(ask))
+                .help("Answer “\(label)” through the agent's own hook")
+            }
+        case .menu:
+            let picks = store.picks(for: ask)
+            Menu(AskChoiceLayout.menuTitle(choices, picks: picks)) {
+                AskChoiceMenuItems(choices: choices, picks: picks,
+                                   pick: { store.pick($0, in: $1, of: ask) },
+                                   send: { store.sendPicks(ask) })
+            }
+            .menuStyle(.button)
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(store.isAnswerPending(ask))
+            .help(choices.count == 1 ? choices[0].question : "\(choices.count) questions — pick an answer for each")
+            if picks.isComplete(choices), choices.count > 1 || choices.first?.multi == true {
+                Button("Send") { store.sendPicks(ask) }
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .disabled(store.isAnswerPending(ask))
+            }
+        }
     }
 }
 

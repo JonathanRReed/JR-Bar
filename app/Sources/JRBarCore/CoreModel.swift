@@ -152,6 +152,37 @@ public final class CoreModel {
         return try await send("answer_ask", args: args, timeout: 8)
     }
 
+    /// `answer_ask` with the decision as its word, awaited — the decide
+    /// lane's own verbs: `always` for a held ask that offers it
+    /// (`CoreAsk.canAlwaysAllow`), `answer` with `answers` for a held
+    /// question (`CoreAsk.canChoose`), and `approve` / `deny` for a
+    /// caller that holds its verdict as a word. Same pin, same 8 s wait,
+    /// same verdict-in-the-reply as `answerAskNow(approve:)`.
+    @discardableResult
+    public func answerAskNow(session: String, decision: String, answers: [String: JSONValue]? = nil,
+                             request: String? = nil) async throws -> CoreReply {
+        try await send("answer_ask", args: Self.answerAskArgs(session: session, decision: decision,
+                                                              answers: answers, request: request),
+                       timeout: 8)
+    }
+
+    /// The `answer_ask` arguments for a decision word — pure, so what an
+    /// Always allow or a picked option puts on the wire is a test.
+    /// `answers` rides only with `answer`: a question's picks are never
+    /// sent with a bare verdict.
+    public nonisolated static func answerAskArgs(session: String, decision: String,
+                                                 answers: [String: JSONValue]? = nil,
+                                                 request: String? = nil) -> [String: JSONValue] {
+        var args: [String: JSONValue] = [
+            "session": .string(session),
+            "decision": .string(decision),
+            "only_if_frontmost": .bool(false),
+        ]
+        if decision == "answer", let answers { args["answers"] = .object(answers) }
+        if let request { args["request"] = .string(request) }
+        return args
+    }
+
     /// Acknowledges completions; the reply's `batch` is kept so `undoClear`
     /// can put them back within `EventPolicy.undoWindow`.
     public func clearCompleted(sessions: [String]? = nil) {

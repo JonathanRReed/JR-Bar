@@ -181,6 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The Item Bar's photographed glyphs — the app's own; tests never
         // get a camera, so no test captures the screen or writes the cache.
         utilitiesStore.menuBar.glyphCamera = MenuBarGlyphCamera()
+        // One answer desk for every ask surface: the panel's, which the
+        // notch, the Dock preview and the Rail answer through too. An
+        // answer it lands steps the notch's ask capsule down at once.
+        AskAnswerDesk.shared = store.askDesk
+        store.askDesk.onAnswered = { [weak toysStore] session, request in
+            toysStore?.notch.resolveAsk(session: session, request: request)
+        }
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater

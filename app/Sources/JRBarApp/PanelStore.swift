@@ -251,6 +251,10 @@ final class PanelStore {
     /// Per-session model, tokens, cost and context — shared with the
     /// Overview, which the app delegate hands it to.
     let sessionUsage: SessionUsageStore
+    /// Always allow and a held question's picks — the desk the notch,
+    /// the Dock preview and the Rail share with the panel (the app
+    /// delegate publishes it as `AskAnswerDesk.shared`).
+    let askDesk: AskAnswerDesk
 
     // Fallback (file feeds) and app-owned state.
     var fallbackState: AgentAggregateState = .idle
@@ -321,6 +325,7 @@ final class PanelStore {
          mediaFeed: MediaFeed = .shared, screenBarShown: Bool = true) {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
+        self.askDesk = AskAnswerDesk(core: core)
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -1266,7 +1271,9 @@ final class PanelStore {
         draftsDefaults.set(data, forKey: Self.replyDraftsKey)
     }
 
-    func isAnswerPending(_ ask: CoreAsk) -> Bool { pendingAnswers.contains(ask.id) }
+    func isAnswerPending(_ ask: CoreAsk) -> Bool {
+        pendingAnswers.contains(ask.id) || askDesk.isPending(ask.session)
+    }
 
     func approve(_ ask: CoreAsk) { answer(ask, approve: true) }
     func deny(_ ask: CoreAsk) { answer(ask, approve: false) }
@@ -1278,14 +1285,20 @@ final class PanelStore {
             show(toast: "This ask has no session left to answer")
             return
         }
-        guard ask.canAnswer else {
+        if approve, AskVerbs.chooses(ask) {
+            // A held question: a bare yes answers nothing — its options do.
+            show(toast: "Pick one of its options")
+            return
+        }
+        guard ask.canAnswer || (!approve && AskVerbs.denies(ask)) else {
             // The daemon marked it unanswerable from here (no live target,
             // a kind it cannot type into): the only honest path is the
-            // session's own window.
+            // session's own window. A held question still declines
+            // through its hook, whatever hosts the session.
             show(toast: "This one has to be answered in the session's window")
             return
         }
-        guard !pendingAnswers.contains(ask.id) else { return }
+        guard !isAnswerPending(ask) else { return }
         if CoreSession.isRemoteID(session) {
             show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
             return
@@ -1345,6 +1358,50 @@ final class PanelStore {
             } catch {
                 self.show(toast: "No answer from the monitor — the ask is still open")
             }
+        }
+    }
+
+    /// Always allow, from its own button only: the agent remembers the
+    /// allow rule it offered (`CoreAsk.canAlwaysAllow`). Through the
+    /// shared desk, so every surface's copy of the ask dims with it.
+    func alwaysAllow(_ ask: CoreAsk) {
+        guard AskVerbs.alwaysAllows(ask) else {
+            show(toast: "This one has no rule to remember — approve it once instead")
+            return
+        }
+        send(ask, .always)
+    }
+
+    /// A click on one of a held question's options: the answer itself
+    /// for a single-pick question, one more pick otherwise.
+    func pick(_ label: String, in choice: CoreAskChoice, of ask: CoreAsk) {
+        if let verdict = AskChoicePicks.oneClick(label, choices: ask.decision?.choices ?? []) {
+            send(ask, verdict)
+        } else {
+            askDesk.toggle(label, in: choice, of: ask)
+        }
+    }
+
+    /// The picks so far for a multi-question or multi-select ask.
+    func picks(for ask: CoreAsk) -> AskChoicePicks { askDesk.picks(for: ask) }
+
+    /// Send Answers: the collected picks, every question answered.
+    func sendPicks(_ ask: CoreAsk) {
+        guard let choices = ask.decision?.choices,
+              let answers = askDesk.picks(for: ask).answers(choices) else {
+            show(toast: "Pick an answer for every question first")
+            return
+        }
+        send(ask, .choose(answers))
+    }
+
+    /// One of the desk's verdicts, awaited; its line is the toast.
+    private func send(_ ask: CoreAsk, _ verdict: AskVerdict) {
+        guard !pendingAnswers.contains(ask.id) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await self.askDesk.answer(ask, verdict)
+            self.show(toast: outcome.line)
         }
     }
 
