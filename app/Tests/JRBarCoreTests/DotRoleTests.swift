@@ -104,6 +104,9 @@ struct DotRoleTests {
         // The picker offers it, under a name of its own.
         #expect(DotRole.call.label == "Call light")
         #expect(DotRole.call.explanation.contains("camera"))
+        // Nothing the app sends puts a meeting on the light; the picker
+        // does not promise one.
+        #expect(!DotRole.call.explanation.contains("meeting"))
     }
 
     @Test("a shut lid's beacon on an extend Dot is the rule working, not a choice in flight")

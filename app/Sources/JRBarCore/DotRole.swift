@@ -8,9 +8,11 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
     case extend
     /// A designated attention beacon: dark until something needs the person.
     case asks
-    /// A busylight: steady red while the person is on a call or in a
-    /// meeting (`state.presence`, fed by the app's mic and camera
-    /// reading), and exactly the `asks` beacon the rest of the time.
+    /// A busylight: steady red while the person is on a call
+    /// (`state.presence`, fed by the app's mic and camera reading), and
+    /// exactly the `asks` beacon the rest of the time. The daemon also
+    /// holds it red for a report's `meeting_until`, which the app does not
+    /// send yet — the readout names that case for when a reporter does.
     case call
     /// The Dot renders its own two-LED semantic display; nothing drives it
     /// but the Dot, so `lights.surfaces.dot.role` is absent.
@@ -41,7 +43,7 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
         case .asks:
             return "Dark until something needs you: amber for a permission request, red for a blocked error. A glance at the Dot alone answers \"do they need me?\"."
         case .call:
-            return "Steady red while a call has the mic or camera, or a meeting on your calendar is under way — held, never breathed, since it sits in view of the camera. Between calls it is the alert beacon."
+            return "Steady red while a call has the mic or camera — held, never breathed, since it sits in view of the camera. Between calls it is the alert beacon."
         case .status:
             return "Its own two-LED status code, the way an unlinked Dot has always rendered. Nothing else drives it."
         }
