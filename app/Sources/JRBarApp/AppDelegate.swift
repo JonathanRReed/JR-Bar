@@ -454,6 +454,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         settingsStore.onOpenControlCenter = { [weak controlCenterWindow] in controlCenterWindow?.show() }
         deckStore.onOpenControlCenter = { [weak controlCenterWindow] in controlCenterWindow?.show() }
 
+        // ⌘⇧K is JR-Bar's palette, not only the menu bar's: register
+        // every source past the menu bar's own rows, the frecency it
+        // ranks by, and the panel's toast as the HUD's voice for the
+        // verbs that report through it. While the Menu Bar utility is
+        // parked the palette keeps its key on its own.
+        let commandBar = utilitiesStore.menuBar.actions.commandBar
+        commandBar.sources = PaletteWiring.sources(
+            panel: store, effects: effectsStore,
+            toggles: { [weak toysStore] in toysStore?.notch.cardModel.utility.toggles },
+            aquarium: { [weak toysStore] in toysStore?.aquarium },
+            hoarder: utilitiesStore.dataHoarder,
+            windows: PaletteWiring.Windows(
+                overview: { [weak overviewWindow] in overviewWindow?.show() },
+                usageCenter: { [weak usageWindow] provider in usageWindow?.show(focusedProvider: provider) },
+                history: { [weak historyWindow] in historyWindow?.show() },
+                effects: { [weak effectsWindow] in effectsWindow?.show() },
+                deck: { [weak controlCenterWindow] in controlCenterWindow?.show() },
+                replay: { [weak replayWindow] in replayWindow?.show() },
+                panel: { [weak panel] in panel?.toggle() },
+                checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
+                settings: { [weak settingsWindow] page in settingsWindow?.show(page: page) }))
+        commandBar.palette.usage = { [weak utilitiesStore] in utilitiesStore?.state.commandUses ?? PaletteUsage() }
+        commandBar.palette.recordUse = { [weak utilitiesStore] key in utilitiesStore?.state.commandUses.record(key) }
+        commandBar.palette.toastFeed = { [weak store] in store?.toast }
+        utilitiesStore.menuBar.actions.paletteBinding = { [weak utilitiesStore] in
+            utilitiesStore?.menuBar.resolvedHotkeyBindings().first { $0.action == .commandBar }
+        }
+
         // Events → the Mac: sounds, banners, the HUD, the amber pulse, the chime.
         let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
         self.events = events
@@ -697,6 +725,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction?.stop()
         screenBar?.hide()
         events?.reset()
+        // The palette folds and its parked ⌘⇧K lets go for good — the
+        // utility's stop below would otherwise re-arm it.
+        utilitiesStore?.menuBar.actions.shutDownPalette()
         // A clean quit puts the menu bar's hidden items back before the
         // spacers vanish with the process.
         utilitiesStore?.stop()

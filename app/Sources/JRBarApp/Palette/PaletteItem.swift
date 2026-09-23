@@ -213,21 +213,23 @@ struct PaletteItem: Identifiable {
     /// The verb Return runs; nil when Return opens the action panel.
     var primary: PaletteAction? { opensActions ? nil : actions.first }
     /// The verb ⌘Return runs.
-    var secondary: PaletteAction? {
-        opensActions ? nil : actions.dropFirst().first
-    }
+    var secondary: PaletteAction? { action(for: .secondary) }
 
     /// The chord a verb answers to on this row: Return and ⌘Return for
     /// the first two (unless a verb names its own), the verb's own
-    /// otherwise.
+    /// otherwise. A position never hands out a chord some verb claims
+    /// by name — an ask's Approve keeps ⌘Return even after a typed
+    /// "deny" moved Deny to the front.
     func shortcut(for action: PaletteAction) -> PaletteShortcut? {
         if let own = action.shortcut { return own }
         guard !opensActions, let index = actions.firstIndex(where: { $0.id == action.id }) else { return nil }
+        let positional: PaletteShortcut
         switch index {
-        case 0: return .primary
-        case 1: return .secondary
+        case 0: positional = .primary
+        case 1: positional = .secondary
         default: return nil
         }
+        return actions.contains { $0.shortcut == positional } ? nil : positional
     }
 
     /// The verb a chord runs on this row, if any — how a shortcut works
@@ -242,6 +244,11 @@ struct PaletteItem: Identifiable {
 /// something slower, once per settled query.
 @MainActor
 protocol PaletteSource {
+    /// Once per open, before the first `items()` — the moment to ask a
+    /// store to re-read the system (the Control Center strip's truth).
+    /// `items()` itself must only read: the palette re-asks it whenever
+    /// something it read changes, so a write there would loop.
+    func prepare()
     /// The rows known without a query.
     func items() -> [PaletteItem]
     /// Rows that only exist for a query — a full-text hit, a "search
@@ -251,6 +258,7 @@ protocol PaletteSource {
 }
 
 extension PaletteSource {
+    func prepare() {}
     func results(for query: String) async -> [PaletteItem] { [] }
 }
 
@@ -260,12 +268,17 @@ extension PaletteSource {
 struct PaletteClosureSource: PaletteSource {
     let build: @MainActor () -> [PaletteItem]
     var search: (@MainActor (String) async -> [PaletteItem])?
+    var onPrepare: (@MainActor () -> Void)?
 
-    init(build: @escaping @MainActor () -> [PaletteItem],
+    init(prepare: (@MainActor () -> Void)? = nil,
+         build: @escaping @MainActor () -> [PaletteItem],
          search: (@MainActor (String) async -> [PaletteItem])? = nil) {
+        self.onPrepare = prepare
         self.build = build
         self.search = search
     }
+
+    func prepare() { onPrepare?() }
 
     func items() -> [PaletteItem] { build() }
 

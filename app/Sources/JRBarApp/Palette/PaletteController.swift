@@ -171,6 +171,9 @@ final class PaletteController {
     var toastFeed: (@MainActor () -> String?)?
     /// The field's placeholder.
     var prompt = "Search menu bar, sessions and commands…"
+    /// False only in tests: the session runs — sources, rows, keys —
+    /// with no window on anyone's screen.
+    var presentsWindow = true
 
     let model = PaletteModel()
     let hud = PaletteHUD()
@@ -196,7 +199,10 @@ final class PaletteController {
         if isOpen { close() }
         hud.hide()
         activeSources = sources()
-        model.load(items: activeSources.flatMap { $0.items() }, usage: usage())
+        for source in activeSources { source.prepare() }
+        isOpen = true
+        model.load(items: gather(), usage: usage())
+        guard presentsWindow else { return }
         let view = PaletteView(
             model: model, prompt: prompt,
             onQueryChange: { [weak self] in self?.queryChanged() },
@@ -209,9 +215,26 @@ final class PaletteController {
         panel.setFrameOrigin(PalettePanel.origin(on: visible))
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
-        isOpen = true
         openedAtUptime = ProcessInfo.processInfo.systemUptime
         installMonitors()
+    }
+
+    /// Every source's rows, read under observation: whatever a builder
+    /// touched (the daemon's state, a toggle's read-back, the scene)
+    /// re-gathers the list the moment it changes, for as long as the
+    /// palette is up.
+    private func gather() -> [PaletteItem] {
+        let sources = activeSources
+        return withObservationTracking {
+            sources.flatMap { $0.items() }
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.regather() }
+        }
+    }
+
+    private func regather() {
+        guard isOpen else { return }
+        model.reload(items: gather())
     }
 
     func close() {

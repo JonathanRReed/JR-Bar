@@ -63,6 +63,18 @@ final class PaletteModel {
         refilter(keepSelection: false)
     }
 
+    /// Fresh rows from the same sources while the palette stays up — an
+    /// ask that lands mid-search appears under Needs You, a toggle's
+    /// read-back settles its tag. The query, the archive's hits, the
+    /// selection and an open action panel all stay where they were; the
+    /// panel folds only if its row went away.
+    func reload(items: [PaletteItem]) {
+        self.items = items
+        let previous = selectedID
+        refilter(keepSelection: true)
+        if actionsOpen, selectedID != previous { closeActions() }
+    }
+
     /// A slower source's answer. Kept only while the query still reads
     /// the same; the selection stays on the row it was on, so a hit
     /// landing mid-arrow never yanks the highlight.

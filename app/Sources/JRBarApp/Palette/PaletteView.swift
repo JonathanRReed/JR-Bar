@@ -22,6 +22,10 @@ struct PaletteView: View {
     /// VoiceOver's actions rotor — row id, action id.
     let onRun: @MainActor (String, String) -> Void
     let onToggleActions: @MainActor () -> Void
+    /// The render proof's still: `ImageRenderer` draws neither a text
+    /// field nor a scroll view's contents, so a snapshot swaps in their
+    /// static twins. Never set in the app.
+    var snapshot = false
     @FocusState private var focus: Field?
 
     enum Field: Hashable { case search, actions }
@@ -35,7 +39,7 @@ struct PaletteView: View {
             ZStack(alignment: .bottomTrailing) {
                 list
                 if model.actionsOpen, let item = model.selected {
-                    PaletteActionPanel(model: model, item: item, focus: $focus,
+                    PaletteActionPanel(model: model, item: item, focus: $focus, snapshot: snapshot,
                                        onRun: { onRun(item.id, $0) })
                         .padding(10)
                 }
@@ -56,14 +60,21 @@ struct PaletteView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            TextField("", text: Binding(
-                get: { model.query },
-                set: { model.query = $0; onQueryChange() }),
-                      prompt: Text(prompt))
-                .textFieldStyle(.plain)
-                .font(.system(size: 17))
-                .focused($focus, equals: .search)
-                .accessibilityLabel("Search JR-Bar")
+            if snapshot {
+                Text(model.query.isEmpty ? prompt : model.query)
+                    .font(.system(size: 17))
+                    .foregroundStyle(model.query.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                TextField("", text: Binding(
+                    get: { model.query },
+                    set: { model.query = $0; onQueryChange() }),
+                          prompt: Text(prompt))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 17))
+                    .focused($focus, equals: .search)
+                    .accessibilityLabel("Search JR-Bar")
+            }
             if let selected = model.selected, model.actionsOpen {
                 // Raycast's breadcrumb: the panel is about this row.
                 Text(selected.title)
@@ -86,36 +97,15 @@ struct PaletteView: View {
     private var list: some View {
         if model.rows.isEmpty {
             emptyState
+        } else if snapshot {
+            // `ImageRenderer` draws no scroll view contents: the render
+            // proof gets the first screenful of the same rows.
+            rows(Self.firstScreenful(model.sections))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(model.sections) { section in
-                            Text(section.section.title)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 10)
-                                .padding(.bottom, 4)
-                                .accessibilityAddTraits(.isHeader)
-                            ForEach(section.items) { item in
-                                PaletteRowView(item: item, selected: item.id == model.selectedID)
-                                    .id(item.id)
-                                    .onTapGesture { onActivate(item.id) }
-                                    .contextMenu {
-                                        ForEach(item.actions) { action in
-                                            Button(action.title) { onRun(item.id, action.id) }
-                                        }
-                                    }
-                                    .accessibilityActions {
-                                        ForEach(item.actions) { action in
-                                            Button(action.title) { onRun(item.id, action.id) }
-                                        }
-                                    }
-                            }
-                        }
-                    }
-                    .padding(.bottom, 8)
+                    rows(model.sections)
                 }
                 .scrollIndicators(.automatic)
                 .onChange(of: model.selectedID) { _, id in
@@ -125,6 +115,48 @@ struct PaletteView: View {
                 }
             }
         }
+    }
+
+    /// The sections cut to what one screen of the list shows.
+    static func firstScreenful(_ sections: [PaletteListSection], rows limit: Int = 8) -> [PaletteListSection] {
+        var left = limit
+        var out: [PaletteListSection] = []
+        for section in sections where left > 0 {
+            let items = Array(section.items.prefix(left))
+            left -= items.count + 1
+            out.append(PaletteListSection(section: section.section, items: items))
+        }
+        return out
+    }
+
+    private func rows(_ sections: [PaletteListSection]) -> some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(sections) { section in
+                Text(section.section.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(section.items) { item in
+                    PaletteRowView(item: item, selected: item.id == model.selectedID)
+                        .id(item.id)
+                        .onTapGesture { onActivate(item.id) }
+                        .contextMenu {
+                            ForEach(item.actions) { action in
+                                Button(action.title) { onRun(item.id, action.id) }
+                            }
+                        }
+                        .accessibilityActions {
+                            ForEach(item.actions) { action in
+                                Button(action.title) { onRun(item.id, action.id) }
+                            }
+                        }
+                }
+            }
+        }
+        .padding(.bottom, 8)
     }
 
     private var emptyState: some View {
@@ -149,7 +181,7 @@ struct PaletteView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Image(nsImage: NSApp.applicationIconImage ?? NSImage())
+            Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
                 .resizable()
                 .frame(width: 16, height: 16)
                 .accessibilityHidden(true)
@@ -166,9 +198,15 @@ struct PaletteView: View {
                     PaletteFooterButton(title: "Show Actions", caps: PaletteShortcut.primary.keycaps,
                                  action: onToggleActions)
                 }
-                Rectangle()
-                    .fill(Color.primary.opacity(0.12))
-                    .frame(width: 1, height: 14)
+                // The second verb earns the footer too — an ask's
+                // Approve is the chord worth seeing without ⌘K.
+                if let secondary = item.secondary {
+                    footerRule
+                    PaletteFooterButton(title: secondary.title, caps: PaletteShortcut.secondary.keycaps) {
+                        onRun(item.id, secondary.id)
+                    }
+                }
+                footerRule
             }
             PaletteFooterButton(title: model.actionsOpen ? "Close Actions" : "Actions",
                          caps: PaletteShortcut.actionPanel.keycaps,
@@ -182,6 +220,12 @@ struct PaletteView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
         }
+    }
+
+    private var footerRule: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: 1, height: 14)
     }
 }
 
@@ -302,7 +346,21 @@ struct PaletteActionPanel: View {
     let model: PaletteModel
     let item: PaletteItem
     var focus: FocusState<PaletteView.Field?>.Binding
+    var snapshot = false
     let onRun: @MainActor (String) -> Void
+
+    /// Rows the panel shows before it scrolls.
+    static let unscrolledLimit = 8
+
+    private func actionRows(_ actions: [PaletteAction]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
+                actionRow(action, selected: index == model.actionSelection)
+                    .onTapGesture { onRun(action.id) }
+            }
+        }
+        .padding(.bottom, 4)
+    }
 
     var body: some View {
         let actions = model.visibleActions
@@ -320,28 +378,30 @@ struct PaletteActionPanel: View {
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
+            } else if actions.count <= Self.unscrolledLimit || snapshot {
+                actionRows(actions)
             } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
-                            actionRow(action, selected: index == model.actionSelection)
-                                .onTapGesture { onRun(action.id) }
-                        }
-                    }
-                    .padding(.bottom, 4)
-                }
-                .frame(maxHeight: 250)
-                .fixedSize(horizontal: false, vertical: true)
+                ScrollView { actionRows(actions) }
+                    .frame(height: CGFloat(Self.unscrolledLimit) * 30 + 4)
             }
             Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
-            TextField("", text: Binding(get: { model.actionQuery }, set: { model.actionQuery = $0 }),
-                      prompt: Text("Search for actions…"))
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused(focus, equals: .actions)
-                .padding(.horizontal, 14)
-                .frame(height: 36)
-                .accessibilityLabel("Search actions for \(item.title)")
+            Group {
+                if snapshot {
+                    Text(model.actionQuery.isEmpty ? "Search for actions…" : model.actionQuery)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    TextField("", text: Binding(get: { model.actionQuery }, set: { model.actionQuery = $0 }),
+                              prompt: Text("Search for actions…"))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .focused(focus, equals: .actions)
+                        .accessibilityLabel("Search actions for \(item.title)")
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 36)
         }
         .frame(width: 320)
         .background(
