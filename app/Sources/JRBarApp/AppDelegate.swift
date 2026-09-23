@@ -280,6 +280,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.model.utility.weather.allowIPLocation = { [weak toysStore] in
             toysStore?.state.notch.weatherUseIPLocation ?? false
         }
+        notchCard.model.utility.lyrics.enabled = { [weak toysStore] in
+            toysStore?.state.notch.lyrics ?? true
+        }
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.

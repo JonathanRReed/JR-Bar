@@ -762,6 +762,9 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// (ipapi.co). Off by default: it sends the IP to a second third
     /// party, so an empty city otherwise just means no weather row.
     public var weatherUseIPLocation: Bool = false
+    /// Synced lyrics from LRCLIB under the card's media row. On by
+    /// default, as it shipped; off, nothing about the track is sent.
+    public var lyrics: Bool = true
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -805,6 +808,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case hudDuration
         case calendar, reminders
         case weatherUseIPLocation
+        case lyrics
     }
 
     public init(from decoder: any Decoder) throws {
@@ -834,6 +838,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         calendar = (try? c.decodeIfPresent(Bool.self, forKey: .calendar)) ?? true
         reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
         weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
+        lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? true
     }
 }
 

@@ -203,6 +203,7 @@ final class NotchToy: Toy {
         cardModel.utility.weather.allowIPLocation = { [weak self] in
             self?.settings.weatherUseIPLocation ?? false
         }
+        cardModel.utility.lyrics.enabled = { [weak self] in self?.settings.lyrics ?? true }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
         cardModel.timers.onFireNotice = { [weak self] entry in self?.noteTimerFired(entry) }
@@ -1102,6 +1103,9 @@ final class NotchToy: Toy {
         // The weather toggle or city text changed — re-read now rather
         // than on the half-hour tick.
         cardModel.utility.weather.reload()
+        // The lyrics switch: off clears the line at once, on picks the
+        // playing track back up (a key compare when nothing moved).
+        cardModel.utility.lyrics.note(media: cardModel.utility.media)
         // The mirror toggle while the card is already pinned — the
         // pin's own sync only runs on the edge. The lens stays shut
         // unless this open summoned it.
@@ -2076,6 +2080,10 @@ private struct NotchControlsView: View {
                 Toggle(isOn: toy.bind(\.audioVisualizer)) {
                     SettingLabel(title: "Audio visualizer (reacts to what's playing)",
                                  subtitle: "Six live bands on the media row, tapped from the playing app's own audio — asks for the system-audio permission once. Off or denied keeps the decorative animation.")
+                }
+                Toggle(isOn: toy.bind(\.lyrics)) {
+                    SettingLabel(title: "Synced lyrics",
+                                 subtitle: "The current line and the next under the track, swept in time. Looks the song up on LRCLIB (title, artist, album, length — nothing else) and remembers the answer. Off, nothing is sent.")
                 }
             }
             Toggle(isOn: toy.bind(\.mediaHUD)) {

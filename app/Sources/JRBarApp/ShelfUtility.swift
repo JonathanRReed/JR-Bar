@@ -41,7 +41,7 @@ final class ShelfUtilityModel {
     /// Synced lyrics for the playing track — LRCLIB-backed, cached,
     /// nil when the track has none or the source named too little to
     /// query. The row reads `lyrics.line(at:)` on its timeline tick.
-    let lyrics = LyricsStore()
+    let lyrics = LyricsStore(diskURL: LyricsDiskCache.defaultURL())
     /// The Control Center strip — One Switch's row: keep-awake, dark
     /// mode, desktop icons, hidden files, mute, saver, lock, Dock
     /// autohide. Reads truth on show; verbs fire and never latch.

@@ -627,18 +627,7 @@ private struct ShelfMediaRow: View {
                     }
                 }
                 if let synced = utility.lyrics.lyrics {
-                    // The synced line rides the same tick as the
-                    // playhead — faint, one line, silent when the
-                    // playhead sits between stamps.
-                    TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
-                        if let line = synced.line(at: utility.elapsedShown(at: context.date)) {
-                            Text(line)
-                                .font(.system(size: 9))
-                                .foregroundStyle(style.faintColor)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                    }
+                    LyricLines(lyrics: synced, utility: utility, playing: media.playing, style: style)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -660,6 +649,59 @@ private struct ShelfMediaRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The synced lyrics under the transport — Atoll's sweep in the card's
+/// own restraint: the current line bright with a soft highlight
+/// travelling through it in time, the next line faint beneath. The
+/// clock runs on the display (30 fps) only while the row is mounted
+/// and the track plays; paused, or under Reduce Motion, it steps at a
+/// calm rate and the sweep stands still. Silent between stamps.
+private struct LyricLines: View {
+    let lyrics: SyncedLyrics
+    let utility: ShelfUtilityModel
+    let playing: Bool
+    let style: NotchCardStyle
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let live = playing && !reduceMotion
+        TimelineView(.animation(minimumInterval: live ? 1.0 / 30.0 : 0.5, paused: !playing)) { context in
+            let at = utility.elapsedShown(at: context.date)
+            let position = lyrics.position(at: at)
+            VStack(alignment: .leading, spacing: 1) {
+                if let line = lyrics.line(at: at) {
+                    Text(line)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(style.subColor)
+                        .overlay {
+                            if live, let progress = position.progress {
+                                // The sweep: the same text, brighter,
+                                // revealed left to right as the line plays.
+                                Text(line)
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(style.titleColor)
+                                    .mask(alignment: .leading) {
+                                        GeometryReader { geo in
+                                            Rectangle().frame(width: geo.size.width * progress)
+                                        }
+                                    }
+                            }
+                        }
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if let next = position.next {
+                    Text(next)
+                        .font(.system(size: 9))
+                        .foregroundStyle(style.faintColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
