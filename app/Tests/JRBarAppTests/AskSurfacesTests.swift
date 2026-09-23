@@ -321,4 +321,34 @@ struct AskSurfacesTests {
         #expect(OverviewStore.startedText(nil, provider: "codex", cwd: "/tmp/x").hasPrefix("Started Codex at"))
     }
 
+    // MARK: Hook doctor
+
+    @Test("the hook doctor's report reads per provider, and a missing permission hook asks for Repair")
+    func hooksDoctor() {
+        let report: JSONValue = .object(["providers": .array([
+            .object(["provider": .string("claude"), "installed": .bool(true), "hook_events": .number(12),
+                     "registered": .array([.string("shim")]), "would_install": .string("shim"),
+                     "decide": .string("missing"), "last_event_at": .number(now.timeIntervalSince1970 - 240),
+                     "pending_lines": .number(3)]),
+            .object(["provider": .string("codex"), "installed": .bool(true), "hook_events": .number(1),
+                     "registered": .array([.string("shim")]), "decide": .string("installed"),
+                     "last_event_at": .null]),
+            .object(["provider": .string("pi"), "installed": .bool(true), "hook_events": .number(4),
+                     "registered": .array([.string("legacy")]), "would_install": .string("shim")]),
+            .object(["provider": .string("grok"), "installed": .bool(false)]),
+            .object(["label": .string("no id")]),
+        ])])
+        let entries = HooksDoctor.entries(from: report)
+        #expect(entries.count == 4)
+        let claude = entries["claude"]!
+        #expect(HooksDoctor.repairReason(claude)?.hasPrefix("Answering from JR-Bar isn't hooked up") == true)
+        #expect(HooksDoctor.line(claude, now: now) == "12 events hooked · last event 4m ago · 3 queued")
+        let codex = entries["codex"]!
+        #expect(HooksDoctor.repairReason(codex) == nil)
+        #expect(HooksDoctor.line(codex, now: now) == "1 event hooked · no event yet · answers from JR-Bar")
+        #expect(HooksDoctor.repairReason(entries["pi"]!)?.hasPrefix("Runs an older hook command") == true)
+        #expect(HooksDoctor.line(entries["grok"]!, now: now) == nil, "the row already says Not installed")
+        #expect(HooksDoctor.repairReason(entries["grok"]!) == nil, "Install, not Repair")
+    }
+
 }
