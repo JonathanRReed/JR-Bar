@@ -110,6 +110,19 @@ struct AquariumRenderProofTests {
         #expect(renderer.cgImage != nil)
     }
 
+    /// The earned marks draw through the tank without tripping.
+    @Test("fish wearing earned marks render")
+    func variantsRender() {
+        var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        fixture.game?.pets["f-working"]?.variant = AquariumVariant.tide.rawValue
+        fixture.game?.pets["f-dressed"]?.variant = AquariumVariant.starry.rawValue
+        let renderer = ImageRenderer(content: AquariumView(fixture: fixture)
+            .frame(width: 900, height: 520))
+        renderer.scale = 1
+        #expect(renderer.cgImage != nil)
+    }
+
     /// Mean brightness of a render, 0…1.
     private static func brightness(_ image: CGImage) -> Double {
         let w = 90, h = 52

@@ -409,6 +409,12 @@ public struct FishCare: Codable, Equatable, Sendable {
     public var fedDay: Double
     /// Pellets counted today toward growth, pearls and the day's chore.
     public var feedingsToday: Int
+    /// Every second its session worked, lifetime — `workSeconds` is spent
+    /// on growth, this one never is. The tide stripe reads it.
+    public var workedTotal: Double = 0
+    /// The mark it earned (`AquariumVariant` raw value), kept for life —
+    /// a resident wears it after its session is gone.
+    public var variant: String?
 
     public init(stage: Int = 0, feedings: Int = 0, workSeconds: Double = 0,
                 lastNourishedAt: Double = 0, starvingAt: Double = 0,
@@ -432,7 +438,7 @@ public struct FishCare: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case stage, feedings, workSeconds, lastNourishedAt, starvingAt
         case lastDropAt, completionGranted, createdAt, label, provider
-        case fedDay, feedingsToday
+        case fedDay, feedingsToday, workedTotal, variant
     }
 
     /// Field-by-field tolerant decode: a record missing a newer key —
@@ -452,7 +458,13 @@ public struct FishCare: Codable, Equatable, Sendable {
         provider = (try? c.decodeIfPresent(String.self, forKey: .provider)) ?? nil
         fedDay = max(0, (try? c.decodeIfPresent(Double.self, forKey: .fedDay)) ?? 0)
         feedingsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .feedingsToday)) ?? 0)
+        workedTotal = max(0, (try? c.decodeIfPresent(Double.self, forKey: .workedTotal)) ?? 0)
+        let variantRaw = (try? c.decodeIfPresent(String.self, forKey: .variant)) ?? nil
+        variant = variantRaw.flatMap(AquariumVariant.init(rawValue:))?.rawValue
     }
+
+    /// The mark it earned, if any.
+    public var earnedVariant: AquariumVariant? { variant.flatMap(AquariumVariant.init(rawValue:)) }
 
     /// No feeding and no work for `starveAfter`: the hungry mouth.
     public func hungry(at now: Date) -> Bool {
@@ -600,6 +612,30 @@ public enum AquariumGameEffect: Equatable, Sendable {
     case fishShrank(String)
     /// The streak moved to this many days.
     case streakDay(Int)
+    /// A fish earned its mark from what its session did.
+    case variantEarned(String, AquariumVariant)
+}
+
+/// A mark a fish earns from its session's real work (docs/TOYS.md) —
+/// rarity that means something, instead of the golden fish's seeded
+/// dice. One per fish, first earned wins, kept for life. The raw value
+/// is the save's key: never rename a shipped case.
+public enum AquariumVariant: String, Codable, CaseIterable, Sendable {
+    /// A pale stripe down the flank: its session worked two hours.
+    case tide
+    /// Six star specks: its session led six sub-agents at once.
+    case starry
+
+    /// The inspector's word for it.
+    public var word: String {
+        switch self {
+        case .tide: return "tide-striped"
+        case .starry: return "starry"
+        }
+    }
+
+    /// Two hours of a session's work earn the tide stripe.
+    public static let tideSeconds: Double = 2 * 60 * 60
 }
 
 /// The aquarium's idle game (docs/TOYS.md): a pure reducer over a
@@ -813,6 +849,11 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             for id in working {
                 var care = pet(id, now: now)
                 care.workSeconds += seconds
+                care.workedTotal += seconds
+                if care.variant == nil, care.workedTotal >= AquariumVariant.tideSeconds {
+                    care.variant = AquariumVariant.tide.rawValue
+                    effects.append(.variantEarned(id, .tide))
+                }
                 nourish(&care, now: now)
                 grow(&care, effects: &effects, id: id)
                 pets[id] = care
@@ -1083,8 +1124,17 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             }
 
         case .fleet(let facts):
-            // Only the log moves; the milestone sweep below reads it.
+            // The log moves for the milestone sweep below; a session
+            // leading a school of six earns its fish the star specks.
             fleet.note(facts, now: now)
+            for (parent, size) in facts.schools.sorted(by: { $0.key < $1.key })
+            where size >= AquariumRules.schoolSize {
+                var care = pet(parent, now: now)
+                guard care.variant == nil else { continue }
+                care.variant = AquariumVariant.starry.rawValue
+                pets[parent] = care
+                effects.append(.variantEarned(parent, .starry))
+            }
         }
         checkAchievements(now: now, event: event,
                           calendar: calendar, effects: &effects)

@@ -572,6 +572,11 @@ final class AquariumToy: Toy {
                 toast = ("A \(v.displayName) drifts by", now)
             case .visitorDeparted(let v):
                 toast = ("The \(v.displayName) drifts on", now)
+            case .variantEarned(let id, let variant):
+                switch variant {
+                case .tide: toast = ("\(label(for: id)) earned its tide stripe", now)
+                case .starry: toast = ("\(label(for: id)) is starry now", now)
+                }
             case .pearlsSpent, .purchaseDenied: break
             }
         }

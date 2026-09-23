@@ -8,6 +8,8 @@ import Foundation
 public struct AquariumFleetFacts: Equatable, Sendable {
     /// The most live sub-agents swimming with one session right now.
     public var largestSchool: Int
+    /// Live sub-agents per parent session — the starry mark reads it.
+    public var schools: [String: Int] = [:]
     /// Listed sessions that read failed, by id — one failure counts once
     /// however long it lingers in the list.
     public var failedIDs: [String]
@@ -52,9 +54,11 @@ public struct AquariumFleetFacts: Equatable, Sendable {
                 credits[provider.identity] = balance
             }
         }
-        return AquariumFleetFacts(largestSchool: schools.values.max() ?? 0,
-                                  failedIDs: failed.sorted(), weekly: weekly,
-                                  codexCredits: credits)
+        var facts = AquariumFleetFacts(largestSchool: schools.values.max() ?? 0,
+                                       failedIDs: failed.sorted(), weekly: weekly,
+                                       codexCredits: credits)
+        facts.schools = schools
+        return facts
     }
 }
 

@@ -5242,7 +5242,8 @@ struct AquariumView: View {
                          wag: wag, flap: wag * 0.45,
                          mouth: mouth, blink: blink, dead: dead,
                          patternSeed: h,
-                         aspectComp: length / height)
+                         aspectComp: length / height,
+                         variant: fish.isFry || dead ? nil : care?.earnedVariant)
         // A purchased hat rides the head — same unit space, so the
         // pitch, flip and squash all apply to it. Failing a bought
         // hat, a full-grown fish on a streak tank goes royal: three
@@ -5477,6 +5478,9 @@ struct AquariumView: View {
         }
         if !fish.isFry, AquariumBehavior.isGolden(seed: fish.seed) {
             bits.append("golden")
+        }
+        if !fish.isFry, let variant = game.pets[fish.id]?.earnedVariant {
+            bits.append(variant.word)
         }
         return bits.isEmpty ? nil : bits.joined(separator: " · ")
     }
