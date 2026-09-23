@@ -248,11 +248,15 @@ struct MenuBarUtilityControls: View {
                     }
                     Toggle(isOn: utility.bind(\.agentStatusItem)) {
                         SettingLabel(title: "Agent status item",
-                                     subtitle: "A dot in the bar showing what your agents are doing; click opens the Overview.")
+                                     subtitle: utility.concealing
+                                        ? "A dot and what your agents are doing, drawn beside the JR-Bar icon as part of its face; click opens the Overview. The icon's Agents and Orbit styles carry the same state."
+                                        : "A dot in the bar showing what your agents are doing; click opens the Overview.")
                     }
                     Toggle(isOn: utility.bind(\.combinedSystemItem)) {
                         SettingLabel(title: "One system item",
-                                     subtitle: "Battery, Wi-Fi, sound and Focus in a single item with a popover — the matching Control Center items hide while it runs.")
+                                     subtitle: utility.concealing
+                                        ? "Battery, Wi-Fi and Focus drawn beside the JR-Bar icon as part of its face, with a popover. Control Center's own items hide only once that face is on screen, and come back the moment it isn't."
+                                        : "Battery, Wi-Fi, sound and Focus in a single item with a popover — the matching Control Center items hide only while it is on screen.")
                     }
                     Divider()
                         .padding(.vertical, 4)
@@ -393,6 +397,12 @@ struct MenuBarUtilityControls: View {
     private var spacerEditor: some View {
         SettingLabel(title: "Spacer items",
                      subtitle: "Fixed-width or labelled items of ours that sit anywhere in the bar — ⌘-drag them like any other. Clicking one reveals the hidden run.")
+        if utility.concealing {
+            Text("Parked while macOS hides items for JR-Bar: it draws none of JR-Bar's extra items and orders the bar itself, so a spacer could neither show nor sit between apps. Your rows are kept for when the spacer engine stands in.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         ForEach(Array(utility.settings().spacers.enumerated()), id: \.element.id) { index, spacer in
             HStack(spacing: 8) {
                 TextField("Label", text: Binding(

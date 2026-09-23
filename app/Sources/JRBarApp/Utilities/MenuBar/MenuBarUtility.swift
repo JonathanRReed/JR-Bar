@@ -289,6 +289,7 @@ final class MenuBarUtility: Toy {
             self.syncConcealer()
             self.pollDisplayProfile()
             self.bar.syncItems()
+            self.refreshExtrasFaces()
             // The writing passes land off the plan's stack — a settings
             // write inside `onPlan` would nest a whole reconcile inside
             // one, and the updates pass can itself reveal. Deferred like
@@ -1065,6 +1066,10 @@ final class MenuBarUtility: Toy {
         let samples = MenuBarCoreFacts.samples(from: lastCoreFacts, to: facts)
         lastCoreFacts = facts
         for sample in samples { systemTriggerSource.emit(sample) }
+        // The agent glance follows the feed, not the scan cadence.
+        if samples.contains(where: { if case .agentState = $0 { return true } else { return false } }) {
+            refreshExtrasFaces(force: true)
+        }
         // An open ask rides no trigger sample; the "while" rules read it.
         if facts.live, stateRules.levels.askPending != facts.askPending {
             stateRules.update { $0.askPending = facts.askPending }
@@ -1246,7 +1251,11 @@ final class MenuBarUtility: Toy {
     private func syncExtras() {
         let s = settings()
         MenuBarCombinedItem.log.notice("syncExtras: spacers=\(s.spacers.count) underlay=\(s.barUnderlay) agentItem=\(s.agentStatusItem) combined=\(s.combinedSystemItem)")
-        syncSpacerItems(s.spacers)
+        // Under the concealer macOS draws none of our status items, and it
+        // orders the bar itself, so a spacer could neither show nor sit
+        // between chosen apps: the rows keep their settings and the items
+        // stand down until the spacer engine is back (the card says so).
+        syncSpacerItems(Self.spacersDrawable(concealing: concealer != nil) ? s.spacers : [])
         if s.barUnderlay {
             underlay.show(appearance: MenuBarCoverAppearance(settings: s))
         } else {
@@ -1255,19 +1264,125 @@ final class MenuBarUtility: Toy {
         if s.combinedSystemItem {
             Self.seedPreferredPosition(475,
                                        autosaveName: "com.jonathanreed.jrbar.menubar-combined")
-            if !coveredExtrasHidden {
-                coveredExtrasHidden = true
-                MenuBarCombinedItem.setCoveredExtrasHidden(true)
-            }
-            combinedItem.sync()
+            combinedItem.sync(blank: extrasMirrored)
         } else {
             combinedItem.remove()
-            if coveredExtrasHidden {
-                coveredExtrasHidden = false
-                MenuBarCombinedItem.setCoveredExtrasHidden(false)
-            }
         }
         syncAgentItem()
+        pushAccessories()
+        stepCombinedGate()
+    }
+
+    /// Whether spacer items can do their job: only under the spacer
+    /// engine. Pure so a test pins the gate.
+    nonisolated static func spacersDrawable(concealing: Bool) -> Bool { !concealing }
+
+    /// Whether the mirror carries the extras right now — the real items
+    /// then stand blank, so a lift can never flash a second copy.
+    private var extrasMirrored: Bool { concealer != nil && iconMirrored }
+
+    /// The ids of the compound face's segments.
+    nonisolated static let agentAccessoryID = "agents"
+    nonisolated static let combinedAccessoryID = "combined"
+
+    /// The extras the mirror wears as segments of its one compound face
+    /// while the concealer runs: the agent glance and the combined
+    /// readout. Empty under the spacer engine, where the real items draw.
+    private func extrasAccessories() -> [MenuBarFaceAccessory] {
+        guard concealer != nil, running else { return [] }
+        let s = settings()
+        var out: [MenuBarFaceAccessory] = []
+        if s.agentStatusItem {
+            let read = agentState()
+            out.append(MenuBarFaceAccessory(
+                id: Self.agentAccessoryID,
+                image: Self.agentDotImage(tintHex: read.state.tintHex),
+                title: read.state.label,
+                toolTip: "Agents — \(read.state.label)" + (read.detail.isEmpty ? "" : ": \(read.detail)"),
+                accessibilityLabel: "Agents: \(read.state.label)",
+                signature: "\(read.state.rawValue)|\(read.detail)"))
+        }
+        if s.combinedSystemItem {
+            let read = combinedItem.readout()
+            out.append(MenuBarFaceAccessory(
+                id: Self.combinedAccessoryID, image: read.image, title: nil,
+                toolTip: "Battery, Wi-Fi, sound and Focus — one item. Click for the panel.",
+                accessibilityLabel: read.label, signature: read.signature))
+        }
+        return out
+    }
+
+    /// The mirror's face: the host's, with the extras as segments. A
+    /// style that draws no icon lends the mirror no face — only the
+    /// segments stand.
+    private func mirrorFace() -> MenuBarIconFace? {
+        guard let host else { return nil }
+        var face = host.face
+        if !host.anchorWantsVisibleSeat {
+            face.image = nil
+            face.title = nil
+            face.length = 0
+        }
+        face.accessories = extrasAccessories()
+        return face
+    }
+
+    /// Push the current segments to the mirror when they changed.
+    private func pushAccessories() {
+        guard let mirror = iconMirror, let face = mirrorFace() else { return }
+        let wanted = face.accessories.map(\.signature)
+        guard wanted != mirror.face.accessories.map(\.signature) else { return }
+        mirror.update(face: face)
+        updateIconMirror()
+    }
+
+    /// A segment's click: the agents open the Overview, the readout its
+    /// popover — anchored on the segment.
+    private func accessoryClicked(_ id: String, view: NSView) {
+        switch id {
+        case Self.agentAccessoryID: onOpenOverview()
+        case Self.combinedAccessoryID: combinedItem.toggle(relativeTo: view)
+        default: break
+        }
+    }
+
+    /// Refresh the extras' faces — the agent glance and the combined
+    /// readout change with the world, not with settings. Throttled: the
+    /// plan pass calls it every scan.
+    @ObservationIgnored private var extrasRefreshedAt = Date.distantPast
+    private func refreshExtrasFaces(force: Bool = false) {
+        guard running else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(extrasRefreshedAt) >= 2 else { return }
+        extrasRefreshedAt = now
+        let s = settings()
+        if s.combinedSystemItem { combinedItem.sync(blank: extrasMirrored) }
+        syncAgentItem()
+        pushAccessories()
+        stepCombinedGate(now: now)
+    }
+
+    /// The gate on Control Center's items — see `MenuBarDrawnGate`.
+    @ObservationIgnored private var combinedGate = MenuBarDrawnGate()
+
+    private func stepCombinedGate(now: Date = Date()) {
+        let wanted = running && settings().combinedSystemItem
+        guard let hide = combinedGate.step(wanted: wanted, drawn: combinedFaceDrawn, now: now) else { return }
+        MenuBarCombinedItem.log.notice("combined item: \(hide ? "face drawn — hiding" : "face not drawn — restoring", privacy: .public) Control Center's items")
+        coveredExtrasHidden = hide
+        MenuBarCombinedItem.setCoveredExtrasHidden(hide)
+    }
+
+    /// Whether the combined face is on screen: under a live assertion
+    /// only the mirror's segment can be (macOS draws no item of ours);
+    /// with none, the real item once it has a window.
+    private var combinedFaceDrawn: Bool {
+        guard settings().combinedSystemItem, combinedItem.item != nil else { return false }
+        if let concealer, concealer.isConcealing || concealer.isSuspended {
+            guard iconMirrored, let mirror = iconMirror, mirror.isVisible else { return false }
+            return mirror.face.accessories.contains { $0.id == Self.combinedAccessoryID }
+        }
+        return combinedItem.item?.button?.window != nil
     }
 
     /// Everything extras-related off the bar — the disable path and
@@ -1281,6 +1396,7 @@ final class MenuBarUtility: Toy {
         }
         underlay.hide()
         combinedItem.remove()
+        _ = combinedGate.release()
         if coveredExtrasHidden {
             coveredExtrasHidden = false
             MenuBarCombinedItem.setCoveredExtrasHidden(false)
@@ -1357,11 +1473,15 @@ final class MenuBarUtility: Toy {
             agentItem = item
         }
         let read = agentState()
-        let signature = "\(read.state.rawValue)|\(read.detail)"
+        let blank = extrasMirrored
+        let signature = "\(read.state.rawValue)|\(read.detail)" + (blank ? "|blank" : "")
         guard signature != lastAgentSignature else { return }
         lastAgentSignature = signature
-        agentItem?.button?.image = Self.agentDotImage(tintHex: read.state.tintHex)
-        agentItem?.button?.title = read.state.label
+        // While the mirror carries the glance the item stands blank —
+        // macOS draws nothing of ours under the assertion anyway, and a
+        // lift must not flash a second copy.
+        agentItem?.button?.image = blank ? nil : Self.agentDotImage(tintHex: read.state.tintHex)
+        agentItem?.button?.title = blank ? "" : read.state.label
         agentItem?.button?.toolTip = "Agents — \(read.state.label)"
             + (read.detail.isEmpty ? "" : ": \(read.detail)")
     }
@@ -1452,6 +1572,8 @@ final class MenuBarUtility: Toy {
         iconMirror = makeIconMirror()
         updateIconMirror()
         menuHandleChanged()
+        // The spacers stand down and the extras move onto the mirror.
+        if running { syncExtras() }
     }
 
     /// The icon while the concealer runs — see `MenuBarIconMirror`.
@@ -1517,7 +1639,8 @@ final class MenuBarUtility: Toy {
         mirror.onSecondaryClick = { [weak self] view in self?.host?.popUpMenu(in: view) }
         mirror.onChevronClick = { [weak self] in self?.host?.onBoundaryClick?() }
         mirror.onPlace = { [weak self] frame in self?.host?.mirroredFaceFrame = frame }
-        if let face = host?.face { mirror.update(face: face) }
+        mirror.onAccessoryClick = { [weak self] id, view in self?.accessoryClicked(id, view: view) }
+        if let face = mirrorFace() { mirror.update(face: face) }
         return mirror
     }
 
@@ -1555,14 +1678,25 @@ final class MenuBarUtility: Toy {
         let before = standingMirrorFrame
         // A target of apps that are not running conceals nothing — the
         // engine drops the assertion and macOS draws the real item.
+        // A style that draws no icon still stands a mirror while the
+        // extras ride it — they have nowhere else to show.
+        let drawsSomething = (host?.anchorWantsVisibleSeat ?? false)
+            || !(iconMirror?.face.accessories.isEmpty ?? true)
         let mirrored = Self.mirrorsIcon(engineUp: true,
-                                        styleDrawsIcon: host?.anchorWantsVisibleSeat ?? false,
+                                        styleDrawsIcon: drawsSomething,
                                         concealing: concealer.isConcealing,
                                         suspended: concealer.isSuspended,
                                         targetEmpty: concealTarget().isDisjoint(with: runningApps.snapshot()),
                                         activationFailing: concealer.activationFailing)
+        let extrasFlipped = iconMirrored != mirrored
         iconMirrored = mirrored
         host?.setFaceMirrored(mirrored)
+        if extrasFlipped {
+            // The extras' real items blank or wear their faces again.
+            if settings().combinedSystemItem { combinedItem.sync(blank: extrasMirrored) }
+            syncAgentItem()
+        }
+        stepCombinedGate()
         if mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first {
             mirror.show(row: Self.primaryRow(), primaryMaxY: primary.frame.maxY) { width in
                 mirrorSeat(width: width)
@@ -1587,8 +1721,8 @@ final class MenuBarUtility: Toy {
     /// (a label or the ‹ changes its width); a flip to or from the
     /// `.hidden` style settles whether it stands at all.
     private func faceChanged() {
-        guard concealer != nil, let host else { return }
-        iconMirror?.update(face: host.face)
+        guard concealer != nil, let face = mirrorFace() else { return }
+        iconMirror?.update(face: face)
         updateIconMirror()
     }
 
@@ -1695,6 +1829,8 @@ final class MenuBarUtility: Toy {
         hider.externalPlan = nil
         self.concealer = nil
         menuHandleChanged()
+        // The real extras are the faces again; the spacers come back.
+        if running { syncExtras() }
     }
 
     /// The bundle identifiers of every running app — the allowlist's

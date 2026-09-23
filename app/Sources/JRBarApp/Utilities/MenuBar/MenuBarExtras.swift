@@ -142,10 +142,31 @@ final class MenuBarCombinedItem {
     private var lastSignature = ""
     private var actions: MenuBarSpacerActions?
 
+    /// What the face shows right now: the composed image, a signature
+    /// that changes only when a value does, and a spoken summary for the
+    /// mirror's segment.
+    func readout() -> (image: NSImage?, signature: String, label: String) {
+        let power = AlcovePowerMonitor.read()
+        let ssid = MenuBarSystemTriggerSource.currentSSID()
+        let focused = INFocusStatusCenter.default.authorizationStatus == .authorized
+            && (INFocusStatusCenter.default.focusStatus.isFocused ?? false)
+        let signature = "\(power.percent ?? -1)|\(power.charging)|\(ssid ?? "-")|\(focused)"
+        var parts: [String] = []
+        if power.hasBattery {
+            parts.append("Battery " + (power.percent.map { "\($0)%" } ?? "unknown")
+                         + (power.charging ? ", charging" : ""))
+        }
+        parts.append(ssid.map { "Wi-Fi \($0)" } ?? "Wi-Fi off or unnamed")
+        if focused { parts.append("Focus on") }
+        return (Self.faceImage(power: power, wifi: ssid != nil, focused: focused), signature,
+                parts.joined(separator: ", "))
+    }
+
     /// Install (once) or refresh the item's face. The image rebuilds
     /// only when the signature changes — battery %, Wi-Fi state,
-    /// Focus — so a 1 Hz reconcile costs a read, not a redraw.
-    func sync() {
+    /// Focus — so a refresh costs a read, not a redraw. `blank` hands
+    /// the face to the mirror.
+    func sync(blank: Bool = false) {
         if item == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             item.autosaveName = "com.jonathanreed.jrbar.menubar-combined"
@@ -157,14 +178,11 @@ final class MenuBarCombinedItem {
             self.item = item
             self.actions = actions
         }
-        let power = AlcovePowerMonitor.read()
-        let ssid = MenuBarSystemTriggerSource.currentSSID()
-        let focused = INFocusStatusCenter.default.authorizationStatus == .authorized
-            && (INFocusStatusCenter.default.focusStatus.isFocused ?? false)
-        let signature = "\(power.percent ?? -1)|\(power.charging)|\(ssid ?? "-")|\(focused)"
+        let read = readout()
+        let signature = read.signature + (blank ? "|blank" : "")
         guard signature != lastSignature else { return }
         lastSignature = signature
-        item?.button?.image = Self.faceImage(power: power, wifi: ssid != nil, focused: focused)
+        item?.button?.image = blank ? nil : read.image
         item?.button?.imagePosition = .imageOnly
         (popover?.contentViewController as? NSHostingController<MenuBarSystemPane>)?
             .rootView.model.refresh()
@@ -216,8 +234,18 @@ final class MenuBarCombinedItem {
         }
     }
 
+    /// The popover, anchored on `view` — the mirror's segment while it
+    /// carries the readout, the item's own button otherwise.
+    func toggle(relativeTo view: NSView) {
+        showPopover(relativeTo: view)
+    }
+
     private func toggle() {
         guard let item, let button = item.button else { return }
+        showPopover(relativeTo: button)
+    }
+
+    private func showPopover(relativeTo button: NSView) {
         if popover == nil {
             let popover = NSPopover()
             popover.behavior = .transient
@@ -235,6 +263,9 @@ final class MenuBarCombinedItem {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
+
+    /// Whether the popover is up — the mirror's highlight follows it.
+    var popoverShown: Bool { popover?.isShown ?? false }
 
     /// The item's face: battery gauge + percent when the machine has a
     /// battery, Wi-Fi when a network is joined, a moon while Focus is
@@ -299,6 +330,63 @@ final class MenuBarCombinedItem {
         case ..<88: return "battery.75percent"
         default: return "battery.100percent"
         }
+    }
+}
+
+/// The safety gate on the combined item's one risky write: Control
+/// Center's battery, Wi-Fi, Bluetooth, sound, Now Playing and Focus items
+/// are hidden only while the replacement face is verifiably drawn —
+/// otherwise both could vanish at once. The face has to stand for a
+/// settle window before the items hide, and a flip back to hidden waits
+/// out a minimum interval, so a flapping face never thrashes
+/// `killall ControlCenter`. Restoring waits only the settle window:
+/// your battery and Wi-Fi coming back is never throttled. Pure, so a
+/// test pins the timing.
+struct MenuBarDrawnGate: Equatable, Sendable {
+    /// Whether Control Center's items are hidden through the gate now.
+    private(set) var hidden = false
+    private var drawnSince: Date?
+    private var undrawnSince: Date?
+    private var lastHide: Date = .distantPast
+
+    /// How long the face must stand (or be gone) before the gate acts.
+    nonisolated static let settle: TimeInterval = 3
+    /// The least time between two hides.
+    nonisolated static let minHideInterval: TimeInterval = 10
+
+    /// One look at the face. Returns the new state when Control Center's
+    /// items should flip, nil when nothing changes. `wanted` off restores
+    /// at once — the person turned the item off.
+    mutating func step(wanted: Bool, drawn: Bool, now: Date) -> Bool? {
+        guard wanted else {
+            drawnSince = nil
+            undrawnSince = nil
+            guard hidden else { return nil }
+            hidden = false
+            return false
+        }
+        if drawn {
+            undrawnSince = nil
+            let since = drawnSince ?? now
+            drawnSince = since
+            guard !hidden, now.timeIntervalSince(since) >= Self.settle,
+                  now.timeIntervalSince(lastHide) >= Self.minHideInterval else { return nil }
+            hidden = true
+            lastHide = now
+            return true
+        }
+        drawnSince = nil
+        let since = undrawnSince ?? now
+        undrawnSince = since
+        guard hidden, now.timeIntervalSince(since) >= Self.settle else { return nil }
+        hidden = false
+        return false
+    }
+
+    /// The disable path: restore now, whatever the clocks say.
+    mutating func release() -> Bool {
+        defer { self = MenuBarDrawnGate() }
+        return hidden
     }
 }
 
