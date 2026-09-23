@@ -825,9 +825,7 @@ final class OverviewStore {
                 session: entry.id, approve: approve,
                 replyText: replyText, request: ask?.request)
             if reply.ok {
-                let decision = reply.result?["decision"]?.stringValue
-                    ?? (replyText != nil ? "reply" : (approve ? "approve" : "deny"))
-                report("Answer sent (\(decision))")
+                report(Self.answeredText(reply, approve: approve, replied: replyText != nil))
                 await load()
             } else {
                 report(reply.error?.message ?? "Answer refused", isError: true)
@@ -835,6 +833,13 @@ final class OverviewStore {
         } catch {
             report(Self.describe(error), isError: true)
         }
+    }
+
+    /// The status line for an answer that went out, with the route the
+    /// reply names — "Approved · sent through the agent's permission
+    /// hook", "Reply sent · typed into the terminal" — the panel's words.
+    nonisolated static func answeredText(_ reply: CoreReply, approve: Bool, replied: Bool) -> String {
+        replied ? AskAnswerLine.replied(reply) : AskAnswerLine.sent(approve ? .approve : .deny, reply: reply)
     }
 
     /// `dismiss_session`: acknowledge a live-but-going-nowhere row until

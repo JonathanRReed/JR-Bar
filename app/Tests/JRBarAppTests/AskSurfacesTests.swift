@@ -364,6 +364,17 @@ struct AskSurfacesTests {
         #expect(OverviewStore.startedText(nil, provider: "codex", cwd: "/tmp/x").hasPrefix("Started Codex at"))
     }
 
+    @Test("the Overview's status line names the route an answer took, as the panel's toast does")
+    func overviewAnswerLine() {
+        let hook = CoreReply(id: "1", ok: true, result: .object(["mechanism": .string("permission_hook"),
+                                                                 "decision": .string("approve")]))
+        #expect(OverviewStore.answeredText(hook, approve: true, replied: false)
+                == "Approved · sent through the agent's permission hook")
+        let typed = CoreReply(id: "2", ok: true, result: .object(["mechanism": .string("synthetic_text")]))
+        #expect(OverviewStore.answeredText(typed, approve: true, replied: true) == "Reply sent · typed into the terminal")
+        #expect(OverviewStore.answeredText(CoreReply(id: "3", ok: true), approve: false, replied: false) == "Denied")
+    }
+
     // MARK: Hook doctor
 
     @Test("the hook doctor's report reads per provider, and a missing permission hook asks for Repair")
