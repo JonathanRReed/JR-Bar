@@ -211,6 +211,29 @@ final class ScreenBarController {
     func crossfadeNextProgram() {
         crossfadeUntil = Date().addingTimeInterval(Self.unplugCrossfadeWindow)
     }
+
+    /// How long a level-only change eases for.
+    static let levelCrossfadeSeconds: CFTimeInterval = 0.6
+
+    /// Whether `new` is `old` with only its `brightness` lines changed —
+    /// the same steps, colours and timings at another level. Brightness
+    /// is global in the firmware, wherever the line sits, so the lines
+    /// are compared without it; blank lines and surrounding space never
+    /// count.
+    nonisolated static func onlyBrightnessChanged(from old: String, to new: String) -> Bool {
+        func split(_ text: String) -> (steps: [String], levels: [String]) {
+            var steps: [String] = []
+            var levels: [String] = []
+            for raw in text.split(omittingEmptySubsequences: true, whereSeparator: \.isNewline) {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                guard !line.isEmpty else { continue }
+                if line.lowercased().hasPrefix("brightness") { levels.append(line.lowercased()) } else { steps.append(line) }
+            }
+            return (steps, levels)
+        }
+        let before = split(old), after = split(new)
+        return !before.steps.isEmpty && before.steps == after.steps && before.levels != after.levels
+    }
     private let powerMonitor = AlcovePowerMonitor()
     private let audioMonitor = ScreenBarAudioMonitor()
     private var noticeMonitorsRunning = false
@@ -940,10 +963,17 @@ final class ScreenBarController {
             publishStatus()
             return
         }
+        let previousText = lastRawText
         lastRawText = text
-        if let until = crossfadeUntil {
+        if let until = crossfadeUntil, until > Date() {
             crossfadeUntil = nil
-            if until > Date() { view.crossfadeNextChange(over: Self.unplugCrossfadeSeconds) }
+            view.crossfadeNextChange(over: Self.unplugCrossfadeSeconds)
+        } else if Self.onlyBrightnessChanged(from: previousText, to: text) {
+            // A dimmer step (the panel's slider, idle dim, a Focus rule)
+            // rewrites the program with a new `brightness N` and nothing
+            // else; the band eases to the new level instead of jumping.
+            crossfadeUntil = nil
+            view.crossfadeNextChange(over: Self.levelCrossfadeSeconds)
         }
         // The firmware starts a new program from the colours currently showing.
         let now = CACurrentMediaTime()

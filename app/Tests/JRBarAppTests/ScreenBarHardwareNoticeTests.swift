@@ -112,6 +112,20 @@ struct ScreenBarHardwareNoticeTests {
                 "an emptied override file is not an unplug")
     }
 
+    @Test func aLevelOnlyChangeIsTheSameProgramAtAnotherBrightness() {
+        let bright = "brightness 200\n#FF9F0A 1.4s pulse\noff 400ms none\nrepeat"
+        let dim = "brightness 90\n#FF9F0A 1.4s pulse\noff 400ms none\nrepeat\n"
+        #expect(ScreenBarController.onlyBrightnessChanged(from: bright, to: dim))
+        // Brightness is global: where the line sits does not matter.
+        #expect(ScreenBarController.onlyBrightnessChanged(from: bright, to: "#FF9F0A 1.4s pulse\noff 400ms none\nrepeat\nBrightness 90"))
+        // No line is 255; adding one is a level change too.
+        #expect(ScreenBarController.onlyBrightnessChanged(from: "#FF9F0A 1.4s pulse\nrepeat", to: "brightness 64\n#FF9F0A 1.4s pulse\nrepeat"))
+        #expect(!ScreenBarController.onlyBrightnessChanged(from: bright, to: bright), "nothing changed")
+        #expect(!ScreenBarController.onlyBrightnessChanged(from: bright, to: "brightness 90\n#00FF66 1.4s pulse\noff 400ms none\nrepeat"),
+                "a new colour is a new program")
+        #expect(!ScreenBarController.onlyBrightnessChanged(from: "", to: dim), "the first program is not a dimmer step")
+    }
+
     @Test func anArmedCrossfadeIsUsedByTheNextChangeOnly() {
         let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
         view.relayout()
