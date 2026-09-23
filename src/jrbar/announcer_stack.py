@@ -236,6 +236,7 @@ ANNOUNCER_PRIORITY_BY_KIND: Final[dict[RequestKind, AnnouncerAlertPriority]] = {
     RequestKind.REVIEW: AnnouncerAlertPriority.REVIEW,
     RequestKind.INPUT: AnnouncerAlertPriority.INPUT,
     RequestKind.UNKNOWN: AnnouncerAlertPriority.UNKNOWN,
+    RequestKind.DIALOG: AnnouncerAlertPriority.INPUT,
 }
 _LEGACY_PRIORITY_BY_EVENT: Final[dict[str, AnnouncerAlertPriority]] = {
     "PermissionRequest": AnnouncerAlertPriority.PERMISSION,

@@ -198,7 +198,7 @@ struct FireConfettiIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try JRBarIntentBridge.run(.confetti)
+        try JRBarIntentBridge.run(.confetti())
         return .result()
     }
 }

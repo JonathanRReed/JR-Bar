@@ -844,6 +844,33 @@ def test_work_key_snooze_hides_quiet_until_one_common_exact_deadline__and_2_more
 
 
 
+def test_one_runs_quiet_never_hides_its_familys_shelf() -> None:
+    from jrbar.mailbox_preferences import MailboxSnoozeScope
+
+    shelf = _work_row(_work_key("family"), WorkLifecycle.ACTIVE, stable_order=0)
+    result = apply_mailbox_preferences(
+        _work_projection(in_progress=(shelf,)),
+        (
+            CanonicalMailboxPreference(
+                shelf.work_key,
+                MailboxPreferenceMode.PINNED,
+                0,
+                snoozed_at=NOW - 60.0,
+                snoozed_until=NOW + 600.0,
+                snooze_scope=MailboxSnoozeScope.RUN,
+            ),
+        ),
+        now=NOW,
+    )
+
+    assert isinstance(result, CanonicalMailboxPreferenceProjection)
+    assert _canonical_rows(result, MailboxSectionKind.IN_PROGRESS) == (shelf,)
+    assert result.next_wake_epoch is None
+    (retained,) = result.retained_preferences
+    assert retained.mode is MailboxPreferenceMode.PINNED
+    assert retained.snoozed_until is None, "the shelf reads no snooze of its own"
+
+
 def test_canonical_preference_dtos_expose_only_source_scoped_fields() -> None:
     assert tuple(field.name for field in fields(CanonicalMailboxPreference)) == (
         "work_key",
@@ -852,6 +879,8 @@ def test_canonical_preference_dtos_expose_only_source_scoped_fields() -> None:
         "snoozed_at",
         "snoozed_until",
         "last_visited_at",
+        # What the snooze quiets: the family, or one run's exact key.
+        "snooze_scope",
     )
     assert tuple(field.name for field in fields(CanonicalMailboxPreferenceProjection)) == (
         "projection",

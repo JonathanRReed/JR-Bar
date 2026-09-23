@@ -164,6 +164,8 @@ class ProviderEventName(str, Enum):
     SESSION_FINALIZE = "session_finalize"
     API_REQUEST_ERROR = "api_request_error"
     INTERRUPT = "interrupt"
+    ELICITATION = "elicitation"
+    ELICITATION_RESULT = "elicitation_result"
 
 
 class NotificationKind(str, Enum):
@@ -421,6 +423,29 @@ _API_REQUEST_ERROR = _rule(
     NextActor.PROVIDER,
     45,
 )
+# Claude Code's MCP elicitation: a server asks the owner for input through a
+# dialog Claude draws, mid tool call, keyed by its ``elicitation_id``. The
+# work waits on the user and the request is a live ask for the light,
+# escalation and the panel -- a DIALOG, so it is never offered an in-place
+# answer (JR-Bar cannot fill an MCP form), only the session to open.
+_ELICITATION = _rule(
+    ProviderEventName.ELICITATION,
+    WorkLifecycle.WAITING,
+    NextActor.USER,
+    73,
+    request_state=ProviderRequestState.LIVE,
+    request_kind=RequestKind.DIALOG,
+)
+# The owner accepted, declined or cancelled it: the same id resolves, and
+# the tool call carries on.
+_ELICITATION_RESULT = _rule(
+    ProviderEventName.ELICITATION_RESULT,
+    WorkLifecycle.ACTIVE,
+    NextActor.PROVIDER,
+    42,
+    request_state=ProviderRequestState.RESOLVED,
+    request_kind=RequestKind.DIALOG,
+)
 
 
 # These are complete static ingress tables. Native aliases are listed only for
@@ -458,6 +483,8 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "Stop": _STOP,
         "StopFailure": _STOP_FAILURE,
         "SessionEnd": _SESSION_END,
+        "Elicitation": _ELICITATION,
+        "ElicitationResult": _ELICITATION_RESULT,
     },
     "devin": {
         "SessionStart": _SESSION_START,
@@ -633,6 +660,12 @@ _NOTIFICATION_KINDS: Final[dict[str, dict[str, NotificationKind]]] = {
         "input_required": NotificationKind.INPUT_REQUIRED,
         "completed": NotificationKind.WORK_COMPLETED,
         "failed": NotificationKind.WORK_FAILED,
+        # An MCP server's form or link dialog, and a dialog of Claude's own
+        # (a teammate's setup, a computer-use action, a notice to accept):
+        # each waits on the owner, and none names a request to answer.
+        "elicitation_dialog": NotificationKind.INPUT_REQUIRED,
+        "elicitation_url_dialog": NotificationKind.INPUT_REQUIRED,
+        "agent_needs_input": NotificationKind.INPUT_REQUIRED,
     },
     "grok": {
         "permission_prompt": NotificationKind.PERMISSION_REQUEST,
@@ -683,6 +716,8 @@ _REQUEST_ID_FIELDS: Final = (
     "requestId",
     "permission_request_id",
     "permissionRequestId",
+    # Claude Code's MCP Elicitation / ElicitationResult pair.
+    "elicitation_id",
 )
 _SEQUENCE_FIELDS: Final = ("sequence", "event_sequence", "eventSequence")
 _NOTIFICATION_KIND_FIELDS: Final = ("notification_type", "notificationType")

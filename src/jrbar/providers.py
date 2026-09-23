@@ -78,6 +78,12 @@ CLAUDE_EVENTS = (
     # the error text. Without it a rate-limited turn read as a finished one.
     "StopFailure",
     "SessionEnd",
+    # An MCP server asking the owner for input (a form or a link) mid tool
+    # call, and the owner's answer: the ask's start and end, with the
+    # server's own name and question. The shim prints nothing, so Claude
+    # shows its own dialog exactly as before.
+    "Elicitation",
+    "ElicitationResult",
 )
 
 GROK_EVENTS = (

@@ -22,6 +22,20 @@ class MailboxPreferenceMode(str, Enum):
     PINNED = "pinned"
 
 
+class MailboxSnoozeScope(str, Enum):
+    """What a preference's snooze quiets.
+
+    ``FAMILY`` (the mailbox's own snooze) sits on the family's root key and
+    quiets every session in the family. ``RUN`` ("Quiet this run") sits on
+    one row's exact key -- a main session or one of its workers -- and
+    quiets that run alone; the family's shelf and its other runs keep their
+    voice.
+    """
+
+    FAMILY = "family"
+    RUN = "run"
+
+
 @dataclass(frozen=True, slots=True)
 class MailboxPreference:
     work_key: WorkKey
@@ -30,6 +44,7 @@ class MailboxPreference:
     snoozed_at: float | None = None
     snoozed_until: float | None = None
     last_visited_at: float | None = None
+    snooze_scope: MailboxSnoozeScope = MailboxSnoozeScope.FAMILY
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +286,9 @@ def _normalize_work_preference(
         or snoozed_until is None
         or snoozed_until <= snoozed_at
         or snoozed_until > now + _MAX_SNOOZE_SECONDS
+        # A shelf is a family: one run's own quiet (snooze_scope) never
+        # hides it, or its other runs would vanish with it.
+        or raw.snooze_scope is MailboxSnoozeScope.RUN
     ):
         snoozed_at = None
         snoozed_until = None

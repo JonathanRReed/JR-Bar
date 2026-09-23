@@ -109,7 +109,8 @@ class AgentStatus:
         """
         return (
             self.mode == AgentMode.WAITING_FOR_INPUT
-            and self.event_name in ("PermissionRequest", "Notification")
+            # Elicitation: an MCP server asking through Claude's dialog.
+            and self.event_name in ("PermissionRequest", "Notification", "Elicitation")
         )
 
     @property

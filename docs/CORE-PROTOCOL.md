@@ -185,10 +185,11 @@ Vocabulary:
   reads `ended`.
 
   `next_actor` comes from canonical operator state (`user`, `provider`)
-  with a mode-based fallback. `snoozed_until` is the family mailbox's
-  active snooze epoch for this session (a `snooze` command covers the
-  family, not the row), null while none is in effect -- the panel reads
-  it to say "Snoozed until…" and to offer Unsnooze.
+  with a mode-based fallback. `snoozed_until` is the mailbox's active
+  snooze epoch for this session (a family `snooze` covers the family, not
+  the row; a `scope: "run"` snooze covers this row alone; the later
+  deadline wins), null while none is in effect -- the panel reads it to
+  say "Snoozed until…" and to offer Unsnooze.
 - `sessions` is what the panel should be looking at, not everything the
   daemon remembers (`completion_visibility`): live sessions -- working,
   tool running, waiting, blocked, idle-ready -- while they are still being
@@ -202,8 +203,20 @@ Vocabulary:
   An acknowledgement is bound to the event it acknowledged, so a cleared
   session that starts working again is listed again straight away.
 - `ask.kind` is the canonical request kind (`permission`, `input`,
-  `approval`, `review`) with a fallback from the hook event; `summary` is
-  the hook's message or tool name; `opened_at` the request's opening epoch.
+  `approval`, `review`, `dialog`) with a fallback from the hook event;
+  `summary` is the hook's message or tool name; `opened_at` the request's
+  opening epoch. `dialog` is a form the agent draws that only the owner can
+  fill -- Claude Code's MCP `Elicitation` hook (an MCP server asking for
+  input, or for a link to be opened), keyed by its `elicitation_id` and
+  resolved by the matching `ElicitationResult` (or the turn ending). It
+  lights, escalates and holds a card like any ask, and is never
+  `answerable` or `replyable`: the panel opens the session instead. Claude's
+  `Notification` types `elicitation_dialog`, `elicitation_url_dialog` and
+  `agent_needs_input` (a background agent or teammate blocked on the owner,
+  a computer-use action to allow) put the session in `waiting` with
+  `next_actor: "user"` whatever their words -- they name no request, so
+  they carry no card of their own -- and never count as the source going
+  quiet.
   `answerable` means the `answer_ask` chain can actually deliver a decision
   to this session -- the provider's negotiated contract declares the
   `answering` capability, the invocation binds the reviewed local surface,
@@ -728,8 +741,17 @@ happened in the last two minutes -- history re-read after a restart
 never fires it: `count` is the step just reached (the latest, when one
 batch crossed several), `reached` every step this batch crossed,
 `next_count` the step above it (absent at the top of the ladder), `label`
-"Completion milestone" and `detail` "50 finished". The lights' own cue and
-the toys (Confetti, the Aquarium) celebrate the same number from it.
+"Completion milestone" and `detail` "50 finished"; `provider` names the
+agent whose completion crossed the step. The lights' own cue and
+the toys (Confetti, the Aquarium) celebrate the same number from it:
+Confetti fires it under its Milestones trigger, in that provider's colours.
+`confetti` goes out once per `confetti` command the daemon journals (a
+script, a hook or CI asking for a burst): `session` and `provider` when the
+caller named a watched session or a provider -- the burst wears that
+provider's colours -- `label` the session's name and `detail` the caller's
+`reason` ("tests passed"). It is a request, not a trigger: the app's
+Confetti toy fires it only while the toy is on, minds the room, and drops a
+repeat inside its cooldown.
 
 ### settings
 Full settings document, sent on connect and after every change from any
@@ -877,7 +899,7 @@ the main thread). Unknown args are ignored.
 | --- | --- | --- |
 | `open_session` | session, action? | A session still running in a terminal is **raised, not resumed** (`answer_surfaces.py`): its tmux pane (`list-panes -a` matched by the session's tty, then `select-window`/`select-pane`, switching a lone client to that tmux session), its Terminal.app or iTerm2 tab (selected by tty over Apple events), or its Ghostty terminal (`focus` on the surface recorded when the session started, else the only terminal in the session's working directory, else the only one whose title carries the session's name; a tie brings Ghostty forward and never guesses); any other host app is activated. Reply `{session, activated, origin, raised: "pane"\|"tab"\|"terminal"\|"app", app, bundle_id, detail}`. Opening also lets a request the decide lane holds for that session fall through, so a Codex prompt waiting behind the hook appears at once. A live session JR-Bar cannot find refuses `not_found` ("…still running, but JR-Bar can't find its window; nothing new was started.") instead of starting a second process on it. An ended CLI session whose open is a terminal resume resumes **in the terminal it ran in** (recorded at its SessionStart), not whichever app is in front: a new tab in Ghostty's front window at the session's directory with the resume command typed into the owner's own shell (a new window through the reviewed launch plan when Ghostty refuses the Apple event), or a new Terminal.app / iTerm2 window -- `raised: "new_tab"\|"new_window"`, `detail: "resumed"`. A remote row, a session hosted by its provider's desktop app, an explicit `action` of `app`/`vscode`, or a Clicks-open / provider-profile choice of either keeps the controller's `open_session` (provider URL, or `cd <cwd> && <cli> --resume <id>` in a terminal): `{session, activated, origin}`. `action: "raise"` asks for the live path explicitly. |
 | `answer_ask` | session, decision (`approve`/`deny`, or `always` for a held request that offers it, or `answer` for a held question), answers (with `answer` only: `{<question text>: <label>}` for every question in `ask.decision.choices`, a list of labels for a `multi` one), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | A request the decide lane holds (`ask.decision` non-null) is answered first, through the agent's own `PermissionRequest` hook: `{session, decision, answered, delivered, code: "sent", message, confirmation: "provider_pending", mechanism: "permission_hook"}` -- see "The decide lane" below. Anything else is answered **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- kitty, WezTerm, Alacritty have no such call; Ghostty proves its focused terminal by it being the surface recorded at the session's SessionStart, and a session with no recorded surface stays unproven -- the only terminal in the session's directory is not proof, since a plain shell the owner opened there looks the same) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is `focused_tab_tty` (the terminal named the focused tab and it is this session's) or, in Ghostty, `recorded_surface` (its focused terminal is the one the session started in, still in the session's directory). See the refusals below. |
-| `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
+| `snooze` | session or `all`, seconds, scope (`family`, the default, or `run`) | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until, scope: "family"}`. `scope: "run"` ("Quiet this run") quiets that one row instead -- a main session or a single worker, on its exact work key (`snooze_scope: "run"` in `mailbox-preferences.json`), for exactly `seconds` (a week at most) -- so quieting a sub-agent never silences the session that spawned it, nor its siblings, and the family's shelf stays. It needs a named session (`all` is `invalid_args`) whose row has a work key (else `unsupported`); `seconds: 0` lifts it. `{sessions: [id], until, scope: "run"}`, `until` being whatever now quiets the row (its own deadline, or the family snooze already in force on that key, which a run snooze never replaces since that would wake the rest of the family; null when nothing does). Either way a live ask still breaks through, and the row's `snoozed_until` is the later of its family's deadline and its own. A family unsnooze of a named session (or `all`) also lifts that row's own run snooze, so Unsnooze always clears what the row shows. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
 | `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. |
@@ -897,6 +919,7 @@ the main thread). Unknown args are ignored.
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
+| `confetti` | session?, provider?, reason? | A burst asked for from outside JR-Bar -- `jrbar confetti [--session ID \| --provider NAME \| --from-hook] [--why TEXT]`, a Stop hook, `make test && …`, CI (`confetti_requests.py`). `session` is the daemon's id (`claude:session:…`) or the agent's own (`session_id` from its hook payload, which names the session's main row before any worker); `provider` (`[a-z][a-z0-9._-]{0,31}`) wins over the session's own; `reason` is one printable line, at most 80 chars. Journals one `confetti` event (see event) and replies `{sent: true, coalesced: false, event, cursor, session, provider, unmatched}`. The daemon only states the fact: the app's Confetti toy fires it when the toy is on and the room is clear, with its own cooldown. A second ask inside 3 s (the app's cooldown) is answered `{sent: false, coalesced: true}` and never journaled, so a loop in a hook cannot evict the events a reconnecting app replays. A named session nobody watches still celebrates, in the Toys colour: `session: null`, `unmatched: <the id>`. Bad args are `invalid_args`. |
 | `hold_awake` | exactly one of `seconds` (> 0), `until` (epoch), `until_time` (a local `HH:MM`, the next one, resolved in the Mac's zone so "until 08:00" survives a daylight-saving night), `until_agents_idle: true` (+ optional `sessions[]`), `indefinite: true`; `display` (default false); `source` (a short word, default `app`) | The person's keep-awake lease, the one hold every surface shares (the notch chip, a deck key, a CLI verb). It replaces any earlier lease, lasts at most 24 h (an agents lease: until none of its sessions is working or waiting on the person, backstop 12 h; without `sessions` it waits on every main session running now), holds the display too with `display: true` (the screen will not lock), outranks the agent-only switches (`agent_keep_awake_enabled`, `keep_awake_on_battery`) and survives a daemon restart. It yields -- never ends -- to heat and to the low-battery floor (`state.power.hold.suspended`). `seconds: 0` ends it, like `quiet`. `{lease, hold}`; `refused` "No agent is working right now." for an agents lease with nothing to wait on, `invalid_args` otherwise. |
 | `release_awake` | | Ends the person's lease (the agent hold keeps its own switch). `{ended, hold}`; `ended: false` when no lease was in force. |
 | `session_energy` | | Which agent session is keeping the CPU busy -- the battery reading no battery app can make (`jrbar.session_energy`). Each live main session's process (the pid its hook recorded, still running under the same start time) and every process under it -- the builds, tests and servers its tools started -- billed to the nearest session above it, so a session started from another's shell is never counted twice; shared-host providers are never billed. `{sampled_at, window_seconds, sessions[{session, provider, cpu_percent, cpu_seconds, processes}], total_percent, heaviest}`: `cpu_percent` is Activity Monitor's (100 is one core fully busy) averaged over `window_seconds` -- the time since the previous ask when that was 1.5 s to 15 min ago, else a 1.5 s window the command waits for -- and null for a session whose pid the earlier sample did not see; heaviest first; `heaviest` is the top session at 5 % or more, else null. One `ps` fork per sample and nothing sampled in the background; no command line or argument is read. Socket thread. |
@@ -941,9 +964,10 @@ the main thread). Unknown args are ignored.
 | `list_scene_packs` | | `{packs[{id, name, scenes[], installed}]}` — the installed Scene packs as the `ScenePackSummary` the app decodes; `scenes` lists the scene names each pack overrides. |
 | `import_scene_pack` | path, update? | Validates the pack file first (`preview_source`, so nothing writes before the plan exists — a version-1 pack is migrated in memory, `invalid_pack` when the validator refuses it), then `ScenePackStore.install` (or `update` with `update: true`). `{pack_id, name, scenes[], installed, migrated, status}`; `conflict` when the pack id is installed and no update was asked for. Scene packs are data-only, network-free and bounded, must declare reduced-motion / high-contrast / non-colour-cue support, and may only name the known scenes (`focus`, `calm`, `night`, `demo`, `travel`, `dnd`). |
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
-| `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. |
+| `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. The same server carries `GET /asks.json` and `POST /answer` (see "Answering from serve" below), which act only while `serve_answer_enabled` is on. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
 | `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask the decide lane holds -- in any terminal, frontmost or not -- or a live ask whose terminal or origin app is frontmost, the press approves it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Control Center (⌘K)."; `input_check` while input check is on. |
+| `deck_answer` | index 0…12, decision (`approve`, `deny`, `always`, `answer`), answers? (with `answer`), request?, command_id? | An explicit answer from a session key -- the Rail's Deny, Always allow (from its own button) or a picked choice, a Stream Deck key through serve's `/answer` -- where a press can only approve. The key's session is answered through `answer_ask` with `only_if_frontmost: true`: the same fences, command journal and decide lane (`always` and `answer` only while the lane holds the agent's own prompt), so a key can never do what the panel's own buttons could not. Never falls back to revealing: a key whose session has no live ask refuses `not_found`. `{index, identity, session, action: "answer_ask", …the answer_ask receipt}`. `invalid_args` for another decision or an index past the session keys; `not_found` for an empty or reserved key; `input_check` while input check is on. Runs on the socket thread. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
 | `deck_bank` | delta | Steps the bank, wrapping. `{index, count}`. |
 | `deck_scope` | delta | Steps the board scope through `automatic` plus the configured provider scopes, wrapping (what the `next_scope` / `previous_scope` aux actions run). `{scope, scopes}`. |
@@ -1059,6 +1083,45 @@ hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …"),
 with no `choices` or with nothing held) and `invalid_args` (`answers` that
 do not pick from the offered options for every question). A request the lane
 does not hold goes through the checks above unchanged.
+
+### Answering from serve
+
+A Stream Deck key (or a script) can answer through the loopback endpoint,
+on the one answer path the panel uses (`serve_answers.py`). Both routes are
+bearer-authenticated like `/status.json` -- never anonymous, whatever
+`--allow-anonymous-status` says -- and act only while
+`serve_answer_enabled` is on (off by default; separate from
+`serve_enabled`, since reading the fleet and answering for the owner are
+different grants). The daemon's own server reads the switch on every
+request; a standalone `jrbar serve --allow-answers` reaches the daemon over
+`core.sock` and reads the same switch. Its answer waits up to 12 s for the
+reply -- past `answer_ask`'s own 6 s budget and the hops to the main
+thread -- so a slow focus check is never reported as an unreachable monitor
+while the answer is still delivered.
+
+- `GET /asks.json` → `{ok: true, asks: [{session, provider, label, slot,
+  kind, request, opened_at, preview, risk, decisions, choices}]}`: what is
+  waiting, the deck `slot` (1-13, the current bank's key; null when none)
+  showing it, one bounded line of what it wants, and the `decisions` an
+  answer may carry -- `approve`/`deny` only while the ask is `answerable`,
+  `always` only when the agent offered a rule to remember, `answer` only
+  for a held question (`choices`); once the decide lane has `decided`, the
+  hold is spent and neither `always` nor `answer` (nor its `choices`) is
+  offered.
+- `POST /answer` names one `session` (the daemon's id) or one `slot` and an
+  explicit `decision`, in the query string (`/answer?slot=2&decision=deny`,
+  for a key that can only send a URL) or a JSON object body (which wins
+  where both name a field); `answers` (an object, JSON only) goes with
+  `answer`, `request` pins the ask. A session runs `answer_ask`
+  (`only_if_frontmost: true`), a slot `deck_answer`. `200 {ok: true,
+  result: {session, decision, answered, delivered, mechanism, code,
+  message, confirmation}}` -- never the host's pid, tty or window
+  evidence. Refusals are `{ok: false, error: {code, message}}` with the
+  answer path's own code: `400` `invalid_args`, `401` without the bearer
+  token, `403` `answering_off`, `404` `not_found`, `413` for a body over
+  16 KiB, `503` when the monitor is unreachable, `500` `internal` for a
+  failure on the answer path itself, `409` for everything else
+  (`stale_ask`, `stale_request`, `unsupported`, `not_frontmost`, `busy`, …).
 
 ### subscribe
 Optional; protocol 1 always sends everything. Reserved.

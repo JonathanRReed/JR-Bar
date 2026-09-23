@@ -94,6 +94,31 @@ struct ConfettiTriggerPolicyTests {
         #expect(fire?.reason == .sessionCompleted && fire?.provider == "claude")
     }
 
+    @Test("an odometer milestone fires under the Milestones switch, once per crossing")
+    func odometerMilestone() throws {
+        let data = Data(#"{"id":"ev-4","kind":"milestone","provider":"codex","label":"Completion milestone","detail":"50 finished","count":50,"reached":[25,50],"next_count":100,"cursor":"s1:ev-4"}"#.utf8)
+        let event = try JSONDecoder().decode(CoreEvent.self, from: data)
+        #expect(event.count == 50)
+        #expect(ConfettiTriggerPolicy.eventFire(event, settings: Self.settings()) == nil,
+                "off by default, like every trigger after the weekly one")
+        var on = Self.settings { $0.triggers.milestones = true }
+        let fire = try #require(ConfettiTriggerPolicy.eventFire(event, settings: on))
+        #expect(fire.reason == .milestone && fire.provider == "codex" && fire.key == "event:s1:ev-4")
+        on.noteFired(fire.key)
+        #expect(ConfettiTriggerPolicy.eventFire(event, settings: on) == nil, "a replayed crossing never fires twice")
+        // Completions alone never earn it: that is the Completed trigger's.
+        let completed = CoreEvent(id: "ev-5", kind: "completed", provider: "codex")
+        #expect(ConfettiTriggerPolicy.eventFire(completed, settings: on) == nil)
+    }
+
+    @Test("an outside confetti request is the toy's to judge, never a trigger")
+    func requestIsNotATrigger() {
+        var everything = Self.settings { $0.triggers.milestones = true }
+        everything.triggers.sessionCompleted = true
+        #expect(ConfettiTriggerPolicy.eventFire(
+            CoreEvent(id: "c-1", kind: "confetti", provider: "claude"), settings: everything) == nil)
+    }
+
     @Test("kinds the toy never asked about stay quiet")
     func otherKinds() {
         var everything = ConfettiSettings()

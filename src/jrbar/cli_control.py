@@ -1,6 +1,6 @@
 """Control verbs for the running JR-Bar: ``jrbar status | quiet | snooze |
-set | get`` over the core socket, and ``jrbar toggle | awake | open`` through
-the app's ``jrbar://`` links.
+set | get | confetti`` over the core socket, and ``jrbar toggle | awake |
+open`` through the app's ``jrbar://`` links.
 
 The install and diagnose commands already existed; nothing let a script,
 a Raycast Script Command, an Alfred workflow, cron or a Makefile *drive*
@@ -29,7 +29,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
-VERBS = frozenset({"status", "quiet", "snooze", "set", "get", "toggle", "awake", "deepwork", "open"})
+VERBS = frozenset(
+    {"status", "quiet", "snooze", "set", "get", "confetti", "toggle", "awake", "deepwork", "open"}
+)
 
 QUIET_MODES = {
     "pause": "pause",
@@ -58,6 +60,8 @@ TOGGLE_NAMES = (
 
 MAX_SECONDS = 86_400
 EXIT_NO_CORE = 3
+#: A hook's JSON on stdin is a few kilobytes; anything past this is not one.
+MAX_HOOK_PAYLOAD_BYTES = 1 << 20
 
 _DURATION_PART = re.compile(r"(\d+)([smhd])")
 _CLOCK = re.compile(r"(\d{1,2})(?::(\d{2}))?(am|pm|a|p)?")
@@ -65,11 +69,13 @@ _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86_400}
 
 
 class ControlError(Exception):
-    """A refusal to report, with the exit status it deserves."""
+    """A refusal to report, with the exit status it deserves -- and, for a
+    command the daemon refused, the daemon's own error code."""
 
-    def __init__(self, message: str, status: int = 1) -> None:
+    def __init__(self, message: str, status: int = 1, *, code: str | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.code = code
 
 
 def parse_duration(raw: str) -> int:
@@ -236,7 +242,8 @@ class CoreConnection:
             if reply.get("ok") is False:
                 error = reply.get("error") or {}
                 message = error.get("message") or error.get("code") or "refused"
-                raise ControlError(f"{name}: {message}", 1)
+                code = error.get("code") if isinstance(error.get("code"), str) else None
+                raise ControlError(f"{name}: {message}", 1, code=code)
             result = reply.get("result")
             return result if isinstance(result, dict) else {}
         raise ControlError(f"no reply to {name}", 1)  # pragma: no cover
@@ -366,6 +373,62 @@ def cmd_get(args: argparse.Namespace, connect: Callable[[], CoreConnection]) -> 
     return 0
 
 
+def hook_session(stream: Any) -> str:
+    """The session a hook's JSON payload on stdin names (``session_id``,
+    or the camel-case spelling some agents use)."""
+    raw = stream.read(MAX_HOOK_PAYLOAD_BYTES + 1)
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    if len(raw) > MAX_HOOK_PAYLOAD_BYTES:
+        raise ControlError("the hook payload on stdin is too large", 2)
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        raise ControlError("--from-hook reads the hook's JSON on stdin; none arrived", 2) from None
+    session = payload.get("session_id") or payload.get("sessionId") if isinstance(payload, dict) else None
+    if not isinstance(session, str) or not session.strip():
+        raise ControlError("the hook payload names no session_id", 2)
+    return session.strip()
+
+
+def cmd_confetti(
+    args: argparse.Namespace,
+    connect: Callable[[], CoreConnection],
+    stdin: Any = None,
+) -> int:
+    """Ask for a burst. The daemon journals it in the named session's
+    colours; the app's Confetti toy fires it when it is on and the room is
+    clear. ``--from-hook`` never fails the hook that runs it: a celebration
+    must not cost an agent its turn."""
+    try:
+        session = hook_session(stdin if stdin is not None else sys.stdin) if args.from_hook else args.session
+        body: dict[str, Any] = {}
+        if session:
+            body["session"] = session
+        if args.provider:
+            body["provider"] = args.provider
+        if args.why:
+            body["reason"] = args.why
+        with connect() as core:
+            result = core.command("confetti", body)
+    except ControlError as exc:
+        if args.from_hook:
+            print(f"jrbar confetti: {exc}", file=sys.stderr)
+            return 0
+        raise
+    if result.get("unmatched"):
+        print(
+            f"jrbar confetti: no watched session is {result['unmatched']!r}; the burst wears the Toys colour",
+            file=sys.stderr,
+        )
+    if result.get("coalesced"):
+        print("confetti: one went out in the last few seconds; this one joins it")
+    else:
+        colours = f" in {result['provider']} colours" if result.get("provider") else ""
+        print(f"confetti requested{colours} (it fires when the Confetti toy is on)")
+    return 0
+
+
 def cmd_toggle(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
     query = "" if args.state == "flip" else "?" + urlencode({"on": "1" if args.state == "on" else "0"})
     opener(f"jrbar://toggle/{quote(args.name)}{query}")
@@ -430,6 +493,19 @@ def build_parser() -> argparse.ArgumentParser:
     getter = commands.add_parser("get", help="Read one monitor setting by dot-path.")
     getter.add_argument("path")
 
+    confetti = commands.add_parser(
+        "confetti", help="Ask for a burst of confetti (fires while the Confetti toy is on)."
+    )
+    target = confetti.add_mutually_exclusive_group()
+    target.add_argument("--session", help="wear this session's colours: its id in jrbar status, or the agent's own")
+    target.add_argument("--provider", help="wear this provider's colours: claude, codex, gemini, ...")
+    target.add_argument(
+        "--from-hook",
+        action="store_true",
+        help="read the session from the hook JSON on stdin (for a Stop hook); never fails the hook",
+    )
+    confetti.add_argument("--why", help="what earned it, for History and Event Replay")
+
     toggle = commands.add_parser("toggle", help="Flip or set a quick toggle in the app.")
     toggle.add_argument("name", help=", ".join(TOGGLE_NAMES))
     toggle.add_argument("state", nargs="?", choices=("flip", "on", "off"), default="flip")
@@ -471,6 +547,8 @@ def main(
             return cmd_set(args, connect)
         if args.command == "get":
             return cmd_get(args, connect)
+        if args.command == "confetti":
+            return cmd_confetti(args, connect)
         if args.command == "toggle":
             return cmd_toggle(args, link)
         if args.command == "awake":

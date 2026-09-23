@@ -383,6 +383,19 @@ public final class CoreModel {
         post("snooze", args: ["session": .string(session ?? "all"), "seconds": .number(Double(seconds))])
     }
 
+    /// "Quiet this run": `snooze {session, seconds, scope: "run"}` quiets
+    /// that one row — a main session or a single worker — for exactly
+    /// `seconds` (a live ask still gets through), never its whole family
+    /// the way `snooze` does. `seconds: 0` lifts it.
+    public func quietRun(session: String, seconds: Int) {
+        post("snooze", args: Self.quietRunArgs(session: session, seconds: seconds))
+    }
+
+    /// The `snooze` args `quietRun` sends — the protocol's `scope` field.
+    public nonisolated static func quietRunArgs(session: String, seconds: Int) -> [String: JSONValue] {
+        ["session": .string(session), "seconds": .number(Double(max(0, seconds))), "scope": .string("run")]
+    }
+
     /// A validated settings write; the daemon echoes a new `settings`
     /// document and replies with its generation.
     @discardableResult
@@ -728,6 +741,27 @@ public final class CoreModel {
     @discardableResult
     public func deckPress(index: Int) async throws -> CoreReply {
         try await send("deck_press", args: ["index": .number(Double(index))])
+    }
+
+    /// `deck_answer {index, decision, answers?, request?}`: an explicit answer
+    /// from a session key 0..12 — the Rail's Deny, Always allow (its own
+    /// button) or a picked choice — through `answer_ask`, never a reveal in
+    /// its place. `decision` is `approve`, `deny`, `always` or `answer`
+    /// (with `answers: {<question>: <label>}`); `request` pins the ask.
+    @discardableResult
+    public func deckAnswer(index: Int, decision: String, answers: [String: JSONValue]? = nil,
+                           request: String? = nil) async throws -> CoreReply {
+        try await send("deck_answer", args: Self.deckAnswerArgs(index: index, decision: decision,
+                                                                answers: answers, request: request))
+    }
+
+    /// The `deck_answer` args `deckAnswer` sends.
+    public nonisolated static func deckAnswerArgs(index: Int, decision: String, answers: [String: JSONValue]? = nil,
+                                                  request: String? = nil) -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["index": .number(Double(index)), "decision": .string(decision)]
+        if let answers { args["answers"] = .object(answers) }
+        if let request { args["request"] = .string(request) }
+        return args
     }
 
     /// `deck_pin {index}`: toggles the pin on the identity at that key. Pins

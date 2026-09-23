@@ -42,6 +42,7 @@ REAL_THREAD = threading.Thread
 DECK_COMMANDS = {
     "deck_press", "deck_pin", "deck_bank", "deck_scope", "deck_rail", "deck_clear_absent", "deck_plan_keymap",
     "deck_apply_keymap", "deck_restore_keymap", "deck_approve_device", "deck_check_input", "deck_set_settings",
+    "deck_answer",
 }
 SERIAL = "D0CF130481EC"
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
@@ -355,6 +356,56 @@ def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.Mon
     with pytest.raises(CommandError) as reserved:
         controller._core_dispatch("deck_press", {"index": ask_key})
     assert (reserved.value.code, reserved.value.message) == ("not_found", "Reserved: session not observed.")
+
+
+def test_deck_answer_says_deny_always_or_a_choice_through_answer_ask(
+    headless, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    """The Rail's (and a Stream Deck key's) explicit answer: the slot's
+    session through ``answer_ask`` with the verb it names, and never a
+    reveal in its place."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    live = [_status("session-a", AgentMode.WAITING_FOR_INPUT), _status("session-b")]
+    _board_with(controller, live)
+    slot_of = {slot["session"]: slot["index"] for slot in controller._core_build_state()["deck"]["slots"] if slot["session"]}
+    ask_key, work_key = slot_of[live[0].agent_id], slot_of[live[1].agent_id]
+    answers: list[dict] = []
+
+    def answer(self, args):
+        answers.append(args)
+        if args["session"].endswith("session-b"):
+            raise CommandError("not_found", "no live ask for that session")
+        return {"session": args["session"], "decision": args["decision"], "answered": True}
+
+    monkeypatch.setattr(core_runtime, "_cmd_answer_ask", answer)
+
+    reply = controller._core_dispatch("deck_answer", {"index": ask_key, "decision": "Deny"})
+    assert reply["action"] == "answer_ask" and reply["decision"] == "deny" and reply["session"] == live[0].agent_id
+    assert answers[-1] == {"session": live[0].agent_id, "decision": "deny", "only_if_frontmost": True}
+    controller._core_dispatch(
+        "deck_answer",
+        {"index": ask_key, "decision": "answer", "answers": {"Which?": "a"}, "request": "request:v1:x"},
+    )
+    assert answers[-1] == {"session": live[0].agent_id, "decision": "answer", "only_if_frontmost": True,
+                           "answers": {"Which?": "a"}, "request": "request:v1:x"}
+    # No ask on that key: refused, never revealed.
+    with pytest.raises(CommandError) as quiet:
+        controller._core_dispatch("deck_answer", {"index": work_key, "decision": "always"})
+    assert quiet.value.code == "not_found"
+    for args, code in (
+        ({"index": ask_key}, "invalid_args"),
+        ({"index": ask_key, "decision": "maybe"}, "invalid_args"),
+        ({"index": 13, "decision": "approve"}, "invalid_args"),
+        ({"index": 5, "decision": "approve"}, "not_found"),
+    ):
+        with pytest.raises(CommandError) as refused:
+            controller._core_dispatch("deck_answer", args)
+        assert refused.value.code == code, args
+    assert controller._core_dispatch("deck_check_input", {"enabled": True}) == {"enabled": True}
+    with pytest.raises(CommandError) as paused:
+        controller._core_dispatch("deck_answer", {"index": ask_key, "decision": "deny"})
+    assert paused.value.code == "input_check"
 
 
 def test_physical_inputs_become_events_and_state__and_1_more(headless) -> None:  # noqa: F811

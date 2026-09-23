@@ -822,6 +822,31 @@ def _cmd_answer_ask(self, args):
     return result
 
 
+#: "Quiet this run" reaches next morning at most; a week is past any use.
+MAX_RUN_SNOOZE_SECONDS: Final = 7 * 86_400
+
+
+def _set_run_snooze(self, status, seconds: float) -> bool:
+    """One run's own snooze on the mailbox (snooze_scope.py): quiet its
+    exact key for ``seconds``, or lift it (``seconds <= 0``). True when the
+    stored preferences changed."""
+    from .snooze_scope import with_run_snooze, without_run_snooze
+
+    work_key = getattr(status, "work_key", None)
+    if work_key is None:
+        return False
+    now = time.time()
+    preferences = tuple(getattr(self, "mailbox_preferences", ()) or ())
+    if seconds > 0:
+        updated = with_run_snooze(preferences, work_key, now=now, until=now + seconds)
+    else:
+        updated = without_run_snooze(preferences, work_key, now=now)
+    if updated == preferences:
+        return False
+    self._publish_mailbox_preferences(updated)
+    return True
+
+
 @command("snooze")
 def _cmd_snooze(self, args):
     from .agent_browser_window import AgentBrowserActionPayload
@@ -829,9 +854,34 @@ def _cmd_snooze(self, args):
 
     seconds = float(args.get("seconds") or 0)
     session = args.get("session") or "all"
+    scope = args.get("scope") or "family"
+    if scope not in ("family", "run"):
+        raise CommandError("invalid_args", "scope must be family or run")
     state = getattr(self, "current_operator_state", None)
     if state is None:
         raise CommandError("not_found", "no operator state yet")
+    if scope == "run":
+        # "Quiet this run": that row alone, never its family -- the exact
+        # length asked for, not the family snooze's presets.
+        if session == "all":
+            raise CommandError("invalid_args", "a run snooze names one session")
+        if seconds > MAX_RUN_SNOOZE_SECONDS:
+            raise CommandError("invalid_args", "a run stays quiet for a week at most")
+        status = _find_status(self, session)
+        if getattr(status, "work_key", None) is None:
+            raise CommandError("unsupported", "that row has no run of its own to quiet")
+        try:
+            _set_run_snooze(self, status, seconds)
+        except (OSError, ValueError) as exc:
+            raise CommandError("send_failed", f"could not save the snooze: {exc}") from None
+        self.refresh_(None)
+        # What quiets the row now: its own deadline, or the family snooze
+        # already in force that a run's never replaces.
+        return {
+            "sessions": [status.agent_id],
+            "until": self._core_snoozed_untils([status]).get(status.agent_id),
+            "scope": "run",
+        }
     if session == "all":
         if seconds <= 0:
             # Unsnooze-all means every family actually snoozed — quiet
@@ -850,6 +900,13 @@ def _cmd_snooze(self, args):
         if work_key is None:
             continue
         if seconds <= 0:
+            # Unsnooze lifts whatever quiets the row: its family's snooze
+            # and its own run snooze alike.
+            try:
+                if _set_run_snooze(self, status, 0):
+                    applied.append(status.agent_id)
+            except Exception as exc:
+                self._core_log(f"unsnooze failed for {status.agent_id}: {exc}")
             payload = AgentBrowserActionPayload(work_key, state.generation, OperatorActionKind.UNSNOOZE)
         else:
             preset = "15-minutes" if seconds <= 900 else "1-hour" if seconds <= 3600 else "tomorrow"
@@ -857,12 +914,12 @@ def _cmd_snooze(self, args):
                 work_key, state.generation, OperatorActionKind.SNOOZE, snooze_preset=preset
             )
         try:
-            if self._apply_preference_action(payload):
+            if self._apply_preference_action(payload) and status.agent_id not in applied:
                 applied.append(status.agent_id)
         except Exception as exc:
             self._core_log(f"snooze failed for {status.agent_id}: {exc}")
     self.refresh_(None)
-    return {"sessions": applied, "until": (time.time() + seconds) if seconds > 0 else None}
+    return {"sessions": applied, "until": (time.time() + seconds) if seconds > 0 else None, "scope": "family"}
 
 
 @command("clear_completed")
@@ -3120,6 +3177,35 @@ def _cmd_mark_history_seen(self, args):
     return {"last_seen": self.ensure_activity_ledger().last_seen_epoch}
 
 
+@command("confetti")
+def _cmd_confetti(self, args):
+    """A burst asked for from outside JR-Bar (``jrbar confetti``, a hook, CI).
+
+    Journals one ``confetti`` event in the named session's provider colours
+    (confetti_requests.py); the app's Confetti toy decides whether it fires.
+    A repeat inside the coalescing window is answered, never journaled.
+    """
+    from .confetti_requests import CONFETTI_EVENT_KIND, ConfettiGate, resolve_confetti_request
+
+    snapshot = getattr(self, "last_snapshot", None)
+    statuses = (*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())) if snapshot else ()
+    try:
+        request = resolve_confetti_request(args, statuses)
+    except ValueError as error:
+        raise CommandError("invalid_args", str(error)) from None
+    result = {"session": request.session, "provider": request.provider, "unmatched": request.unmatched}
+    gate = getattr(self, "_core_confetti_gate", None)
+    if gate is None:
+        gate = self._core_confetti_gate = ConfettiGate()
+    if not gate.admit(time.monotonic()):
+        return {**result, "sent": False, "coalesced": True}
+    server = getattr(self, "_core", None)
+    if server is None:
+        raise CommandError("unavailable", "the event stream is not running")
+    body = server.publish_event({"kind": CONFETTI_EVENT_KIND, **request.event_fields()})
+    return {**result, "sent": True, "coalesced": False, "event": body.get("id"), "cursor": body.get("cursor")}
+
+
 @command("serve_token", main_thread=False)
 def _cmd_serve_token(self, args):
     """The loopback status endpoint's bearer token, for the reveal row.
@@ -3331,6 +3417,48 @@ def _cmd_deck_press(self, args):
     if getattr(self, "_deck_input_check_active", False):
         raise CommandError("input_check", core_deck.INPUT_CHECK_MESSAGE)
     return self._core_deck_press(index)
+
+
+#: What a deck control may say to an ask beyond a press's approve: the
+#: verbs ``answer_ask`` takes (``always`` and ``answer`` only while the
+#: decide lane holds the agent's own prompt; the answer path says so).
+DECK_ANSWER_DECISIONS: Final = frozenset({"approve", "deny", "always", "answer"})
+
+
+@command("deck_answer", main_thread=False)
+def _cmd_deck_answer(self, args):
+    """An explicit answer from a deck control: the Rail's Deny, Always allow
+    or a choice, a Stream Deck key through serve's ``/answer``. The slot's
+    session is answered through ``answer_ask`` -- the same fences, journal
+    and decide lane as the panel -- and never falls back to revealing: a
+    slot with no live ask refuses. A plain press keeps ``deck_press``."""
+    from .deck_session_board import SLOTS_PER_BANK
+
+    index = _deck_index(args, limit=SLOTS_PER_BANK)
+    if getattr(self, "_deck_input_check_active", False):
+        raise CommandError("input_check", core_deck.INPUT_CHECK_MESSAGE)
+    decision = str(args.get("decision") or "").lower()
+    if decision not in DECK_ANSWER_DECISIONS:
+        raise CommandError("invalid_args", "decision must be approve, deny, always or answer")
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+
+    def _slot():
+        revision, identity = self._core_deck_board().resolve_slot(index)
+        if identity is None:
+            raise CommandError("not_found", core_deck.NO_SESSION_MESSAGE)
+        status = self._core_deck_status_for_identity(identity)
+        if status is None:
+            raise CommandError("not_found", core_deck.RESERVED_MESSAGE)
+        return identity, status
+
+    identity, status = on_main(_slot)
+    answer = {"session": status.agent_id, "decision": decision, "only_if_frontmost": True}
+    for key in ("answers", "request", "command_id"):
+        if args.get(key) is not None:
+            answer[key] = args[key]
+    result = _cmd_answer_ask(self, answer)
+    self._core_log(f"deck: {core_deck.control_label(index)} answers {status.agent_id}: {decision}")
+    return {"index": index, "identity": identity, "session": status.agent_id, "action": "answer_ask", **result}
 
 
 @command("deck_pin")
@@ -5367,14 +5495,19 @@ def build_headless_controller_class() -> type:
             if server is not None:
                 return
             from .serve import SERVE_DEFAULT_PORT, create_serve_server
+            from .serve_answers import ControllerAnswers
 
             try:
                 port = int(os.environ.get("JRBAR_SERVE_PORT") or SERVE_DEFAULT_PORT)
             except ValueError:
                 port = SERVE_DEFAULT_PORT
             try:
+                # /answer and /asks.json read serve_answer_enabled on every
+                # request, so flipping it needs no restart of the port.
                 server = create_serve_server(
-                    port=port, status_access_token=token.encode("utf-8")
+                    port=port,
+                    status_access_token=token.encode("utf-8"),
+                    answers=ControllerAnswers(self),
                 )
             except OSError as error:
                 legacy.log_status_bar(f"core: serve could not bind :{port}: {error}")
@@ -5983,11 +6116,16 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_snoozed_untils(self, statuses) -> dict[str, float]:
-            """``agent_id`` -> the family mailbox's active ``snoozed_until``.
+            """``agent_id`` -> the active ``snoozed_until`` that quiets the row.
 
-            Snooze lives on the family's mailbox preference, never on the
-            session; the row reports it so the panel can show "Snoozed"
-            and offer Unsnooze without a second document."""
+            Snooze lives on the mailbox, never on the session: the family's
+            preference covers every row in the family, and a run's own
+            ("Quiet this run", ``snooze_scope`` run) covers that row alone.
+            The later deadline wins. The row reports it so the panel can
+            show "Snoozed" and offer Unsnooze without a second document."""
+            from .mailbox_preferences import MailboxSnoozeScope
+            from .snooze_scope import active_snooze_until
+
             try:
                 state = getattr(self, "current_operator_state", None)
                 preferences = getattr(self, "mailbox_preferences", ()) or ()
@@ -6000,13 +6138,18 @@ def build_headless_controller_class() -> type:
                     agent_id = str(getattr(status, "agent_id", "") or "")
                     if work_key is None or not agent_id:
                         continue
+                    deadlines = []
                     family = legacy._family_work_key(state, work_key)
-                    if family is None:
-                        continue
-                    preference = legacy._preference_for_work_key(preferences, family)
-                    until = getattr(preference, "snoozed_until", None) if preference is not None else None
-                    if until is not None and float(until) > now:
-                        result[agent_id] = float(until)
+                    if family is not None:
+                        preference = legacy._preference_for_work_key(preferences, family)
+                        if getattr(preference, "snooze_scope", None) is not MailboxSnoozeScope.RUN:
+                            deadlines.append(active_snooze_until(preference, now))
+                    own = legacy._preference_for_work_key(preferences, work_key)
+                    if getattr(own, "snooze_scope", None) is MailboxSnoozeScope.RUN:
+                        deadlines.append(active_snooze_until(own, now))
+                    until = max((value for value in deadlines if value is not None), default=None)
+                    if until is not None:
+                        result[agent_id] = until
                 return result
             except Exception:
                 return {}

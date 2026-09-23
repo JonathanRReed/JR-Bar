@@ -93,12 +93,53 @@ import Testing
     @Test func theRestOfTheVocabulary() {
         #expect(parse("jrbar://screenbar") == .screenBar(on: nil))
         #expect(parse("jrbar://screenbar/off") == .screenBar(on: false))
-        #expect(parse("jrbar://confetti") == .confetti)
+        #expect(parse("jrbar://confetti") == .confetti())
         #expect(parse("jrbar://menubar/reveal") == .menuBar(.reveal))
         #expect(parse("jrbar://menubar/command-bar") == .menuBar(.commandBar))
         #expect(parse("jrbar://ask") == .revealAsk)
         #expect(parse("jrbar://shelf") == .shelf)
         #expect(parse("jrbar://session?id=claude%3Asession%3Aabc") == .openSession("claude:session:abc"))
+    }
+
+    @Test func aConfettiLinkNamesWhoseColoursItWears() {
+        #expect(parse("jrbar://confetti?provider=Codex") == .confetti(tint: .provider("codex")))
+        #expect(parse("jrbar://confetti?session=claude%3Asession%3Aabc") == .confetti(tint: .session("claude:session:abc")))
+        #expect(parse("jrbar://confetti?session=0199-abc") == .confetti(tint: .session("0199-abc")))
+        // One target, like `jrbar confetti`; a malformed one is refused whole.
+        #expect(parse("jrbar://confetti?provider=codex&session=abc") == nil)
+        #expect(parse("jrbar://confetti?provider=not%20one") == nil)
+        #expect(parse("jrbar://confetti?provider=") == nil)
+        #expect(parse("jrbar://confetti?session=") == nil)
+        #expect(parse("jrbar://confetti/codex") == nil)
+    }
+
+    @Test func aBurstWearsTheNamedProviderThenTheSessionsThenTheFocused() {
+        let sessions = [
+            CoreSession(id: "claude:session:abc", provider: "claude"),
+            CoreSession(id: "claude:agent:w1", provider: "claude", kind: "worker", parent: "claude:session:abc"),
+            CoreSession(id: "codex:session:xyz", provider: "codex"),
+        ]
+        let lookup: (String) -> String? = { AppCommand.provider(ofSession: $0, in: sessions) }
+        #expect(AppCommand.provider(ofSession: "codex:session:xyz", in: sessions) == "codex")
+        // A hook's own session id names its main row.
+        #expect(AppCommand.provider(ofSession: "abc", in: sessions) == "claude")
+        #expect(AppCommand.provider(ofSession: "ghost", in: sessions) == nil)
+        #expect(AppCommand.confettiProvider(.provider("gemini"), focused: "codex:session:xyz", providerOf: lookup) == "gemini")
+        #expect(AppCommand.confettiProvider(.session("abc"), focused: "codex:session:xyz", providerOf: lookup) == "claude")
+        #expect(AppCommand.confettiProvider(.focused, focused: "codex:session:xyz", providerOf: lookup) == "codex")
+        // Nothing focused, or a session nobody watches: the Toys tint.
+        #expect(AppCommand.confettiProvider(.focused, focused: nil, providerOf: lookup) == nil)
+        #expect(AppCommand.confettiProvider(.session("ghost"), focused: "codex:session:xyz", providerOf: lookup) == nil)
+    }
+
+    @MainActor
+    @Test func theRouterHandsTheTintToTheBurst() {
+        let router = AppCommandRouter()
+        var tints: [AppCommand.ConfettiTint] = []
+        router.fireConfetti = { tints.append($0) }
+        #expect(router.open(URL(string: "jrbar://confetti?provider=codex")!) == .done)
+        #expect(router.perform(.confetti()) == .done)
+        #expect(tints == [.provider("codex"), .focused])
     }
 
     @Test func noLinkAnswersAnAskOrRewritesTheMenuBar() {
@@ -130,7 +171,7 @@ import Testing
         let router = AppCommandRouter()
         var said: [String] = []
         router.onRefused = { said.append($0) }
-        #expect(router.perform(.confetti) != .done)
+        #expect(router.perform(.confetti()) != .done)
         router.revealAsk = { "No agent is waiting on you." }
         #expect(router.perform(.revealAsk) == .refused("No agent is waiting on you."))
         var opened: [Bool] = []

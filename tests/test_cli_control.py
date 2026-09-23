@@ -284,3 +284,45 @@ def test_the_public_router_sends_the_verbs_here(monkeypatch) -> None:
 
 def test_render_status_survives_a_sparse_state() -> None:
     assert render_status({}) == "JR-Bar core -- 0 sessions"
+
+
+def test_confetti_asks_the_daemon_in_a_sessions_colours(core, capsys) -> None:
+    core.replies["confetti"] = {"ok": True, "result": {"sent": True, "provider": "claude",
+                                                       "session": "claude:session:2"}}
+    assert run(["confetti", "--session", "claude:session:2", "--why", "tests passed"], core) == 0
+    assert core.commands[-1]["name"] == "confetti"
+    assert core.commands[-1]["args"] == {"session": "claude:session:2", "reason": "tests passed"}
+    assert "confetti requested in claude colours" in capsys.readouterr().out
+    assert run(["confetti", "--provider", "codex"], core) == 0
+    assert core.commands[-1]["args"] == {"provider": "codex"}
+    with pytest.raises(SystemExit):
+        run(["confetti", "--provider", "codex", "--session", "x"], core)
+
+
+def test_confetti_says_when_it_joined_a_burst_or_matched_nothing(core, capsys) -> None:
+    core.replies["confetti"] = {"ok": True, "result": {"sent": False, "coalesced": True}}
+    assert run(["confetti"], core) == 0
+    assert "joins it" in capsys.readouterr().out
+    core.replies["confetti"] = {"ok": True, "result": {"sent": True, "unmatched": "ghost"}}
+    assert run(["confetti", "--session", "ghost"], core) == 0
+    assert "no watched session is 'ghost'" in capsys.readouterr().err
+
+
+def test_confetti_from_a_hook_reads_its_session_and_never_fails_it(core, capsys, monkeypatch) -> None:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"hook_event_name": "Stop", "session_id": "0199-abc", "cwd": "/tmp"})))
+    assert run(["confetti", "--from-hook", "--why", "done"], core) == 0
+    assert core.commands[-1]["args"] == {"session": "0199-abc", "reason": "done"}
+
+    # No payload, or no monitor: the hook still exits 0, the reason on stderr.
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    assert run(["confetti", "--from-hook"], core) == 0
+    assert "none arrived" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"session_id": "s"}'))
+    missing = Path(tempfile.gettempdir()) / "jrc-missing" / "core.sock"
+    assert run(["confetti", "--from-hook"], socket_path=missing) == 0
+    assert "not running" in capsys.readouterr().err
+    # Outside a hook the missing monitor is an error like any other verb.
+    assert run(["confetti"], socket_path=missing) == cli_control.EXIT_NO_CORE

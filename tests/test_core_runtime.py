@@ -3343,3 +3343,110 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
     with pytest.raises(CommandError) as invalid:
         controller._core_dispatch("usage_graph", {"days": 14})
     assert invalid.value.code == "invalid_args"
+
+
+def test_confetti_journals_one_burst_in_the_sessions_colours(headless, monkeypatch) -> None:
+    """``confetti`` states the fact as an event the app's toy judges; a
+    loop in someone's hook coalesces instead of flooding the journal."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    server = controller._core
+    status = SimpleNamespace(agent_id="codex:session:run", provider="codex", session_id="run",
+                             display_name="sidepulse-core")
+    controller.last_snapshot = SimpleNamespace(statuses=(status,), stale_statuses=())
+    clock = iter((1_000.0, 1_001.0, 1_010.0))
+    monkeypatch.setattr(core_runtime.time, "monotonic", lambda: next(clock))
+    server.published.clear()
+
+    reply = controller._core_dispatch("confetti", {"session": "run", "reason": "tests passed"})
+
+    assert reply["sent"] is True and reply["coalesced"] is False
+    assert reply["session"] == "codex:session:run" and reply["provider"] == "codex"
+    assert server.published == [("event", {
+        "kind": "confetti", "session": "codex:session:run", "provider": "codex",
+        "label": "sidepulse-core", "detail": "tests passed",
+    })]
+
+    again = controller._core_dispatch("confetti", {})
+    assert again["sent"] is False and again["coalesced"] is True
+    assert len(server.published) == 1
+
+    later = controller._core_dispatch("confetti", {"session": "ghost"})
+    assert later["sent"] is True and later["unmatched"] == "ghost"
+    assert server.published[-1] == ("event", {"kind": "confetti"})
+
+    with pytest.raises(CommandError) as invalid:
+        controller._core_dispatch("confetti", {"provider": "not a provider"})
+    assert invalid.value.code == "invalid_args"
+
+
+def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
+    """``snooze {scope: "run"}`` quiets one worker; its session and sibling
+    keep their voice, the family snooze still covers everyone, and the
+    row's Unsnooze lifts whatever quiets it."""
+    from jrbar.capacity_types import SourceKey
+    from jrbar.mailbox_preferences import MailboxSnoozeScope
+    from jrbar.provider_facts import WorkIdentifier, WorkKey
+
+    controller = headless
+    source = SourceKey("claude", "hooks", "global", "live_agent_events")
+    root, w1, w2 = (WorkKey(source, WorkIdentifier(name)) for name in ("main", "w1", "w2"))
+    controller.current_operator_state = SimpleNamespace(
+        generation=0,
+        works=(
+            SimpleNamespace(key=root, parent_key=None),
+            SimpleNamespace(key=w1, parent_key=root),
+            SimpleNamespace(key=w2, parent_key=root),
+        ),
+    )
+    rows = (
+        SimpleNamespace(agent_id="claude:session:main", work_key=root),
+        SimpleNamespace(agent_id="claude:agent:w1", work_key=w1),
+        SimpleNamespace(agent_id="claude:agent:w2", work_key=w2),
+    )
+    controller.last_snapshot = SimpleNamespace(statuses=rows, stale_statuses=())
+    controller.mailbox_preferences = ()
+    saved: list[tuple] = []
+    controller.mailbox_preferences_saver = saved.append
+
+    before = time.time()
+    reply = controller._core_dispatch("snooze", {"session": "claude:agent:w1", "seconds": 1_800, "scope": "run"})
+
+    assert reply["sessions"] == ["claude:agent:w1"] and reply["scope"] == "run"
+    assert before + 1_800 <= reply["until"] <= time.time() + 1_800
+    (stored,) = saved[-1]
+    assert stored.work_key == w1 and stored.snooze_scope is MailboxSnoozeScope.RUN
+    untils = controller._core_snoozed_untils(rows)
+    assert set(untils) == {"claude:agent:w1"}
+    assert before + 1_800 <= untils["claude:agent:w1"] <= time.time() + 1_800
+
+    # The family's own snooze still covers every row, the quieted one too.
+    family = controller._core_dispatch("snooze", {"session": "claude:session:main", "seconds": 900})
+    assert family["scope"] == "family"
+    assert set(controller._core_snoozed_untils(rows)) == {row.agent_id for row in rows}
+    controller._core_dispatch("snooze", {"session": "claude:session:main", "seconds": 0})
+    assert set(controller._core_snoozed_untils(rows)) == {"claude:agent:w1"}
+
+    # The row's Unsnooze (a family unsnooze by default) lifts its run quiet.
+    lifted = controller._core_dispatch("snooze", {"session": "claude:agent:w1", "seconds": 0})
+    assert lifted["sessions"] == ["claude:agent:w1"]
+    again = controller._core_dispatch("snooze", {"session": "claude:agent:w1", "seconds": 0, "scope": "run"})
+    assert again["until"] is None
+    assert controller._core_snoozed_untils(rows) == {}
+    assert all(item.work_key != w1 for item in controller.mailbox_preferences)
+
+    for args, code in (
+        ({"session": "claude:agent:w1", "seconds": 60, "scope": "loud"}, "invalid_args"),
+        ({"session": "all", "seconds": 60, "scope": "run"}, "invalid_args"),
+        ({"session": "claude:agent:w1", "seconds": 8 * 86_400, "scope": "run"}, "invalid_args"),
+        ({"session": "claude:agent:nobody", "seconds": 60, "scope": "run"}, "not_found"),
+    ):
+        with pytest.raises(CommandError) as refused:
+            controller._core_dispatch("snooze", args)
+        assert refused.value.code == code, args
+    controller.last_snapshot = SimpleNamespace(
+        statuses=(SimpleNamespace(agent_id="gemini:session:keyless", work_key=None),), stale_statuses=()
+    )
+    with pytest.raises(CommandError) as keyless:
+        controller._core_dispatch("snooze", {"session": "gemini:session:keyless", "seconds": 60, "scope": "run"})
+    assert keyless.value.code == "unsupported"

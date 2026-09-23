@@ -620,6 +620,57 @@ def test_v2_round_trip_uses_only_exact_source_scoped_work_keys(tmp_path: Path) -
     assert all("agent_id" not in entry for entry in raw["preferences"])
 
 
+def test_a_runs_own_snooze_round_trips_and_a_familys_writes_no_scope(tmp_path: Path) -> None:
+    from jrbar.mailbox_preferences import MailboxSnoozeScope
+
+    target = tmp_path / "state" / "mailbox-preferences-v2.json"
+    family = _v2_preference("family", snoozed_at=1_786_536_000.0, snoozed_until=1_786_537_000.0)
+    run = _v2_preference(
+        "worker",
+        snoozed_at=1_786_536_000.0,
+        snoozed_until=1_786_539_600.0,
+        snooze_scope=MailboxSnoozeScope.RUN,
+    )
+    save_mailbox_preferences_v2(target, (family, run))
+
+    assert load_mailbox_preference_document(target) == MailboxPreferenceDocument(2, (family, run), (), False)
+    raw = _stored_document(target)["preferences"]
+    assert "snooze_scope" not in raw[0], "a family-only file stays byte-for-byte what it was"
+    assert raw[1]["snooze_scope"] == "run"
+
+    # A run scope with no snooze left means nothing: it is written as a
+    # plain preference and reads back as one.
+    idle = _v2_preference("idle", snooze_scope=MailboxSnoozeScope.RUN)
+    save_mailbox_preferences_v2(target, (idle,))
+    assert load_mailbox_preference_document(target).preferences == (_v2_preference("idle"),)
+
+
+def test_a_malformed_snooze_scope_fails_visible(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences-v2.json"
+    base = {
+        "work_key": work_key_to_payload(_work_key("w")),
+        "mode": "default",
+        "pin_order": None,
+        "snoozed_at": 1_786_536_000.0,
+        "snoozed_until": 1_786_537_000.0,
+        "last_visited_at": None,
+    }
+    def load(entry: dict) -> MailboxPreferenceDocument:
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target.write_text(json.dumps({"version": 2, "preferences": [entry]}))
+        target.chmod(0o600)
+        return load_mailbox_preference_document(target)
+
+    assert not load(base).degraded
+    assert not load({**base, "snooze_scope": "run"}).degraded
+    for entry in (
+        {**base, "snooze_scope": "family"},
+        {**base, "snooze_scope": "everything"},
+        {**base, "snoozed_at": None, "snoozed_until": None, "snooze_scope": "run"},
+    ):
+        assert load(entry).degraded, entry
+
+
 def test_strict_v1_document_decodes_only_legacy_fields(tmp_path: Path) -> None:
     target = tmp_path / "state" / "mailbox-preferences.json"
     legacy = LegacyMailboxPreference(

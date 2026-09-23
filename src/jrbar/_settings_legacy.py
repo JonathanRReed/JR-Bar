@@ -455,6 +455,12 @@ class AgentMonitorSettings:
     # a port that answers "what is this Mac doing" opens on explicit ask
     # only.
     serve_enabled: bool = False
+    # Whether that endpoint may also ANSWER an agent (POST /answer, for a
+    # Stream Deck key): approve, deny, always or a choice, through the same
+    # answer_ask path as the panel, bearer-authenticated like the rest of
+    # serve. Off by default and separate from serve_enabled -- reading the
+    # fleet and answering for the owner are different grants.
+    serve_answer_enabled: bool = False
     # Scenes are presentation policy only. Calm is the compatibility default:
     # until a runtime owner consumes this policy, existing display behavior is
     # unchanged, while every settings document has one valid active scene.
@@ -1279,6 +1285,9 @@ class AgentMonitorSettings:
     def with_serve_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, serve_enabled=bool(enabled))
 
+    def with_serve_answer_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, serve_answer_enabled=bool(enabled))
+
     def with_active_scene(self, scene: object) -> AgentMonitorSettings:
         selected = scene_from_value(scene)
         if selected is None:
@@ -1753,6 +1762,7 @@ class AgentMonitorSettings:
             "idle_auto_off_after_minutes": self.idle_auto_off_after_minutes,
             "focus_sync_enabled": self.focus_sync_enabled,
             "serve_enabled": self.serve_enabled,
+            "serve_answer_enabled": self.serve_answer_enabled,
             "active_scene": _scene_setting(self.active_scene),
             "active_scene_pack": (
                 self.active_scene_pack
@@ -2170,6 +2180,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         focus_sync_enabled=_bool_setting(data.get("focus_sync_enabled"), False),
         serve_enabled=_bool_setting(data.get("serve_enabled"), False),
+        serve_answer_enabled=_bool_setting(data.get("serve_answer_enabled"), False),
         active_scene=_scene_setting(data.get("active_scene")),
         active_scene_pack=(
             # Tolerant decode: anything that is not a non-empty string is
