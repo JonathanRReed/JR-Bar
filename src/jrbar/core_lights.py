@@ -1,0 +1,268 @@
+"""The headless daemon's light commands that had no socket spelling: the
+semantic cues by name (``list_cues``/``set_cue``), the INIT.LED burn
+(``burn_init``), calibration profile slots (``calibration_profile``) and
+the Focus roster the per-Focus rules are written against
+(``list_focuses``).
+
+Every one of these lived only in the retiring PyObjC settings window. The
+commands let the Swift app reach them; ``core_runtime`` registers them and
+hands in the controller.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .ambient_cues import (
+    SWITCHABLE_CUE_IDS,
+    cue_documents,
+    cue_for_id,
+    normalize_disabled_cues,
+)
+
+#: The longest program ``burn_init`` accepts before any parsing: the
+#: firmware's own budget is 512 bytes, and a request ten times that is a
+#: mistake, not a program.
+MAX_BURN_PROGRAM_CHARACTERS = 4096
+
+
+def _command_error(code: str, message: str):
+    from .core_server import CommandError
+
+    return CommandError(code, message)
+
+
+def _apply_settings(controller: Any, candidate: Any, *, touched: list[str]) -> int:
+    """Validate, save and publish a settings object the way ``set_setting``
+    does, through the runtime's one write path."""
+    from . import core_runtime
+
+    return core_runtime._apply_settings_document(controller, candidate.to_dict(), touched=touched)
+
+
+# --- the cues -------------------------------------------------------------------
+
+
+def list_cues(controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
+    return {"cues": cue_documents(getattr(controller, "settings", None))}
+
+
+def set_cue(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    cue = cue_for_id(args.get("id"))
+    if cue is None:
+        raise _command_error("invalid_args", "unknown cue id")
+    enabled = args.get("enabled")
+    if type(enabled) is not bool:
+        raise _command_error("invalid_args", "enabled must be a boolean")
+    settings = controller.settings
+    document = settings.to_dict()
+    if cue.setting is not None:
+        document[cue.setting] = enabled
+        touched = [cue.setting]
+    else:
+        disabled = set(normalize_disabled_cues(document.get("ambient_cues_disabled")))
+        if enabled:
+            disabled.discard(cue.id)
+        else:
+            disabled.add(cue.id)
+        document["ambient_cues_disabled"] = sorted(disabled & SWITCHABLE_CUE_IDS)
+        touched = ["ambient_cues_disabled"]
+    from . import core_runtime
+
+    generation = core_runtime._apply_settings_document(controller, document, touched=touched)
+    return {"generation": generation, "cues": cue_documents(controller.settings)}
+
+
+# --- INIT.LED -------------------------------------------------------------------------
+
+
+def _burn_targets(controller: Any, device: object) -> list[Any]:
+    from . import status_bar_legacy as legacy
+
+    # The command runs off the main thread (an SD write can take seconds);
+    # the device inventory is the controller's, so it is read there.
+    on_main = getattr(controller, "_core_on_main", None) or (lambda fn: fn())
+    inventory = on_main(lambda: list(controller.status_bar_devices(remember=False) or []))
+    targets = [
+        candidate
+        for candidate in inventory
+        if getattr(candidate, "connected", False)
+        and getattr(candidate, "device_id", None) != legacy.VIRTUAL_DEVICE_ID
+    ]
+    if device in (None, "", "all"):
+        return targets
+    return [candidate for candidate in targets if candidate.device_id == device]
+
+
+def burn_init(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Plan -- and only with ``confirm: true``, write -- a power-up program.
+
+    Each device is judged at its OWN LED count through the four gates of
+    ``animation.plan_power_up_burn`` (model, compile, device limits, the real
+    firmware parser, refusing when that parser is unavailable). Without
+    ``confirm`` nothing is written and the reply is the exact plan: the bytes
+    each device would get and every warning. INIT.LED replays at every boot,
+    so the write is the one thing here a person cannot undo by looking away.
+    """
+    from ._led_status_legacy import led_count_for_target
+    from .animation import (
+        AnimationValidationError,
+        burn_power_up_animation,
+        parse_animation,
+    )
+
+    program = args.get("program")
+    if type(program) is not str or not program.strip():
+        raise _command_error("invalid_args", "program is required")
+    if len(program) > MAX_BURN_PROGRAM_CHARACTERS:
+        raise _command_error("invalid_args", "program is far past the device budget")
+    confirm = args.get("confirm", False)
+    if type(confirm) is not bool:
+        raise _command_error("invalid_args", "confirm must be a boolean")
+    targets = _burn_targets(controller, args.get("device"))
+    if not targets:
+        raise _command_error("not_found", "No connected SidePulse Pro or Dot to burn.")
+    rows: list[dict[str, Any]] = []
+    for target in targets:
+        row: dict[str, Any] = {
+            "device": target.device_id,
+            "name": getattr(target, "name", target.device_id),
+            "written": False,
+        }
+        try:
+            led_count = int(led_count_for_target(target.target))
+        except Exception:
+            led_count = 8
+        row["led_count"] = led_count
+        try:
+            animation = parse_animation(program.strip(), led_count=led_count)
+            plan = burn_power_up_animation(
+                animation,
+                device_path=getattr(target, "root", None),
+                led_count=led_count,
+                dry_run=not confirm,
+            )
+        except AnimationValidationError as error:
+            row["error"] = "invalid_program"
+            row["problems"] = [
+                {
+                    "severity": getattr(problem, "severity", None),
+                    "code": getattr(problem, "code", None),
+                    "message": getattr(problem, "message", str(problem)),
+                    "step": getattr(problem, "step", None),
+                }
+                for problem in getattr(error, "problems", ()) or ()
+            ] or [{"severity": "error", "code": None, "message": str(error), "step": None}]
+        except Exception as error:
+            row["error"] = str(error) or error.__class__.__name__
+        else:
+            row.update(
+                {
+                    "bytes": plan.byte_count,
+                    "firmware_checked": plan.firmware_checked,
+                    "warnings": [problem.message for problem in plan.warnings],
+                    "written": bool(plan.written),
+                    "target": None if plan.target is None else str(plan.target),
+                    "error": None,
+                }
+            )
+        rows.append(row)
+    return {
+        "confirmed": confirm,
+        "written": any(row["written"] for row in rows),
+        "devices": rows,
+    }
+
+
+# --- calibration profiles ------------------------------------------------------------
+
+
+def calibration_profile(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Save the current calibration into a slot, apply one, or delete one."""
+    from ._settings_legacy import CALIBRATION_PROFILE_SLOTS
+
+    action = args.get("action")
+    slot = args.get("slot")
+    if action not in ("save", "apply", "delete"):
+        raise _command_error("invalid_args", "action must be save, apply or delete")
+    if slot not in CALIBRATION_PROFILE_SLOTS:
+        raise _command_error(
+            "invalid_args", f"slot must be one of {', '.join(CALIBRATION_PROFILE_SLOTS)}"
+        )
+    settings = controller.settings
+    matched = None
+    if action == "save":
+        candidate = settings.with_saved_calibration_profile(slot)
+    elif action == "apply":
+        profile = settings.calibration_profiles.get(slot)
+        if not isinstance(profile, dict):
+            raise _command_error("not_found", f"no {slot} profile is saved")
+        known = {device.device_id for device in settings.devices}
+        matched = sum(1 for device_id in profile if device_id in known)
+        candidate = settings.with_applied_calibration_profile(slot)
+    else:
+        document = settings.to_dict()
+        profiles = dict(document.get("calibration_profiles") or {})
+        removed = profiles.pop(slot, None) is not None
+        if not removed:
+            return {"slot": slot, "removed": False, "slots": sorted(settings.calibration_profiles)}
+        document["calibration_profiles"] = profiles
+        from . import core_runtime
+
+        generation = core_runtime._apply_settings_document(
+            controller, document, touched=["calibration_profiles"]
+        )
+        return {
+            "slot": slot,
+            "removed": True,
+            "generation": generation,
+            "slots": sorted(controller.settings.calibration_profiles),
+        }
+    generation = _apply_settings(
+        controller, candidate, touched=["calibration_profiles", "devices"]
+    )
+    reply: dict[str, Any] = {
+        "slot": slot,
+        "action": action,
+        "generation": generation,
+        "slots": sorted(controller.settings.calibration_profiles),
+    }
+    if matched is not None:
+        reply["matched"] = matched
+    return reply
+
+
+# --- Focus -------------------------------------------------------------------------------
+
+
+def list_focuses(_controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
+    """The Focuses this Mac has configured, so a per-Focus rule can name a
+    custom one and not only the four built-ins. The roster lives beside
+    the assertions file macOS guards with Full Disk Access; ``available``
+    false says so rather than pretending the Mac has no Focuses."""
+    from . import focus_sync
+
+    try:
+        configured = focus_sync.configured_focus_modes()
+    except focus_sync.FocusSyncUnavailableError as error:
+        return {"available": False, "reason": str(error)[:200], "focuses": [], "active": []}
+    try:
+        active = sorted(focus_sync.active_focus_mode_identifiers())
+    except focus_sync.FocusSyncUnavailableError:
+        active = []
+    return {
+        "available": True,
+        "reason": None,
+        "focuses": [{"id": identifier, "name": name} for identifier, name in configured],
+        "active": active,
+    }
+
+
+__all__ = [
+    "MAX_BURN_PROGRAM_CHARACTERS",
+    "burn_init",
+    "calibration_profile",
+    "list_cues",
+    "list_focuses",
+    "set_cue",
+]

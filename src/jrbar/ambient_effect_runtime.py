@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .accessibility_display import AccessibilityDisplayPreferences
+from .ambient_cues import disabled_cue_families
 from .ambient_effect_dispatch import (
     AmbientEffectDispatch,
     AmbientEffectFamily,
@@ -328,33 +329,46 @@ def _compile_runtime_dispatch(controller: object) -> None:
     semantic_program = getattr(controller, "_semantic_effect_program", None)
     if type(semantic_program) is not str or not semantic_program:
         semantic_program = None
+    # A cue the person switched off (jrbar.ambient_cues) is planned as it
+    # always was -- its observers keep their bookkeeping -- and simply never
+    # reaches a surface.
+    off = disabled_cue_families(getattr(controller, "settings", None))
+
+    def unless_off(family: AmbientEffectFamily, plan):
+        return None if family in off else plan
+
     proposed = compile_ambient_effect_dispatch(
         semantic_selection=semantic_selection,
         semantic_program=semantic_program,
-        glance_light=_typed_plan(
-            getattr(controller, "_glance_light_plan", None),
-            GlanceLightPlan,
+        glance_light=unless_off(
+            AmbientEffectFamily.GLANCE_LIGHT,
+            _typed_plan(getattr(controller, "_glance_light_plan", None), GlanceLightPlan),
         ),
-        firefly_completion=_decision_plan(
-            getattr(controller, "_firefly_completion_decision", None),
-            FireflyCompletionPlan,
+        firefly_completion=unless_off(
+            AmbientEffectFamily.FIREFLY_COMPLETION,
+            _decision_plan(
+                getattr(controller, "_firefly_completion_decision", None),
+                FireflyCompletionPlan,
+            ),
         ),
-        completion_meniscus=_first_screen_meniscus(controller),
-        handoff_baton=_decision_plan(
-            getattr(controller, "_handoff_baton_decision", None),
-            HandoffBatonPlan,
+        completion_meniscus=unless_off(
+            AmbientEffectFamily.COMPLETION_MENISCUS, _first_screen_meniscus(controller)
         ),
-        recovery_grace=_typed_plan(
-            getattr(controller, "_recovery_grace_plan", None),
-            RecoveryGracePlan,
+        handoff_baton=unless_off(
+            AmbientEffectFamily.HANDOFF_BATON,
+            _decision_plan(getattr(controller, "_handoff_baton_decision", None), HandoffBatonPlan),
         ),
-        ask_heartbeat=_typed_plan(
-            getattr(controller, "_ask_heartbeat_plan", None),
-            AskHeartbeatPlan,
+        recovery_grace=unless_off(
+            AmbientEffectFamily.RECOVERY_GRACE,
+            _typed_plan(getattr(controller, "_recovery_grace_plan", None), RecoveryGracePlan),
         ),
-        turn_length_ember=_typed_plan(
-            getattr(controller, "_turn_length_ember_plan", None),
-            TurnLengthEmberPlan,
+        ask_heartbeat=unless_off(
+            AmbientEffectFamily.ASK_HEARTBEAT,
+            _typed_plan(getattr(controller, "_ask_heartbeat_plan", None), AskHeartbeatPlan),
+        ),
+        turn_length_ember=unless_off(
+            AmbientEffectFamily.TURN_LENGTH_EMBER,
+            _typed_plan(getattr(controller, "_turn_length_ember_plan", None), TurnLengthEmberPlan),
         ),
         rainstick_idle=_typed_plan(
             getattr(controller, "_rainstick_idle_plan", None),
@@ -368,10 +382,12 @@ def _compile_runtime_dispatch(controller: object) -> None:
             getattr(controller, "_milestone_odometer_plan", None),
             MilestoneOdometerPlan,
         ),
-        fleet_arrival_departure=_latest_fleet_cue(controller),
-        courtesy_signature=_typed_plan(
-            getattr(controller, "_courtesy_signature_plan", None),
-            CourtesySignaturePlan,
+        fleet_arrival_departure=unless_off(
+            AmbientEffectFamily.FLEET_ARRIVAL_DEPARTURE, _latest_fleet_cue(controller)
+        ),
+        courtesy_signature=unless_off(
+            AmbientEffectFamily.COURTESY_SIGNATURE,
+            _typed_plan(getattr(controller, "_courtesy_signature_plan", None), CourtesySignaturePlan),
         ),
         semantic_colors=_ambient_colors(controller),
     )

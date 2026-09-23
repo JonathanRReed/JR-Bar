@@ -550,6 +550,9 @@ class AgentMonitorSettings:
     # deduplicated, bounded (the pure planner accepts at most 16). The
     # default ladder makes the toggle meaningful on its own.
     milestone_odometer_steps: tuple[int, ...] = DEFAULT_MILESTONE_ODOMETER_STEPS
+    # The semantic ambient cues switched off by name (jrbar.ambient_cues):
+    # firefly, meniscus, baton and the rest play unless listed here.
+    ambient_cues_disabled: tuple[str, ...] = ()
     # Capacity retention is a separate, explicit consent boundary. Existing
     # transcript and broad usage settings never enable either history stream.
     capacity_history_enabled: bool = False
@@ -1789,6 +1792,7 @@ class AgentMonitorSettings:
             "milestone_odometer_steps": list(
                 _milestone_steps_setting(self.milestone_odometer_steps)
             ),
+            "ambient_cues_disabled": list(_ambient_cues_disabled_setting(self.ambient_cues_disabled)),
             "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
@@ -1922,6 +1926,15 @@ def _active_scene_pack_overrides(pack_id: object):
         return ScenePackStore().policy_overrides(pack_id.strip())
     except Exception:
         return None
+
+
+def _ambient_cues_disabled_setting(raw: object) -> tuple[str, ...]:
+    """Known, switchable cue ids, sorted and deduplicated. Imported late:
+    the cue catalogue reaches the ambient dispatch, which settings must not
+    load at import time."""
+    from .ambient_cues import normalize_disabled_cues
+
+    return normalize_disabled_cues(raw)
 
 
 def _milestone_steps_setting(raw: object) -> tuple[int, ...]:
@@ -2207,6 +2220,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         milestone_odometer_steps=_milestone_steps_setting(
             data.get("milestone_odometer_steps")
         ),
+        ambient_cues_disabled=_ambient_cues_disabled_setting(data.get("ambient_cues_disabled")),
         capacity_history_enabled=_bool_setting(
             data.get("capacity_history_enabled"), False
         ),

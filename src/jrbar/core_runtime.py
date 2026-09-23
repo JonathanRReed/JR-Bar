@@ -2428,6 +2428,44 @@ def _cmd_presence(self, args):
     return core_power.set_presence(self, args)
 
 
+# --- light controls that lived only in the legacy window (jrbar.core_lights) ---
+
+
+@command("list_cues")
+def _cmd_list_cues(self, args):
+    from . import core_lights
+
+    return core_lights.list_cues(self, args)
+
+
+@command("set_cue")
+def _cmd_set_cue(self, args):
+    from . import core_lights
+
+    return core_lights.set_cue(self, args)
+
+
+@command("burn_init", main_thread=False)
+def _cmd_burn_init(self, args):
+    from . import core_lights
+
+    return core_lights.burn_init(self, args)
+
+
+@command("calibration_profile")
+def _cmd_calibration_profile(self, args):
+    from . import core_lights
+
+    return core_lights.calibration_profile(self, args)
+
+
+@command("list_focuses", main_thread=False)
+def _cmd_list_focuses(self, args):
+    from . import core_lights
+
+    return core_lights.list_focuses(self, args)
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
