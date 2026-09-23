@@ -875,9 +875,11 @@ def _cmd_snooze(self, args):
         except (OSError, ValueError) as exc:
             raise CommandError("send_failed", f"could not save the snooze: {exc}") from None
         self.refresh_(None)
+        # What quiets the row now: its own deadline, or the family snooze
+        # already in force that a run's never replaces.
         return {
             "sessions": [status.agent_id],
-            "until": (time.time() + seconds) if seconds > 0 else None,
+            "until": self._core_snoozed_untils([status]).get(status.agent_id),
             "scope": "run",
         }
     if session == "all":

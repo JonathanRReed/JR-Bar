@@ -121,27 +121,34 @@ def _lapsed_run(preference: MailboxPreference, now: float) -> bool:
     )
 
 
+def _lifted(preference: MailboxPreference) -> MailboxPreference | None:
+    """A run's snooze taken off: nothing is left on a key with no pin, watch
+    or visit to keep (a worker's, usually), else the plain family preference
+    that remains (a root's pin or watch)."""
+    if (
+        preference.mode is MailboxPreferenceMode.DEFAULT
+        and preference.pin_order is None
+        and preference.last_visited_at is None
+    ):
+        return None
+    return replace(
+        preference,
+        snoozed_at=None,
+        snoozed_until=None,
+        snooze_scope=MailboxSnoozeScope.FAMILY,
+    )
+
+
 def _without_lapsed_runs(preferences, now: float) -> list[MailboxPreference]:
-    """Drop run snoozes that have run out: a worker's key keeps nothing
-    else worth storing, and a root's pin or watch survives as a plain
-    family preference."""
+    """The preferences with every run snooze that has run out lifted."""
     kept: list[MailboxPreference] = []
     for preference in preferences:
         if type(preference) is not MailboxPreference:
             continue
         if _lapsed_run(preference, now):
-            if (
-                preference.mode is MailboxPreferenceMode.DEFAULT
-                and preference.pin_order is None
-                and preference.last_visited_at is None
-            ):
+            preference = _lifted(preference)
+            if preference is None:
                 continue
-            preference = replace(
-                preference,
-                snoozed_at=None,
-                snoozed_until=None,
-                snooze_scope=MailboxSnoozeScope.FAMILY,
-            )
         kept.append(preference)
     return kept
 
@@ -149,17 +156,20 @@ def _without_lapsed_runs(preferences, now: float) -> list[MailboxPreference]:
 def with_run_snooze(preferences, work_key: WorkKey, *, now: float, until: float):
     """``preferences`` with ``work_key``'s run quiet until ``until``.
 
-    A family snooze already in force on the same key lasts at least as
-    long and covers more, so it is kept as it is. Returns a new tuple.
+    A family snooze in force on the same key is kept as it is: it already
+    quiets this run, and trading it for a run's would wake the rest of the
+    family. Returns a new tuple.
     """
     if type(work_key) is not WorkKey or not until > now:
         raise ValueError("a run snooze needs a work key and a deadline after now")
     kept = _without_lapsed_runs(preferences, now)
     existing = next((item for item in kept if item.work_key == work_key), None)
-    if existing is not None and existing.snooze_scope is MailboxSnoozeScope.FAMILY:
-        family_until = active_snooze_until(existing, now)
-        if family_until is not None and family_until >= until:
-            return tuple(kept)
+    if (
+        existing is not None
+        and existing.snooze_scope is MailboxSnoozeScope.FAMILY
+        and active_snooze_until(existing, now) is not None
+    ):
+        return tuple(kept)
     updated = replace(
         existing or MailboxPreference(work_key),
         snoozed_at=now,
@@ -175,18 +185,9 @@ def without_run_snooze(preferences, work_key: WorkKey, *, now: float):
     kept = []
     for preference in _without_lapsed_runs(preferences, now):
         if preference.work_key == work_key and preference.snooze_scope is MailboxSnoozeScope.RUN:
-            if (
-                preference.mode is MailboxPreferenceMode.DEFAULT
-                and preference.pin_order is None
-                and preference.last_visited_at is None
-            ):
+            preference = _lifted(preference)
+            if preference is None:
                 continue
-            preference = replace(
-                preference,
-                snoozed_at=None,
-                snoozed_until=None,
-                snooze_scope=MailboxSnoozeScope.FAMILY,
-            )
         kept.append(preference)
     return tuple(kept)
 

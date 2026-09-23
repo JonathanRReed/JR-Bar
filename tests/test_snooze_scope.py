@@ -183,12 +183,14 @@ def test_with_run_snooze_sets_one_rows_quiet_and_prunes_lapsed_runs() -> None:
         with_run_snooze((), w1, now=NOW, until=NOW)
 
 
-def test_a_longer_family_snooze_on_the_key_is_kept() -> None:
+def test_a_family_snooze_on_the_key_is_never_traded_for_a_narrower_one() -> None:
     root, *_ = _family()
     family = (_snooze(root, until=NOW + 7_200.0),)
     assert with_run_snooze(family, root, now=NOW, until=NOW + 900.0) == family
-    shorter = with_run_snooze(family, root, now=NOW, until=NOW + 9_000.0)
-    assert shorter[0].snooze_scope is MailboxSnoozeScope.RUN
+    # Even for longer: the run's quiet would wake the rest of the family.
+    assert with_run_snooze(family, root, now=NOW, until=NOW + 9_000.0) == family
+    lapsed = (_snooze(root, until=NOW - 1.0),)
+    assert with_run_snooze(lapsed, root, now=NOW, until=NOW + 900.0)[0].snooze_scope is MailboxSnoozeScope.RUN
 
 
 def test_without_run_snooze_lifts_only_a_runs_own_quiet() -> None:

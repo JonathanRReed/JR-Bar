@@ -3413,6 +3413,7 @@ def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
     reply = controller._core_dispatch("snooze", {"session": "claude:agent:w1", "seconds": 1_800, "scope": "run"})
 
     assert reply["sessions"] == ["claude:agent:w1"] and reply["scope"] == "run"
+    assert before + 1_800 <= reply["until"] <= time.time() + 1_800
     (stored,) = saved[-1]
     assert stored.work_key == w1 and stored.snooze_scope is MailboxSnoozeScope.RUN
     untils = controller._core_snoozed_untils(rows)
@@ -3429,6 +3430,8 @@ def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
     # The row's Unsnooze (a family unsnooze by default) lifts its run quiet.
     lifted = controller._core_dispatch("snooze", {"session": "claude:agent:w1", "seconds": 0})
     assert lifted["sessions"] == ["claude:agent:w1"]
+    again = controller._core_dispatch("snooze", {"session": "claude:agent:w1", "seconds": 0, "scope": "run"})
+    assert again["until"] is None
     assert controller._core_snoozed_untils(rows) == {}
     assert all(item.work_key != w1 for item in controller.mailbox_preferences)
 
