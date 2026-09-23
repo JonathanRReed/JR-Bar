@@ -66,7 +66,7 @@ struct LightingPage: View {
                 }
             }
             .padding(.vertical, 2)
-            ColorVisionNote(store: store, colors: stateColors)
+            ColorVisionNote(store: store, colors: stateColors, others: providerColorsInUse)
         }
 
         SettingGroup("Pulse range") {
@@ -324,33 +324,149 @@ struct ColorVisionNote: View {
         let name: String
         let path: String
         let hex: String
+
+        /// The monitor's key for this colour (`check_palette`):
+        /// `agent:<provider>` or `state:<mode>`.
+        var paletteKey: String? {
+            if path.hasPrefix("colors.agent_colors.") { return "agent:" + id }
+            if path.hasPrefix("colors.mode_colors.") { return "state:" + id }
+            return nil
+        }
     }
 
     @Bindable var store: SettingsStore
     let colors: [Entry]
+    /// The other group's colours, for pairs across the two (a provider's
+    /// colour against a state's). Only one note gets them, so a cross
+    /// pair is named once.
+    var others: [Entry] = []
+
+    /// `check_palette`'s reply for `checkKey`, while the monitor has it.
+    @ViewState private var checked: (key: String, pairs: [PaletteCheck.Pair])?
 
     private var collisions: [ColorVision.Collision] {
         ColorVision.collisions(colors.map { (id: $0.id, hex: $0.hex) })
     }
 
+    /// The palette as the note knows it: a new colour anywhere re-asks.
+    private var checkKey: String {
+        "\(store.core.isLive)|" + (colors + others).map { "\($0.id)=\($0.hex)" }.joined(separator: ",")
+    }
+
     var body: some View {
-        let entries = Dictionary(uniqueKeysWithValues: colors.map { ($0.id, $0) })
-        ForEach(collisions) { collision in
-            if let first = entries[collision.first], let second = entries[collision.second] {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "eye.trianglebadge.exclamationmark").foregroundStyle(.orange)
-                    Text("\(first.name) and \(second.name) look alike with \(collision.vision.name).")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    if let nudged = ColorVision.nudge(second.hex, awayFrom: first.hex) {
-                        Button("Nudge \(second.name) apart") { store.set(second.path, .string(nudged)) }
-                            .controlSize(.small)
-                            .disabled(!store.isProvided(second.path))
-                            .help("Sets \(second.name) to \(nudged): the same hue, lighter or darker until every vision tells them apart")
+        Group {
+            if let checked, checked.key == checkKey {
+                ForEach(PaletteCheck.rows(checked.pairs, own: colors, others: others), id: \.id) { row in
+                    pairRow(row.text) {
+                        if let nudge = row.nudge {
+                            Button("Nudge \(nudge.entry.name) apart") { store.set(nudge.entry.path, .string(nudge.color)) }
+                                .controlSize(.small)
+                                .disabled(!store.isProvided(nudge.entry.path))
+                                .help("Sets \(nudge.entry.name) to \(nudge.color): lighter or darker, same hue, until it stands apart from every other light")
+                        }
+                    }
+                }
+            } else {
+                let entries = Dictionary(uniqueKeysWithValues: colors.map { ($0.id, $0) })
+                ForEach(collisions) { collision in
+                    if let first = entries[collision.first], let second = entries[collision.second] {
+                        pairRow("\(first.name) and \(second.name) look alike with \(collision.vision.name).") {
+                            if let nudged = ColorVision.nudge(second.hex, awayFrom: first.hex) {
+                                Button("Nudge \(second.name) apart") { store.set(second.path, .string(nudged)) }
+                                    .controlSize(.small)
+                                    .disabled(!store.isProvided(second.path))
+                                    .help("Sets \(second.name) to \(nudged): the same hue, lighter or darker until every vision tells them apart")
+                            }
+                        }
                     }
                 }
             }
+        }
+        .task(id: checkKey) {
+            let key = checkKey
+            guard store.core.isLive,
+                  let reply = try? await store.core.request("check_palette", args: ["visions": .array(PaletteCheck.visions.map(JSONValue.string))],
+                                                            as: PaletteCheck.self) else { checked = nil; return }
+            checked = (key, reply.pairs)
+        }
+    }
+
+    private func pairRow<Trailing: View>(_ text: String, @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "eye.trianglebadge.exclamationmark").foregroundStyle(.orange)
+            Text(text)
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            trailing()
+        }
+    }
+}
+
+/// `check_palette`: the monitor's colour-vision check of the whole
+/// palette — every provider and state, the error colour as the lights
+/// paint it, and a nudge that clears the moved colour from every other
+/// light, not just its pair. The note prefers it to the local check
+/// whenever the monitor has it, so the page and the monitor never
+/// disagree about which colours collide; the local check answers for a
+/// monitor that predates it.
+struct PaletteCheck: Decodable {
+    struct Suggestion: Decodable, Equatable {
+        let key: String
+        let color: String
+    }
+
+    struct Pair: Decodable, Equatable {
+        let left: String
+        let right: String
+        let vision: String
+        let shipped: Bool?
+        let suggestion: Suggestion?
+    }
+
+    let pairs: [Pair]
+
+    /// Every vision, tritanopia included: the page has always named a
+    /// blue-blind collapse, even the one the shipped palette carries.
+    static let visions = ["normal", "deuteranopia", "protanopia", "tritanopia"]
+
+    static func visionName(_ vision: String) -> String {
+        switch vision {
+        case "normal": return ColorVision.typical.name
+        case "protanopia": return ColorVision.protan.name
+        case "deuteranopia": return ColorVision.deutan.name
+        case "tritanopia": return ColorVision.tritan.name
+        default: return vision
+        }
+    }
+
+    struct Row: Equatable {
+        let id: String
+        let text: String
+        let nudge: (entry: ColorVisionNote.Entry, color: String)?
+
+        static func == (a: Row, b: Row) -> Bool {
+            a.id == b.id && a.text == b.text && a.nudge?.entry == b.nudge?.entry && a.nudge?.color == b.nudge?.color
+        }
+    }
+
+    /// The pairs one note names: both colours its own, or — when it is
+    /// given the other group — one its own and one from there. Colours
+    /// the page does not show (providers this Mac never runs) are never
+    /// named.
+    static func rows(_ pairs: [Pair], own: [ColorVisionNote.Entry], others: [ColorVisionNote.Entry]) -> [Row] {
+        let mine = Dictionary(own.compactMap { entry in entry.paletteKey.map { ($0, entry) } }, uniquingKeysWith: { first, _ in first })
+        let theirs = Dictionary(others.compactMap { entry in entry.paletteKey.map { ($0, entry) } }, uniquingKeysWith: { first, _ in first })
+        return pairs.compactMap { pair in
+            let left = mine[pair.left] ?? theirs[pair.left]
+            let right = mine[pair.right] ?? theirs[pair.right]
+            guard let left, let right, mine[pair.left] != nil || mine[pair.right] != nil else { return nil }
+            let shipped = pair.shipped == true ? " — both as shipped" : ""
+            let text = "\(left.name) and \(right.name) look alike with \(visionName(pair.vision))\(shipped)."
+            let moved = pair.suggestion.flatMap { suggestion in
+                (mine[suggestion.key] ?? theirs[suggestion.key]).map { (entry: $0, color: suggestion.color) }
+            }
+            return Row(id: "\(pair.left)|\(pair.right)", text: text, nudge: moved)
         }
     }
 }

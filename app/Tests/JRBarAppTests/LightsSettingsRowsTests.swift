@@ -87,6 +87,42 @@ struct LightsSettingsRowsTests {
         #expect(FocusRoster<EmptyView>.merge(known: known, reported: []).map(\.id) == known.map(\.id))
     }
 
+    @Test func theMonitorsPaletteCheckIsNamedOncePerPair() throws {
+        let reply = try JSONDecoder().decode(PaletteCheck.self, from: Data("""
+        {"min_separation": 12, "visions": ["normal", "deuteranopia", "protanopia", "tritanopia"], "checked": 17, "pairs": [
+          {"left": "state:done", "right": "state:working", "left_color": "#00FF66", "right_color": "#00E5FF",
+           "vision": "tritanopia", "separation": 7.9, "shipped": true, "suggestion": {"key": "state:working", "color": "#00A3B8", "separation": 13.1}},
+          {"left": "agent:codex", "right": "state:working", "left_color": "#2B8FFF", "right_color": "#00E5FF",
+           "vision": "deuteranopia", "separation": 9.0, "shipped": false, "suggestion": {"key": "agent:codex", "color": "#1F66B8", "separation": 12.4}},
+          {"left": "agent:claude", "right": "agent:codex", "left_color": "#D97757", "right_color": "#2B8FFF",
+           "vision": "protanopia", "separation": 11.0, "shipped": false, "suggestion": null},
+          {"left": "agent:gemini", "right": "agent:codex", "left_color": "#4285F4", "right_color": "#2B8FFF",
+           "vision": "normal", "separation": 4.0, "shipped": false, "suggestion": null}
+        ]}
+        """.utf8))
+        let providers = [
+            ColorVisionNote.Entry(id: "claude", name: "Claude", path: "colors.agent_colors.claude", hex: "#D97757"),
+            ColorVisionNote.Entry(id: "codex", name: "Codex", path: "colors.agent_colors.codex", hex: "#2B8FFF"),
+        ]
+        let states = [
+            ColorVisionNote.Entry(id: "working", name: "Working", path: "colors.mode_colors.working", hex: "#00E5FF"),
+            ColorVisionNote.Entry(id: "done", name: "Done", path: "colors.mode_colors.done", hex: "#00FF66"),
+        ]
+        // The provider note: its own pairs only, and never a provider this
+        // Mac does not run (Gemini).
+        let providerRows = PaletteCheck.rows(reply.pairs, own: providers, others: [])
+        #expect(providerRows.map(\.text) == ["Claude and Codex look alike with protanopia (red-blind)."])
+        #expect(providerRows.first?.nudge == nil)
+        // The state note: its own pairs and the cross pair, named once.
+        let stateRows = PaletteCheck.rows(reply.pairs, own: states, others: providers)
+        #expect(stateRows.map(\.text) == [
+            "Done and Working look alike with tritanopia (blue-blind) — both as shipped.",
+            "Codex and Working look alike with deuteranopia (green-blind).",
+        ])
+        #expect(stateRows[0].nudge?.entry.path == "colors.mode_colors.working" && stateRows[0].nudge?.color == "#00A3B8")
+        #expect(stateRows[1].nudge?.entry.path == "colors.agent_colors.codex", "the monitor moves the provider, not the state")
+    }
+
     @Test func refusedEventKitGrantsAreNamed() {
         #expect(EventKitAccessNote.isRefused(.denied))
         #expect(EventKitAccessNote.isRefused(.restricted))
