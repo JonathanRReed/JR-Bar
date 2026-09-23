@@ -27,10 +27,10 @@ enum ScreenBarPeekIntent: Equatable {
 // MARK: - The ear's marks
 
 /// The menu bar's say on the right ear, read off `MenuBarEarFeed`: while
-/// items are tucked away and nothing else claims the side, a resting mark
-/// of one to three dots holds the ear — the peek's home — so the reveal
-/// surface is there whenever there is something to reveal. When hiding
-/// stops working the ear says so in the alert tone, and its peek says why.
+/// items are tucked away and nothing else claims the side, a resting
+/// mark holds the ear — the peek's home — so the reveal surface is there
+/// whenever there is something to reveal. When hiding stops working the
+/// ear says so in the alert tone, and its peek says why.
 struct ScreenBarMenuBarMarks: Equatable {
     /// How many hidden items the feed tiles.
     var hiddenCount = 0
@@ -44,6 +44,10 @@ struct ScreenBarMenuBarMarks: Equatable {
     /// subject, not a generic warning, so it never reads as the band's
     /// refused program.
     static let failureSymbol = "menubar.rectangle"
+    /// The resting mark: one ellipsis, the ‹'s "more here" — the same
+    /// for two items or twenty, so it never reads as a meter. How many
+    /// is VoiceOver's and the peek's to say.
+    static let restingSymbol = "ellipsis"
 
     init(hiddenCount: Int = 0, failure: String? = nil, nudge: ScreenBarWingSlot? = nil) {
         self.hiddenCount = hiddenCount
@@ -71,17 +75,6 @@ struct ScreenBarMenuBarMarks: Equatable {
         return slot
     }
 
-    /// The resting mark's weight: one dot for a few, two for a handful,
-    /// three past that — how much, never how many.
-    static func dots(hiddenCount: Int) -> Int {
-        switch hiddenCount {
-        case ..<1: return 0
-        case 1...3: return 1
-        case 4...8: return 2
-        default: return 3
-        }
-    }
-
     /// VoiceOver's words for the resting mark.
     static func hiddenWords(_ count: Int) -> String {
         count == 1 ? "1 menu bar item tucked away" : "\(count) menu bar items tucked away"
@@ -90,7 +83,7 @@ struct ScreenBarMenuBarMarks: Equatable {
     /// `wings` with the menu bar's marks on the right ear. A failure
     /// takes the side from whatever ambient mark held it — hiding
     /// stopped, and the person should see that where they look — then a
-    /// nudge, for its beat. The resting dots only fill an empty side:
+    /// nudge, for its beat. The resting mark only fills an empty side:
     /// the meter, the media ear and a device beat all keep it, and their
     /// ear still opens the peek.
     static func apply(_ marks: ScreenBarMenuBarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
@@ -103,7 +96,7 @@ struct ScreenBarMenuBarMarks: Equatable {
             dressed.right = nudge
         } else if dressed.right == nil, marks.hiddenCount > 0 {
             dressed.right = ScreenBarWingSlot(text: hiddenWords(marks.hiddenCount),
-                                              dots: dots(hiddenCount: marks.hiddenCount))
+                                              symbol: restingSymbol)
         }
         return dressed
     }
@@ -184,10 +177,11 @@ final class ScreenBarPeekModel {
     var hasWords: Bool { failure != nil || nudge != nil || awake != nil }
 }
 
-/// The peek's face: notch black — the reason hiding stopped, when it
-/// has, then the hidden glyphs in a row. Template glyphs are drawn
-/// white, as the bar would draw them on a dark wallpaper; a glyph never
-/// photographed shows its app's icon.
+/// The peek's face, top to bottom in notch black: the reason hiding
+/// stopped, when it has; the nudge standing, with its three answers; the
+/// hidden glyphs in a row; the keep-awake hold in words. Template glyphs
+/// are drawn white, as the bar would draw them on a dark wallpaper; a
+/// glyph never photographed shows its app's icon.
 struct ScreenBarPeekView: View {
     let model: ScreenBarPeekModel
 
@@ -239,7 +233,7 @@ struct ScreenBarPeekView: View {
                 .fill(.black))
         .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Hidden menu bar items")
+        .accessibilityLabel(model.tiles.isEmpty ? "Menu bar" : "Hidden menu bar items")
     }
 
     private var tileRow: some View {

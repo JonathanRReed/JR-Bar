@@ -268,6 +268,7 @@ final class ScreenBarInteraction {
                 let point = NSEvent.mouseLocation
                 let top = NSScreen.screens.first { $0.frame.contains(point) }?.frame.maxY ?? point.y
                 let near = top - point.y <= Self.nearReach || self.hovering || self.isTooltipShown
+                    || self.peekState().shown
                 self.scheduleMovePoll(after: near ? Self.moveInterval : Self.farMoveInterval)
             }
         })

@@ -19,29 +19,28 @@ struct ScreenBarPeekTests {
 
     // MARK: The ear's marks
 
-    @Test func theRestingMarkIsAWeightNeverACount() {
-        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 0) == 0)
-        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 1) == 1)
-        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 3) == 1)
-        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 4) == 2)
-        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 8) == 2)
-        #expect(ScreenBarMenuBarMarks.dots(hiddenCount: 40) == 3)
+    @Test func theRestingMarkIsOneMarkNeverAMeter() {
+        let few = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(hiddenCount: 2), to: .empty).right
+        let many = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(hiddenCount: 40), to: .empty).right
+        #expect(few?.symbol == ScreenBarMenuBarMarks.restingSymbol)
+        #expect(few?.symbol == many?.symbol && few?.meter == nil && many?.meter == nil,
+                "two items or forty draw the same mark — no segments, no fill")
     }
 
     @Test func tuckedAwayItemsGiveTheEmptyEarItsRestingMark() throws {
         let marks = ScreenBarMenuBarMarks(hiddenCount: 5)
         let dressed = ScreenBarMenuBarMarks.apply(marks, to: .empty)
         let right = try #require(dressed.right)
-        #expect(right.dots == 2)
+        #expect(right.symbol == ScreenBarMenuBarMarks.restingSymbol)
         #expect(right.hasMark)
-        #expect(right.symbol == nil && right.provider == nil, "a mark, never a number or a word")
+        #expect(right.provider == nil && right.meter == nil, "a mark, never a number or a word")
         #expect(right.text == "5 menu bar items tucked away", "VoiceOver gets the count")
         #expect(dressed.left == nil)
         // Nothing hidden: no ear is conjured.
         #expect(ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(), to: .empty).right == nil)
     }
 
-    @Test func theMeterKeepsItsEarAndTheDotsNeverDisplaceIt() {
+    @Test func theMeterKeepsItsEarAndTheRestingMarkNeverDisplacesIt() {
         let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
         let dressed = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(hiddenCount: 9),
                                                   to: ScreenBarWings(left: nil, right: meter))
@@ -54,15 +53,16 @@ struct ScreenBarPeekTests {
         let dressed = ScreenBarEarMarks.apply(marks, to: ScreenBarMenuBarMarks.apply(
             ScreenBarMenuBarMarks(hiddenCount: 2), to: .empty))
         let right = try #require(dressed.right)
-        #expect(right.dots == 1)
+        #expect(right.symbol == ScreenBarMenuBarMarks.restingSymbol)
         #expect(right.accessory?.symbol == ScreenBarEarMarks.leaseSymbol)
     }
 
     @Test func theRestingMarkIsItsOwnSubjectForADismissal() {
-        let dots = ScreenBarWingSlot(text: "tucked", dots: 1)
+        let resting = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(hiddenCount: 2), to: .empty).right!
+        let grown = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(hiddenCount: 9), to: .empty).right!
         let sensorsOnly = ScreenBarWingSlot(text: "Microphone in use")
-        #expect(!ScreenBarController.sameWingSubject(dots, sensorsOnly))
-        #expect(ScreenBarController.sameWingSubject(dots, ScreenBarWingSlot(text: "more", dots: 3)),
+        #expect(!ScreenBarController.sameWingSubject(resting, sensorsOnly))
+        #expect(ScreenBarController.sameWingSubject(resting, grown),
                 "the run growing is the same ear still dismissed")
     }
 
@@ -88,7 +88,7 @@ struct ScreenBarPeekTests {
         let right = try #require(dressed.right)
         #expect(right.symbol == ScreenBarMenuBarMarks.failureSymbol, "the menu bar's own mark")
         #expect(right.tone == .alert)
-        #expect(right.dots == 0 && right.meter == nil, "one mark, not a stack of them")
+        #expect(right.meter == nil && right.provider == nil, "one mark, not a stack of them")
         #expect(right.text == "The concealer is failing", "the reason is VoiceOver's and the peek's")
         #expect(!ScreenBarController.sameWingSubject(right, meter), "a failure revives a dismissed meter ear")
         #expect(right.symbol != "exclamationmark.triangle.fill", "never mistaken for the band's refused program")

@@ -242,7 +242,6 @@ final class ScreenBarController {
     nonisolated static func sameWingSubject(_ a: ScreenBarWingSlot, _ b: ScreenBarWingSlot) -> Bool {
         a.provider == b.provider && a.symbol == b.symbol && a.visualizer == b.visualizer
             && (a.artworkData != nil) == (b.artworkData != nil)
-            && (a.dots > 0) == (b.dots > 0)
             && (a.glyph != nil) == (b.glyph != nil) && a.markID == b.markID
     }
     /// The device notice holding a side, and when it lets go.
