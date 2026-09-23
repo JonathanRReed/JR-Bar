@@ -225,13 +225,16 @@ enum LightingPreviewPrograms {
     }
 
     /// A busy desk under `blendMode`: two agents working in their own
-    /// colours and a third asking, in the ask colour — the decision a
-    /// blend mode is really about, which a single-agent swatch cannot
-    /// show. A local sketch of `colors.BLEND_MODE_DESCRIPTIONS`, like
-    /// `working`; the daemon's compiler is the authority for the strip.
-    static func fleet(blendMode: String, working: (String, String), askHex: String,
-                      cycleSeconds: Double, ledCount: Int = 8) -> String {
-        let a = normalized(working.0), b = normalized(working.1), ask = normalized(askHex)
+    /// colours and a third just done — the monitor's own `fleet` preview
+    /// scenario, the decision a blend mode is really about, which a
+    /// single-agent swatch cannot show. A local sketch of
+    /// `colors.BLEND_MODE_DESCRIPTIONS` for a monitor without
+    /// `preview_fleet`; the daemon's render is the authority. There is no
+    /// ask in it on purpose: an ask takes the whole strip under every
+    /// blend, so it says nothing about the blend.
+    static func fleet(blendMode: String, working: (String, String), doneHex: String,
+                      workingStateHex: String = "#00E5FF", cycleSeconds: Double, ledCount: Int = 8) -> String {
+        let a = normalized(working.0), b = normalized(working.1), done = normalized(doneHex)
         let ms = max(600, Int(cycleSeconds * 1000))
         let n = max(2, ledCount)
         func block(_ range: Range<Int>, _ hex: String, _ timing: String) -> String {
@@ -239,41 +242,42 @@ enum LightingPreviewPrograms {
         }
         switch blendMode {
         case "round_robin":
-            // Everyone: alternating LEDs, each agent in its own colour,
-            // breathing together.
-            let colors = (0..<n).map { [a, b, ask][$0 % 3] }
-            let floor = colors.map { scaled($0, 0.15) }.joined(separator: " ")
-            let swell = colors.enumerated().map { "\($0.offset):\($0.element) \(ms)ms pulse" }.joined(separator: "; ")
+            // Everyone: alternating LEDs, each agent in its own colour;
+            // the working two breathe, the finished one holds.
+            let colors = (0..<n).map { [a, b, done][$0 % 3] }
+            let floor = colors.enumerated().map { $0.offset % 3 == 2 ? $0.element : scaled($0.element, 0.15) }.joined(separator: " ")
+            let swell = colors.enumerated().filter { $0.offset % 3 != 2 }
+                .map { "\($0.offset):\($0.element) \(ms)ms pulse" }.joined(separator: "; ")
             return "\(floor)\n\(swell)\nrepeat"
         case "spatial_split":
-            // Split: the asking agent gets the widest section, because it
-            // needs you most; its section beats while the others hold.
-            let askStart = n / 2
-            let quarter = max(1, n / 4)
+            // Split: a section each; the working sections beat while the
+            // finished one holds.
+            let third = max(1, n / 3)
             let base = (0..<n).map { index in
-                index < quarter ? a : index < askStart ? b : scaled(ask, 0.4)
+                index < third ? scaled(a, 0.4) : index < 2 * third ? scaled(b, 0.4) : done
             }.joined(separator: " ")
-            let beat = (askStart..<n).map { "\($0):\(ask) \(max(500, ms / 2))ms pulse" }.joined(separator: "; ")
+            let beat = (0..<(2 * third)).map { "\($0):\($0 < third ? a : b) \(ms)ms pulse" }.joined(separator: "; ")
             return "\(base)\n\(beat)\nrepeat"
         case "relay":
             // Spotlight: every section rests dim and one flares at a time.
             let third = max(1, n / 3)
-            let sections: [(Range<Int>, String)] = [(0..<third, a), (third..<(2 * third), b), ((2 * third)..<n, ask)]
+            let sections: [(Range<Int>, String)] = [(0..<third, a), (third..<(2 * third), b), ((2 * third)..<n, done)]
             let dim = sections.flatMap { range, hex in range.map { _ in scaled(hex, 0.2) } }.joined(separator: " ")
             let flares = sections.map { range, hex in block(range, hex, "") + " \(ms)ms pulse" }
             return ([dim] + flares + ["repeat"]).joined(separator: "\n")
         case "cycle":
             // One at a time: the whole strip is each agent in turn.
-            let lines = [a, b, ask].flatMap { hex in ["\(hex) \(ms / 3)ms cosine", "\(hex) \(ms)ms none"] }
+            let lines = [a, b, done].flatMap { hex in ["\(hex) \(ms / 3)ms cosine", "\(hex) \(ms)ms none"] }
             return (lines + ["repeat"]).joined(separator: "\n")
         case "classic":
-            // Status only: one colour for whatever needs you most — the ask.
-            return state("ask", colorHex: ask)
+            // Status only: one colour for the desk's state, agents unnamed:
+            // something is working.
+            return state("working", colorHex: workingStateHex)
         default:
             // Smooth: the three colours blended into one gradient, drifting.
             let stops = (0..<n).map { index -> String in
                 let t = Double(index) / Double(n - 1)
-                return t < 0.5 ? mixed(a, b, t * 2) : mixed(b, ask, (t - 0.5) * 2)
+                return t < 0.5 ? mixed(a, b, t * 2) : mixed(b, done, (t - 0.5) * 2)
             }
             return "\(stops.joined(separator: " "))\nroll \(max(1200, ms * 3))ms linear\nrepeat"
         }

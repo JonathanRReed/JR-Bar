@@ -47,15 +47,7 @@ struct LightingPage: View {
                 .pickerStyle(.menu)
                 .fixedSize()
             }
-            SettingRow("With three agents", subtitle: "Two working and one asking — how a busy desk reads in this mode.") {
-                VStack(alignment: .trailing, spacing: 6) {
-                    LEDStripPreview(program: fleetProgram, style: .dots, dotSize: 9, spacing: 6)
-                        .frame(width: 168)
-                    LEDStripPreview(program: fleetProgram, style: .band, dotSize: 5, showsBackground: false)
-                        .frame(width: 150)
-                }
-                .accessibilityLabel("Three agents under the chosen blend")
-            }
+            FleetPreviewRow(store: store, sketch: fleetProgram)
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
@@ -155,8 +147,8 @@ struct LightingPage: View {
             }
     }
 
-    /// The fleet preview: Claude and Codex working in their colours,
-    /// a third agent asking in the ask colour, under the chosen blend.
+    /// The local sketch of the fleet preview: Claude and Codex working in
+    /// their colours and a third agent done, under the chosen blend.
     private var fleetProgram: String {
         func accent(_ provider: String) -> String {
             store.document.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
@@ -164,7 +156,8 @@ struct LightingPage: View {
         return LightingPreviewPrograms.fleet(
             blendMode: store.document.string("colors.blend_mode") ?? "color_blend",
             working: (accent("claude"), accent("codex")),
-            askHex: store.document.string("colors.mode_colors.ask") ?? ModeSwatch.defaults["ask"] ?? "#FF3A00",
+            doneHex: store.document.string("colors.mode_colors.done") ?? ModeSwatch.defaults["done"] ?? "#00FF66",
+            workingStateHex: store.document.string("colors.mode_colors.working") ?? ModeSwatch.defaults["working"] ?? "#00E5FF",
             cycleSeconds: store.document.double("colors.cycle_speed_seconds") ?? 2.2)
     }
 
@@ -274,6 +267,50 @@ struct ScenePackPicker: View {
         let id = shown
         guard !id.isEmpty, store.core.isLive else { preview = nil; return }
         preview = try? await store.core.previewScenePack(packID: id, ledCount: 8)
+    }
+}
+
+/// Lighting › Blend › "With three agents": the chosen blend against a
+/// busy desk. The monitor's `preview_fleet` renders it exactly as a strip
+/// would play it — the person's own colours through the real renderer and
+/// the compiler — so that is what plays whenever the monitor has it; the
+/// local sketch stands in for a monitor without the command.
+struct FleetPreviewRow: View {
+    @Bindable var store: SettingsStore
+    /// `LightingPreviewPrograms.fleet` for the current document.
+    let sketch: String
+    @ViewState private var rendered: (key: String, program: String, label: String)?
+
+    struct Reply: Decodable {
+        let program: String
+        let label: String?
+    }
+
+    /// What the render depends on: the blend, its speed, the palette.
+    private var key: String {
+        "\(store.core.isLive)|\(store.core.settings?.generation ?? 0)"
+    }
+
+    var body: some View {
+        let live = rendered.flatMap { $0.key == key ? $0 : nil }
+        let program = live?.program ?? sketch
+        SettingRow("With three agents", subtitle: live.map { "\($0.label) — as the monitor renders it." }
+                   ?? "Two working and one done: how a busy desk reads in this mode. An ask takes the whole strip under every blend, so it has no part here.") {
+            VStack(alignment: .trailing, spacing: 6) {
+                LEDStripPreview(program: program, style: .dots, dotSize: 9, spacing: 6)
+                    .frame(width: 168)
+                LEDStripPreview(program: program, style: .band, dotSize: 5, showsBackground: false)
+                    .frame(width: 150)
+            }
+            .accessibilityLabel("Three agents under the chosen blend")
+        }
+        .task(id: key) {
+            let key = self.key
+            guard store.core.isLive,
+                  let reply = try? await store.core.request("preview_fleet", args: ["led_count": .number(8)], as: Reply.self),
+                  !reply.program.isEmpty else { rendered = nil; return }
+            rendered = (key, reply.program, reply.label ?? "Three agents: two working, one done")
+        }
     }
 }
 

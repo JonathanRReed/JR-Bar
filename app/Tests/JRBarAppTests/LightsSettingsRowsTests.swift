@@ -29,15 +29,22 @@ struct LightsSettingsRowsTests {
         for mode in LightingPage.blendModes.map(\.value) {
             for cycle in [0.5, 2.2, 8.0] {
                 let text = LightingPreviewPrograms.fleet(blendMode: mode, working: ("#D97757", "#2B8FFF"),
-                                                         askHex: "#FF3A00", cycleSeconds: cycle)
+                                                         doneHex: "#00FF66", workingStateHex: "#00E5FF", cycleSeconds: cycle)
                 #expect(text.utf8.count <= LEDSLimits.maxProgramBytes, "\(mode) at \(cycle) s")
                 let program = try LEDSProgram.parse(text, ledCount: 8)
                 #expect(LEDSPresentationCompiler.compile(text, ledCount: 8).accepted, "\(mode) at \(cycle) s")
-                // Every mode shows the ask somewhere: its colour is on the strip.
                 let sampler = LEDSSampler(program: program, ledCount: 8)
                 let span = sampler.cycleDuration ?? 1
                 let seen = stride(from: 0.0, to: span, by: span / 24).flatMap { sampler.codes(atMilliseconds: Int($0 * 1000)) }
-                #expect(seen.contains { $0.r > 150 && $0.g < 120 && $0.b < 60 }, "\(mode) should show the ask")
+                if mode == "classic" {
+                    // Status Only names no agent: the desk's state, working.
+                    #expect(seen.contains { $0.r < 80 && $0.g > 150 && $0.b > 150 }, "\(mode) should show the working state")
+                } else {
+                    // Every other mode shows the finished agent somewhere.
+                    #expect(seen.contains { $0.r < 80 && $0.g > 180 && $0.b < 140 }, "\(mode) should show the finished agent")
+                }
+                // No ask in the sketch: an ask takes the strip under every blend.
+                #expect(!seen.contains { $0.r > 150 && $0.g < 120 && $0.b < 60 }, "\(mode) has no ask in it")
             }
         }
     }
