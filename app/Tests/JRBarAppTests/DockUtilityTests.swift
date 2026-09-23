@@ -41,13 +41,19 @@ struct DockUtilityTests {
         #expect(DockUtility.conflictNote(running: ["Witch"], windowChord: false, appChord: false) == nil)
     }
 
-    @Test("a counterpart pick for the switcher has a probe; JR-Bar has none")
+    @Test("a counterpart pick for the switcher has a probe; JR-Bar and Off have none")
     func switcherProbes() {
         #expect(DockUtility.probe(for: .jrbar) == nil)
-        for provider in DockSwitcherProvider.allCases where provider != .jrbar {
+        #expect(DockUtility.probe(for: .off) == nil)
+        for provider in DockSwitcherProvider.allCases where provider != .jrbar && provider != .off {
             #expect(DockUtility.probe(for: provider) != nil)
+        }
+        for provider in DockSwitcherProvider.allCases {
             #expect(!DockUtility.displayName(provider).isEmpty)
         }
+        #expect(DockUtility.chordRivals.map(\.name).allSatisfy { name in
+            DockSwitcherProvider.allCases.contains { DockUtility.displayName($0) == name }
+        }, "every app known to take ⌥⇥ can be handed it")
     }
 
     @Test("the watcher's knobs stand down with the previews parked or handed off")

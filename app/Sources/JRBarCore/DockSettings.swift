@@ -50,7 +50,15 @@ public struct DockSettings: Codable, Equatable, Sendable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         provider = (try? c.decodeIfPresent(DockProvider.self, forKey: .provider)) ?? .jrbar
         enhance = (try? c.decodeIfPresent(DockEnhanceSettings.self, forKey: .enhance)) ?? DockEnhanceSettings()
-        switcherProvider = (try? c.decodeIfPresent(DockSwitcherProvider.self, forKey: .switcherProvider)) ?? .jrbar
+        // A blob from before the split has no switcher pick: back then
+        // an external renderer parked the whole card, ⌥⇥ included, so
+        // DockDoor's own switcher answered it. That stays true until the
+        // pick is made — an upgrade never starts a tap nobody chose.
+        if let picked = try? c.decodeIfPresent(DockSwitcherProvider.self, forKey: .switcherProvider) {
+            switcherProvider = picked
+        } else {
+            switcherProvider = DockSwitcherProvider.legacy(for: provider)
+        }
     }
 
     /// Whether JR-Bar's own hover watcher should run: the card on,
@@ -66,12 +74,24 @@ public struct DockSettings: Codable, Equatable, Sendable {
     }
 }
 
-/// Who answers ⌥⇥ and ⌘⇥: JR-Bar's own switcher, or an installed
-/// counterpart the card hands the chords to (AltTab, Witch, Contexts).
-/// A counterpart pick parks our chords — the tap still runs for the
-/// preview's keys when the watcher is up.
+/// Who answers ⌥⇥ and ⌘⇥: JR-Bar's own switcher, an installed
+/// counterpart the card hands the chords to (AltTab, DockDoor, Witch,
+/// Contexts), or nobody of ours — `off` leaves both chords to macOS and
+/// whatever else binds them. Any pick but `jrbar` parks our chords; the
+/// tap still runs for the preview's keys when the watcher is up.
 public enum DockSwitcherProvider: String, Codable, CaseIterable, Sendable {
-    case jrbar, altTab, witch, contexts
+    case jrbar, altTab, dockDoor, witch, contexts, off
+
+    /// The pick a pre-split blob implies from its renderer: JR-Bar kept
+    /// its chords, DockDoor answered ⌥⇥ with its own switcher, and
+    /// ActiveDock's pick left the chords to nobody of ours.
+    public static func legacy(for renderer: DockProvider) -> DockSwitcherProvider {
+        switch renderer {
+        case .jrbar: return .jrbar
+        case .dockDoor: return .dockDoor
+        case .activeDock: return .off
+        }
+    }
 }
 
 /// One remembered switcher pick — Contexts' Fast Search: a short query

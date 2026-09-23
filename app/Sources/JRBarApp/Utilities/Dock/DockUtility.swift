@@ -157,15 +157,16 @@ final class DockUtility {
     }
 
     /// The picked switcher counterpart's probe — nil while JR-Bar owns
-    /// the chords.
+    /// the chords, or while nobody of ours does.
     private var switcherProbe: ExternalAppProbe? {
         Self.probe(for: settings().switcherProvider)
     }
 
     static func probe(for provider: DockSwitcherProvider) -> ExternalAppProbe? {
         switch provider {
-        case .jrbar: return nil
+        case .jrbar, .off: return nil
         case .altTab: return ExternalProviders.altTab
+        case .dockDoor: return ExternalProviders.dockDoor
         case .witch: return ExternalProviders.witch
         case .contexts: return ExternalProviders.contexts
         }
@@ -175,8 +176,10 @@ final class DockUtility {
         switch provider {
         case .jrbar: return "JR-Bar"
         case .altTab: return "AltTab"
+        case .dockDoor: return "DockDoor"
         case .witch: return "Witch"
         case .contexts: return "Contexts"
+        case .off: return "Off"
         }
     }
 
@@ -289,7 +292,7 @@ final class DockUtility {
                     guard let self else { return }
                     self.workspaceVersion += 1
                     let current = self.settings()
-                    if current.provider != .jrbar || current.switcherProvider != .jrbar {
+                    if current.provider != .jrbar || Self.probe(for: current.switcherProvider) != nil {
                         self.applySettings()
                     }
                 }

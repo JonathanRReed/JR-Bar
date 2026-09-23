@@ -108,6 +108,26 @@ struct DockSettingsTests {
         #expect(DockSettings().enhance.switcherThisDisplay == false && DockSettings().enhance.previewThisDisplay == false)
     }
 
+    @Test("a blob from before the switcher pick keeps its chords where they were")
+    func legacySwitcherPick() throws {
+        let dockDoor = try decode(DockSettings.self, #"{"enabled": true, "provider": "dockDoor"}"#)
+        #expect(dockDoor.switcherProvider == .dockDoor)
+        #expect(!dockDoor.switcherWanted, "DockDoor answered ⌥⇥ before the upgrade and still does")
+        let activeDock = try decode(DockSettings.self, #"{"enabled": true, "provider": "activeDock"}"#)
+        #expect(activeDock.switcherProvider == .off)
+        #expect(!activeDock.switcherWanted)
+        let ours = try decode(DockSettings.self, #"{"enabled": true}"#)
+        #expect(ours.switcherProvider == .jrbar)
+        #expect(ours.switcherWanted)
+        let picked = try decode(DockSettings.self,
+                                #"{"enabled": true, "provider": "dockDoor", "switcherProvider": "jrbar"}"#)
+        #expect(picked.switcherWanted, "a pick made on the card wins over the renderer")
+        var round = DockSettings(enabled: true)
+        round.switcherProvider = .off
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(!round.switcherWanted)
+    }
+
     @Test("handing the previews to DockDoor keeps JR-Bar's switcher; the card off stops both")
     func halvesAreIndependent() {
         var s = DockSettings(enabled: true, provider: .dockDoor)
