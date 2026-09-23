@@ -900,7 +900,8 @@ struct CreatorMicroCard: View {
 struct ScreenBarCard: View {
     @Bindable var store: SettingsStore
     /// The camera hold is the app's own: the band is drawn here, and the
-    /// camera reading is the app's too.
+    /// camera reading is the app's too — the notch island's poll, so the
+    /// row follows `ScreenBarCameraHold`.
     @AppStorage(ScreenBarController.stillOnCameraDefaultsKey) private var stillOnCamera = true
     /// The video guard is the app's too: it reads the now-playing app and
     /// the frontmost window, neither of which the daemon sees.
@@ -943,8 +944,9 @@ struct ScreenBarCard: View {
         SettingToggle(store, "Mirror hardware strip", subtitle: "Play the strip's program on its clock; off, the bar renders its own display.", path: "link_screen_bar_to_hardware", default: true)
         Toggle(isOn: $stillOnCamera) {
             SettingLabel(title: "Hold still on camera",
-                         subtitle: "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber.")
+                         subtitle: ScreenBarCameraHold.subtitle(cameraReadable: ScreenBarLiveStatus.shared.cameraReadable))
         }
+        .disabled(!ScreenBarLiveStatus.shared.cameraReadable)
         .settingRowStyle()
         DisclosureRow("Advanced", subtitle: "Phase, geometry and the band's dim floor.") {
             SettingSlider(store, "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back.",
@@ -992,6 +994,27 @@ struct ScreenBarCard: View {
             return "Uncalibrated"
         }
         return SettingsStore.calibrationSummary(document: store.document, prefix: "devices.\(index)")
+    }
+}
+
+/// "Hold still on camera" and what it leans on. The band has no camera
+/// reading of its own: the notch island's privacy-dot poll is the only
+/// one, and it runs only while JR-Bar draws the island with its Mic &
+/// camera indicators on. With the Notch toy off, Alcove or Boring Notch
+/// drawing, or the island hidden, the hold could never engage — so the
+/// row names the dependency and greys out rather than reading On.
+enum ScreenBarCameraHold {
+    /// Whether the camera hold can see a camera: the island shown (the
+    /// Notch toy on, rendered by JR-Bar, the island switch on) and its
+    /// indicators polling.
+    static func readable(islandVisible: Bool, indicatorsOn: Bool) -> Bool {
+        islandVisible && indicatorsOn
+    }
+
+    static func subtitle(cameraReadable: Bool) -> String {
+        cameraReadable
+            ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber. Uses the notch island's camera reading."
+            : "Uses the notch island's camera reading, which is off. Under Toys › Notch, render with JR-Bar, then turn on Show the island and Mic & camera indicators."
     }
 }
 

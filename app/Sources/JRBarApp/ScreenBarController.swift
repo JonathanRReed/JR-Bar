@@ -1173,6 +1173,11 @@ final class ScreenBarLiveStatus {
     var followingAlcove = false
     /// True while the band has stepped aside for a full-screen video.
     var steppedAsideForVideo = false
+    /// True while the notch island's mic/camera poll runs — the only
+    /// camera reading the band has (`ScreenBarCameraHold.readable`).
+    /// Without it "Hold still on camera" has nothing to hold on, and the
+    /// card says so instead of promising it.
+    var cameraReadable = false
 }
 
 /// The Screen Bar card's "Right now" line: which source the band plays,

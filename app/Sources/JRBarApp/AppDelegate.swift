@@ -1074,12 +1074,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// ears drawn the island rests bare, so the dots it would show ride
     /// the right ear instead. Re-armed after every change, like
     /// `observeCore`; the island's own switch and poll lifetime decide
-    /// what the reading is.
+    /// what the reading is — and whether there is one, which the Screen
+    /// Bar card's camera hold row reads.
     private func observeSensorDots() {
         guard let notch = toysStore?.notch else { return }
         screenBar?.sensors = notch.sensorState
+        let readable = ScreenBarCameraHold.readable(islandVisible: notch.islandVisible,
+                                                    indicatorsOn: notch.sensorIndicatorsEnabled)
+        let status = ScreenBarLiveStatus.shared
+        if status.cameraReadable != readable { status.cameraReadable = readable }
         withObservationTracking {
             _ = notch.sensorState
+            _ = notch.islandVisible
+            _ = notch.sensorIndicatorsEnabled
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observeSensorDots() }
         }
