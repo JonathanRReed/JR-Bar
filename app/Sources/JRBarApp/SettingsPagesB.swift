@@ -47,6 +47,15 @@ struct LightingPage: View {
                 .pickerStyle(.menu)
                 .fixedSize()
             }
+            SettingRow("With three agents", subtitle: "Two working and one asking — how a busy desk reads in this mode.") {
+                VStack(alignment: .trailing, spacing: 6) {
+                    LEDStripPreview(program: fleetProgram, style: .dots, dotSize: 9, spacing: 6)
+                        .frame(width: 168)
+                    LEDStripPreview(program: fleetProgram, style: .band, dotSize: 5, showsBackground: false)
+                        .frame(width: 150)
+                }
+                .accessibilityLabel("Three agents under the chosen blend")
+            }
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
@@ -149,6 +158,19 @@ struct LightingPage: View {
                 return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
                                              hex: store.document.string(SettingsPath(path)) ?? style.accentHex)
             }
+    }
+
+    /// The fleet preview: Claude and Codex working in their colours,
+    /// a third agent asking in the ask colour, under the chosen blend.
+    private var fleetProgram: String {
+        func accent(_ provider: String) -> String {
+            store.document.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
+        }
+        return LightingPreviewPrograms.fleet(
+            blendMode: store.document.string("colors.blend_mode") ?? "color_blend",
+            working: (accent("claude"), accent("codex")),
+            askHex: store.document.string("colors.mode_colors.ask") ?? ModeSwatch.defaults["ask"] ?? "#FF3A00",
+            cycleSeconds: store.document.double("colors.cycle_speed_seconds") ?? 2.2)
     }
 
     private var blendDetail: String {

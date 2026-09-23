@@ -24,6 +24,23 @@ struct LightsSettingsRowsTests {
         }
     }
 
+    @Test func everyBlendModesFleetPreviewIsAPlayableProgram() throws {
+        for mode in LightingPage.blendModes.map(\.value) {
+            for cycle in [0.5, 2.2, 8.0] {
+                let text = LightingPreviewPrograms.fleet(blendMode: mode, working: ("#D97757", "#2B8FFF"),
+                                                         askHex: "#FF3A00", cycleSeconds: cycle)
+                #expect(text.utf8.count <= LEDSLimits.maxProgramBytes, "\(mode) at \(cycle) s")
+                let program = try LEDSProgram.parse(text, ledCount: 8)
+                #expect(LEDSPresentationCompiler.compile(text, ledCount: 8).accepted, "\(mode) at \(cycle) s")
+                // Every mode shows the ask somewhere: its colour is on the strip.
+                let sampler = LEDSSampler(program: program, ledCount: 8)
+                let span = sampler.cycleDuration ?? 1
+                let seen = stride(from: 0.0, to: span, by: span / 24).flatMap { sampler.codes(atMilliseconds: Int($0 * 1000)) }
+                #expect(seen.contains { $0.r > 150 && $0.g < 120 && $0.b < 60 }, "\(mode) should show the ask")
+            }
+        }
+    }
+
     @Test func refusedEventKitGrantsAreNamed() {
         #expect(EventKitAccessNote.isRefused(.denied))
         #expect(EventKitAccessNote.isRefused(.restricted))
