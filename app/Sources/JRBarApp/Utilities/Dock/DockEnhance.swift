@@ -176,9 +176,15 @@ struct DockHoverTracker {
 enum DockTile: String, CaseIterable {
     case leftHalf, rightHalf, topHalf, bottomHalf
     case topLeft, topRight, bottomLeft, bottomRight
+    /// Two-thirds of the screen, centred — DockDoor's Center.
+    case center
+    /// The whole visible frame — a fill, not macOS full screen.
+    case fill
 
     var title: String {
         switch self {
+        case .center: return "Center"
+        case .fill: return "Fill"
         case .leftHalf: return "Left Half"
         case .rightHalf: return "Right Half"
         case .topHalf: return "Top Half"
@@ -239,7 +245,20 @@ enum DockEnhanceMath {
         case .bottomRight:
             return CGRect(x: visible.midX, y: visible.midY,
                           width: halfW, height: halfH)
+        case .center:
+            let w = (visible.width * 2 / 3).rounded(), h = (visible.height * 2 / 3).rounded()
+            return CGRect(x: visible.midX - w / 2, y: visible.midY - h / 2, width: w, height: h)
+        case .fill:
+            return visible
         }
+    }
+
+    /// "Move to <display>": the window keeps its size — clamped to fit
+    /// the target's visible frame — and lands centred on it. Quartz
+    /// space in, Quartz space out.
+    static func moveFrame(_ frame: CGRect, to visible: CGRect) -> CGRect {
+        let w = min(frame.width, visible.width), h = min(frame.height, visible.height)
+        return CGRect(x: visible.midX - w / 2, y: visible.midY - h / 2, width: w, height: h)
     }
 
     static func appKitRect(_ axRect: CGRect, mainScreenHeight: CGFloat) -> CGRect {
@@ -840,12 +859,80 @@ enum AppleDockReader {
         return axBool(element, "AXFullScreen")
     }
 
-    /// The header's "New": the app's own ⌘N — activate it, then post
-    /// the chord straight to its event queue. Apps with no ⌘N do
-    /// nothing; nothing else is reachable without scripting rights.
+    /// One menu item as the New-window pick reads it.
+    struct MenuItemFacts: Equatable {
+        var title: String
+        var cmdChar: String?
+        /// `AXMenuItemCmdModifiers`: 0 is ⌘ alone; bits add ⇧ (1),
+        /// ⌥ (2), ⌃ (4), and 8 means no ⌘ at all.
+        var cmdModifiers: Int?
+        var enabled: Bool
+        var hasSubmenu = false
+    }
+
+    /// The item "New window" should press: an enabled leaf titled "New
+    /// Window", else the enabled leaf the app itself binds to plain ⌘N
+    /// (whatever it calls it). nil means the menu offers neither.
+    static func newWindowItemIndex(_ items: [MenuItemFacts]) -> Int? {
+        let leaves = items.indices.filter { items[$0].enabled && !items[$0].hasSubmenu }
+        func normalized(_ title: String) -> String {
+            title.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "….")))
+                .lowercased()
+        }
+        if let titled = leaves.first(where: { normalized(items[$0].title) == "new window" }) {
+            return titled
+        }
+        return leaves.first {
+            items[$0].cmdChar?.uppercased() == "N" && (items[$0].cmdModifiers ?? 0) == 0
+        }
+    }
+
+    /// Walk the app's menu bar (past the Apple menu, one submenu deep)
+    /// for the New-window item. AX reads only — the press is the caller's.
+    static func newWindowMenuItem(pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &value) == .success,
+              let bar = value, CFGetTypeID(bar) == AXUIElementGetTypeID() else { return nil }
+        var facts: [MenuItemFacts] = []
+        var elements: [AXUIElement] = []
+        func collect(_ menu: AXUIElement, depth: Int) {
+            for item in axChildren(menu) {
+                let submenu = axChildren(item).first
+                let modifiers: Int? = {
+                    var raw: AnyObject?
+                    guard AXUIElementCopyAttributeValue(item, kAXMenuItemCmdModifiersAttribute as CFString,
+                                                        &raw) == .success else { return nil }
+                    return (raw as? NSNumber)?.intValue
+                }()
+                facts.append(MenuItemFacts(
+                    title: axString(item, kAXTitleAttribute) ?? "",
+                    cmdChar: axString(item, kAXMenuItemCmdCharAttribute),
+                    cmdModifiers: modifiers,
+                    enabled: axBool(item, kAXEnabledAttribute),
+                    hasSubmenu: submenu != nil))
+                elements.append(item)
+                if let submenu, depth < 1 { collect(submenu, depth: depth + 1) }
+            }
+        }
+        for top in axChildren(bar as! AXUIElement).dropFirst().prefix(6) {
+            for menu in axChildren(top) { collect(menu, depth: 0) }
+        }
+        return newWindowItemIndex(facts).map { elements[$0] }
+    }
+
+    /// The header's "New": the app's own New Window menu item, pressed
+    /// through AX — it works where ⌘N means New Document or isn't bound,
+    /// and never types into whatever window has focus. Only when the
+    /// menu offers neither does the old path run: post ⌘N to the app.
     static func newWindow(app: NSRunningApplication?) {
         guard let app else { return }
         app.activate()
+        if let item = newWindowMenuItem(pid: app.processIdentifier),
+           AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {
+            return
+        }
         // Virtual key 45 is 'n'. Posting to the pid lands the chord in
         // the app's own queue — a real event, and a pid-targeted post
         // asks for no scripting right.
@@ -1679,6 +1766,9 @@ final class DockEnhanceController {
         }
         panel.actions.onDocumentDrop = { [weak self] url in self?.openDocumentInPreview(url) ?? false }
         panel.actions.onAnswer = { [weak self] ask, approve in self?.answer(ask, approve: approve) }
+        panel.actions.onMoveToDisplay = { [weak self] window, display in
+            self?.move(window, toDisplay: display)
+        }
         self.panel = panel
         return panel
     }
@@ -1970,7 +2060,19 @@ final class DockEnhanceController {
         _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: quartz))
     }
 
-    /// The header's "New" — the app's ⌘N. The live list usually lands
+    /// The context menu's Move To: the window keeps its size (clamped
+    /// to fit) and lands centred on the other display's visible frame.
+    private func move(_ window: DockPreviewWindow, toDisplay id: CGDirectDisplayID) {
+        guard let display = DockDisplays.all().first(where: { $0.id == id }) else { return }
+        let visible = DockEnhanceMath.appKitRect(display.screen.visibleFrame,
+                                                 mainScreenHeight: Self.mainScreenHeight())
+        let current = window.frame ?? window.element.flatMap { AppleDockReader.frame(of: $0) }
+            ?? CGRect(origin: .zero, size: visible.size)
+        if window.minimized { _ = AppleDockReader.setMinimized(window, false) }
+        _ = AppleDockReader.setFrame(window, DockEnhanceMath.moveFrame(current, to: visible))
+    }
+
+    /// The header's "New" — the app's New Window. The live list usually lands
     /// the new card by itself; a beat later the same refresh runs once
     /// more for apps that post no window-created notification.
     private func newWindow() {

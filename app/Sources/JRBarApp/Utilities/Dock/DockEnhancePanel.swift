@@ -54,7 +54,7 @@ final class DockPreviewActions {
     /// The context menu's tile — snap the window into a half or
     /// quarter of the screen, DockDoor's snap verbs.
     var onTile: (@MainActor (DockPreviewWindow, DockTile) -> Void)?
-    /// The header's "New" — the app's ⌘N.
+    /// The header's "New" — the app's own New Window menu item.
     var onNewWindow: (@MainActor () -> Void)?
     /// The header's "Quit".
     var onQuitApp: (@MainActor () -> Void)?
@@ -84,6 +84,34 @@ final class DockPreviewActions {
     var onDocumentDrop: (@MainActor (URL) -> Bool)?
     /// An ask row's Approve (true) / Deny (false).
     var onAnswer: (@MainActor (CoreAsk, Bool) -> Void)?
+    /// The context menu's Move To — the window to another display.
+    var onMoveToDisplay: (@MainActor (DockPreviewWindow, CGDirectDisplayID) -> Void)?
+}
+
+/// The Macs' displays as the Move To menu names them.
+@MainActor
+enum DockDisplays {
+    struct Display { let id: CGDirectDisplayID; let name: String; let screen: NSScreen }
+
+    static func all() -> [Display] {
+        NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            else { return nil }
+            return Display(id: CGDirectDisplayID(number.uint32Value), name: screen.localizedName, screen: screen)
+        }
+    }
+
+    /// Every display but the one holding `frame`'s centre (Quartz) —
+    /// empty on a one-screen desk, so the menu never offers a no-op.
+    static func others(than frame: CGRect?) -> [Display] {
+        let displays = all()
+        guard displays.count > 1 else { return [] }
+        guard let frame else { return displays }
+        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
+                             ?? NSScreen.screens.first)?.frame.height ?? 0
+        let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
+        return displays.filter { !$0.screen.frame.contains(centre) }
+    }
 }
 
 /// The Enhance preview's window: a borderless, nonactivating glass
@@ -376,7 +404,7 @@ struct DockPreviewView: View {
                             actions.onHideApp?()
                         }
                         headerVerb("plus", tint: Color(red: 0.36, green: 0.78, blue: 0.36),
-                                   label: "New window in \(content.appName) (⌘N)") {
+                                   label: "New window in \(content.appName)") {
                             actions.onNewWindow?()
                         }
                     }
@@ -654,8 +682,23 @@ struct DockPreviewCard: View {
                     }
                     Divider()
                     Menu("Tile To") {
-                        ForEach(DockTile.allCases, id: \.rawValue) { tile in
+                        ForEach(DockTile.allCases.filter { $0 != .center && $0 != .fill }, id: \.rawValue) { tile in
                             Button(tile.title) { actions.performWindowAction(window, value: tile, actions.onTile) }
+                        }
+                        Divider()
+                        Button(DockTile.center.title) { actions.performWindowAction(window, value: DockTile.center, actions.onTile) }
+                        Button(DockTile.fill.title) { actions.performWindowAction(window, value: DockTile.fill, actions.onTile) }
+                    }
+                    // The other monitors, by name — the display half of
+                    // DockDoor's move-between-Spaces, no private Space API.
+                    let others = DockDisplays.others(than: window.frame)
+                    if !others.isEmpty {
+                        Menu("Move To") {
+                            ForEach(others, id: \.id) { display in
+                                Button(display.name) {
+                                    actions.performWindowAction(window, value: display.id, actions.onMoveToDisplay)
+                                }
+                            }
                         }
                     }
                     Divider()
