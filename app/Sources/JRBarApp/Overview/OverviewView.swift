@@ -982,8 +982,17 @@ struct OverviewView: View {
                     // The one timeline view History and the Data Hoarder
                     // mount too: the story card, the honest gaps, the
                     // kind chips, jump to error and the rows.
-                    ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
-                                              viewState: store.timelineViewState, embedded: true)
+                    if let archived = store.archivedTimeline, archived.id == entry.id {
+                        // The live transcript is gone but the Data Hoarder
+                        // kept it: the same view, labelled as the archive's.
+                        ReconstructedTimelineView(
+                            reconstruction: archived.reconstruction,
+                            viewState: store.timelineViewState, embedded: true,
+                            sourceNote: "Archived copy · \(archived.record.name) — the live transcript is gone")
+                    } else {
+                        ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
+                                                  viewState: store.timelineViewState, embedded: true)
+                    }
                     if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
                         Button {
                             store.onOpenArchive?(OverviewStore.archiveSearchTerm(for: entry))

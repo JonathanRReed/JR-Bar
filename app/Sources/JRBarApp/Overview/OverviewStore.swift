@@ -861,6 +861,7 @@ final class OverviewStore {
         timelineLoading = true
         defer { timelineLoading = false }
         let fallback = timelineFallback(for: id)
+        archivedTimeline = nil
         do {
             let page = try await core.sessionTimeline(
                 id: id, provider: fallback.provider,
@@ -868,6 +869,9 @@ final class OverviewStore {
             guard timelineSessionID == id else { return }
             timeline = page.events
             timelinePage = page
+            if page.gaps.contains("transcript_not_found") {
+                await loadArchivedTimeline(for: id)
+            }
         } catch {
             guard timelineSessionID == id else { return }
             timelinePage = CoreTimelinePage(gaps: [Self.describe(error)])
@@ -1053,6 +1057,24 @@ final class OverviewStore {
     func probeArchive(file: String) async {
         guard archiveStates[file] == nil, let archiveProbe else { return }
         archiveStates[file] = await archiveProbe(file)
+    }
+
+    /// Rebuilds a session's archived transcript by its uuid — set by the
+    /// app delegate to the Data Hoarder's reader; nil hides the fallback.
+    var archiveTimeline: ((String) async -> (SessionReconstruction, ArchiveRecord)?)?
+    /// The archived copy standing in for a transcript that is gone: the
+    /// row it belongs to, the rebuilt timeline and the record it came from.
+    private(set) var archivedTimeline: (id: String, reconstruction: SessionReconstruction, record: ArchiveRecord)?
+
+    /// An ended session whose transcript was cleaned up or moved still has
+    /// a story when the Data Hoarder kept it: rebuild that copy and show it
+    /// in the same timeline view, labelled as the archive's.
+    func loadArchivedTimeline(for id: String) async {
+        guard let archiveTimeline,
+              let entry = rows.first(where: { $0.id == id }) ?? roster.first(where: { $0.id == id }) else { return }
+        let sessionID = Self.archiveSearchTerm(for: entry)
+        guard let found = await archiveTimeline(sessionID), timelineSessionID == id else { return }
+        archivedTimeline = (id, found.0, found.1)
     }
 
     /// The term "Search archive for this session" seeds the hoarder

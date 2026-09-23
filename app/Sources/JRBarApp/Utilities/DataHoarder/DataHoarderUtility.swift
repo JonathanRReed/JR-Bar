@@ -909,4 +909,34 @@ final class DataHoarderModel {
             selectedSources = [sourceID]
         }
     }
+
+    // MARK: Archived timelines for other windows
+
+    /// The archived copy of a session's transcript, rebuilt — what the
+    /// Overview inspector shows when the live transcript was cleaned up or
+    /// moved. The newest Claude/Codex record filed under the session's id
+    /// wins; segment reads are hash-verified like every other archive read,
+    /// and the rebuild runs off-main. Nil when the archive never kept it.
+    nonisolated static func archivedTimeline(in archive: DataHoarderArchive,
+                                             sessionID: String) async -> (SessionReconstruction, ArchiveRecord)? {
+        guard !sessionID.isEmpty,
+              let records = try? await archive.relatedRecords(sessionID: sessionID),
+              let record = newestTranscript(in: records),
+              let provider = record.provider,
+              let payloads = try? await archive.segmentData(id: record.id) else { return nil }
+        let startedAt = record.startedAt
+        let rebuilt = await Task.detached(priority: .userInitiated) {
+            SessionReconstructor.reconstruct(segments: payloads, provider: provider, epochFallback: startedAt)
+        }.value
+        return (rebuilt, record)
+    }
+
+    /// The transcript record a session's timeline should come from: a
+    /// Claude or Codex record (never a CLIProxyAPI request log), newest
+    /// activity first.
+    nonisolated static func newestTranscript(in records: [ArchiveRecord]) -> ArchiveRecord? {
+        records
+            .filter { $0.provider == "claude" || $0.provider == "codex" }
+            .max { ($0.lastActivityAt ?? $0.importedAt) < ($1.lastActivityAt ?? $1.importedAt) }
+    }
 }

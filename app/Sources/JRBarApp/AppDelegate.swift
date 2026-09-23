@@ -395,6 +395,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
             return try? await archive.captureState(path: path)
         }
+        overviewStore.archiveTimeline = { [weak utilitiesStore] sessionID in
+            guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
+            return await DataHoarderModel.archivedTimeline(in: archive, sessionID: sessionID)
+        }
         overviewStore.onOpenArchive = { [weak utilitiesStore] term in
             guard let hoarder = utilitiesStore?.dataHoarder else { return }
             hoarder.model.query = term
