@@ -3343,3 +3343,38 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
     with pytest.raises(CommandError) as invalid:
         controller._core_dispatch("usage_graph", {"days": 14})
     assert invalid.value.code == "invalid_args"
+
+
+def test_confetti_journals_one_burst_in_the_sessions_colours(headless, monkeypatch) -> None:
+    """``confetti`` states the fact as an event the app's toy judges; a
+    loop in someone's hook coalesces instead of flooding the journal."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    server = controller._core
+    status = SimpleNamespace(agent_id="codex:session:run", provider="codex", session_id="run",
+                             display_name="sidepulse-core")
+    controller.last_snapshot = SimpleNamespace(statuses=(status,), stale_statuses=())
+    clock = iter((1_000.0, 1_001.0, 1_010.0))
+    monkeypatch.setattr(core_runtime.time, "monotonic", lambda: next(clock))
+    server.published.clear()
+
+    reply = controller._core_dispatch("confetti", {"session": "run", "reason": "tests passed"})
+
+    assert reply["sent"] is True and reply["coalesced"] is False
+    assert reply["session"] == "codex:session:run" and reply["provider"] == "codex"
+    assert server.published == [("event", {
+        "kind": "confetti", "session": "codex:session:run", "provider": "codex",
+        "label": "sidepulse-core", "detail": "tests passed",
+    })]
+
+    again = controller._core_dispatch("confetti", {})
+    assert again["sent"] is False and again["coalesced"] is True
+    assert len(server.published) == 1
+
+    later = controller._core_dispatch("confetti", {"session": "ghost"})
+    assert later["sent"] is True and later["unmatched"] == "ghost"
+    assert server.published[-1] == ("event", {"kind": "confetti"})
+
+    with pytest.raises(CommandError) as invalid:
+        controller._core_dispatch("confetti", {"provider": "not a provider"})
+    assert invalid.value.code == "invalid_args"

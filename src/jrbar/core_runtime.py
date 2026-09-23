@@ -3120,6 +3120,35 @@ def _cmd_mark_history_seen(self, args):
     return {"last_seen": self.ensure_activity_ledger().last_seen_epoch}
 
 
+@command("confetti")
+def _cmd_confetti(self, args):
+    """A burst asked for from outside JR-Bar (``jrbar confetti``, a hook, CI).
+
+    Journals one ``confetti`` event in the named session's provider colours
+    (confetti_requests.py); the app's Confetti toy decides whether it fires.
+    A repeat inside the coalescing window is answered, never journaled.
+    """
+    from .confetti_requests import CONFETTI_EVENT_KIND, ConfettiGate, resolve_confetti_request
+
+    snapshot = getattr(self, "last_snapshot", None)
+    statuses = (*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())) if snapshot else ()
+    try:
+        request = resolve_confetti_request(args, statuses)
+    except ValueError as error:
+        raise CommandError("invalid_args", str(error)) from None
+    result = {"session": request.session, "provider": request.provider, "unmatched": request.unmatched}
+    gate = getattr(self, "_core_confetti_gate", None)
+    if gate is None:
+        gate = self._core_confetti_gate = ConfettiGate()
+    if not gate.admit(time.monotonic()):
+        return {**result, "sent": False, "coalesced": True}
+    server = getattr(self, "_core", None)
+    if server is None:
+        raise CommandError("unavailable", "the event stream is not running")
+    body = server.publish_event({"kind": CONFETTI_EVENT_KIND, **request.event_fields()})
+    return {**result, "sent": True, "coalesced": False, "event": body.get("id"), "cursor": body.get("cursor")}
+
+
 @command("serve_token", main_thread=False)
 def _cmd_serve_token(self, args):
     """The loopback status endpoint's bearer token, for the reveal row.
