@@ -67,7 +67,14 @@ final class OverviewStore {
     init(core: CoreModel) {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
+        self.ownDesk = AskAnswerDesk(core: core)
     }
+
+    /// Always allow and a held question's picks go through the panel's
+    /// shared desk (one pending set, one set of picks across surfaces);
+    /// this store's own only until the app delegate publishes that one.
+    private let ownDesk: AskAnswerDesk
+    var askDesk: AskAnswerDesk { AskAnswerDesk.shared ?? ownDesk }
 
     /// Reads usage for the rows the table leads with and the selection.
     func refreshSessionUsage(force: Bool = false) {
@@ -646,6 +653,60 @@ final class OverviewStore {
         } catch {
             report(Self.describe(error), isError: true)
         }
+    }
+
+    // MARK: The desk's verbs
+
+    /// The row's ask as the desk answers it: its session filled in.
+    func deskAsk(for entry: CoreRosterEntry) -> CoreAsk? {
+        guard var ask = entry.session.ask else { return nil }
+        if ask.session == nil { ask.session = entry.id }
+        return ask
+    }
+
+    /// Always allow, from its own button — only while the agent's hook
+    /// holds an ask that offers a rule to remember.
+    func alwaysAllow(entry: CoreRosterEntry) async {
+        guard askAction(for: entry) == .actionable, let ask = deskAsk(for: entry) else {
+            report(askDisabledReason(for: entry) ?? "This ask can no longer be answered", isError: true)
+            return
+        }
+        await answerThroughDesk(ask, .always)
+    }
+
+    /// One of a held question's options: the answer itself for a single
+    /// pick, one more pick otherwise.
+    func pick(_ label: String, in choice: CoreAskChoice, entry: CoreRosterEntry) async {
+        guard let ask = deskAsk(for: entry), !entry.session.remote else { return }
+        if let verdict = AskChoicePicks.oneClick(label, choices: ask.decision?.choices ?? []) {
+            await answerThroughDesk(ask, verdict)
+        } else {
+            askDesk.toggle(label, in: choice, of: ask)
+        }
+    }
+
+    /// Deny on a held question: the hook declines it the way Esc does,
+    /// whatever hosts the session — the keystroke path's answerability
+    /// does not come into it.
+    func declineQuestion(entry: CoreRosterEntry) async {
+        guard let ask = deskAsk(for: entry), !entry.session.remote else { return }
+        await answerThroughDesk(ask, .deny)
+    }
+
+    /// Send Answers for a question with several parts.
+    func sendPicks(entry: CoreRosterEntry) async {
+        guard let ask = deskAsk(for: entry), let choices = ask.decision?.choices,
+              let answers = askDesk.picks(for: ask).answers(choices) else {
+            report("Pick an answer for every question first", isError: true)
+            return
+        }
+        await answerThroughDesk(ask, .choose(answers))
+    }
+
+    private func answerThroughDesk(_ ask: CoreAsk, _ verdict: AskVerdict) async {
+        let outcome = await askDesk.answer(ask, verdict)
+        report(outcome.line, isError: !outcome.ok)
+        if outcome.ok { await load() }
     }
 
     /// What the ask-action buttons may claim on this row. `remote` and
