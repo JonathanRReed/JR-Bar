@@ -957,4 +957,18 @@ extension CoreModel {
     public func reportPresence(_ report: CorePresenceReport) async throws -> CoreReply {
         try await send("presence", args: report.arguments)
     }
+
+    /// `hold_awake`: the person's keep-awake lease, the one hold every
+    /// surface shares (it replaces any earlier lease).
+    @discardableResult
+    public func holdAwake(_ request: CoreAwakeRequest) async throws -> CoreReply {
+        try await send("hold_awake", args: request.arguments)
+    }
+
+    /// `release_awake`: ends the person's lease; the agents' own hold
+    /// keeps its switch.
+    @discardableResult
+    public func releaseAwake() async throws -> CoreReply {
+        try await send("release_awake")
+    }
 }

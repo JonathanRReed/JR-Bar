@@ -1636,6 +1636,9 @@ extension AppDelegate {
         SystemTogglesStore.shared.state.protectedVolumePaths = { [weak self] in
             self?.core?.devices.compactMap(\.path) ?? []
         }
+        // Awake is the daemon's one keep-awake lease: the chip, links and
+        // Shortcuts send it, `state.power.hold` is what the chip shows.
+        if let core { SystemTogglesStore.shared.state.attachLease(to: core) }
         wireCommandRouter()
         // Shortcuts' "Open Agent Session" picks from the live list.
         JRBarIntentBridge.sessions = { [weak self] in
