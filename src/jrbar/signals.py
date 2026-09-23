@@ -200,6 +200,38 @@ def escalation_stage(
     return min(stage, _TIER_CEILING.get(tier, 2))
 
 
+MAX_PROVIDER_ESCALATION_TIERS = 32
+
+
+def normalize_provider_escalation_tiers(value: object) -> dict[str, str]:
+    """``{provider id: tier}``, known tiers and short ids only."""
+    if not isinstance(value, dict):
+        return {}
+    tiers: dict[str, str] = {}
+    for provider, tier in value.items():
+        if (
+            isinstance(provider, str)
+            and 0 < len(provider.strip()) <= 64
+            and provider.strip().isprintable()
+            and tier in ESCALATION_TIERS
+            and len(tiers) < MAX_PROVIDER_ESCALATION_TIERS
+        ):
+            tiers[provider.strip()] = tier
+    return dict(sorted(tiers.items()))
+
+
+def provider_escalation_stage(stage: int, *, provider: str | None, tiers: dict[str, str]) -> int:
+    """Pure: a per-provider ceiling under the global one. A Claude
+    permission ask may climb to the chime while another provider's asks
+    never go past the light. It can only lower the stage: the global tier
+    is what arms the finale, so a provider cannot climb above it."""
+    stage = max(0, min(3, int(stage)))
+    tier = tiers.get(provider or "") if provider else None
+    if tier is None:
+        return stage
+    return min(stage, _TIER_CEILING[tier])
+
+
 def presence_escalation_stage(
     stage: int,
     *,

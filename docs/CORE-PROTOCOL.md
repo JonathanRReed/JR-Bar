@@ -1201,6 +1201,7 @@ path, validated by the real settings loader:
 | `devices.N.blend_mode` | `color_blend` \| `round_robin` \| `spatial_split` \| `relay` \| `cycle` \| `classic`, or null | null | A per-device blend, so eight discrete LEDs can take per-agent blocks while the band stays smooth. Null (or an unknown word) follows the global `colors.blend_mode`. |
 | `call_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `sounds` | What a call does (`presence`). |
 | `meeting_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What a calendar meeting does. |
+| `escalation_tier_by_provider` | object: provider id → `light`/`menu_bar`/`chime`/`takeover` | `{}` | A ceiling per provider under `escalation_tier`, judged on the oldest open ask's provider: Claude's asks may climb to the chime while another provider's never go past the light. It only ever lowers the stage (the global tier arms the finale). |
 
 ## Versioning
 

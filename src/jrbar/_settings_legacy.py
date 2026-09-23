@@ -42,6 +42,7 @@ from .signals import (
     DEFAULT_QUOTA_THRESHOLDS,
     FOCUS_SIGNAL_POLICIES,
     normalize_alert_burst,
+    normalize_provider_escalation_tiers,
     normalize_quota_thresholds,
 )
 from .private_io import (
@@ -381,6 +382,10 @@ class AgentMonitorSettings:
     escalation_ramp_seconds: float = 30.0
     escalation_menu_bar_seconds: float = 120.0
     escalation_final_seconds: float = 300.0
+    # A ceiling per provider under the global tier: {provider id: tier}.
+    # Claude's permission asks may climb to the chime while another
+    # provider's never go past the light (signals.provider_escalation_stage).
+    escalation_tier_by_provider: dict[str, str] = field(default_factory=dict)
     session_open_preferences: dict[str, str] = field(default_factory=dict)
     setup_screen_completed: bool = False
     colors: ColorSettings = field(default_factory=ColorSettings.defaults)
@@ -1722,6 +1727,9 @@ class AgentMonitorSettings:
             "escalation_ramp_seconds": self.escalation_ramp_seconds,
             "escalation_menu_bar_seconds": self.escalation_menu_bar_seconds,
             "escalation_final_seconds": self.escalation_final_seconds,
+            "escalation_tier_by_provider": normalize_provider_escalation_tiers(
+                self.escalation_tier_by_provider
+            ),
             "session_open_preferences": dict(sorted(self.session_open_preferences.items())),
             "setup_screen_completed": self.setup_screen_completed,
             "colors": self.colors.to_dict(),
@@ -2118,6 +2126,9 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         signal_styles=_signal_styles(data.get("signal_styles")),
         escalation_tier=_escalation_tier(data.get("escalation_tier")),
+        escalation_tier_by_provider=normalize_provider_escalation_tiers(
+            data.get("escalation_tier_by_provider")
+        ),
         **_escalation_thresholds(data),
         session_open_preferences=_session_open_preferences(data.get("session_open_preferences")),
         setup_screen_completed=_bool_setting(data.get("setup_screen_completed"), False),

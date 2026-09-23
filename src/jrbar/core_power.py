@@ -44,7 +44,7 @@ from .presence import (
     presence_document,
     presence_escalation_ceiling,
 )
-from .signals import presence_escalation_stage
+from .signals import presence_escalation_stage, provider_escalation_stage
 
 #: The power events a client hears as an ``event`` frame (kind ``power``),
 #: in History's words. Starting a lease and resuming are visible in
@@ -302,8 +302,17 @@ def on_call(controller: Any, *, now: float | None = None) -> bool:
 
 
 def escalation_stage(controller: Any, stage: int, *, now: float | None = None) -> int:
-    """The ladder's stage adjusted for presence: held at the light on a
-    call, past the invisible menu-bar pulse while the screen is locked."""
+    """The ladder's stage adjusted for whose ask it is and for presence: a
+    per-provider ceiling first, then held at the light on a call, past the
+    invisible menu-bar pulse while the screen is locked."""
+    settings = getattr(controller, "settings", None)
+    tiers = getattr(settings, "escalation_tier_by_provider", None)
+    if isinstance(tiers, dict) and tiers:
+        oldest = getattr(controller, "_core_oldest_ask", None)
+        status = oldest() if callable(oldest) else None
+        stage = provider_escalation_stage(
+            stage, provider=getattr(status, "provider", None), tiers=tiers
+        )
     facts = presence_facts(controller)
     if facts is None:
         return stage

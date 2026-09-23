@@ -309,3 +309,33 @@ def test_presence_facts_are_frozen() -> None:
     facts = PresenceFacts(received_at=NOW, mic=True)
     with pytest.raises(AttributeError):
         facts.mic = False  # type: ignore[misc]
+
+
+# --- a ceiling per provider ----------------------------------------------------------
+
+
+def test_a_provider_ceiling_only_ever_lowers_the_stage() -> None:
+    from jrbar.signals import normalize_provider_escalation_tiers, provider_escalation_stage
+
+    tiers = normalize_provider_escalation_tiers({"codex": "light", "claude": "chime", "pi": "shout", 3: "light"})
+    assert tiers == {"claude": "chime", "codex": "light"}
+    assert provider_escalation_stage(3, provider="codex", tiers=tiers) == 1
+    assert provider_escalation_stage(2, provider="claude", tiers=tiers) == 2
+    assert provider_escalation_stage(3, provider="gemini", tiers=tiers) == 3
+    assert provider_escalation_stage(3, provider=None, tiers=tiers) == 3
+    assert normalize_provider_escalation_tiers("codex=light") == {}
+
+
+def test_the_daemon_caps_the_oldest_asks_provider() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import core_power
+
+    controller = SimpleNamespace(
+        settings=AgentMonitorSettings(escalation_tier_by_provider={"codex": "light"}),
+        _core_oldest_ask=lambda: SimpleNamespace(provider="codex"),
+    )
+    assert core_power.escalation_stage(controller, 3) == 1
+    controller._core_oldest_ask = lambda: SimpleNamespace(provider="claude")
+    assert core_power.escalation_stage(controller, 3) == 3
+    assert AgentMonitorSettings().to_dict()["escalation_tier_by_provider"] == {}
