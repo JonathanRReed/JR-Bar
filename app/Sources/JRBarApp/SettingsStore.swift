@@ -766,6 +766,72 @@ final class SettingsStore {
         }
     }
 
+    /// "Copy diagnostics" is gathering (the doctor round-trip).
+    var diagnosticsCopying = false
+
+    /// Settings › Advanced › Copy diagnostics: the Doctor's reply (when
+    /// the monitor is up), every Setup permission read without prompting,
+    /// both builds and the log tail, redacted, onto the pasteboard.
+    func copyDiagnostics() {
+        guard !diagnosticsCopying else { return }
+        diagnosticsCopying = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.diagnosticsCopying = false }
+            var doctor: JSONValue?
+            if self.core.isLive {
+                do {
+                    let reply = try await self.core.doctor()
+                    doctor = reply.ok ? (reply.result ?? .object([:]))
+                        : .object(["error": .string(reply.error?.message ?? "doctor failed")])
+                } catch {
+                    doctor = .object(["error": .string("\(error)")])
+                }
+            }
+            var statuses = await SetupModel.probePermissions()
+            statuses[.lidHelper] = SetupModel.lidHelperStatus(
+                helperInstalled: self.core.isLive ? self.core.state?.power?.closedLid?.helperInstalled : nil)
+            let bundle = Bundle.main
+            let facts = DiagnosticsReport.Facts(
+                appVersion: AppVersion.describe(bundle: bundle),
+                appCommit: bundle.object(forInfoDictionaryKey: "JRBarCommit") as? String,
+                system: Self.systemDescription(),
+                bundlePath: bundle.bundlePath,
+                connection: self.connectionDescription,
+                coreVersion: self.core.hello?.coreVersion,
+                doctor: doctor,
+                permissions: SetupPermission.allCases.map { ($0.title, (statuses[$0] ?? .unknown).word) },
+                log: self.core.logTail,
+                home: FileManager.default.homeDirectoryForCurrentUser.path,
+                generated: Date())
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(DiagnosticsReport.text(facts), forType: .string)
+            self.show(status: "Diagnostics copied — paste them into a report or a session")
+        }
+    }
+
+    /// The monitor's connection in words, as the Advanced page says it.
+    var connectionDescription: String {
+        switch core.connection {
+        case .connected where core.state != nil: return "Connected"
+        case .connected: return "Connected, waiting for state"
+        case .connecting(let attempt): return attempt <= 1 ? "Connecting" : "Reconnecting (try \(attempt))"
+        case .disconnected(let reason): return "Disconnected · \(reason)"
+        case .idle: return "Idle"
+        }
+    }
+
+    /// "macOS 27.2 (Build …) · Mac16,1" — the OS and the hardware model.
+    static func systemDescription() -> String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        var model = [CChar](repeating: 0, count: max(size, 1))
+        sysctlbyname("hw.model", &model, &size, nil, 0)
+        let name = String(decoding: model.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        let os = "macOS " + ProcessInfo.processInfo.operatingSystemVersionString
+        return name.isEmpty ? os : "\(os) · \(name)"
+    }
+
     func resetPage(_ page: Page) {
         guard let catalogue = page.catalogue else { return }
         let paths = SettingsKey.resetPaths(on: catalogue, in: SettingsDocument(core.settings?.document ?? .object([:])))

@@ -160,6 +160,13 @@ struct SettingsPageContainer: View {
                         .lineLimit(2)
                 }
             }
+            if store.lastError == nil, let status = store.status {
+                Section {
+                    Label(status, systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
             if let hit = store.searchHit, hit.page == page, hit.title != page.title {
                 Section {
                     Label {
@@ -185,11 +192,14 @@ struct SettingsPageContainer: View {
             case .sounds: SoundsPage(store: store)
             case .shortcuts: ShortcutsPage(store: store)
             case .remote: RemotePage(store: store)
-            case .advanced: AdvancedPage(store: store)
+            case .advanced:
+                AdvancedPage(store: store)
+                DiagnosticsCopyGroup(store: store)
             }
         }
         .formStyle(.grouped)
         .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
+        .animation(.easeInOut(duration: 0.15), value: store.status == nil)
         .id(page)
     }
 }

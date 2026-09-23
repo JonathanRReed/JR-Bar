@@ -135,6 +135,8 @@ enum SettingsSearch {
               keywords: ["cli", "terminal", "path", "install", "command line tool"]),
         .init(.advanced, "Diagnostics", "State folder", subtitle: "The monitor's data on this Mac."),
         .init(.advanced, "Diagnostics", "Doctor", subtitle: "Checks the monitor's health."),
+        .init(.advanced, "Report", "Copy diagnostics", subtitle: "Builds, Doctor, permissions and the log tail as one redacted block.",
+              keywords: ["bug", "report", "support", "clipboard"]),
         .init(.advanced, "Diagnostics", "Reset to defaults", subtitle: "Rarely needed — puts one page's settings back."),
     ]
 

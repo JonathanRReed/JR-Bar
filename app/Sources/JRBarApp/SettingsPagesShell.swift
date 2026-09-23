@@ -85,6 +85,26 @@ struct SoundsPage: View {
     }
 }
 
+// MARK: - Advanced › Report
+
+/// The Advanced page's closing group: the whole picture — builds,
+/// Doctor, permissions, the log — as one redacted block for a bug report
+/// or a paste into a Claude session.
+struct DiagnosticsCopyGroup: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Report") {
+            SettingRow("Copy diagnostics",
+                       subtitle: "Version, build and commit beside the monitor's, the Doctor's checks, every permission and the last \(DiagnosticsReport.logLines) log lines — home folder, tokens, addresses and webhook paths taken out.") {
+                Button(store.diagnosticsCopying ? "Copying…" : "Copy") { store.copyDiagnostics() }
+                    .controlSize(.small)
+                    .disabled(store.diagnosticsCopying)
+            }
+        }
+    }
+}
+
 // MARK: - Shortcuts
 
 /// Every global shortcut JR-Bar holds, on one page, each with a real
