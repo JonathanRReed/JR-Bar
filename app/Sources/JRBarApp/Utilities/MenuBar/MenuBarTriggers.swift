@@ -279,6 +279,15 @@ protocol MenuBarTriggerSource: AnyObject {
 @MainActor
 final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     var onEvent: (@MainActor (MenuBarTriggerEvent) -> Void)?
+    /// A second listener on the same samples — the "while" rules read
+    /// levels from the feed the one-shot rules edge.
+    var onSample: (@MainActor (MenuBarTriggerEvent) -> Void)?
+
+    /// Every sample reaches both the one-shot engine and the levels.
+    func emit(_ event: MenuBarTriggerEvent) {
+        onEvent?(event)
+        onSample?(event)
+    }
 
     private var observers: [NSObjectProtocol] = []
     private var distributedObservers: [NSObjectProtocol] = []
@@ -306,7 +315,7 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
             distributedObservers.append(distributed.addObserver(
                 forName: NSNotification.Name(name), object: nil, queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.onEvent?(event) }
+                MainActor.assumeIsolated { self?.emit(event) }
             })
         }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
@@ -316,7 +325,7 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                     as? NSRunningApplication,
                   let bundleID = app.bundleIdentifier else { return }
-            MainActor.assumeIsolated { self?.onEvent?(.appActivated(bundleID: bundleID)) }
+            MainActor.assumeIsolated { self?.emit(.appActivated(bundleID: bundleID)) }
         })
         // Launch and quit — the "while Zoom runs" family, and the
         // documented app launch/quit triggers.
@@ -329,7 +338,7 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
                         as? NSRunningApplication,
                       let bundleID = app.bundleIdentifier else { return }
                 MainActor.assumeIsolated {
-                    self?.onEvent?(launched ? .appLaunched(bundleID: bundleID)
+                    self?.emit(launched ? .appLaunched(bundleID: bundleID)
                                             : .appTerminated(bundleID: bundleID))
                 }
             })
@@ -362,6 +371,14 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
         poll()
     }
 
+    /// One poll now, while the feed runs — a listener that just joined
+    /// (the "while" rules) gets every level without waiting out the
+    /// cadence. A parked feed polls when it starts anyway.
+    func pollNow() {
+        guard timer != nil else { return }
+        poll()
+    }
+
     func stop() {
         timer?.invalidate()
         timer = nil
@@ -390,8 +407,8 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     func makeWiFiDelegate() -> WiFiEventDelegate {
         WiFiEventDelegate { [weak self] in
             Task { @MainActor [weak self] in
-                self?.onEvent?(.wifiChanged)
-                self?.onEvent?(.wifiSSID(MenuBarSystemTriggerSource.currentSSID()))
+                self?.emit(.wifiChanged)
+                self?.emit(.wifiSSID(MenuBarSystemTriggerSource.currentSSID()))
             }
         }
     }
@@ -406,22 +423,22 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
             let key = hour * 60 + minute
             if key != lastMinuteKey {
                 lastMinuteKey = key
-                onEvent?(.minute(hour: hour, minute: minute))
+                emit(.minute(hour: hour, minute: minute))
             }
         }
         let power = AlcovePowerMonitor.read()
         if power.hasBattery {
-            onEvent?(.onACPower(power.onAC))
+            emit(.onACPower(power.onAC))
             if let percent = power.percent {
-                onEvent?(.batteryPercent(percent))
+                emit(.batteryPercent(percent))
             }
         }
-        onEvent?(.wifiSSID(Self.currentSSID()))
-        onEvent?(.micInUse(Self.microphoneInUse()))
+        emit(.wifiSSID(Self.currentSSID()))
+        emit(.micInUse(Self.microphoneInUse()))
         // Focus is read only once granted — a bare poll must never be
         // the thing that raises the consent prompt.
         if INFocusStatusCenter.default.authorizationStatus == .authorized {
-            onEvent?(.focusOn(INFocusStatusCenter.default.focusStatus.isFocused ?? false))
+            emit(.focusOn(INFocusStatusCenter.default.focusStatus.isFocused ?? false))
         }
         sampleDisplays()
     }
@@ -429,8 +446,8 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     /// The display count and the lid — one read each, on the poll and on
     /// every screen reconfiguration.
     private func sampleDisplays() {
-        onEvent?(.displayCount(NSScreen.screens.count))
-        if let shut = Self.clamshellClosed() { onEvent?(.clamshell(shut)) }
+        emit(.displayCount(NSScreen.screens.count))
+        if let shut = Self.clamshellClosed() { emit(.clamshell(shut)) }
     }
 
     /// The root power domain's `AppleClamshellState` — public IOKit, no

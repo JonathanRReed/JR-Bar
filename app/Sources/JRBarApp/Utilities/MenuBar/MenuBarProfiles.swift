@@ -83,6 +83,19 @@ enum MenuBarProfiles {
         settings.spacers = profile.spacers
     }
 
+    /// The cover's look alone — what a "while" rule's profile brings to
+    /// the live copy while it holds. The reveal, the spacing and the
+    /// spacers are system-wide or gesture settings and stay with your
+    /// saved choice.
+    nonisolated static func applyCoverLook(_ profile: MenuBarSettings.Profile,
+                                           to settings: inout MenuBarSettings) {
+        settings.coverMaterial = profile.coverMaterial
+        settings.coverTint = profile.coverTint
+        settings.coverTintOpacity = profile.coverTintOpacity
+        settings.coverRoundness = profile.coverRoundness
+        settings.showCoverSeparator = profile.showCoverSeparator
+    }
+
     /// The active profile, when its id still resolves.
     nonisolated static func activeProfile(in settings: MenuBarSettings) -> MenuBarSettings.Profile? {
         guard let id = settings.curation.activeProfileID else { return nil }

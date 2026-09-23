@@ -446,6 +446,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+        // The menu bar's "while" rules reach the strip and the daemon: a
+        // scene held while the rule lasts, the agents' quiet leased.
+        let menuBarRules = utilitiesStore.menuBar.stateRules
+        menuBarRules.currentScene = { [weak effectsStore, weak core] in
+            core?.isLive == true ? effectsStore?.activeScene : nil
+        }
+        menuBarRules.setScene = { [weak effectsStore] scene in effectsStore?.setActiveScene(scene) }
+        menuBarRules.quietAgents = { [weak core] seconds in core?.quiet(mode: "dnd", seconds: seconds) }
 
         let deckStore = DeckStore(core: core)
         let controlCenterWindow = ControlCenterWindowController(store: deckStore)

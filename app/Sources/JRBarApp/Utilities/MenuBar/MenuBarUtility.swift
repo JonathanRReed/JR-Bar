@@ -51,6 +51,15 @@ final class MenuBarUtility: Toy {
     /// The real trigger feed, created once; `syncActions` runs it only
     /// while at least one rule is enabled.
     @ObservationIgnored private let systemTriggerSource = MenuBarSystemTriggerSource()
+    /// The "while" rules' runtime — levels, the outcome, and its effects
+    /// on the bar, the LED scene and the agents' quiet. The app delegate
+    /// wires the scene and quiet closures.
+    @ObservationIgnored let stateRules = MenuBarStateRunner()
+    /// Whether the levels were seeded for the rules now enabled.
+    @ObservationIgnored private var stateRulesSeeded = false
+    /// Bumped whenever the rules' outcome moves, so the card's "holding
+    /// now" line observes it.
+    private(set) var stateOutcomeVersion = 0
     /// Hotkey registrations the system refused — a key another app
     /// already owns. Mirrored out of `actions.hotkeys` after each
     /// registration pass so the card's note observes it.
@@ -420,6 +429,14 @@ final class MenuBarUtility: Toy {
         actions.delegate = self
         actions.rules = { [weak self] in self?.settings().triggerRules ?? [] }
         actions.triggerSource = systemTriggerSource
+        systemTriggerSource.onSample = { [weak self] event in self?.stateRules.absorb(event) }
+        stateRules.rules = { [weak self] in self?.settings().curation.stateRules ?? [] }
+        stateRules.sceneBeforeRule = { [weak self] in self?.settings().curation.sceneBeforeRule }
+        stateRules.setSceneBeforeRule = { [weak self] scene in
+            self?.update { $0.curation.sceneBeforeRule = scene }
+        }
+        stateRules.onLayersChange = { [weak self] in self?.hider.reconcile() }
+        stateRules.onOutcomeChange = { [weak self] in self?.stateOutcomeVersion += 1 }
         chevronActions.utility = self
         spacerActions.onClick = { [weak self] in self?.chevronClicked() }
         agentActions.onClick = { [weak self] in self?.onOpenOverview() }
@@ -592,7 +609,15 @@ final class MenuBarUtility: Toy {
 
     /// The overlay standing right now, if any.
     var activeOverlay: MenuBarOverlay.Kind? {
-        settings().curation.overlay.flatMap { $0.isLive() ? $0.kind : nil }
+        let manual = settings().curation.overlay.flatMap { $0.isLive() ? $0 : nil }
+        // A "while" rule's overlay and a manual one: whichever came last.
+        if let rule = stateRules.outcome.overlay,
+           MenuBarStateRuleEngine.ruleWins(
+               ruleSince: stateRules.overlaySince,
+               manualSince: manual.map { Date(timeIntervalSince1970: $0.sinceEpoch) }) {
+            return rule
+        }
+        return manual?.kind
     }
 
     /// The card's line while an overlay stands.
@@ -609,7 +634,16 @@ final class MenuBarUtility: Toy {
     /// The settings the engines converge to: the curated maps with the
     /// standing overlay laid over them. Writes always go to `settings()`.
     func liveSettings() -> MenuBarSettings {
-        let curated = curatedSettings()
+        let base = settings()
+        var curated: MenuBarSettings
+        if let profile = ruleProfile(in: base) {
+            // A holding rule's profile stands in for the active one —
+            // its deltas and its cover look, never your saved choice.
+            curated = MenuBarProfiles.curated(base, profile: profile)
+            MenuBarProfiles.applyCoverLook(profile, to: &curated)
+        } else {
+            curated = MenuBarProfiles.curated(base)
+        }
         guard let overlay = activeOverlay else { return curated }
         return MenuBarLayers.live(curated, overlay: overlay,
                                   apps: overlay == .hideEverything ? overlayApps() : [],
@@ -769,7 +803,28 @@ final class MenuBarUtility: Toy {
     /// settings write, so the reconcile path restyles and re-covers.
     func applyProfile(id: String) {
         let profile = settings().profiles.first { $0.id == id }
+        // A switch made after a rule took hold wins over the rule's.
+        manualProfileAt = Date()
         update { MenuBarProfiles.apply(profile, to: &$0) }
+    }
+
+    /// When a profile was last switched by hand (the card, the menu, a
+    /// hotkey, a one-shot rule, a display) — against a "while" rule's
+    /// profile, the later one wins. Runtime only: after a relaunch a
+    /// holding rule wins.
+    @ObservationIgnored private var manualProfileAt: Date?
+
+    /// The profile a holding "while" rule lays over the bar, while it
+    /// wins — resolved by name like the triggers; "None" is your bar with
+    /// the default look.
+    private func ruleProfile(in settings: MenuBarSettings) -> MenuBarSettings.Profile? {
+        guard let name = stateRules.outcome.profileName,
+              MenuBarStateRuleEngine.ruleWins(ruleSince: stateRules.profileSince,
+                                              manualSince: manualProfileAt) else { return nil }
+        if name.caseInsensitiveCompare(MenuBarProfiles.noneName) == .orderedSame {
+            return MenuBarSettings.Profile(id: MenuBarProfiles.noneID, name: MenuBarProfiles.noneName)
+        }
+        return settings.profiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     /// The active profile's id, or the built-in None's.
@@ -966,6 +1021,30 @@ final class MenuBarUtility: Toy {
         update { $0.triggerRules.removeAll { $0.id == id } }
     }
 
+    // MARK: "While" rules
+
+    func addStateRule(_ rule: MenuBarStateRule) {
+        update { $0.curation.stateRules.append(rule) }
+    }
+
+    func setStateRule(id: String, enabled: Bool) {
+        update { draft in
+            guard let i = draft.curation.stateRules.firstIndex(where: { $0.id == id }) else { return }
+            draft.curation.stateRules[i].enabled = enabled
+        }
+    }
+
+    func deleteStateRule(id: String) {
+        update { $0.curation.stateRules.removeAll { $0.id == id } }
+    }
+
+    /// The rules holding right now, as the card lists them.
+    var holdingStateRules: [MenuBarStateRule] {
+        _ = stateOutcomeVersion
+        let holding = Set(stateRules.outcome.holding)
+        return settings().curation.stateRules.filter { holding.contains($0.id) }
+    }
+
     /// The daemon's feed changed: whatever moved among the agents, the
     /// asks, the headroom and SidePulse reaches the rule engine as a
     /// sample. Always delivered — parked rules included — so the
@@ -975,7 +1054,11 @@ final class MenuBarUtility: Toy {
         let facts = coreFacts()
         let samples = MenuBarCoreFacts.samples(from: lastCoreFacts, to: facts)
         lastCoreFacts = facts
-        for sample in samples { systemTriggerSource.onEvent?(sample) }
+        for sample in samples { systemTriggerSource.emit(sample) }
+        // An open ask rides no trigger sample; the "while" rules read it.
+        if facts.live, stateRules.levels.askPending != facts.askPending {
+            stateRules.update { $0.askPending = facts.askPending }
+        }
     }
 
     // MARK: Lifecycle
@@ -1135,6 +1218,12 @@ final class MenuBarUtility: Toy {
         updateHideTask = nil
         overlayExpiry?.cancel()
         overlayExpiry = nil
+        // A stopped utility holds nothing: the scene and the quiet go
+        // back, the layers drop.
+        if stateRulesSeeded {
+            stateRulesSeeded = false
+            stateRules.stop()
+        }
         failedHotkeyActions = []
         running = false
     }
@@ -2150,11 +2239,32 @@ final class MenuBarUtility: Toy {
             actions.hotkeys.bindings = resolved
             actions.hotkeys.apply()
         }
-        if settings().triggerRules.contains(where: \.enabled) {
+        let whileRulesOn = settings().curation.stateRules.contains(where: \.enabled)
+        if whileRulesOn, !stateRulesSeeded {
+            // The levels no sample carries yet: the running apps, the
+            // front one, the lock, the displays, the lid — and the
+            // daemon's facts as last heard.
+            stateRulesSeeded = true
+            var seed = MenuBarStateRunner.seedLevels()
+            if let facts = lastCoreFacts, facts.live {
+                seed.agent = facts.agent
+                seed.askPending = facts.askPending
+                seed.quotaRemaining = facts.quotaRemaining
+                seed.sidePulse = facts.sidePulsePresent
+            }
+            stateRules.update { $0 = seed }
+            systemTriggerSource.pollNow()
+        } else if !whileRulesOn, stateRulesSeeded {
+            stateRulesSeeded = false
+            stateRules.stop()
+        }
+        if settings().triggerRules.contains(where: \.enabled) || whileRulesOn {
             systemTriggerSource.start()
         } else {
             systemTriggerSource.stop()
         }
+        // A rule edited, added or toggled re-resolves against the levels.
+        if whileRulesOn { stateRules.evaluate() }
         // `apply()` re-registers — the refusal set is refreshed either
         // way, and a fresh start clears a stale failure list.
         failedHotkeyActions = actions.hotkeys.failedActions
