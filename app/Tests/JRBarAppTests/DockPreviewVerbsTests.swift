@@ -75,4 +75,58 @@ struct DockPreviewVerbsTests {
         let huge = DockEnhanceMath.moveFrame(CGRect(x: 0, y: 0, width: 3000, height: 2000), to: target)
         #expect(huge == target, "a window bigger than the screen lands fitted")
     }
+
+    // MARK: Calendar glance
+
+    private static var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    /// 2026-09-23 at `hour`:`minute` UTC.
+    private func at(_ hour: Int, _ minute: Int = 0, day: Int = 23) -> Date {
+        Self.utc.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour, minute: minute))!
+    }
+
+    private func event(_ title: String, _ start: Date, minutes: Double = 30,
+                       url: String? = nil) -> ShelfCalendarModel.Event {
+        ShelfCalendarModel.Event(title: title, start: start, end: start.addingTimeInterval(minutes * 60),
+                                 url: url.flatMap(URL.init(string:)))
+    }
+
+    @Test("the Calendar tile shows the rest of today, three at most, and when you're free")
+    func calendarGlance() {
+        let events = [event("Standup", at(9)), event("Review", at(14)), event("1:1", at(15)),
+                      event("Retro", at(16)), event("Late", at(17))]
+        let morning = DockEnhanceMath.calendarGlance(events, now: at(11), calendar: Self.utc)
+        #expect(morning.events.map(\.title) == ["Review", "1:1", "Retro"], "past events drop, three at most")
+        #expect(morning.freeUntil == at(14), "nothing on now — free until the next one")
+        let busy = DockEnhanceMath.calendarGlance(events, now: at(9, 10), calendar: Self.utc)
+        #expect(busy.events.first?.title == "Standup", "what's on now leads")
+        #expect(busy.freeUntil == nil, "no free line while something is on")
+        let evening = DockEnhanceMath.calendarGlance(
+            [event("Tomorrow", at(9, day: 24))], now: at(20), calendar: Self.utc)
+        #expect(evening.events.map(\.title) == ["Tomorrow"], "after the last one, the next inside 24 h")
+        #expect(evening.freeUntil == nil)
+        #expect(DockEnhanceMath.calendarGlance([], now: at(11), calendar: Self.utc).events.isEmpty)
+    }
+
+    @Test("a meeting app's tile offers Join only on the event whose link it opens")
+    func meetingTiles() {
+        #expect(DockEnhanceMath.meetingBundleIDs(for: URL(string: "https://us02web.zoom.us/j/123")) == ["us.zoom.xos"])
+        #expect(DockEnhanceMath.meetingBundleIDs(for: URL(string: "https://notzoom.us/j/1")).isEmpty,
+                "a lookalike host is not Zoom's")
+        #expect(DockEnhanceMath.meetingBundleIDs(for: URL(string: "https://teams.microsoft.com/l/x"))
+                .contains("com.microsoft.teams2"))
+        #expect(DockEnhanceMath.meetingBundleIDs(for: nil).isEmpty)
+        #expect(DockEnhanceMath.isMeetingApp("us.zoom.xos"))
+        #expect(!DockEnhanceMath.isMeetingApp("com.apple.Safari"))
+        let events = [event("Planning", at(14), url: "https://meet.google.com/abc"),
+                      event("Sync", at(15), url: "https://acme.zoom.us/j/9")]
+        #expect(DockEnhanceMath.meetingEvent(for: "us.zoom.xos", in: events, now: at(11),
+                                             calendar: Self.utc)?.title == "Sync")
+        #expect(DockEnhanceMath.meetingEvent(for: "com.apple.FaceTime", in: events, now: at(11),
+                                             calendar: Self.utc) == nil)
+    }
 }

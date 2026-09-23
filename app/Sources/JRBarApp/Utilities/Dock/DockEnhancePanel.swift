@@ -433,10 +433,10 @@ struct DockPreviewView: View {
                 Divider()
                 DockMediaRow(media: media, actions: actions)
             }
-            if content.bundleID == DockEnhanceMath.calendarBundleID,
-               content.calendarEvent != nil || content.calendarNeedsAuth {
+            if !content.calendarEvents.isEmpty || content.calendarNeedsAuth {
                 Divider()
-                DockCalendarRow(event: content.calendarEvent,
+                DockCalendarRow(events: content.calendarEvents,
+                                freeUntil: content.calendarFreeUntil,
                                 needsAuth: content.calendarNeedsAuth,
                                 actions: actions)
             }
@@ -1244,12 +1244,16 @@ private struct DockMediaScrubber: View {
     }
 }
 
-/// The Calendar tile's next event — DockDoor's calendar widget. The
-/// row only exists when the grant already covers it or is still
-/// unasked ("Show events" is the explicit opt-in, never a prompt from
-/// a bare hover).
+/// The calendar row — DockDoor's calendar widget, HyperDock's list.
+/// On the Calendar tile: the rest of today (up to three, each with its
+/// own Join) and a quiet "Free until 3:30" when nothing is on now; on a
+/// meeting app's tile, the one event whose link opens there. The row
+/// only exists when the grant already covers it or is still unasked
+/// ("Show events" is the explicit opt-in, never a prompt from a bare
+/// hover).
 private struct DockCalendarRow: View {
-    let event: ShelfCalendarModel.Event?
+    let events: [ShelfCalendarModel.Event]
+    let freeUntil: Date?
     let needsAuth: Bool
     let actions: DockPreviewActions
 
@@ -1263,26 +1267,50 @@ private struct DockCalendarRow: View {
                     .help("Allow calendar access to preview upcoming events")
             }
             .padding(.vertical, 2)
-        } else if let event {
-            HStack(spacing: 8) {
-                Image(systemName: "calendar")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(event.title)
-                        .font(.callout)
-                        .lineLimit(1)
-                    Text(event.start, style: .time)
-                        .font(.caption2)
+        } else if !events.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                if let freeUntil {
+                    Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 8)
-                if let url = event.url {
-                    Button("Join") { actions.onCalendarJoin?(url) }
-                        .controlSize(.small)
-                        .help("Join the meeting link")
+                ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                    eventRow(event)
                 }
             }
             .padding(.vertical, 2)
         }
+    }
+
+    private func eventRow(_ event: ShelfCalendarModel.Event) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.title)
+                    .font(.callout)
+                    .lineLimit(1)
+                Text(timeLine(event))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if let url = event.url {
+                Button("Join") { actions.onCalendarJoin?(url) }
+                    .controlSize(.small)
+                    .help("Join the meeting link")
+            }
+        }
+    }
+
+    /// "Now – 3:30 PM" for what's on, "2:00 – 2:30 PM" otherwise; a
+    /// tomorrow event says so.
+    private func timeLine(_ event: ShelfCalendarModel.Event) -> String {
+        let now = Date()
+        let end = event.end.formatted(date: .omitted, time: .shortened)
+        if event.start <= now { return "Now – \(end)" }
+        let start = event.start.formatted(date: .omitted, time: .shortened)
+        let prefix = Calendar.current.isDateInToday(event.start) ? "" : "Tomorrow "
+        return "\(prefix)\(start) – \(end)"
     }
 }

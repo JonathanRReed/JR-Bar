@@ -417,8 +417,62 @@ enum DockEnhanceMath {
     }
 
     /// The Calendar tile's bundle id — the only tile that earns the
-    /// next-event row.
+    /// calendar row on its own (and offers the grant).
     static let calendarBundleID = "com.apple.iCal"
+
+    /// The Calendar tile's glance: the rest of today — what's on now
+    /// and what's next, up to `limit`, each with its own Join — else the
+    /// next event inside the fetched 24 h, so an evening hover still
+    /// names tomorrow's first meeting. `freeUntil` is set when nothing
+    /// is on right now and something is still coming today.
+    static func calendarGlance(_ events: [ShelfCalendarModel.Event], now: Date,
+                               calendar: Calendar = .current,
+                               limit: Int = 3) -> (events: [ShelfCalendarModel.Event], freeUntil: Date?) {
+        let upcoming = events.filter { $0.end > now }.sorted { $0.start < $1.start }
+        let startOfDay = calendar.startOfDay(for: now)
+        let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfDay)
+            ?? startOfDay.addingTimeInterval(24 * 3600)
+        let today = upcoming.filter { $0.start < endOfToday }
+        guard let first = today.first else { return (Array(upcoming.prefix(1)), nil) }
+        let busy = today.contains { $0.start <= now }
+        return (Array(today.prefix(limit)), busy ? nil : first.start)
+    }
+
+    /// The apps a meeting link opens in, by the link's host — a Zoom,
+    /// Teams, Webex or FaceTime tile offers Join on the event whose
+    /// link is theirs, where you'd look just before the call.
+    static let meetingHosts: [(suffix: String, bundleIDs: Set<String>)] = [
+        ("zoom.us", ["us.zoom.xos"]),
+        ("teams.microsoft.com", ["com.microsoft.teams2", "com.microsoft.teams"]),
+        ("teams.live.com", ["com.microsoft.teams2", "com.microsoft.teams"]),
+        ("webex.com", ["Cisco-Systems.Spark", "com.cisco.webexmeetingsapp"]),
+        ("facetime.apple.com", ["com.apple.FaceTime"]),
+    ]
+
+    /// Whether `bundleID` is a meeting app some link could belong to.
+    static func isMeetingApp(_ bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        return meetingHosts.contains { $0.bundleIDs.contains(bundleID) }
+    }
+
+    /// The meeting apps a link opens in: its host is the suffix or a
+    /// subdomain of it (`us02web.zoom.us`), never a lookalike
+    /// (`notzoom.us`).
+    static func meetingBundleIDs(for url: URL?) -> Set<String> {
+        guard let host = url?.host?.lowercased() else { return [] }
+        return meetingHosts.reduce(into: Set<String>()) { out, entry in
+            if host == entry.suffix || host.hasSuffix("." + entry.suffix) { out.formUnion(entry.bundleIDs) }
+        }
+    }
+
+    /// A meeting app's row: the first of today's glance (or the next
+    /// event) whose link opens in that app — one event, never a list.
+    static func meetingEvent(for bundleID: String, in events: [ShelfCalendarModel.Event],
+                             now: Date, calendar: Calendar = .current) -> ShelfCalendarModel.Event? {
+        let glance = calendarGlance(events, now: now, calendar: calendar, limit: .max).events
+        let pool = glance.isEmpty ? events.filter { $0.end > now }.sorted { $0.start < $1.start } : glance
+        return pool.first { meetingBundleIDs(for: $0.url).contains(bundleID) }
+    }
 
     /// DockDoor's Aero shake: a fast left-right-left wiggle of the
     /// pointer over a card. Counted as x-direction reversals past a
@@ -1095,9 +1149,12 @@ final class DockPreviewContent {
     /// panel subscribes to `MediaFeed` and shows what the system says
     /// that app is playing. nil until a track lands.
     var media: AlcoveMedia?
-    /// The Calendar tile's next event, read only when the app already
-    /// holds Full Calendar Access — a hover never prompts.
-    var calendarEvent: ShelfCalendarModel.Event?
+    /// The Calendar tile's glance (the rest of today, up to three), or a
+    /// meeting app's one event whose link is its own — read only when
+    /// JR-Bar already holds Full Calendar Access; a hover never prompts.
+    var calendarEvents: [ShelfCalendarModel.Event] = []
+    /// "Free until 3:30" — nothing on now, something later today.
+    var calendarFreeUntil: Date?
     /// Calendar access was never asked: the row offers an explicit
     /// "Show events" button rather than reading unprompted.
     var calendarNeedsAuth = false
@@ -1674,8 +1731,14 @@ final class DockEnhanceController {
             }
         }
 
-        // The Calendar tile: read today's next event only when the
-        // grant already exists — a hover never prompts, it offers.
+        // The Calendar tile: read the rest of today only when the grant
+        // already exists — a hover never prompts, it offers. A meeting
+        // app's tile reads too, but only under an existing grant: it
+        // never offers one.
+        if let bundleID = preview.bundleID, DockEnhanceMath.isMeetingApp(bundleID),
+           EKEventStore.authorizationStatus(for: .event) == .fullAccess {
+            loadCalendarRow(generation: generationAtShow, meetingApp: bundleID)
+        }
         if preview.bundleID == DockEnhanceMath.calendarBundleID {
             switch EKEventStore.authorizationStatus(for: .event) {
             case .fullAccess:
@@ -1863,7 +1926,8 @@ final class DockEnhanceController {
         content.folderURL = nil
         content.folderEntries = []
         content.media = nil
-        content.calendarEvent = nil
+        content.calendarEvents = []
+        content.calendarFreeUntil = nil
         content.calendarNeedsAuth = false
         content.badge = item.badge
         content.askNotes = [:]
@@ -2344,33 +2408,53 @@ final class DockEnhanceController {
         hidePreview()
     }
 
-    /// The next event for the Calendar tile's row — the shelf's own
-    /// read (24 h, not all-day, earliest first) done off-main; an
-    /// EventKit query is a synchronous IPC to `calendard` and a hover
-    /// never waits on it.
-    private func loadCalendarRow(generation: Int) {
+    /// The calendar row — the shelf's own read (24 h, not all-day,
+    /// earliest first) done off-main; an EventKit query is a synchronous
+    /// IPC to `calendard` and a hover never waits on it. The Calendar
+    /// tile gets today's glance; a meeting app gets the one event whose
+    /// link it opens, or no row.
+    private func loadCalendarRow(generation: Int, meetingApp: String? = nil) {
         Task { @MainActor [weak self] in
-            let event = await Task.detached(priority: .userInitiated) {
-                Self.nextCalendarEvent()
+            let events = await Task.detached(priority: .userInitiated) {
+                Self.upcomingCalendarEvents()
             }.value
             guard let self, self.generation == generation else { return }
-            self.preview.calendarEvent = event
+            let now = Date()
+            if let meetingApp {
+                self.preview.calendarEvents = DockEnhanceMath.meetingEvent(
+                    for: meetingApp, in: events, now: now).map { [$0] } ?? []
+                self.preview.calendarFreeUntil = nil
+            } else {
+                let glance = DockEnhanceMath.calendarGlance(events, now: now)
+                self.preview.calendarEvents = glance.events
+                self.preview.calendarFreeUntil = glance.freeUntil
+            }
             self.reframe()
         }
     }
 
+    /// One EventKit store for every hover — building one per hover paid
+    /// its database open each time. Created on the first read, which
+    /// only ever runs under an existing Full Calendar grant.
+    nonisolated(unsafe) private static var calendarStore: EKEventStore?
+    nonisolated private static let calendarStoreLock = NSLock()
+
     /// The EventKit half of the calendar row — pure enough to run on a
     /// worker: the grant is already checked, and `project`/`joinableURL`
-    /// are nonisolated. `nil` reads as "nothing upcoming".
-    nonisolated static func nextCalendarEvent() -> ShelfCalendarModel.Event? {
-        let store = EKEventStore()
+    /// are nonisolated. Empty reads as "nothing upcoming".
+    nonisolated static func upcomingCalendarEvents() -> [ShelfCalendarModel.Event] {
+        let store: EKEventStore = calendarStoreLock.withLock {
+            if let calendarStore { return calendarStore }
+            let made = EKEventStore()
+            calendarStore = made
+            return made
+        }
         let now = Date()
         let predicate = store.predicateForEvents(
             withStart: now, end: now.addingTimeInterval(24 * 3600), calendars: nil)
         return store.events(matching: predicate)
             .filter { !$0.isAllDay }
             .sorted { $0.startDate < $1.startDate }
-            .first
             .map { ShelfCalendarModel.project($0) }
     }
 
