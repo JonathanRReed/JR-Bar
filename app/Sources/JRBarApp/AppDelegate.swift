@@ -406,9 +406,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
             return try? await archive.captureState(path: path)
         }
+        // The archived fallbacks read only while the Data Hoarder is on,
+        // like History's archive search: switched off, it is not asked.
         overviewStore.archiveTimeline = { [weak utilitiesStore] sessionID in
-            guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
-            return await DataHoarderModel.archivedTimeline(in: archive, sessionID: sessionID)
+            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
+            return await DataHoarderModel.archivedTimeline(in: model.archive, sessionID: sessionID)
         }
         overviewStore.hoarderProbe = { [weak utilitiesStore] in
             guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
@@ -419,8 +421,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 archive: (try? await model.archive.captureHealth()) ?? ArchiveCaptureHealth())
         }
         overviewStore.archiveProxyEvidence = { [weak utilitiesStore] sessionID in
-            guard let archive = utilitiesStore?.dataHoarder.model.archive else { return [] }
-            return await DataHoarderModel.proxyRequests(in: archive, sessionID: sessionID)
+            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return [] }
+            return await DataHoarderModel.proxyRequests(in: model.archive, sessionID: sessionID)
         }
         overviewStore.onOpenArchive = { [weak utilitiesStore] term in
             guard let hoarder = utilitiesStore?.dataHoarder else { return }
