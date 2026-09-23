@@ -405,10 +405,12 @@ final class MenuBarUtility: Toy {
         }
         bar.items = { [weak self] in self?.barItems() ?? [] }
         bar.glyphFace = { [weak self] item in self?.glyphFace(for: item) }
-        // The bar hangs under the icon's ‹ while the mirror carries it.
+        // The bar hangs under the icon's ‹ while the mirror carries it —
+        // the ‹'s own zone, not the compound face the extras widen.
         bar.anchorFrame = { [weak self] in
-            guard let self, self.iconMirrored else { return nil }
-            return self.standingMirrorFrame
+            guard let self, self.iconMirrored, let mirror = self.iconMirror,
+                  let frame = self.standingMirrorFrame else { return nil }
+            return MenuBarIconMirror.chevronFrame(in: frame, hiddenCount: mirror.face.hiddenCount)
         }
         // A concealed item's ghost reports a frozen on-row frame but
         // draws nothing — capturing that rect would tile empty bar.

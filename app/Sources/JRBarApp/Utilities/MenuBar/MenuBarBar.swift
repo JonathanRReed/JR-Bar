@@ -535,8 +535,9 @@ final class MenuBarBar {
     var onOpenChange: @MainActor (Bool) -> Void = { _ in }
     /// A photographed glyph for an item, when the cache has one.
     var glyphFace: @MainActor (MenuBarItem) -> MenuBarGlyphCache.Face? = { _ in nil }
-    /// Where the bar hangs: the icon's frame in AppKit screen coordinates
-    /// (its ‹ sits at the left edge) — nil hangs it at the screen's edge.
+    /// Where the bar hangs: the icon's ‹ in AppKit screen coordinates —
+    /// the bar's right edge under its right edge — nil hangs it at the
+    /// screen's edge.
     var anchorFrame: @MainActor () -> NSRect? = { nil }
     /// Ids whose picture changed since the bar last closed.
     var updatedIDs: Set<String> = [] {

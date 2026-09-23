@@ -321,6 +321,13 @@ final class MenuBarIconMirror: NSPanel {
         return NSRect(x: seatMinX, y: primaryMaxY - quartzY - height, width: width, height: height)
     }
 
+    /// The ‹'s zone at the panel's left edge while anything is hidden —
+    /// where the Item Bar hangs from — else the bare left edge.
+    nonisolated static func chevronFrame(in panel: NSRect, hiddenCount: Int) -> NSRect {
+        NSRect(x: panel.minX, y: panel.minY,
+               width: hiddenCount > 0 ? chevronZone : 0, height: panel.height)
+    }
+
     /// The face's slice of the panel — right of the ‹ zone, left of the
     /// compound face's segments.
     nonisolated static func faceFrame(in panel: NSRect, chevronWidth: CGFloat,
