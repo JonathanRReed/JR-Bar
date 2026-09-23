@@ -1539,10 +1539,14 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
     /// (`docs/CORE-PROTOCOL.md`, "The Dot's role"): `extend` or `asks`.
     /// Absent when the Dot renders its own display, and never on a preview.
     public var role: String?
+    /// Additive: the ambient cue staged on this surface right now
+    /// (`{id, name}`, "Handoff baton"), so a sweep has a name; nil when
+    /// none plays, and on daemons that predate it.
+    public var cue: CoreLightCue?
 
     public init(program: String, ledCount: Int? = nil, anchor: Double? = nil, motion: String? = nil,
                 staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil,
-                whyDetail: CoreWhyDetail? = nil, role: String? = nil) {
+                whyDetail: CoreWhyDetail? = nil, role: String? = nil, cue: CoreLightCue? = nil) {
         self.program = program
         self.ledCount = ledCount
         self.anchor = anchor
@@ -1552,10 +1556,11 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         self.why = why
         self.whyDetail = whyDetail
         self.role = role
+        self.cue = cue
     }
 
     enum CodingKeys: String, CodingKey {
-        case program, anchor, motion, brightness, why, role
+        case program, anchor, motion, brightness, why, role, cue
         case ledCount = "led_count"
         case staticFallback = "static_fallback"
         case whyDetail = "why_detail"
@@ -1572,6 +1577,18 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         why = try c.decodeIfPresent(String.self, forKey: .why)
         whyDetail = try? c.decodeIfPresent(CoreWhyDetail.self, forKey: .whyDetail)
         role = try c.decodeIfPresent(String.self, forKey: .role)
+        cue = try? c.decodeIfPresent(CoreLightCue.self, forKey: .cue)
+    }
+}
+
+/// `lights.surfaces.<name>.cue`: the ambient cue a surface is playing.
+public struct CoreLightCue: Codable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
     }
 }
 

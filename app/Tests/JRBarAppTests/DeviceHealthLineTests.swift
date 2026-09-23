@@ -23,6 +23,17 @@ struct DeviceHealthLineTests {
         #expect(line == "Waiting · written 12 s ago · 3 lines, \(Self.program.utf8.count) of 512 bytes · driven at 79%")
     }
 
+    @Test func aPlayingCueIsNamed() throws {
+        let surface = try JSONDecoder().decode(CoreLightSurface.self, from: Data(#"{"program": "off", "why": "completed", "cue": {"id": "handoff_baton", "name": "Handoff baton"}}"#.utf8))
+        #expect(surface.cue == CoreLightCue(id: "handoff_baton", name: "Handoff baton"))
+        let line = try #require(DeviceHealthLine.describe(device: Self.pro(), surface: surface, now: Self.now))
+        #expect(line.hasPrefix("Completed · playing Handoff baton · "))
+        let bar = ScreenBarSourceLine.describe(live: true, mirrorSetting: false, stripPresent: false, phaseOffsetMs: nil,
+                                               why: "completed", rejection: nil, motionNote: nil, followingAlcove: false,
+                                               cue: "Firefly")
+        #expect(bar == "Its own display · completed · playing Firefly")
+    }
+
     @Test func anAbsentDeviceLeavesItToTheHeader() {
         #expect(DeviceHealthLine.describe(device: Self.pro(connected: false), surface: nil, now: Self.now) == nil)
         #expect(DeviceHealthLine.describe(device: nil, surface: nil, now: Self.now) == nil)

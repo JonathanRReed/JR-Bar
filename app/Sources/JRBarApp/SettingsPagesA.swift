@@ -678,6 +678,7 @@ enum DeviceHealthLine {
             let words = why.replacingOccurrences(of: "_", with: " ")
             parts.append(words.prefix(1).uppercased() + words.dropFirst())
         }
+        if let cue = surface?.cue?.name, !cue.isEmpty { parts.append("playing \(cue)") }
         if let error = device.error, !error.isEmpty {
             parts.append("the last write failed (\(error.replacingOccurrences(of: "_", with: " ")))")
         }
@@ -974,7 +975,8 @@ struct ScreenBarCard: View {
             rejection: status.rejection,
             motionNote: status.motionNote,
             followingAlcove: status.followingAlcove,
-            steppedAsideForVideo: status.steppedAsideForVideo)
+            steppedAsideForVideo: status.steppedAsideForVideo,
+            cue: core.lights?.screenBar?.cue?.name)
     }
 
     /// The picker's note: what the machine reports and what the tray's

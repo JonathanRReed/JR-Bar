@@ -1181,7 +1181,7 @@ final class ScreenBarLiveStatus {
 enum ScreenBarSourceLine {
     static func describe(live: Bool, mirrorSetting: Bool, stripPresent: Bool, phaseOffsetMs: Double?,
                          why: String?, rejection: String?, motionNote: String?, followingAlcove: Bool,
-                         steppedAsideForVideo: Bool = false) -> String {
+                         steppedAsideForVideo: Bool = false, cue: String? = nil) -> String {
         var parts: [String] = []
         if !live {
             parts.append("Monitor offline — playing the last program the strip was sent")
@@ -1199,6 +1199,7 @@ enum ScreenBarSourceLine {
         if live, let why, !why.isEmpty {
             parts.append(why.replacingOccurrences(of: "_", with: " "))
         }
+        if live, let cue, !cue.isEmpty { parts.append("playing \(cue)") }
         if let rejection {
             parts.append("refused a program (\(rejection)), holding the last safe one")
         }
