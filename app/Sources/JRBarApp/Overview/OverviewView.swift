@@ -535,6 +535,13 @@ struct OverviewView: View {
                             .help(entry.session.remote
                                 ? "A remote session is the peer's to snooze"
                                 : "Mute this session's family mailbox for an hour")
+                        if store.canStartHere(entry) {
+                            Divider()
+                            Button("New \(ProviderStyle.style(for: entry.session.provider).name) Session Here") {
+                                Task { await store.startSessionHere(entry) }
+                            }
+                            .help("Start \(ProviderStyle.style(for: entry.session.provider).name) in your terminal at \(entry.session.cwd ?? "this folder")")
+                        }
                     }
                     if store.canCompare {
                         Divider()
@@ -837,8 +844,17 @@ struct OverviewView: View {
                         // the daemon says hosts the session — "Open in
                         // iTerm", never a bare promise.
                         let app = entry.session.terminal?.app
-                        Button(app.map { "Open in \($0)" } ?? "Open session") { store.openSelected() }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
+                        HStack(spacing: 8) {
+                            Button(app.map { "Open in \($0)" } ?? "Open session") { store.openSelected() }
+                                .buttonStyle(.borderedProminent).controlSize(.small)
+                            if store.canStartHere(entry) {
+                                // A fresh run in the same folder, in your
+                                // own terminal — the first prompt is yours.
+                                Button("New Session Here") { Task { await store.startSessionHere(entry) } }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                    .help("Start \(ProviderStyle.style(for: entry.session.provider).name) in your terminal at \(entry.session.cwd ?? "this folder")")
+                            }
+                        }
                     }
                 }
                 .padding(16)

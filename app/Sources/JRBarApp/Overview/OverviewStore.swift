@@ -655,6 +655,53 @@ final class OverviewStore {
         }
     }
 
+    // MARK: New session here
+
+    /// The agents `new_session` can start: their CLIs, in the owner's
+    /// own terminal.
+    static let newSessionProviders: Set<String> = ["claude", "codex", "devin", "grok", "cursor", "hermes"]
+
+    /// "New session here": a local row with a directory, of an agent
+    /// whose CLI the daemon can start.
+    func canStartHere(_ entry: CoreRosterEntry) -> Bool {
+        !entry.session.remote && entry.session.cwd?.isEmpty == false
+            && Self.newSessionProviders.contains(entry.session.provider)
+    }
+
+    /// `new_session {provider, cwd}` — explicit only: a new tab (or
+    /// window) in the owner's terminal at the row's directory with the
+    /// agent's CLI started; the first prompt is still theirs to type.
+    /// The daemon's receipt, or its refusal, lands on the status line.
+    func startSessionHere(_ entry: CoreRosterEntry) async {
+        guard canStartHere(entry), let cwd = entry.session.cwd else {
+            report("A new session needs a local row with a folder", isError: true)
+            return
+        }
+        do {
+            let reply = try await core.send("new_session", args: [
+                "provider": .string(entry.session.provider), "cwd": .string(cwd)])
+            if reply.ok {
+                report(Self.startedText(reply.result, provider: entry.session.provider, cwd: cwd))
+            } else {
+                report(reply.error?.message ?? "New session refused", isError: true)
+            }
+        } catch {
+            report(Self.describe(error), isError: true)
+        }
+    }
+
+    /// "Started Claude in a new Ghostty tab at JR-Bar/app".
+    nonisolated static func startedText(_ result: JSONValue?, provider: String, cwd: String) -> String {
+        let name = ProviderStyle.style(for: provider).name
+        let place = SessionRow.tail(of: cwd)
+        let app = result?["app"]?.stringValue
+        switch result?["raised"]?.stringValue {
+        case "new_tab": return "Started \(name) in a new \(app ?? "terminal") tab at \(place)"
+        case "new_window": return "Started \(name) in a new \(app ?? "terminal") window at \(place)"
+        default: return "Started \(name) at \(place)"
+        }
+    }
+
     // MARK: The desk's verbs
 
     /// The row's ask as the desk answers it: its session filled in.

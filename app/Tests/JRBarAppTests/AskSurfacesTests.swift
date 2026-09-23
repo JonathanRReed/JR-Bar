@@ -304,4 +304,21 @@ struct AskSurfacesTests {
                                          title: "fix-ci") == "fix-ci was still running — raised it in Terminal")
     }
 
+    @Test("New Session Here is for a local row with a folder, of an agent whose CLI the daemon starts")
+    func overviewNewSession() {
+        let store = OverviewStore(core: CoreModel())
+        func entry(_ provider: String, cwd: String? = "/Users/me/src/app", remote: Bool = false) -> CoreRosterEntry {
+            CoreRosterEntry(session: CoreSession(id: "\(provider):x", provider: provider, cwd: cwd, remote: remote))
+        }
+        #expect(store.canStartHere(entry("claude")))
+        #expect(store.canStartHere(entry("codex")))
+        #expect(!store.canStartHere(entry("gemini")))
+        #expect(!store.canStartHere(entry("claude", cwd: nil)))
+        #expect(!store.canStartHere(entry("claude", remote: true)))
+        #expect(OverviewStore.startedText(.object(["raised": .string("new_tab"), "app": .string("Ghostty")]),
+                                          provider: "claude", cwd: "/Users/me/src/app")
+                == "Started Claude in a new Ghostty tab at src/app")
+        #expect(OverviewStore.startedText(nil, provider: "codex", cwd: "/tmp/x").hasPrefix("Started Codex at"))
+    }
+
 }
