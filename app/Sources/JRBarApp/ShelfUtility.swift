@@ -13,8 +13,10 @@ import JRBarCore
 ///   says so instead of drawing fake controls.
 /// * The battery row appears only when IOKit reports an internal
 ///   battery — a Mac without one shows no row, never a fake percent.
-/// * Volume and brightness are deliberately absent: macOS owns those
-///   HUDs and JR-Bar has no certified read/control path for them.
+/// * The media row's volume slider exists only while the default
+///   output has a readable hardware volume (`SystemLevelReader`, the
+///   same path the level HUD reads) — an output without one draws no
+///   slider rather than a dead one. Brightness stays with its keys.
 @MainActor
 @Observable
 final class ShelfUtilityModel {
@@ -72,8 +74,20 @@ final class ShelfUtilityModel {
         // the card was folded: take its reading now, or the row would
         // wait for the next transition showing the charge it left with.
         power = powerMonitor.current
+        outputVolume = SystemLevelReader.outputVolume().map(Double.init)
         weather.start()
         toggles.refresh()
+    }
+
+    /// The default output's volume as the card opened, 0…1 — nil hides
+    /// the slider (no hardware volume on this output).
+    private(set) var outputVolume: Double?
+
+    /// The slider's write: through the same CoreAudio path the level
+    /// keys use, then read back so the slider shows what took.
+    func setVolume(_ value: Double) {
+        guard SystemLevelReader.setOutputVolume(Float(value)) else { return }
+        outputVolume = SystemLevelReader.outputVolume().map(Double.init) ?? value
     }
 
     func stop() {
@@ -138,6 +152,15 @@ final class ShelfUtilityModel {
         guard let data = media?.artworkData,
               data.count <= Self.maxArtworkBytes else { return nil }
         return NSImage(data: data)
+    }
+
+    /// A click on the artwork: the player comes forward — the app the
+    /// feed named, and only if it is running (nothing is launched).
+    func raisePlayer() {
+        guard let bundle = media?.bundleIdentifier,
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
+        else { return }
+        app.activate()
     }
 
     /// The source app's display name for the card's identity line,

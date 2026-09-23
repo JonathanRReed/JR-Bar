@@ -581,6 +581,9 @@ private struct ShelfMediaRow: View {
                     }
                     .frame(width: 18, height: 18)
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .contentShape(Rectangle())
+                    .onTapGesture { utility.raisePlayer() }
+                    .help(utility.sourceName.map { "Open \($0)" } ?? "")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(media.displayLine)
                             .font(.system(size: 11))
@@ -634,6 +637,23 @@ private struct ShelfMediaRow: View {
                 }
                 if let synced = utility.lyrics.lyrics {
                     LyricLines(lyrics: synced, utility: utility, playing: media.playing, style: style)
+                }
+                if let volume = utility.outputVolume {
+                    // Fine adjustment without the keys — the same
+                    // CoreAudio path the level HUD reads.
+                    HStack(spacing: 6) {
+                        Image(systemName: volume <= 0 ? "speaker.slash.fill" : "speaker.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(style.faintColor)
+                            .frame(width: 12)
+                        Slider(value: Binding(get: { volume }, set: { utility.setVolume($0) }),
+                               in: 0...1)
+                            .controlSize(.mini)
+                        Image(systemName: "speaker.wave.3.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(style.faintColor)
+                    }
+                    .accessibilityLabel("Volume")
                 }
             }
             .accessibilityElement(children: .combine)
