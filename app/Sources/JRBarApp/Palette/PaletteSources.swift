@@ -29,6 +29,16 @@ struct AgentPaletteVerbs {
     /// started in the panel finishes here and the other way round.
     var replyDraft: @MainActor (CoreAsk) -> String = { _ in "" }
     var setReplyDraft: @MainActor (CoreAsk, String) -> Void = { _, _ in }
+    /// Always allow, through the panel's `alwaysAllow` — offered only
+    /// while the hook holds an ask that has a rule to remember.
+    var alwaysAllow: @MainActor (CoreAsk) -> Void = { _ in }
+    /// A held question's option: the answer itself for one single-pick
+    /// question, one more pick otherwise (`PanelStore.pick`).
+    var pick: @MainActor (String, CoreAskChoice, CoreAsk) -> Void = { _, _, _ in }
+    /// The picks so far — shared with the panel, the notch and the Dock.
+    var picks: @MainActor (CoreAsk) -> AskChoicePicks = { _ in AskChoicePicks() }
+    /// Send Answers for a question with several parts.
+    var sendPicks: @MainActor (CoreAsk) -> Void = { _ in }
 }
 
 enum AgentPaletteRows {
@@ -55,12 +65,29 @@ enum AgentPaletteRows {
     /// words, Reply…, which opens the palette's field for them. Either
     /// appears only where the daemon says an answer can land: not for a
     /// peer's row, not where `canAnswer` is false.
+    ///
+    /// Where the agent's hook holds the ask, Always Allow joins them —
+    /// in the action panel only, never on a chord — and a held question
+    /// lists its options instead of Approve: one click answers a
+    /// single-pick question; several parts pick with the palette up and
+    /// then Send Answers. The row says what would run and marks a
+    /// destructive command.
     @MainActor
     static func askItem(row: SessionRow, ask: CoreAsk, now: Date, verbs: AgentPaletteVerbs) -> PaletteItem {
         var actions = [PaletteAction(id: "open", title: "Open Session", symbol: "macwindow") {
             verbs.open(row)
             return nil
         }]
+        if !row.isRemote, ask.session?.isEmpty == false, AskVerbs.chooses(ask) {
+            actions += choiceActions(ask: ask, verbs: verbs)
+            actions += pathActions(row: row, verbs: verbs)
+            actions.append(PaletteAction(id: "snooze", title: "Snooze 1 Hour", symbol: "moon.zzz") {
+                verbs.snooze(row, 3600)
+                return nil
+            })
+            actions.append(snoozeFor(row: row, verbs: verbs))
+            return askRow(row: row, ask: ask, now: now, actions: actions)
+        }
         let answerable = ask.canAnswer && !row.isRemote && !ask.wantsTextReply
         // A field is only worth opening where the words can land: the
         // panel's own reply row asks the same of the ask.
@@ -87,6 +114,17 @@ enum AgentPaletteRows {
                 verbs.deny(ask)
                 return nil
             })
+            if AskVerbs.alwaysAllows(ask) {
+                // Its own verb, never a chord and never Return: remembering
+                // a rule is a choice made by reading it in the action
+                // panel, so "allow fix" finds the row but Return still
+                // opens it.
+                actions.append(PaletteAction(id: "always", title: "Always Allow", symbol: "checkmark.seal",
+                                             promotable: false) {
+                    verbs.alwaysAllow(ask)
+                    return nil
+                })
+            }
         }
         actions += pathActions(row: row, verbs: verbs)
         if !row.isRemote {
@@ -96,7 +134,15 @@ enum AgentPaletteRows {
             })
             actions.append(snoozeFor(row: row, verbs: verbs))
         }
+        return askRow(row: row, ask: ask, now: now, actions: actions)
+    }
+
+    /// The ask row around its verbs: who asks, what, what it would run,
+    /// how long it has waited, and the destructive mark.
+    @MainActor
+    private static func askRow(row: SessionRow, ask: CoreAsk, now: Date, actions: [PaletteAction]) -> PaletteItem {
         var tags = [PaletteTag(text: "Needs You", tone: .attention)]
+        if ask.isDestructive { tags.append(PaletteTag(text: "Destructive", tone: .alert)) }
         if let age = PanelStore.elapsed(since: ask.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since,
                                         now: now) {
             tags.append(PaletteTag(text: age))
@@ -104,18 +150,66 @@ enum AgentPaletteRows {
         let note: String?
         if row.isRemote {
             note = "Runs on \(row.remoteMachine ?? "another Mac") — answer it there"
-        } else if !ask.canAnswer {
+        } else if !ask.canAnswer, !AskVerbs.chooses(ask) {
             note = "Answer it in the session's own window"
         } else {
-            note = nil
+            note = ask.isDestructive ? AskRiskMark.help : nil
         }
+        let summary = ask.summary ?? (ask.wantsTextReply ? "Wants a typed reply" : "Needs your answer")
+        let preview = ask.previewLine
         return PaletteItem(
             id: "ask.\(row.id)", title: row.label,
-            subtitle: ask.summary ?? (ask.wantsTextReply ? "Wants a typed reply" : "Needs your answer"),
+            subtitle: preview.map { "\(summary) — \($0)" } ?? summary,
             keywords: ["answer", "ask", row.style.name] + (ask.wantsTextReply ? ["reply"] : [])
-                + (row.cwdTail.map { [$0] } ?? []),
+                + (row.cwdTail.map { [$0] } ?? []) + (preview.map { [$0] } ?? []),
             icon: .provider(row.style.id), tags: tags, kind: "Ask", section: .needsYou,
             actions: actions, urgent: true, accessibilityNote: note)
+    }
+
+    /// A held question's verbs. Deny comes first so ⌘↩ lands on no
+    /// option: an answer is always picked by name. One single-pick
+    /// question: each option is its answer. Several parts, or a
+    /// multi-select: each option is a pick made with the palette up,
+    /// then Send Answers once every question has one.
+    @MainActor
+    static func choiceActions(ask: CoreAsk, verbs: AgentPaletteVerbs) -> [PaletteAction] {
+        let choices = ask.decision?.choices ?? []
+        var actions = [PaletteAction(id: "deny", title: "Deny", symbol: "xmark.circle",
+                                     shortcut: denyChord, isDestructive: true) {
+            verbs.deny(ask)
+            return nil
+        }]
+        if choices.count == 1, let choice = choices.first, !choice.multi {
+            for (index, label) in choice.options.enumerated() {
+                actions.append(PaletteAction(id: "answer.\(index)", title: "Answer “\(label)”",
+                                             symbol: "checkmark.bubble") {
+                    verbs.pick(label, choice, ask)
+                    return nil
+                })
+            }
+            return actions
+        }
+        let picks = verbs.picks(ask)
+        for (questionIndex, choice) in choices.enumerated() {
+            let part = choice.header ?? choice.question
+            for (index, label) in choice.options.enumerated() {
+                let picked = picks.isPicked(label, in: choice)
+                actions.append(PaletteAction(
+                    id: "pick.\(questionIndex).\(index)",
+                    title: "\(picked ? "Unpick" : "Pick") “\(label)” · \(part)",
+                    symbol: picked ? "checkmark.circle.fill" : "circle", keepsOpen: true) {
+                    verbs.pick(label, choice, ask)
+                    return nil
+                })
+            }
+        }
+        if picks.isComplete(choices) {
+            actions.append(PaletteAction(id: "sendAnswers", title: "Send Answers", symbol: "paperplane") {
+                verbs.sendPicks(ask)
+                return nil
+            })
+        }
+        return actions
     }
 
     /// A session. Return opens it; the rest are the panel row's menu.

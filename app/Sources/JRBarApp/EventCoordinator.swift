@@ -30,13 +30,27 @@ final class EventCoordinator {
         let app = NSWorkspace.shared.frontmostApplication
         return (app?.bundleIdentifier, app?.processIdentifier)
     }
+    /// The daemon's `session_in_front` for a session — true, false, or
+    /// nil when it cannot be told — injectable so tests stage the
+    /// verdict. Asked, never prompting, on an ask and at each stage.
+    var sessionInFront: @MainActor (String) async -> Bool?
     /// The last escalation_stage the daemon announced — remembered so a
     /// frontmost flip can re-decide the noise without waiting for the
     /// next stage boundary.
     private var lastEscalation: CoreEvent?
+    /// The daemon's last word on whether the owner is watching an asking
+    /// session, and under which frontmost app it was read.
+    private(set) var inFrontVerdict: AskingPane.Verdict?
+    /// The verdict a check in flight is for, so one ask never asks twice.
+    private var inFrontAsking: String?
 
     init(core: CoreModel, hudAnchor: @escaping @MainActor () -> NSRect?) {
         self.core = core
+        sessionInFront = { [weak core] session in
+            guard let core, core.isLive else { return nil }
+            let reply = try? await core.send("session_in_front", args: ["session": .string(session)], timeout: 3)
+            return AskingPane.inFront(from: reply)
+        }
         hud = NotchHUD(anchorRect: hudAnchor)
         sounds.onMissing = { [weak core] name in core?.appendLocalLog(level: "warn", "no system sound named \(name)") }
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
@@ -94,10 +108,12 @@ final class EventCoordinator {
 
     func handle(_ event: CoreEvent) {
         let settings = core.settings.map { SettingsDocument($0.document) }
+        let watching = askingPaneFrontmost(sessionID: event.session)
         let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
-                                                          askingFrontmost: askingPaneFrontmost(sessionID: event.session)), event)
+                                                          askingFrontmost: watching), event)
         if event.kind == "escalation_stage" { lastEscalation = event }
         apply(delivery, for: event)
+        confirmWatching(event, decidedWatching: watching)
         var summary = "event \(event.kind)"
         if let label = event.label, !label.isEmpty { summary += " · \(label)" }
         if delivery.isSilent { summary += " (quiet)" }
@@ -160,18 +176,62 @@ final class EventCoordinator {
     }
 
     /// The ask the event names is on screen: the user is already looking
-    /// at it, so the escalation ladder's noise stays down. The proof is
-    /// `answer_local`'s own — the host app's bundle on the frontmost app,
-    /// and when the session names a process the frontmost pid on that
-    /// process's ancestry (`AskingPane`). A remote session has no pane
-    /// here at all, so it can never quiet the ladder.
+    /// at it, so the escalation ladder's noise stays down. The app's own
+    /// read is `answer_local`'s — the host app's bundle on the frontmost
+    /// app, and when the session names a process the frontmost pid on
+    /// that process's ancestry (`AskingPane`) — and the daemon's
+    /// `session_in_front`, while it still speaks for this session and
+    /// this frontmost app, overrules it either way (`AskingPane
+    /// .watching`). A remote session has no pane here at all, so it can
+    /// never quiet the ladder.
     private func askingPaneFrontmost(sessionID: String?) -> Bool {
         guard quietWhenPaneFrontmost(), let sessionID,
               let session = core.state?.session(withID: sessionID), !session.remote else { return false }
         let expected = Set([session.terminal?.bundleId, session.origin?.bundleId].compactMap { $0 })
         let front = frontmostApp()
-        return AskingPane.isFrontmost(expectedBundleIDs: expected, sessionPID: session.pid,
-                                      frontmostBundleID: front.bundleID, frontmostPID: front.pid)
+        let local = AskingPane.isFrontmost(expectedBundleIDs: expected, sessionPID: session.pid,
+                                           frontmostBundleID: front.bundleID, frontmostPID: front.pid)
+        let verdict = inFrontVerdict.flatMap {
+            $0.speaks(for: sessionID, frontmostPID: front.pid, now: Date()) ? $0.inFront : nil
+        }
+        return AskingPane.watching(local: local, inFront: verdict)
+    }
+
+    /// Ask the daemon whether the owner is watching the session an ask
+    /// or a stage is about — the tab, not just the app — and, when its
+    /// word differs from what this event was decided on, put it right:
+    /// an ask whose sound the app rule kept down chimes after all (the
+    /// owner is in another tab), a stage re-decides its pulse and chime.
+    /// Only while "quiet while watching" is on, for a local session,
+    /// once per session while a check is out.
+    private func confirmWatching(_ event: CoreEvent, decidedWatching: Bool) {
+        guard event.kind == "ask_opened" || event.kind == "escalation_stage",
+              quietWhenPaneFrontmost(), let sessionID = event.session,
+              let session = core.state?.session(withID: sessionID), !session.remote,
+              inFrontAsking != sessionID else { return }
+        let front = frontmostApp().pid
+        if let verdict = inFrontVerdict, verdict.speaks(for: sessionID, frontmostPID: front, now: Date()) { return }
+        inFrontAsking = sessionID
+        Task { [weak self] in
+            guard let self else { return }
+            let inFront = await self.sessionInFront(sessionID)
+            self.inFrontAsking = nil
+            self.inFrontVerdict = AskingPane.Verdict(session: sessionID, inFront: inFront,
+                                                     frontmostPID: front, at: Date())
+            let watching = self.askingPaneFrontmost(sessionID: sessionID)
+            guard watching != decidedWatching else { return }
+            if event.kind == "ask_opened", decidedWatching, !watching {
+                // The app rule quieted the ask's sound; the daemon says
+                // the owner is in another tab — it sounds after all.
+                let settings = self.core.settings.map { SettingsDocument($0.document) }
+                let delivery = self.deliveryRules(
+                    EventPolicy.delivery(for: event, state: self.core.state, settings: settings,
+                                         askingFrontmost: false), event)
+                if let sound = delivery.sound { self.sounds.play(sound, repeats: delivery.soundRepeats) }
+            } else if event.kind == "escalation_stage" {
+                self.reapplyEscalationNoise()
+            }
+        }
     }
 
     /// The frontmost app changed: if the asking pane just came forward
@@ -181,6 +241,9 @@ final class EventCoordinator {
     /// sounds and banners already fired are gone either way.
     private func reapplyEscalationNoise() {
         guard let event = lastEscalation, asksStillOpen else { return }
+        // A new app in front: the daemon's word is asked afresh, and
+        // until it answers the app's own rule decides.
+        confirmWatching(event, decidedWatching: askingPaneFrontmost(sessionID: event.session))
         let settings = core.settings.map { SettingsDocument($0.document) }
         let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
                                                           askingFrontmost: askingPaneFrontmost(sessionID: event.session)), event)
@@ -206,6 +269,7 @@ final class EventCoordinator {
     /// The daemon went away: nothing is escalating any more.
     func reset() {
         lastEscalation = nil
+        inFrontVerdict = nil
         sounds.stopChime()
         if isPulsing {
             isPulsing = false

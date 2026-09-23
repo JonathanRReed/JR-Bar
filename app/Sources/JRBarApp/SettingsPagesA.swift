@@ -259,6 +259,9 @@ struct MenuBarPreview: View {
 
 struct AgentsPage: View {
     @Bindable var store: SettingsStore
+    /// `hooks_doctor`'s per-provider report — read when the page shows
+    /// and again whenever an install or removal settles.
+    @ViewState private var doctor = HooksDoctorModel()
 
     static let openChoices: [(value: String, label: String)] = [
         ("", "Automatic"), ("app", "Its app"), ("terminal", "Terminal"), ("vscode", "VS Code"),
@@ -267,8 +270,16 @@ struct AgentsPage: View {
     var body: some View {
         SettingGroup("Providers", note: "Hooks let each agent report its sessions. “Clicks open” picks what a click on a session raises.") {
             ForEach(SettingsKey.providers, id: \.self) { provider in
-                AgentRow(store: store, provider: provider)
+                AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider))
             }
+        }
+        .task { doctor.refresh(core: store.core) }
+        .onChange(of: store.hookBusy) { before, after in
+            // An install, repair or removal just finished: read again.
+            if after.count < before.count { doctor.refresh(core: store.core) }
+        }
+        .onChange(of: store.core.isLive) { _, live in
+            if live { doctor.refresh(core: store.core) }
         }
 
         SettingGroup("Transcripts", note: "Reads each agent's local transcript files for token and cost figures.") {
@@ -292,6 +303,8 @@ struct AgentsPage: View {
 struct AgentRow: View {
     @Bindable var store: SettingsStore
     let provider: String
+    /// What `hooks_doctor` found for this provider, when it has said.
+    var doctor: HooksDoctorEntry? = nil
 
     private var style: ProviderStyle { ProviderStyle.style(for: provider, document: store.document) }
     private var status: String? { store.hookStatus(provider) }
@@ -342,6 +355,28 @@ struct AgentRow: View {
                         .foregroundStyle(note.isError ? Color.red : Color.secondary)
                         .lineLimit(1)
                         .transition(.opacity)
+                } else if let doctor, let reason = HooksDoctor.repairReason(doctor) {
+                    // Something to fix, and the fix beside it.
+                    HStack(spacing: 6) {
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Button("Repair") { store.installHooks(provider) }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .disabled(!store.core.isLive || store.hookBusy.contains(provider)
+                                      || store.hookDetected(provider) == false)
+                            .help("Reinstall \(style.name)'s hooks the way JR-Bar writes them today")
+                    }
+                } else if let doctor, let line = HooksDoctor.line(doctor) {
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help("From the monitor's hook doctor")
                 }
             }
             Spacer()

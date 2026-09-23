@@ -139,6 +139,31 @@ final class PaletteHUD {
     }
 }
 
+/// One verb's claim on the toasts it raises. The palette runs every
+/// verb under a fresh ticket (`PaletteVerbScope.ticket`); a store that
+/// reports through a toast hands each line to the ticket it runs under.
+/// The verb's own call and every task it starts inherit the ticket, so
+/// the daemon's late verdict is heard as that verb's answer — and a
+/// toast an unrelated event raised a second later is not.
+@MainActor
+@Observable
+final class PaletteVerbTicket {
+    /// What the verb raised, oldest first; the HUD shows the newest.
+    private(set) var lines: [String] = []
+
+    nonisolated init() {}
+
+    func hear(_ line: String) {
+        guard !line.isEmpty else { return }
+        lines.append(line)
+    }
+}
+
+/// The ticket the running code answers to, if a palette verb started it.
+enum PaletteVerbScope {
+    @TaskLocal static var ticket: PaletteVerbTicket?
+}
+
 extension NSScreen {
     /// The screen under the pointer — where the person is looking.
     @MainActor
@@ -170,10 +195,13 @@ final class PaletteController {
     /// off every row.
     var forgetUse: (@MainActor (String) -> Void)?
     /// A store that reports through its own toast (the panel's): after
-    /// a verb runs, the palette listens to it for a few seconds and
-    /// shows what it says in the HUD, so "Approved · typed into the
-    /// session's terminal" or a refusal is heard even with the panel
-    /// shut.
+    /// a verb runs, the palette listens for a few seconds and shows the
+    /// lines that verb raised in the HUD, so "Approved · sent through
+    /// the agent's permission hook" or a refusal is heard even with the
+    /// panel shut. Which lines count is the verb's ticket's call
+    /// (`PaletteVerbTicket`), never the clock's: a toast some other
+    /// event raised meanwhile is not this verb's answer. nil hears
+    /// nothing.
     var toastFeed: (@MainActor () -> String?)?
     /// The field's placeholder.
     var prompt = "Search menu bar, sessions and commands…"
@@ -377,9 +405,14 @@ final class PaletteController {
         let ranked = model.items.contains { $0.id == item.id }
         close()
         if ranked { recordUse(item.id) }
-        listenForToast(until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)
+        let ticket = PaletteVerbTicket()
+        if toastFeed != nil {
+            listen(to: ticket, until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)
+        }
         Self.log.debug("run \(item.id, privacy: .private) · \(action.id, privacy: .public)")
-        if let line = run() {
+        // The verb runs under its ticket: the toast it raises now, or
+        // from a task it starts, is heard as its answer.
+        if let line = PaletteVerbScope.$ticket.withValue(ticket, operation: run) {
             hud.show(line, near: anchor)
         }
     }
@@ -530,7 +563,10 @@ final class PaletteController {
 
     // MARK: Slower sources
 
-    /// The query moved: re-ask the slower sources once it settles.
+    /// The query moved: re-ask the slower sources once it settles. They
+    /// run side by side and each answer lands as it comes, in source
+    /// order — one slow Accessibility read of the front app's menus
+    /// never holds the archive's or History's hits back.
     func queryChanged() {
         searchTask?.cancel()
         let query = model.query
@@ -538,37 +574,64 @@ final class PaletteController {
             model.noteSearching(false)
             return
         }
-        let sources = activeSources
+        let count = activeSources.count
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: Self.searchDebounce)
             guard !Task.isCancelled, let self else { return }
             self.model.noteSearching(true)
-            var found: [PaletteItem] = []
-            for source in sources {
-                found += await source.results(for: query)
-                if Task.isCancelled { return }
+            guard count > 0 else {
+                self.model.setSearchResults([], for: query)
+                return
             }
-            self.model.setSearchResults(found, for: query)
+            let run = PaletteSearchRun(count: count)
+            // One read per source, by its place: each finds its source
+            // on the main actor, where every source lives, and while one
+            // waits on another app's Accessibility the rest carry on.
+            let reads = (0..<count).map { index in
+                Task { @MainActor [weak self] in
+                    guard let source = self?.activeSources[safe: index] else { return }
+                    let found = await source.results(for: query)
+                    guard !Task.isCancelled, let self else { return }
+                    run.answers.record(found, at: index)
+                    self.model.setSearchResults(run.answers.items, for: query,
+                                                finished: run.answers.isComplete)
+                }
+            }
+            await withTaskCancellationHandler {
+                for read in reads { await read.value }
+            } onCancel: {
+                for read in reads { read.cancel() }
+            }
         }
     }
 
     // MARK: The store's answer
 
-    /// Watches `toastFeed` until `deadline`: each new line it reports
-    /// becomes the HUD. Armed before the verb runs, so a toast the verb
-    /// raises synchronously is caught as surely as a daemon's late
-    /// reply.
-    private func listenForToast(until deadline: Date, anchor: NSRect?) {
-        guard let feed = toastFeed else { return }
+    /// Watches the verb's ticket until `deadline`: each line the verb
+    /// raised becomes the HUD. Armed before the verb runs, so a toast
+    /// the verb raises synchronously is caught as surely as a daemon's
+    /// late reply — and a toast nothing this verb did raised is never
+    /// shown as its answer.
+    ///
+    /// The ticket's own registrar keeps the change handler, so the
+    /// handler holds the ticket weakly: a verb that raises nothing (open
+    /// an app, hide an item) frees its ticket once it returns rather
+    /// than waiting on a line that never comes. A task the verb started
+    /// keeps its ticket through the task-local, so a late toast is
+    /// still heard; the handler runs inside the ticket's own change,
+    /// with the ticket alive, and holds it strongly only for the hop.
+    private func listen(to ticket: PaletteVerbTicket, until deadline: Date, anchor: NSRect?) {
+        let heard = ticket.lines.count
         withObservationTracking {
-            _ = feed()
-        } onChange: { [weak self] in
+            _ = ticket.lines
+        } onChange: { [weak self, weak ticket] in
+            guard let ticket else { return }
             Task { @MainActor [weak self] in
                 guard let self, Date() < deadline else { return }
-                if let line = feed(), !line.isEmpty {
+                if ticket.lines.count > heard, let line = ticket.lines.last, !line.isEmpty {
                     self.hud.show(line, symbol: "text.bubble.fill", near: anchor)
                 }
-                self.listenForToast(until: deadline, anchor: anchor)
+                self.listen(to: ticket, until: deadline, anchor: anchor)
             }
         }
     }

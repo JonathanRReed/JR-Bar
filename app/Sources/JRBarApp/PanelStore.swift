@@ -251,6 +251,14 @@ final class PanelStore {
     /// Per-session model, tokens, cost and context — shared with the
     /// Overview, which the app delegate hands it to.
     let sessionUsage: SessionUsageStore
+    /// Always allow and a held question's picks — the desk the notch,
+    /// the Dock preview and the Rail share with the panel (the app
+    /// delegate publishes it as `AskAnswerDesk.shared`).
+    let askDesk: AskAnswerDesk
+    /// The exact window a live session runs in, raised through the
+    /// Dock's window locator (`UtilitiesStore.raiseSessionWindow`) — the
+    /// fallback when the daemon cannot find it. True when it came up.
+    var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     // Fallback (file feeds) and app-owned state.
     var fallbackState: AgentAggregateState = .idle
@@ -321,6 +329,7 @@ final class PanelStore {
          mediaFeed: MediaFeed = .shared, screenBarShown: Bool = true) {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
+        self.askDesk = AskAnswerDesk(core: core)
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -1266,26 +1275,36 @@ final class PanelStore {
         draftsDefaults.set(data, forKey: Self.replyDraftsKey)
     }
 
-    func isAnswerPending(_ ask: CoreAsk) -> Bool { pendingAnswers.contains(ask.id) }
+    func isAnswerPending(_ ask: CoreAsk) -> Bool {
+        pendingAnswers.contains(ask.id) || askDesk.isPending(ask.session)
+    }
 
     func approve(_ ask: CoreAsk) { answer(ask, approve: true) }
     func deny(_ ask: CoreAsk) { answer(ask, approve: false) }
 
     /// `answer_ask`, awaited: the toast reports the daemon's verdict, not a
-    /// guess — a refused answer leaves the ask open and says why.
+    /// guess — a refused answer leaves the ask open and says why — and
+    /// how it went: through the agent's permission hook, or typed into
+    /// the terminal (the reply's `mechanism`).
     private func answer(_ ask: CoreAsk, approve: Bool) {
         guard let session = ask.session, !session.isEmpty else {
             show(toast: "This ask has no session left to answer")
             return
         }
-        guard ask.canAnswer else {
+        if approve, AskVerbs.chooses(ask) {
+            // A held question: a bare yes answers nothing — its options do.
+            show(toast: "Pick one of its options")
+            return
+        }
+        guard ask.canAnswer || (!approve && AskVerbs.denies(ask)) else {
             // The daemon marked it unanswerable from here (no live target,
             // a kind it cannot type into): the only honest path is the
-            // session's own window.
+            // session's own window. A held question still declines
+            // through its hook, whatever hosts the session.
             show(toast: "This one has to be answered in the session's window")
             return
         }
-        guard !pendingAnswers.contains(ask.id) else { return }
+        guard !isAnswerPending(ask) else { return }
         if CoreSession.isRemoteID(session) {
             show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
             return
@@ -1301,7 +1320,7 @@ final class PanelStore {
                 let reply = try await self.core.answerAskNow(session: session, approve: approve,
                                                              request: ask.request)
                 if reply.ok {
-                    self.show(toast: approve ? "Approved · typed into the session's terminal" : "Denied")
+                    self.show(toast: AskAnswerLine.sent(approve ? .approve : .deny, reply: reply))
                 } else {
                     self.answerRefused(reply.error)
                 }
@@ -1338,13 +1357,57 @@ final class PanelStore {
                     // Sent and confirmed — the draft's job is done. A
                     // refusal keeps the text so it isn't lost.
                     self.setReplyDraft("", for: ask)
-                    self.show(toast: "Reply sent · typed into the session's terminal")
+                    self.show(toast: AskAnswerLine.replied(reply))
                 } else {
                     self.answerRefused(reply.error)
                 }
             } catch {
                 self.show(toast: "No answer from the monitor — the ask is still open")
             }
+        }
+    }
+
+    /// Always allow, from its own button only: the agent remembers the
+    /// allow rule it offered (`CoreAsk.canAlwaysAllow`). Through the
+    /// shared desk, so every surface's copy of the ask dims with it.
+    func alwaysAllow(_ ask: CoreAsk) {
+        guard AskVerbs.alwaysAllows(ask) else {
+            show(toast: "This one has no rule to remember — approve it once instead")
+            return
+        }
+        send(ask, .always)
+    }
+
+    /// A click on one of a held question's options: the answer itself
+    /// for a single-pick question, one more pick otherwise.
+    func pick(_ label: String, in choice: CoreAskChoice, of ask: CoreAsk) {
+        if let verdict = AskChoicePicks.oneClick(label, choices: ask.decision?.choices ?? []) {
+            send(ask, verdict)
+        } else {
+            askDesk.toggle(label, in: choice, of: ask)
+        }
+    }
+
+    /// The picks so far for a multi-question or multi-select ask.
+    func picks(for ask: CoreAsk) -> AskChoicePicks { askDesk.picks(for: ask) }
+
+    /// Send Answers: the collected picks, every question answered.
+    func sendPicks(_ ask: CoreAsk) {
+        guard let choices = ask.decision?.choices,
+              let answers = askDesk.picks(for: ask).answers(choices) else {
+            show(toast: "Pick an answer for every question first")
+            return
+        }
+        send(ask, .choose(answers))
+    }
+
+    /// One of the desk's verdicts, awaited; its line is the toast.
+    private func send(_ ask: CoreAsk, _ verdict: AskVerdict) {
+        guard !pendingAnswers.contains(ask.id) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await self.askDesk.answer(ask, verdict)
+            self.show(toast: outcome.line)
         }
     }
 
@@ -1388,6 +1451,12 @@ final class PanelStore {
                 let reply = try await self.core.send("open_session", args: ["session": .string(row.id)])
                 if reply.ok {
                     self.onClose?()
+                } else if Self.raisesWindowInstead(reply.error, row: row),
+                          self.raiseSessionWindow?(row.id) == true {
+                    // The daemon could not find the window of a session
+                    // that is still running; the Dock's window locator
+                    // could, and raised it.
+                    self.onClose?()
                 } else {
                     self.show(toast: reply.error?.message ?? "Could not open \(row.label)")
                 }
@@ -1395,6 +1464,13 @@ final class PanelStore {
                 self.show(toast: "The monitor is not answering — the panel stays open")
             }
         }
+    }
+
+    /// Whether a refused open is worth the window locator's try: the
+    /// daemon's `not_found` for a local session that is still live. An
+    /// ended row has no window left to find — its refusal stands.
+    nonisolated static func raisesWindowInstead(_ error: CoreReplyError?, row: SessionRow) -> Bool {
+        error?.code == "not_found" && !row.isRemote && !row.activity.isClearable && row.activity != .failed
     }
 
     /// `dismiss_session {session}` for a stuck or quiet row: the daemon
@@ -1687,6 +1763,9 @@ final class PanelStore {
 
     private func present(toast text: String, life: TimeInterval) {
         toast = text
+        // A palette verb's answer: the ticket it runs under hears it, so
+        // the palette's HUD says this line and no other.
+        PaletteVerbScope.ticket?.hear(text)
         toastClear?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.toast = nil; self?.toastAction = nil }

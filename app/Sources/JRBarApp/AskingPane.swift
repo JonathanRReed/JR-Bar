@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import JRBarCore
 
 /// "The user is already looking at this ask" — the read
 /// `answer_local.py` makes before it will type into a session, reused
@@ -56,5 +57,43 @@ enum AskingPane {
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
         return Int32(bitPattern: info.pbi_ppid)
+    }
+
+    // MARK: The daemon's tab-level word
+
+    /// Whether the owner is watching the session, with the daemon's
+    /// `session_in_front` over the rule above. The app alone cannot
+    /// tell a background Ghostty tab from the one in front — every
+    /// Ghostty window is one process — so the daemon's verdict decides
+    /// when it has one: `true` is proof the session's own tab, pane or
+    /// terminal is in front (quiet), `false` is proof it is not (keep
+    /// the noise, even with its terminal app frontmost), and `nil` —
+    /// it cannot be told — leaves the rule as it was.
+    static func watching(local: Bool, inFront: Bool?) -> Bool { inFront ?? local }
+
+    /// `session_in_front`'s `in_front`: true, false, or nil for a null,
+    /// a refusal or no reply at all — "keep your own rule".
+    static func inFront(from reply: CoreReply?) -> Bool? {
+        guard let reply, reply.ok, let value = reply.result?["in_front"], !value.isNull else { return nil }
+        return value.boolValue
+    }
+
+    /// How long a verdict speaks for the session, with the same app in
+    /// front: a tab switch inside one app raises no activation, so the
+    /// word goes stale on its own.
+    static let verdictLife: TimeInterval = 3
+
+    /// The last verdict, whom it was about, and under which frontmost
+    /// app it was read.
+    struct Verdict: Equatable {
+        let session: String
+        let inFront: Bool?
+        let frontmostPID: Int32?
+        let at: Date
+
+        /// The verdict still speaks for `session` now, with `pid` in front.
+        func speaks(for session: String, frontmostPID pid: Int32?, now: Date) -> Bool {
+            self.session == session && frontmostPID == pid && now.timeIntervalSince(at) < AskingPane.verdictLife
+        }
     }
 }

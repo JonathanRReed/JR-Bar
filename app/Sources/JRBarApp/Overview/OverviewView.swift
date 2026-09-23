@@ -494,9 +494,25 @@ struct OverviewView: View {
                         .help(entry.map { e in store.canOpen(e)
                             ? "Open the session's terminal"
                             : "A remote session — open it on \(e.session.origin?.label ?? "that Mac")" } ?? "")
-                    if let entry, store.askAction(for: entry) == .actionable {
+                    if let entry, !entry.session.remote, let ask = store.deskAsk(for: entry), AskVerbs.chooses(ask) {
+                        // A held question: its options, through the hook.
+                        Divider()
+                        Menu(AskChoiceLayout.menuTitle(ask.decision?.choices ?? [],
+                                                       picks: store.askDesk.picks(for: ask))) {
+                            AskChoiceMenuItems(choices: ask.decision?.choices ?? [],
+                                               picks: store.askDesk.picks(for: ask),
+                                               pick: { label, choice in
+                                                   Task { await store.pick(label, in: choice, entry: entry) }
+                                               },
+                                               send: { Task { await store.sendPicks(entry: entry) } })
+                        }
+                        Button("Deny ask") { Task { await store.declineQuestion(entry: entry) } }
+                    } else if let entry, store.askAction(for: entry) == .actionable {
                         Divider()
                         Button("Approve ask") { Task { await store.answerAsk(entry: entry, approve: true) } }
+                        if let ask = entry.session.ask, AskVerbs.alwaysAllows(ask) {
+                            Button("Always allow") { Task { await store.alwaysAllow(entry: entry) } }
+                        }
                         Button("Deny ask") { Task { await store.answerAsk(entry: entry, approve: false) } }
                         if store.canReply(entry) {
                             Button("Reply…") { replyEntry = entry }
@@ -519,6 +535,13 @@ struct OverviewView: View {
                             .help(entry.session.remote
                                 ? "A remote session is the peer's to snooze"
                                 : "Mute this session's family mailbox for an hour")
+                        if store.canStartHere(entry) {
+                            Divider()
+                            Button("New \(ProviderStyle.style(for: entry.session.provider).name) Session Here") {
+                                Task { await store.startSessionHere(entry) }
+                            }
+                            .help("Start \(ProviderStyle.style(for: entry.session.provider).name) in your terminal at \(entry.session.cwd ?? "this folder")")
+                        }
                     }
                     if store.canCompare {
                         Divider()
@@ -821,8 +844,17 @@ struct OverviewView: View {
                         // the daemon says hosts the session — "Open in
                         // iTerm", never a bare promise.
                         let app = entry.session.terminal?.app
-                        Button(app.map { "Open in \($0)" } ?? "Open session") { store.openSelected() }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
+                        HStack(spacing: 8) {
+                            Button(app.map { "Open in \($0)" } ?? "Open session") { store.openSelected() }
+                                .buttonStyle(.borderedProminent).controlSize(.small)
+                            if store.canStartHere(entry) {
+                                // A fresh run in the same folder, in your
+                                // own terminal — the first prompt is yours.
+                                Button("New Session Here") { Task { await store.startSessionHere(entry) } }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                    .help("Start \(ProviderStyle.style(for: entry.session.provider).name) in your terminal at \(entry.session.cwd ?? "this folder")")
+                            }
+                        }
                     }
                 }
                 .padding(16)
@@ -953,28 +985,103 @@ struct OverviewView: View {
             }
             Text(ask.summary ?? "This session has an open question.")
                 .font(.system(size: 12)).textSelection(.enabled)
-            let reason = store.askDisabledReason(for: entry)
-            HStack(spacing: 8) {
-                Button("Approve") {
-                    Task { await store.answerAsk(entry: entry, approve: true) }
+            if let preview = ask.previewLine {
+                HStack(spacing: 5) {
+                    if ask.isDestructive { AskRiskMark(size: 10) }
+                    Text(preview)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+                        .textSelection(.enabled)
+                        .lineLimit(3)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
-                Button("Deny") {
-                    Task { await store.answerAsk(entry: entry, approve: false) }
-                }
-                .buttonStyle(.bordered).controlSize(.small).tint(.red)
-                if store.canReply(entry) {
-                    Button("Reply…") { replyEntry = entry }
-                        .buttonStyle(.bordered).controlSize(.small)
-                }
+            } else if ask.isDestructive {
+                Label("Destructive — it can lose work if it runs by mistake", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(.red)
             }
-            .disabled(reason != nil)
-            .help(reason ?? "Send the answer to the session's terminal — the monitor's verdict is shown on the status line")
-            if let reason {
-                Label(reason, systemImage: "info.circle")
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            if !entry.session.remote, AskVerbs.chooses(ask) {
+                // A held question: its options are the answer, through
+                // the agent's own hook, from whatever terminal hosts it.
+                choiceSection(entry: entry, ask: ask)
+            } else {
+                let reason = store.askDisabledReason(for: entry)
+                HStack(spacing: 8) {
+                    Button("Approve") {
+                        Task { await store.answerAsk(entry: entry, approve: true) }
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+                    if AskVerbs.alwaysAllows(ask) {
+                        // Its own button: the agent remembers the rule.
+                        Button("Always Allow") {
+                            Task { await store.alwaysAllow(entry: entry) }
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .help("Approve, and let the agent remember the rule it offered")
+                    }
+                    Button("Deny") {
+                        Task { await store.answerAsk(entry: entry, approve: false) }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                    if store.canReply(entry) {
+                        Button("Reply…") { replyEntry = entry }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
+                }
+                .disabled(reason != nil)
+                .help(reason ?? (ask.isHeldForDecision
+                    ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
+                    : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
+                if let reason {
+                    Label(reason, systemImage: "info.circle")
+                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                }
             }
         }
+    }
+
+    /// A held question in the inspector: every question with its options
+    /// as buttons — one click answers a single-pick question; several
+    /// parts pick first and then Send — and Deny, which declines it.
+    @ViewBuilder
+    private func choiceSection(entry: CoreRosterEntry, ask: CoreAsk) -> some View {
+        let choices = ask.decision?.choices ?? []
+        let picks = store.askDesk.picks(for: ask)
+        let oneClick = choices.count == 1 && choices.first?.multi == false
+        let busy = store.askDesk.isPending(entry.id)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(choices, id: \.question) { choice in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(choice.header.map { "\($0) — \(choice.question)" } ?? choice.question)
+                        .font(.system(size: 11, weight: .medium))
+                    WrapRow {
+                        ForEach(choice.options, id: \.self) { label in
+                            if picks.isPicked(label, in: choice) {
+                                optionButton(label, choice: choice, entry: entry)
+                                    .buttonStyle(.borderedProminent)
+                            } else {
+                                optionButton(label, choice: choice, entry: entry)
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                if !oneClick {
+                    Button("Send Answers") { Task { await store.sendPicks(entry: entry) } }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .disabled(!picks.isComplete(choices))
+                }
+                Button("Deny") { Task { await store.declineQuestion(entry: entry) } }
+                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+            }
+        }
+        .disabled(busy)
+    }
+
+    private func optionButton(_ label: String, choice: CoreAskChoice, entry: CoreRosterEntry) -> some View {
+        Button(label) { Task { await store.pick(label, in: choice, entry: entry) } }
+            .controlSize(.small)
+            .help(choice.multi ? "Pick or unpick “\(label)”" : "Answer “\(label)”")
     }
 
     // MARK: Timeline

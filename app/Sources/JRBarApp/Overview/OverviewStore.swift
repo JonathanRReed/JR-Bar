@@ -67,7 +67,17 @@ final class OverviewStore {
     init(core: CoreModel) {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
+        self.ownDesk = AskAnswerDesk(core: core)
     }
+
+    /// Always allow and a held question's picks go through the panel's
+    /// shared desk (one pending set, one set of picks across surfaces);
+    /// this store's own only until the app delegate publishes that one.
+    private let ownDesk: AskAnswerDesk
+    var askDesk: AskAnswerDesk { AskAnswerDesk.shared ?? ownDesk }
+    /// The exact window a live session runs in, through the Dock's
+    /// window locator — Open's fallback when the daemon cannot find it.
+    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     /// Reads usage for the rows the table leads with and the selection.
     func refreshSessionUsage(force: Bool = false) {
@@ -640,12 +650,125 @@ final class OverviewStore {
             if reply.ok {
                 let app = reply.result?["activated"]?.stringValue
                 report(app.map { "Opened in \($0)" } ?? "Open request sent")
+            } else if reply.error?.code == "not_found", isLiveLocal(id), raiseSessionWindow?(id) == true {
+                // The daemon could not find a running session's window;
+                // the Dock's window locator could, and raised it.
+                report("Raised its window")
             } else {
                 report(reply.error?.message ?? "Open refused", isError: true)
             }
         } catch {
             report(Self.describe(error), isError: true)
         }
+    }
+
+    /// A local row still running — the only kind whose window a refused
+    /// open is worth looking for.
+    private func isLiveLocal(_ id: String) -> Bool {
+        guard let entry = roster.first(where: { $0.id == id }) else { return false }
+        let activity = SessionActivity.reduce(entry.session)
+        return !entry.session.remote && !activity.isClearable && activity != .failed
+    }
+
+    // MARK: New session here
+
+    /// The agents `new_session` can start: their CLIs, in the owner's
+    /// own terminal.
+    static let newSessionProviders: Set<String> = ["claude", "codex", "devin", "grok", "cursor", "hermes"]
+
+    /// "New session here": a local row with a directory, of an agent
+    /// whose CLI the daemon can start.
+    func canStartHere(_ entry: CoreRosterEntry) -> Bool {
+        !entry.session.remote && entry.session.cwd?.isEmpty == false
+            && Self.newSessionProviders.contains(entry.session.provider)
+    }
+
+    /// `new_session {provider, cwd}` — explicit only: a new tab (or
+    /// window) in the owner's terminal at the row's directory with the
+    /// agent's CLI started; the first prompt is still theirs to type.
+    /// The daemon's receipt, or its refusal, lands on the status line.
+    func startSessionHere(_ entry: CoreRosterEntry) async {
+        guard canStartHere(entry), let cwd = entry.session.cwd else {
+            report("A new session needs a local row with a folder", isError: true)
+            return
+        }
+        do {
+            let reply = try await core.send("new_session", args: [
+                "provider": .string(entry.session.provider), "cwd": .string(cwd)])
+            if reply.ok {
+                report(Self.startedText(reply.result, provider: entry.session.provider, cwd: cwd))
+            } else {
+                report(reply.error?.message ?? "New session refused", isError: true)
+            }
+        } catch {
+            report(Self.describe(error), isError: true)
+        }
+    }
+
+    /// "Started Claude in a new Ghostty tab at JR-Bar/app".
+    nonisolated static func startedText(_ result: JSONValue?, provider: String, cwd: String) -> String {
+        let name = ProviderStyle.style(for: provider).name
+        let place = SessionRow.tail(of: cwd)
+        let app = result?["app"]?.stringValue
+        switch result?["raised"]?.stringValue {
+        case "new_tab": return "Started \(name) in a new \(app ?? "terminal") tab at \(place)"
+        case "new_window": return "Started \(name) in a new \(app ?? "terminal") window at \(place)"
+        default: return "Started \(name) at \(place)"
+        }
+    }
+
+    // MARK: The desk's verbs
+
+    /// The row's ask as the desk answers it: its session filled in.
+    func deskAsk(for entry: CoreRosterEntry) -> CoreAsk? {
+        guard var ask = entry.session.ask else { return nil }
+        if ask.session == nil { ask.session = entry.id }
+        return ask
+    }
+
+    /// Always allow, from its own button — only while the agent's hook
+    /// holds an ask that offers a rule to remember.
+    func alwaysAllow(entry: CoreRosterEntry) async {
+        guard askAction(for: entry) == .actionable, let ask = deskAsk(for: entry) else {
+            report(askDisabledReason(for: entry) ?? "This ask can no longer be answered", isError: true)
+            return
+        }
+        await answerThroughDesk(ask, .always)
+    }
+
+    /// One of a held question's options: the answer itself for a single
+    /// pick, one more pick otherwise.
+    func pick(_ label: String, in choice: CoreAskChoice, entry: CoreRosterEntry) async {
+        guard let ask = deskAsk(for: entry), !entry.session.remote else { return }
+        if let verdict = AskChoicePicks.oneClick(label, choices: ask.decision?.choices ?? []) {
+            await answerThroughDesk(ask, verdict)
+        } else {
+            askDesk.toggle(label, in: choice, of: ask)
+        }
+    }
+
+    /// Deny on a held question: the hook declines it the way Esc does,
+    /// whatever hosts the session — the keystroke path's answerability
+    /// does not come into it.
+    func declineQuestion(entry: CoreRosterEntry) async {
+        guard let ask = deskAsk(for: entry), !entry.session.remote else { return }
+        await answerThroughDesk(ask, .deny)
+    }
+
+    /// Send Answers for a question with several parts.
+    func sendPicks(entry: CoreRosterEntry) async {
+        guard let ask = deskAsk(for: entry), let choices = ask.decision?.choices,
+              let answers = askDesk.picks(for: ask).answers(choices) else {
+            report("Pick an answer for every question first", isError: true)
+            return
+        }
+        await answerThroughDesk(ask, .choose(answers))
+    }
+
+    private func answerThroughDesk(_ ask: CoreAsk, _ verdict: AskVerdict) async {
+        let outcome = await askDesk.answer(ask, verdict)
+        report(outcome.line, isError: !outcome.ok)
+        if outcome.ok { await load() }
     }
 
     /// What the ask-action buttons may claim on this row. `remote` and
@@ -702,9 +825,7 @@ final class OverviewStore {
                 session: entry.id, approve: approve,
                 replyText: replyText, request: ask?.request)
             if reply.ok {
-                let decision = reply.result?["decision"]?.stringValue
-                    ?? (replyText != nil ? "reply" : (approve ? "approve" : "deny"))
-                report("Answer sent (\(decision))")
+                report(Self.answeredText(reply, approve: approve, replied: replyText != nil))
                 await load()
             } else {
                 report(reply.error?.message ?? "Answer refused", isError: true)
@@ -712,6 +833,13 @@ final class OverviewStore {
         } catch {
             report(Self.describe(error), isError: true)
         }
+    }
+
+    /// The status line for an answer that went out, with the route the
+    /// reply names — "Approved · sent through the agent's permission
+    /// hook", "Reply sent · typed into the terminal" — the panel's words.
+    nonisolated static func answeredText(_ reply: CoreReply, approve: Bool, replied: Bool) -> String {
+        replied ? AskAnswerLine.replied(reply) : AskAnswerLine.sent(approve ? .approve : .deny, reply: reply)
     }
 
     /// `dismiss_session`: acknowledge a live-but-going-nowhere row until

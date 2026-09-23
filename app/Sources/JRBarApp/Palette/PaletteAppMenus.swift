@@ -235,6 +235,7 @@ final class AppMenuPaletteSource: PaletteSource {
                       app: MenuApp,
                       press: @escaping @Sendable (pid_t, [Int]) -> Void) -> [PaletteItem] {
         let section = PaletteSection(id: "appMenu", title: "\(app.name) Menus", order: 95)
+        let ids = rowIDs(for: entries, app: app)
         let scored = entries.enumerated().compactMap { offset, entry -> (AppMenuEntry, Int, Int)? in
             let title = MenuBarCommands.score(query, entry.title)
             let full = MenuBarCommands.score(query, "\(entry.path) \(entry.title)").map { $0 * 4 / 5 }
@@ -245,11 +246,11 @@ final class AppMenuPaletteSource: PaletteSource {
         return scored
             .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.2 < $1.2 }
             .prefix(limit)
-            .map { entry, _, _ in
+            .map { entry, _, offset in
                 let path = entry.indexPath
                 let pid = app.pid
                 return PaletteItem(
-                    id: "menu.\(app.bundleID ?? app.name).\(entry.path)/\(entry.title)",
+                    id: ids[offset],
                     title: entry.title, subtitle: entry.path,
                     icon: .app(pid: pid, bundleID: app.bundleID),
                     tags: entry.shortcut.map { [PaletteTag(text: $0)] } ?? [],
@@ -259,5 +260,21 @@ final class AppMenuPaletteSource: PaletteSource {
                         return nil
                     }])
             }
+    }
+
+    /// One id per entry, in menu order: `menu.<app>.<path>/<title>`, and
+    /// for a second item with the same path and title — two "Untitled"
+    /// windows in the Window menu — the same with `#2`, `#3`, so every
+    /// row the list draws and the selection follows is its own. Read
+    /// over every entry, not a query's matches, so an id never changes
+    /// with the words typed.
+    static func rowIDs(for entries: [AppMenuEntry], app: MenuApp) -> [String] {
+        var seen: [String: Int] = [:]
+        return entries.map { entry in
+            let base = "menu.\(app.bundleID ?? app.name).\(entry.path)/\(entry.title)"
+            let count = (seen[base] ?? 0) + 1
+            seen[base] = count
+            return count == 1 ? base : "\(base)#\(count)"
+        }
     }
 }

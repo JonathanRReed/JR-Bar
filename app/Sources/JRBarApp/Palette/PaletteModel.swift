@@ -96,14 +96,16 @@ final class PaletteModel {
         if inputActive, inputAction == nil { endInput() }
     }
 
-    /// A slower source's answer. Kept only while the query still reads
-    /// the same; the selection stays on the row it was on, so a hit
-    /// landing mid-arrow never yanks the highlight.
-    func setSearchResults(_ results: [PaletteItem], for query: String) {
+    /// The slower sources' answers so far. Kept only while the query
+    /// still reads the same; the selection stays on the row it was on,
+    /// so a hit landing mid-arrow never yanks the highlight. `finished`
+    /// is false while a source is still reading — its answer lands in
+    /// its own place when it comes.
+    func setSearchResults(_ results: [PaletteItem], for query: String, finished: Bool = true) {
         guard Self.trimmed(query) == Self.trimmed(self.query) else { return }
         searchResults = results
         searchedQuery = query
-        searching = false
+        searching = !finished
         refilter(keepSelection: true)
     }
 
@@ -246,4 +248,30 @@ final class PaletteModel {
     nonisolated static func trimmed(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespaces)
     }
+}
+
+/// The slower sources' answers for one query: they arrive in any order
+/// and are listed in source order, each in its own place as it lands.
+struct PaletteSearchAnswers {
+    private var slots: [[PaletteItem]?]
+
+    init(count: Int) { slots = Array(repeating: nil, count: max(0, count)) }
+
+    mutating func record(_ items: [PaletteItem], at index: Int) {
+        guard slots.indices.contains(index) else { return }
+        slots[index] = items
+    }
+
+    /// Every answer so far, source by source.
+    var items: [PaletteItem] { slots.compactMap { $0 }.flatMap { $0 } }
+    /// Every source has answered.
+    var isComplete: Bool { slots.allSatisfy { $0 != nil } }
+}
+
+/// One query's reads, shared by the per-source tasks that fill it.
+@MainActor
+final class PaletteSearchRun {
+    var answers: PaletteSearchAnswers
+
+    init(count: Int) { answers = PaletteSearchAnswers(count: count) }
 }

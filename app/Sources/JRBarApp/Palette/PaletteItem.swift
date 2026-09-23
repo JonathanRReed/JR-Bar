@@ -195,6 +195,10 @@ struct PaletteAction: Identifiable {
     /// Drawn in red in the action panel — a verb that throws something
     /// away or says no.
     var isDestructive = false
+    /// False for a verb that runs only when picked by name in the
+    /// action panel (Always Allow): a query still finds the row through
+    /// it, but typed words never lift it onto Return.
+    var promotable = true
     /// A verb about the palette itself (pin a favorite): it runs with
     /// the palette still up, and the list redraws around it.
     var keepsOpen = false
@@ -208,13 +212,14 @@ struct PaletteAction: Identifiable {
     let run: @MainActor () -> String?
 
     init(id: String, title: String, symbol: String, shortcut: PaletteShortcut? = nil,
-         isDestructive: Bool = false, keepsOpen: Bool = false,
+         isDestructive: Bool = false, promotable: Bool = true, keepsOpen: Bool = false,
          run: @escaping @MainActor () -> String?) {
         self.id = id
         self.title = title
         self.symbol = symbol
         self.shortcut = shortcut
         self.isDestructive = isDestructive
+        self.promotable = promotable
         self.keepsOpen = keepsOpen
         self.run = run
     }

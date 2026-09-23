@@ -16,6 +16,10 @@ struct HistoryPaletteVerbs {
     /// what can be opened.
     var isLive: @MainActor (String?) -> Bool
     var openSession: @MainActor (String) -> Void
+    /// Whether an ended row's session can be picked back up — History's
+    /// own `canResume` — and the Resume that does it.
+    var canResume: @MainActor (CoreHistoryRow) -> Bool = { _ in false }
+    var resume: @MainActor (CoreHistoryRow) -> Void = { _ in }
 }
 
 enum HistoryPaletteRows {
@@ -40,6 +44,12 @@ enum HistoryPaletteRows {
             if let session = row.session, verbs.isLive(session) {
                 actions.append(PaletteAction(id: "session", title: "Open Session", symbol: "macwindow") {
                     verbs.openSession(session)
+                    return nil
+                })
+            } else if verbs.canResume(row) {
+                // An ended run picks back up in the terminal it ran in.
+                actions.append(PaletteAction(id: "resume", title: "Resume Session", symbol: "arrow.uturn.forward") {
+                    verbs.resume(row)
                     return nil
                 })
             }
