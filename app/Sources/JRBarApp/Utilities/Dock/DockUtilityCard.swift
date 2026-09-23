@@ -68,6 +68,16 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Hover previews",
                              subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window (⌥-click keeps the preview up), hover it for × (close), – (minimize) and full screen; New, Hide and Quit sit in the header. Apps with no windows open nothing. Off keeps the switcher below on its own.")
             }
+            Picker(selection: previewTrigger) {
+                Text("Hover").tag(DockPreviewTrigger.hover)
+                Text("Hover with ⌥ held").tag(DockPreviewTrigger.optionHover)
+                Text("Middle-click").tag(DockPreviewTrigger.middleClick)
+            } label: {
+                SettingLabel(title: "Open previews on",
+                             subtitle: "A rest on the icon, a rest while holding Option, or a middle click — for anyone who finds hover panels noisy while aiming at the Dock.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: previewDelay, in: DockEnhancePreferences.delayRange)
@@ -77,6 +87,11 @@ struct DockUtilityControls: View {
             } label: {
                 SettingLabel(title: "Show after",
                              subtitle: "How long the pointer rests before the preview opens.")
+            }
+            .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
+            Toggle(isOn: scrollGestures) {
+                SettingLabel(title: "Scroll on an icon",
+                             subtitle: "Scroll up on a Dock icon to open its preview at once; scroll down to hide the app.")
             }
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
@@ -254,6 +269,14 @@ struct DockUtilityControls: View {
     private var hoverPreviews: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.hoverPreviews },
                 set: { utility.enhance.preferences.hoverPreviews = $0 })
+    }
+    private var previewTrigger: Binding<DockPreviewTrigger> {
+        Binding(get: { utility.enhance.preferences.previewTrigger },
+                set: { utility.enhance.preferences.previewTrigger = $0 })
+    }
+    private var scrollGestures: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.scrollGestures },
+                set: { utility.enhance.preferences.scrollGestures = $0 })
     }
     private var previewThisDisplay: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.previewThisDisplay },

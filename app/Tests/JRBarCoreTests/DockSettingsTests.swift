@@ -59,6 +59,22 @@ struct DockSettingsTests {
         #expect(DockEnhanceSettings(previewDelay: .nan).previewDelay == DockEnhanceSettings.defaultDelay)
     }
 
+    @Test("the preview trigger and scroll gestures decode tolerantly: hover, off")
+    func triggerKeys() throws {
+        #expect(DockSettings().enhance.previewTrigger == .hover)
+        #expect(DockSettings().enhance.scrollGestures == false)
+        let s = try decode(DockSettings.self, #"{"enhance": {"previewTrigger": "middleClick", "scrollGestures": true}}"#)
+        #expect(s.enhance.previewTrigger == .middleClick)
+        #expect(s.enhance.scrollGestures == true)
+        let junk = try decode(DockSettings.self, #"{"enhance": {"previewTrigger": "telepathy", "scrollGestures": "yes"}}"#)
+        #expect(junk.enhance.previewTrigger == .hover)
+        #expect(junk.enhance.scrollGestures == false)
+        var round = DockSettings()
+        round.enhance.previewTrigger = .optionHover
+        round.enhance.scrollGestures = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+    }
+
     @Test("the switcher pick and hover previews decode tolerantly and default to JR-Bar, on")
     func switcherKeys() throws {
         let s = try decode(DockSettings.self, #"{"switcherProvider": "altTab", "enhance": {"hoverPreviews": false}}"#)

@@ -88,6 +88,16 @@ final class DockEnhancePreferences {
         get { read().previewThisDisplay }
         set { write?({ var s = read(); s.previewThisDisplay = newValue; return s }()) }
     }
+    /// What opens a preview — a rest, a rest with ⌥, or a middle click.
+    var previewTrigger: DockPreviewTrigger {
+        get { read().previewTrigger }
+        set { write?({ var s = read(); s.previewTrigger = newValue; return s }()) }
+    }
+    /// Scroll up on an icon previews it at once; down hides the app.
+    var scrollGestures: Bool {
+        get { read().scrollGestures }
+        set { write?({ var s = read(); s.scrollGestures = newValue; return s }()) }
+    }
 
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
     static let defaultDelay: Double = DockEnhanceSettings.defaultDelay
@@ -162,6 +172,36 @@ struct DockHoverTracker {
         shown = nil
         hoveredSince = nil
         emptySince = nil
+    }
+
+    /// A deliberate summon — a middle click or an upward scroll on the
+    /// tile — opens the panel now, without waiting out the rest; from
+    /// there the usual grace rules close it. The same tile again is a
+    /// no-op (the caller decides whether a repeat means "close").
+    @discardableResult
+    mutating func summon(_ item: String, now: TimeInterval) -> Action {
+        hovered = item
+        hoveredSince = now
+        emptySince = nil
+        guard shown != item else { return .none }
+        shown = item
+        return .show(item)
+    }
+
+    /// What the tick hands `note` under a trigger mode: every tile for
+    /// Hover; with ⌥ only a tile rested on while ⌥ is held; for Middle
+    /// Click nothing rests open a panel. The tile already shown always
+    /// passes, so letting go of ⌥ — or never having pressed it — doesn't
+    /// close the panel under the pointer.
+    static func trackedItem(_ hovered: String?, shown: String?,
+                            trigger: DockPreviewTrigger, optionHeld: Bool) -> String? {
+        guard let hovered else { return nil }
+        if hovered == shown { return hovered }
+        switch trigger {
+        case .hover: return hovered
+        case .optionHover: return optionHeld ? hovered : nil
+        case .middleClick: return nil
+        }
     }
 }
 
@@ -404,6 +444,13 @@ enum DockEnhanceMath {
     /// keep-open-after-activating. ⌘ and ⌃ stay the system's.
     static func keepsPanelOpen(_ flags: NSEvent.ModifierFlags) -> Bool {
         flags.intersection([.option, .command, .control]) == .option
+    }
+
+    /// A Dock-icon scroll in the flick's units: a trackpad's points as
+    /// they come, a wheel's line steps scaled so about three notches make
+    /// the same deliberate flick a short two-finger swipe does.
+    static func scrollAmount(_ delta: CGFloat, precise: Bool) -> CGFloat {
+        precise ? delta : delta * 20
     }
 
     /// "3:07", "1:02:45" — a playhead the way players print it.
@@ -1381,6 +1428,13 @@ final class DockEnhanceController {
     /// The quick-quit watch: ⌘+right-click on a Dock tile. A global
     /// monitor (observe-only — the Dock's own menu still opens).
     @ObservationIgnored private var quickQuitMonitor: Any?
+    /// The Middle Click trigger's watch — only while that trigger is picked.
+    @ObservationIgnored private var middleClickMonitor: Any?
+    /// Scroll on a Dock icon — only while scroll gestures are on.
+    @ObservationIgnored private var scrollMonitor: Any?
+    /// The scroll gesture's running total, per tile.
+    @ObservationIgnored private var scrollFlick = DockEnhanceMath.SwipeAccumulator()
+    @ObservationIgnored private var scrollTile: String?
     /// The `MediaFeed` reader a player tile's preview holds — started
     /// on show, released on hide, so the perl helper only lives while
     /// a media card is actually up.
@@ -1478,8 +1532,45 @@ final class DockEnhanceController {
             let point = NSEvent.mouseLocation
             Task { @MainActor [weak self] in self?.quickQuit(at: point, force: force) }
         }
+        installGestureMonitors()
         scheduleTick(after: Self.pollInterval)
         schedulePanelWarmup(layoutOnly: panel != nil)
+    }
+
+    /// The Dock-icon gestures the card asks for: a middle-click monitor
+    /// under the Middle Click trigger, a scroll monitor with scroll
+    /// gestures on. Observe-only global monitors — Apple's Dock ignores
+    /// both, nothing is eaten or synthesized — re-seated on every
+    /// settings apply so a card edit lands without a restart.
+    func installGestureMonitors() {
+        let wantsClick = running && preferences.previewTrigger == .middleClick
+        if wantsClick, middleClickMonitor == nil {
+            middleClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
+                guard event.buttonNumber == 2 else { return }
+                let point = NSEvent.mouseLocation
+                Task { @MainActor [weak self] in self?.middleClick(at: point) }
+            }
+        } else if !wantsClick, let monitor = middleClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            middleClickMonitor = nil
+        }
+        let wantsScroll = running && preferences.scrollGestures
+        if wantsScroll, scrollMonitor == nil {
+            scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard event.momentumPhase == [] else { return }
+                let deltaY = DockEnhanceMath.scrollAmount(event.scrollingDeltaY,
+                                                          precise: event.hasPreciseScrollingDeltas)
+                let inverted = event.isDirectionInvertedFromDevice
+                let now = event.timestamp
+                let point = NSEvent.mouseLocation
+                Task { @MainActor [weak self] in
+                    self?.scroll(at: point, deltaY: deltaY, inverted: inverted, now: now)
+                }
+            }
+        } else if !wantsScroll, let monitor = scrollMonitor {
+            NSEvent.removeMonitor(monitor)
+            scrollMonitor = nil
+        }
     }
 
     func stop() {
@@ -1495,6 +1586,7 @@ final class DockEnhanceController {
         switcher.setDockReach(nil)
         if let quickQuitMonitor { NSEvent.removeMonitor(quickQuitMonitor) }
         quickQuitMonitor = nil
+        installGestureMonitors()
         hidePreview()
     }
 
@@ -1613,7 +1705,10 @@ final class DockEnhanceController {
             mirroredChars = chars
             switcher.setPreviewChars(chars)
         }
-        let action = tracker.note(hovered: hovered?.hoverID, pointerInPanel: inPanel,
+        let tracked = DockHoverTracker.trackedItem(
+            hovered?.hoverID, shown: tracker.shown, trigger: preferences.previewTrigger,
+            optionHeld: NSEvent.modifierFlags.contains(.option))
+        let action = tracker.note(hovered: tracked, pointerInPanel: inPanel,
                                   now: CACurrentMediaTime(), delay: preferences.previewDelay)
         switch action {
         case .show:
@@ -2702,6 +2797,61 @@ final class DockEnhanceController {
             guard let self, !app.isTerminated else { return }
             self.showToast("\(name) is still running — ⌘⌥-right-click to force quit", over: item,
                            duration: 2.4)
+        }
+    }
+
+    /// The tile under an AppKit point, when it's over the Dock.
+    private func tile(at point: NSPoint) -> DockAXItem? {
+        let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight())
+        guard accessibilityTrusted, let list = dockList(near: axPoint),
+              Self.listReach(of: list.frame).contains(axPoint) else { return nil }
+        return tiles(of: list).first { $0.frame.contains(axPoint) }
+    }
+
+    /// The Middle Click trigger: a middle click on a tile opens its
+    /// preview at once; the same click on the tile already shown closes it.
+    private func middleClick(at point: NSPoint) {
+        guard running, preferences.previewTrigger == .middleClick, let item = tile(at: point) else { return }
+        if tracker.shown == item.hoverID {
+            tracker.reset()
+            hidePreview()
+            return
+        }
+        if case .show = tracker.summon(item.hoverID, now: CACurrentMediaTime()) {
+            showPreview(for: item)
+        }
+    }
+
+    /// Scroll on a Dock icon — HyperDock's classic: a deliberate scroll
+    /// up opens that app's preview without the rest, a scroll down hides
+    /// the app. The flick threshold is the cards' own, so a brush of the
+    /// wheel on the way past does nothing.
+    private func scroll(at point: NSPoint, deltaY: CGFloat, inverted: Bool, now: TimeInterval) {
+        guard running, preferences.scrollGestures, let item = tile(at: point), item.kind == .app else {
+            scrollTile = nil
+            return
+        }
+        if scrollTile != item.hoverID {
+            scrollTile = item.hoverID
+            scrollFlick = DockEnhanceMath.SwipeAccumulator()
+        }
+        switch scrollFlick.note(deltaY: deltaY, inverted: inverted, now: now) {
+        case .up:
+            if case .show = tracker.summon(item.hoverID, now: CACurrentMediaTime()) {
+                showPreview(for: item)
+            }
+        case .down:
+            guard let url = item.url, let bundleID = Bundle(url: url)?.bundleIdentifier,
+                  !MenuBarUtility.isOwnFamily(bundleID),
+                  let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+                  app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            if tracker.shown == item.hoverID {
+                tracker.reset()
+                hidePreview()
+            }
+            app.hide()
+        case nil:
+            break
         }
     }
 

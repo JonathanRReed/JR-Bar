@@ -74,6 +74,18 @@ public enum DockSwitcherProvider: String, Codable, CaseIterable, Sendable {
     case jrbar, altTab, witch, contexts
 }
 
+/// What opens a Dock preview — DockDoor 1.39.5's trigger modes. Hover
+/// is the rest-on-an-icon default; the other two make it deliberate for
+/// anyone who finds hover panels noisy while aiming at the Dock.
+public enum DockPreviewTrigger: String, Codable, CaseIterable, Sendable {
+    /// Rest on an icon for the delay.
+    case hover
+    /// Rest on an icon while ⌥ is held.
+    case optionHover
+    /// Middle-click an icon — Apple's Dock ignores that button.
+    case middleClick
+}
+
 /// The hover-preview knobs (docs/TOY-PARITY.md, "Dock — Enhance"):
 /// how long the pointer must rest on an Apple-Dock icon before the
 /// preview panel opens, whether the panel's cards carry live
@@ -123,6 +135,12 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var switcherThisDisplay: Bool
     /// A preview lists only the windows on the display its Dock is on.
     public var previewThisDisplay: Bool
+    /// What opens a preview: a rest (the default), a rest with ⌥ held,
+    /// or a middle click on the icon.
+    public var previewTrigger: DockPreviewTrigger
+    /// Scrolling on a Dock icon: up opens its preview at once, down
+    /// hides the app — HyperDock's classic. Off by default.
+    public var scrollGestures: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -140,7 +158,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 excludedBundleIDs: [String] = [],
                 hoverPreviews: Bool = true,
                 switcherThisDisplay: Bool = false,
-                previewThisDisplay: Bool = false) {
+                previewThisDisplay: Bool = false,
+                previewTrigger: DockPreviewTrigger = .hover,
+                scrollGestures: Bool = false) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -153,6 +173,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.hoverPreviews = hoverPreviews
         self.switcherThisDisplay = switcherThisDisplay
         self.previewThisDisplay = previewThisDisplay
+        self.previewTrigger = previewTrigger
+        self.scrollGestures = scrollGestures
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -168,6 +190,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
+        case previewTrigger, scrollGestures
     }
 
     public init(from decoder: any Decoder) throws {
@@ -186,6 +209,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         hoverPreviews = (try? c.decodeIfPresent(Bool.self, forKey: .hoverPreviews)) ?? true
         switcherThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .switcherThisDisplay)) ?? false
         previewThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .previewThisDisplay)) ?? false
+        previewTrigger = (try? c.decodeIfPresent(DockPreviewTrigger.self, forKey: .previewTrigger)) ?? .hover
+        scrollGestures = (try? c.decodeIfPresent(Bool.self, forKey: .scrollGestures)) ?? false
     }
 }
 

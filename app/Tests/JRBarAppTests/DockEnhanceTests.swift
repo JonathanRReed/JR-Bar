@@ -68,6 +68,45 @@ import Testing
                 "the rested new icon takes the panel over — no flicker")
     }
 
+    @Test("a middle click or an upward scroll opens the panel at once; the rest's grace still closes it")
+    func summonSkipsTheRest() {
+        var tracker = DockHoverTracker()
+        #expect(tracker.summon("Safari", now: 0) == .show("Safari"), "no delay for a deliberate summon")
+        #expect(tracker.summon("Safari", now: 0.1) == .none, "the same tile again is no second show")
+        #expect(tracker.note(hovered: "Safari", pointerInPanel: false, now: 0.2, delay: 0.25) == .none)
+        _ = tracker.note(hovered: nil, pointerInPanel: false, now: 0.3, delay: 0.25)
+        #expect(tracker.note(hovered: nil, pointerInPanel: false,
+                             now: 0.3 + DockHoverTracker.grace + 0.01, delay: 0.25) == .hide)
+    }
+
+    @Test("trigger modes: ⌥ gates a rest, Middle Click never rests one open, the shown tile always holds")
+    func triggerModesGateTheRest() {
+        typealias T = DockHoverTracker
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .hover, optionHeld: false) == "Safari")
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .optionHover, optionHeld: false) == nil)
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .optionHover, optionHeld: true) == "Safari")
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .middleClick, optionHeld: true) == nil)
+        #expect(T.trackedItem("Safari", shown: "Safari", trigger: .middleClick, optionHeld: false) == "Safari",
+                "the summoned tile under the pointer keeps its panel")
+        #expect(T.trackedItem("Safari", shown: "Safari", trigger: .optionHover, optionHeld: false) == "Safari",
+                "letting go of ⌥ doesn't close the panel under the pointer")
+        #expect(T.trackedItem("Mail", shown: "Safari", trigger: .optionHover, optionHeld: false) == nil,
+                "a retarget needs ⌥ too")
+        #expect(T.trackedItem(nil, shown: "Safari", trigger: .hover, optionHeld: true) == nil)
+    }
+
+    @Test("a wheel's notches and a trackpad's points meet one flick threshold")
+    func scrollUnits() {
+        #expect(DockEnhanceMath.scrollAmount(12, precise: true) == 12)
+        #expect(DockEnhanceMath.scrollAmount(1, precise: false) == 20)
+        var flick = DockEnhanceMath.SwipeAccumulator()
+        let notch = DockEnhanceMath.scrollAmount(1, precise: false)
+        #expect(flick.note(deltaY: notch, inverted: false, now: 0) == nil)
+        #expect(flick.note(deltaY: notch, inverted: false, now: 0.05) == nil)
+        #expect(flick.note(deltaY: notch, inverted: false, now: 0.1) == .up,
+                "three wheel-up notches are a deliberate scroll up")
+    }
+
     // MARK: Geometry
 
     @Test func axAndAppKitCoordinatesFlip() {
