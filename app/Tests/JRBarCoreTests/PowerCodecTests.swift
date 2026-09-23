@@ -83,7 +83,7 @@ struct PowerCodecTests {
         let state = try Self.state("""
         {"t":"state","v":1,"generation":3,"aggregate":{},"sessions":[],"asks":[],"devices":[],
          "focus":{"mode":"off","source":"call","until":null,"banner_allowed":true,"audible_allowed":false,
-                  "summary":"DND: On a call, sounds off"},
+                  "summary":"DND: On a call, sounds off","named_readable":false},
          "presence":{"on_call":true,"mic":true,"camera":false,"screen_shared":false,"since":1000,
                      "in_meeting":false,"meeting_until":null,"away":false,"fresh":true,
                      "quiet":"sounds","escalation_ceiling":1,"celebrations_held":true}}
@@ -97,6 +97,7 @@ struct PowerCodecTests {
         #expect(state.focus?.source == "call")
         #expect(state.focus?.soundsAllowed == false)
         #expect(state.focus?.bannerAllowed == true)
+        #expect(state.focus?.namedReadable == false)
         #expect(CoreFocus(mode: "dim").soundsAllowed)
 
         // A malformed presence is "no report", never a lost state.

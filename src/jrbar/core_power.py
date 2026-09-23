@@ -463,6 +463,13 @@ def presence_expired(controller: Any) -> None:
 
 def augment_presence_document(controller: Any, document: dict[str, Any], *, now: float) -> None:
     document["presence"] = presence_state_document(controller, now=now)
+    # Whether the helper itself can read which Focus is on. Full Disk Access
+    # is granted per binary, and the app's own probe says "granted" while
+    # the helper still cannot see Focus; Setup's row should say so.
+    focus = document.get("focus")
+    if isinstance(focus, dict):
+        readable = getattr(controller, "_focus_observation_available", None)
+        focus["named_readable"] = readable if isinstance(readable, bool) else None
 
 
 def merge_history(

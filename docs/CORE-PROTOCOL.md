@@ -364,7 +364,10 @@ Vocabulary:
   `sounds` quiet leaves `focus.mode` at `off` with
   `focus.audible_allowed` false -- the one test for "no sounds right now".
   `quiet` takes the first that applies: the call, then the meeting, then
-  the empty desk.
+  the empty desk. `focus.named_readable` says whether the daemon's helper
+  can itself read which Focus is on (Full Disk Access is granted per
+  binary, so the app's own probe can say "granted" while the helper still
+  cannot see); null until it has tried.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was

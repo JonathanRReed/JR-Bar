@@ -1526,11 +1526,15 @@ public struct CoreFocus: Codable, Hashable, Sendable {
     public var bannerAllowed: Bool?
     public var audibleAllowed: Bool?
     public var summary: String?
+    /// Whether the daemon's helper can read which Focus is on (it needs
+    /// Full Disk Access of its own); nil until it has tried.
+    public var namedReadable: Bool?
 
     enum CodingKeys: String, CodingKey {
         case mode, source, until, summary
         case bannerAllowed = "banner_allowed"
         case audibleAllowed = "audible_allowed"
+        case namedReadable = "named_readable"
     }
 
     /// False only when the daemon says sounds are off right now.

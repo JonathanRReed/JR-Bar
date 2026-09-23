@@ -273,6 +273,16 @@ def test_presence_quiets_a_call_and_holds_the_ladder_at_the_light(powered, monke
     assert controller._core_build_state()["focus"]["source"] is None
 
 
+def test_the_focus_document_says_whether_the_helper_can_read_focus(powered) -> None:
+    controller = powered
+    controller._focus_observation_available = None
+    assert controller._core_build_state()["focus"]["named_readable"] is None
+    controller._focus_observation_available = False
+    assert controller._core_build_state()["focus"]["named_readable"] is False
+    controller._focus_observation_available = True
+    assert controller._core_build_state()["focus"]["named_readable"] is True
+
+
 def test_presence_refuses_a_malformed_report(powered) -> None:
     with pytest.raises(CommandError) as error:
         core_runtime._cmd_presence(powered, {"mic": "yes"})
