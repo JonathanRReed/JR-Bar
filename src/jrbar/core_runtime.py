@@ -2484,6 +2484,13 @@ def _cmd_list_light_log(self, args):
     return core_lights.list_light_log(self, args)
 
 
+@command("resolve_effect", main_thread=False)
+def _cmd_resolve_effect(self, args):
+    from . import core_lights
+
+    return core_lights.resolve_effect(self, args)
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")

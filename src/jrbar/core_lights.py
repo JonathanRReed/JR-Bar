@@ -284,6 +284,82 @@ def calibration_profile(controller: Any, args: dict[str, Any]) -> dict[str, Any]
     return reply
 
 
+# --- situation preview -------------------------------------------------------------------
+
+
+def resolve_effect(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Which assignment wins for a situation, before it happens: pick a
+    meaning, a scene, a provider, a project and a device and see the scope
+    ladder walked -- device, project, provider instance, provider, scene,
+    meaning, everywhere -- with the winning rung marked. Answers "why is
+    Codex purple in Night" without waiting for Codex at night. Asks and
+    failures keep their reserved alert: only the meaning rung is consulted."""
+    from . import core_runtime
+    from .effect_assignment_store import (
+        _SCOPE_PRECEDENCE,
+        EffectAssignmentContext,
+        EffectAssignmentStoreError,
+        _target_for_scope,
+        resolve_effect_assignment,
+    )
+    from .effect_studio import AssignmentScope
+    from .scenes import DEFAULT_SCENE, scene_from_value
+    from .semantic_effect_router import URGENT_SEMANTICS, SemanticEventKind
+
+    try:
+        semantic = SemanticEventKind(str(args.get("semantic") or ""))
+    except ValueError as error:
+        raise _command_error("invalid_args", "semantic must name a meaning (ask, work, completion, ...)") from error
+    scene_word = args.get("scene")
+    if scene_word is None:
+        scene_word = getattr(getattr(controller, "settings", None), "active_scene", None)
+    scene = scene_from_value(scene_word) or (None if args.get("scene") is not None else DEFAULT_SCENE)
+    if scene is None:
+        raise _command_error("invalid_args", "unknown scene")
+    fields = {}
+    for key, name in (
+        ("provider", "provider_id"),
+        ("instance", "provider_instance_id"),
+        ("project", "project_id"),
+        ("device", "device_id"),
+    ):
+        value = args.get(key)
+        if value is not None and (type(value) is not str or not value.strip()):
+            raise _command_error("invalid_args", f"{key} must be a nonempty string")
+        fields[name] = value.strip() if isinstance(value, str) else None
+    try:
+        context = EffectAssignmentContext(semantic, scene, **fields)
+    except EffectAssignmentStoreError as error:
+        raise _command_error("invalid_args", str(error)) from error
+    document = core_runtime._effects_cache(controller).snapshot()
+    winner = resolve_effect_assignment(document, context)
+    urgent = semantic in URGENT_SEMANTICS
+    scopes = (AssignmentScope.SEMANTIC,) if urgent else _SCOPE_PRECEDENCE
+    ladder = []
+    for scope in scopes:
+        target = _target_for_scope(context, scope)
+        applicable = scope is AssignmentScope.GLOBAL or target is not None
+        assignment = document.assignment_for(scope, target) if applicable else None
+        ladder.append(
+            {
+                "scope": scope.value,
+                "target_id": target,
+                "applicable": applicable,
+                "effect_id": None if assignment is None else assignment.effect_id,
+                "wins": assignment is not None and assignment == winner,
+            }
+        )
+    return {
+        "semantic": semantic.value,
+        "scene": scene.value,
+        "urgent": urgent,
+        "winner": None
+        if winner is None
+        else {"scope": winner.scope.value, "target_id": winner.target_id, "effect_id": winner.effect_id},
+        "ladder": ladder,
+    }
+
+
 # --- the light log -------------------------------------------------------------------------
 
 

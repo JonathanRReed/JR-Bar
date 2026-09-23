@@ -278,6 +278,41 @@ def test_a_device_blend_mode_writes_through_set_setting(daemon) -> None:
     assert daemon.settings.device_blend_mode("pro") is None
 
 
+def test_resolve_effect_walks_the_scope_ladder_before_it_happens(
+    daemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from jrbar import core_effects, effect_assignment_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(type(daemon), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+    daemon._core_dispatch("set_assignment", {"effect_id": "aurora", "scope": "provider", "target_id": "codex"})
+    daemon._core_dispatch("set_assignment", {"effect_id": "pulse", "scope": "scene", "target_id": "night"})
+
+    reply = core_runtime._cmd_resolve_effect(daemon, {"semantic": "work", "scene": "night", "provider": "codex"})
+    assert reply["winner"] == {"scope": "provider", "target_id": "codex", "effect_id": "aurora"}
+    ladder = {row["scope"]: row for row in reply["ladder"]}
+    assert [row["scope"] for row in reply["ladder"]][0] == "device"
+    assert ladder["device"]["applicable"] is False
+    assert ladder["provider"]["wins"] is True
+    # The scene rung has an assignment too; the ladder shows it lost.
+    assert ladder["scene"]["effect_id"] == "pulse" and ladder["scene"]["wins"] is False
+
+    claude = core_runtime._cmd_resolve_effect(daemon, {"semantic": "work", "scene": "night", "provider": "claude"})
+    assert claude["winner"]["scope"] == "scene"
+
+    # An ask keeps its reserved alert: only the meaning rung is consulted.
+    ask = core_runtime._cmd_resolve_effect(daemon, {"semantic": "ask", "provider": "codex"})
+    assert ask["urgent"] is True and [row["scope"] for row in ask["ladder"]] == ["semantic"]
+
+    for bad in ({"semantic": "vibes"}, {"semantic": "work", "scene": "disco"}, {"semantic": "work", "provider": ""}):
+        with pytest.raises(CommandError) as error:
+            core_runtime._cmd_resolve_effect(daemon, bad)
+        assert error.value.code == "invalid_args"
+
+
 def test_the_light_log_lists_what_the_lights_tried_to_show(daemon) -> None:
     from jrbar.effect_history import (
         EffectEvent,
