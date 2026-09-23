@@ -774,6 +774,17 @@ struct OverviewView: View {
                     }
                     timelineSection(for: entry)
                     observedToolsSection(for: entry)
+                    if let previous = store.previousRun(for: entry) {
+                        Button {
+                            store.compareWithPreviousRun(entry)
+                        } label: {
+                            Label("Compare with the previous run here", systemImage: "arrow.left.arrow.right")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.link)
+                        .disabled(store.comparing)
+                        .help("Side by side with \(previous.session.label ?? previous.session.shortId ?? "the last finished run") in the same folder")
+                    }
                     advancedSection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")

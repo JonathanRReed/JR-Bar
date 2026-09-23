@@ -489,18 +489,45 @@ final class OverviewStore {
         guard canCompare else { return }
         let pair = rows.filter { selectedIDs.contains($0.id) }.map(\.id)
         guard pair.count == 2 else { return }
+        compare(pair[0], pair[1])
+    }
+
+    private func compare(_ a: String, _ b: String) {
         // The sheet's Model/Tokens/Cost rows read both sides' usage; ask
         // now so they fill while the comparison is computed.
-        sessionUsage.refresh(ids: pair, force: true)
+        sessionUsage.refresh(ids: [a, b], force: true)
         comparing = true
         Task {
             defer { comparing = false }
             do {
-                comparison = try await core.compareRuns(pair[0], pair[1])
+                comparison = try await core.compareRuns(a, b)
             } catch {
                 self.error = Self.describe(error)
             }
         }
+    }
+
+    /// The run the common question compares against: the newest run in
+    /// the same folder that had already finished (done, ended or failed)
+    /// before this one last spoke — "was this attempt better than the
+    /// last one here?" without hunting for two rows.
+    func previousRun(for entry: CoreRosterEntry) -> CoreRosterEntry? {
+        guard !entry.session.remote, let cwd = entry.session.cwd, !cwd.isEmpty else { return nil }
+        let before = entry.session.since ?? .greatestFiniteMagnitude
+        return roster
+            .filter { candidate in
+                guard candidate.id != entry.id, !candidate.session.remote, candidate.session.kind == entry.session.kind,
+                      candidate.session.cwd == cwd else { return false }
+                let activity = SessionActivity.reduce(candidate.session)
+                return (activity == .done || activity == .ended || activity == .failed)
+                    && (candidate.session.since ?? 0) < before
+            }
+            .max { ($0.session.since ?? 0) < ($1.session.since ?? 0) }
+    }
+
+    func compareWithPreviousRun(_ entry: CoreRosterEntry) {
+        guard let previous = previousRun(for: entry) else { return }
+        compare(entry.id, previous.id)
     }
 
     // MARK: Actions on rows

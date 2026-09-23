@@ -63,6 +63,26 @@ import JRBarCore
         #expect(store.viewLabel == "branch JR-Bar · wave1/agentsui")
     }
 
+    @Test("the previous run here is the newest finished run in the same folder, before this one")
+    func previousRun() {
+        let store = OverviewStore(core: CoreModel())
+        func entry(_ id: String, cwd: String, mode: String, lifecycle: String, since: Double, remote: Bool = false) -> CoreRosterEntry {
+            CoreRosterEntry(session: CoreSession(id: id, provider: "claude", cwd: cwd, mode: mode, lifecycle: lifecycle,
+                                                 since: since, remote: remote))
+        }
+        let current = entry("now", cwd: "/r/app", mode: "working", lifecycle: "active", since: 500)
+        store.roster = [
+            current,
+            entry("old", cwd: "/r/app", mode: "completed", lifecycle: "completed", since: 100),
+            entry("newer", cwd: "/r/app", mode: "failed", lifecycle: "failed", since: 300),
+            entry("later", cwd: "/r/app", mode: "completed", lifecycle: "completed", since: 900),
+            entry("elsewhere", cwd: "/r/other", mode: "completed", lifecycle: "completed", since: 400),
+            entry("live", cwd: "/r/app", mode: "working", lifecycle: "active", since: 450),
+        ]
+        #expect(store.previousRun(for: current)?.id == "newer")
+        #expect(store.previousRun(for: entry("x", cwd: "/r/none", mode: "working", lifecycle: "active", since: 1)) == nil)
+    }
+
     @Test("a reading that lands re-sorts a usage column, and only a usage column")
     func generationInvalidatesOnlyUsageSorts() {
         let store = OverviewStore(core: CoreModel())
