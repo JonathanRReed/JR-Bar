@@ -54,8 +54,7 @@ struct StudioAnalysisTests {
         let fast = LEDSStudioAnalysis("#FF0000 100ms none\noff 100ms none\nrepeat")
         #expect(fast.playable)
         #expect(fast.compiled.transformed)
-        let note = try? #require(fast.compilerNote)
-        #expect(note?.hasPrefix("Slowed to stay under 2 Hz") == true)
+        #expect(fast.compilerNote?.hasPrefix("Slowed to stay under 2 Hz") == true)
         #expect(fast.compiled.program != fast.text)
     }
 
