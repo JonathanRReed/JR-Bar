@@ -516,6 +516,69 @@ struct PaletteSourcesTests {
                 "too short to search")
     }
 
+    // MARK: History
+
+    private func historyVerbs(_ log: Log) -> HistoryPaletteVerbs {
+        HistoryPaletteVerbs(
+            show: { log.calls.append("show:\($0.kind):\($1)") },
+            search: { log.calls.append("search:\($0)") },
+            isLive: { $0 == "claude:live" },
+            openSession: { log.calls.append("session:\($0)") })
+    }
+
+    @Test("history hits match the window's own filter, newest first, and a live session opens")
+    func historyRows() {
+        let log = Log()
+        let rows = [
+            CoreHistoryRow(at: now.timeIntervalSince1970 - 7200, kind: "completed", provider: "claude",
+                           session: "claude:old", label: "flaky build"),
+            CoreHistoryRow(at: now.timeIntervalSince1970 - 600, kind: "failed", provider: "claude",
+                           session: "claude:live", label: "flaky build", detail: "exit 1"),
+            CoreHistoryRow(at: now.timeIntervalSince1970 - 60, kind: "asked", provider: "codex",
+                           session: "codex:x", label: "docs"),
+        ]
+        let items = HistoryPaletteRows.items(query: " flaky ", rows: rows, now: now, verbs: historyVerbs(log))
+        #expect(items.map(\.title) == ["flaky build", "flaky build", "Search History for “flaky”"])
+        #expect(items[0].tags == [PaletteTag(text: "Failed", tone: .alert), PaletteTag(text: "10m ago")])
+        #expect(items[0].subtitle == "exit 1")
+        #expect(items[0].section == .history)
+        #expect(items[0].actions.map(\.id) == ["show", "session"])
+        #expect(items[1].actions.map(\.id) == ["show"], "an ended run has nothing to open")
+        _ = items[0].primary?.run()
+        _ = items[0].secondary?.run()
+        _ = items[2].primary?.run()
+        #expect(log.calls == ["show:failed:flaky", "session:claude:live", "search:flaky"])
+        #expect(HistoryPaletteRows.items(query: "fl", rows: rows, now: now, verbs: historyVerbs(log)).isEmpty)
+    }
+
+    /// The fetches a history source made.
+    @MainActor
+    final class Fetches {
+        var count = 0
+        var live = true
+    }
+
+    @Test("history is fetched once per open, and says nothing while the monitor is away")
+    func historySourceFetches() async {
+        let log = Log()
+        let fetches = Fetches()
+        let source = HistoryPaletteSource(load: {
+            fetches.count += 1
+            guard fetches.live else { return nil }
+            return [CoreHistoryRow(at: 1, kind: "completed", label: "release notes")]
+        }, verbs: historyVerbs(log))
+        source.prepare()
+        #expect(await source.results(for: "re").isEmpty, "too short to fetch")
+        #expect(fetches.count == 0)
+        #expect(await source.results(for: "release").map(\.id).first == "history.1.0|completed||release notes")
+        #expect(await source.results(for: "notes").count == 2)
+        #expect(fetches.count == 1, "one fetch serves the open")
+        source.prepare()
+        fetches.live = false
+        #expect(await source.results(for: "release").isEmpty, "no monitor, no History rows")
+        #expect(fetches.count == 2)
+    }
+
     // MARK: The frontmost app's menus
 
     @Test("a key equivalent reads the way the menu draws it")

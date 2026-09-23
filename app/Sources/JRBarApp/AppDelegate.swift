@@ -466,6 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             aquarium: { [weak toysStore] in toysStore?.aquarium },
             confetti: { [weak toysStore] in toysStore?.confetti },
             hoarder: utilitiesStore.dataHoarder,
+            history: historyStore,
             windows: PaletteWiring.Windows(
                 overview: { [weak overviewWindow] in overviewWindow?.show() },
                 usageCenter: { [weak usageWindow] provider in usageWindow?.show(focusedProvider: provider) },

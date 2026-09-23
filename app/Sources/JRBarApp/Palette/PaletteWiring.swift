@@ -28,6 +28,7 @@ enum PaletteWiring {
                         aquarium: @escaping @MainActor () -> AquariumToy?,
                         confetti: @escaping @MainActor () -> ConfettiToy? = { nil },
                         hoarder: DataHoarderUtility,
+                        history: HistoryStore? = nil,
                         windows: Windows) -> [any PaletteSource] {
         [
             agents(panel: panel, openPanel: windows.panel),
@@ -39,8 +40,33 @@ enum PaletteWiring {
             confettiSource(confetti),
             AppMenuPaletteSource(),
             archive(hoarder: hoarder),
+        ] + (history.map { [historySource($0, windows: windows)] } ?? []) + [
             open(hoarder: hoarder, windows: windows),
         ]
+    }
+
+    /// History's rows through the daemon's `list_history`, matched by the
+    /// window's own filter; a pick raises the window with the query as
+    /// its filter and the row selected, and a live session opens as the
+    /// window would open it.
+    static func historySource(_ store: HistoryStore, windows: Windows) -> HistoryPaletteSource {
+        HistoryPaletteSource(
+            load: {
+                guard store.core.isLive else { return nil }
+                return (try? await store.core.listHistory()) ?? []
+            },
+            verbs: HistoryPaletteVerbs(
+                show: { row, query in
+                    store.filter = HistoryFilter(text: query)
+                    windows.history()
+                    store.selectedID = row.id
+                },
+                search: { query in
+                    store.filter = HistoryFilter(text: query)
+                    windows.history()
+                },
+                isLive: { store.isLiveSession($0) },
+                openSession: { store.core.openSession($0) }))
     }
 
     /// Asks and sessions, through the panel's own verbs — `approve` and

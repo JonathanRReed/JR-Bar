@@ -39,6 +39,8 @@ struct PaletteSection: Hashable, Sendable {
     /// Data Hoarder's full-text hits — searched only once you type,
     /// listed after everything the palette already knew.
     static let archive = PaletteSection(id: "archive", title: "Archive", order: 100)
+    /// History's matches for a query, after the archive's.
+    static let history = PaletteSection(id: "history", title: "History", order: 110)
 }
 
 /// The colour a row's icon tile takes. System palette names rather than
