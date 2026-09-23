@@ -39,6 +39,9 @@ final class ScreenBarController {
     /// the camera hold: the band and the now-playing reading are the app's.
     static let hideOverVideoDefaultsKey = "jrbar.screenBarHideOverVideo"
     private var hideOverVideo = UserDefaults.standard.object(forKey: ScreenBarController.hideOverVideoDefaultsKey) as? Bool ?? true
+    /// The defaults watch that re-reads the two switches above; held for
+    /// the controller's life, which is the app's.
+    private var defaultsObserver: NSObjectProtocol?
     /// The now-playing app's bundle id while it is actually playing; nil
     /// when nothing plays or the source named no app.
     var nowPlaying: String? {
@@ -347,8 +350,13 @@ final class ScreenBarController {
         workspace.addObserver(self, selector: #selector(frontmostMayHaveChanged(_:)), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         workspace.addObserver(self, selector: #selector(frontmostMayHaveChanged(_:)), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         // Settings › Screen Bar's camera hold is an app-local default;
-        // re-read it whenever the defaults move.
-        center.addObserver(self, selector: #selector(defaultsChanged(_:)), name: UserDefaults.didChangeNotification, object: nil)
+        // re-read it whenever the defaults move. A main-queue block, not
+        // a selector: the notification posts on whichever thread wrote
+        // the default, and a framework writing off the main thread must
+        // not trip this main-actor class's isolation check.
+        defaultsObserver = center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.defaultsChanged() }
+        }
 
         // A device transition takes the ambient wing for a beat, then the
         // slot it replaced comes back — the queue's life constant is the
@@ -582,7 +590,7 @@ final class ScreenBarController {
 
     /// The camera hold's or the video guard's switch moved (or any other
     /// default did — the reads are cheap and only a real change acts).
-    @objc private func defaultsChanged(_ note: Notification) {
+    private func defaultsChanged() {
         let overVideo = UserDefaults.standard.object(forKey: Self.hideOverVideoDefaultsKey) as? Bool ?? true
         if overVideo != hideOverVideo {
             hideOverVideo = overVideo
