@@ -33,7 +33,8 @@ enum AppCommand: Equatable, Sendable {
     case deepWork(seconds: Int)
     /// The Screen Bar on, off, or flipped (nil).
     case screenBar(on: Bool?)
-    case confetti
+    /// A burst, like the card's Test burst, in the colours `tint` names.
+    case confetti(tint: ConfettiTint = .focused)
     case menuBar(MenuBarVerb)
     /// A session by its daemon id — raises its terminal or app.
     case openSession(String)
@@ -45,6 +46,46 @@ enum AppCommand: Equatable, Sendable {
 
     enum AppWindow: String, CaseIterable, Sendable {
         case overview, history, usage, effects, controlCenter = "control-center", setup
+    }
+
+    /// Whose colours a linked burst wears: the focused session's (a bare
+    /// `jrbar://confetti`), a provider's (`?provider=codex`), or a
+    /// session's (`?session=<id>`, the daemon's id or the agent's own) —
+    /// the same targets `jrbar confetti` takes.
+    enum ConfettiTint: Equatable, Sendable {
+        case focused
+        case provider(String)
+        case session(String)
+    }
+
+    /// A provider id as a link may spell it: lowercased, `claude`,
+    /// `codex`, `gemini`… — the daemon's own `confetti` grammar.
+    nonisolated static func providerID(_ raw: String) -> String? {
+        let id = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let first = id.unicodeScalars.first, ("a"..."z").contains(first), id.count <= 32,
+              id.unicodeScalars.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || "._-".unicodeScalars.contains($0) })
+        else { return nil }
+        return id
+    }
+
+    /// The provider a burst wears: the one named, else the named session's,
+    /// else the focused session's; nil is the Toys tint. `providerOf`
+    /// reads a watched session's provider by the daemon's id or the
+    /// agent's own.
+    nonisolated static func confettiProvider(_ tint: ConfettiTint, focused: String?,
+                                             providerOf: (String) -> String?) -> String? {
+        switch tint {
+        case .provider(let id): return id
+        case .session(let id): return providerOf(id)
+        case .focused: return focused.flatMap(providerOf)
+        }
+    }
+
+    /// A watched session's provider by the daemon's id (`claude:session:…`)
+    /// or the agent's own session id — a hook's `session_id` names its main
+    /// row, as the daemon's `confetti` reads it.
+    nonisolated static func provider(ofSession id: String, in sessions: [CoreSession]) -> String? {
+        (sessions.first { $0.id == id } ?? sessions.first { $0.id.hasSuffix(":session:\(id)") })?.provider
     }
 
     /// The menu-bar verbs safe to trigger from outside: reveals and the
@@ -150,7 +191,19 @@ enum AppCommand: Equatable, Sendable {
                 return flag(value).map { .screenBar(on: $0) }
             }
         case "confetti":
-            return object == nil ? .confetti : nil
+            guard object == nil else { return nil }
+            switch (query["provider"], query["session"]) {
+            case (nil, nil):
+                return .confetti()
+            case (let raw?, nil):
+                return providerID(raw).map { .confetti(tint: .provider($0)) }
+            case (nil, let id?):
+                guard !id.isEmpty, id.count <= 512 else { return nil }
+                return .confetti(tint: .session(id))
+            default:
+                // One target, like `jrbar confetti`: both is refused whole.
+                return nil
+            }
         case "menubar", "menu-bar":
             guard let object, let menuVerb = MenuBarVerb(rawValue: object.lowercased()) else { return nil }
             return .menuBar(menuVerb)

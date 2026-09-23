@@ -26,7 +26,8 @@ final class AppCommandRouter {
     var quiet: ((_ mode: String?, _ seconds: Int) -> String?)?
     var endQuiet: (() -> String?)?
     var setScreenBar: ((Bool?) -> Void)?
-    var fireConfetti: (() -> Void)?
+    /// A burst in the colours the tint names (`AppCommand.confettiProvider`).
+    var fireConfetti: ((AppCommand.ConfettiTint) -> Void)?
     var menuBar: ((AppCommand.MenuBarVerb) -> String?)?
     var openSession: ((String) -> String?)?
     var revealAsk: (() -> String?)?
@@ -115,9 +116,9 @@ final class AppCommandRouter {
         case .screenBar(let on):
             guard let setScreenBar else { return Self.notReady }
             setScreenBar(on)
-        case .confetti:
+        case .confetti(let tint):
             guard let fireConfetti else { return Self.notReady }
-            fireConfetti()
+            fireConfetti(tint)
         case .menuBar(let verb):
             guard let menuBar else { return Self.notReady }
             return menuBar(verb)
@@ -194,7 +195,7 @@ enum AppShortcutCatalog {
         AppShortcutAction(id: "action.screenBar", title: "Show or hide the Screen Bar",
                           command: .screenBar(on: nil)),
         AppShortcutAction(id: "action.overview", title: "Open Overview", command: .window(.overview)),
-        AppShortcutAction(id: "action.confetti", title: "Fire confetti", command: .confetti),
+        AppShortcutAction(id: "action.confetti", title: "Fire confetti", command: .confetti()),
     ]
 
     /// Every chip, by its registry id.

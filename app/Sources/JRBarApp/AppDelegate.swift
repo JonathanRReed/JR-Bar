@@ -1694,11 +1694,14 @@ extension AppDelegate {
             guard let self else { return }
             self.setScreenBar(shown: on ?? !self.appState.showScreenBar)
         }
-        router.fireConfetti = { [weak self] in
+        router.fireConfetti = { [weak self] tint in
             // An explicit ask, like the card's Test burst: it fires even
-            // while the toy is off, in the focused session's colour.
-            let provider = self?.store?.screenBarFocus.focusSession
-                .flatMap { self?.core?.state?.session(withID: $0) }?.provider
+            // while the toy is off — in the linked provider's or session's
+            // colour, else the focused session's.
+            let sessions = self?.core?.state?.sessions ?? []
+            let provider = AppCommand.confettiProvider(
+                tint, focused: self?.store?.screenBarFocus.focusSession,
+                providerOf: { AppCommand.provider(ofSession: $0, in: sessions) })
             let document = self?.core?.settings.map { SettingsDocument($0.document) }
             self?.toysStore?.confetti.testBurst(
                 providerColor: ProviderStyle.style(for: provider ?? "", document: document).accent)
