@@ -148,6 +148,12 @@ final class AquariumAmbientController {
             return panel
         }
         guard !savers.isEmpty else { return }
+        // One tank takes the keyboard, so the key that wakes it lands on
+        // the tank — not on a terminal hidden underneath, where Return
+        // or 1 would answer an agent's prompt. A non-activating panel
+        // takes key without bringing JR-Bar forward, and ordering it out
+        // hands the keyboard back to the window that had it.
+        savers.first?.makeKey()
         armed = false
         shownAt = Date()
         let watch = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -297,21 +303,28 @@ struct AquariumSceneryView: View {
     }
 }
 
-/// One screen's worth of scenery tank: borderless, never key, sharing
-/// nothing with screen capture. The wallpaper sits a level above the
-/// desktop icons, behind every window and click-through; the
-/// screensaver sits over everything and takes the first click only to
-/// go away, so the click never lands on something you can't see.
+/// One screen's worth of scenery tank: borderless, sharing nothing with
+/// screen capture. The wallpaper sits a level above the desktop icons,
+/// behind every window, click-through and never key. The screensaver
+/// sits over everything and takes the first click, key or modifier
+/// only to go away — it can become key (without activating JR-Bar) so
+/// that waking input never lands on something you can't see.
 @MainActor
 final class AquariumAmbientPanel: NSPanel {
     enum Mode { case wallpaper, screensaver }
 
+    let mode: Mode
     var onTouch: (@MainActor () -> Void)?
 
-    init(screen: NSScreen, toy: AquariumToy, mode: Mode) {
-        super.init(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
+    convenience init(screen: NSScreen, toy: AquariumToy, mode: Mode) {
+        self.init(frame: screen.frame, toy: toy, mode: mode)
+    }
+
+    init(frame: NSRect, toy: AquariumToy, mode: Mode) {
+        self.mode = mode
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
-        let host = TouchView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        let host = TouchView(frame: NSRect(origin: .zero, size: frame.size))
         let hosting = NSHostingView(rootView: AquariumSceneryView(
             toy: toy, clock: mode == .screensaver))
         hosting.frame = host.bounds
@@ -337,12 +350,35 @@ final class AquariumAmbientPanel: NSPanel {
             ignoresMouseEvents = false
             collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         }
-        setFrame(screen.frame, display: false)
+        setFrame(frame, display: false)
     }
 
-    override var canBecomeKey: Bool { false }
+    /// Only the screensaver takes the keyboard — while it's up, the key
+    /// meant to wake it must not reach the app underneath.
+    override var canBecomeKey: Bool { mode == .screensaver }
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+
+    /// The keyboard never gets past the screensaver: a key, a key-up or
+    /// a lone modifier wakes it and goes no further, whichever view the
+    /// responder chain would have picked.
+    override func sendEvent(_ event: NSEvent) {
+        if mode == .screensaver, Self.wakingKeys.contains(event.type) {
+            onTouch?()
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    /// A ⌘-chord comes here before the window and the app's menus: it
+    /// wakes the tank instead of quitting or closing anything.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard mode == .screensaver else { return super.performKeyEquivalent(with: event) }
+        onTouch?()
+        return true
+    }
+
+    private static let wakingKeys: Set<NSEvent.EventType> = [.keyDown, .keyUp, .flagsChanged]
 
     /// Swallows the click that wakes the screensaver.
     private final class TouchView: NSView {
@@ -353,6 +389,7 @@ final class AquariumAmbientPanel: NSPanel {
         }
         override func mouseDown(with event: NSEvent) { onTouch?() }
         override func rightMouseDown(with event: NSEvent) { onTouch?() }
+        override func otherMouseDown(with event: NSEvent) { onTouch?() }
         override func scrollWheel(with event: NSEvent) { onTouch?() }
     }
 }

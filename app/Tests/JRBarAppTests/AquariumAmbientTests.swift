@@ -99,6 +99,47 @@ struct AquariumAmbientTests {
         #expect(renderer.cgImage != nil)
     }
 
+    private final class Touches { var count = 0 }
+
+    @MainActor
+    @Test("the screensaver takes the waking key itself; the wallpaper never takes the keyboard")
+    func saverSwallowsKeys() throws {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        let tank = try #require(store.aquarium)
+        let frame = NSRect(x: 0, y: 0, width: 320, height: 200)
+        let saver = AquariumAmbientPanel(frame: frame, toy: tank, mode: .screensaver)
+        let wallpaper = AquariumAmbientPanel(frame: frame, toy: tank, mode: .wallpaper)
+        #expect(saver.canBecomeKey, "so Return never reaches a hidden agent prompt")
+        #expect(!saver.canBecomeMain)
+        #expect(!wallpaper.canBecomeKey)
+        let touches = Touches()
+        saver.onTouch = { touches.count += 1 }
+
+        func key(_ type: NSEvent.EventType, _ characters: String, code: UInt16,
+                 flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
+                                          timestamp: 0, windowNumber: saver.windowNumber,
+                                          context: nil, characters: characters,
+                                          charactersIgnoringModifiers: characters,
+                                          isARepeat: false, keyCode: code))
+        }
+        // Return, the key that would approve a tool call underneath.
+        saver.sendEvent(try key(.keyDown, "\r", code: 36))
+        #expect(touches.count == 1)
+        saver.sendEvent(try key(.keyUp, "\r", code: 36))
+        #expect(touches.count == 2)
+        // A lone modifier wakes it too.
+        saver.sendEvent(try key(.flagsChanged, "", code: 56, flags: .shift))
+        #expect(touches.count == 3)
+        // ⌘Q wakes the tank; it neither quits JR-Bar nor passes on.
+        #expect(saver.performKeyEquivalent(with: try key(.keyDown, "q", code: 12, flags: .command)))
+        #expect(touches.count == 4)
+        saver.close()
+        wallpaper.close()
+    }
+
     @Test("both switches default off, round-trip, and read tolerantly")
     func settings() throws {
         let fresh = AquariumSettings()
