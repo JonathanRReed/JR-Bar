@@ -26,6 +26,8 @@ struct AquariumView: View {
         /// A pinned parade position (0…1) so a proof shot catches a
         /// visitor mid-water instead of at the claim edge.
         var visitorProgress: Double?
+        /// A pinned water mood; nil is calm water.
+        var mood: AquariumWaterMood?
     }
 
     private let toy: AquariumToy?
@@ -1386,6 +1388,50 @@ struct AquariumView: View {
                         ]),
                         startPoint: .zero,
                         endPoint: CGPoint(x: 0, y: size.height)))
+        drawFleetMood(canvas: &canvas, size: size, t: t)
+    }
+
+    /// The water reading the fleet, very subtly (docs/TOYS.md) — no
+    /// words, only the column: a quota window running low cools and
+    /// dims it, an unreviewed failure hazes it with silt settling toward
+    /// the sand, and a fresh reset lands one warm shaft that fades over a
+    /// few minutes. Calm water draws nothing extra.
+    private func drawFleetMood(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let mood = fixture.map { $0.mood ?? .calm }
+            ?? toy?.waterMood(at: Date(timeIntervalSince1970: t)) ?? .calm
+        guard mood != .calm else { return }
+        let rect = Path(CGRect(origin: .zero, size: size))
+        if mood.low > 0 {
+            canvas.fill(rect, with: .color(Color(red: 0.03, green: 0.06, blue: 0.19)
+                                             .opacity(0.24 * mood.low)))
+        }
+        if mood.cloud > 0 {
+            let silt = Color(red: 0.52, green: 0.56, blue: 0.50)
+            canvas.fill(rect, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: silt.opacity(0.02 * mood.cloud), location: 0),
+                    .init(color: silt.opacity(0.11 * mood.cloud), location: 1),
+                ]),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+        }
+        if mood.shaft > 0 {
+            var lit = canvas
+            lit.blendMode = .plusLighter
+            var beam = Path()
+            beam.move(to: CGPoint(x: size.width * 0.52, y: 0))
+            beam.addLine(to: CGPoint(x: size.width * 0.64, y: 0))
+            beam.addLine(to: CGPoint(x: size.width * 0.74, y: size.height))
+            beam.addLine(to: CGPoint(x: size.width * 0.50, y: size.height))
+            beam.closeSubpath()
+            let warm = Color(red: 1.0, green: 0.93, blue: 0.74)
+            lit.fill(beam, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: warm.opacity(0.20 * mood.shaft), location: 0),
+                    .init(color: warm.opacity(0.07 * mood.shaft), location: 0.6),
+                    .init(color: warm.opacity(0), location: 1),
+                ]),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+        }
     }
 
     /// Soft light shafts leaning down from the surface. Each ray is its

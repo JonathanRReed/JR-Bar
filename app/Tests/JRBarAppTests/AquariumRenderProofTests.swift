@@ -110,6 +110,40 @@ struct AquariumRenderProofTests {
         #expect(renderer.cgImage != nil)
     }
 
+    /// Mean brightness of a render, 0…1.
+    private static func brightness(_ image: CGImage) -> Double {
+        let w = 90, h = 52
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8,
+                                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            sum += (Double(pixels[i]) + Double(pixels[i + 1]) + Double(pixels[i + 2])) / 765
+        }
+        return sum / Double(w * h)
+    }
+
+    /// The fleet's mood reaches the water: a low quota darkens the
+    /// column and a reset's shaft brightens it, against the same tank.
+    @Test("the water reads the fleet: low quota dims, a reset's shaft brightens")
+    func fleetMoodRenders() throws {
+        func render(_ mood: AquariumWaterMood?) throws -> Double {
+            var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                       backdropID: "classic", night: 0, visitor: nil)
+            fixture.fish = []
+            fixture.mood = mood
+            let renderer = ImageRenderer(content: AquariumView(fixture: fixture)
+                .frame(width: 450, height: 260))
+            renderer.scale = 1
+            return Self.brightness(try #require(renderer.cgImage))
+        }
+        let calm = try render(nil)
+        #expect(try render(AquariumWaterMood(low: 1)) < calm - 0.01)
+        #expect(try render(AquariumWaterMood(shaft: 1)) > calm + 0.005)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write /tmp/jrbar-audit PNGs"))
     func snapshots() throws {

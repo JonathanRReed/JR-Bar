@@ -181,3 +181,62 @@ public struct AquariumFleetLog: Codable, Equatable, Sendable {
         creditGains = max(0, (try? c.decodeIfPresent(Int.self, forKey: .creditGains)) ?? 0)
     }
 }
+
+/// The water reading the fleet, very subtly (docs/TOYS.md): no words and
+/// no gauges — the tank becomes a calm ambient meter the way the LED
+/// strip is. A quota window running low cools and dims the column, a
+/// failed run nobody has reviewed hazes it with a little silt, and a
+/// fresh reset lands one bright shaft for a few minutes.
+public struct AquariumWaterMood: Equatable, Sendable {
+    /// 0…1: how far the tightest headline quota window has run low.
+    public var low: Double
+    /// 0…1: a failed run is still unreviewed.
+    public var cloud: Double
+    /// 0…1: a reset just landed — fades out over `shaftLife`.
+    public var shaft: Double
+
+    public init(low: Double = 0, cloud: Double = 0, shaft: Double = 0) {
+        self.low = low
+        self.cloud = cloud
+        self.shaft = shaft
+    }
+
+    public static let calm = AquariumWaterMood()
+
+    /// The column starts to cool at this much spent, and is fully cool
+    /// at `lowFull`.
+    public static let lowFrom: Double = 70
+    public static let lowFull: Double = 95
+    /// How long a reset's shaft lingers.
+    public static let shaftLife: TimeInterval = 5 * 60
+
+    /// The slow half of the mood — the quota and the failures — from one
+    /// document. Quantized to twentieths, so a window creeping up by a
+    /// tenth of a percent doesn't redraw the tank.
+    public static func base(_ state: CoreState?) -> AquariumWaterMood {
+        guard let state else { return .calm }
+        let tightest = (state.usage?.providers ?? [])
+            .compactMap { $0.headlineWindow?.usedPct }
+            .filter(\.isFinite)
+            .max() ?? 0
+        let low = min(1, max(0, (tightest - lowFrom) / (lowFull - lowFrom)))
+        let unreviewed = state.sessions.contains {
+            SessionActivity.reduce($0) == .failed && $0.axes?.review != "reviewed"
+        }
+        return AquariumWaterMood(low: (low * 20).rounded() / 20, cloud: unreviewed ? 1 : 0)
+    }
+
+    /// The base plus the reset's shaft at `now`: full as it lands, eased
+    /// out to nothing over `shaftLife`.
+    public func with(resetAt: Date?, now: Date) -> AquariumWaterMood {
+        var mood = self
+        if let resetAt {
+            let age = now.timeIntervalSince(resetAt)
+            if age >= 0, age < Self.shaftLife {
+                let p = 1 - age / Self.shaftLife
+                mood.shaft = p * p * (3 - 2 * p)
+            }
+        }
+        return mood
+    }
+}

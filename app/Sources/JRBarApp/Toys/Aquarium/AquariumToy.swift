@@ -47,6 +47,18 @@ final class AquariumToy: Toy {
     /// The window is covered or hidden; the view pauses its timeline.
     var windowOccluded = false
 
+    /// The water's slow mood (docs/TOYS.md): the tightest quota window
+    /// and any unreviewed failure, read once per document; the view adds
+    /// the reset's shaft at draw time. Written only when it moves, so a
+    /// steady fleet redraws nothing.
+    private(set) var waterBase = AquariumWaterMood.calm
+    /// When the last quota reset landed — the shaft's clock.
+    private(set) var lastResetAt: Date?
+
+    func waterMood(at now: Date) -> AquariumWaterMood {
+        waterBase.with(resetAt: lastResetAt, now: now)
+    }
+
     /// The Toys page's room rule (`ToysStore.hushReason`): while JR-Bar
     /// is quiet, a Focus is on or a call has the mic, the tank keeps its
     /// game moments to itself — no toast, no reward card sliding in, no
@@ -486,6 +498,7 @@ final class AquariumToy: Toy {
     func noteEvent(_ event: CoreEvent) {
         guard event.kind == "quota_reset" else { return }
         let now = Date()
+        lastResetAt = now
         note(game.apply(.quotaReset, now: now), now: now)
         persist()
     }
@@ -607,6 +620,8 @@ final class AquariumToy: Toy {
         }
         noteCompletions(now: now)
         noteFleet(now: now)
+        let base = AquariumWaterMood.base(core.state)
+        if base != waterBase { waterBase = base }
     }
 
     /// The work's own milestones (a school of six, a clean week, a week
