@@ -126,6 +126,12 @@ import Testing
         var answer: SystemTogglesStore.LeaseAnswer = .taken
     }
 
+    /// The app's own power assertions, counted instead of taken.
+    final class FakeAssertions {
+        var taken = 0
+        var released = 0
+    }
+
     private func leased(_ defaults: UserDefaults, hold: String? = nil) throws
         -> (SystemTogglesStore, SystemTogglesStore.State, FakeLease) {
         let state = SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults)
@@ -252,6 +258,47 @@ import Testing
         #expect(SystemTogglesStore.State.sameShape(try lease(#"{"kind":"agents","sessions":[]}"#))
                     == .untilAgentsFinish(sessions: nil), "no sessions: every main session running now")
         #expect(SystemTogglesStore.State.sameShape(try lease(#"{"kind":"indefinite"}"#)) == .indefinite)
+    }
+
+    @Test func aDaemonWithoutTheLeaseLeavesAHoldTheChipCanLetGo() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (store, state, fake) = try leased(defaults)
+        // Stand-in assertions: id 0 is never a real one.
+        let assertions = FakeAssertions()
+        state.takeAssertion = { _ in assertions.taken += 1; return 0 }
+        state.releaseAssertion = { _ in assertions.released += 1 }
+        fake.answer = .unavailable
+        store.apply(.keepAwake)
+        await settle(state)
+        #expect(fake.sent == [CoreAwakeRequest(.indefinite, display: false)])
+        #expect(state.awake.held, "the app's own assertion stands in")
+        #expect(store.isOn[.keepAwake] == true, "and the chip shows the hold it took")
+        // The daemon's frames keep coming; none re-asks a daemon that said
+        // it cannot take the hold.
+        for _ in 0..<3 { state.noteDaemonHold(nil, live: true) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(fake.sent.count == 1)
+        #expect(state.awake.held)
+        // The lit chip's tap lets the assertion go.
+        store.apply(.keepAwake)
+        #expect(!state.awake.held)
+        #expect(store.isOn[.keepAwake] == false)
+        // A link's on and off move the same assertion, without a lease.
+        store.set(.keepAwake, on: true)
+        #expect(state.awake.held)
+        store.set(.keepAwake, on: false)
+        #expect(!state.awake.held)
+        #expect(fake.sent.count == 1)
+        #expect(assertions.taken == 2 && assertions.released == 2)
+        // The next connection is asked afresh.
+        state.noteDaemonHold(nil, live: false)
+        state.noteDaemonHold(nil, live: true)
+        fake.answer = .taken
+        store.apply(.keepAwake)
+        await settle(state)
+        #expect(fake.sent.count == 2)
+        #expect(!state.awake.held, "a daemon that takes it holds the one hold")
     }
 
     @Test func automationAnswersMapToWhatTheChipSays() {

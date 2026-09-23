@@ -18,8 +18,9 @@ import os
 /// the same truth and hold the same keep-awake — never two. Keep-awake is
 /// the daemon's `hold_awake` lease while it is connected (the one hold the
 /// agents, the CLI and a deck key share, in `state.power.hold`); the
-/// app's own power assertion is only the fallback while it is away, and
-/// hands itself over the moment it is back.
+/// app's own power assertion is only the fallback while it is away (or
+/// too old for the lease), and hands itself over the moment one can take
+/// it.
 @MainActor
 final class SystemTogglesStore {
     /// What the daemon said to a lease.
@@ -70,8 +71,9 @@ final class SystemTogglesStore {
         var strip: [SystemToggle]
 
         /// The app's own keep-awake assertion — the fallback while the
-        /// daemon is away. Boxed nonisolated so `deinit` can release it:
-        /// the assertion must not outlive the state.
+        /// daemon is away or cannot take the lease. Boxed nonisolated so
+        /// `deinit` can release it: the assertion must not outlive the
+        /// state.
         let awake = AwakeAssertion()
 
         /// The daemon's hold (`state.power.hold`) as last published, and
@@ -89,11 +91,31 @@ final class SystemTogglesStore {
         @ObservationIgnored private var awakeTick: Task<Void, Never>?
         /// A hand-over of the app's assertion to the daemon is in flight.
         @ObservationIgnored private var handingOver = false
+        /// This connection's daemon answered a lease with "no such
+        /// command" (or never answered): it cannot take the hold, so the
+        /// app's own assertion does the job until the next connection
+        /// asks afresh — no lease re-sent on every state frame.
+        @ObservationIgnored private(set) var leaseUnsupported = false
+        /// Takes a power assertion of the given kind (nil when refused),
+        /// and lets one go. A test hands in its own pair, so no suite
+        /// holds the Mac awake.
+        @ObservationIgnored var takeAssertion: @MainActor (CFString) -> IOPMAssertionID? = { kind in
+            var assertion = IOPMAssertionID(0)
+            let status = IOPMAssertionCreateWithName(
+                kind,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "JR-Bar Keep Awake" as CFString,
+                &assertion)
+            return status == kIOReturnSuccess ? assertion : nil
+        }
+        @ObservationIgnored var releaseAssertion: @MainActor (IOPMAssertionID) -> Void = { _ = IOPMAssertionRelease($0) }
 
         /// The one hold as the chip draws it: the daemon's while it is
-        /// connected, else the app's own.
+        /// connected, else the app's own — and the app's own whenever it
+        /// holds one, so an assertion the daemon could not take is never
+        /// held out of sight of the switch that lets it go.
         var awakeReading: KeepAwakeReading {
-            daemonLive
+            daemonLive && !awake.held
                 ? KeepAwakeReading(hold: daemonHold)
                 : KeepAwakeReading(localHeld: awake.held, until: awakeUntil, display: awakeKeepsDisplay)
         }
@@ -134,20 +156,14 @@ final class SystemTogglesStore {
                 let kind = awakeKeepsDisplay
                     ? kIOPMAssertionTypePreventUserIdleDisplaySleep
                     : kIOPMAssertionTypeNoIdleSleep
-                var assertion = IOPMAssertionID(0)
-                let status = IOPMAssertionCreateWithName(
-                    kind as CFString,
-                    IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                    "JR-Bar Keep Awake" as CFString,
-                    &assertion)
-                if status == kIOReturnSuccess {
+                if let assertion = takeAssertion(kind as CFString) {
                     awake.id = assertion
                     awake.held = true
                 } else {
                     lastError = "Awake: the power assertion was refused."
                 }
             } else if !hold && awake.held {
-                IOPMAssertionRelease(awake.id)
+                releaseAssertion(awake.id)
                 awake.id = 0
                 awake.held = false
             }
@@ -161,9 +177,11 @@ final class SystemTogglesStore {
 
         /// Hold for `seconds`, indefinitely (nil), or let go (0) —
         /// Amphetamine's session vocabulary on the one hold: the daemon's
-        /// lease while it is connected, the app's assertion otherwise.
+        /// lease while it is connected and can take one, the app's
+        /// assertion otherwise — and the assertion's own switch while the
+        /// app holds it, so a tap always moves the hold the chip shows.
         func holdAwake(seconds: Int?) {
-            guard daemonLive, sendLease != nil else {
+            guard daemonLive, sendLease != nil, !leaseUnsupported, !awake.held else {
                 holdLocally(seconds: seconds)
                 return
             }
@@ -192,6 +210,7 @@ final class SystemTogglesStore {
                 case .refused(let why):
                     self.lastError = "Awake: \(why)"
                 case .unavailable:
+                    if self.daemonLive { self.leaseUnsupported = true }
                     fallback?()
                 }
                 self.syncAwakeChip()
@@ -227,12 +246,12 @@ final class SystemTogglesStore {
             guard on != awakeKeepsDisplay else { return }
             awakeKeepsDisplay = on
             defaults.set(on, forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
-            if daemonLive, sendLease != nil, let hold = daemonHold, hold.isManual, let current = hold.lease {
+            if daemonLive, sendLease != nil, !awake.held, let hold = daemonHold, hold.isManual, let current = hold.lease {
                 lease(CoreAwakeRequest(Self.sameShape(current), display: on), fallback: nil)
                 return
             }
             guard awake.held else { return }
-            IOPMAssertionRelease(awake.id)
+            releaseAssertion(awake.id)
             awake.held = false
             let until = awakeUntil
             let timer = awakeTimer
@@ -310,10 +329,14 @@ final class SystemTogglesStore {
         }
 
         /// The daemon's latest word on the hold. The moment it is back, a
-        /// hold the app took while it was away becomes its lease.
+        /// hold the app took while it was away becomes its lease — asked
+        /// afresh of each connection, since the daemon may have changed.
         func noteDaemonHold(_ hold: CoreAwakeHold?, live: Bool) {
             if daemonHold != hold { daemonHold = hold }
-            if daemonLive != live { daemonLive = live }
+            if daemonLive != live {
+                if live { leaseUnsupported = false }
+                daemonLive = live
+            }
             if live, awake.held { handOver() }
             syncAwakeChip()
         }
@@ -321,9 +344,10 @@ final class SystemTogglesStore {
         /// One hold, never two: the app's assertion becomes the daemon's
         /// lease (its deadline kept), then lets go. A lease the daemon
         /// already has — it survives a restart — stands, and the
-        /// assertion simply lets go.
+        /// assertion simply lets go. A daemon that cannot take a lease
+        /// is not asked again on every frame; the assertion stays.
         private func handOver() {
-            guard !handingOver, let sendLease else { return }
+            guard !handingOver, !leaseUnsupported, let sendLease else { return }
             if daemonHold?.isManual == true {
                 setAwake(false)
                 return
@@ -335,7 +359,11 @@ final class SystemTogglesStore {
                 let answer = await sendLease(request)
                 guard let self else { return }
                 self.handingOver = false
-                if answer == .taken { self.setAwake(false) }
+                switch answer {
+                case .taken: self.setAwake(false)
+                case .unavailable: if self.daemonLive { self.leaseUnsupported = true }
+                case .refused: break
+                }
                 self.syncAwakeChip()
             }
         }
