@@ -1218,8 +1218,12 @@ private struct DockPreviewCompactRow: View {
 }
 
 /// A waiting agent this app hosts, answerable from the Dock: the mark,
-/// the session and what it asks, then Deny / Approve through the same
-/// `answer_ask` the panel sends (the daemon raises the terminal first).
+/// the session and what it asks — what it would run, and the red mark
+/// when that is destructive — then Deny / Approve through the same
+/// `answer_ask` the panel sends (the daemon raises the terminal first,
+/// or the agent's own hook takes it). Where the hook holds the ask,
+/// Always Allow sits between them, and a held question offers its
+/// options instead of Approve; both go through the shared answer desk.
 /// Where the daemon says the ask can't be answered from outside, the
 /// buttons disable and say where it can be; once answered, the row
 /// shows the daemon's verdict instead of guessing success.
@@ -1229,41 +1233,123 @@ private struct DockAskRow: View {
     let answering: Bool
     let actions: DockPreviewActions
 
+    /// The mark's ask with its session filled in, for the desk.
+    private var ask: CoreAsk? {
+        mark.ask.map { ask in
+            var ask = ask
+            if ask.session == nil { ask.session = mark.sessionID }
+            return ask
+        }
+    }
+
     var body: some View {
+        let desk = AskAnswerDesk.shared
+        let busy = answering || (desk?.isPending(mark.sessionID) ?? false)
         HStack(spacing: 8) {
             DockAgentDot(mark: mark)
             VStack(alignment: .leading, spacing: 1) {
-                Text(mark.label)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(mark.label)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    if ask?.isDestructive == true {
+                        AskRiskMark(size: 10)
+                    }
+                }
                 Text(mark.statusLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let preview = ask?.previewLine {
+                    AskPreviewLine(text: preview, size: 10.5,
+                                   tint: ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+                }
             }
             .frame(maxWidth: 260, alignment: .leading)
             Spacer(minLength: 8)
-            if let note {
-                Text(note)
+            if let line = note ?? desk?.note(for: mark.sessionID)?.text {
+                Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-            } else if let ask = mark.ask {
+            } else if let ask, let desk, AskVerbs.chooses(ask) {
+                Button("Deny") { Task { await desk.answer(ask, .deny) } }
+                    .controlSize(.small)
+                    .disabled(busy)
+                DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
+            } else if let ask {
                 let answerable = ask.canAnswer && !ask.wantsTextReply
                 Button("Deny") { actions.onAnswer?(ask, false) }
                     .controlSize(.small)
-                    .disabled(!answerable || answering)
+                    .disabled(!answerable || busy)
+                if let desk, answerable, AskVerbs.alwaysAllows(ask) {
+                    Button("Always Allow") { Task { await desk.answer(ask, .always) } }
+                        .controlSize(.small)
+                        .disabled(busy)
+                        .help("Approve, and let \(mark.providerName) remember the rule it offered")
+                }
                 Button("Approve") { actions.onAnswer?(ask, true) }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                     .tint(mark.accent)
-                    .disabled(!answerable || answering)
+                    .disabled(!answerable || busy)
                     .help(answerable ? "Approve — \(mark.providerName) carries on"
                                      : "Answer this one in the session's window")
             }
         }
         .padding(.vertical, 2)
         .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
+    }
+}
+
+/// A held question's options on the Dock's ask row: a button each for
+/// one short single-pick question — a click is the answer — else one
+/// menu that holds them, with Send once each question has a pick.
+private struct DockAskChoices: View {
+    let ask: CoreAsk
+    let desk: AskAnswerDesk
+    let accent: Color
+    let busy: Bool
+
+    private var choices: [CoreAskChoice] { ask.decision?.choices ?? [] }
+
+    var body: some View {
+        switch AskChoiceLayout.layout(choices) {
+        case .buttons(let labels):
+            ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
+                if index == 0 {
+                    option(label).buttonStyle(.borderedProminent).tint(accent)
+                } else {
+                    option(label)
+                }
+            }
+        case .menu:
+            let picks = desk.picks(for: ask)
+            Menu(AskChoiceLayout.menuTitle(choices, picks: picks)) {
+                AskChoiceMenuItems(choices: choices, picks: picks,
+                                   pick: { desk.pick($0, in: $1, of: ask) },
+                                   send: { Task { await desk.sendPicks(for: ask) } })
+            }
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(busy)
+            if picks.isComplete(choices), choices.count > 1 || choices.first?.multi == true {
+                Button("Send") { Task { await desk.sendPicks(for: ask) } }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(accent)
+                    .disabled(busy)
+            }
+        }
+    }
+
+    private func option(_ label: String) -> some View {
+        Button(label) {
+            if let choice = choices.first { desk.pick(label, in: choice, of: ask) }
+        }
+        .controlSize(.small)
+        .disabled(busy)
+        .help("Answer “\(label)”")
     }
 }
 
