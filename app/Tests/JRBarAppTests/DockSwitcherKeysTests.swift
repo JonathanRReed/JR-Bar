@@ -65,6 +65,38 @@ struct DockSwitcherKeysTests {
         #expect(try !eaten(tap, 0), "closing hands the keyboard back")
     }
 
+    @Test("⌘/ pins the ⌘⇥ strip for typing; closing it forgets the latch")
+    func searchLatch() throws {
+        let tap = SwitcherKeyTap()
+        let keyboard = DockKeyboardLayout()
+        keyboard.set(layout: DockKeyboardLayout.layoutData(id: "com.apple.keylayout.US"))
+        tap.keyboard = keyboard
+        tap.setCmdOpen(true)
+        #expect(try eaten(tap, 44, flags: .maskCommand))
+        #expect(tap.isLatched, "set on the tap thread, before ⌘'s release can race it")
+        tap.setCmdOpen(false)
+        #expect(!tap.isLatched)
+        // The ⌥⇥ strip has no latch — ⌘/ there is just eaten.
+        tap.setOpen(true)
+        #expect(try eaten(tap, 44, flags: .maskCommand))
+        #expect(!tap.isLatched)
+        tap.setOpen(false)
+    }
+
+    @Test("⌥⌘ arrows and ↑ are the strip's; the verb row names what ⌘ does now")
+    func arrowsAndHints() throws {
+        let tap = SwitcherKeyTap()
+        tap.keyboard = DockKeyboardLayout()
+        tap.setOpen(true)
+        #expect(try eaten(tap, 123, flags: [.maskAlternate, .maskCommand]))
+        #expect(try eaten(tap, 126))
+        tap.setOpen(false)
+        #expect(try !eaten(tap, 126), "closed, ↑ belongs to the front app")
+        #expect(DockSwitcherList.verbHints(appMode: true, drilled: false).contains("/ search"))
+        #expect(DockSwitcherList.verbHints(appMode: false, drilled: true).contains("↑ apps"))
+        #expect(DockSwitcherList.verbHints(appMode: false, drilled: false).contains("tile"))
+    }
+
     @Test("hover selects only once the pointer has moved since the strip opened")
     func hoverGate() {
         var gate = SwitcherHoverGate()

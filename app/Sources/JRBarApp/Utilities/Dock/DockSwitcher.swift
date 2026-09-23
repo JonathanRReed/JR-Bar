@@ -308,6 +308,14 @@ enum DockSwitcherList {
         return parts
     }
 
+    /// The verb row shown while ⌘ is held — the keys the strip answers
+    /// right now, so nobody has to read docs to find them.
+    static func verbHints(appMode: Bool, drilled: Bool) -> String {
+        if appMode { return "Q quit · H hide · ↓ windows · / search" }
+        if drilled { return "W close · M minimize · F full screen · Q quit · H hide · ↑ apps" }
+        return "W close · M minimize · F full screen · Q quit · H hide · ←→↑↓ tile"
+    }
+
     /// The window a plain ⌘⇥ commit restores: when every window the app
     /// has is minimized, the first (most recent) one — activation alone
     /// would land on no window at all. nil when any window is up.
@@ -479,6 +487,14 @@ final class SwitcherKeyTap: @unchecked Sendable {
     var onDrill: () -> Void = {}
     /// ` under the ⌥⇥ strip — the one-app scope toggle.
     var onScope: () -> Void = {}
+    /// ↑ on a drilled ⌘⇥ strip — back out to the app row.
+    var onUndrill: () -> Void = {}
+    /// ⌘/ or ⌘S on the ⌘⇥ strip: search pins it open past ⌘'s release.
+    var onLatch: () -> Void = {}
+    /// ⌥⌘ + an arrow on the ⌥⇥ strip: tile the pick into that half.
+    var onTile: (_ code: Int64) -> Void = { _ in }
+    /// ⌘ went down or up while a strip is open — the verb hints' cue.
+    var onCommandHeld: (_ held: Bool) -> Void = { _ in }
     /// The preview panel's keys — Esc/arrows/Return — while its flag is
     /// set. The events are eaten either way: the panel can't take key
     /// status, so a pass-through would land them in the front app too.
@@ -510,6 +526,15 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// so a release that races the async open still resolves.
     nonisolated(unsafe) private var prevOption = false
     nonisolated(unsafe) private var prevCmd = false
+    /// The ⌘⇥ search latch — set on the tap thread the moment ⌘/ lands,
+    /// so a ⌘ release racing the async hop still finds the strip pinned.
+    nonisolated(unsafe) private var latched = false
+
+    /// Whether the open strip is pinned for typing (tests read it).
+    var isLatched: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return latched
+    }
 
     func setEnabled(_ value: Bool) {
         lock.lock(); enabled = value; lock.unlock()
@@ -527,6 +552,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
     func setOpen(_ value: Bool) {
         lock.lock()
         open = value
+        latched = false
         if !value { cmdOpen = false; pendingOptionCommit = false; pendingCmdCommit = false }
         lock.unlock()
     }
@@ -535,6 +561,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
     func setCmdOpen(_ value: Bool) {
         lock.lock()
         open = value; cmdOpen = value
+        latched = false
         if !value { pendingOptionCommit = false; pendingCmdCommit = false }
         lock.unlock()
     }
@@ -601,8 +628,16 @@ final class SwitcherKeyTap: @unchecked Sendable {
                 DispatchQueue.main.async { [weak self] in self?.onCmdTab(shifted) }
                 return nil
             }
+            if isOpen, !isCmdOpen, flags.contains(.maskCommand), (123...126).contains(code) {
+                // ⌥⌘ + arrow: put the pick in that half of its screen —
+                // switch to a window and place it at once.
+                return swallow { self.onTile(code) }
+            }
             if isOpen {
                 switch code {
+                case 126:                                       // ↑
+                    // Back out of a drilled app to the app row.
+                    return swallow { if isCmdOpen { self.onUndrill() } }
                 case 123: return swallow { self.onArrow(-1) }   // ←
                 case 124: return swallow { self.onArrow(1) }    // →
                 case 125: return swallow {                    // ↓
@@ -627,9 +662,15 @@ final class SwitcherKeyTap: @unchecked Sendable {
                     // ⌘Q on the app being switched *away from*. The
                     // letter is the one the layout types under ⌘.
                     if flags.contains(.maskCommand) {
-                        if let char = keyboard.character(for: code, command: true)?.lowercased(),
-                           Self.verbKeys.contains(char) {
+                        let char = keyboard.character(for: code, command: true)?.lowercased()
+                        if let char, Self.verbKeys.contains(char) {
                             return swallow { self.onVerb(char) }
+                        }
+                        if isCmdOpen, let char, Self.latchKeys.contains(char) {
+                            // ⌘/ — the search latch, set here and now:
+                            // the ⌘ release may beat the main-thread hop.
+                            lock.lock(); latched = true; lock.unlock()
+                            return swallow { self.onLatch() }
                         }
                         return nil
                     }
@@ -658,10 +699,29 @@ final class SwitcherKeyTap: @unchecked Sendable {
             return Unmanaged.passRetained(event)
         }
 
+        // ⌘'s edge is tracked on every modifier change, open or not, so
+        // the first change after an open compares against the truth.
+        let commandDown = flags.contains(.maskCommand)
+        var commandChanged = false
+        if type == .flagsChanged {
+            lock.lock()
+            commandChanged = commandDown != prevCmd
+            prevCmd = commandDown
+            lock.unlock()
+        }
         if type == .flagsChanged, isOpen {
-            if isCmdOpen, !flags.contains(.maskCommand) {
-                // Command lifted — the app switcher's commit.
-                DispatchQueue.main.async { [weak self] in self?.onCmdCommit() }
+            lock.lock()
+            let isLatched = latched
+            lock.unlock()
+            if commandChanged {
+                DispatchQueue.main.async { [weak self] in self?.onCommandHeld(commandDown) }
+            }
+            if isCmdOpen, !commandDown {
+                // Command lifted — the app switcher's commit, unless the
+                // search latch pinned the strip for typing (↩ commits).
+                if !isLatched {
+                    DispatchQueue.main.async { [weak self] in self?.onCmdCommit() }
+                }
             } else if !isCmdOpen, !flags.contains(.maskAlternate) {
                 // Option lifted — the window switcher's commit,
                 // AltTab-style.
@@ -683,6 +743,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// The ⌘-verb letters — the row of actions stock ⌘⇥ and AltTab
     /// share. Type-ahead keeps every other key.
     nonisolated static let verbKeys: Set<String> = ["q", "w", "m", "h", "f"]
+
+    /// ⌘/ or ⌘S on the ⌘⇥ strip — Witch's and Contexts' search field.
+    nonisolated static let latchKeys: Set<String> = ["/", "s"]
 
     /// Keycode → character through the user's keyboard layout —
     /// injectable so a test can type through Dvorak or AZERTY.
@@ -787,6 +850,10 @@ final class DockSwitcherController {
         tap.onVerb = { [weak self] char in self?.verb(char) }
         tap.onPreviewKey = { [weak self] code in self?.onPreviewKey?(code) }
         tap.onScope = { [weak self] in self?.toggleScope() }
+        tap.onUndrill = { [weak self] in self?.undrill() }
+        tap.onLatch = { [weak self] in self?.latch() }
+        tap.onTile = { [weak self] code in self?.tile(code) }
+        tap.onCommandHeld = { [weak self] held in self?.commandHeld(held) }
         // The layout the type-ahead spells through — read now on the
         // main thread and again on every input-source switch.
         tap.keyboard.startWatching()
@@ -861,6 +928,108 @@ final class DockSwitcherController {
         model.open(with: lane.items, selection: lane.items.firstIndex { $0.id == keep } ?? lane.selection)
         panel?.present(model: model)
         loadThumbnails()
+    }
+
+    /// ↑ on a drilled strip: back to the app row, on the app drilled.
+    func undrill() {
+        guard panel?.isVisible == true, let pid = drilledApp else { return }
+        let apps = buildAppItems()
+        guard !apps.isEmpty else { return }
+        drilledApp = nil
+        appMode = true
+        model.open(with: apps, selection: apps.firstIndex { $0.pid == pid } ?? 0)
+        hoverGate.open(at: NSEvent.mouseLocation)
+        panel?.setHints(DockSwitcherList.verbHints(appMode: true, drilled: false))
+        panel?.present(model: model)
+        loadThumbnails()
+    }
+
+    /// ⌘/ on the app strip: pinned for typing past ⌘'s release — the
+    /// type-ahead ranks the apps, ↩ switches, esc cancels. The tap has
+    /// already set its own latch; this is the strip's face for it.
+    func latch() {
+        guard panel?.isVisible == true else { return }
+        panel?.setLatched(true)
+    }
+
+    /// ⌥⌘ + arrow: the pick goes to that half of the screen it's on
+    /// (a minimized one stands up first); the strip stays up and
+    /// rebuilds around it, like the ⌘-verbs.
+    func tile(_ code: Int64) {
+        guard let item = model.selected, !appMode,
+              let element = resolvedElement(for: item) else { return }
+        let tile: DockTile
+        switch code {
+        case 123: tile = .leftHalf
+        case 124: tile = .rightHalf
+        case 126: tile = .topHalf
+        default: tile = .bottomHalf
+        }
+        let window = DockPreviewWindow(id: 0, title: item.title, minimized: item.minimized,
+                                       fullScreen: nil, frame: item.frame, thumbnail: nil,
+                                       element: element)
+        guard let visible = Self.visibleQuartz(around: item.frame) else { return }
+        if item.minimized { _ = AppleDockReader.setMinimized(window, false) }
+        _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: visible))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.rebuild()
+        }
+    }
+
+    /// The visible frame (Quartz space) of the screen a window sits on —
+    /// by its centre — else the pointer's screen.
+    private static func visibleQuartz(around frame: CGRect?) -> CGRect? {
+        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
+                             ?? NSScreen.screens.first)?.frame.height ?? 0
+        let screen = frame.flatMap { frame -> NSScreen? in
+            let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
+            return NSScreen.screens.first { $0.frame.contains(centre) }
+        } ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        guard let screen else { return nil }
+        // The flip is its own inverse: AppKit → Quartz is the same map.
+        return DockEnhanceMath.appKitRect(screen.visibleFrame, mainScreenHeight: primaryHeight)
+    }
+
+    /// ⌘ held with a strip up: after a beat the verb row appears (a
+    /// quick ⌘⇥ tap never flashes it); ⌘ lifting takes it down.
+    private var hintWork: DispatchWorkItem?
+    func commandHeld(_ held: Bool) {
+        hintWork?.cancel()
+        guard held, panel?.isVisible == true else {
+            panel?.setHints(nil)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel?.isVisible == true else { return }
+                self.panel?.setHints(DockSwitcherList.verbHints(appMode: self.appMode,
+                                                                drilled: self.drilledApp != nil))
+            }
+        }
+        hintWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hintDelay, execute: work)
+    }
+
+    static let hintDelay: TimeInterval = 0.45
+
+    /// The pointer resting on an app card drills into its windows —
+    /// Witch's spring-loading, on the pointer only, so a keyboard-only
+    /// ⌘⇥ never changes under a held ⌘.
+    private var springWork: DispatchWorkItem?
+    static let springDelay: TimeInterval = 0.5
+
+    private func armSpring(for index: Int) {
+        springWork?.cancel()
+        guard appMode else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.appMode, self.panel?.isVisible == true,
+                      self.model.selection == index else { return }
+                self.drill()
+            }
+        }
+        springWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springDelay, execute: work)
     }
 
     private func tab(shifted: Bool) {
@@ -973,6 +1142,8 @@ final class DockSwitcherController {
         panel?.present(model: model)
         loadThumbnails()
         startLive()
+        // ⌘ is already down — the verb row follows after the usual beat.
+        commandHeld(true)
     }
 
     private func buildAppItems() -> [SwitcherItem] {
@@ -983,8 +1154,13 @@ final class DockSwitcherController {
         let byPID = Dictionary(uniqueKeysWithValues: apps.map { ($0.processIdentifier, $0) })
         var ordered: [pid_t] = []
         var seen = Set<pid_t>()
+        /// Each app's front window — its card's still, so the ⌘⇥ strip
+        /// shows which window you'll land on (DockDoor's Cmd+Tab), not
+        /// just whose icon.
+        var frontWindow: [pid_t: CGWindowID] = [:]
         for row in DockSwitcherList.onScreenRows() where seen.insert(row.pid).inserted {
             ordered.append(row.pid)
+            frontWindow[row.pid] = row.windowID
         }
         for app in apps where seen.insert(app.processIdentifier).inserted {
             ordered.append(app.processIdentifier)
@@ -998,7 +1174,7 @@ final class DockSwitcherController {
                                 icon: app.icon,
                                 title: app.localizedName ?? "App",
                                 minimized: false, onScreen: true,
-                                element: nil, windowID: nil,
+                                element: nil, windowID: frontWindow[pid],
                                 badge: app.bundleURL.flatMap { badges[$0.path] },
                                 agent: DockSwitcherList.appMark(bundleID: app.bundleIdentifier,
                                                                 marks: marks))
@@ -1019,6 +1195,10 @@ final class DockSwitcherController {
         appMode = false
         model.open(with: items, selection: 0)
         hoverGate.open(at: NSEvent.mouseLocation)
+        springWork?.cancel()
+        if panel?.hasHints == true {
+            panel?.setHints(DockSwitcherList.verbHints(appMode: false, drilled: true))
+        }
         panel?.present(model: model)
         loadThumbnails()
     }
@@ -1059,6 +1239,7 @@ final class DockSwitcherController {
     }
 
     func advance(by step: Int) {
+        springWork?.cancel()
         model.advance(by: step)
         panel?.present(model: model)
     }
@@ -1074,6 +1255,7 @@ final class DockSwitcherController {
               index != model.selection else { return }
         model.select(index: index)
         panel?.present(model: model)
+        armSpring(for: index)
     }
 
     /// A card click: land the selection on it and commit at once.
@@ -1110,6 +1292,8 @@ final class DockSwitcherController {
         drilledApp = nil
         scopePID = nil
         stopLive()
+        springWork?.cancel()
+        hintWork?.cancel()
         tap.setOpen(false)
         panel?.dismiss()
     }
@@ -1364,8 +1548,26 @@ final class DockSwitcherPanel: NSPanel {
 
     func dismiss() {
         disarm()
+        model.hints = nil
+        model.latched = false
         alphaValue = 0
         orderOut(nil)
+    }
+
+    var hasHints: Bool { model.hints != nil }
+
+    /// The ⌘-held verb row — nil takes it down.
+    func setHints(_ hints: String?) {
+        guard model.hints != hints else { return }
+        model.hints = hints
+        if isVisible { refit() }
+    }
+
+    /// The ⌘⇥ search latch's face: the query row stays up and invites typing.
+    func setLatched(_ latched: Bool) {
+        guard model.latched != latched else { return }
+        model.latched = latched
+        if isVisible { refit() }
     }
 
     /// A guarded verb's first press: the card rings, the footer explains.
@@ -1407,6 +1609,10 @@ final class DockSwitcherModel {
     var armedID: String?
     var armedAccent: Color?
     var armedNote: String?
+    /// The verb row while ⌘ is held.
+    var hints: String?
+    /// ⌘⇥'s search latch: the query row shows even before a letter.
+    var latched = false
 }
 
 /// Hover selects only after the pointer has moved since the strip
@@ -1472,9 +1678,10 @@ struct DockSwitcherView: View {
                     }
                     .padding(10)
                 }
-                if !model.query.isEmpty {
+                if !model.query.isEmpty || model.latched {
                     // The buffer's own label — a filtered strip should
-                    // never read as dropped rows.
+                    // never read as dropped rows. ⌘⇥'s latch shows it
+                    // before the first letter, as an invitation.
                     HStack(spacing: 4) {
                         // A leading "!" is the waiting-agents filter —
                         // named, so the narrowed strip explains itself.
@@ -1482,7 +1689,8 @@ struct DockSwitcherView: View {
                         let rest = waiting ? String(model.query.dropFirst()) : model.query
                         Image(systemName: waiting ? "exclamationmark.bubble" : "magnifyingglass")
                             .font(.system(size: 9, weight: .medium))
-                        Text(waiting && rest.isEmpty ? "Waiting on you" : rest)
+                        Text(waiting && rest.isEmpty ? "Waiting on you"
+                             : (rest.isEmpty ? "Type an app's name — ↩ switches, esc cancels" : rest))
                             .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
                         if model.items.isEmpty {
@@ -1494,6 +1702,15 @@ struct DockSwitcherView: View {
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 8)
                     .padding(.horizontal, 12)
+                }
+                if let hints = model.hints, model.armedNote == nil {
+                    Text(hints)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.bottom, 8)
+                        .padding(.horizontal, 12)
+                        .transition(.opacity)
                 }
                 if let note = model.armedNote {
                     HStack(spacing: 5) {
