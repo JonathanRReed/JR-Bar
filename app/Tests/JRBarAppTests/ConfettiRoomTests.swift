@@ -148,6 +148,35 @@ struct ConfettiRoomTests {
         #expect(bursts.fired.isEmpty)
     }
 
+    @Test("the daemon's own \"off\" is a clear room: bursts fire and the buddy hops")
+    func daemonOffIsClear() throws {
+        let core = CoreModel()
+        // What a connected daemon sends while nothing quiet is in effect
+        // (docs/CORE-PROTOCOL.md): the literal `off`, never null.
+        let off = try JSONDecoder().decode(CoreFocus.self, from: Data(#"""
+            {"mode": "off", "source": null, "until": null}
+            """#.utf8))
+        core.apply(.state(CoreState(focus: off)))
+        var state = ToysState()
+        state.confetti.enabled = true
+        state.notchBuddy.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        #expect(store.state.hushDuringQuiet, "the default switch")
+        #expect(store.hushReason() == nil)
+        let toy = store.confetti
+        let bursts = Bursts()
+        toy.screensForBurst = { [nil] }
+        toy.presentOverride = { screens, density in bursts.fired.append((screens, density)) }
+        #expect(toy.fire(reason: .trigger, provider: "claude", at: t0))
+        #expect(toy.held == nil, "presented, not held")
+        #expect(bursts.fired.count == 1)
+        #expect(bursts.fired.first?.density == 1)
+        let buddy = store.notchBuddy
+        buddy.noteEvent(CoreEvent(id: "c1", kind: "completed", session: "s"), at: t0)
+        #expect(buddy.hopUntil == t0.addingTimeInterval(1.1))
+    }
+
     @Test("hushed, the buddy eats its crumb without the hop")
     func buddyKeepsItsHop() {
         let core = CoreModel()

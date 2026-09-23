@@ -234,11 +234,16 @@ final class ConfettiToy: Toy {
             dropHeld()
             return
         }
-        let hush = store?.hushReason(now: now)
+        // The daemon's reading first — it is free; the window list is
+        // only worth asking once nothing else is keeping the room down.
+        if let hush = store?.hushReason(now: now) {
+            if hush != held.why { self.held = (held.color, held.at, hush) }
+            return
+        }
         let minding = store?.state.hushDuringQuiet ?? true
         let screens = minding ? screensForBurst() : Self.allScreens()
-        guard hush == nil, !screens.isEmpty else {
-            if let hush, hush != held.why { self.held = (held.color, held.at, hush) }
+        guard !screens.isEmpty else {
+            if held.why != .fullscreen { self.held = (held.color, held.at, .fullscreen) }
             return
         }
         dropHeld()

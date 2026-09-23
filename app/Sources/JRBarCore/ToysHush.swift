@@ -29,13 +29,17 @@ public enum ToysHush {
         }
     }
 
-    /// The daemon's quiet reading (`state.focus`): any mode but `normal`
-    /// counts while its `until` has not passed. `source == "focus"` is a
-    /// macOS Focus; everything else is JR-Bar's own quiet.
+    /// The daemon's quiet reading (`state.focus`, docs/CORE-PROTOCOL.md):
+    /// `mode` is the active quiet mode, or the literal `off` — never
+    /// null — while nothing quiet is in effect. Any mode but `off`
+    /// counts while its `until` has not passed; a missing mode (no
+    /// document yet) and an older build's `normal` read as clear too.
+    /// `source == "focus"` is a macOS Focus; everything else is JR-Bar's
+    /// own quiet.
     public static func quietReason(mode: String?, source: String?, until: Double?,
                                    now: Date) -> Reason? {
         let word = (mode ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-        guard !word.isEmpty, word != "normal" else { return nil }
+        guard !word.isEmpty, word != "off", word != "normal" else { return nil }
         if let until, until > 0, until <= now.timeIntervalSince1970 { return nil }
         return source?.lowercased() == "focus" ? .focus : .quiet
     }

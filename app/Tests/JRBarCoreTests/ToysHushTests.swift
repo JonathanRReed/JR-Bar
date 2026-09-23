@@ -10,8 +10,13 @@ import JRBarCore
 struct ToysHushTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    @Test("normal or missing is a clear room")
+    @Test("off, normal or missing is a clear room")
     func normalIsClear() {
+        // The daemon's own word for nothing quiet (docs/CORE-PROTOCOL.md):
+        // `off`, never null — the reading every connected app sees.
+        #expect(ToysHush.quietReason(mode: "off", source: nil, until: nil, now: now) == nil)
+        #expect(ToysHush.quietReason(mode: " OFF ", source: nil, until: nil, now: now) == nil)
+        #expect(ToysHush.reason(mode: "off", source: nil, until: nil, onCall: false, now: now) == nil)
         #expect(ToysHush.quietReason(mode: nil, source: nil, until: nil, now: now) == nil)
         #expect(ToysHush.quietReason(mode: "normal", source: "schedule", until: nil, now: now) == nil)
         #expect(ToysHush.quietReason(mode: " Normal ", source: nil, until: nil, now: now) == nil)
@@ -20,7 +25,7 @@ struct ToysHushTests {
 
     @Test("any quiet mode hushes; a Focus names itself")
     func quietModes() {
-        for mode in ["dnd", "dim", "dark", "pause"] {
+        for mode in ["mute", "dim", "dark", "pause", "asks_only", "dnd"] {
             #expect(ToysHush.quietReason(mode: mode, source: "manual", until: nil, now: now) == .quiet)
         }
         #expect(ToysHush.quietReason(mode: "dnd", source: "focus", until: nil, now: now) == .focus)
