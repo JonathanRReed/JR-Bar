@@ -69,7 +69,7 @@ enum SettingsSearch {
         .init(.devices, "Creator Micro 2", "Control Center", subtitle: "Pins, banks, the rail, input check and the keymap."),
         .init(.devices, "Screen Bar", "Show Screen Bar", subtitle: "The light band under the notch."),
         .init(.devices, "Screen Bar", "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band."),
-        .init(.devices, "Screen Bar", "Show in full screen", subtitle: "Keep the band over full-screen apps and videos."),
+        .init(.devices, "Screen Bar", "In full screen", subtitle: "Hidden, shown but not over video, or always over full-screen apps."),
         .init(.devices, "Screen Bar", "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right."),
         .init(.devices, "Screen Bar", "Notch shape"),
         .init(.devices, "Screen Bar", "Corner radius", subtitle: "The tray's bottom corners, in points. Every notched MacBook measures about 8."),

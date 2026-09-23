@@ -429,7 +429,8 @@ struct PaletteSourcesTests {
         #expect(awake?.primary?.run() == "Keep Awake on")
         #expect(items.first { $0.id == "system.hiddenFiles" }?.tags == [PaletteTag(text: "Applying…")])
         let dock = items.first { $0.id == "system.dockAutoHide" }
-        #expect(dock?.subtitle == "Restarts Dock")
+        #expect(dock?.subtitle == nil, "the Dock flips live through its own driver: no restart")
+        #expect(items.first { $0.id == "system.hiddenFiles" }?.subtitle == "Restarts Finder")
         #expect(dock?.primary?.title == "Toggle", "no read-back yet: no claim")
         let lock = items.first { $0.id == "system.lock" }
         #expect(lock?.tags.isEmpty == true, "a verb has no state")
