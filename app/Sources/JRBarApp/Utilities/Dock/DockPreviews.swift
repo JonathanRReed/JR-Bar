@@ -411,6 +411,13 @@ final class DockLiveStill {
     /// Bumped on every start and stop — a start still resolving when
     /// the pointer moved on closes what it opened instead of keeping it.
     private var token = 0
+    /// The window server's handle for `windowID` owned by `pid`, or nil.
+    /// Internal so the tests can stand in for ScreenCaptureKit.
+    var lookup: @MainActor (CGWindowID, pid_t) async -> SCWindow? = { windowID, pid in
+        guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: false) else { return nil }
+        return shareable.windows.first { $0.windowID == windowID && $0.owningApplication?.processID == pid }
+    }
 
     func start(windowID: CGWindowID, pid: pid_t) {
         guard self.windowID != windowID else { return }
@@ -419,11 +426,13 @@ final class DockLiveStill {
         let started = token
         self.windowID = windowID
         Task { @MainActor [weak self] in
-            guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: false),
-                  let scWindow = shareable.windows.first(where: {
-                      $0.windowID == windowID && $0.owningApplication?.processID == pid }),
-                  let self, self.token == started else { return }
+            guard let lookup = self?.lookup else { return }
+            let found = await lookup(windowID, pid)
+            guard let self, self.token == started else { return }
+            guard let scWindow = found else {
+                self.forget(started)
+                return
+            }
             let scale = NSScreen.main?.backingScaleFactor ?? 2
             let bounds = scWindow.frame
             let factor = min(1, DockThumbnailer.pointLimit / max(bounds.width, bounds.height, 1)) * scale
@@ -447,6 +456,9 @@ final class DockLiveStill {
                                      height: CGFloat(frame.image.height) / scale)))
                 }
             }
+            sink.onStop = { [weak self] in
+                Task { @MainActor [weak self] in self?.forget(started) }
+            }
             let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: scWindow),
                                   configuration: configuration, delegate: sink)
             do {
@@ -454,6 +466,7 @@ final class DockLiveStill {
                                            sampleHandlerQueue: DispatchQueue(label: "jrbar.dock.live"))
                 try await stream.startCapture()
             } catch {
+                self.forget(started)
                 return
             }
             guard self.token == started else {
@@ -472,6 +485,17 @@ final class DockLiveStill {
         guard let stream else { return }
         self.stream = nil
         Task { try? await stream.stopCapture() }
+    }
+
+    /// A start that came to nothing — no such window, no grant, a stream
+    /// that wouldn't open or that the system stopped — forgets its
+    /// window, so the next hover on that card tries again instead of
+    /// finding it "already streaming". A later start owns the state.
+    private func forget(_ started: Int) {
+        guard token == started else { return }
+        windowID = nil
+        sink = nil
+        stream = nil
     }
 
     isolated deinit { stop() }
@@ -503,7 +527,12 @@ final class DockLiveSink: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         onImage?(DockLiveFrame(image: cgImage))
     }
 
+    /// The system ended the stream (the window closed, the grant was
+    /// pulled) — the owner forgets it.
+    var onStop: (@Sendable () -> Void)?
+
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         onImage = nil
+        onStop?()
     }
 }

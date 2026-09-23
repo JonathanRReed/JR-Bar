@@ -233,6 +233,24 @@ struct DockPreviewAgentTests {
         #expect(DockLiveStill.framesPerSecond <= 10, "a thumbnail, not a video call")
     }
 
+    @Test("a live card that couldn't start forgets its window, so the next hover tries again")
+    func liveStillRetries() async throws {
+        let live = DockLiveStill()
+        var asked = 0
+        live.lookup = { _, _ in
+            asked += 1
+            return nil
+        }
+        live.start(windowID: 42, pid: 1)
+        #expect(live.windowID == 42, "the window is claimed while the start resolves")
+        for _ in 0..<200 where live.windowID != nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(live.windowID == nil, "no such window: nothing is streaming")
+        live.start(windowID: 42, pid: 1)
+        for _ in 0..<200 where asked < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(asked == 2, "the same card hovered again asks again")
+        live.stop()
+    }
+
     @Test("a hovered card re-takes only an aged or out-of-date still, never a missing one")
     func hoverRefresh() {
         #expect(!DockThumbnailer.wantsHoverRefresh(hasStill: false, age: nil, cachedTag: nil, tag: nil),
