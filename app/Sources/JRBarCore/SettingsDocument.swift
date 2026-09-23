@@ -346,6 +346,10 @@ extension SettingsKey {
         SettingsKey(.lighting, "rainstick_night_enabled", .bool),
         SettingsKey(.lighting, "milestone_odometer_steps", .numberList),
         SettingsKey(.devices, "devices[].blend_mode", .nullableString),
+        // The daemon's newer signal settings: the low-battery warning by
+        // time left and a per-provider ceiling under the escalation tier.
+        SettingsKey(.notifications, "battery_monitoring.low_battery_threshold_minutes", .number),
+        SettingsKey(.notifications, "escalation_tier_by_provider", .object),
     ]
 
     /// The person's own light documents: saved calibration profiles, the

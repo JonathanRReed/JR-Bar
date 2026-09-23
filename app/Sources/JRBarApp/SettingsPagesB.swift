@@ -698,6 +698,12 @@ struct NotificationsPage: View {
                           path: "battery_monitoring.low_battery_alert_enabled", default: true)
             SettingSlider(store, "Below", path: "battery_monitoring.low_battery_threshold_percent", in: 1...50, step: 1, default: 5) { "\(Int($0)) %" }
                 .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
+            SettingSlider(store, "Or with less left than",
+                          subtitle: "Time left, not charge: a fast drain at 20 % can be nearer empty than a slow one at 8 %. Twice as early while agents run under a keep-awake hold; never on macOS's first guess, never plugged in.",
+                          path: "battery_monitoring.low_battery_threshold_minutes", in: 0...120, step: 5, default: 0) { minutes in
+                minutes < 1 ? "Off" : "\(Int(minutes)) min"
+            }
+            .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
             SettingToggle(store, "Charging fill when idle", subtitle: "While plugged in and nothing is running, the strip fills to the charge level instead of the idle whisper. Agents always break through.",
                           path: "battery_monitoring.charging_idle_enabled", default: true)
             SettingToggle(store, "Show power changes", subtitle: "Plugging in or unplugging shows the charge on the lights for a few seconds.",
