@@ -303,6 +303,12 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// diagnostic, so the fallback can be proven on a Mac that never
     /// needs it.
     public var forceSpacerEngine: Bool
+    /// The desks the Mac has sat at — each set of displays attached at
+    /// once — and the profile the bar takes when that set arrives.
+    public var deskProfiles: [MenuBarDeskProfile]
+    /// The desk the bar last saw, so a set of displays that changed while
+    /// JR-Bar was not running still counts as an arrival.
+    public var lastDeskKey: String?
 
     /// The profile model this build writes.
     public static let currentProfileModel = 1
@@ -310,17 +316,21 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     public init(overlay: MenuBarOverlay? = nil, activeProfileID: String? = nil,
                 profileModel: Int = MenuBarCuration.currentProfileModel,
                 stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil,
-                forceSpacerEngine: Bool = false) {
+                forceSpacerEngine: Bool = false, deskProfiles: [MenuBarDeskProfile] = [],
+                lastDeskKey: String? = nil) {
         self.overlay = overlay
         self.activeProfileID = activeProfileID
         self.profileModel = profileModel
         self.stateRules = stateRules
         self.sceneBeforeRule = sceneBeforeRule
         self.forceSpacerEngine = forceSpacerEngine
+        self.deskProfiles = deskProfiles
+        self.lastDeskKey = lastDeskKey
     }
 
     private enum CodingKeys: String, CodingKey {
         case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule, forceSpacerEngine
+        case deskProfiles, lastDeskKey
     }
 
     /// One element that swallows its own decode failure — a rule written
@@ -340,6 +350,31 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
                                               forKey: .stateRules)) ?? []).compactMap(\.value)
         sceneBeforeRule = (try? c.decodeIfPresent(String.self, forKey: .sceneBeforeRule)) ?? nil
         forceSpacerEngine = (try? c.decodeIfPresent(Bool.self, forKey: .forceSpacerEngine)) ?? false
+        deskProfiles = ((try? c.decodeIfPresent([Lossy<MenuBarDeskProfile>].self,
+                                                forKey: .deskProfiles)) ?? []).compactMap(\.value)
+        lastDeskKey = (try? c.decodeIfPresent(String.self, forKey: .lastDeskKey)) ?? nil
+    }
+}
+
+/// A desk: one set of displays attached at once — the laptop alone, the
+/// laptop on the studio display, the lid shut on two externals — and the
+/// profile the bar takes each time that set arrives. Keyed by the
+/// displays' own identities, not the pointer or a display number, so
+/// docking picks the layout once and nothing is rewritten as the pointer
+/// crosses a seam.
+public struct MenuBarDeskProfile: Equatable, Codable, Sendable {
+    /// The display set's identity (`MenuBarDesk.key`).
+    public var key: String
+    /// What the card calls the desk while it is not attached.
+    public var name: String
+    /// The profile to take on arrival — a saved profile's id, or the
+    /// built-in None's.
+    public var profileID: String
+
+    public init(key: String, name: String, profileID: String) {
+        self.key = key
+        self.name = name
+        self.profileID = profileID
     }
 }
 

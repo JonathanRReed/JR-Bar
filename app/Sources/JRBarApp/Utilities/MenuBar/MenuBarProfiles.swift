@@ -238,5 +238,8 @@ enum MenuBarProfiles {
     nonisolated static func delete(id: String, in settings: inout MenuBarSettings) {
         settings.profiles.removeAll { $0.id == id }
         if settings.curation.activeProfileID == id { settings.curation.activeProfileID = nil }
+        // A desk or a display that took the profile has nothing to take.
+        settings.curation.deskProfiles.removeAll { $0.profileID == id }
+        settings.displayProfiles = settings.displayProfiles.filter { $0.value != id }
     }
 }

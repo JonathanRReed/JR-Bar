@@ -274,12 +274,13 @@ struct MenuBarUtilityControls: View {
                     spacerEditor
                     Divider()
                         .padding(.vertical, 4)
+                    deskProfileEditor
                     displayProfileEditor
                 }
                 .padding(.top, 4)
             } label: {
                 SettingLabel(title: "Extras",
-                             subtitle: "Spacer items, the bar underlay, the agent item, per-display profiles, and what the notch and menus cover.")
+                             subtitle: "Spacer items, the bar underlay, the agent item, profiles per desk and per display, and what the notch and menus cover.")
             }
 
             DisclosureGroup(isExpanded: $showOverrides) {
@@ -511,6 +512,55 @@ struct MenuBarUtilityControls: View {
         }
     }
 
+    /// The desk the Mac sits at — its set of displays — and the profile
+    /// the bar takes each time that set arrives, plus the other desks it
+    /// remembers.
+    @ViewBuilder
+    private var deskProfileEditor: some View {
+        let profiles = utility.settings().profiles
+        let desks = utility.settings().curation.deskProfiles
+        if let desk = utility.currentDesk, !profiles.isEmpty || !desks.isEmpty {
+            LabeledContent {
+                Picker(selection: Binding(
+                    get: { desks.first { $0.key == desk.key }?.profileID ?? "" },
+                    set: { utility.setProfileForCurrentDesk($0) })) {
+                    Text("No change").tag("")
+                    Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneID)
+                    ForEach(profiles) { profile in
+                        Text(profile.name).tag(profile.id)
+                    }
+                } label: { EmptyView() }
+                .labelsHidden()
+                .fixedSize()
+            } label: {
+                SettingLabel(title: "Profile at this desk",
+                             subtitle: "\(desk.name). Taken once each time these displays arrive — docking, undocking, the lid shutting — so a profile you pick by hand holds until the desk changes.")
+            }
+            ForEach(desks.filter { $0.key != desk.key }, id: \.key) { other in
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        Text(profileName(other.profileID))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button { utility.forgetDesk(key: other.key) } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .help("Forget this desk")
+                    }
+                } label: {
+                    SettingLabel(title: other.name)
+                }
+            }
+        }
+    }
+
+    private func profileName(_ id: String) -> String {
+        if id == MenuBarProfiles.noneID { return MenuBarProfiles.noneName }
+        return utility.settings().profiles.first { $0.id == id }?.name ?? "—"
+    }
+
     /// One row per attached display: which profile the bar takes while
     /// the pointer is on it.
     @ViewBuilder
@@ -518,7 +568,7 @@ struct MenuBarUtilityControls: View {
         let screens = NSScreen.screens
         if screens.count > 1 {
             SettingLabel(title: "Profile per display",
-                         subtitle: "The bar takes this profile while the pointer rests on that display — the mapping survives a logout, unlike a hotkey cycle.")
+                         subtitle: "The bar takes this profile while the pointer rests on that display — it follows the pointer; a desk's profile follows the displays.")
             ForEach(screens, id: \.self) { screen in
                 if let key = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue {
                     LabeledContent {

@@ -141,6 +141,10 @@ final class MenuBarUtility: Toy {
     /// pointer-screen sightings a pending switch has collected.
     @ObservationIgnored private var activeDisplayKey: String?
     @ObservationIgnored private var pendingDisplayKey: (key: String, count: Int)?
+    /// The desk the Mac sits at now — the card names it and maps it.
+    private(set) var currentDesk: (key: String, name: String)?
+    @ObservationIgnored private var deskObserver: Any?
+    @ObservationIgnored private var deskRead: Task<Void, Never>?
     /// The macOS 27 engine: `MenuBarAgent` conceals the hidden apps
     /// itself (`MenuBarConcealer`). nil where the private framework
     /// does not resolve — the spacer engine stands in then.
@@ -1227,6 +1231,7 @@ final class MenuBarUtility: Toy {
         actions.start()
         failedHotkeyActions = actions.hotkeys.failedActions
         syncExtras()
+        startDeskWatch()
         // First AX fill — a no-op without the grant — then reconcile
         // against real frames.
         Task { [weak self] in
@@ -1251,6 +1256,7 @@ final class MenuBarUtility: Toy {
         updateHideTask = nil
         overlayExpiry?.cancel()
         overlayExpiry = nil
+        stopDeskWatch()
         // A stopped utility holds nothing: the scene and the quiet go
         // back, the layers drop.
         if stateRulesSeeded {
@@ -1546,6 +1552,84 @@ final class MenuBarUtility: Toy {
         // Deferred — `applyProfile` writes settings, which reconciles;
         // running it inside `onPlan` would nest a reconcile in one.
         Task { @MainActor [weak self] in self?.applyProfile(id: profileID) }
+    }
+
+    // MARK: Desks
+
+    /// How long the screens must hold still before a desk is read — a
+    /// dock or a lid shutting reconfigures them in a burst.
+    nonisolated static let deskSettle: TimeInterval = 1.5
+
+    /// Read the desk now and again whenever the screens change.
+    private func startDeskWatch() {
+        guard deskObserver == nil else { return }
+        deskObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleDeskRead(after: Self.deskSettle) }
+        }
+        // Off start's stack: an arrival writes settings.
+        scheduleDeskRead(after: 0)
+    }
+
+    private func stopDeskWatch() {
+        if let deskObserver { NotificationCenter.default.removeObserver(deskObserver) }
+        deskObserver = nil
+        deskRead?.cancel()
+        deskRead = nil
+    }
+
+    private func scheduleDeskRead(after delay: TimeInterval) {
+        deskRead?.cancel()
+        deskRead = Task { @MainActor [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1e9)) }
+            guard !Task.isCancelled, let self, self.running else { return }
+            self.noteDesk(MenuBarDesk.current(),
+                          lidClosed: MenuBarSystemTriggerSource.clamshellClosed() ?? false)
+        }
+    }
+
+    /// A desk read: name it for the card and, when it is a different desk
+    /// from the last one seen, take the profile it maps to — once, so a
+    /// profile picked by hand afterwards holds until the desk changes.
+    func noteDesk(_ displays: [MenuBarDesk.Display], lidClosed: Bool) {
+        guard let key = MenuBarDesk.key(displays) else { return }
+        let name = MenuBarDesk.name(displays, lidClosed: lidClosed)
+        currentDesk = (key, name)
+        let curation = settings().curation
+        let arriving = MenuBarDesk.profileToApply(previousKey: curation.lastDeskKey,
+                                                  currentKey: key, desks: curation.deskProfiles)
+        let renamed = curation.deskProfiles.contains { $0.key == key && $0.name != name }
+        guard curation.lastDeskKey != key || renamed else { return }
+        update { draft in
+            draft.curation.lastDeskKey = key
+            if let index = draft.curation.deskProfiles.firstIndex(where: { $0.key == key }) {
+                draft.curation.deskProfiles[index].name = name
+            }
+        }
+        if let arriving, deskProfileExists(arriving) { applyProfile(id: arriving) }
+    }
+
+    /// Map the current desk to a profile (empty clears it). Picking one
+    /// takes it now — the desk you are at is the one you are choosing for.
+    func setProfileForCurrentDesk(_ profileID: String) {
+        guard let desk = currentDesk else { return }
+        update { draft in
+            draft.curation.deskProfiles = MenuBarDesk.setting(profileID, forKey: desk.key, name: desk.name,
+                                                              in: draft.curation.deskProfiles)
+            draft.curation.lastDeskKey = desk.key
+        }
+        if !profileID.isEmpty, deskProfileExists(profileID) { applyProfile(id: profileID) }
+    }
+
+    /// Forget a desk that is not attached.
+    func forgetDesk(key: String) {
+        update { draft in draft.curation.deskProfiles.removeAll { $0.key == key } }
+    }
+
+    private func deskProfileExists(_ id: String) -> Bool {
+        id == MenuBarProfiles.noneID || settings().profiles.contains { $0.id == id }
     }
 
     // MARK: The concealer (macOS 27)
