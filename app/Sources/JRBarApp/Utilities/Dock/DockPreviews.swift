@@ -77,16 +77,25 @@ final class DockPanelWatchers {
 /// `onChange` a beat later (a new window posts created, titled and
 /// focused in a row). DockDoor 1.40's live list — the cards follow the
 /// app instead of only our own verbs.
+///
+/// A burst never outlasts `maxWait`: a terminal whose agent spins its
+/// title ("⠂ Claude" → "⠐ Claude") retitles faster than the debounce,
+/// and a trailing-only settle would never fire while the agent works —
+/// the one window the preview most needs to follow.
 @MainActor
 final class DockWindowObserver {
     var onChange: (@MainActor () -> Void)?
     /// A burst's settle time before one refresh runs.
-    static let debounce: TimeInterval = 0.15
+    nonisolated static let debounce: TimeInterval = 0.15
+    /// The longest a burst can hold its refresh back.
+    nonisolated static let maxWait: TimeInterval = 0.5
 
     private var observer: AXObserver?
     private(set) var pid: pid_t?
     private var watched = Set<AXUIElement>()
     private var pending: DispatchWorkItem?
+    /// When the pending burst's first notification landed.
+    private var burstStart: TimeInterval?
 
     static let appNotifications = [kAXWindowCreatedNotification]
     static let windowNotifications = [
@@ -129,6 +138,7 @@ final class DockWindowObserver {
     func stop() {
         pending?.cancel()
         pending = nil
+        burstStart = nil
         if let observer {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         }
@@ -139,13 +149,30 @@ final class DockWindowObserver {
 
     private var refcon: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
 
-    private func fire() {
+    /// One notification: re-arm the settle, but never past the burst's
+    /// `maxWait`. Internal for the tests, which fire bursts directly.
+    func fire() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let start = burstStart ?? now
+        burstStart = start
         pending?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.onChange?() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pending = nil
+                self.burstStart = nil
+                self.onChange?()
+            }
         }
         pending = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.delay(now: now, burstStart: start), execute: work)
+    }
+
+    /// Seconds from `now` until the refresh runs: the settle, cut short
+    /// so the burst that began at `burstStart` refreshes by `maxWait`.
+    nonisolated static func delay(now: TimeInterval, burstStart: TimeInterval) -> TimeInterval {
+        max(0, min(debounce, burstStart + maxWait - now))
     }
 
     isolated deinit { stop() }

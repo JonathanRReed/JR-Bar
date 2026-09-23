@@ -131,6 +131,51 @@ struct DockPreviewAgentTests {
                 "with no id and no element, nothing proves two rows are one window")
     }
 
+    @Test("a retitle alone asks for no stills; a newcomer or a window back from the Dock does")
+    func liveStills() {
+        let still = NSImage(size: NSSize(width: 4, height: 4))
+        func card(_ id: Int, _ title: String, minimized: Bool = false, still: NSImage? = nil) -> DockPreviewWindow {
+            DockPreviewWindow(id: id, title: title, minimized: minimized, fullScreen: nil,
+                              frame: nil, thumbnail: still, element: nil, windowID: CGWindowID(id))
+        }
+        let parked = card(2, "Notes", minimized: true)
+        let old = [card(1, "⠂ Claude", still: still), parked]
+        #expect(!DockEnhanceMath.wantsStills(old: old, new: [card(1, "⠐ Claude", still: still), parked]),
+                "a spinner retitle is a re-list, not a capture")
+        #expect(!DockEnhanceMath.wantsStills(old: old, new: [card(1, "⠐ Claude", still: still),
+                                                            card(2, "Notes (edited)", minimized: true)]),
+                "a minimized card with no still already had its pass")
+        #expect(DockEnhanceMath.wantsStills(old: old, new: old + [card(3, "New")]))
+        #expect(DockEnhanceMath.wantsStills(old: old, new: [old[0], card(2, "Notes")]),
+                "a window back from the Dock can be captured now")
+    }
+
+    @Test("a burst's refresh waits for the settle but never past the max wait")
+    func observerMaxWait() {
+        let debounce = DockWindowObserver.debounce, maxWait = DockWindowObserver.maxWait
+        #expect(DockWindowObserver.delay(now: 10, burstStart: 10) == debounce)
+        #expect(DockWindowObserver.delay(now: 10.2, burstStart: 10) == debounce)
+        #expect(abs(DockWindowObserver.delay(now: 10.4, burstStart: 10) - (maxWait - 0.4)) < 1e-9,
+                "the settle is cut short so the burst refreshes by its max wait")
+        #expect(DockWindowObserver.delay(now: 10.9, burstStart: 10) == 0)
+        #expect(maxWait > debounce && maxWait <= 0.5)
+    }
+
+    @Test("a spinner's retitles, faster than the settle, still refresh while they keep coming")
+    func observerBurstRefreshes() async throws {
+        let observer = DockWindowObserver()
+        var changes: [TimeInterval] = []
+        observer.onChange = { changes.append(ProcessInfo.processInfo.systemUptime) }
+        let start = ProcessInfo.processInfo.systemUptime
+        let burst = DockWindowObserver.maxWait * 3
+        while ProcessInfo.processInfo.systemUptime - start < burst {
+            observer.fire()
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        #expect(!changes.isEmpty, "a trailing-only settle never fired while the title kept spinning")
+        observer.stop()
+    }
+
     @Test("stopping the live watch forgets the app")
     func observerStops() {
         let observer = DockWindowObserver()

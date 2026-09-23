@@ -786,6 +786,18 @@ enum DockEnhanceMath {
         }
     }
 
+    /// Whether a live refresh earns a capture pass: a still-less card
+    /// that just appeared, or one just back from the Dock. A card that
+    /// was already there without a still had its pass — a terminal
+    /// retitling every beat must not ask the window server each time.
+    static func wantsStills(old: [DockPreviewWindow], new: [DockPreviewWindow]) -> Bool {
+        new.contains { card in
+            guard card.thumbnail == nil else { return false }
+            guard let prior = old.first(where: { $0.id == card.id }) else { return true }
+            return prior.minimized && !card.minimized
+        }
+    }
+
     /// "Only windows on this display": cards whose window's centre sits
     /// on `display` (Quartz space). Minimized and frameless windows stay
     /// — they belong to no display, and the filter never hides what it
@@ -2255,13 +2267,16 @@ final class DockEnhanceController {
 
     /// The previewed app's windows changed under the open panel — a new
     /// one, a closed one, a retitle, a minimize. Re-list, keep every
-    /// surviving card's id and still, watch the newcomers, and fetch
-    /// stills only for cards that have none.
+    /// surviving card's id and still, and watch the newcomers. The panel
+    /// moves only when its size changed, and stills are fetched only for
+    /// newcomers and windows just back from the Dock: a retitle is a
+    /// re-list and nothing more.
     private func refreshLiveWindows(force: Bool = false) {
         guard let panel, panel.isVisible, let pid = preview.processIdentifier,
               force || windowObserver.pid == pid, preview.folderURL == nil else { return }
-        let merged = DockEnhanceMath.mergeWindows(old: preview.windows, new: listWindows(pid: pid))
-        guard DockEnhanceMath.cardsDiffer(preview.windows, merged) else { return }
+        let old = preview.windows
+        let merged = DockEnhanceMath.mergeWindows(old: old, new: listWindows(pid: pid))
+        guard DockEnhanceMath.cardsDiffer(old, merged) else { return }
         preview.windows = merged
         windowObserver.watch(merged.compactMap(\.element))
         if let selected = preview.selectedWindowID, !merged.contains(where: { $0.id == selected }) {
@@ -2279,9 +2294,9 @@ final class DockEnhanceController {
         }
         preview.compact = DockEnhanceMath.compactList(
             windowCount: merged.count, limit: preferences.compactListLimit)
-        reframe()
+        reframe(onlyIfResized: true)
         guard preferences.showThumbnails, !preview.compact, screenCaptureGranted,
-              merged.contains(where: { $0.thumbnail == nil }) else { return }
+              DockEnhanceMath.wantsStills(old: old, new: merged) else { return }
         let generationAtRefresh = generation
         let bundleID = preview.bundleID
         let offscreen = preferences.includeOffscreenWindows
@@ -3289,10 +3304,13 @@ final class DockEnhanceController {
 
     /// The panel's content changed size (a card left): re-fit on the
     /// same tile, from the same edge, clamped to the same screen.
-    private func reframe() {
+    /// `onlyIfResized` leaves a panel whose content still fits its frame
+    /// where it is — a live retitle usually changes nothing it sizes by.
+    private func reframe(onlyIfResized: Bool = false) {
         guard let panel, panel.isVisible else { return }
+        let size = panel.fittingSize()
+        if onlyIfResized, size == panel.frame.size { return }
         guard let anchor else {
-            let size = panel.fittingSize()
             var frame = panel.frame
             frame.origin.x += (frame.width - size.width) / 2
             frame.size = size
@@ -3305,7 +3323,7 @@ final class DockEnhanceController {
         let itemFrame = anchorFrame(for: anchor.item, edge: anchor.edge,
                                     pointer: NSEvent.mouseLocation)
         panel.setFrame(DockEnhanceMath.panelFrame(
-            anchor: itemFrame, edge: anchor.edge, size: panel.fittingSize(),
+            anchor: itemFrame, edge: anchor.edge, size: size,
             screen: anchor.screen, gap: Self.panelGap,
             labelClearance: DockEnhanceMath.nativeLabelClearance(
                 title: preview.appName, edge: anchor.edge)), display: true)
