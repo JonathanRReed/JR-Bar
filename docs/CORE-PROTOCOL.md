@@ -92,7 +92,7 @@ protocol 1. Timestamps are Unix epoch seconds.
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
           "answerable":true,"replyable":false,"request":"request:v1:{…}",
-          "decision":{"hold_until":1788982845.0,"always":false,"decided":false},
+          "decision":{"hold_until":1788982845.0,"always":false,"decided":false,"choices":[]},
           "preview":"rm -rf build","risk":"destructive"}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
@@ -241,6 +241,15 @@ Vocabulary:
   `PermissionRequest` the ingress saw for that exact request id (Claude,
   Codex, Devin, Grok, OpenCode, pi; remembered for an hour), and are `null`
   when there was none.
+- `ask.decision.choices` is non-empty while the lane holds a Claude
+  `AskUserQuestion`: `[{question, header, options: [label…], multi}]`, one
+  entry per question in the agent's order (1–4 questions, 1–8 distinct
+  labels each). Such an ask is answered by picking --
+  `answer_ask {decision: "answer", answers: {<question>: <label>}}`, a list
+  of labels for a `multi` question -- from any terminal. Its `answerable`
+  and `replyable` stay what the keystroke path can do, since a bare
+  Approve never answers a question. `preview` is the first question's text
+  (`+N` for more). `choices` is `[]` for a yes/no hold.
 - `pid` is the process registry's live pid for that session (absent when
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
@@ -769,7 +778,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | name | args | effect / result |
 | --- | --- | --- |
 | `open_session` | session, action? | A session still running in a terminal is **raised, not resumed** (`answer_surfaces.py`): its tmux pane (`list-panes -a` matched by the session's tty, then `select-window`/`select-pane`, switching a lone client to that tmux session), its Terminal.app or iTerm2 tab (selected by tty over Apple events), or its Ghostty terminal (`focus` on the surface recorded when the session started, else the only terminal in the session's working directory, else the only one whose title carries the session's name; a tie brings Ghostty forward and never guesses); any other host app is activated. Reply `{session, activated, origin, raised: "pane"\|"tab"\|"terminal"\|"app", app, bundle_id, detail}`. Opening also lets a request the decide lane holds for that session fall through, so a Codex prompt waiting behind the hook appears at once. A live session JR-Bar cannot find refuses `not_found` ("…still running, but JR-Bar can't find its window; nothing new was started.") instead of starting a second process on it. An ended CLI session whose open is a terminal resume resumes **in the terminal it ran in** (recorded at its SessionStart), not whichever app is in front: a new tab in Ghostty's front window at the session's directory with the resume command typed into the owner's own shell (a new window through the reviewed launch plan when Ghostty refuses the Apple event), or a new Terminal.app / iTerm2 window -- `raised: "new_tab"\|"new_window"`, `detail: "resumed"`. A remote row, a session hosted by its provider's desktop app, an explicit `action` of `app`/`vscode`, or a Clicks-open / provider-profile choice of either keeps the controller's `open_session` (provider URL, or `cd <cwd> && <cli> --resume <id>` in a terminal): `{session, activated, origin}`. `action: "raise"` asks for the live path explicitly. |
-| `answer_ask` | session, decision (`approve`/`deny`, or `always` for a held request that offers it), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | A request the decide lane holds (`ask.decision` non-null) is answered first, through the agent's own `PermissionRequest` hook: `{session, decision, answered, delivered, code: "sent", message, confirmation: "provider_pending", mechanism: "permission_hook"}` -- see "The decide lane" below. Anything else is answered **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- kitty, WezTerm, Alacritty have no such call; Ghostty proves its focused terminal by working directory instead, and two Ghostty terminals in one directory stay unproven) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is `focused_tab_tty` (the terminal named the focused tab and it is this session's) or, in Ghostty, `focused_surface_cwd` (its focused terminal is the only one in the session's directory). See the refusals below. |
+| `answer_ask` | session, decision (`approve`/`deny`, or `always` for a held request that offers it, or `answer` for a held question), answers (with `answer` only: `{<question text>: <label>}` for every question in `ask.decision.choices`, a list of labels for a `multi` one), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | A request the decide lane holds (`ask.decision` non-null) is answered first, through the agent's own `PermissionRequest` hook: `{session, decision, answered, delivered, code: "sent", message, confirmation: "provider_pending", mechanism: "permission_hook"}` -- see "The decide lane" below. Anything else is answered **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- kitty, WezTerm, Alacritty have no such call; Ghostty proves its focused terminal by working directory instead, and two Ghostty terminals in one directory stay unproven) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is `focused_tab_tty` (the terminal named the focused tab and it is this session's) or, in Ghostty, `focused_surface_cwd` (its focused terminal is the only one in the session's directory). See the refusals below. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
@@ -903,6 +912,7 @@ banner action, the notch, a deck key or the Rail:
 | `approve` | `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` |
 | `deny` | `{"behavior":"deny","message":"The user denied this tool call from JR-Bar."}` -- plus `"interrupt":true` for Claude, which stops the turn the way Esc on its own prompt does. Codex takes no `interrupt`. |
 | `always` | Claude only, and only when `ask.decision.always`: `{"behavior":"allow","updatedPermissions":[…]}` with the request's own `addRules`/`allow` suggestions copied field by field. Mode changes and directory grants are never echoed. Anything else refuses `unsupported`. |
+| `answer` | Claude's `AskUserQuestion` only, and only when `ask.decision.choices` is non-empty: `{"behavior":"allow","updatedInput":{…the agent's own input…,"answers":{"<question>":"<label>"}}}` -- the documented way to answer the tool from a hook. A `multi` question's labels are joined with `", "` in the agent's own option order. `answers` must name every question exactly and pick only offered labels, or it refuses `invalid_args` before anything is sent. |
 
 Only an explicit `answer_ask` decides. The hold ends without a verdict --
 the shim prints nothing, which both agents read as "no decision", so their
@@ -913,14 +923,24 @@ gone, when `open_session` opens the session to answer it there, or when the
 daemon stops. Claude Code shows its own prompt while the hook runs and takes
 whichever answer comes first, so a hold costs it nothing; Codex asks its
 hooks before it shows the prompt, so a Codex request is not held while its
-terminal is the frontmost app. `AskUserQuestion` and `ExitPlanMode` are never
-held: their answer is a choice or a plan, not a yes. At most 16 requests are
-held at once; past that they fall through.
+terminal is the frontmost app. `ExitPlanMode` is never held: its answer is
+a plan, not a yes. Claude's `AskUserQuestion` is held as a choice when every
+question and option can be offered exactly (1–4 questions with distinct
+texts, 1–8 distinct printable labels each, no comma in a multi-select
+label, the input under 24 KiB); anything else keeps the agent's own
+prompt. On a held question `approve` and `always` are never sent -- a bare
+allow would run it with no answer -- so `approve` takes the keystroke path
+it always had, and `deny` declines it like Esc. The question's request id
+ignores `answers`, so the `PostToolUse` of a question answered in its own
+prompt releases the hold. At most 16 requests are held at once; past that
+they fall through.
 
 Refusals on a held request: `stale_request` (the card's `request` is not the
 live one), `stale_ask` ("That ask was already answered from JR-Bar.", "JR-Bar's
 hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …") and
-`unsupported` (an `always` with nothing to remember). A request the lane
+`unsupported` (an `always` with nothing to remember, an `answer` on an ask
+with no `choices` or with nothing held), `invalid_args` (`answers` that do
+not pick from the offered options for every question). A request the lane
 does not hold goes through the checks above unchanged.
 
 ### subscribe

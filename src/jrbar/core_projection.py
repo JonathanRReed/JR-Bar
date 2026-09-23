@@ -912,7 +912,10 @@ def ask_document(
         answer_contracts,
         has_answer_handler,
         host_bundle_ids,
-        decision_parked=parked is not None,
+        # A held question is answered by picking its options
+        # (``decision.choices``); its Approve/Deny stay the keystroke
+        # path's to offer, exactly as before it was held.
+        decision_parked=parked is not None and not parked.choices,
     )
     # The ask's exact episode identity: the canonical request key when the
     # operator state models one, ``None`` when it does not. A surface that
@@ -937,7 +940,8 @@ def ask_document(
         "request": request_identity,
         # The decide lane's hold, while the agent's permission hook waits on
         # JR-Bar: when it falls through to the agent's own prompt, whether
-        # an Always allow can be sent, and whether it was just answered.
+        # an Always allow can be sent, whether it was just answered, and a
+        # held question's options.
         "decision": parked.document() if parked is not None else None,
         # What the agent wants to run, one bounded line, and a mark when it
         # is the kind of command that loses work if it runs by mistake --

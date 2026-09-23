@@ -53,6 +53,39 @@ struct DecideLaneCodecTests {
         #expect(odd.canAnswer)
     }
 
+    @Test("a held question decodes its choices, and only a held one offers them")
+    func heldChoices() throws {
+        let question = try ask("""
+        {"session":"claude:session:a","kind":"input","answerable":false,"replyable":false,
+         "decision":{"hold_until":1788982845.0,"always":false,"decided":false,
+                     "choices":[{"question":"Which framework?","header":"Framework",
+                                 "options":["React","Vue"],"multi":false},
+                                {"question":"Which extras?","header":null,
+                                 "options":["Tests","Docs"],"multi":true}]},
+         "preview":"Which framework? +1","risk":null}
+        """)
+        #expect(question.canChoose)
+        #expect(!question.canAnswer)
+        #expect(question.decision?.choices.count == 2)
+        #expect(question.decision?.choices.first == CoreAskChoice(question: "Which framework?", header: "Framework",
+                                                                   options: ["React", "Vue"]))
+        #expect(question.decision?.choices.last?.multi == true)
+        #expect(question.decision?.choices.last?.header == nil)
+
+        let answered = try ask("""
+        {"session":"s","decision":{"hold_until":1.0,"decided":true,
+         "choices":[{"question":"q","options":["a"],"multi":false}]}}
+        """)
+        #expect(!answered.canChoose)
+        // A yes/no hold, an older daemon, or a malformed list offers no choices.
+        let yesNo = try ask(#"{"session":"s","decision":{"hold_until":1.0,"always":false,"decided":false}}"#)
+        #expect(yesNo.decision?.choices == [])
+        #expect(!yesNo.canChoose)
+        let odd = try ask(#"{"session":"s","decision":{"hold_until":1.0,"choices":"React"}}"#)
+        #expect(odd.isHeldForDecision)
+        #expect(!odd.canChoose)
+    }
+
     @Test("the fields survive a round trip")
     func roundTrip() throws {
         let original = CoreAsk(session: "s", kind: "permission", answerable: true, request: "r",
@@ -60,5 +93,12 @@ struct DecideLaneCodecTests {
                                preview: "npm test", risk: nil)
         let decoded = try JSONDecoder().decode(CoreAsk.self, from: JSONEncoder().encode(original))
         #expect(decoded == original)
+        let choosing = CoreAsk(session: "s", kind: "input", answerable: false,
+                               decision: CoreAskDecision(holdUntil: 3, choices: [
+                                   CoreAskChoice(question: "Which?", header: "Pick", options: ["A", "B"], multi: true),
+                               ]))
+        let back = try JSONDecoder().decode(CoreAsk.self, from: JSONEncoder().encode(choosing))
+        #expect(back == choosing)
+        #expect(back.canChoose)
     }
 }

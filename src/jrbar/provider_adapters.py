@@ -954,6 +954,10 @@ def _request_identifier(value: object) -> RequestIdentifier | None:
 # tool call: Codex puts its escalation justification in tool_input as
 # ``description``, so PermissionRequest and PostToolUse would disagree.
 _REQUEST_SIGNATURE_IGNORED_INPUT: Final = frozenset({"description", "justification"})
+# Claude's AskUserQuestion is asked without ``answers`` and runs with them
+# (the owner's picks, from its own prompt or through the decide lane's
+# updatedInput): the question is the same request either way.
+_REQUEST_SIGNATURE_IGNORED_ANSWERS: Final = {"AskUserQuestion": frozenset({"answers"})}
 
 
 def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
@@ -979,10 +983,13 @@ def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
         scope = record.turn_id
     if type(scope) is not str or not scope:
         scope = record.session_id if type(record.session_id) is str else ""
+    ignored_answers = _REQUEST_SIGNATURE_IGNORED_ANSWERS.get(tool_name, frozenset())
     signature = {
         key: value
         for key, value in tool_input.items()
-        if type(key) is str and key not in _REQUEST_SIGNATURE_IGNORED_INPUT
+        if type(key) is str
+        and key not in _REQUEST_SIGNATURE_IGNORED_INPUT
+        and key not in ignored_answers
     }
     try:
         encoded = json.dumps(

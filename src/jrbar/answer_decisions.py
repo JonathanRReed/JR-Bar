@@ -28,6 +28,12 @@ default, and "Always allow" is a verb of its own: it echoes the agent's
 own ``permission_suggestions`` allow rules, never a mode change, and only
 for Claude (Codex fails closed on ``updatedPermissions`` today).
 
+Claude's AskUserQuestion is held too, as a choice rather than a yes: the
+card gets the questions and their options, and "answer" -- a verb of its
+own, with one of the offered labels per question -- sends the agent's own
+input back with its documented ``answers`` field filled in. A bare approve
+never answers a question; it keeps the keystroke path it always had.
+
 Claude Code shows its own prompt while the hook runs and takes whichever
 answer comes first, so a hold costs nothing there. Codex asks its hooks
 before it shows the prompt, so a hold delays the prompt; a Codex request
@@ -71,8 +77,23 @@ DECIDE_PROVIDERS: Final = frozenset({"claude", "codex"})
 ALWAYS_ALLOW_PROVIDERS: Final = frozenset({"claude"})
 #: Tools whose "allow" is not a permission but the answer itself: an
 #: allow without the chosen option or the edited plan is ignored by
-#: Claude Code, so these keep their own prompt.
+#: Claude Code, so a yes/no never decides them. ExitPlanMode keeps its own
+#: prompt; AskUserQuestion is held as a choice (``CHOICE_TOOLS``).
 UNDECIDABLE_TOOLS: Final = frozenset({"AskUserQuestion", "ExitPlanMode"})
+#: Claude's multiple-choice question. Its answer is an allow whose
+#: ``updatedInput`` echoes the agent's own input plus ``answers``, a map of
+#: each question's text to the chosen option's label ("Claude doesn't set
+#: this field; supply it via updatedInput to answer programmatically" --
+#: Claude Code's hooks reference, checked 2026-09-23). Codex has no such tool.
+CHOICE_TOOLS: Final = frozenset({"AskUserQuestion"})
+CHOICE_PROVIDERS: Final = frozenset({"claude"})
+MAX_CHOICE_QUESTIONS: Final = 4
+MAX_CHOICE_OPTIONS: Final = 8
+_MAX_CHOICE_QUESTION_TEXT: Final = 500
+_MAX_CHOICE_LABEL: Final = 120
+#: The echoed input is bounded so the verdict line always fits what the
+#: shim will print (hook_ingress_protocol.MAX_HOOK_DECISION_BYTES).
+MAX_CHOICE_INPUT_BYTES: Final = 24 * 1024
 #: Events that prove a parked prompt is gone.
 _TURN_OVER_EVENTS: Final = frozenset(
     {"Stop", "StopFailure", "SessionEnd", "UserPromptSubmit", "Interrupt"}
@@ -96,6 +117,8 @@ class DecisionVerb(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
     ALWAYS = "always"
+    #: Pick options on a held question (``CHOICE_TOOLS``).
+    ANSWER = "answer"
 
 
 class DecisionResult(str, Enum):
@@ -107,11 +130,30 @@ class DecisionResult(str, Enum):
     NOT_PARKED = "not_parked"
     #: Somebody answered it a moment ago.
     ALREADY_DECIDED = "already_decided"
-    #: That verb cannot be sent for this request (Always without rules).
+    #: That verb cannot be sent for this request: Always without rules, a
+    #: bare allow on a question, answers that pick nothing offered.
     UNSUPPORTED = "unsupported"
 
 
 # --- the payload ---------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ChoiceQuestion:
+    """One question of a held AskUserQuestion, as the card offers it."""
+
+    question: str
+    header: str | None
+    options: tuple[str, ...]
+    multi: bool = False
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "question": self.question,
+            "header": self.header,
+            "options": list(self.options),
+            "multi": self.multi,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +167,8 @@ class PermissionFacts:
     tool_input: Mapping[str, Any] = field(repr=False)
     always_rules: tuple[dict[str, Any], ...] = ()
     cwd: str | None = None
+    #: The questions, when this request is a question to pick answers for.
+    choices: tuple[ChoiceQuestion, ...] = ()
 
 
 def _request_identity(provider: str, payload_text: str) -> tuple[str, Any] | None:
@@ -170,11 +214,19 @@ def permission_facts(provider: object, payload_text: object) -> PermissionFacts 
     if (
         type(tool_name) is not str
         or not tool_name
-        or tool_name in UNDECIDABLE_TOOLS
         or not isinstance(tool_input, dict)
         or type(session_id) is not str
         or not session_id
     ):
+        return None
+    # A question is held only when every part of it can be offered and
+    # answered exactly; anything odd keeps the agent's own prompt.
+    choices = (
+        choice_questions(tool_input)
+        if tool_name in CHOICE_TOOLS and provider in CHOICE_PROVIDERS
+        else ()
+    )
+    if tool_name in UNDECIDABLE_TOOLS and not choices:
         return None
     request_id = hook_request_identity(record)
     if request_id is None:
@@ -187,11 +239,113 @@ def permission_facts(provider: object, payload_text: object) -> PermissionFacts 
         tool_input=dict(tool_input),
         always_rules=(
             always_allow_rules(raw.get("permission_suggestions"))
-            if provider in ALWAYS_ALLOW_PROVIDERS
+            if provider in ALWAYS_ALLOW_PROVIDERS and not choices
             else ()
         ),
         cwd=record.cwd if type(record.cwd) is str else None,
+        choices=choices,
     )
+
+
+def choice_questions(tool_input: object) -> tuple[ChoiceQuestion, ...]:
+    """AskUserQuestion's questions as the card can offer them, or ``()``
+    when any part cannot be offered and answered exactly: one to four
+    questions with distinct texts, each with one to eight distinct,
+    printable option labels (no comma in a multi-select label, since the
+    answer joins them with commas), inside a bounded input the verdict can
+    echo back whole."""
+    if not isinstance(tool_input, Mapping):
+        return ()
+    questions = tool_input.get("questions")
+    if not isinstance(questions, list) or not 1 <= len(questions) <= MAX_CHOICE_QUESTIONS:
+        return ()
+    try:
+        size = len(json.dumps(tool_input, ensure_ascii=True, separators=(",", ":")))
+    except (TypeError, ValueError):
+        return ()
+    if size > MAX_CHOICE_INPUT_BYTES:
+        return ()
+    parsed: list[ChoiceQuestion] = []
+    for entry in questions:
+        if not isinstance(entry, dict):
+            return ()
+        text = entry.get("question")
+        if (
+            type(text) is not str
+            or not text.strip()
+            or len(text) > _MAX_CHOICE_QUESTION_TEXT
+            or any(question.question == text for question in parsed)
+        ):
+            return ()
+        multi = entry.get("multiSelect", False)
+        if type(multi) is not bool:
+            return ()
+        options = entry.get("options")
+        if not isinstance(options, list) or not 1 <= len(options) <= MAX_CHOICE_OPTIONS:
+            return ()
+        labels: list[str] = []
+        for option in options:
+            label = option.get("label") if isinstance(option, dict) else None
+            if (
+                type(label) is not str
+                or not label.strip()
+                or len(label) > _MAX_CHOICE_LABEL
+                or not label.isprintable()
+                or label in labels
+                or (multi and "," in label)
+            ):
+                return ()
+            labels.append(label)
+        header = entry.get("header")
+        parsed.append(
+            ChoiceQuestion(
+                question=text,
+                # Display only: an odd header is dropped, never a reason to refuse.
+                header=(
+                    header.strip()
+                    if type(header) is str
+                    and header.strip()
+                    and len(header) <= _MAX_CHOICE_LABEL
+                    and header.isprintable()
+                    else None
+                ),
+                options=tuple(labels),
+                multi=multi,
+            )
+        )
+    return tuple(parsed)
+
+
+def choice_answers(questions: object, answers: object) -> dict[str, str] | None:
+    """The ``answers`` map to send, or ``None`` unless ``answers`` picks
+    from the offered options for every question and names nothing else:
+    one label for a single-select question; one label or a list of
+    distinct labels for a multi-select one, joined with commas in the
+    agent's own option order, as the hooks reference documents."""
+    if not isinstance(questions, tuple) or not questions or not isinstance(answers, Mapping):
+        return None
+    if set(answers) != {question.question for question in questions}:
+        return None
+    chosen: dict[str, str] = {}
+    for question in questions:
+        value = answers[question.question]
+        if question.multi:
+            picked = [value] if type(value) is str else value
+            if (
+                not isinstance(picked, list)
+                or not picked
+                or any(type(label) is not str or label not in question.options for label in picked)
+                or len(set(picked)) != len(picked)
+            ):
+                return None
+            chosen[question.question] = ", ".join(
+                label for label in question.options if label in picked
+            )
+        else:
+            if type(value) is not str or value not in question.options:
+                return None
+            chosen[question.question] = value
+    return chosen
 
 
 def _bounded_text(value: object) -> str | None:
@@ -256,12 +410,26 @@ def decision_document(
     verb: DecisionVerb,
     *,
     always_rules: Iterable[Mapping[str, Any]] = (),
+    answered_input: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The exact hookSpecificOutput each agent documents for its verdict."""
+    """The exact hookSpecificOutput each agent documents for its verdict.
+
+    ``answered_input`` is ``answer``'s: the agent's own tool input with its
+    ``answers`` filled in (``choice_answers``), sent back whole because
+    ``updatedInput`` replaces the input rather than merging into it."""
     if provider not in DECIDE_PROVIDERS or type(verb) is not DecisionVerb:
         raise ValueError("invalid decision")
-    if verb is DecisionVerb.DENY:
-        decision: dict[str, Any] = {"behavior": "deny", "message": DENY_MESSAGE}
+    if verb is DecisionVerb.ANSWER:
+        if (
+            provider not in CHOICE_PROVIDERS
+            or not isinstance(answered_input, Mapping)
+            or not isinstance(answered_input.get("answers"), Mapping)
+            or not answered_input.get("answers")
+        ):
+            raise ValueError("an answer needs the agent's own questions and the chosen options")
+        decision: dict[str, Any] = {"behavior": "allow", "updatedInput": dict(answered_input)}
+    elif verb is DecisionVerb.DENY:
+        decision = {"behavior": "deny", "message": DENY_MESSAGE}
         if provider == "claude":
             # Esc on Claude's own prompt stops the turn; a deny from JR-Bar
             # does the same instead of letting Claude try its way around it.
@@ -299,6 +467,13 @@ def tool_preview(tool_name: object, tool_input: object) -> str | None:
     Token-shaped runs are masked; the card is a glance surface."""
     if type(tool_name) is not str or not isinstance(tool_input, Mapping):
         return None
+    if tool_name in CHOICE_TOOLS:
+        # The question itself, which is what the owner is being asked.
+        questions = choice_questions(tool_input)
+        if not questions:
+            return None
+        more = f" +{len(questions) - 1}" if len(questions) > 1 else ""
+        return _one_line(questions[0].question) + more
     command = tool_input.get("command")
     if isinstance(command, list) and all(type(part) is str for part in command):
         command = " ".join(command)
@@ -373,12 +548,16 @@ class ParkedDecision:
     risk: str | None
     #: True for a request answered moments ago (the tombstone).
     decided: bool = False
+    #: A held question's questions and options (``answer``); ``()`` for a
+    #: yes/no request.
+    choices: tuple[ChoiceQuestion, ...] = ()
 
     def document(self) -> dict[str, Any]:
         return {
             "hold_until": round(self.hold_until_epoch, 3),
             "always": self.can_always_allow,
             "decided": self.decided,
+            "choices": [question.document() for question in self.choices],
         }
 
 
@@ -526,7 +705,19 @@ class DecisionBroker:
 
     # -- answering (the answer_ask side) --
 
-    def decide(self, provider: str, request_id: str, verb: DecisionVerb) -> DecisionResult:
+    def decide(
+        self,
+        provider: str,
+        request_id: str,
+        verb: DecisionVerb,
+        *,
+        answers: object = None,
+    ) -> DecisionResult:
+        """Send ``verb`` to the oldest hook parked on that request.
+
+        A held question takes ``answer`` (with ``answers``, see
+        ``choice_answers``) or ``deny`` and nothing else: a bare allow would
+        run it with no answer. ``answer`` on a yes/no request is refused."""
         if type(verb) is not DecisionVerb:
             return DecisionResult.UNSUPPORTED
         now = self._clock()
@@ -539,9 +730,32 @@ class DecisionBroker:
                 return DecisionResult.NOT_PARKED
             if verb is DecisionVerb.ALWAYS and not slot.facts.always_rules:
                 return DecisionResult.UNSUPPORTED
-            slot.verdict = decision_document(
-                slot.facts.provider, verb, always_rules=slot.facts.always_rules
-            )
+            answered_input = None
+            if slot.facts.choices:
+                if verb in (DecisionVerb.ALLOW, DecisionVerb.ALWAYS):
+                    return DecisionResult.UNSUPPORTED
+                if verb is DecisionVerb.ANSWER:
+                    chosen = choice_answers(slot.facts.choices, answers)
+                    if chosen is None:
+                        return DecisionResult.UNSUPPORTED
+                    answered_input = {**slot.facts.tool_input, "answers": chosen}
+            elif verb is DecisionVerb.ANSWER:
+                return DecisionResult.UNSUPPORTED
+            try:
+                verdict = decision_document(
+                    slot.facts.provider,
+                    verb,
+                    always_rules=slot.facts.always_rules,
+                    answered_input=answered_input,
+                )
+                from .hook_ingress_protocol import encode_hook_decision
+
+                # A verdict the shim would not print is no verdict: refuse
+                # it here, while the hold still stands, not after sending.
+                encode_hook_decision(verdict)
+            except (TypeError, ValueError):
+                return DecisionResult.UNSUPPORTED
+            slot.verdict = verdict
             slot.state = "decided"
             self._slots.pop(slot.token, None)
             self._decided[(provider, request_id)] = now + DECIDED_TOMBSTONE_SECONDS
@@ -658,6 +872,7 @@ class DecisionBroker:
             preview=tool_preview(facts.tool_name, facts.tool_input),
             risk=tool_risk(facts.tool_name, facts.tool_input),
             decided=decided,
+            choices=facts.choices,
         )
 
     def _first_locked(self, provider: str, request_id: str) -> _Slot | None:
@@ -809,11 +1024,19 @@ _VERBS: Final = {
     "approve": DecisionVerb.ALLOW,
     "deny": DecisionVerb.DENY,
     "always": DecisionVerb.ALWAYS,
+    "answer": DecisionVerb.ANSWER,
 }
 _SENT_MESSAGES: Final = {
     DecisionVerb.ALLOW: "Approved through the agent's permission hook.",
     DecisionVerb.DENY: "Denied through the agent's permission hook.",
     DecisionVerb.ALWAYS: "Allowed, and the agent's own rule was saved so it won't ask again.",
+    DecisionVerb.ANSWER: "Answered through the agent's permission hook.",
+}
+_DECISION_NAMES: Final = {
+    DecisionVerb.ALLOW: "approve",
+    DecisionVerb.DENY: "deny",
+    DecisionVerb.ALWAYS: "always",
+    DecisionVerb.ANSWER: "answer",
 }
 
 
@@ -843,7 +1066,9 @@ def answer_through_decision_lane(
     The same fences as that path -- the live request, the card's pinned
     ``request`` identity, the command journal -- and none of its window
     checks, because nothing is typed: the verdict is the hook's own reply.
-    ``always`` exists only here. A typed reply is never a decision.
+    ``always`` and ``answer`` exist only here. A typed reply is never a
+    decision, and a bare approve on a held question keeps the keystroke
+    path it always had: the question's answer is ``answer``.
     """
     from .core_server import CommandError
 
@@ -860,6 +1085,14 @@ def answer_through_decision_lane(
                 "Always allow is offered only while JR-Bar holds the agent's "
                 "own permission prompt",
             )
+        if verb is DecisionVerb.ANSWER:
+            raise CommandError(
+                "unsupported",
+                "Picking an answer is offered only while JR-Bar holds the "
+                "agent's own question",
+            )
+        return None
+    if parked.choices and verb is DecisionVerb.ALLOW:
         return None
     expected_request = args.get("request")
     if expected_request is not None:
@@ -880,9 +1113,22 @@ def answer_through_decision_lane(
         raise CommandError(
             "unsupported", "This agent offered no rule to remember; approve it once instead."
         )
+    if verb is DecisionVerb.ANSWER:
+        if not parked.choices:
+            raise CommandError(
+                "unsupported", "That ask has no options to pick; approve or deny it."
+            )
+        # Checked before anything is journaled or armed; the broker checks
+        # the same map again against the request it holds.
+        if choice_answers(parked.choices, args.get("answers")) is None:
+            raise CommandError(
+                "invalid_args",
+                "answers must pick from the offered options for every question, "
+                "keyed by the question's exact text",
+            )
     from .command_journal import STATUS_ACCEPTED, STATUS_COMPLETED
 
-    decision = "always" if verb is DecisionVerb.ALWAYS else "approve" if verb is DecisionVerb.ALLOW else "deny"
+    decision = _DECISION_NAMES[verb]
     agent_id = getattr(status, "agent_id", None)
     journal = on_main(lambda: journal_for(controller))
     command_id = args.get("command_id")
@@ -902,7 +1148,7 @@ def answer_through_decision_lane(
             (record.error or {}).get("code", "send_failed"),
             (record.error or {}).get("message", "that command already failed"),
         )
-    outcome = lane.decide(parked.provider, parked.request_id, verb)
+    outcome = lane.decide(parked.provider, parked.request_id, verb, answers=args.get("answers"))
     if outcome is not DecisionResult.SENT:
         code, message = {
             DecisionResult.NOT_DELIVERED: (
@@ -955,13 +1201,19 @@ def release_for_open(status: object, broker: DecisionBroker | None = None) -> in
 
 __all__ = [
     "ALWAYS_ALLOW_PROVIDERS",
+    "CHOICE_PROVIDERS",
+    "CHOICE_TOOLS",
     "DECIDED_TOMBSTONE_SECONDS",
     "DECIDE_PROVIDERS",
     "DECISION_HOLD_SECONDS",
     "DENY_MESSAGE",
+    "MAX_CHOICE_INPUT_BYTES",
+    "MAX_CHOICE_OPTIONS",
+    "MAX_CHOICE_QUESTIONS",
     "MAX_PARKED_DECISIONS",
     "UNDECIDABLE_TOOLS",
     "AskPreviews",
+    "ChoiceQuestion",
     "DecisionBroker",
     "DecisionResult",
     "DecisionVerb",
@@ -970,6 +1222,8 @@ __all__ = [
     "always_allow_rules",
     "answer_through_decision_lane",
     "ask_preview_for_request",
+    "choice_answers",
+    "choice_questions",
     "decision_document",
     "default_ask_previews",
     "default_decision_broker",

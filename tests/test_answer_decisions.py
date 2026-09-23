@@ -16,12 +16,14 @@ from jrbar.answer_decisions import (
     DENY_MESSAGE,
     MAX_ASK_PREVIEWS,
     AskPreviews,
+    ChoiceQuestion,
     DecisionBroker,
     DecisionResult,
     DecisionVerb,
     PermissionFacts,
     always_allow_rules,
     answer_through_decision_lane,
+    choice_answers,
     decision_document,
     parked_decision_for_request,
     permission_facts,
@@ -31,6 +33,7 @@ from jrbar.answer_decisions import (
 )
 from jrbar.core_server import CommandError
 from jrbar.hook import _normalized_hook_record, routed_hook_payload
+from jrbar.hook_ingress_protocol import decode_hook_decision, encode_hook_decision
 
 ALLOW_SUGGESTION = {
     "type": "addRules",
@@ -526,3 +529,238 @@ def test_every_permission_request_leaves_its_card_a_preview__and_3_more() -> Non
     assert previews.lookup("claude", newest.request_id)[0] == f"echo {MAX_ASK_PREVIEWS + 4}"
     clock.now += ASK_PREVIEW_TTL_SECONDS + 1
     assert previews.lookup("claude", newest.request_id) == (None, None)
+
+
+# --- a question held as a choice ----------------------------------------------------
+
+QUESTION_INPUT = {
+    "questions": [
+        {
+            "question": "Which framework?",
+            "header": "Framework",
+            "options": [{"label": "React", "description": "Hooks and JSX"}, {"label": "Vue"}],
+            "multiSelect": False,
+        },
+        {
+            "question": "Which extras?",
+            "header": "Extras",
+            "options": [{"label": "Tests"}, {"label": "Docs"}, {"label": "CI"}],
+            "multiSelect": True,
+        },
+    ]
+}
+PICKS = {"Which framework?": "React", "Which extras?": ["Docs", "Tests"]}
+SENT_ANSWERS = {"Which framework?": "React", "Which extras?": "Tests, Docs"}
+
+
+def _question_payload(tool_input=None) -> str:
+    return _claude_payload(
+        tool_name="AskUserQuestion",
+        tool_input=QUESTION_INPUT if tool_input is None else tool_input,
+    )
+
+
+def _question(**overrides) -> dict:
+    question = {
+        "question": "Which framework?",
+        "header": "Framework",
+        "options": [{"label": "React"}, {"label": "Vue"}],
+        "multiSelect": False,
+    }
+    question.update(overrides)
+    return question
+
+
+def test_a_question_is_held_with_its_options__and_3_more() -> None:
+    # --- scenario: Claude's AskUserQuestion is held, its options offered exactly
+    facts = permission_facts("claude", _question_payload())
+    assert facts is not None and facts.tool_name == "AskUserQuestion"
+    assert facts.choices == (
+        ChoiceQuestion("Which framework?", "Framework", ("React", "Vue"), False),
+        ChoiceQuestion("Which extras?", "Extras", ("Tests", "Docs", "CI"), True),
+    )
+    # A question offers nothing to remember, whatever the payload suggests.
+    assert facts.always_rules == ()
+    assert tool_preview("AskUserQuestion", QUESTION_INPUT) == "Which framework? +1"
+    assert tool_preview("AskUserQuestion", {"questions": [_question()]}) == "Which framework?"
+
+    # --- scenario: anything that cannot be offered and answered exactly keeps the agent's prompt
+    for tool_input in (
+        {},
+        {"questions": []},
+        {"questions": [_question(question=f"Q{index}?") for index in range(5)]},
+        {"questions": [_question(), _question()]},
+        {"questions": [_question(options=[{"label": "React"}, {"label": "React"}])]},
+        {"questions": [_question(options=[{"label": " "}])]},
+        {"questions": [_question(options=[{"label": "a\nb"}])]},
+        {"questions": [_question(options=[{"label": f"o{index}"} for index in range(9)])]},
+        {"questions": [_question(options="React")]},
+        {"questions": [_question(multiSelect="yes")]},
+        {"questions": [_question(multiSelect=True, options=[{"label": "Tests, lint"}])]},
+        {"questions": [_question(question="x" * 501)]},
+        {"questions": [_question(options=[{"label": "React", "description": "x" * 30_000}])]},
+    ):
+        assert permission_facts("claude", _question_payload(tool_input)) is None, tool_input
+    # A header is only a chip: an odd one is dropped, never a refusal.
+    odd_header = permission_facts("claude", _question_payload({"questions": [_question(header=7)]}))
+    assert odd_header is not None and odd_header.choices[0].header is None
+
+    # --- scenario: Codex has no such question, and a plan is never held
+    assert permission_facts("codex", _codex_payload(tool_name="AskUserQuestion", tool_input=QUESTION_INPUT)) is None
+    assert permission_facts("claude", _claude_payload(tool_name="ExitPlanMode", tool_input={"plan": "# Plan"})) is None
+
+    # --- scenario: answers pick from the offered options, for every question and nothing else
+    questions = facts.choices
+    assert choice_answers(questions, PICKS) == SENT_ANSWERS
+    assert choice_answers(questions, {"Which framework?": "Vue", "Which extras?": "CI"}) == {
+        "Which framework?": "Vue",
+        "Which extras?": "CI",
+    }
+    for answers in (
+        {"Which framework?": "Svelte", "Which extras?": "CI"},
+        {"Which framework?": "Vue"},
+        {**PICKS, "Which database?": "Postgres"},
+        {"Which framework?": ["Vue"], "Which extras?": "CI"},
+        {"Which framework?": "Vue", "Which extras?": []},
+        {"Which framework?": "Vue", "Which extras?": ["CI", "CI"]},
+        {"Which framework?": "Vue", "Which extras?": ["CI", "Lint"]},
+        None,
+        "React",
+    ):
+        assert choice_answers(questions, answers) is None, answers
+    assert choice_answers((), PICKS) is None
+
+
+def test_a_held_question_is_answered_through_the_agents_own_answers_field__and_4_more() -> None:
+    facts = permission_facts("claude", _question_payload())
+
+    # --- scenario: answer sends the agent's own input back with its answers filled in
+    broker = _broker()
+    _slot, received, thread = _park_and_serve(broker, facts)
+    parked = broker.parked("claude", facts.request_id)
+    assert parked.choices == facts.choices and parked.can_always_allow is False
+    assert parked.preview == "Which framework? +1"
+    assert parked.document()["choices"] == [
+        {"question": "Which framework?", "header": "Framework", "options": ["React", "Vue"], "multi": False},
+        {"question": "Which extras?", "header": "Extras", "options": ["Tests", "Docs", "CI"], "multi": True},
+    ]
+    assert broker.decide("claude", facts.request_id, DecisionVerb.ANSWER, answers=PICKS) is DecisionResult.SENT
+    thread.join(2.0)
+    assert received == [
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "allow",
+                    "updatedInput": {**QUESTION_INPUT, "answers": SENT_ANSWERS},
+                },
+            }
+        }
+    ]
+    line = encode_hook_decision(received[0])
+    assert decode_hook_decision(line) == line[:-1].decode("ascii")
+
+    # --- scenario: a bare allow, an always or answers off the list never reach the hook
+    broker = _broker()
+    _slot, received, thread = _park_and_serve(broker, facts)
+    assert broker.decide("claude", facts.request_id, DecisionVerb.ALLOW) is DecisionResult.UNSUPPORTED
+    assert broker.decide("claude", facts.request_id, DecisionVerb.ALWAYS) is DecisionResult.UNSUPPORTED
+    assert (
+        broker.decide("claude", facts.request_id, DecisionVerb.ANSWER, answers={"Which framework?": "Vue"})
+        is DecisionResult.UNSUPPORTED
+    )
+    assert broker.parked_count() == 1
+
+    # --- scenario: deny still declines the question, like Esc on its own prompt
+    assert broker.decide("claude", facts.request_id, DecisionVerb.DENY) is DecisionResult.SENT
+    thread.join(2.0)
+    assert received == [decision_document("claude", DecisionVerb.DENY)]
+
+    # --- scenario: a yes/no request has nothing to pick
+    broker = _broker()
+    _slot, received, thread = _park_and_serve(broker, _facts())
+    assert broker.parked("claude", "derived:abc").document()["choices"] == []
+    assert broker.decide("claude", "derived:abc", DecisionVerb.ANSWER, answers=PICKS) is DecisionResult.UNSUPPORTED
+    broker.release_all()
+    thread.join(2.0)
+    assert received == [None]
+    with pytest.raises(ValueError):
+        decision_document("claude", DecisionVerb.ANSWER)
+    with pytest.raises(ValueError):
+        decision_document("codex", DecisionVerb.ANSWER, answered_input={**QUESTION_INPUT, "answers": SENT_ANSWERS})
+
+    # --- scenario: answered in its own prompt, the question's PostToolUse (answers and all) releases it
+    broker = _broker()
+    _slot, received, thread = _park_and_serve(broker, facts)
+    ran = json.loads(_question_payload())
+    ran.update(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_use_id": "toolu_01",
+            "tool_input": {**QUESTION_INPUT, "answers": SENT_ANSWERS},
+            "tool_response": {"answers": SENT_ANSWERS},
+        }
+    )
+    assert broker.observe("claude", json.dumps(ran)) == 1
+    thread.join(2.0)
+    assert received == [None]
+
+
+def test_answer_ask_picks_options_on_a_held_question__and_4_more() -> None:
+    from jrbar.core_projection import ask_document
+
+    journal = _Journal()
+    facts = permission_facts("claude", _question_payload())
+
+    def call(controller, status, args, broker):
+        return answer_through_decision_lane(
+            controller, status, args, journal_for=lambda _c: journal, on_main=lambda fn: fn(), broker=broker
+        )
+
+    # --- scenario: the card offers the options; Approve/Deny keep their keystroke-path flags
+    broker = _broker()
+    controller, status, _request, refreshed = _controller(request_id=facts.request_id)
+    _slot, received, thread = _park_and_serve(broker, facts)
+    document = ask_document(
+        status, controller.current_operator_state, with_session=False, decision_lane=broker, ask_previews=AskPreviews()
+    )
+    assert document["decision"]["choices"][1]["options"] == ["Tests", "Docs", "CI"]
+    assert document["preview"] == "Which framework? +1"
+    assert document["answerable"] is False and document["replyable"] is False
+
+    # --- scenario: a bare approve keeps the keystroke path it always had
+    assert call(controller, status, {"decision": "approve"}, broker) is None
+    assert broker.parked_count() == 1
+
+    # --- scenario: answers off the list refuse before anything is journaled or sent
+    begun = len(journal.begun)
+    with pytest.raises(CommandError) as error:
+        call(controller, status, {"decision": "answer", "answers": {"Which framework?": "Svelte"}}, broker)
+    assert error.value.code == "invalid_args"
+    assert len(journal.begun) == begun and broker.parked_count() == 1
+
+    # --- scenario: answer is sent, journaled without the picks, and refreshed
+    result = call(controller, status, {"session": status.agent_id, "decision": "answer", "answers": PICKS}, broker)
+    thread.join(2.0)
+    assert result["decision"] == "answer" and result["mechanism"] == "permission_hook"
+    assert received[0]["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == SENT_ANSWERS
+    assert journal.begun[-1] == ("answer_ask", {"session": status.agent_id, "decision": "answer", "request": None})
+    assert refreshed == [None]
+
+    # --- scenario: answer with nothing held, or on a yes/no hold, is unsupported
+    broker = _broker()
+    controller, status, _request, _ = _controller()
+    with pytest.raises(CommandError) as error:
+        call(controller, status, {"decision": "answer", "answers": PICKS}, broker)
+    assert error.value.code == "unsupported"
+    _slot, received, thread = _park_and_serve(broker, _facts())
+    with pytest.raises(CommandError) as error:
+        call(controller, status, {"decision": "answer", "answers": PICKS}, broker)
+    assert error.value.code == "unsupported"
+    document = ask_document(
+        status, controller.current_operator_state, with_session=False, decision_lane=broker, ask_previews=AskPreviews()
+    )
+    assert document["answerable"] is True and document["decision"]["choices"] == []
+    broker.release_all()
+    thread.join(2.0)
+    assert received == [None]

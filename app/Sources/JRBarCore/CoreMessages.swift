@@ -159,6 +159,10 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     public var isHeldForDecision: Bool { decision.map { !$0.decided } ?? false }
     /// Whether an "Always allow" (`answer_ask` decision `always`) can be sent.
     public var canAlwaysAllow: Bool { isHeldForDecision && (decision?.always ?? false) }
+    /// A held multiple-choice ask: its options can be picked from any
+    /// terminal (`answer_ask` decision `answer` with `answers`). Approve
+    /// and Deny keep following `canAnswer`.
+    public var canChoose: Bool { isHeldForDecision && !(decision?.choices.isEmpty ?? true) }
     public var isDestructive: Bool { risk == "destructive" }
 
     /// What the buttons may claim: assume yes when the daemon is too old
@@ -210,15 +214,20 @@ public struct CoreAskDecision: Codable, Hashable, Sendable {
     public var always: Bool
     /// Answered a moment ago; the provider's events have not caught up.
     public var decided: Bool
+    /// The questions of a held multiple-choice ask (Claude's
+    /// AskUserQuestion), in the agent's order. Empty for a yes/no ask.
+    public var choices: [CoreAskChoice]
 
-    public init(holdUntil: Double? = nil, always: Bool = false, decided: Bool = false) {
+    public init(holdUntil: Double? = nil, always: Bool = false, decided: Bool = false,
+                choices: [CoreAskChoice] = []) {
         self.holdUntil = holdUntil
         self.always = always
         self.decided = decided
+        self.choices = choices
     }
 
     enum CodingKeys: String, CodingKey {
-        case always, decided
+        case always, decided, choices
         case holdUntil = "hold_until"
     }
 
@@ -227,6 +236,25 @@ public struct CoreAskDecision: Codable, Hashable, Sendable {
         holdUntil = try? c.decodeIfPresent(Double.self, forKey: .holdUntil)
         always = (try? c.decodeIfPresent(Bool.self, forKey: .always)) ?? false
         decided = (try? c.decodeIfPresent(Bool.self, forKey: .decided)) ?? false
+        choices = (try? c.decodeIfPresent([CoreAskChoice].self, forKey: .choices)) ?? []
+    }
+}
+
+/// One question of a held multiple-choice ask (`ask.decision.choices[]`).
+/// The answer names `question` exactly and picks from `options` exactly:
+/// `answers: {question: label}`, or a list of labels when `multi`.
+public struct CoreAskChoice: Codable, Hashable, Sendable {
+    public var question: String
+    /// The agent's short chip for the question ("Framework"), when given.
+    public var header: String?
+    public var options: [String]
+    public var multi: Bool
+
+    public init(question: String, header: String? = nil, options: [String], multi: Bool = false) {
+        self.question = question
+        self.header = header
+        self.options = options
+        self.multi = multi
     }
 }
 
