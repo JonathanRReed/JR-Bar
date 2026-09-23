@@ -23,6 +23,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,7 @@ MAX_SECONDS = 86_400
 EXIT_NO_CORE = 3
 
 _DURATION_PART = re.compile(r"(\d+)([smhd])")
+_CLOCK = re.compile(r"(\d{1,2})(?::(\d{2}))?(am|pm|a|p)?")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86_400}
 
 
@@ -90,6 +92,44 @@ def parse_duration(raw: str) -> int:
     if position != len(text) or not text:
         raise ControlError(f"not a duration: {raw!r} (try 90s, 15m, 2h, 1h30m or off)", 2)
     return total
+
+
+def seconds_until(raw: str, now: float | None = None) -> int:
+    """Seconds from ``now`` to the next time the clock reads ``raw`` --
+    ``08:00``, ``8am``, ``8:30pm``, ``20:30`` -- later today, or tomorrow
+    once today's has passed: Amphetamine's "until 8 AM". The same grammar
+    as the app's ``until=`` links; a bare ``8`` is refused, since a bare
+    number is a duration everywhere else."""
+    text = raw.strip().lower().replace(" ", "").replace(".", "")
+    match = _CLOCK.fullmatch(text)
+    if match is None or (match.group(2) is None and match.group(3) is None):
+        raise ControlError(f"not a time of day: {raw!r} (try 8am, 8:30pm or 20:30)", 2)
+    hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    meridiem = match.group(3)
+    if meridiem:
+        if not 1 <= hour <= 12:
+            raise ControlError(f"not a time of day: {raw!r}", 2)
+        hour = hour % 12 + (12 if meridiem.startswith("p") else 0)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ControlError(f"not a time of day: {raw!r}", 2)
+    base = time.time() if now is None else now
+    day = time.localtime(base)
+    # mktime normalises a day past the month's end and settles DST itself.
+    target = time.mktime((day.tm_year, day.tm_mon, day.tm_mday, hour, minute, 0, 0, 0, -1))
+    if target <= base:
+        target = time.mktime((day.tm_year, day.tm_mon, day.tm_mday + 1, hour, minute, 0, 0, 0, -1))
+    return max(1, int(-(-(target - base) // 1)))
+
+
+def _length(duration: str | None, until: str | None, what: str) -> int | None:
+    """One length from a duration or a clock time; both is refused."""
+    if duration is not None and until is not None:
+        raise ControlError(f"give {what} a duration or --until, not both", 2)
+    if until is not None:
+        return seconds_until(until)
+    if duration is not None:
+        return parse_duration(duration)
+    return None
 
 
 def describe_seconds(seconds: int) -> str:
@@ -282,7 +322,9 @@ def cmd_status(args: argparse.Namespace, connect: Callable[[], CoreConnection]) 
 
 
 def cmd_quiet(args: argparse.Namespace, connect: Callable[[], CoreConnection]) -> int:
-    seconds = parse_duration(args.duration)
+    seconds = _length(args.duration, args.until, "quiet")
+    if seconds is None:
+        raise ControlError("say how long: a duration (1h, 30m, off) or --until 8am", 2)
     if seconds > MAX_SECONDS:
         raise ControlError("quiet lasts at most a day", 2)
     mode = QUIET_MODES.get(args.mode.lower())
@@ -331,10 +373,10 @@ def cmd_toggle(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
 
 
 def cmd_awake(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
-    if args.duration is None:
+    seconds = _length(args.duration, args.until, "awake")
+    if seconds is None:
         opener("jrbar://awake")
         return 0
-    seconds = parse_duration(args.duration)
     if seconds > MAX_SECONDS:
         raise ControlError("keep awake lasts at most a day", 2)
     opener("jrbar://awake?" + urlencode({"for": "off" if seconds == 0 else str(seconds)}))
@@ -357,7 +399,8 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="The whole state document as JSON.")
 
     quiet = commands.add_parser("quiet", help="Quiet JR-Bar for a while (off ends it).")
-    quiet.add_argument("duration", help="90s, 15m, 1h, 1h30m, or off")
+    quiet.add_argument("duration", nargs="?", help="90s, 15m, 1h, 1h30m, or off")
+    quiet.add_argument("--until", help="a time of day instead: 8am, 20:30")
     quiet.add_argument("--mode", default="pause", help="pause (default), dim, mute, asks-only, dark")
 
     snooze = commands.add_parser("snooze", help="Snooze a session's alerts (0 unsnoozes).")
@@ -377,6 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     awake = commands.add_parser("awake", help="Keep the Mac awake (the app's hold): 2h, 30m, off.")
     awake.add_argument("duration", nargs="?", help="omit to hold until turned off")
+    awake.add_argument("--until", help="a time of day instead: 8am, 20:30")
 
     opener = commands.add_parser("open", help="Run any jrbar:// link, e.g. panel/toggle or settings/shortcuts.")
     opener.add_argument("target")
@@ -417,4 +461,4 @@ def main(
         return exc.status
 
 
-__all__ = ["VERBS", "ControlError", "CoreConnection", "main", "parse_duration", "render_status"]
+__all__ = ["VERBS", "ControlError", "CoreConnection", "main", "parse_duration", "render_status", "seconds_until"]

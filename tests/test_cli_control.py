@@ -8,12 +8,13 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from jrbar import cli_control, cli_entry
-from jrbar.cli_control import ControlError, parse_duration, render_status
+from jrbar.cli_control import ControlError, parse_duration, render_status, seconds_until
 
 
 class FakeCore:
@@ -151,6 +152,37 @@ def test_quiet_refuses_a_mode_or_length_it_does_not_know(core, capsys) -> None:
     assert run(["quiet", "3d"], core) == 2
     assert core.commands == []
     assert "unknown quiet mode" in capsys.readouterr().err
+
+
+def _local(hour: int, minute: int) -> float:
+    return time.mktime((2026, 9, 23, hour, minute, 0, 0, 0, -1))
+
+
+def test_a_time_of_day_counts_to_its_next_occurrence() -> None:
+    now = _local(22, 15)
+    assert seconds_until("8am", now) == 9 * 3600 + 45 * 60
+    assert seconds_until("08:00", now) == 9 * 3600 + 45 * 60
+    assert seconds_until("8:00 A.M.", now) == 9 * 3600 + 45 * 60
+    assert seconds_until("11:30pm", now) == 75 * 60
+    assert seconds_until("23:30", now) == 75 * 60
+    assert seconds_until("12am", now) == 105 * 60
+    assert seconds_until("22:15", now) == 24 * 3600, "now itself is tomorrow's"
+    for bad in ("8", "25:00", "13pm", "8:75", "soon", "", "0am"):
+        with pytest.raises(ControlError):
+            seconds_until(bad, now)
+
+
+def test_quiet_and_awake_take_a_time_of_day(core, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli_control, "seconds_until", lambda raw, now=None: 4500)
+    assert run(["quiet", "--until", "11:30pm", "--mode", "dim"], core) == 0
+    assert core.commands[-1]["args"] == {"mode": "dim", "seconds": 4500}
+    opened: list[str] = []
+    assert run(["awake", "--until", "11:30pm"], opened=opened) == 0
+    assert opened == ["jrbar://awake?for=4500"]
+    assert run(["quiet", "1h", "--until", "8am"], core) == 2
+    assert run(["quiet"], core) == 2
+    assert run(["awake", "2h", "--until", "8am"], opened=opened) == 2
+    assert "not both" in capsys.readouterr().err
 
 
 def test_set_writes_json_values_and_says_what_the_monitor_kept(core, capsys) -> None:

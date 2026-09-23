@@ -50,6 +50,36 @@ import Testing
         #expect(parse("jrbar://awake?for=3d") == nil, "longer than a day is refused")
     }
 
+    @Test func untilAClockTimeCountsToItsNextOccurrence() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+        // 2026-09-23 22:15 in Chicago.
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 22, minute: 15)))
+        func at(_ link: String) -> AppCommand? { AppCommand.parse(URL(string: link)!, now: now, calendar: calendar) }
+        // 8 AM is tomorrow: 9 h 45 min away.
+        #expect(at("jrbar://awake?until=8am") == .keepAwake(seconds: 35_100))
+        #expect(at("jrbar://awake?until=08:00") == .keepAwake(seconds: 35_100))
+        #expect(at("jrbar://awake?until=8:00%20AM") == .keepAwake(seconds: 35_100))
+        // 11:30 PM is later tonight.
+        #expect(at("jrbar://quiet?mode=dim&until=11:30pm") == .quiet(mode: "dim", seconds: 4500))
+        #expect(at("jrbar://quiet?until=23:30") == .quiet(mode: nil, seconds: 4500))
+        // 12 AM is midnight, 12 PM is noon.
+        #expect(at("jrbar://awake?until=12am") == .keepAwake(seconds: 6300))
+        #expect(at("jrbar://awake?until=12pm") == .keepAwake(seconds: 49_500))
+    }
+
+    @Test func aClockTimeThatIsNotOneIsRefused() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        func at(_ link: String) -> AppCommand? { AppCommand.parse(URL(string: link)!, now: now) }
+        #expect(at("jrbar://awake?until=8") == nil, "a bare number is a duration's grammar, not a clock's")
+        #expect(at("jrbar://awake?until=25:00") == nil)
+        #expect(at("jrbar://awake?until=13pm") == nil)
+        #expect(at("jrbar://awake?until=8:75") == nil)
+        #expect(at("jrbar://awake?until=soon") == nil)
+        #expect(at("jrbar://awake?until=8am&for=2h") == nil, "two lengths are one too many")
+        #expect(at("jrbar://quiet?until=") == nil)
+    }
+
     @Test func quietTakesAModeAndALength() {
         #expect(parse("jrbar://quiet") == .quiet(mode: nil, seconds: 3600))
         #expect(parse("jrbar://quiet?mode=dim&for=30m") == .quiet(mode: "dim", seconds: 1800))

@@ -68,6 +68,11 @@ enum AppCommand: Equatable, Sendable {
     /// options. Unknown verbs, objects and option values are refused
     /// whole — a link never half-runs.
     nonisolated static func parse(_ url: URL) -> AppCommand? {
+        parse(url, now: Date(), calendar: .current)
+    }
+
+    /// The same, with the clock an `until=` time is placed on.
+    nonisolated static func parse(_ url: URL, now: Date, calendar: Calendar = .current) -> AppCommand? {
         guard url.scheme?.lowercased() == scheme,
               let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         var path = parts.path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
@@ -99,6 +104,10 @@ enum AppCommand: Equatable, Sendable {
             guard let on = flag(raw) else { return nil }
             return .toggle(toggle, on: on)
         case "awake":
+            if let raw = query["until"] {
+                guard query["for"] == nil, let seconds = secondsUntil(raw, now: now, calendar: calendar) else { return nil }
+                return .keepAwake(seconds: seconds)
+            }
             guard let raw = query["for"] else { return .keepAwake(seconds: nil) }
             if let off = flag(raw), !off { return .keepAwake(seconds: 0) }
             guard let seconds = duration(raw), seconds <= maximumSeconds else { return nil }
@@ -111,6 +120,10 @@ enum AppCommand: Equatable, Sendable {
                 let normalized = raw == "dnd" ? "pause" : raw
                 guard quietModes.contains(normalized) else { return nil }
                 mode = normalized
+            }
+            if let raw = query["until"] {
+                guard query["for"] == nil, let seconds = secondsUntil(raw, now: now, calendar: calendar) else { return nil }
+                return .quiet(mode: mode, seconds: seconds)
             }
             guard let raw = query["for"] else { return .quiet(mode: mode, seconds: defaultQuietSeconds) }
             if let on = flag(raw), !on { return .endQuiet }
@@ -138,6 +151,38 @@ enum AppCommand: Equatable, Sendable {
         default:
             return nil
         }
+    }
+
+    /// Seconds from `now` to the next time the clock reads `raw` —
+    /// `08:00`, `8am`, `8:30pm`, `20:30` — later today, or tomorrow
+    /// once today's has passed; Amphetamine's "until 8 AM". nil for
+    /// anything else, so a typo is refused rather than guessed at.
+    nonisolated static func secondsUntil(_ raw: String, now: Date, calendar: Calendar) -> Int? {
+        var text = raw.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: ".", with: "")
+        var meridiem: String?
+        for suffix in ["am", "pm", "a", "p"] where text.hasSuffix(suffix) {
+            meridiem = String(suffix.prefix(1))
+            text.removeLast(suffix.count)
+            break
+        }
+        let parts = text.split(separator: ":", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.count <= 2 && $0.allSatisfy(\.isNumber) }),
+              var hour = Int(parts[0]) else { return nil }
+        let minute = parts.count == 2 ? Int(parts[1]) ?? -1 : 0
+        guard (0...59).contains(minute) else { return nil }
+        if let meridiem {
+            guard (1...12).contains(hour) else { return nil }
+            hour = hour % 12 + (meridiem == "p" ? 12 : 0)
+        } else if parts.count == 1 {
+            // A bare "8" reads as a clock hour only with am/pm or a colon
+            // form; a bare number is a duration elsewhere, so refuse it.
+            return nil
+        }
+        guard (0...23).contains(hour),
+              let next = calendar.nextDate(after: now, matching: DateComponents(hour: hour, minute: minute, second: 0),
+                                           matchingPolicy: .nextTime) else { return nil }
+        let seconds = Int(next.timeIntervalSince(now).rounded(.up))
+        return (1...maximumSeconds).contains(seconds) ? seconds : nil
     }
 
     /// `1/0`, `true/false`, `on/off`, `yes/no`.
