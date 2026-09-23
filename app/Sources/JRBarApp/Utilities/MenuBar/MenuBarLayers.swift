@@ -70,4 +70,11 @@ enum MenuBarLayers {
         let clock = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
         return "\(what) until \(clock) — your picks come back then."
     }
+
+    /// The card's line while a "while" rule's overlay stands.
+    nonisolated static func ruleOverlayNote(_ kind: MenuBarOverlay.Kind) -> String {
+        let what = kind == .hideEverything
+            ? "A while rule has everything tucked away" : "A while rule is showing everything"
+        return "\(what) — your picks come back when it ends, or now with Restore."
+    }
 }

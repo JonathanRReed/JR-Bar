@@ -646,20 +646,36 @@ final class MenuBarUtility: Toy {
 
     /// The overlay standing right now, if any.
     var activeOverlay: MenuBarOverlay.Kind? {
+        if ruleOverlayWins, let rule = stateRules.outcome.overlay { return rule }
+        return settings().curation.overlay.flatMap { $0.isLive() ? $0.kind : nil }
+    }
+
+    /// When the overlay was last put back by hand — Restore, or Keep. A
+    /// "while" rule's overlay that took hold before it stands down until
+    /// the rule next takes hold, the way a later Show all beats it.
+    /// Runtime only, like the profile's; observed, so the card's Restore
+    /// row answers at once.
+    private(set) var overlayRestoredAt: Date?
+
+    /// Whether a holding rule's overlay is the one in force: of it and
+    /// your own last word on the overlay — a Hide all, a Show all, a
+    /// Restore — whichever came last.
+    private var ruleOverlayWins: Bool {
+        _ = stateOutcomeVersion
+        guard stateRules.outcome.overlay != nil else { return false }
         let manual = settings().curation.overlay.flatMap { $0.isLive() ? $0 : nil }
-        // A "while" rule's overlay and a manual one: whichever came last.
-        if let rule = stateRules.outcome.overlay,
-           MenuBarStateRuleEngine.ruleWins(
-               ruleSince: stateRules.overlaySince,
-               manualSince: manual.map { Date(timeIntervalSince1970: $0.sinceEpoch) }) {
-            return rule
-        }
-        return manual?.kind
+            .map { Date(timeIntervalSince1970: $0.sinceEpoch) }
+        let manualSince = [manual, overlayRestoredAt].compactMap { $0 }.max()
+        return MenuBarStateRuleEngine.ruleWins(ruleSince: stateRules.overlaySince,
+                                               manualSince: manualSince)
     }
 
     /// The card's line while an overlay stands.
     var overlayNote: String? {
-        MenuBarLayers.overlayNote(settings().curation.overlay)
+        if ruleOverlayWins, let kind = stateRules.outcome.overlay {
+            return MenuBarLayers.ruleOverlayNote(kind)
+        }
+        return MenuBarLayers.overlayNote(settings().curation.overlay)
     }
 
     /// The curated maps: the base with the active profile's deltas laid
@@ -742,10 +758,13 @@ final class MenuBarUtility: Toy {
         hider.reconcile()
     }
 
-    /// Drop the overlay — the curated bar, exactly as you left it.
+    /// Drop the overlay — the curated bar, exactly as you left it. A
+    /// rule's overlay stands down too, until the rule next takes hold.
     func restoreCuratedBar() {
-        guard settings().curation.overlay != nil else { return }
-        update { $0.curation.overlay = nil }
+        let manual = settings().curation.overlay != nil
+        guard manual || ruleOverlayWins else { return }
+        overlayRestoredAt = Date()
+        if manual { update { $0.curation.overlay = nil } }
         hider.reconcile()
     }
 
@@ -780,6 +799,8 @@ final class MenuBarUtility: Toy {
             }
             draft.curation.overlay = nil
         }
+        // Kept is yours now: a rule's overlay it came from stands down.
+        overlayRestoredAt = Date()
         hider.reconcile()
     }
 

@@ -369,6 +369,31 @@ struct MenuBarStateRuleTests {
         #expect(utility.activeOverlay == nil)
     }
 
+    @MainActor
+    @Test("restore stands a rule's quiet bar down until the rule next takes hold; the file is untouched")
+    func utilityRestoreBeatsRule() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.concealedApps = ["slack": .hidden]
+        state.curation.stateRules = [rule(.microphoneLive, [.quietBar])]
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+        utility.hider.listItems = { [] }
+        utility.hider.onPlan = nil
+        utility.stateRules.rules = { state.curation.stateRules }
+        utility.stateRules.absorb(.micInUse(true), now: Date().addingTimeInterval(-10))
+        #expect(utility.activeOverlay == .hideEverything)
+        #expect(utility.overlayNote == MenuBarLayers.ruleOverlayNote(.hideEverything))
+        utility.restoreCuratedBar()
+        #expect(utility.activeOverlay == nil)
+        #expect(utility.overlayNote == nil)
+        #expect(utility.liveSettings().concealedApps == ["slack": .hidden])
+        #expect(state.curation.overlay == nil)
+        utility.stateRules.absorb(.micInUse(false))
+        utility.stateRules.absorb(.micInUse(true), now: Date().addingTimeInterval(1))
+        #expect(utility.activeOverlay == .hideEverything, "the rule taking hold again wins")
+    }
+
     // MARK: The file
 
     @Test("rules round-trip; an unknown effect drops alone, an unknown condition drops the rule")
