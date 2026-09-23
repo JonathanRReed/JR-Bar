@@ -642,13 +642,14 @@ def frontmost_application() -> tuple[str | None, int | None]:
 
 
 def process_ancestry(pid: int, depth: int = MAX_ANCESTRY_DEPTH) -> tuple[int, ...]:
-    """The pid's ancestors, nearest first, from one ``ps`` table read."""
+    """The pid's ancestors, nearest first, from one ``ps`` table read -- read
+    again uncached when a session younger than the cached table is missing."""
     if type(pid) is not int or pid <= 1:
         return ()
     try:
-        from .process_registry import list_processes
+        from .answer_surfaces import process_table_holding
 
-        table = list_processes()
+        table = process_table_holding(pid)
     except Exception:
         return ()
     chain: list[int] = []
@@ -1083,7 +1084,7 @@ def session_host(
     acceptable identity for sessions launched from a provider's own app.
     """
     from .core_projection import origin_document, terminal_from_command
-    from .process_registry import SHARED_HOST_PROVIDERS, list_processes, load_record
+    from .process_registry import SHARED_HOST_PROVIDERS, load_record
 
     pid: int | None = None
     bundles: set[str] = set()
@@ -1105,7 +1106,10 @@ def session_host(
     tty = tty_for_pid(pid)
     if pid is not None:
         try:
-            table = list_processes()
+            from .answer_surfaces import process_table_holding
+
+            # A session younger than the cached table is read afresh.
+            table = process_table_holding(pid)
         except Exception:
             table = {}
         # Start at the PARENT, never at the session process itself. The CLI's

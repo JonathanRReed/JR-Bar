@@ -227,6 +227,49 @@ def host_from_ancestry(pid: object, table: Mapping[int, Any]) -> tuple[str | Non
     return None, None, False
 
 
+def _ancestry_in_table(pid: object, table: Mapping[int, Any]) -> bool:
+    """Whether ``pid`` and each of its ancestors up to launchd are in ``table``."""
+    if type(pid) is not int or pid <= 1:
+        return True
+    current: object = pid
+    for _ in range(MAX_ANCESTRY_DEPTH + 1):
+        entry = table.get(current)  # type: ignore[call-overload]
+        if entry is None:
+            return False
+        current = getattr(entry, "ppid", None)
+        if type(current) is not int or current <= 1:
+            return True
+    return True
+
+
+def process_table_holding(
+    pid: object,
+    process_table: Callable[[], Mapping[int, Any]] | None = None,
+) -> Mapping[int, Any]:
+    """The process table, with ``pid``'s whole ancestry in it while it runs.
+
+    The shared table is cached for ``TABLE_CACHE_SECONDS`` and the liveness
+    sweep keeps it warm, so an agent started a second ago -- the one a
+    SessionStart names, a session the owner has just opened -- is missing
+    from it, and a walk that stops there finds no terminal at all. A walk
+    that falls off the table reads it once more, uncached."""
+
+    def load(fresh: bool) -> Mapping[int, Any]:
+        try:
+            if process_table is not None:
+                return process_table()
+            from .process_registry import list_processes
+
+            return list_processes(fresh=True) if fresh else list_processes()
+        except Exception:
+            return {}
+
+    table = load(False)
+    if _ancestry_in_table(pid, table):
+        return table
+    return load(True)
+
+
 # --- Ghostty -----------------------------------------------------------------
 
 
@@ -750,17 +793,10 @@ class SurfaceRecorder:
             if user_start:
                 self._forget_surface(provider, session_id)
             return
-        try:
-            if self._table is not None:
-                table = self._table()
-            else:
-                from .process_registry import list_processes
-
-                table = list_processes()
-        except Exception:
-            table = {}
         # The shim's parent is the agent (or the shell the agent ran the
-        # hook through); either way the host is above it.
+        # hook through); either way the host is above it. The agent started
+        # a moment ago, so it is rarely in the cached table yet.
+        table = process_table_holding(ppid, self._table)
         _app, bundle, in_tmux = host_from_ancestry(ppid, table)
         if in_tmux or bundle is None or bundle in APP_HOSTED_BUNDLE_IDS:
             if user_start:
@@ -954,9 +990,10 @@ def _live_host(
     *,
     process_table: Callable[[], Mapping[int, Any]] | None = None,
     on_main: Callable[[Callable[[], Any]], Any] | None = None,
-) -> tuple[SessionHost, object] | None:
-    """The live, terminal-hosted session's host and the row's extras, or
-    ``None`` for an ended session or one its provider's app hosts."""
+) -> tuple[SessionHost, object, Mapping[int, Any]] | None:
+    """The live, terminal-hosted session's host, the row's extras and the
+    process table that placed it, or ``None`` for an ended session or one
+    its provider's app hosts."""
     extras = None
     lookup = getattr(controller, "_core_extras_for", None)
     if callable(lookup):
@@ -967,15 +1004,7 @@ def _live_host(
     pid = getattr(extras, "pid", None)
     if type(pid) is not int or pid <= 1:
         return None
-    try:
-        if process_table is not None:
-            table = process_table()
-        else:
-            from .process_registry import list_processes
-
-            table = list_processes()
-    except Exception:
-        table = {}
+    table = process_table_holding(pid, process_table)
     app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
     if bundle_id in APP_HOSTED_BUNDLE_IDS:
         return None
@@ -988,7 +1017,7 @@ def _live_host(
         bundle_id=bundle_id,
         in_tmux=in_tmux,
     )
-    return host, extras
+    return host, extras, table
 
 
 def _raise_live(
@@ -1028,7 +1057,7 @@ def raise_for_answer(
         live = _live_host(controller, status, process_table=process_table, on_main=on_main)
         if live is None:
             return None
-        host, extras = live
+        host, extras, _table = live
         return _raise_live(host, extras, status, runner=runner, recorder=recorder)
     except Exception:
         return None
@@ -1071,19 +1100,10 @@ def session_in_front(
     reply: dict[str, Any] = {"session": agent_id, "in_front": None, "evidence": "remote", "app": None}
     if not isinstance(agent_id, str) or agent_id.startswith("remote:"):
         return reply
-    try:
-        if process_table is not None:
-            table = process_table()
-        else:
-            from .process_registry import list_processes
-
-            table = list_processes()
-    except Exception:
-        table = {}
-    live = _live_host(controller, status, process_table=lambda: table, on_main=on_main)
+    live = _live_host(controller, status, process_table=process_table, on_main=on_main)
     if live is None:
         return {**reply, "evidence": "not_running"}
-    host, _extras = live
+    host, _extras, table = live
     reply["app"] = host.app_name
     runner = runner or SurfaceRunner()
     front_bundle, front_pid = runner.frontmost_application()
@@ -1331,15 +1351,7 @@ def resume_ended_session(
             alive = True  # unknown is not "ended": never start a second copy on a guess
         if alive:
             pid = getattr(record, "pid", None)
-            try:
-                if process_table is not None:
-                    table = process_table()
-                else:
-                    from .process_registry import list_processes
-
-                    table = list_processes()
-            except Exception:
-                table = {}
+            table = process_table_holding(pid, process_table)
             from .answer_local import tty_for_pid
 
             app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
@@ -1457,7 +1469,7 @@ def open_live_session(
     live = _live_host(controller, status, process_table=process_table)
     if live is None:
         return None  # ended or app-hosted: the ladder's open is the right one
-    host, extras = live
+    host, extras, _table = live
     from .answer_decisions import release_for_open
 
     # The owner is going to the session to answer there: a Codex prompt
@@ -1497,6 +1509,7 @@ __all__ = [
     "open_session_surface",
     "parse_ghostty_terminals",
     "parse_tmux_pane_for_tty",
+    "process_table_holding",
     "raise_for_answer",
     "raise_session_host",
     "recorded_ghostty_surface",

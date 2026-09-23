@@ -201,11 +201,15 @@ TABLE_CACHE_SECONDS = 10.0
 _table_cache: tuple[float, dict[int, ProcessEntry]] | None = None
 
 
-def list_processes(runner=subprocess.run) -> dict[int, ProcessEntry]:
-    """One ``ps`` fork for the whole table; empty on any failure."""
+def list_processes(runner=subprocess.run, *, fresh: bool = False) -> dict[int, ProcessEntry]:
+    """One ``ps`` fork for the whole table; empty on any failure.
+
+    ``fresh`` reads past the cache, and refreshes it for everyone: a process
+    younger than the cached table -- an agent started a second ago -- is
+    not in it."""
     global _table_cache
     cacheable = runner is subprocess.run
-    if cacheable and _table_cache is not None:
+    if cacheable and not fresh and _table_cache is not None:
         at, table = _table_cache
         if time.monotonic() - at < TABLE_CACHE_SECONDS:
             return table

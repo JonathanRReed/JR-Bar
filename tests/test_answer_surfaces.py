@@ -363,6 +363,80 @@ def test_only_a_start_the_owner_made_records_the_surface__and_4_more(tmp_path: P
     assert subject.recorded("claude", "s-1") is None
 
 
+class _TableReads:
+    """A process-table loader that is one read behind: the first call is the
+    cached table, from before the agent started; the next is ``ps`` now."""
+
+    def __init__(self, before, after) -> None:
+        self.tables = [before, after]
+        self.calls = 0
+
+    def __call__(self):
+        table = self.tables[min(self.calls, len(self.tables) - 1)]
+        self.calls += 1
+        return table
+
+
+def test_an_agent_younger_than_the_cached_table_is_found__and_4_more(monkeypatch, tmp_path: Path) -> None:
+    from jrbar import process_registry
+
+    # The cached table predates the agent (500) and the shell it was typed
+    # into (400); Ghostty and login are old.
+    before = _table(_entry(300, 200, "/usr/bin/login"), _entry(200, 1, GHOSTTY))
+
+    # --- scenario: a SessionStart for a just-started agent records its host and surface
+    reads = _TableReads(before, GHOSTTY_CODEX)
+    recorder = SurfaceRecorder(
+        path=tmp_path / "s.json", runner=FakeRunner(focused="T1\t/Users/me/repo"), process_table=reads, synchronous=True
+    )
+    recorder.note_session_start("codex", _start(), 500)
+    assert (recorder.recorded_host("codex", "s-1"), recorder.recorded("codex", "s-1")) == ("com.mitchellh.ghostty", "T1")
+    assert reads.calls == 2
+
+    # --- scenario: a table that already holds the whole ancestry is read once
+    reads = _TableReads(GHOSTTY_CODEX, before)
+    assert surfaces.process_table_holding(500, reads) is GHOSTTY_CODEX and reads.calls == 1
+
+    # --- scenario: opening a session the owner started a second ago raises its terminal, not "can't find"
+    reads = _TableReads(before, GHOSTTY_CODEX)
+    controller, status = _live()
+    reply = open_live_session(
+        controller,
+        status,
+        {},
+        runner=FakeRunner(ghostty_terminals="T1\t/Users/me/repo\tcodex\n"),
+        recorder=SurfaceRecorder(path=tmp_path / "o.json", runner=FakeRunner(), synchronous=True),
+        process_table=reads,
+    )
+    assert (reply["raised"], reply["detail"]) == ("terminal", "T1")
+
+    # --- scenario: History's Resume of a still-running young session raises it too
+    from jrbar.answer_surfaces import resume_ended_session
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    reply = resume_ended_session(
+        "codex:session:s-1",
+        runner=FakeRunner(ghostty_terminals=f"T1\t{repo}\tcodex\n"),
+        recorder=SurfaceRecorder(path=tmp_path / "r.json", runner=FakeRunner(), synchronous=True),
+        load_record=lambda provider, session_id: SimpleNamespace(cwd=str(repo), pid=500, ended_at_epoch=None),
+        record_is_live=lambda record: True,
+        process_table=_TableReads(before, GHOSTTY_CODEX),
+    )
+    assert (reply["raised"], reply["detail"]) == ("terminal", "T1")
+
+    # --- scenario: the default loader reads past the shared cache, and refreshes it for everyone
+    uncached: list = []
+    fresh_table = {500: _entry(500, 1, "/bin/codex")}
+    monkeypatch.setattr(process_registry, "_list_processes_uncached", lambda runner: uncached.append(1) or fresh_table)
+    monkeypatch.setattr(process_registry, "_table_cache", (process_registry.time.monotonic(), dict(before)))
+    assert 500 not in process_registry.list_processes()
+    assert uncached == []
+    assert surfaces.process_table_holding(500) is fresh_table
+    assert uncached == [1]
+    assert process_registry.list_processes() is fresh_table
+
+
 def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch, tmp_path: Path) -> None:
     import os
     import signal
