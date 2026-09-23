@@ -16,7 +16,13 @@ final class NotchCardModel {
         didSet {
             // The lens is a peek, not a standing row: folding the card
             // puts it away, and the next open starts without it.
-            if !pinned { mirrorSummoned = false }
+            if !pinned {
+                mirrorSummoned = false
+                // Only a real fold starts the next open on Now — a
+                // repeat "not pinned" while the card is already away
+                // must not undo a shelf summon waiting to grow.
+                if oldValue { page = .now }
+            }
             refreshPrivacy()
             guard runtimeEnabled else { return }
             if pinned {
@@ -55,6 +61,7 @@ final class NotchCardModel {
 
     private func setMirror(_ summoned: Bool) {
         mirrorSummoned = summoned
+        if summoned { show(.shelf) }
         if pinned, runtimeEnabled { mirror.sync(enabled: summoned) }
     }
     /// The one-line ear-gesture hint — drawn in the pinned card until
@@ -117,6 +124,31 @@ final class NotchCardModel {
     var remindersEnabled: () -> Bool = { true }
     /// Where a session works — a reminder about it says so.
     var sessionCwd: (String) -> String? = { _ in nil }
+
+    /// The card's two pages: what needs the person now (sessions, their
+    /// quota, who is listening, media, battery) and the shelf (files,
+    /// timers, the day, the Mirror, the Control Center strip) — Alcove's
+    /// calm of one thing at a time instead of every row in one scroll.
+    /// Every open starts on Now; a shelf summon or the Mirror lands on
+    /// the shelf.
+    enum Page: Equatable { case now, shelf }
+    private(set) var page: Page = .now
+
+    func show(_ page: Page) {
+        if self.page != page { self.page = page }
+    }
+
+    /// A two-finger swipe across the grown card: left is the shelf,
+    /// right is back to Now.
+    func flipPage(toShelf: Bool) {
+        show(toShelf ? .shelf : .now)
+    }
+
+    /// What waits on the shelf page, for its tab: files, running or
+    /// done timers, and a fresh copy to paste.
+    var shelfWaiting: Int {
+        tray.items.count + timers.entries.count + (tray.pasteOffered ? 1 : 0)
+    }
 
     /// Who has the microphone, whether a camera is rolling — read as the
     /// card opens and on every sensor edge while it is open; nil while
@@ -288,49 +320,11 @@ struct NotchCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             revealRow(0, focusHeader(pinned: true))
             if model.wingHint { revealRow(1, wingHintRow) }
-            if !model.rows.isEmpty {
-                ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
-                        id: \.element.id) { index, row in
-                    revealRow(2 + index, sessionRow(row))
-                }
-                if model.rows.count > NotchIsland.rowLimit {
-                    revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
-                        .font(.system(size: 10))
-                        .foregroundStyle(style.faintColor)
-                        .padding(.leading, 24))
-                }
+            switch model.page {
+            case .now: nowPage
+            case .shelf: shelfPage
             }
-            if let privacy = model.privacyLine {
-                revealRow(9, privacyRow(privacy))
-            }
-            revealRow(9, ShelfMediaRow(utility: model.utility, style: style))
-            revealRow(10, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
-                                          heldAwake: model.heldAwake(), style: style))
-            if !model.weatherInCalendarSlot {
-                revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
-            }
-            revealRow(12, ShelfTrayRow(tray: model.tray, style: style,
-                                       handTargets: model.handTargets,
-                                       onHand: { entry, session in
-                                           model.handToAgent(entry, session: session)
-                                       }))
-            if !model.timers.entries.isEmpty {
-                revealRow(13, ShelfTimersRow(timers: model.timers, style: style))
-            }
-            if model.weatherInCalendarSlot {
-                revealRow(14, ShelfWeatherRow(weather: model.utility.weather, style: style))
-            } else {
-                revealRow(14, ShelfCalendarRow(calendar: model.calendar, style: style))
-            }
-            revealRow(15, ShelfRemindersRow(reminders: model.reminders, style: style))
-            revealRow(16, ShelfMirrorRow(mirror: model.mirror, style: style))
-            revealRow(17, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
-            if !model.meters.isEmpty {
-                ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                    revealRow(18 + index, meterRow(meter))
-                }
-            }
-            revealRow(22, overviewButton)
+            revealRow(22, pageBar)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, verticalPad)
@@ -481,6 +475,100 @@ struct NotchCardView: View {
                 .buttonStyle(.borderless)
             }
         }
+    }
+
+    /// Page one — what needs the person now, in the product design's
+    /// order: the sessions (asks and failures sort first), their quota,
+    /// who is listening, what is playing, the battery the runs ride on.
+    @ViewBuilder
+    private var nowPage: some View {
+        if !model.rows.isEmpty {
+            ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
+                    id: \.element.id) { index, row in
+                revealRow(2 + index, sessionRow(row))
+            }
+            if model.rows.count > NotchIsland.rowLimit {
+                revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
+                    .font(.system(size: 10))
+                    .foregroundStyle(style.faintColor)
+                    .padding(.leading, 24))
+            }
+        }
+        if !model.meters.isEmpty {
+            ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
+                revealRow(9 + index, meterRow(meter))
+            }
+        }
+        if let privacy = model.privacyLine {
+            revealRow(12, privacyRow(privacy))
+        }
+        revealRow(13, ShelfMediaRow(utility: model.utility, style: style))
+        revealRow(14, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
+                                      heldAwake: model.heldAwake(), style: style))
+    }
+
+    /// Page two — the shelf and the day: files, timers, the weather
+    /// and calendar, reminders, the Mirror when asked for, and the
+    /// Control Center strip.
+    @ViewBuilder
+    private var shelfPage: some View {
+        revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
+                                  handTargets: model.handTargets,
+                                  onHand: { entry, session in
+                                      model.handToAgent(entry, session: session)
+                                  }))
+        if !model.timers.entries.isEmpty {
+            revealRow(3, ShelfTimersRow(timers: model.timers, style: style))
+        }
+        // The weather leads the day; on a day with nothing scheduled it
+        // is the day, and the calendar's empty line goes.
+        revealRow(4, ShelfWeatherRow(weather: model.utility.weather, style: style))
+        if !model.weatherInCalendarSlot {
+            revealRow(5, ShelfCalendarRow(calendar: model.calendar, style: style))
+        }
+        revealRow(6, ShelfRemindersRow(reminders: model.reminders, style: style))
+        revealRow(7, ShelfMirrorRow(mirror: model.mirror, style: style))
+        revealRow(8, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
+    }
+
+    /// The card's foot: the two pages as quiet tabs — the shelf's says
+    /// when something waits there — and, on Now, the roster.
+    private var pageBar: some View {
+        HStack(spacing: 4) {
+            pageTab(.now, title: "Now")
+            pageTab(.shelf, title: model.shelfWaiting > 0 ? "Shelf · \(model.shelfWaiting)" : "Shelf")
+            Spacer(minLength: 8)
+            if model.page == .now {
+                Button { model.onOpenOverview?() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "rectangle.grid.2x2")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Agent Overview")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(style.subColor)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Every session as a roster (⌘O)")
+            }
+        }
+    }
+
+    private func pageTab(_ page: NotchCardModel.Page, title: String) -> some View {
+        let selected = model.page == page
+        return Button { model.show(page) } label: {
+            Text(title)
+                .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? style.titleColor : style.faintColor)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule(style: .continuous).fill(selected ? style.chipFill : .clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(page == .now ? "Sessions, quota, media" : "Shelf, timers, calendar, reminders")
     }
 
     /// Who is listening: the dots' colours (green camera, orange mic)
@@ -658,23 +746,6 @@ struct NotchCardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var overviewButton: some View {
-        Button { model.onOpenOverview?() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "rectangle.grid.2x2")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(style.subColor)
-                    .frame(width: 18, height: 18)
-                Text("Agent Overview")
-                    .font(.system(size: 11))
-                    .foregroundStyle(style.subColor)
-                Spacer(minLength: 8)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Every session as a roster (⌘O)")
-    }
 }
 
 /// The card's media row: artwork, source identity, track line,

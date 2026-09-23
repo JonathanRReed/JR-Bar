@@ -226,8 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                                       keyCode: UInt32(kVK_ANSI_D),
                                       hotKeyID: 1)
         shelfHotkey.onPress = { [weak toysStore] in
-            guard let notch = toysStore?.notch else { return }
-            if notch.islandExpanded { notch.collapseFromBand() } else { notch.expandFromBand() }
+            toysStore?.notch.toggleShelfFromHotkey()
         }
         shelfHotkey.setEnabled(settingsStore.shelfHotkeyEnabled)
         settingsStore.shelfHotkeyRegistrationFailed = shelfHotkey.registrationFailed

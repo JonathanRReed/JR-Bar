@@ -746,6 +746,9 @@ final class NotchToy: Toy {
     private var shelfExpandPending = false
 
     func shelfSummon() {
+        // A drag grows the card on Now: the session rows are drop
+        // targets there (let go on an agent to hand it the file), and a
+        // drop anywhere else lands in the tray and turns to the shelf.
         guard !islandExpanded else { return }
         shelfSummoned = true
         let pendingWasClaimed = bandExpandPending
@@ -786,6 +789,8 @@ final class NotchToy: Toy {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
         cardModel.tray.add(ShelfTrayDrop.trayURLs(from: urls))
+        // Show where it landed.
+        cardModel.show(.shelf)
     }
 
     // MARK: - Shake to summon
@@ -1986,6 +1991,18 @@ final class NotchToy: Toy {
         }
     }
 
+    /// ⌃⌥D: the card opens straight onto the shelf, or folds when it is
+    /// already up — the Yoink key, which is about the shelf, not the
+    /// sessions.
+    func toggleShelfFromHotkey() {
+        if islandExpanded {
+            collapseFromBand()
+        } else {
+            cardModel.show(.shelf)
+            expandFromBand()
+        }
+    }
+
     /// ⌥-click on the resting island: the card opens straight onto the
     /// Mirror. The camera only ever runs when asked for like this (or
     /// from the card header's camera button), and closes with the card.
@@ -2071,9 +2088,19 @@ final class NotchToy: Toy {
         guard settings.pullGestures else { return }
         switch swipe {
         case .left:
-            if islandMedia != nil { mediaNextTrack() }
+            // Across the grown card a sideways swipe turns its page; on
+            // the resting island it is the transport.
+            if islandExpanded {
+                cardModel.flipPage(toShelf: true)
+            } else if islandMedia != nil {
+                mediaNextTrack()
+            }
         case .right:
-            if islandMedia != nil { mediaPreviousTrack() }
+            if islandExpanded {
+                cardModel.flipPage(toShelf: false)
+            } else if islandMedia != nil {
+                mediaPreviousTrack()
+            }
         case .down:
             if islandExpanded {
                 foldExpandedCard()
@@ -2184,6 +2211,7 @@ final class NotchToy: Toy {
             _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb
             _ = displayVersion
             _ = cardModel.mirror.state    // the lens going live grows the card to hold it
+            _ = cardModel.page            // a page turn re-measures the card
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.runtimeEnabled else { return }
