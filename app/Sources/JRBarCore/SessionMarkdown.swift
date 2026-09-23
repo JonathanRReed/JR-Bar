@@ -219,6 +219,9 @@ extension FailureStory {
         } else if errorCount > 0 {
             parts.append("\(errorCount) \(errorCount == 1 ? "error" : "errors") in these rows")
         }
+        if let seconds = failingTurnSeconds, seconds >= 1 {
+            parts.append("It failed \(Self.duration(seconds)) into the turn")
+        }
         if diedMidTurn {
             parts.append("The session ended mid-turn")
         }
@@ -227,5 +230,13 @@ extension FailureStory {
         }
         guard !parts.isEmpty else { return "These rows show a failure." }
         return parts.joined(separator: ". ") + "."
+    }
+
+    /// "42 s", "3 min 12 s", "1 h 4 min".
+    static func duration(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total) s" }
+        if total < 3600 { return total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s" }
+        return "\(total / 3600) h \((total % 3600) / 60) min"
     }
 }

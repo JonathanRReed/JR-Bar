@@ -326,7 +326,8 @@ struct HistoryRowView: View {
     private var timeline: some View {
         if let reconstruction = store.timeline(for: row) {
             VStack(alignment: .leading, spacing: 6) {
-                ReconstructedTimelineView(reconstruction: reconstruction, viewState: store.expandedViewState)
+                ReconstructedTimelineView(reconstruction: reconstruction, viewState: store.expandedViewState,
+                                          landOnFailure: row.kind == "failed")
                     .frame(height: 280)
                 if let session = row.session, store.onRevealSession != nil {
                     Button("Open in Overview") { store.onRevealSession?(session) }

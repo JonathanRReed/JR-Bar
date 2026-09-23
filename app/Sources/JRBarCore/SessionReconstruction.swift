@@ -73,16 +73,21 @@ public struct FailureStory: Sendable, Equatable {
     public let diedMidTurn: Bool      // last activity has no closing turn_end
     public let lastUserIntent: String?// bounded last user message
     public let failedToolNames: [String]
+    /// How long the turn that first failed had run when it failed: from
+    /// the last thing you said before the first error to that error. Nil
+    /// without a dated error, or with no message of yours before it.
+    public let failingTurnSeconds: Double?
 
     public init(failed: Bool, errorCount: Int, lastErrorSummary: String?,
                 diedMidTurn: Bool, lastUserIntent: String?,
-                failedToolNames: [String]) {
+                failedToolNames: [String], failingTurnSeconds: Double? = nil) {
         self.failed = failed
         self.errorCount = errorCount
         self.lastErrorSummary = lastErrorSummary
         self.diedMidTurn = diedMidTurn
         self.lastUserIntent = lastUserIntent
         self.failedToolNames = failedToolNames
+        self.failingTurnSeconds = failingTurnSeconds
     }
 }
 
@@ -607,7 +612,18 @@ public enum SessionReconstructor {
             lastErrorSummary: lastErrorSummary,
             diedMidTurn: diedMidTurn,
             lastUserIntent: lastUserIntent,
-            failedToolNames: failedToolNames)
+            failedToolNames: failedToolNames,
+            failingTurnSeconds: failingTurnSeconds(items))
+    }
+
+    /// The first dated error's distance from the last user message before
+    /// it — the failing turn's running time when it failed.
+    static func failingTurnSeconds(_ items: [ReconstructedItem]) -> Double? {
+        guard let index = items.firstIndex(where: { $0.isError && $0.at != nil }),
+              let failedAt = items[index].at,
+              let asked = items[..<index].last(where: { $0.kind == .message && $0.role == "user" && $0.at != nil })?.at,
+              failedAt >= asked else { return nil }
+        return failedAt - asked
     }
 
     /// A failed tool_result's name lives on its paired tool_use row.

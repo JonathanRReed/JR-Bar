@@ -28,6 +28,10 @@ struct ReconstructedTimelineView: View {
     /// Where the rows came from, when it is worth a word ("archived
     /// copy"); nil says nothing.
     var sourceNote: String? = nil
+    /// Open scrolled to the first failure, the tool calls that led to it
+    /// just above — for panes whose job is reconstructing what went wrong
+    /// (the archive, a failed History row). Only inside its own scroll.
+    var landOnFailure = false
 
     enum KindFilter: String, CaseIterable {
         case all = "All"
@@ -232,6 +236,12 @@ struct ReconstructedTimelineView: View {
                     } else {
                         ScrollView {
                             rows(shown).padding(.bottom, 4)
+                        }
+                        // Keyed on the rebuild, so a new record lands on
+                        // its own failure and a chip change never yanks.
+                        .task(id: "\(reconstruction.totalLines)|\(entries.count)|\(firstError ?? "")") {
+                            guard landOnFailure, kind == .all, let firstError else { return }
+                            proxy.scrollTo(firstError, anchor: .center)
                         }
                     }
                 }

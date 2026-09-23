@@ -687,7 +687,7 @@ struct DataHoarderView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let reconstruction = model.reconstruction {
             ReconstructedTimelineView(reconstruction: reconstruction,
-                                      viewState: model.timelineViewState)
+                                      viewState: model.timelineViewState, landOnFailure: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Text(model.detailError ?? "Nothing to rebuild — the stored segments produced no rows.")
