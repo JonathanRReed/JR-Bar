@@ -1015,7 +1015,7 @@ private struct MenuBarAutomationControls: View {
                 .controlSize(.small)
         } label: {
             SettingLabel(title: "Command bar",
-                         subtitle: "A floating palette of every item and action — type to filter, Enter to run.")
+                         subtitle: "JR-Bar's palette: asks and sessions, menu bar items, the front app's menus, quiet, lights and windows — type to find, ↩ to run, ⌘K for every verb.")
         }
 
         ForEach(utility.resolvedHotkeyBindings(), id: \.action) { binding in
