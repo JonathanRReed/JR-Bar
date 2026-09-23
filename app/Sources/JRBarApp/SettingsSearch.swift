@@ -137,6 +137,10 @@ enum SettingsSearch {
         .init(.advanced, "Diagnostics", "Doctor", subtitle: "Checks the monitor's health."),
         .init(.advanced, "Report", "Copy diagnostics", subtitle: "Builds, Doctor, permissions and the log tail as one redacted block.",
               keywords: ["bug", "report", "support", "clipboard"]),
+        .init(.advanced, "Transfer", "Export settings", subtitle: "Every preference as one JSON file.",
+              keywords: ["backup", "export", "migrate", "second mac", "sync"]),
+        .init(.advanced, "Transfer", "Import settings", subtitle: "Take chosen parts of an export.",
+              keywords: ["restore", "import", "migrate", "second mac"]),
         .init(.advanced, "Diagnostics", "Reset to defaults", subtitle: "Rarely needed — puts one page's settings back."),
     ]
 

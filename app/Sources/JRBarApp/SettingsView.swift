@@ -195,6 +195,7 @@ struct SettingsPageContainer: View {
             case .advanced:
                 AdvancedPage(store: store)
                 DiagnosticsCopyGroup(store: store)
+                SettingsTransferGroup(store: store)
             }
         }
         .formStyle(.grouped)

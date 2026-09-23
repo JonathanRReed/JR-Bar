@@ -4,6 +4,7 @@ import JRBarCore
 import Observation
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 /// The Settings window's state. The daemon's document is the only source of
@@ -808,6 +809,166 @@ final class SettingsStore {
             NSPasteboard.general.setString(DiagnosticsReport.text(facts), forType: .string)
             self.show(status: "Diagnostics copied — paste them into a report or a session")
         }
+    }
+
+    // MARK: Transfer
+
+    /// An opened export waiting on its checklist.
+    var pendingImport: SettingsBundle?
+    /// An import is writing (the monitor's keys go one `set_setting` each).
+    var importing = false
+
+    /// Advanced › Transfer › Export: every category into one file the
+    /// person names. The monitor's part is whatever document is live; a
+    /// monitor that is down exports the app's part alone.
+    func exportSettings() {
+        let bundle = SettingsBundle.make(
+            document: core.settings?.document, schema: core.settings?.schema,
+            utilities: utilities?.state, toys: toys?.state,
+            defaults: UserDefaults.standard.dictionaryRepresentation(),
+            appVersion: AppVersion.describe(), now: Date())
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "JR-Bar Settings.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.message = "The file holds your webhook URL and the menu bar's curated apps; keep it where only you can read it."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try bundle.encoded().write(to: url, options: .atomic)
+            let parts = bundle.categories.map { $0.title.lowercased() }
+            show(status: "Exported \(parts.joined(separator: ", ")) to \(url.lastPathComponent)")
+        } catch {
+            report(error: "Export: \(error.localizedDescription)")
+        }
+    }
+
+    /// Advanced › Transfer › Import: read a file, then show its checklist.
+    func chooseImport() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            pendingImport = try SettingsBundle.read(Data(contentsOf: url))
+        } catch {
+            report(error: "Import: \(error.localizedDescription)")
+        }
+    }
+
+    /// Applies the ticked categories. The monitor's keys go through
+    /// `set_setting` one at a time — the daemon validates each, and a
+    /// refusal names its key instead of failing the rest; only keys this
+    /// monitor knows and values that differ are written. The Utilities
+    /// and Toys pages take their state whole, through their own stores,
+    /// so every utility re-applies at once.
+    func applyImport(_ bundle: SettingsBundle, categories: Set<SettingsBundle.Category>) {
+        pendingImport = nil
+        guard !categories.isEmpty, !importing else { return }
+        importing = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.importing = false }
+            var done: [String] = []
+            var problems: [String] = []
+            let wantsMonitor = categories.contains(.monitor) || categories.contains(.devices)
+            if wantsMonitor, !self.core.isLive {
+                problems.append("monitor settings need the monitor running")
+            }
+            if categories.contains(.monitor), self.core.isLive {
+                let plan = bundle.monitorWrites(against: self.core.settings?.document)
+                var refused: [String] = []
+                for write in plan.writes {
+                    if await !self.write(write.key, write.value) { refused.append(write.key) }
+                }
+                done.append("\(plan.writes.count - refused.count) monitor settings")
+                if !refused.isEmpty { problems.append("refused " + refused.joined(separator: ", ")) }
+                if !plan.unknown.isEmpty { problems.append("\(plan.unknown.count) this monitor does not know were skipped") }
+            }
+            if categories.contains(.devices), self.core.isLive, let devices = bundle.devices {
+                var landed = self.core.settings?.document["devices"] == devices
+                if !landed { landed = await self.write("devices", devices) }
+                if landed { done.append("devices") } else { problems.append("the devices were refused") }
+            }
+            if categories.contains(.utilities) {
+                if let state = SettingsBundle.decode(UtilitiesState.self, from: bundle.utilities), let utilities = self.utilities {
+                    utilities.state = state
+                    done.append("utilities")
+                } else {
+                    problems.append("the utilities could not be read")
+                }
+            }
+            if categories.contains(.toys) {
+                if let state = SettingsBundle.decode(ToysState.self, from: bundle.toys), let toys = self.toys {
+                    toys.state = state
+                    done.append("toys")
+                } else {
+                    problems.append("the toys could not be read")
+                }
+            }
+            if categories.contains(.preferences) {
+                done.append("\(self.applyPreferences(bundle.preferences)) preferences")
+            }
+            let summary = "Imported " + (done.isEmpty ? "nothing" : done.joined(separator: ", "))
+            if problems.isEmpty {
+                self.show(status: summary)
+            } else {
+                self.report(error: summary + " — " + problems.joined(separator: "; "))
+            }
+        }
+    }
+
+    /// One awaited `set_setting`; true when the monitor took it.
+    private func write(_ key: String, _ value: JSONValue) async -> Bool {
+        do {
+            return try await core.setSetting(SettingsPath(key), value: value).ok
+        } catch {
+            return false
+        }
+    }
+
+    /// The app's preferences, each through the path its own control
+    /// takes so it lands live: chords re-register (first, so the file's
+    /// own on/off switches win after a recorded key turns one on), the
+    /// switches flip their registrations, the channel and automatic
+    /// checks reach Sparkle, and sounds and the strip re-read.
+    private func applyPreferences(_ preferences: [String: JSONValue]) -> Int {
+        let chordPrefix = "hotkeyChord."
+        var applied = 0
+        for key in preferences.keys.sorted() where key.hasPrefix(chordPrefix) {
+            guard let stored = preferences[key]?.stringValue else { continue }
+            let chord = stored.isEmpty ? nil : HotkeyChord(storageString: stored)
+            guard stored.isEmpty || chord != nil else { continue }
+            setShortcut(chord, for: String(key.dropFirst(chordPrefix.count)))
+            applied += 1
+        }
+        let defaults = UserDefaults.standard
+        for key in preferences.keys.sorted() where !key.hasPrefix(chordPrefix) {
+            guard let value = preferences[key], let object = SettingsBundle.defaultsValue(value) else { continue }
+            switch key {
+            case PanelHotkey.defaultsKey:
+                guard let on = value.boolValue else { continue }
+                panelHotkeyEnabled = on
+            case Self.shelfHotkeyDefaultsKey:
+                guard let on = value.boolValue else { continue }
+                shelfHotkeyEnabled = on
+            case SparkleUpdater.channelDefaultsKey:
+                guard let channel = value.stringValue else { continue }
+                updateChannel = channel
+            case SparkleUpdater.automaticChecksDefaultsKey:
+                guard let on = value.boolValue else { continue }
+                setAutomaticUpdateChecks(on)
+            case SystemTogglesStore.awakeDisplayDefaultsKey:
+                guard let on = value.boolValue else { continue }
+                SystemTogglesStore.shared.setAwakeKeepsDisplay(on)
+            default:
+                defaults.set(object, forKey: key)
+            }
+            applied += 1
+        }
+        soundPreferences = SoundPreferences.load()
+        SystemTogglesStore.shared.state.strip = SystemTogglesStore.loadStrip()
+        return applied
     }
 
     /// The monitor's connection in words, as the Advanced page says it.

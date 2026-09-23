@@ -105,6 +105,112 @@ struct DiagnosticsCopyGroup: View {
     }
 }
 
+// MARK: - Advanced › Transfer
+
+/// Export every JR-Bar preference to one file, or import one with a
+/// checklist of what to take — a second Mac or a reset in one step.
+struct SettingsTransferGroup: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Transfer", note: "Import writes only what you tick; the monitor checks every setting as it lands.") {
+            SettingRow("Export settings", subtitle: "The monitor's settings, devices, Utilities, Toys, shortcuts and sounds, as one JSON file.") {
+                Button("Export…") { store.exportSettings() }
+                    .controlSize(.small)
+            }
+            SettingRow("Import settings", subtitle: "Open an export and choose which parts to take.") {
+                Button(store.importing ? "Importing…" : "Import…") { store.chooseImport() }
+                    .controlSize(.small)
+                    .disabled(store.importing)
+            }
+        }
+        .sheet(isPresented: Binding(get: { store.pendingImport != nil },
+                                    set: { if !$0 { store.pendingImport = nil } })) {
+            if let bundle = store.pendingImport {
+                SettingsImportSheet(bundle: bundle, monitorLive: store.core.isLive,
+                                    knownSchema: CoreProtocol.knownSettingsSchema,
+                                    apply: { store.applyImport(bundle, categories: $0) },
+                                    cancel: { store.pendingImport = nil })
+            }
+        }
+    }
+}
+
+/// The import checklist: what the file holds, a tick per part, and
+/// where it came from.
+struct SettingsImportSheet: View {
+    let bundle: SettingsBundle
+    let monitorLive: Bool
+    let knownSchema: Int
+    let apply: (Set<SettingsBundle.Category>) -> Void
+    let cancel: () -> Void
+    @ViewState private var chosen: Set<SettingsBundle.Category>
+
+    init(bundle: SettingsBundle, monitorLive: Bool, knownSchema: Int,
+         apply: @escaping (Set<SettingsBundle.Category>) -> Void, cancel: @escaping () -> Void) {
+        self.bundle = bundle
+        self.monitorLive = monitorLive
+        self.knownSchema = knownSchema
+        self.apply = apply
+        self.cancel = cancel
+        _chosen = ViewState(initialValue: Set(bundle.categories.filter(\.onByDefault)))
+    }
+
+    private var origin: String {
+        var parts: [String] = []
+        if let version = bundle.appVersion { parts.append("JR-Bar \(version)") }
+        if let date = bundle.exportedAt { parts.append(date.formatted(date: .abbreviated, time: .shortened)) }
+        return parts.isEmpty ? "An export of unknown age." : "Exported from " + parts.joined(separator: ", ") + "."
+    }
+
+    private func needsMonitor(_ category: SettingsBundle.Category) -> Bool {
+        (category == .monitor || category == .devices) && !monitorLive
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Import settings").font(.title3.weight(.semibold))
+                Text(origin).foregroundStyle(.secondary)
+                if let schema = bundle.schema, schema > knownSchema {
+                    Text("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.")
+                        .font(.callout).foregroundStyle(.orange)
+                }
+            }
+            if bundle.categories.isEmpty {
+                Text("The file holds nothing to import.").foregroundStyle(.secondary)
+            }
+            ForEach(bundle.categories) { category in
+                Toggle(isOn: Binding(get: { chosen.contains(category) && !needsMonitor(category) },
+                                     set: { if $0 { chosen.insert(category) } else { chosen.remove(category) } })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(category.title)
+                            Text(bundle.summary(of: category)).foregroundStyle(.tertiary)
+                        }
+                        Text(needsMonitor(category) ? "Needs the monitor running." : category.detail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .disabled(needsMonitor(category))
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { cancel() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Import") { apply(chosen.filter { !needsMonitor($0) }) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(chosen.filter { !needsMonitor($0) }.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+}
+
 // MARK: - Shortcuts
 
 /// Every global shortcut JR-Bar holds, on one page, each with a real
