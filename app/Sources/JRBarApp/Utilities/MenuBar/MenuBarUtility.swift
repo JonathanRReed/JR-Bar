@@ -1850,6 +1850,11 @@ final class MenuBarUtility: Toy {
         concealed.filter { !isOwnFamily($0) && !(lifts[$0].map { $0 > now } ?? false) }
     }
 
+    /// How long a lift holds for its photograph — the camera's two
+    /// frames and their listings, with room to spare; the pass ends it
+    /// sooner.
+    nonisolated static let liftPhotographHold: TimeInterval = 3
+
     /// Stand `app` alone on the row until `until` (a later lift wins),
     /// and converge now.
     private func lift(_ app: String, until: Date) {
@@ -1860,12 +1865,24 @@ final class MenuBarUtility: Toy {
     /// End a lift once nothing of the app's is open — a menu the person
     /// is reading keeps it standing, polled each second for up to five
     /// minutes — then put the full target back.
-    private func releaseLift(_ app: String, ownerPID: pid_t) async {
+    private func releaseLift(_ app: String, item: MenuBarItem) async {
         for _ in 0..<300 {
-            guard MenuBarItemLister.menuOpen(ownerPIDs: [ownerPID],
+            guard MenuBarItemLister.menuOpen(ownerPIDs: [item.ownerPID],
                                              infos: MenuBarItemLister.windowInfos()) else { break }
             lifts[app] = Date().addingTimeInterval(2)
             try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        // The press is answered and its menu closed, and the lift still
+        // stands the item on the row: the moment to photograph a stale
+        // glyph. Never before the press — each frame lights the
+        // recording indicator and shifts the bar, which must not land
+        // between a click and the menu it opens. A fresh glyph costs no
+        // capture at all. Only a lift still standing is held — one that
+        // already lapsed is not raised again for a picture.
+        if let camera = glyphCamera, let until = lifts[app], until > Date() {
+            lifts[app] = max(until, Date().addingTimeInterval(Self.liftPhotographHold))
+            let stored = await camera.photograph([item], rows: MenuBarItemLister.menuBarRows())
+            if !stored.isEmpty { bar.glyphsChanged() }
         }
         lifts[app] = nil
         runningApps.invalidate()
@@ -2614,6 +2631,8 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored private var prePhotographPending = false
     /// This reveal's photographs are taken (or under way).
     @ObservationIgnored private var revealPhotographed = false
+    /// Waits out the moment this reveal may be photographed.
+    @ObservationIgnored private var revealPhotoWatch: Task<Void, Never>?
 
     /// The menu bar's appearance — the icon's, which follows the
     /// wallpaper under the bar, not the app's.
@@ -2689,24 +2708,38 @@ final class MenuBarUtility: Toy {
     }
 
     /// While a reveal holds the concealed apps on the row, photograph
-    /// them once — after a beat, so the fade-in has landed.
+    /// the stale ones once — after the fade-in, and only while nobody is
+    /// using the row: the pointer off every surface the reveal serves
+    /// and no listed item's menu open. Each frame lights the recording
+    /// indicator and shifts the bar, which must never land under a
+    /// pointer aiming at the items the reveal just brought back. The
+    /// watch is a pointer read and a window list twice a second, for
+    /// the life of one reveal, and stops once the pass is taken.
     private func photographReveal() {
-        guard concealer != nil, glyphCamera != nil else { return }
-        guard !hider.revealed.isEmpty else {
+        guard concealer != nil, glyphCamera != nil, !hider.revealed.isEmpty else {
             revealPhotographed = false
+            revealPhotoWatch?.cancel()
+            revealPhotoWatch = nil
             return
         }
-        guard !revealPhotographed else { return }
-        revealPhotographed = true
-        Task { @MainActor [weak self] in
+        guard !revealPhotographed, revealPhotoWatch == nil else { return }
+        revealPhotoWatch = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
-            guard let self, !self.hider.revealed.isEmpty else { return }
-            let tucked = MenuBarConcealPlan.concealed(apps: self.curatedSettings().concealedApps,
-                                                      revealed: [])
-            let standing = self.onRowItems(in: self.listedItems).filter {
-                $0.bundleID.map(tucked.contains) ?? false
+            while !Task.isCancelled {
+                guard let self, self.concealer != nil, !self.hider.revealed.isEmpty else { return }
+                if !self.reveal.pointerOnRevealSurface(), !self.listedItemMenuOpen() {
+                    self.revealPhotographed = true
+                    self.revealPhotoWatch = nil
+                    let tucked = MenuBarConcealPlan.concealed(apps: self.curatedSettings().concealedApps,
+                                                              revealed: [])
+                    let standing = self.onRowItems(in: self.listedItems).filter {
+                        $0.bundleID.map(tucked.contains) ?? false
+                    }
+                    self.photograph(standing)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
             }
-            self.photograph(standing)
         }
     }
 
@@ -3014,19 +3047,11 @@ final class MenuBarUtility: Toy {
                         if MenuBarItemLister.onAnyMenuBarRow(found.bounds) { break }
                     }
                 }
-                // The narrow lift is one of the moments the item is
-                // drawn: photograph it (only when its glyph is stale)
-                // before the press opens its menu over it.
-                if let camera = self.glyphCamera,
-                   MenuBarItemLister.onAnyMenuBarRow(fresh.bounds) {
-                    let stored = await camera.photograph([fresh], rows: MenuBarItemLister.menuBarRows())
-                    if !stored.isEmpty { self.bar.glyphsChanged() }
-                }
                 if !MenuBarAX.press(fresh) {
                     await MainActor.run { self.clickFallback(fresh) }
                 }
                 try? await Task.sleep(nanoseconds: UInt64(rehide * 1e9))
-                await self.releaseLift(id, ownerPID: fresh.ownerPID)
+                await self.releaseLift(id, item: fresh)
             }
             return
         }

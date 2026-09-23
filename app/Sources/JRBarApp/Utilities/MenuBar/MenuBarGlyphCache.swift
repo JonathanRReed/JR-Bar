@@ -8,8 +8,11 @@ import OSLog
 /// capture can only ever show the owner's app icon, and on a curated bar
 /// nearly every tile was one. Ice's PR #995 and Bartender for Golden
 /// Gate photograph each item while it is legitimately on the row; this
-/// does the same: before the first conceal, during a reveal, and in the
-/// narrow lift a tile click makes. Each photograph is taken twice and
+/// does the same: before the first conceal, during a reveal once the
+/// pointer has left the row, and in the narrow lift a tile click makes
+/// once its menu has closed — never between a click and its answer,
+/// since each frame lights the recording indicator and shifts the bar.
+/// Each photograph is taken twice and
 /// kept only when the two frames agree (a mid-fade frame never lands),
 /// lifted off the bar's own material, stored per item and appearance
 /// under Application Support, and re-tinted when the glyph is a template
