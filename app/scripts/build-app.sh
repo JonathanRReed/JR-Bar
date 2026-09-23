@@ -132,6 +132,10 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<string>JR-Bar shows the next event on the shelf and the Dock's Calendar tile, and only after you ask it to. Nothing leaves the Mac.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>JR-Bar lists your next reminders on the shelf — and only after you ask it to. Checking one off writes back to Reminders; nothing else is sent anywhere.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

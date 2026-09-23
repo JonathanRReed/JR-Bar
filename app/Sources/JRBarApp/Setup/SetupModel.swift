@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import CoreBluetooth
+import CoreLocation
 import EventKit
 import Intents
 import JRBarCore
@@ -59,8 +60,11 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
     case audioCapture
     case bluetooth
     case accessibility
+    case automation
+    case location
     case fullDiskAccess
     case focusStatus
+    case lidHelper
 
     var id: String { rawValue }
 
@@ -74,8 +78,11 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .audioCapture: return "System Audio"
         case .bluetooth: return "Bluetooth"
         case .accessibility: return "Accessibility"
+        case .automation: return "Automation"
+        case .location: return "Location"
         case .fullDiskAccess: return "Full Disk Access"
         case .focusStatus: return "Focus Status"
+        case .lidHelper: return "Closed-lid helper"
         }
     }
 
@@ -98,10 +105,16 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
             return "The notch's connect announcements — \"AirPods connected\"."
         case .accessibility:
             return "Answering asks straight into the session's terminal, and following Alcove's capsule."
+        case .automation:
+            return "The Dark chip, and the Dock chip's fallback — JR-Bar asks System Events to switch the appearance or the Dock's auto-hide."
+        case .location:
+            return "Wi-Fi rules in the Menu Bar utility — macOS only tells apps a network's name with Location on. Nothing reads where you are."
         case .fullDiskAccess:
             return "Focus sync in the monitor — it reads the Do Not Disturb database so the lights quiet down when a Focus is on."
         case .focusStatus:
             return "The app's own read of the active Focus — Menu Bar triggers and the status item's moon. Separate from Full Disk Access."
+        case .lidHelper:
+            return "Agents keep running with the lid shut (Notifications & Focus › Power). Copy the command, paste it in Terminal; it asks for your password once."
         }
     }
 
@@ -115,8 +128,11 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .audioCapture: return "waveform"
         case .bluetooth: return "antenna.radiowaves.left.and.right"
         case .accessibility: return "accessibility"
+        case .automation: return "gearshape.2.fill"
+        case .location: return "location.fill"
         case .fullDiskAccess: return "internaldrive.fill"
         case .focusStatus: return "moon.fill"
+        case .lidHelper: return "laptopcomputer"
         }
     }
 
@@ -127,17 +143,22 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
     var canPrompt: Bool {
         switch self {
         case .notifications, .calendar, .reminders, .camera, .screenRecording,
-             .focusStatus:
+             .focusStatus, .automation, .location:
             return true
-        case .accessibility, .fullDiskAccess, .audioCapture, .bluetooth:
+        case .accessibility, .fullDiskAccess, .audioCapture, .bluetooth, .lidHelper:
             return false
         }
     }
 
     /// What the row's button says and whether it opens a System Settings
     /// pane rather than a prompt — nil when there is nothing to press.
-    /// Denied always deep-links: a second prompt is never offered.
+    /// Denied always deep-links: a second prompt is never offered. The
+    /// closed-lid helper is no TCC grant at all — a sudoers rule only
+    /// Terminal can install — so its button copies the command.
     func action(for status: SetupPermissionStatus) -> (title: String, opensSettings: Bool)? {
+        if self == .lidHelper {
+            return status == .needed ? ("Copy Command", false) : nil
+        }
         switch status {
         case .granted, .unavailable:
             return nil
@@ -279,7 +300,13 @@ extension SetupModel {
         model.installHooks = { [weak core] provider in
             await Self.installHooks(provider, on: core)
         }
-        model.refreshPermissions = { await Self.probePermissions() }
+        model.refreshPermissions = { [weak core] in
+            var statuses = await Self.probePermissions()
+            // The daemon owns the helper's install state (`power.closed_lid`).
+            statuses[.lidHelper] = Self.lidHelperStatus(
+                helperInstalled: core?.isLive == true ? core?.state?.power?.closedLid?.helperInstalled : nil)
+            return statuses
+        }
         model.act = { permission in await Self.act(on: permission) }
         model.iconPreview = { [weak core] in Self.iconPreview(core: core) }
         return model
@@ -334,7 +361,58 @@ extension SetupModel {
         statuses[.reminders] = reminderStatus()
         statuses[.camera] = cameraStatus()
         statuses[.notifications] = await notificationStatus()
+        // Asked without prompting — the same read the Dark chip makes
+        // before it flips.
+        statuses[.automation] = automationStatus(
+            await Task.detached { AutomationPermission.systemEvents(ask: false) }.value)
+        statuses[.location] = locationStatus(locationManager.authorizationStatus,
+                                             servicesEnabled: CLLocationManager.locationServicesEnabled())
         return statuses
+    }
+
+    /// The System Events grant as a row. Unavailable (System Events not
+    /// running, so macOS cannot say) reads Unknown with a Grant button —
+    /// the grant path launches it first.
+    static func automationStatus(_ permission: AutomationPermission) -> SetupPermissionStatus {
+        switch permission {
+        case .granted: return .granted
+        case .needsConsent: return .needed
+        case .denied: return .denied
+        case .unavailable: return .unknown
+        }
+    }
+
+    /// `CLLocationManager.authorizationStatus`: either "authorized" is a
+    /// grant; Location Services off for the whole Mac reads as denied,
+    /// since only the pane can change it.
+    static func locationStatus(_ status: CLAuthorizationStatus, servicesEnabled: Bool) -> SetupPermissionStatus {
+        guard servicesEnabled else { return .denied }
+        switch status {
+        case .authorizedAlways, .authorizedWhenInUse: return .granted
+        case .denied: return .denied
+        case .restricted: return .unavailable
+        case .notDetermined: return .needed
+        @unknown default: return .unknown
+        }
+    }
+
+    /// The helper's row from the daemon's `power.closed_lid.helper_installed`;
+    /// Unknown while the monitor is not connected.
+    static func lidHelperStatus(helperInstalled: Bool?) -> SetupPermissionStatus {
+        switch helperInstalled {
+        case true?: return .granted
+        case false?: return .needed
+        case nil: return .unknown
+        }
+    }
+
+    /// The install command for this build: the bundled `jrbar-core` in a
+    /// packaged app (whose path Terminal needs, since it is on no PATH),
+    /// else `jrbar` from a source checkout. `sudo` because the helper is a
+    /// sudoers rule; nothing else in JR-Bar ever asks for a password.
+    static func lidHelperCommand(coreExecutable: String?) -> String {
+        let executable = coreExecutable.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" } ?? "jrbar"
+        return "sudo \(executable) status-bar install-sleep-helper"
     }
 
     /// `EKEventStore.authorizationStatus(for: .event)` — the same status
@@ -443,9 +521,53 @@ extension SetupModel {
         case .audioCapture: NSWorkspace.shared.open(audioCaptureSettingsURL)
         case .bluetooth: NSWorkspace.shared.open(bluetoothSettingsURL)
         case .accessibility: NSWorkspace.shared.open(accessibilitySettingsURL)
+        case .automation: await requestAutomation()
+        case .location: requestLocation()
         case .fullDiskAccess: NSWorkspace.shared.open(fullDiskAccessSettingsURL)
         case .focusStatus: await requestFocusStatus()
+        case .lidHelper: copyLidHelperCommand()
         }
+    }
+
+    /// Location privacy, for a denied row (and Location Services off).
+    static let locationSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")!
+
+    /// macOS's own "control System Events?" prompt, asked up front rather
+    /// than on the Dark chip's first tap. System Events must be running
+    /// for macOS to ask, so it is launched first, hidden. A denied grant
+    /// only changes in the Automation pane.
+    static func requestAutomation() async {
+        if AutomationPermission.systemEvents(ask: false) == .denied {
+            NSWorkspace.shared.open(AutomationPermission.settingsURL)
+            return
+        }
+        let systemEvents = URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        _ = try? await NSWorkspace.shared.openApplication(at: systemEvents, configuration: configuration)
+        _ = await Task.detached { AutomationPermission.systemEvents(ask: true) }.value
+    }
+
+    /// The one location manager the prompt needs alive until it is
+    /// answered; nothing ever starts updates on it.
+    private static let locationManager = CLLocationManager()
+
+    static func requestLocation() {
+        let status = locationStatus(locationManager.authorizationStatus,
+                                    servicesEnabled: CLLocationManager.locationServicesEnabled())
+        if status == .needed {
+            locationManager.requestWhenInUseAuthorization()
+        } else if status == .denied {
+            NSWorkspace.shared.open(locationSettingsURL)
+        }
+    }
+
+    static func copyLidHelperCommand() {
+        let command = lidHelperCommand(coreExecutable: CoreSupervisor.bundledCore(in: Bundle.main)?.executable)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
     }
 
     /// NotificationBridge asks with `.alert/.sound/.badge` the first

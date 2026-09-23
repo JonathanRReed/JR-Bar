@@ -1041,8 +1041,12 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "JR-Bar uses Focus Status only when you choose Allow Focus Status, "
         "so Do Not Disturb can follow whether a macOS Focus is active."
     )
+    # Wi-Fi rules read the network name, which macOS gates behind Location.
+    assert info["NSLocationUsageDescription"] == info["NSLocationWhenInUseUsageDescription"]
+    assert "never read or sent" in info["NSLocationUsageDescription"]
     entitlements = plistlib.loads((packaging_dir / "entitlements.plist").read_bytes())
     assert entitlements["com.apple.security.automation.apple-events"] is True
+    assert entitlements["com.apple.security.personal-information.location"] is True
 
     # The layout: Swift app, the frozen daemon bundle and the shim under
     # Helpers, Sparkle and its license.
