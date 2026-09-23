@@ -147,7 +147,8 @@ struct AquariumView: View {
                     Canvas { canvas, size in
                         // One steering step per frame before anything
                         // reads a position: wander, glass, food, school.
-                        stepSwim(order.ordered, in: size, t: t, now: context.date)
+                        stepSwim(order.ordered, in: size, t: t, now: context.date,
+                                 density: density)
                         // The empty-tank caption's capsule: decor keeps
                         // clear of it, and it draws last, over the sand.
                         let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
@@ -230,6 +231,8 @@ struct AquariumView: View {
                                 CGRect(x: l.x - len * 0.62, y: l.y - hgt * 0.85,
                                        width: len * 1.24, height: hgt * 1.7)))
                         }
+                        drawTokenPasses(canvas: &canvas, roster: order.ordered,
+                                        layouts: layouts, t: t, now: context.date)
                         drawMeals(canvas: &canvas, meals: meals, now: context.date)
                         drawFeed(canvas: &canvas, size: size, now: context.date)
                         drawShopDecor(canvas: &canvas, size: size, t: t)
@@ -581,6 +584,9 @@ struct AquariumView: View {
         var pendingEvents: [PendingGameEvent] = []
         /// A drain is already queued for after this pass.
         var eventDrainQueued = false
+        /// Which fish are at their station this frame — the cue pass
+        /// only draws a fish's work where it is actually doing it.
+        var stationed: [String: TankStation] = [:]
     }
 
     /// A game event a draw pass produced — recorded, not applied.
@@ -637,7 +643,8 @@ struct AquariumView: View {
     /// just reads the results. Special states (rise/sink/leave) hold
     /// their bodies still; the pose functions animate from the anchor
     /// recorded where the state changed.
-    private func stepSwim(_ roster: [Fish], in size: CGSize, t: Double, now: Date) {
+    private func stepSwim(_ roster: [Fish], in size: CGSize, t: Double, now: Date,
+                          density: Double = 1) {
         let m = motion
         m.size = size
         // Reduce Motion ticks once a second: let the sim absorb real
@@ -652,6 +659,7 @@ struct AquariumView: View {
             m.anchors = m.anchors.filter { liveIDs.contains($0.key) }
             m.stages = m.stages.filter { liveIDs.contains($0.key) }
             m.startles = m.startles.filter { liveIDs.contains($0.key) }
+            m.stationed = m.stationed.filter { liveIDs.contains($0.key) }
         }
         // Transient FX expiry — puffs and flights are draw-only state.
         m.startles = m.startles.filter { now < $0.value.until }
@@ -766,6 +774,29 @@ struct AquariumView: View {
             context.wander = fish.state == .idling ? 0.5 : 1.0
             context.hunger = hungry ? 1.3 : 1.0
             context.effort = fish.state == .idling ? 0.42 : 1.0
+            // At work: the plan's tool-level action has a station, and
+            // the fish goes and does it there — foraging the kelp for a
+            // read, circling the wreck for a test. Expressed as a slow
+            // seek on the station's moving point, so the glass, the
+            // food and a startle all still outrank it: lunch first, a
+            // poke still scares, and the work waits a beat.
+            if context.food == nil, fish.state == .swimming,
+               let cue = fish.cue, cue.isFresh(at: now),
+               let anchor = stationAnchor(cue.station, for: fish, in: size,
+                                          density: density, bounds: bounds) {
+                let goal = AquariumStations.target(for: cue.station, anchor: anchor,
+                                                   t: t, seed: fish.seed)
+                let dx = goal.x - body.x, dy = goal.y - body.y
+                context.food = (x: min(bounds.maxX, max(bounds.minX, goal.x)),
+                                y: min(bounds.maxY, max(bounds.minY, goal.y)))
+                context.hunger = AquariumStations.seekHunger
+                context.wander = 0.35
+                context.effort = AquariumStations.effort(for: cue.station,
+                                                         distance: (dx * dx + dy * dy).squareRoot())
+                m.stationed[fish.id] = cue.station
+            } else {
+                m.stationed.removeValue(forKey: fish.id)
+            }
             AquariumSteering.step(&body, dt: dt, t: t, seed: fish.seed,
                                   context: context)
             m.bodies[fish.id] = body
@@ -4397,6 +4428,218 @@ struct AquariumView: View {
         }
     }
 
+    // MARK: Stations
+
+    /// Where a station stands in this tank, in unit space — resolved from
+    /// the decor actually drawn (the density's prefix, the shop's owned
+    /// pieces), so a fish never works at a landmark that isn't there.
+    /// nil when the tank has nothing to stand in for it: the fish keeps
+    /// its patrol rather than working at an invisible spot.
+    private func stationAnchor(_ station: TankStation, for fish: Fish, in size: CGSize,
+                               density: Double, bounds: SwimBounds) -> AquariumStations.Anchor? {
+        let w = max(1, size.width), h = max(1, size.height)
+        let shown = Int((Double(Self.decor.count) * min(1, density)).rounded(.up))
+        let visible = Self.decor.filter { $0.id < shown }
+        func first(_ kind: TankDecor.Kind) -> TankDecor? { visible.first { $0.kind == kind } }
+        // Fish sharing a station spread over its pieces by seed.
+        func pick(_ kind: TankDecor.Kind, deepOnly: Bool = false) -> TankDecor? {
+            let list = visible.filter { $0.kind == kind && (!deepOnly || $0.depth <= 0.6) }
+            return list.isEmpty ? nil : list[Int(fish.seed % UInt64(list.count))]
+        }
+        // The lowest line the steering lets a fish swim — just over the
+        // sand, where the stones and the starfish are.
+        let floor = bounds.maxY - 0.01
+        func unitY(_ y: Double) -> Double { min(floor, max(bounds.minY + 0.02, y / h)) }
+        switch station {
+        case .kelp:
+            guard let kelp = pick(.kelp, deepOnly: true) ?? pick(.kelp) else { return nil }
+            return .init(x: kelp.x, y: unitY(decorBaseY(kelp, in: size) - h * 0.08),
+                         spanX: 26 / w, spanY: min(0.30, 0.22 * (0.8 + kelp.scale * 0.25)))
+        case .pebbles:
+            guard let rock = pick(.rock) ?? pick(.shell) else { return nil }
+            return .init(x: rock.x, y: floor, spanX: 30 / w, spanY: 0.04)
+        case .chest:
+            guard let chest = first(.chest) else { return nil }
+            let lid = decorBaseY(chest, in: size) - 26 * chest.scale * Self.decorBoost - 16
+            return .init(x: chest.x, y: unitY(lid), spanX: 40 / w, spanY: 0.04)
+        case .current:
+            // The bubble wall's curtain when the tank owns one, else the
+            // column the chest burps up — both are real rising bubbles.
+            if owns(.bubbleWall), let slot = AquariumModel.decorSlot(for: .bubbleWall) {
+                return .init(x: slot.x, y: unitY(h * 0.45), spanX: 20 / w, spanY: 0.06)
+            }
+            guard let chest = first(.chest) else { return nil }
+            return .init(x: chest.x, y: unitY(h * 0.40), spanX: 20 / w, spanY: 0.06)
+        case .wreck:
+            if owns(.shipwreck), let slot = AquariumModel.decorSlot(for: .shipwreck) {
+                let hull = ownedBaseY(slot, in: size) - slot.h * h * 0.55
+                return .init(x: slot.x, y: unitY(hull), spanX: slot.w * h / w * 0.55,
+                             spanY: 0.07)
+            }
+            // No wreck bought: the coral stands in, then the chest.
+            guard let piece = pick(.coral) ?? first(.chest) else { return nil }
+            return .init(x: piece.x, y: unitY(decorBaseY(piece, in: size) - h * 0.12),
+                         spanX: 60 / w, spanY: 0.06)
+        case .bench:
+            guard let star = first(.starfish) ?? first(.chest) else { return nil }
+            return .init(x: star.x, y: floor, spanX: 34 / w, spanY: 0.04)
+        case .survey:
+            let marks = visible.filter {
+                [.coral, .rock, .bottle, .shell, .starfish, .kelp].contains($0.kind)
+            }
+            guard marks.count >= 2 else { return nil }
+            let a = Int(fish.seed % UInt64(marks.count))
+            let b = (a + 1 + Int((fish.seed >> 8) % UInt64(marks.count - 1))) % marks.count
+            let lane = min(floor, max(bounds.minY + 0.05, laneY(for: fish, in: size) / h))
+            return .init(x: marks[a].x, y: lane, spanX: 30 / w, spanY: 0.05,
+                         altX: marks[b].x, altY: lane)
+        }
+    }
+
+    /// The work itself, drawn small at the fish while it is at its
+    /// station — never words, never a meter: a forager's crumbs of kelp,
+    /// the sand an editor stirs, the current streaming past a shell
+    /// worker, an inspector's slow sonar ring, a glint on the chest's
+    /// lid, and a finished test's bubble rising green or red. Reduce
+    /// Motion keeps a still version of each so the tell survives.
+    private func drawStationCue(_ cue: FishCue, l: Layout, canvas: inout GraphicsContext,
+                                size: CGSize, length: Double, height: Double,
+                                t: Double, phase: Double) {
+        let mouthX = l.x + l.facing * length * 0.45
+        var c = canvas
+        c.opacity = l.opacity
+        func dot(_ x: Double, _ y: Double, _ r: Double, _ color: Color, _ alpha: Double) {
+            c.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                   with: .color(color.opacity(alpha)))
+        }
+        func ring(_ x: Double, _ y: Double, _ r: Double, _ color: Color, _ alpha: Double,
+                  width: Double = 0.8) {
+            c.stroke(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                     with: .color(color.opacity(alpha)), lineWidth: width)
+        }
+        if let tone = cue.tone {
+            // A finished test or build: one bubble rising off the fish,
+            // tinted by the result — green passed, red failed.
+            let tint = tone == .pass ? Color(red: 0.35, green: 0.88, blue: 0.52)
+                : Color(red: 1.0, green: 0.38, blue: 0.36)
+            let p = reduceMotion ? 0.3 : frac(t / 2.4 + phase / (.pi * 2))
+            let r = 3.8 + p * 2.4
+            let bx = l.x + l.facing * length * 0.1 + (reduceMotion ? 0 : sin(p * 9 + phase) * 2)
+            let by = l.y - height * 0.6 - 6 - p * 34
+            let alpha = reduceMotion ? 0.9 : 0.35 + (1 - p) * 0.6
+            dot(bx, by, r, tint, alpha * 0.45)
+            ring(bx, by, r, tint, alpha, width: 1.1)
+            dot(bx - r * 0.35, by - r * 0.4, r * 0.25, .white, alpha * 0.8)
+            return
+        }
+        switch cue.station {
+        case .kelp:
+            // Reading: two green crumbs drift off the mouth and fade.
+            for k in 0..<2 {
+                let p = reduceMotion ? 0.35 : frac(t / 1.6 + Double(k) * 0.5 + phase)
+                let x = mouthX + l.facing * p * 9
+                let y = l.y - 1 + p * 7 + (reduceMotion ? 0 : sin(p * 7 + Double(k)) * 1.5)
+                dot(x, y, 1.1 + 0.4 * (1 - p), Color(red: 0.45, green: 0.78, blue: 0.40),
+                    (reduceMotion ? 0.7 : (1 - p)) * 0.8)
+            }
+        case .pebbles:
+            // Editing: little puffs of sand kicked up under the nose.
+            let sand = sandTop(atX: mouthX, in: size)
+            guard sand - (l.y + height * 0.5) < 60 else { return }
+            for k in 0..<3 {
+                let p = reduceMotion ? 0.3 : frac(t / 1.3 + Double(k) / 3 + phase)
+                let x = mouthX + (Double(k) - 1) * 5 + l.facing * p * 4
+                let y = sand - 3 - p * 12
+                dot(x, y, 1.3 + p * 0.8, Color(red: 0.86, green: 0.78, blue: 0.60),
+                    (reduceMotion ? 0.6 : (1 - p)) * 0.55)
+            }
+        case .current:
+            // Running a command: the current streams past, small bubbles
+            // rising across the body while the fish holds against it.
+            for k in 0..<4 {
+                let p = reduceMotion ? Double(k) / 4 : frac(t / 1.1 + Double(k) / 4 + phase)
+                let x = l.x + (Double(k) - 1.5) * length * 0.22 + sin(p * 6 + Double(k)) * 1.5
+                let y = l.y + height * 0.6 - p * height * 1.8
+                ring(x, y, 1.0 + p * 1.1, .white, (reduceMotion ? 0.5 : sin(p * .pi)) * 0.55)
+            }
+        case .wreck:
+            // Testing or building: a slow sonar ring off the fish as it
+            // laps the structure.
+            let p = reduceMotion ? 0.4 : frac(t / 2.8 + phase)
+            let r = length * (0.45 + p * 0.9)
+            c.stroke(Path(ellipseIn: CGRect(x: l.x - r, y: l.y - r * 0.55, width: r * 2, height: r * 1.1)),
+                     with: .color(Color(red: 0.62, green: 0.86, blue: 1.0).opacity((1 - p) * 0.35)),
+                     lineWidth: 0.9)
+        case .chest:
+            // Calling a tool server: a brass glint winks off the lid
+            // below the fish.
+            let p = reduceMotion ? 0.5 : frac(t / 1.9 + phase)
+            let glow = sin(p * .pi)
+            var g = c
+            g.blendMode = .plusLighter
+            g.opacity = l.opacity * glow * 0.8
+            g.translateBy(x: l.x, y: l.y + height * 0.9)
+            g.scaleBy(x: 4.5, y: 4.5)
+            g.fill(Self.starPath, with: .color(Color(red: 1.0, green: 0.86, blue: 0.5)))
+        case .survey:
+            // Searching: a faint scan arc ahead of the nose.
+            let p = reduceMotion ? 0.5 : frac(t / 1.5 + phase)
+            var arc = Path()
+            arc.addArc(center: CGPoint(x: mouthX, y: l.y), radius: 6 + p * 8,
+                       startAngle: .radians(l.facing > 0 ? -0.6 : .pi - 0.6),
+                       endAngle: .radians(l.facing > 0 ? 0.6 : .pi + 0.6), clockwise: false)
+            c.stroke(arc, with: .color(.white.opacity((1 - p) * 0.4)), lineWidth: 0.8)
+        case .bench:
+            // Any other tool: a small bright tick at the mouth, working.
+            let p = reduceMotion ? 0.5 : frac(t / 0.9 + phase)
+            dot(mouthX + l.facing * 2, l.y, 1.2, .white, sin(p * .pi) * 0.6)
+        }
+    }
+
+    /// AQ13's parallel markers: a working main session with several
+    /// workers carries that many small motes circling close to its
+    /// body — company, not a gauge: no track, no fill, just motes.
+    private func drawParallelMarkers(_ count: Int, l: Layout, canvas: inout GraphicsContext,
+                                     length: Double, height: Double, t: Double, phase: Double) {
+        guard count > 0 else { return }
+        var c = canvas
+        c.opacity = l.opacity * 0.7
+        let rx = length * 0.72, ry = height * 0.95
+        for k in 0..<count {
+            let angle = (reduceMotion ? 0 : t * 0.9) + phase + Double(k) / Double(count) * .pi * 2
+            let x = l.x + cos(angle) * rx
+            let y = l.y + sin(angle) * ry * 0.6
+            // Motes behind the body dim, so the ring reads as round.
+            let front = sin(angle) > 0
+            let r = front ? 1.7 : 1.3
+            c.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                   with: .color(.white.opacity(front ? 0.75 : 0.35)))
+        }
+    }
+
+    /// AQ15's token pass: a verified delegation hands a pellet from the
+    /// parent to one of its fry — the first in its school — on a loop
+    /// while the plan cites it. Only a real delegation event sets the
+    /// action, so proximity never draws one.
+    private func drawTokenPasses(canvas: inout GraphicsContext, roster: [Fish],
+                                 layouts: [String: Layout], t: Double, now: Date) {
+        for parent in roster where !parent.isFry && parent.plan?.action == .tokenPass {
+            guard let from = layouts[parent.id],
+                  let fry = roster.first(where: { $0.isFry && $0.anchorID == parent.id }),
+                  let to = layouts[fry.id] else { continue }
+            let p = reduceMotion ? 0.5 : frac(t / 1.6 + Double(parent.seed & 0xFF) / 0xFF)
+            let e = smooth(p)
+            let x = from.x + (to.x - from.x) * e
+            let y = from.y + (to.y - from.y) * e - sin(p * .pi) * 10
+            var c = canvas
+            c.opacity = min(from.opacity, to.opacity) * (reduceMotion ? 0.9 : sin(p * .pi))
+            c.fill(Path(ellipseIn: CGRect(x: x - 2.2, y: y - 2.2, width: 4.4, height: 4.4)),
+                   with: .color(Color(red: 0.93, green: 0.70, blue: 0.36)))
+            c.stroke(Path(ellipseIn: CGRect(x: x - 2.2, y: y - 2.2, width: 4.4, height: 4.4)),
+                     with: .color(Color(red: 0.55, green: 0.36, blue: 0.14)), lineWidth: 0.6)
+        }
+    }
+
     // MARK: Fish
 
     /// Where a fish is right now: position, which way it faces, how far
@@ -5001,6 +5244,21 @@ struct AquariumView: View {
                               length: length, height: height, t: t)
         }
 
+        // What it's doing, drawn where it's doing it: the station's
+        // small tell, only while the fish is actually stationed and the
+        // cue is fresh — a fixture with no steering draws the same tell
+        // wherever the fish is, so the proof shots still show it.
+        if !fish.isFry, fish.state == .swimming, let cue = fish.cue, cue.isFresh(at: now),
+           motion.stationed[fish.id] != nil || motion.bodies[fish.id] == nil {
+            drawStationCue(cue, l: l, canvas: &canvas, size: size,
+                           length: length, height: height, t: t, phase: phase)
+        }
+        if !fish.isFry, fish.state == .swimming, let markers = fish.plan?.parallelMarkers,
+           markers > 0 {
+            drawParallelMarkers(markers, l: l, canvas: &canvas, length: length,
+                                height: height, t: t, phase: phase)
+        }
+
         // An idle fish sipping the surface leaves one small bubble.
         if l.sip > 0.4, !fish.isFry {
             let br = 1.8 + (l.sip - 0.4) * 2
@@ -5155,6 +5413,14 @@ struct AquariumView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                // Where it's working and what that means — the station
+                // the evidence line above put it at.
+                if let cue = fish.cue, cue.isFresh(at: Date()), !fish.isFry {
+                    Text(cue.phrase)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 if let note = careNote(for: fish) {
                     Text(note)
                         .font(.system(size: 9))
