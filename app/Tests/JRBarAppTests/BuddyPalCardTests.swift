@@ -57,6 +57,14 @@ struct BuddyPalCardTests {
         #expect(BuddyPalCard.duration(42) == "42 s")
         #expect(BuddyPalCard.duration(7_500) == "2 h 5 min")
         #expect(BuddyPalCard.duration(7_200) == "2 h")
+        // A hand-edited care log can hold any finite number; the card
+        // must not trap converting it.
+        #expect(BuddyPalCard.duration(1e300) == BuddyPalCard.duration(BuddyPalCard.maxDuration))
+        #expect(BuddyPalCard.duration(-5) == "0 s")
+        #expect(BuddyPalCard.duration(.infinity) == "0 s")
+        var edited = BuddyCare()
+        edited.noteAsk(lasted: 1e300)
+        #expect(BuddyPalCard.make(care: edited, now: t0).longestAsk?.hasPrefix("Longest ask") == true)
     }
 
     @Test("a log from before the fields is seeded with its earliest stamp, as a floor")

@@ -95,15 +95,20 @@ struct BuddyPalCard: Equatable {
                             stage: BuddyStage.of(crumbs: care.crumbsEaten))
     }
 
-    /// "45 s", "14 min", "2 h 5 min".
+    /// "45 s", "14 min", "2 h 5 min". The care log and the history are
+    /// read tolerantly, so a hand-edited or runaway figure is clamped to
+    /// a year rather than trapping the Int conversion.
     static func duration(_ seconds: Double) -> String {
-        let s = Int(seconds.rounded())
+        let s = Int((seconds.isFinite ? min(max(seconds, 0), maxDuration) : 0).rounded())
         if s < 60 { return "\(s) s" }
         let minutes = s / 60
         if minutes < 60 { return "\(minutes) min" }
         let hours = minutes / 60, rest = minutes % 60
         return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
     }
+
+    /// The longest span `duration` will spell out.
+    static let maxDuration: Double = 365 * 86_400
 }
 
 /// The card itself: the buddy standing still in its content pose, its
