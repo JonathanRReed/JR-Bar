@@ -94,8 +94,21 @@ final class ScreenBarController {
     /// after dismissals and notices, because a flick or a charger beat
     /// must never hide that a microphone is live.
     var sensors = NotchSensorState() {
-        didSet { if sensors != oldValue { pushWings() } }
+        didSet {
+            guard sensors != oldValue else { return }
+            pushWings()
+            if sensors.cameraInUse != oldValue.cameraInUse, stillOnCamera { present() }
+        }
     }
+    /// `jrbar.screenBarStillOnCamera` (default on): while any camera is
+    /// live the band holds its program still — the Reduce Motion path —
+    /// so nothing pulses millimetres from the lens or in the glasses of
+    /// the person on the call; an ask stays a steady amber.
+    static let stillOnCameraDefaultsKey = "jrbar.screenBarStillOnCamera"
+    private var stillOnCamera = UserDefaults.standard.object(forKey: ScreenBarController.stillOnCameraDefaultsKey) as? Bool ?? true
+    /// Whether the band is held still right now: Reduce Motion, or the
+    /// camera hold with a camera rolling.
+    private var holdsStill: Bool { reduceMotion || (stillOnCamera && sensors.cameraInUse) }
     /// Whether the ears can draw the privacy dots right now: shown, the
     /// wings on, no external capsule holding the flanks. The read the
     /// sensor poll's owner can gate on — a reading nothing can draw is
@@ -206,6 +219,7 @@ final class ScreenBarController {
             reposition()
             updateNoticeMonitors()
             updateAppMenuWatch()
+            publishStatus()
         }
     }
 
@@ -246,6 +260,9 @@ final class ScreenBarController {
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
         workspace.addObserver(self, selector: #selector(reduceMotionChanged(_:)), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        // Settings › Screen Bar's camera hold is an app-local default;
+        // re-read it whenever the defaults move.
+        center.addObserver(self, selector: #selector(defaultsChanged(_:)), name: UserDefaults.didChangeNotification, object: nil)
 
         // A device transition takes the ambient wing for a beat, then the
         // slot it replaced comes back — the queue's life constant is the
@@ -293,6 +310,7 @@ final class ScreenBarController {
         guard sampler != nil else { return "no sampler" }
         if plan?.isStatic == true { return "a still program" }
         if reduceMotion { return "still under Reduce Motion" }
+        if holdsStill { return "still while the camera is on" }
         return nil
     }
 
@@ -301,6 +319,7 @@ final class ScreenBarController {
         guard sampler != nil else { return "nothing" }
         if plan?.isStatic == true { return "static" }
         if reduceMotion { return "still (Reduce Motion)" }
+        if holdsStill { return "still (camera on)" }
         if let plan {
             return "keyframes (\(plan.lead?.count ?? 0) + \(plan.loop?.count ?? 0) frames)"
         }
@@ -469,6 +488,24 @@ final class ScreenBarController {
     @objc private func reduceMotionChanged(_ note: Notification) {
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         present()
+    }
+
+    /// The camera hold's switch moved (or any other default did — the
+    /// read is cheap and only a real change re-presents).
+    @objc private func defaultsChanged(_ note: Notification) {
+        let wanted = UserDefaults.standard.object(forKey: Self.stillOnCameraDefaultsKey) as? Bool ?? true
+        guard wanted != stillOnCamera else { return }
+        stillOnCamera = wanted
+        if sensors.cameraInUse { present() }
+    }
+
+    /// Hands what the band is doing to Settings' "Right now" line.
+    private func publishStatus() {
+        let status = ScreenBarLiveStatus.shared
+        if status.rejection != lastRejection { status.rejection = lastRejection }
+        let note = menuMotionNote
+        if status.motionNote != note { status.motionNote = note }
+        if status.followingAlcove != (capsule != nil) { status.followingAlcove = capsule != nil }
     }
 
     /// Each side's content-wing claim: the measured flank room beside the
@@ -744,12 +781,20 @@ final class ScreenBarController {
             return
         }
         let decision = Self.programDecision(text, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
+        let wasRefusing = lastRejection != nil
         lastRejection = decision.rejection
         guard let program = decision.program, let compiledText = decision.programText else {
             // Refused: `lastRawText`/`lastAnchorEpoch` keep describing the
             // program still on the bar -- a refused text must not move the
             // running program's anchor (it used to, through `lastRawText`).
             NSLog("JR-Bar: refusing LEDS program (%@); keeping the previous one", decision.rejection ?? "?")
+            // The first refusal in a run holds the right ear for a beat —
+            // a mark, not words: the band kept the last safe program and
+            // says so where the eye already is.
+            if !wasRefusing, let slot = ScreenBarNotices.refused(decision.rejection) {
+                presentWingNotice(.right, slot: slot)
+            }
+            publishStatus()
             return
         }
         lastRawText = text
@@ -829,7 +874,8 @@ final class ScreenBarController {
         guard sampler != nil else { updateClock(); return }
         if Self.logsMotion { NSLog("JR-Bar: screen bar %@, anchor %.1f s ago", motionDescription, programAge) }
         updateAccessibility()
-        if reduceMotion {
+        defer { publishStatus() }
+        if holdsStill {
             view.stopKeyframes()
             displayLink?.isPaused = true
             renderStillFrame()
@@ -918,5 +964,52 @@ final class ScreenBarController {
         if codes == lastCodes { return }
         lastCodes = codes
         view.display(colors: codes.map(\.rgb))
+    }
+}
+
+/// What the band is doing right now, published by the controller for
+/// Settings › Devices › Screen Bar — the same facts the status menu's
+/// lights line reads, in one observable place.
+@MainActor
+@Observable
+final class ScreenBarLiveStatus {
+    static let shared = ScreenBarLiveStatus()
+    /// The last refused program's reason while the band holds the
+    /// previous one; nil while the running program is the latest.
+    var rejection: String?
+    /// Why the band is not moving ("still under Reduce Motion"), or nil.
+    var motionNote: String?
+    var followingAlcove = false
+}
+
+/// The Screen Bar card's "Right now" line: which source the band plays,
+/// whether a program was refused, and why it may be still — the answers
+/// the card never gave ("whose clock is it on?", "why is it frozen?").
+enum ScreenBarSourceLine {
+    static func describe(live: Bool, mirrorSetting: Bool, stripPresent: Bool, phaseOffsetMs: Double?,
+                         why: String?, rejection: String?, motionNote: String?, followingAlcove: Bool) -> String {
+        var parts: [String] = []
+        if !live {
+            parts.append("Monitor offline — playing the last program the strip was sent")
+        } else if mirrorSetting, stripPresent {
+            var mirror = "Mirroring the strip, phase-locked"
+            if let offset = phaseOffsetMs, abs(offset) >= 1 {
+                mirror += " (nudged \(offset > 0 ? "+" : "−")\(Int(abs(offset).rounded())) ms)"
+            }
+            parts.append(mirror)
+        } else if mirrorSetting {
+            parts.append("Its own display — no strip to mirror")
+        } else {
+            parts.append("Its own display")
+        }
+        if live, let why, !why.isEmpty {
+            parts.append(why.replacingOccurrences(of: "_", with: " "))
+        }
+        if let rejection {
+            parts.append("refused a program (\(rejection)), holding the last safe one")
+        }
+        if let motionNote { parts.append(motionNote) }
+        if followingAlcove { parts.append("following Alcove") }
+        return parts.joined(separator: " · ")
     }
 }

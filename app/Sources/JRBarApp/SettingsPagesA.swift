@@ -827,8 +827,14 @@ struct CreatorMicroCard: View {
 
 struct ScreenBarCard: View {
     @Bindable var store: SettingsStore
+    /// The camera hold is the app's own: the band is drawn here, and the
+    /// camera reading is the app's too.
+    @AppStorage(ScreenBarController.stillOnCameraDefaultsKey) private var stillOnCamera = true
 
     var body: some View {
+        SettingRow("Right now", subtitle: rightNow) {
+            EmptyView()
+        }
         SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
@@ -843,6 +849,11 @@ struct ScreenBarCard: View {
                           default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
         }
         SettingToggle(store, "Mirror hardware strip", subtitle: "Play the strip's program on its clock; off, the bar renders its own display.", path: "link_screen_bar_to_hardware", default: true)
+        Toggle(isOn: $stillOnCamera) {
+            SettingLabel(title: "Hold still on camera",
+                         subtitle: "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber.")
+        }
+        .settingRowStyle()
         DisclosureRow("Advanced", subtitle: "Phase, geometry and the band's dim floor.") {
             SettingSlider(store, "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back.",
                           path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
@@ -856,6 +867,22 @@ struct ScreenBarCard: View {
             Button("Calibrate…") { store.calibrating = "virtual:status-bar" }
                 .disabled(!store.core.isLive)
         }
+    }
+
+    /// The "Right now" line: which clock the band is on, whether it
+    /// turned a program away, and why it might be still.
+    private var rightNow: String {
+        let status = ScreenBarLiveStatus.shared
+        let core = store.core
+        return ScreenBarSourceLine.describe(
+            live: core.isLive,
+            mirrorSetting: store.document.bool("link_screen_bar_to_hardware") ?? true,
+            stripPresent: core.devices.contains { $0.kind == "pro" && $0.isPresent },
+            phaseOffsetMs: store.document.double("screen_bar_phase_offset_ms"),
+            why: core.lights?.screenBar?.why,
+            rejection: status.rejection,
+            motionNote: status.motionNote,
+            followingAlcove: status.followingAlcove)
     }
 
     /// The picker's note: what the machine reports and what the tray's

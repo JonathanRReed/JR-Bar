@@ -170,6 +170,15 @@ struct ScreenBarSensorDotsTests {
         #expect(ScreenBarView.contentWidth(alone) == CGFloat(6 + 5 + 6))
     }
 
+    @Test func aRefusedProgramHoldsTheRightEarWithAMark() {
+        let slot = ScreenBarNotices.refused("too-long")
+        #expect(slot?.symbol == "exclamationmark.triangle.fill")
+        #expect(slot?.tone == .alert)
+        #expect(slot?.text.contains("too-long") == true, "the reason is VoiceOver's, not the ear's face")
+        #expect(ScreenBarNotices.refused(nil) == nil)
+        #expect(ScreenBarNotices.refused("") == nil)
+    }
+
     @Test func aDotsOnlyEarDrawsOnTheNotchedFlank() throws {
         let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
         view.wingGeometry = ScreenBarWingGeometry(

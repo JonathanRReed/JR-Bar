@@ -25,6 +25,15 @@ enum ScreenBarNotices {
                                  tone: .attention)
     }
 
+    /// A refused program → a right-wing slot: an alert-toned warning mark
+    /// for a beat, the reason in VoiceOver. The band keeps the last safe
+    /// program, so the mark is the only sign anything was turned away.
+    static func refused(_ reason: String?) -> ScreenBarWingSlot? {
+        guard let reason, !reason.isEmpty else { return nil }
+        return ScreenBarWingSlot(text: "Program refused, holding the last safe one · \(reason)",
+                                 symbol: "exclamationmark.triangle.fill", tone: .alert)
+    }
+
     /// An output-route change → a right-wing slot ("AirPods Pro"), or
     /// nil when the reroute repeated inside the cooldown — a Bluetooth
     /// flap is strobe, not a new connection. `now` is the caller's clock
