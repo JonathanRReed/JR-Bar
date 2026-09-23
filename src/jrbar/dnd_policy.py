@@ -16,8 +16,8 @@ DEFAULT_DND_SCHEDULE_END_MINUTES = 7 * 60
 DEFAULT_DND_DIM_FRACTION = 0.15
 MAX_DND_OVERRIDE_SECONDS = 7 * 24 * 60 * 60
 # One per source: manual, schedule, macOS Focus, named Focus, a call, a
-# calendar meeting.
-MAX_DND_CONTRIBUTIONS = 6
+# calendar meeting, an empty desk.
+MAX_DND_CONTRIBUTIONS = 7
 MAX_DND_REFUSALS = 9
 #: A presence quiet that keeps every light and banner and drops only the
 #: sounds -- the busylight default for a call (jrbar.presence).
@@ -41,10 +41,12 @@ class DndSource(str, Enum):
     # the app reported) or in a calendar meeting -- jrbar.presence.
     CALL = "call"
     CALENDAR = "calendar"
+    # Nobody is at the desk: the screen is locked or the Mac has sat idle.
+    AWAY = "away"
 
 
 #: The sources a presence report can contribute.
-PRESENCE_DND_SOURCES = frozenset({DndSource.CALL, DndSource.CALENDAR})
+PRESENCE_DND_SOURCES = frozenset({DndSource.CALL, DndSource.CALENDAR, DndSource.AWAY})
 
 
 class DisplayAdmission(str, Enum):
@@ -317,6 +319,7 @@ _SOURCE_LABEL = {
     DndSource.NAMED_FOCUS: "Named Focus",
     DndSource.CALL: "On a call",
     DndSource.CALENDAR: "In a meeting",
+    DndSource.AWAY: "Away",
 }
 _MODE_LABEL = {
     DndMode.MUTE: "Mute",
@@ -523,6 +526,7 @@ def evaluate_dnd_policy(
     call: DndContribution | None = None,
     meeting: DndContribution | None = None,
     extra_transitions: tuple[float, ...] = (),
+    away: DndContribution | None = None,
 ) -> DndProjection:
     """Evaluate durable local and injected Focus truth into one projection.
 
@@ -545,7 +549,11 @@ def evaluate_dnd_policy(
         or named_focus.source is not DndSource.NAMED_FOCUS
     ):
         raise ValueError("named Focus DND contribution has the wrong source")
-    for presence, source in ((call, DndSource.CALL), (meeting, DndSource.CALENDAR)):
+    for presence, source in (
+        (call, DndSource.CALL),
+        (meeting, DndSource.CALENDAR),
+        (away, DndSource.AWAY),
+    ):
         if presence is not None and (
             type(presence) is not DndContribution or presence.source is not source
         ):
@@ -589,6 +597,8 @@ def evaluate_dnd_policy(
         contributions.append(call)
     if meeting is not None:
         contributions.append(meeting)
+    if away is not None:
+        contributions.append(away)
 
     transitions: list[float] = [
         value for value in (_finite_epoch(item) for item in extra_transitions) if value is not None

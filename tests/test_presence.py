@@ -242,6 +242,30 @@ def test_the_controller_adopts_a_call_and_lets_it_go() -> None:
     assert controller.projection.active_sources == ()
 
 
+def test_an_empty_desk_quiets_only_when_asked_to() -> None:
+    controller, holder = _controller(AgentMonitorSettings())
+    controller.set_presence(parse_presence({"locked": True}, now=NOW))
+    # Off by default: a locked screen changes nothing on its own.
+    assert controller.projection.active_sources == ()
+
+    holder["settings"] = AgentMonitorSettings(away_quiet_mode="asks_only")
+    controller.refresh()
+    assert controller.projection.active_sources == (DndSource.AWAY,)
+    assert controller.projection.summary == "DND: Away Asks Only"
+    document = presence_document(
+        parse_presence({"locked": True}, now=NOW),
+        now=NOW,
+        call_quiet_mode="sounds",
+        meeting_quiet_mode="off",
+        away_quiet_mode="asks_only",
+    )
+    assert document["away"] is True and document["quiet"] == "asks_only"
+
+    # Unlocked: back to normal.
+    controller.set_presence(parse_presence({"locked": False}, now=NOW))
+    assert controller.projection.active_sources == ()
+
+
 def test_the_apps_focus_reading_stands_in_when_the_daemon_cannot_read_focus() -> None:
     settings = AgentMonitorSettings(focus_sync_enabled=True)
     controller, holder = _controller(settings)

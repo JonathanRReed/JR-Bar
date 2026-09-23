@@ -36,6 +36,7 @@ from .keep_awake import (
 )
 from .models import AgentMode
 from .presence import (
+    DEFAULT_AWAY_QUIET_MODE,
     DEFAULT_CALL_QUIET_MODE,
     DEFAULT_MEETING_QUIET_MODE,
     PresenceFacts,
@@ -273,7 +274,8 @@ def presence_facts(controller: Any) -> PresenceFacts | None:
     return facts if isinstance(facts, PresenceFacts) else None
 
 
-def _quiet_modes(controller: Any) -> tuple[str, str]:
+def _quiet_modes(controller: Any) -> tuple[str, str, str]:
+    """(call, meeting, away) quiet modes from the settings."""
     settings = getattr(controller, "settings", None)
     return (
         normalize_presence_quiet_mode(
@@ -283,16 +285,21 @@ def _quiet_modes(controller: Any) -> tuple[str, str]:
             getattr(settings, "meeting_quiet_mode", DEFAULT_MEETING_QUIET_MODE),
             DEFAULT_MEETING_QUIET_MODE,
         ),
+        normalize_presence_quiet_mode(
+            getattr(settings, "away_quiet_mode", DEFAULT_AWAY_QUIET_MODE),
+            DEFAULT_AWAY_QUIET_MODE,
+        ),
     )
 
 
 def presence_state_document(controller: Any, *, now: float | None = None) -> dict[str, Any]:
-    call_mode, meeting_mode = _quiet_modes(controller)
+    call_mode, meeting_mode, away_mode = _quiet_modes(controller)
     return presence_document(
         presence_facts(controller),
         now=time.time() if now is None else now,
         call_quiet_mode=call_mode,
         meeting_quiet_mode=meeting_mode,
+        away_quiet_mode=away_mode,
     )
 
 
@@ -317,7 +324,7 @@ def escalation_stage(controller: Any, stage: int, *, now: float | None = None) -
     if facts is None:
         return stage
     current = time.time() if now is None else now
-    call_mode, _meeting_mode = _quiet_modes(controller)
+    call_mode, _meeting_mode, _away_mode = _quiet_modes(controller)
     return presence_escalation_stage(
         stage,
         tier=str(getattr(getattr(controller, "settings", None), "escalation_tier", "menu_bar")),
@@ -337,7 +344,9 @@ def _apply_presence(controller: Any, facts: PresenceFacts | None) -> None:
     apply_escalation = getattr(controller, "apply_escalation", None)
     if callable(apply_escalation):
         apply_escalation(allow_refresh=False)
-    if facts is not None and facts.sensing_call:
+    # A call or an empty desk ends on its own when the reports stop; arm the
+    # moment that happens so the quiet does not outlive its evidence.
+    if facts is not None and (facts.sensing_call or facts.away(time.time())):
         from . import core_runtime
 
         previous = getattr(controller, "_core_presence_timer", None)

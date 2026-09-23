@@ -322,6 +322,7 @@ _DND_SOURCE_LABELS = {
     DndSource.NAMED_FOCUS: "Named Focus",
     DndSource.CALL: "On a call",
     DndSource.CALENDAR: "In a meeting",
+    DndSource.AWAY: "Away",
 }
 
 _REDUCE_MOTION_LABELS = {

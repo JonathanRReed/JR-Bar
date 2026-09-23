@@ -47,6 +47,10 @@ QUIET_SOUNDS: Final = "sounds"
 PRESENCE_QUIET_CHOICES: Final = (QUIET_OFF, QUIET_SOUNDS, *(mode.value for mode in DndMode))
 DEFAULT_CALL_QUIET_MODE: Final = QUIET_SOUNDS
 DEFAULT_MEETING_QUIET_MODE: Final = QUIET_OFF
+#: Nobody at the desk (a locked screen, a long idle). Opt-in: "asks_only"
+#: keeps the Dot beacon and every ask lit while the rest of the desk goes
+#: quiet, the way Lolgato turns lights off when the Mac locks.
+DEFAULT_AWAY_QUIET_MODE: Final = QUIET_OFF
 
 #: The escalation stage a call holds at: the light ramp, never the
 #: menu-bar pulse or the chime.
@@ -197,17 +201,22 @@ def presence_document(
     now: float,
     call_quiet_mode: str,
     meeting_quiet_mode: str,
+    away_quiet_mode: str = DEFAULT_AWAY_QUIET_MODE,
 ) -> dict[str, object]:
     """``state.presence``: the fact every surface reads the same way."""
     on_call = bool(facts is not None and facts.on_call(now))
     in_meeting = bool(facts is not None and facts.in_meeting(now))
+    away = bool(facts is not None and facts.away(now))
     call_mode = normalize_presence_quiet_mode(call_quiet_mode, DEFAULT_CALL_QUIET_MODE)
     meeting_mode = normalize_presence_quiet_mode(meeting_quiet_mode, DEFAULT_MEETING_QUIET_MODE)
+    away_mode = normalize_presence_quiet_mode(away_quiet_mode, DEFAULT_AWAY_QUIET_MODE)
     quiet = (
         call_mode
         if on_call and call_mode != QUIET_OFF
         else meeting_mode
         if in_meeting and meeting_mode != QUIET_OFF
+        else away_mode
+        if away and away_mode != QUIET_OFF
         else QUIET_OFF
     )
     fresh = bool(facts is not None and facts.fresh(now))
@@ -219,7 +228,7 @@ def presence_document(
         "since": facts.call_since if on_call and facts is not None else None,
         "in_meeting": in_meeting,
         "meeting_until": facts.meeting_until if in_meeting and facts is not None else None,
-        "away": bool(facts is not None and facts.away(now)),
+        "away": away,
         # No report time: the app renews while a sensor is live, and a
         # stamp that moved every minute would rebroadcast an unchanged
         # state that often. ``fresh`` is the fact a reader needs.
@@ -239,6 +248,7 @@ def presence_document(
 __all__ = [
     "AWAY_IDLE_SECONDS",
     "CALL_ESCALATION_CEILING",
+    "DEFAULT_AWAY_QUIET_MODE",
     "DEFAULT_CALL_QUIET_MODE",
     "DEFAULT_MEETING_QUIET_MODE",
     "PRESENCE_QUIET_CHOICES",

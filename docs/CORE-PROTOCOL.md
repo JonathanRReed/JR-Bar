@@ -357,8 +357,11 @@ Vocabulary:
   is 1 while a call holds the ladder at the light, else null;
   `celebrations_held` is true for the whole call, whatever the quiet mode.
   While a call's quiet is in force `focus.source` is `call` (`calendar` for
-  a meeting), and a `sounds` quiet leaves `focus.mode` at `off` with
+  a meeting, `away` for an empty desk under `away_quiet_mode`), and a
+  `sounds` quiet leaves `focus.mode` at `off` with
   `focus.audible_allowed` false -- the one test for "no sounds right now".
+  `quiet` takes the first that applies: the call, then the meeting, then
+  the empty desk.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was
@@ -1201,6 +1204,7 @@ path, validated by the real settings loader:
 | `devices.N.blend_mode` | `color_blend` \| `round_robin` \| `spatial_split` \| `relay` \| `cycle` \| `classic`, or null | null | A per-device blend, so eight discrete LEDs can take per-agent blocks while the band stays smooth. Null (or an unknown word) follows the global `colors.blend_mode`. |
 | `call_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `sounds` | What a call does (`presence`). |
 | `meeting_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What a calendar meeting does. |
+| `away_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What an empty desk does (a locked screen or five idle minutes, as the app reports them): `asks_only` keeps the Dot beacon and every ask lit while the rest goes quiet, `dark` turns the desk off like Lolgato. The report expires after 180 s, so the quiet cannot outlive the evidence. |
 | `escalation_tier_by_provider` | object: provider id → `light`/`menu_bar`/`chime`/`takeover` | `{}` | A ceiling per provider under `escalation_tier`, judged on the oldest open ask's provider: Claude's asks may climb to the chime while another provider's never go past the light. It only ever lowers the stage (the global tier arms the finale). |
 
 ## Versioning

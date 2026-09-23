@@ -219,19 +219,35 @@ class DndController:
         settings: object,
         now: float,
         dim_fraction: float,
-    ) -> tuple[DndContribution | None, DndContribution | None, tuple[float, ...]]:
+    ) -> tuple[
+        DndContribution | None,
+        DndContribution | None,
+        DndContribution | None,
+        tuple[float, ...],
+    ]:
+        """(call, meeting, away, transitions) from the latest report."""
         facts = self._presence
         if facts is None:
-            return None, None, ()
+            return None, None, None, ()
         from .presence import (
+            DEFAULT_AWAY_QUIET_MODE,
             DEFAULT_CALL_QUIET_MODE,
             DEFAULT_MEETING_QUIET_MODE,
             normalize_presence_quiet_mode,
         )
 
-        call = meeting = None
+        call = meeting = away = None
         transitions: tuple[float, ...] = ()
         try:
+            if facts.away(now):  # type: ignore[attr-defined]
+                away = contribution_for_presence(
+                    DndSource.AWAY,
+                    normalize_presence_quiet_mode(
+                        getattr(settings, "away_quiet_mode", DEFAULT_AWAY_QUIET_MODE),
+                        DEFAULT_AWAY_QUIET_MODE,
+                    ),
+                    dim_fraction=dim_fraction,
+                )
             if facts.on_call(now):  # type: ignore[attr-defined]
                 call = contribution_for_presence(
                     DndSource.CALL,
@@ -254,8 +270,8 @@ class DndController:
                 if meeting is not None and until is not None:
                     transitions = (float(until),)
         except (AttributeError, TypeError, ValueError):
-            return None, None, ()
-        return call, meeting, transitions
+            return None, None, None, ()
+        return call, meeting, away, transitions
 
     @property
     def focus_observation(self) -> FocusStatusObservation:
@@ -379,7 +395,7 @@ class DndController:
             else None
         )
         parsed = settings.dnd_settings()
-        call, meeting, presence_transitions = self._presence_contributions(
+        call, meeting, away, presence_transitions = self._presence_contributions(
             settings, now, parsed.dim_fraction
         )
         projection = evaluate_dnd_policy(
@@ -394,6 +410,7 @@ class DndController:
             call=call,
             meeting=meeting,
             extra_transitions=presence_transitions,
+            away=away,
         )
         next_generation = generation + 1
         prepared_timer = self._prepare_timer(
@@ -661,7 +678,7 @@ class DndController:
                 else None
             )
             parsed = settings.dnd_settings()
-            call, meeting, presence_transitions = self._presence_contributions(
+            call, meeting, away, presence_transitions = self._presence_contributions(
                 settings, now, parsed.dim_fraction
             )
             projection = evaluate_dnd_policy(
@@ -676,6 +693,7 @@ class DndController:
                 call=call,
                 meeting=meeting,
                 extra_transitions=presence_transitions,
+                away=away,
             )
             expected_generation = self._generation
             next_generation = expected_generation + 1

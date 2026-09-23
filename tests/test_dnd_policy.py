@@ -69,6 +69,7 @@ def test_exact_five_mode_matrix__and_2_more() -> None:
         "named_focus",
         "call",
         "calendar",
+        "away",
     )
     assert tuple(item.value for item in DisplayAdmission) == (
         "none",

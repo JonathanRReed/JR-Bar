@@ -32,6 +32,7 @@ from .led_status import (
     normalize_channel_gain,
 )
 from .presence import (
+    DEFAULT_AWAY_QUIET_MODE,
     DEFAULT_CALL_QUIET_MODE,
     DEFAULT_MEETING_QUIET_MODE,
     normalize_presence_quiet_mode,
@@ -483,6 +484,9 @@ class AgentMonitorSettings:
     # The same for a calendar meeting the app reports. Off by default: a
     # meeting on the calendar is not always a call.
     meeting_quiet_mode: str = DEFAULT_MEETING_QUIET_MODE
+    # And for an empty desk (a locked screen, a long idle). Off by default;
+    # "asks_only" keeps the Dot beacon and every ask while the rest goes.
+    away_quiet_mode: str = DEFAULT_AWAY_QUIET_MODE
     tips_enabled: bool = True
     menu_bar_label_enabled: bool = False
     # The native app's status item picture (MENU_BAR_ICON_STYLES).
@@ -1810,6 +1814,9 @@ class AgentMonitorSettings:
             "meeting_quiet_mode": normalize_presence_quiet_mode(
                 self.meeting_quiet_mode, DEFAULT_MEETING_QUIET_MODE
             ),
+            "away_quiet_mode": normalize_presence_quiet_mode(
+                self.away_quiet_mode, DEFAULT_AWAY_QUIET_MODE
+            ),
             "completion_notification_enabled": self.completion_notification_enabled,
             "notification_policy_version": 1,
             "webhook_events": [
@@ -2288,6 +2295,9 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         meeting_quiet_mode=normalize_presence_quiet_mode(
             data.get("meeting_quiet_mode"), DEFAULT_MEETING_QUIET_MODE
+        ),
+        away_quiet_mode=normalize_presence_quiet_mode(
+            data.get("away_quiet_mode"), DEFAULT_AWAY_QUIET_MODE
         ),
         completion_notification_enabled=_bool_setting(
             data.get("completion_notification_enabled"),
