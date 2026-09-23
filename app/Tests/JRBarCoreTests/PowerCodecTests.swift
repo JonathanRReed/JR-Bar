@@ -137,6 +137,7 @@ struct PowerCodecTests {
         ])
         #expect(CoreAwakeRequest(.untilAgentsFinish(sessions: nil)).arguments["sessions"] == nil)
         #expect(CoreAwakeRequest(.indefinite).arguments["indefinite"] == .bool(true))
+        #expect(CoreAwakeRequest(.untilTime("08:00")).arguments["until_time"] == .string("08:00"))
 
         let report = CorePresenceReport(mic: true, locked: false, idleSeconds: -3, meetingUntil: 9000)
         #expect(report.sensingCall)

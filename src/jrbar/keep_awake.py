@@ -229,20 +229,48 @@ def lease_verdict(
     return None
 
 
+def next_local_time(clock: str, *, now: float, zone=None) -> float:
+    """The next occurrence of a local ``HH:MM`` after ``now``, as an epoch --
+    "until 8 AM" said the way a person says it, resolved in the Mac's own
+    zone (a daylight-saving night is not a fixed 24 hours)."""
+    from datetime import datetime, timedelta
+    from datetime import time as wall_time
+
+    from .local_time_boundary import resolve_local_epoch, system_local_timezone
+
+    text = str(clock).strip()
+    parts = text.split(":")
+    if len(parts) != 2 or not all(part.isdigit() and len(part) == 2 for part in parts):
+        raise ValueError("until_time must be HH:MM")
+    hour, minute = int(parts[0]), int(parts[1])
+    if hour > 23 or minute > 59:
+        raise ValueError("until_time must be HH:MM")
+    local_zone = zone or system_local_timezone(now)
+    today = datetime.fromtimestamp(now, local_zone).date()
+    for offset in (0, 1, 2):
+        epoch = resolve_local_epoch(
+            today + timedelta(days=offset), wall_time(hour, minute), local_zone
+        )
+        if epoch is not None and epoch > now:
+            return epoch
+    raise ValueError("until_time could not be resolved")
+
+
 def lease_from_args(
     args: Mapping[str, object],
     *,
     now: float,
     pending_ids: frozenset[str],
+    zone=None,
 ) -> AwakeLease:
     """The ``hold_awake`` command's arguments as a lease.
 
-    Exactly one of ``seconds``, ``until``, ``until_agents_idle`` or
-    ``indefinite`` says how long. ``sessions`` narrows "until the agents
-    finish" to named sessions; without it the lease waits on every session
-    working right now. ``ValueError`` is a malformed request;
-    ``LeaseRefusedError`` is a well-formed one that cannot be honoured
-    (there is nothing working to wait for).
+    Exactly one of ``seconds``, ``until``, ``until_time`` (a local ``HH:MM``,
+    the next one), ``until_agents_idle`` or ``indefinite`` says how long.
+    ``sessions`` narrows "until the agents finish" to named sessions; without
+    it the lease waits on every session working right now. ``ValueError`` is
+    a malformed request; ``LeaseRefusedError`` is a well-formed one that
+    cannot be honoured (there is nothing working to wait for).
     """
     display = args.get("display", False)
     if type(display) is not bool:
@@ -253,19 +281,24 @@ def lease_from_args(
     source = str(source).strip()
     chosen = [
         name
-        for name in ("seconds", "until", "until_agents_idle", "indefinite")
+        for name in ("seconds", "until", "until_time", "until_agents_idle", "indefinite")
         if args.get(name) not in (None, False)
     ]
     if len(chosen) != 1:
         raise ValueError(
-            "give exactly one of seconds, until, until_agents_idle or indefinite"
+            "give exactly one of seconds, until, until_time, until_agents_idle or indefinite"
         )
     shape = chosen[0]
-    if shape in ("seconds", "until"):
-        raw = _finite(args.get(shape))
-        if raw is None:
-            raise ValueError(f"{shape} must be a number")
-        until = now + raw if shape == "seconds" else raw
+    if shape in ("seconds", "until", "until_time"):
+        if shape == "until_time":
+            if type(args.get("until_time")) is not str:
+                raise ValueError("until_time must be HH:MM")
+            until = next_local_time(str(args.get("until_time")), now=now, zone=zone)
+        else:
+            raw = _finite(args.get(shape))
+            if raw is None:
+                raise ValueError(f"{shape} must be a number")
+            until = now + raw if shape == "seconds" else raw
         if until <= now:
             raise ValueError(f"{shape} must lie in the future")
         if until - now > MAX_LEASE_SECONDS:

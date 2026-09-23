@@ -143,6 +143,29 @@ def test_lease_from_args_refuses_malformed_requests(args) -> None:
         lease_from_args(args, now=NOW, pending_ids=frozenset({"claude:b"}))
 
 
+def test_until_a_local_time_resolves_to_the_next_occurrence_in_the_macs_zone() -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from jrbar.keep_awake import next_local_time
+
+    zone = ZoneInfo("America/Chicago")
+    evening = datetime(2026, 9, 22, 22, 30, tzinfo=zone).timestamp()
+    eight = next_local_time("08:00", now=evening, zone=zone)
+    assert datetime.fromtimestamp(eight, zone) == datetime(2026, 9, 23, 8, 0, tzinfo=zone)
+    lease = lease_from_args({"until_time": "08:00", "source": "chip"}, now=evening, pending_ids=frozenset(), zone=zone)
+    assert lease.kind == LEASE_DURATION and lease.until == eight
+    # Earlier the same day: today's occurrence.
+    morning = datetime(2026, 9, 22, 6, 0, tzinfo=zone).timestamp()
+    assert datetime.fromtimestamp(next_local_time("08:00", now=morning, zone=zone), zone).day == 22
+    # A daylight-saving night is not a fixed 24 hours.
+    fall_back = datetime(2026, 10, 31, 23, 0, tzinfo=zone).timestamp()
+    assert next_local_time("08:00", now=fall_back, zone=zone) - fall_back == pytest.approx(10 * 3600)
+    for bad in ("8am", "24:00", "08:60", "8:00"):
+        with pytest.raises(ValueError):
+            lease_from_args({"until_time": bad}, now=evening, pending_ids=frozenset(), zone=zone)
+
+
 def test_until_agents_finish_is_refused_when_nothing_runs() -> None:
     with pytest.raises(LeaseRefusedError):
         lease_from_args({"until_agents_idle": True}, now=NOW, pending_ids=frozenset())

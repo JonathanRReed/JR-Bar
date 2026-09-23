@@ -1403,6 +1403,9 @@ public struct CoreAwakeRequest: Hashable, Sendable {
     public enum Shape: Hashable, Sendable {
         case seconds(Double)
         case until(Double)
+        /// A local `HH:MM` ("08:00"): the daemon resolves the next one in
+        /// the Mac's own zone.
+        case untilTime(String)
         /// Every main session running now, or the named ones.
         case untilAgentsFinish(sessions: [String]?)
         case indefinite
@@ -1423,6 +1426,7 @@ public struct CoreAwakeRequest: Hashable, Sendable {
         switch shape {
         case .seconds(let seconds): args["seconds"] = .number(seconds)
         case .until(let epoch): args["until"] = .number(epoch)
+        case .untilTime(let clock): args["until_time"] = .string(clock)
         case .untilAgentsFinish(let sessions):
             args["until_agents_idle"] = .bool(true)
             if let sessions { args["sessions"] = .array(sessions.map(JSONValue.string)) }
