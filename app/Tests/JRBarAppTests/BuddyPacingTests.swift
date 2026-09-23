@@ -114,6 +114,70 @@ struct BuddyPacingTests {
         _ = (store, fedStore)
     }
 
+    // MARK: Tempo
+
+    private func stamped(_ id: String, at updated: Double, mode: String = "tool_running") -> CoreSession {
+        CoreSession(id: id, provider: "claude", mode: mode, lifecycle: "active", updatedAt: updated)
+    }
+
+    @Test("each moved stamp on a working session is one tool event")
+    func tempoCountsEvents() {
+        var tempo = BuddyTempo()
+        tempo.note(sessions: [stamped("a", at: 100)], now: t0)
+        #expect(tempo.rate(at: t0) == 0, "a first sighting is a baseline, not a burst")
+        for k in 1...8 {
+            tempo.note(sessions: [stamped("a", at: 100 + Double(k))], now: t0.addingTimeInterval(Double(k)))
+        }
+        #expect(abs(tempo.rate(at: t0.addingTimeInterval(8)) - 8 / BuddyTempo.window) < 1e-9)
+        tempo.note(sessions: [stamped("a", at: 108)], now: t0.addingTimeInterval(9))
+        #expect(tempo.stamps.count == 8, "an unchanged stamp is a heartbeat, not an event")
+        #expect(tempo.rate(at: t0.addingTimeInterval(9 + BuddyTempo.window)) == 0,
+                "the window forgets")
+    }
+
+    @Test("an idle session's stamp moving is not tool work")
+    func tempoIgnoresIdle() {
+        var tempo = BuddyTempo()
+        tempo.note(sessions: [stamped("a", at: 1, mode: "idle_ready")], now: t0)
+        tempo.note(sessions: [stamped("a", at: 2, mode: "idle_ready")], now: t0)
+        #expect(tempo.stamps.isEmpty)
+    }
+
+    @Test("the cadence runs from a stroll to a sprint, and clamps")
+    func cadenceRange() {
+        #expect(BuddyTempo.cadence(rate: 0) == BuddyTempo.strollCadence)
+        #expect(BuddyTempo.cadence(rate: BuddyTempo.sprintRate) == BuddyTempo.sprintCadence)
+        #expect(BuddyTempo.cadence(rate: 50) == BuddyTempo.sprintCadence)
+        #expect(BuddyTempo.cadence(rate: .nan) == BuddyTempo.strollCadence)
+        let mid = BuddyTempo.cadence(rate: BuddyTempo.sprintRate / 2)
+        #expect(mid > BuddyTempo.strollCadence && mid < BuddyTempo.sprintCadence)
+    }
+
+    @Test("the walk clock only ever moves forward, faster under load")
+    func walkClockAdvances() {
+        let (idle, idleStore, _) = makeToy()
+        let (busy, busyStore, busyCore) = makeToy()
+        let start = Date()
+        busyCore.apply(.state(CoreState(generation: 1, sessions: [stamped("a", at: 1)])))
+        _ = busy.sessionDigest()
+        for k in 2...20 {
+            busyCore.apply(.state(CoreState(generation: k, sessions: [stamped("a", at: Double(k))])))
+            _ = busy.sessionDigest()
+        }
+        let idle0 = idle.walkPhase(at: start)
+        let busy0 = busy.walkPhase(at: start)
+        var idleLast = idle0, busyLast = busy0
+        for step in 1...40 {
+            let now = start.addingTimeInterval(Double(step) * 0.1)
+            let i = idle.walkPhase(at: now), b = busy.walkPhase(at: now)
+            #expect(i >= idleLast && b >= busyLast)
+            idleLast = i
+            busyLast = b
+        }
+        #expect(busyLast - busy0 > idleLast - idle0, "hammered tools walk faster")
+        _ = (idleStore, busyStore)
+    }
+
     @Test("the pure digest counts, tints and picks the focus")
     func digestOfSessions() {
         let asking = CoreSession(id: "ask", provider: "codex", mode: "waiting_for_user",

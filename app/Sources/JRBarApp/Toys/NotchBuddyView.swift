@@ -81,7 +81,8 @@ struct NotchBuddyView: View {
                 care: summary.care,
                 trick: trick(at: context.date),
                 treatAge: age(of: toy.treatBurstAt, at: context.date),
-                crumbAge: age(of: toy.crumbAt, at: context.date)
+                crumbAge: age(of: toy.crumbAt, at: context.date),
+                stride: toy.walkPhase(at: context.date)
             )
             .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
             .scaleEffect(x: dress.squash.width, y: dress.squash.height, anchor: .bottom)
@@ -325,6 +326,13 @@ struct BuddyFigure: View {
     let treatAge: TimeInterval?
     /// Seconds since the last crumb it ate; the "+1" floats while fresh.
     let crumbAge: TimeInterval?
+    /// The walk's own clock (`NotchBuddyToy.walkPhase`): it runs faster
+    /// while the agents hammer their tools, slower while they think.
+    /// nil walks on `phase`, the fixed cadence the roster strip keeps.
+    var stride: TimeInterval? = nil
+
+    /// The clock the pacing and gathering poses step on.
+    private var walk: TimeInterval { stride ?? phase }
 
     // MARK: Pose
 
@@ -478,7 +486,7 @@ struct BuddyFigure: View {
     private var pacingPose: Pose {
         var pose = Pose()
         let cycle = 3.4
-        let c = (phase.truncatingRemainder(dividingBy: cycle) + cycle)
+        let c = (walk.truncatingRemainder(dividingBy: cycle) + cycle)
             .truncatingRemainder(dividingBy: cycle) / cycle
         let leg: (x: Double, dir: Double, walk: Double?, turn: Double)
         switch c {
@@ -510,13 +518,13 @@ struct BuddyFigure: View {
         var pose = Pose()
         pose.pupil = 2.3
         pose.mouth = .smile
-        let b = abs(sin(phase * 7.2))
+        let b = abs(sin(walk * 7.2))
         pose.offset.height = -2.0 * b
         pose.air = 0.35 * b
         pose.squash = CGSize(width: 1 + 0.10 * (1 - b) - 0.04 * b,
                              height: 1 - 0.09 * (1 - b) + 0.07 * b)
-        pose.lean = sin(phase * 3.6) * 4
-        pose.look = CGSize(width: sin(phase * 1.8) * 0.7, height: -0.25)
+        pose.lean = sin(walk * 3.6) * 4
+        pose.look = CGSize(width: sin(walk * 1.8) * 0.7, height: -0.25)
         return pose
     }
 

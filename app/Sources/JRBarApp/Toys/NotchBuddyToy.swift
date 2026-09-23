@@ -482,7 +482,9 @@ final class NotchBuddyToy: Toy {
         digestStale.withLock { $0 = false }
         let stale = digestStale
         cachedDigest = withObservationTracking {
-            Self.digest(of: core.sessions)
+            let sessions = core.sessions
+            tempo.note(sessions: sessions, now: Date())
+            return Self.digest(of: sessions)
         } onChange: { [weak self] in
             stale.withLock { $0 = true }
             // The re-read waits for the hop: onChange runs in the
@@ -496,6 +498,33 @@ final class NotchBuddyToy: Toy {
     private func followDocument() {
         _ = sessionDigest()
         digestVersion &+= 1
+    }
+
+    // MARK: Tempo
+
+    /// How hard the agents are working the tools right now — RunCat's
+    /// living meter, from real data: each hook event bumps a working
+    /// session's `updated_at`, and the rate of those bumps sets the walk.
+    @ObservationIgnored private(set) var tempo = BuddyTempo()
+    /// The walk's own clock: seconds of stride, advanced at the tempo's
+    /// cadence so a change of pace speeds the legs up without jumping
+    /// the pose. Maintained by `walkPhase(at:)`, like `wavingSince`.
+    @ObservationIgnored private var walkClock: (phase: TimeInterval, at: Date, cadence: Double)?
+
+    /// The pacing and gathering poses' clock at `now`: a sprint while
+    /// the tools are hammered, a stroll while the agents think. The
+    /// cadence eases toward its target over about a second.
+    func walkPhase(at now: Date) -> TimeInterval {
+        let target = BuddyTempo.cadence(rate: tempo.rate(at: now))
+        guard let clock = walkClock else {
+            walkClock = (now.timeIntervalSince1970, now, target)
+            return now.timeIntervalSince1970
+        }
+        let dt = min(0.25, max(0, now.timeIntervalSince(clock.at)))
+        let cadence = clock.cadence + (target - clock.cadence) * min(1, dt / 0.9)
+        let phase = clock.phase + dt * cadence
+        walkClock = (phase, now, cadence)
+        return phase
     }
 
     // MARK: Frame pacing
@@ -788,6 +817,59 @@ final class NotchBuddyToy: Toy {
         onVisibilityChange?()
     }
 
+}
+
+/// RunCat's tempo, from the hook stream rather than the CPU: every tool
+/// event bumps its session's `updated_at`, so counting the bumps on
+/// working sessions over a short window is the rate the agents are
+/// working their tools. A sprint means the tools are being hammered; a
+/// stroll means the agents are thinking.
+struct BuddyTempo: Equatable {
+    /// The window the rate is counted over.
+    static let window: TimeInterval = 20
+    /// Events a second that reads as a full sprint.
+    static let sprintRate: Double = 0.8
+    /// The walk's speed range, as a multiple of the old fixed cadence.
+    static let strollCadence: Double = 0.75
+    static let sprintCadence: Double = 1.7
+
+    /// When each counted event was seen, oldest first.
+    private(set) var stamps: [Date] = []
+    /// Each session's `updated_at` last time we looked.
+    private var lastSeen: [String: Double] = [:]
+
+    /// One document's worth: a working session whose stamp moved since
+    /// the last look is one event. A session's first sighting sets its
+    /// baseline and counts nothing — a relaunch is not a burst.
+    mutating func note(sessions: [CoreSession], now: Date) {
+        var seen: [String: Double] = [:]
+        for session in sessions {
+            guard let updated = session.updatedAt else { continue }
+            seen[session.id] = updated
+            guard SessionActivity.reduce(session) == .working,
+                  let previous = lastSeen[session.id], updated > previous else { continue }
+            stamps.append(now)
+        }
+        lastSeen = seen
+        prune(now)
+    }
+
+    private mutating func prune(_ now: Date) {
+        stamps.removeAll { now.timeIntervalSince($0) > Self.window }
+        if stamps.count > 200 { stamps.removeFirst(stamps.count - 200) }
+    }
+
+    /// Events a second over the window.
+    func rate(at now: Date) -> Double {
+        Double(stamps.filter { now.timeIntervalSince($0) <= Self.window }.count) / Self.window
+    }
+
+    /// The walk's speed for a rate: a stroll at rest, a sprint at
+    /// `sprintRate` and beyond.
+    static func cadence(rate: Double) -> Double {
+        let k = min(1, max(0, rate.isFinite ? rate / sprintRate : 0))
+        return strollCadence + (sprintCadence - strollCadence) * k
+    }
 }
 
 /// The card's disclosure body: the roster picker (a menu, like the Fold
