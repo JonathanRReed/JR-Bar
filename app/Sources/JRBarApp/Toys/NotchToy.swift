@@ -137,6 +137,12 @@ final class NotchToy: Toy {
     /// The mic/camera poller; exists only while the island is ours,
     /// shown, and the indicators switch is on.
     @ObservationIgnored private var sensorMonitor: NotchSensorMonitor?
+    /// The calendar's background heads-up and live-meeting reader —
+    /// only while the island is shown with `meetingAlerts` on.
+    @ObservationIgnored let meetingWatch = ShelfMeetingWatch()
+    /// The meeting the heads-up on screen is about — its face reads the
+    /// times and the link off it.
+    @ObservationIgnored private(set) var headsUpMeeting: ShelfCalendarModel.Event?
     /// What the idle face reads for its privacy dots — quiet while the
     /// monitor is off or nothing is live.
     private(set) var sensorState = NotchSensorState()
@@ -214,6 +220,10 @@ final class NotchToy: Toy {
         }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
+        // A meeting about to start says so; one running is a quiet
+        // stretch, and its end may replay what it held.
+        meetingWatch.onSoon = { [weak self] event in self?.noteMeetingSoon(event) }
+        meetingWatch.onLiveChange = { [weak self] _ in self?.noteQuietChange() }
         audioTap.onLevels = { [weak self] bands in
             self?.cardModel.utility.audioLevels = bands
         }
@@ -445,7 +455,7 @@ final class NotchToy: Toy {
     /// while the capsule is not an ask. The frame and the climb read
     /// the same measure.
     private func askFaceSize(on screen: NSScreen) -> CGSize? {
-        guard let capsule = activeCapsule, capsule.kind == .ask else { return nil }
+        guard let capsule = activeCapsule, capsule.kind.hasVerbs else { return nil }
         return NotchIslandLayout.askSize(
             slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
             notchDepth: ScreenBarGeometry.islandDepth(of: screen),
@@ -996,7 +1006,7 @@ final class NotchToy: Toy {
     /// outranks idle. An ask capsule wears the ask face.
     private var currentFace: NotchIslandFace {
         if activeOverlay != nil { return .notice }
-        if let capsule = activeCapsule { return capsule.kind == .ask ? .ask : .notice }
+        if let capsule = activeCapsule { return capsule.kind.hasVerbs ? .ask : .notice }
         return islandExpanded ? .expanded : .idle
     }
 
@@ -1141,6 +1151,7 @@ final class NotchToy: Toy {
         syncSensorMonitor()
         syncAudioTap()
         syncShakeMonitor()
+        syncMeetingWatch()
     }
 
     /// The glass card's presenter reads the same `notchSurface` answer
@@ -1196,6 +1207,7 @@ final class NotchToy: Toy {
         syncSensorMonitor()
         syncAudioTap()
         syncShakeMonitor()
+        syncMeetingWatch()
     }
 
     /// Ends every owned runtime source and releases the island. The
@@ -1421,7 +1433,8 @@ final class NotchToy: Toy {
                                                          focusName: macFocus) {
             return context
         }
-        return macFocus
+        if let macFocus { return macFocus }
+        return settings.meetingAlerts ? meetingWatch.live?.title : nil
     }
 
     /// The last quiet stretch seen — its end is what replays the hold.
@@ -1459,6 +1472,44 @@ final class NotchToy: Toy {
         var said = notice
         said.subtitle = "Focus on · news waits"
         return said
+    }
+
+    // MARK: Meetings
+
+    /// The meeting watch lives exactly as long as the island is shown
+    /// with the heads-up and the calendar both on; `reconcile` and
+    /// `parkIsland` land here. `runtimeEnabled` is folded in, so the
+    /// state-machine tests never make an EventKit store.
+    private func syncMeetingWatch() {
+        let s = settings
+        meetingWatch.sync(enabled: runtimeEnabled && islandVisible
+                          && s.meetingAlerts && s.calendar && s.provider == .jrbar)
+    }
+
+    /// Two minutes out: the island says which meeting, when, and offers
+    /// Join (and the Mirror, for a last look). Internal for the tests.
+    func noteMeetingSoon(_ event: ShelfCalendarModel.Event) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.meetingAlerts,
+              islandVisible, !islandExpanded else { return }
+        headsUpMeeting = event
+        let key = "meeting:\(ShelfMeetingWatch.key(event))"
+        offer(AlcoveNotice(id: key, kind: .meeting, title: event.title,
+                           subtitle: ShelfMeetingWatch.detail(event), key: key))
+    }
+
+    /// The heads-up's Join: the link opens in the browser (only an
+    /// http(s) one ever reaches here) and the heads-up steps down.
+    func joinHeadsUpMeeting() {
+        if let url = headsUpMeeting?.url { NSWorkspace.shared.open(url) }
+        dismissCapsule()
+    }
+
+    /// The heads-up's Mirror: a last look before the call — the card
+    /// opens straight onto the lens.
+    func mirrorBeforeMeeting() {
+        dismissCapsule()
+        summonMirror()
     }
 
     // MARK: Timers
@@ -2250,6 +2301,13 @@ private struct NotchControlsView: View {
                 SettingLabel(title: "Calendar",
                              subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
                                                        granted: "The next three events in the card, the first with Join."))
+            }
+            if toy.settings.calendar {
+                Toggle(isOn: toy.bind(\.meetingAlerts)) {
+                    SettingLabel(title: "Meeting heads-up",
+                                 subtitle: "Two minutes before an event with a join link, the island says so with Join (and the Mirror, when it is on). While the meeting runs, finished runs wait like in a Focus. Reads the calendar in the background, on this Mac only.")
+                }
+                .padding(.leading, 28)
             }
             Toggle(isOn: toy.remindersBinding) {
                 SettingLabel(title: "Reminders",

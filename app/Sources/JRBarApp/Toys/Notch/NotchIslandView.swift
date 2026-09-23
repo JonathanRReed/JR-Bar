@@ -38,7 +38,7 @@ struct NotchIslandView: View {
     /// faces provide).
     private var face: Int {
         if let notice = shownNotice {
-            guard notice.kind == .ask else { return 1 }
+            guard notice.kind.hasVerbs else { return 1 }
             return notice.takeover ? 4 : 3
         }
         return toy.islandExpanded ? 2 : 0
@@ -397,6 +397,7 @@ struct NotchIslandView: View {
     private func noticeCapsule(_ notice: AlcoveNotice) -> some View {
         switch notice.kind {
         case .ask: askFace(notice)
+        case .meeting: meetingFace(notice)
         case .level: levelFace(notice)
         default: lineFace(notice)
         }
@@ -563,6 +564,70 @@ struct NotchIslandView: View {
         .accessibilityValue(toy.askSummary(notice))
     }
 
+    /// A meeting about to start, in the ask's verb face: which meeting
+    /// and a live countdown, its times and where it is held, and the
+    /// verbs — the Mirror for a last look (when the Mirror is on) and
+    /// Join (when the event carries a link). A tap off the buttons puts
+    /// it away; the card's calendar row keeps Join after it goes.
+    private func meetingFace(_ notice: AlcoveNotice) -> some View {
+        let meeting = toy.headsUpMeeting
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: notice.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(noticeTint(notice))
+                Text(notice.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                if let start = meeting?.start {
+                    TimelineView(.periodic(from: .now, by: 15)) { context in
+                        Text(ShelfMeetingWatch.countdown(to: start, now: context.date))
+                            .font(.system(size: 9.5, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+            }
+            .frame(height: NotchIslandLayout.askTitleLine)
+            Text(notice.subtitle)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.62))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, minHeight: NotchIslandLayout.askSummaryLine,
+                       maxHeight: NotchIslandLayout.askSummaryLine, alignment: .topLeading)
+            Spacer(minLength: NotchIslandLayout.askGap)
+            HStack(spacing: 6) {
+                Spacer(minLength: 4)
+                if toy.settings.mirror {
+                    NotchVerbButton(title: "Mirror", style: .island, systemImage: "person.crop.square") {
+                        toy.mirrorBeforeMeeting()
+                    }
+                }
+                if meeting?.url != nil {
+                    NotchVerbButton(title: "Join", style: .island, prominent: true,
+                                    systemImage: "video.fill") {
+                        toy.joinHeadsUpMeeting()
+                    }
+                }
+            }
+            .frame(height: NotchIslandLayout.askVerbRow)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, NotchIslandLayout.askPad)
+        .padding(.top, toy.notchDepth > 0 ? toy.notchDepth : NotchIslandLayout.askFloatingTop)
+        .padding(.bottom, toy.askClimb)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { toy.islandTapped() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(notice.title) is starting")
+        .accessibilityValue(notice.subtitle)
+    }
+
     /// "4m", "1h 5m" — how long the ask has waited, off its own
     /// `opened_at`.
     static func waited(since openedAt: Double, now: Date) -> String {
@@ -585,6 +650,7 @@ struct NotchIslandView: View {
         case .quotaReset: return ProviderStyle.style(for: notice.provider ?? "").accent
         case .charging: return .yellow
         case .timer: return .orange
+        case .meeting: return .blue
         case .focus: return .indigo
         case .level, .device, .capsLock, .display: return .white.opacity(0.85)
         }

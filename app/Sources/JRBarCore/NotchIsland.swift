@@ -439,6 +439,10 @@ public enum NotchIslandLayout {
 }
 
 extension AlcoveNoticeKind {
+    /// The kinds whose capsule carries buttons — the ask's verbs, a
+    /// meeting's Join — and so wears the taller verb face.
+    public var hasVerbs: Bool { self == .ask || self == .meeting }
+
     /// Which capsule deserves the queue's one waiting slot: an ask
     /// outranks a failure, and both outrun the ambient kinds. Lower
     /// wins. `AlcoveCapsuleQueue` itself stays newest-wins; the
@@ -448,8 +452,9 @@ extension AlcoveNoticeKind {
         switch self {
         case .ask: return 0
         case .failed: return 1
-        // A timer the person set outranks an agent's news about itself.
-        case .timer: return 2
+        // A meeting about to start and a timer the person set outrank
+        // an agent's news about itself.
+        case .meeting, .timer: return 2
         case .completed: return 3
         case .quotaReset: return 4
         case .device: return 5

@@ -36,6 +36,9 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
     case display
     /// A shelf timer came due.
     case timer
+    /// A meeting with a join link is about to start — the calendar's
+    /// heads-up, with Join (and the Mirror, for a last look).
+    case meeting
 
     /// The SF Symbol the capsule's leading glyph draws. The tint is the
     /// view's business (amber / green / red / the provider's accent) —
@@ -54,6 +57,7 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .capsLock: return "capslock.fill"
         case .display: return "display"
         case .timer: return "timer"
+        case .meeting: return "video.fill"
         }
     }
 
@@ -71,6 +75,7 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .capsLock: return "Caps Lock"
         case .display: return "display changed"
         case .timer: return "done"
+        case .meeting: return "starting soon"
         }
     }
 
@@ -85,6 +90,7 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .ask: return nil
         case .level, .capsLock: return AlcoveCapsuleQueue.feedbackLife
         case .timer: return AlcoveCapsuleQueue.timerLife
+        case .meeting: return AlcoveCapsuleQueue.meetingLife
         case .completed, .failed, .quotaReset, .charging, .focus, .device, .display:
             return AlcoveCapsuleQueue.life
         }
@@ -184,7 +190,8 @@ public struct AlcoveCapsuleKinds: Codable, Equatable, Sendable {
         // The Mac's own announcements keep their switches on the notch
         // settings (`alerts`, `mediaHUD`), checked where they are
         // raised; a timer is the person's own ask to be told.
-        case .level, .focus, .device, .capsLock, .display, .timer: return true
+        // A meeting's heads-up has its own switch (`meetingAlerts`).
+        case .level, .focus, .device, .capsLock, .display, .timer, .meeting: return true
         }
     }
 
@@ -321,6 +328,9 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
     public static let feedbackLife: TimeInterval = 2.0
     /// Seconds a due timer's capsule holds: it was set to be noticed.
     public static let timerLife: TimeInterval = 8
+    /// A meeting's heads-up holds long enough to reach Join from across
+    /// the desk; the card's calendar row keeps Join after it steps down.
+    public static let meetingLife: TimeInterval = 30
     /// The same kind about the same session/provider repeats inside this
     /// window are suppressed.
     public static let sameKeyCooldown: TimeInterval = 30

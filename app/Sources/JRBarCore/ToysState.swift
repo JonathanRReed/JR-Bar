@@ -769,6 +769,11 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// completions and quota resets wait and replay as one summary
     /// capsule afterwards; asks and failures still show.
     public var holdNewsWhileQuiet: Bool = true
+    /// Two minutes before a timed event with a join link, the island
+    /// says so with Join; while it runs it is a quiet stretch like a
+    /// Focus. Off by default: it reads the calendar in the background,
+    /// not only while the card is open.
+    public var meetingAlerts: Bool = false
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -814,6 +819,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case weatherUseIPLocation
         case lyrics
         case holdNewsWhileQuiet
+        case meetingAlerts
     }
 
     public init(from decoder: any Decoder) throws {
@@ -845,6 +851,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
         lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? true
         holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
+        meetingAlerts = (try? c.decodeIfPresent(Bool.self, forKey: .meetingAlerts)) ?? false
     }
 }
 
