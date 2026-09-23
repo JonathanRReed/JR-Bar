@@ -45,9 +45,28 @@ parse starts the new program from line 1 using the current state as the
 transition start colors. A parse error stops the current program and blinks all
 LEDs red six times with 150 ms on/off phases.
 
+The rules below are the firmware parser's own, probed against the packaged
+`sdled.wasm` (the verdicts live in `app/Tests/JRBarLEDSTests/Fixtures`; the
+Swift port that mirrors them is `app/Sources/JRBarLEDS/LEDSParser.swift`). The
+size limits are checked first: more than 512 UTF-8 bytes is `too-long` before
+anything else is read, and more than 20 lines is `too-many-lines`. `\r\n`,
+`\n` and `\r` all end a line, and one trailing line break does not start a new
+line. Keywords, easing names and the `ms`/`s` suffixes are case-insensitive:
+`OFF`, `Repeat`, `COSINE` and `330MS` all parse.
+
+JR-Bar's own gate in front of every device write is stricter in two places,
+so a program it shows never reads differently on the device: it refuses a
+tab anywhere in a line, and a time with more than three fraction digits.
+
 ## Comments
 
-Blank lines are ignored. Comment lines may start with `;`, `//`, or `# `.
+Blank lines are ignored. A comment is recognised only at the start of a line
+(after any spaces or tabs), in three spellings:
+
+* `//` followed by anything;
+* `;` followed by anything -- elsewhere on a line `;` separates segments;
+* `#` alone, or `#` followed by a space or a tab. `#` followed by anything
+  else is a colour, so `#comment` fails as `bad-color`.
 
 ```text
 # all LEDs white
@@ -85,17 +104,27 @@ the compiled LED count are checked for valid syntax, then ignored:
 0:#ffffff 2:#ff00ee 7:#0040ff
 ```
 
-Multiple segments may appear on one line, separated by semicolons. If an LED is
-assigned more than once on a line, the last assignment wins:
+Colours are always six hex digits: `#fff` is `bad-color`. An indexed LED takes
+a colour, never a keyword: `0:off` (and `0:` or `0:#fff`) is `bad-index` --
+write `0:#000000` to turn one LED off.
+
+Multiple segments may appear on one line, separated by semicolons; an empty
+segment (`;;`) is ignored. If an LED is assigned more than once on a line, the
+last assignment wins:
 
 ```text
 0:#ff0000 1s; 0:#0000ff 1s
 ```
 
+A colour list and indexed assignments cannot share one segment: in
+`#ff0000 0:#00ff00` the `0:#00ff00` is read where the timing belongs and fails
+as `bad-time`. Give each its own segment: `#ff0000; 0:#00ff00`.
+
 ## Brightness
 
 Brightness scales the RGB values. It does not change the stored animation colors. Each successful parse starts with brightness 255 unless
-the program includes `brightness N`.
+the program includes `brightness N`, where `N` is a whole number from 0 to 255
+(anything else is `bad-brightness`) and nothing may follow it on the line.
 
 ```text
 brightness 128
@@ -116,7 +145,9 @@ easing delay
 ```
 
 Durations and delays accept integer milliseconds, integer seconds, or decimal
-seconds, up to 65535 ms:
+seconds, up to 65535 ms. A decimal needs a digit before the point (`.5s` is
+`bad-time`, write `0.5s`) and keeps only its first three fraction digits:
+`0.3333s` is 333 ms.
 
 ```text
 #ff00ff 330ms
@@ -182,7 +213,8 @@ roll-right 1.5s cosine
 
 `roll` is an alias for `roll-right`. Missing easing defaults to `linear`.
 Duration is the time for one complete loop, so `roll 2s` returns to the
-starting arrangement after 2 seconds. Roll always uses the current visible LED
+starting arrangement after 2 seconds. A roll owns its line: a `;` anywhere on
+it fails as `bad-time`. Roll always uses the current visible LED
 state as its source. To roll a chosen palette, set it first:
 
 ```text
@@ -207,6 +239,12 @@ Stagger all 8 LEDs:
 ```
 
 ## Repeat
+
+`repeat` may appear once per program, and only after a line that lights
+something -- a paint that reaches a real LED, or a roll. A `repeat` with
+nothing lit before it (only comments, `brightness`, or indexes past the LED
+count) is `bad-repeat`, and the firmware reports it on the line after the
+`repeat`. A count is a whole number from 1 to 65535.
 
 Loop forever from the first animation line:
 
