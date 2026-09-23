@@ -302,6 +302,67 @@ def _recorded(tmp_path: Path, terminal_id: str | None, *, provider: str = "codex
     return recorder
 
 
+def _start_from(source: str | None, session_id: str = "s-1", cwd: str = "/Users/me/repo") -> str:
+    payload = {"hook_event_name": "SessionStart", "session_id": session_id, "cwd": cwd}
+    if source is not None:
+        payload["source"] = source
+    return json.dumps(payload)
+
+
+def test_only_a_start_the_owner_made_records_the_surface__and_4_more(tmp_path: Path) -> None:
+    path = tmp_path / "session-surfaces.json"
+    clock = [1_000.0]
+
+    def recorder(runner, table=GHOSTTY_CODEX):
+        return SurfaceRecorder(
+            path=path, runner=runner, process_table=lambda: table, wall_clock=lambda: clock[0], synchronous=True
+        )
+
+    # --- scenario: a compaction with a sibling split focused in the same repo keeps the session's own terminal
+    recorder(FakeRunner(focused="T1\t/Users/me/repo")).note_session_start("claude", _start_from("startup"), 500)
+    clock[0] = 2_000.0
+    sibling = FakeRunner(focused="T2\t/Users/me/repo")
+    subject = recorder(sibling)
+    assert subject.note_session_start("claude", _start_from("compact"), 500)
+    assert subject.recorded("claude", "s-1") == "T1"
+    assert ("ghostty-focused",) not in sibling.calls
+    # Its age is refreshed, so a long session's record does not lapse.
+    assert json.loads(path.read_text())["surfaces"]["claude\x1fs-1"]["recorded_at"] == 2_000.0
+
+    # --- scenario: a compaction with nothing recorded notes the host app, never a surface
+    subject = recorder(FakeRunner(focused="T2\t/Users/me/repo"))
+    subject.note_session_start("claude", _start_from("compact", "s-2"), 500)
+    assert subject.recorded("claude", "s-2") is None
+    assert subject.recorded_host("claude", "s-2") == "com.mitchellh.ghostty"
+    # ...and a source this does not know is treated the same way.
+    subject.note_session_start("claude", _start_from("hook", "s-3"), 500)
+    assert subject.recorded("claude", "s-3") is None
+
+    # --- scenario: resume, clear, fork -- and a CLI that sends no source -- record where they are typed
+    for index, source in enumerate(("resume", "clear", "fork", None)):
+        subject = recorder(FakeRunner(focused=f"T{index + 5}\t/Users/me/repo"))
+        subject.note_session_start("codex", _start_from(source), 500)
+        assert subject.recorded("codex", "s-1") == f"T{index + 5}", source
+
+    # --- scenario: a resume this cannot place (inside tmux) forgets the old surface and keeps the app
+    recorder(FakeRunner(focused="T1\t/Users/me/repo")).note_session_start("claude", _start_from("startup"), 500)
+    tmux = _table(
+        _entry(500, 400, "/Users/me/.local/share/claude/versions/2.1.280"),
+        _entry(400, 350, "/bin/zsh"),
+        _entry(350, 1, "/opt/homebrew/bin/tmux"),
+    )
+    subject = recorder(FakeRunner(focused="T1\t/Users/me/repo"), table=tmux)
+    subject.note_session_start("claude", _start_from("resume"), 500)
+    assert subject.recorded("claude", "s-1") is None
+    assert subject.recorded_host("claude", "s-1") == "com.mitchellh.ghostty"
+
+    # --- scenario: a resume whose probe proves no surface (Ghostty not in front) replaces the old one too
+    recorder(FakeRunner(focused="T1\t/Users/me/repo")).note_session_start("claude", _start_from("startup"), 500)
+    subject = recorder(FakeRunner(focused="T1\t/Users/me/repo", frontmost="com.apple.Safari"))
+    subject.note_session_start("claude", _start_from("resume"), 500)
+    assert subject.recorded("claude", "s-1") is None
+
+
 def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch, tmp_path: Path) -> None:
     import os
     import signal

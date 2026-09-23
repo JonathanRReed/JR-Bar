@@ -606,6 +606,13 @@ def _surface_key(provider: str, session_id: str) -> str:
     return f"{provider}\x1f{session_id}"
 
 
+#: SessionStart sources the owner made -- typing the command, ``/resume``,
+#: ``/clear``, a fork -- so the session's own terminal is the focused one.
+#: Claude Code and Codex also send ``compact``, which fires on
+#: auto-compaction mid-turn with whatever terminal the owner is looking at.
+USER_START_SOURCES: Final = frozenset({"startup", "resume", "clear", "fork"})
+
+
 class SurfaceRecorder:
     """Where each session started, kept across restarts: the terminal app
     that hosts it (from the process table, no permission needed) and, in
@@ -616,6 +623,11 @@ class SurfaceRecorder:
     ``note_session_start`` is called by the hook ingress for every
     SessionStart and returns at once; the probe runs on one worker thread
     with a bounded queue, so a burst of starts never slows a hook.
+
+    Only a start the owner made records a surface, and it replaces the
+    record -- or, when it cannot place the session, forgets the old surface,
+    so a session resumed elsewhere is never proven in the terminal it left.
+    Any other start (``compact``) keeps the record it finds.
     """
 
     def __init__(
@@ -634,7 +646,7 @@ class SurfaceRecorder:
         self._synchronous = synchronous
         self._lock = threading.Lock()
         self._records: dict[str, dict[str, Any]] | None = None
-        self._queue: deque[tuple[str, str, str | None, int | None]] = deque(maxlen=8)
+        self._queue: deque[tuple[str, str, str | None, int | None, bool]] = deque(maxlen=8)
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
 
@@ -688,7 +700,16 @@ class SurfaceRecorder:
         cwd = payload.get("cwd")
         if type(session_id) is not str or not session_id:
             return False
-        item = (provider, session_id, cwd if type(cwd) is str else None, ppid if type(ppid) is int else None)
+        # A CLI that sends no source fires SessionStart only when started.
+        source = payload.get("source")
+        user_start = source is None or source in USER_START_SOURCES
+        item = (
+            provider,
+            session_id,
+            cwd if type(cwd) is str else None,
+            ppid if type(ppid) is int else None,
+            user_start,
+        )
         if self._synchronous:
             self._probe(*item)
             return True
@@ -717,8 +738,17 @@ class SurfaceRecorder:
             except Exception:
                 continue
 
-    def _probe(self, provider: str, session_id: str, cwd: str | None, ppid: int | None) -> None:
+    def _probe(
+        self,
+        provider: str,
+        session_id: str,
+        cwd: str | None,
+        ppid: int | None,
+        user_start: bool = True,
+    ) -> None:
         if ppid is None or not cwd:
+            if user_start:
+                self._forget_surface(provider, session_id)
             return
         try:
             if self._table is not None:
@@ -728,11 +758,21 @@ class SurfaceRecorder:
 
                 table = list_processes()
         except Exception:
-            return
+            table = {}
         # The shim's parent is the agent (or the shell the agent ran the
         # hook through); either way the host is above it.
         _app, bundle, in_tmux = host_from_ancestry(ppid, table)
         if in_tmux or bundle is None or bundle in APP_HOSTED_BUNDLE_IDS:
+            if user_start:
+                # Started again somewhere this cannot place (inside tmux, an
+                # app, an unreadable ancestry): the old surface is not it.
+                self._forget_surface(provider, session_id)
+            return
+        if not user_start:
+            # A compaction does not move the session, and the terminal in
+            # front is whichever one the owner is reading -- often a sibling
+            # split in the same repo. Keep the record its own start made.
+            self._keep(provider, session_id, host_bundle=bundle, cwd=cwd)
             return
         self._store(provider, session_id, host_bundle=bundle, terminal_id=self._ghostty_surface(bundle, cwd), cwd=cwd)
 
@@ -803,13 +843,54 @@ class SurfaceRecorder:
         row: dict[str, Any] = {"host_bundle": host_bundle, "cwd": cwd, "recorded_at": self._wall()}
         if terminal_id:
             row["ghostty_terminal"] = terminal_id
+        # Every start the owner made replaces the record: a session resumed
+        # in another terminal must not be raised in the one it left.
+        self._update(provider, session_id, lambda _old: row)
+
+    def _keep(self, provider: str, session_id: str, *, host_bundle: str, cwd: str) -> None:
+        """A start that is not the owner's: the record stays as it is (its
+        age refreshed); with none yet, only the host app is noted."""
+        now = self._wall()
+        self._update(
+            provider,
+            session_id,
+            lambda old: {**old, "recorded_at": now}
+            if old is not None
+            else {"host_bundle": host_bundle, "cwd": cwd, "recorded_at": now},
+        )
+
+    def _forget_surface(self, provider: str, session_id: str) -> None:
+        """Drop the recorded Ghostty surface, keeping the host app."""
+
+        def forget(old: dict[str, Any] | None) -> dict[str, Any] | None:
+            if old is None or "ghostty_terminal" not in old:
+                return old
+            kept = {name: value for name, value in old.items() if name != "ghostty_terminal"}
+            return kept if "host_bundle" in kept else None
+
+        self._update(provider, session_id, forget)
+
+    def _update(
+        self,
+        provider: str,
+        session_id: str,
+        change: Callable[[dict[str, Any] | None], dict[str, Any] | None],
+    ) -> None:
+        """Apply ``change`` to one record (``None`` removes it) and write
+        the file; an unchanged record writes nothing."""
+        key = _surface_key(provider, session_id)
         with self._lock:
             records = self._loaded()
-            # Every start replaces the record: a session resumed in another
-            # terminal must not be raised in the one it left.
-            records[_surface_key(provider, session_id)] = row
+            old = records.get(key)
+            row = change(old)
+            if row is old:
+                return
+            if row is None:
+                records.pop(key, None)
+            else:
+                records[key] = row
             while len(records) > MAX_RECORDED_SURFACES:
-                oldest = min(records, key=lambda key: records[key]["recorded_at"])
+                oldest = min(records, key=lambda name: records[name]["recorded_at"])
                 del records[oldest]
             snapshot = {"version": 1, "surfaces": dict(records)}
         path = self._records_path()

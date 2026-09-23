@@ -1015,8 +1015,11 @@ is frontmost, macOS already allows the daemon to send Ghostty Apple events
 (`AEDeterminePermissionToAutomateTarget` with `askUserIfNeeded` false:
 starting an agent never raises a permission prompt), and the focused
 terminal of its front window is in the session's directory. Every start
-replaces the record, so a session resumed elsewhere is never raised in the
-terminal it left.
+the owner makes (`source` `startup`, `resume`, `clear`, `fork`, or none)
+replaces the record, and one that cannot place the session forgets the old
+surface, so a session resumed elsewhere is never raised -- or proven -- in
+the terminal it left. A `compact` start, which fires on auto-compaction with
+whatever terminal the owner is reading in front, keeps the record it finds.
 
 `install.hook_command_arguments` registers the shim when `JRBAR_HOOK_EXEC`
 names one (an empty value disables it), when a bundled copy sits beside a
