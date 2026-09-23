@@ -1200,6 +1200,13 @@ final class ScreenBarLiveStatus {
     /// the app fell back to — so the line names the idle breath as the
     /// idle breath, not as the strip's last program.
     var offlineFeed: ScreenBarSourceLine.OfflineFeed?
+
+    /// The fallback put `source` on the band. It re-lands on every offline
+    /// refresh, so only a different feed touches the observed value.
+    func noteOfflineFeed(_ source: LEDFeed.Source) {
+        let feed = ScreenBarSourceLine.OfflineFeed(source)
+        if offlineFeed != feed { offlineFeed = feed }
+    }
 }
 
 /// The Screen Bar card's "Right now" line: which source the band plays,

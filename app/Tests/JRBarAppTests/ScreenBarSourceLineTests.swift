@@ -42,6 +42,13 @@ struct ScreenBarSourceLineTests {
         #expect(ScreenBarSourceLine.OfflineFeed(.builtInIdle) == .idleBreath)
         #expect(ScreenBarSourceLine.OfflineFeed(.device("/Volumes/SIDEPULSE/LEDS.LED")) == .strip)
         #expect(ScreenBarSourceLine.OfflineFeed(.stateFile("/tmp/feed.led")) == .file)
+
+        let status = ScreenBarLiveStatus()
+        #expect(status.offlineFeed == nil)
+        status.noteOfflineFeed(.builtInIdle)
+        #expect(status.offlineFeed == .idleBreath)
+        status.noteOfflineFeed(.device("/Volumes/SIDEPULSE/LEDS.LED"))
+        #expect(status.offlineFeed == .strip)
     }
 
     @Test func refusalsStillnessAndAlcoveAreSpelledOut() {
