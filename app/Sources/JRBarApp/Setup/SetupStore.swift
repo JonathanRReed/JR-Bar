@@ -294,6 +294,31 @@ final class SetupStore {
         Task { [weak self] in await self?.refreshPermissions() }
     }
 
+    /// Straight to one step — the lost-permission notice opens on
+    /// Permissions. Nothing is marked completed or skipped on the way.
+    func jump(to target: Step) {
+        step = target
+        if target == .permissions { Task { await refreshPermissions() } }
+    }
+
+    // MARK: Permission health
+
+    /// One launch-time look: every row probed without prompting, compared
+    /// with the grants remembered from the last look, and the new set
+    /// remembered. Returns the rows that were granted then and are not
+    /// now — empty on the very first look, which only records. Writes
+    /// only the remembered grants, never this run's step outcomes.
+    func reviewPermissionHealth() async -> [SetupPermission] {
+        let probed = await model.refreshPermissions()
+        statuses = probed
+        let review = PermissionHealth.review(remembered: state.grantedPermissions, statuses: probed)
+        if review.remember != state.grantedPermissions {
+            state.grantedPermissions = review.remember
+            persist(state)
+        }
+        return review.lost
+    }
+
     // MARK: Appearance step
 
     var iconPreview: SetupIconPreview { model.iconPreview() }

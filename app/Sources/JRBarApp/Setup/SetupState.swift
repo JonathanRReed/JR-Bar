@@ -27,20 +27,27 @@ struct SetupState: Codable, Equatable, Sendable {
     /// mid-way is offered once more, then stops asking; "Run setup
     /// again" is always available from Settings.
     var presentedCount: Int
+    /// The permission rows granted when JR-Bar last looked
+    /// (`SetupPermission` raw values). nil until the first look, which
+    /// only records; a later look that finds one of these gone says so
+    /// once — the reset an OS update or a re-signed build can leave.
+    var grantedPermissions: [String]?
 
     static let currentVersion = 1
 
     init(version: Int = SetupState.currentVersion, completedSteps: [String] = [],
-         skippedSteps: [String] = [], finishedAt: Double? = nil, presentedCount: Int = 0) {
+         skippedSteps: [String] = [], finishedAt: Double? = nil, presentedCount: Int = 0,
+         grantedPermissions: [String]? = nil) {
         self.version = version
         self.completedSteps = completedSteps
         self.skippedSteps = skippedSteps
         self.finishedAt = finishedAt
         self.presentedCount = presentedCount
+        self.grantedPermissions = grantedPermissions
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, completedSteps, skippedSteps, finishedAt, presentedCount
+        case version, completedSteps, skippedSteps, finishedAt, presentedCount, grantedPermissions
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys
@@ -52,6 +59,7 @@ struct SetupState: Codable, Equatable, Sendable {
         skippedSteps = (try? container.decodeIfPresent([String].self, forKey: .skippedSteps)) ?? []
         finishedAt = (try? container.decodeIfPresent(Double.self, forKey: .finishedAt)) ?? nil
         presentedCount = (try? container.decodeIfPresent(Int.self, forKey: .presentedCount)) ?? 0
+        grantedPermissions = (try? container.decodeIfPresent([String].self, forKey: .grantedPermissions)) ?? nil
     }
 }
 

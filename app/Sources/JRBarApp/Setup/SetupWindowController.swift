@@ -39,6 +39,12 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         window.makeKey()
     }
 
+    /// Presents and lands on `step` — a lost grant opens on Permissions.
+    func show(step: SetupStore.Step) {
+        show()
+        store.jump(to: step)
+    }
+
     func close() {
         window?.close()
     }

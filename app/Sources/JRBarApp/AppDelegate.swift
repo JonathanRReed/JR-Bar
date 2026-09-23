@@ -196,7 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // Status item ↔ panel.
         panel.setAnchorProvider { [weak statusItem] in statusItem?.anchorRect }
-        panel.onOpenStateChange = { [weak statusItem] open in statusItem?.setPanelOpen(open) }
+        panel.onOpenStateChange = { [weak self, weak statusItem] open in
+            statusItem?.setPanelOpen(open)
+            if open { self?.showWaitingNotice() }
+        }
         statusItem.onTogglePanel = { [weak panel] in panel?.toggle() }
         statusItem.onUnsnoozeAll = { [weak core] in core?.snooze(session: nil, seconds: 0) }
         // Menu open is the reader's moment: force a usage refresh so the
@@ -1412,7 +1415,7 @@ extension AppDelegate {
         // A scheduled update Sparkle leaves to us: said on the panel and
         // once in Notification Center, never a window over the work.
         updater?.onUpdateReady = { [weak self] version in
-            self?.store?.show(toast: "JR-Bar \(version) is ready", actionTitle: "Update…") { [weak self] in
+            self?.notice(key: "update-ready", "JR-Bar \(version) is ready", actionTitle: "Update…") { [weak self] in
                 self?.checkForUpdates(nil)
             }
             self?.events?.notifications.deliver(.init(
@@ -1425,9 +1428,48 @@ extension AppDelegate {
         // banner has said its piece.
         updater?.onUpdateAttended = { [weak self] in
             self?.events?.notifications.withdraw(identifier: "update-ready")
+            LaunchNotices.shared.withdraw(key: "update-ready")
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            MainActor.assumeIsolated { self?.mentionStaleCopies() }
+            MainActor.assumeIsolated {
+                self?.mentionStaleCopies()
+                self?.reviewPermissionHealth()
+            }
+        }
+    }
+
+    /// A notice for the panel: said now when it is open, else held for
+    /// the next opening — a toast posted while it is shut is never seen.
+    private func notice(key: String, _ text: String, actionTitle: String, action: @escaping @MainActor () -> Void) {
+        if panel?.isOpen == true {
+            store?.show(toast: text, actionTitle: actionTitle, action: action)
+        } else {
+            LaunchNotices.shared.post(.init(key: key, text: text, actionTitle: actionTitle, action: action))
+        }
+    }
+
+    /// The panel just opened: one waiting notice, the oldest.
+    private func showWaitingNotice() {
+        guard let notice = LaunchNotices.shared.next() else { return }
+        store?.show(toast: notice.text, actionTitle: notice.actionTitle, action: notice.action)
+    }
+
+    /// A grant an OS update or a re-signed build took away is named once,
+    /// on the panel and in Notification Center, with Setup one click off.
+    private func reviewPermissionHealth() {
+        let setup = SetupWindowController.shared
+        Task { @MainActor [weak self] in
+            let lost = await setup.store.reviewPermissionHealth()
+            guard let self, let text = PermissionHealth.notice(for: lost) else { return }
+            self.core?.appendLocalLog(level: "setup", "permissions lost: " + lost.map(\.rawValue).joined(separator: ", "))
+            self.notice(key: "permission-health", text, actionTitle: "Open Setup") {
+                SetupWindowController.shared.show(step: .permissions)
+            }
+            self.events?.notifications.deliver(.init(
+                identifier: "permission-health",
+                title: lost.count == 1 ? "JR-Bar lost a permission" : "JR-Bar lost \(lost.count) permissions",
+                body: text + " Setup (Settings › General) grants \(lost.count == 1 ? "it" : "them") back.",
+                category: .plain))
         }
     }
 
@@ -1443,8 +1485,8 @@ extension AppDelegate {
         defaults.set(true, forKey: InstalledCopies.noticedKey(first))
         let folder = first.deletingLastPathComponent().path
             .replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
-        store?.show(toast: "Another JR-Bar is installed in \(folder) — updates replace only this one",
-                    actionTitle: "Show") {
+        notice(key: "stale-copy", "Another JR-Bar is installed in \(folder) — updates replace only this one",
+               actionTitle: "Show") {
             NSWorkspace.shared.activateFileViewerSelecting([first])
         }
     }
