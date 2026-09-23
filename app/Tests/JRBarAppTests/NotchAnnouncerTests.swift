@@ -97,6 +97,36 @@ struct NotchAnnouncerTests {
         #expect(FocusWatcher.announcedName(now: (false, "Focus"), before: nil) == "Focus")
     }
 
+    @Test("the daemon's quiet state is a Focus only when its source is a Focus")
+    func daemonFocus() {
+        // "off" is the daemon's nothing-quiet word — never a Focus on.
+        #expect(FocusWatcher.daemonFocus(mode: "off", source: nil).on == false)
+        #expect(FocusWatcher.daemonFocus(mode: nil, source: nil).on == false)
+        #expect(FocusWatcher.daemonFocus(mode: "dim", source: "focus").on)
+        // A quiet mode from the menu, or quiet hours, is not the Mac's Focus.
+        #expect(FocusWatcher.daemonFocus(mode: "mute", source: "override").on == false)
+        #expect(FocusWatcher.daemonFocus(mode: "dark", source: "schedule").on == false)
+    }
+
+    @Test("the daemon's first focus document is a baseline: it settles and says nothing")
+    func daemonBaseline() {
+        let watcher = FocusWatcher()
+        var said: [Bool] = []
+        var settled: [Bool] = []
+        watcher.onChange = { _, on in said.append(on) }
+        watcher.onSettle = { _, on in settled.append(on) }
+        // Only a Mac whose Assertions.json is unreadable relays.
+        watcher.readFile = { nil }
+        watcher.noteDaemon(mode: "off", source: nil)
+        #expect(said.isEmpty, "no 'Focus off' at launch")
+        #expect(settled == [false])
+        watcher.noteDaemon(mode: "dim", source: "focus")
+        #expect(said == [true])
+        #expect(settled == [false, true])
+        watcher.noteDaemon(mode: "dim", source: "focus")
+        #expect(said == [true], "the same state twice is one flip")
+    }
+
     @Test("Caps Lock is feedback; a display is news")
     func capsAndDisplays() {
         let caps = NotchAnnouncements.capsLockNotice(on: true)

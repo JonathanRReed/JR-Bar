@@ -53,9 +53,8 @@ struct NotchQuietHoldTests {
     func replaysOnEnd() throws {
         let (toy, store, core) = makeToy()
         defer { withExtendedLifetime(store) {} }
-        // The Mac's own announcement named the Focus on its way in.
-        toy.offer(NotchAnnouncements.focusNotice(name: "Work", on: true))
-        toy.finishCapsule()
+        // The Mac named the Focus on its way in; the daemon synced it.
+        toy.noteMacFocus(name: "Work", on: true)
         try quiet(core, #"{"mode":"dim","source":"focus"}"#)
         toy.noteQuietChange()
         toy.offer(news(.completed, id: "a"))
@@ -64,6 +63,8 @@ struct NotchQuietHoldTests {
 
         try quiet(core, #"{"mode":"off"}"#)
         toy.noteQuietChange()
+        #expect(toy.capsuleQueue.held.count == 2, "the Mac's Focus is still on")
+        toy.noteMacFocus(name: "Focus", on: false)
         #expect(toy.capsuleQueue.held.isEmpty)
         let shown = toy.capsuleQueue.current
         #expect(shown?.title == "While you were in Work")
@@ -82,6 +83,31 @@ struct NotchQuietHoldTests {
         toy.noteQuietChange()
         #expect(toy.capsuleQueue.current?.title == "While you were in quiet mode")
         #expect(toy.capsuleQueue.current?.subtitle == "1 quota reset")
+    }
+
+    @Test("the Mac's own Focus holds on a Mac whose daemon never syncs it")
+    func macFocusAlone() throws {
+        let (toy, store, core) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        try quiet(core, #"{"mode":"off"}"#)
+        toy.noteMacFocus(name: "Reading", on: true)
+        #expect(toy.quietContext == "Reading")
+        toy.offer(news(.completed, id: "c"))
+        #expect(toy.activeCapsule == nil)
+        toy.noteMacFocus(name: "Reading", on: false)
+        #expect(toy.capsuleQueue.current?.title == "While you were in Reading")
+        #expect(toy.capsuleQueue.current?.session == "claude:c", "one run: a tap opens it")
+    }
+
+    @Test("a Focus turning on says good news will wait, only while the hold is on")
+    func focusSaysPolicy() {
+        let on = NotchAnnouncements.focusNotice(name: "Work", on: true)
+        #expect(NotchToy.focusPolicyNotice(on, holding: true).subtitle == "Focus on · news waits")
+        #expect(NotchToy.focusPolicyNotice(on, holding: false).subtitle == "Focus on")
+        let off = NotchAnnouncements.focusNotice(name: "Work", on: false)
+        #expect(NotchToy.focusPolicyNotice(off, holding: true).subtitle == "Focus off")
+        let display = NotchAnnouncements.displayNotice(connected: true)
+        #expect(NotchToy.focusPolicyNotice(display, holding: true) == display)
     }
 
     @Test("with the switch off, a Focus holds nothing")

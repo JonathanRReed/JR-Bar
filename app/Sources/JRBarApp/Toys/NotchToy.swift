@@ -1276,7 +1276,6 @@ final class NotchToy: Toy {
             presentFeedback(notice)
             return
         }
-        noteFocusName(notice)
         // A quiet stretch holds good news back for one summary later;
         // asks and failures are not held.
         if settings.holdNewsWhileQuiet, quietContext != nil, capsuleQueue.hold(notice) { return }
@@ -1411,34 +1410,37 @@ final class NotchToy: Toy {
     // MARK: Quiet hold
 
     /// The quiet stretch the Mac is in, by name — nil when it isn't.
-    /// The daemon's `state.focus` is the signal (a macOS Focus synced
-    /// in, quiet hours, or a quiet mode picked by hand); a Focus goes by
-    /// the name the Mac's own announcement last gave it.
+    /// The daemon's `state.focus` is one signal (a macOS Focus synced
+    /// in, quiet hours, or a quiet mode picked by hand); the Mac's own
+    /// Focus, as `NotchAnnouncements` reads it, is the other — so the
+    /// hold works on a Mac whose daemon never syncs the Focus. A Focus
+    /// goes by the name the Mac gave it.
     var quietContext: String? {
-        guard let focus = core.state?.focus else { return nil }
-        return AlcoveCapsuleQueue.quietContext(mode: focus.mode, source: focus.source,
-                                               focusName: lastFocusName)
+        if let focus = core.state?.focus,
+           let context = AlcoveCapsuleQueue.quietContext(mode: focus.mode, source: focus.source,
+                                                         focusName: macFocus) {
+            return context
+        }
+        return macFocus
     }
 
     /// The last quiet stretch seen — its end is what replays the hold.
     @ObservationIgnored private var lastQuiet: String?
-    /// The Focus the Mac last said turned on ("Work"), so a summary can
-    /// say where the person was; nil once it says one turned off.
-    @ObservationIgnored private var lastFocusName: String?
+    /// The Mac's Focus while one is on ("Work"), nil otherwise.
+    @ObservationIgnored private(set) var macFocus: String?
 
-    /// A Focus announcement passing through: remember its name.
-    private func noteFocusName(_ notice: AlcoveNotice) {
-        guard notice.kind == .focus else { return }
-        lastFocusName = notice.key == "focus:on" ? notice.title : nil
+    /// The Mac's Focus settled (`NotchAnnouncements.onFocus`): its name
+    /// while on, and a Focus ending may end the quiet stretch.
+    func noteMacFocus(name: String, on: Bool) {
+        macFocus = on ? name : nil
+        noteQuietChange()
     }
 
-    /// The state moved: a quiet stretch that just ended replays what it
+    /// Something quiet moved: a stretch that just ended replays what it
     /// held as one summary capsule ("While you were in Work · 3
-    /// finished"). `reconcile` calls it; internal for the tests. A
-    /// daemon that is away is not a quiet stretch ending — the hold
-    /// waits for a state that says so.
+    /// finished"). `reconcile` and the Focus call it; internal for the
+    /// tests.
     func noteQuietChange() {
-        guard core.state != nil else { return }
         let now = quietContext
         defer { lastQuiet = now }
         guard now == nil, let ended = lastQuiet,
@@ -1448,6 +1450,15 @@ final class NotchToy: Toy {
         guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.capsuleNotifications,
               islandVisible else { return }
         offer(summary)
+    }
+
+    /// A Focus turning on says what the island will do about it: good
+    /// news waits for the end, asks still show.
+    static func focusPolicyNotice(_ notice: AlcoveNotice, holding: Bool) -> AlcoveNotice {
+        guard holding, notice.kind == .focus, notice.key == "focus:on" else { return notice }
+        var said = notice
+        said.subtitle = "Focus on · news waits"
+        return said
     }
 
     // MARK: Timers
@@ -1528,7 +1539,7 @@ final class NotchToy: Toy {
         guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
               !islandExpanded, !foldEngaged else { return false }
         if notice.kind.isFeedback { return presentFeedback(notice) }
-        offer(notice)
+        offer(Self.focusPolicyNotice(notice, holding: s.holdNewsWhileQuiet && s.capsuleNotifications))
         return true
     }
 

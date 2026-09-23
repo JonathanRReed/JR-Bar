@@ -22,6 +22,12 @@ final class NotchAnnouncements {
     var earAnnouncesAudioRoute: () -> Bool = { false }
     /// What to do with one — the HUD's announcer.
     var announce: (AlcoveNotice) -> Void = { _ in }
+    /// The Mac's Focus as it stands — the start's baseline, then every
+    /// flip — whether or not announcements are allowed: the island's
+    /// quiet hold follows the Focus even when nothing is said about it.
+    /// Called after the flip's announcement, so "Focus off" speaks
+    /// before anything the Focus held.
+    var onFocus: (_ name: String, _ on: Bool) -> Void = { _, _ in }
 
     private let focus = FocusWatcher()
     private let bluetooth = BluetoothWatcher()
@@ -36,6 +42,7 @@ final class NotchAnnouncements {
             guard let self, self.isAllowed() else { return }
             self.announce(Self.focusNotice(name: name, on: on))
         }
+        focus.onSettle = { [weak self] name, on in self?.onFocus(name, on) }
         bluetooth.onChange = { [weak self] change in
             guard let self, self.isAllowed() else { return }
             guard let notice = Self.deviceNotice(change,
@@ -146,12 +153,18 @@ final class NotchAnnouncements {
 /// non-empty.
 @MainActor
 final class FocusWatcher {
+    /// A flip worth announcing — never the baseline.
     var onChange: (_ mode: String, _ on: Bool) -> Void = { _, _ in }
+    /// The Focus as it now stands: the baseline once, then after every
+    /// flip's `onChange`.
+    var onSettle: (_ mode: String, _ on: Bool) -> Void = { _, _ in }
 
     private var source: DispatchSourceFileSystemObject?
     private var debounce: DispatchWorkItem?
     /// The baseline read at start — never announces, only diffs.
     private var active: (on: Bool, mode: String)?
+    /// The Assertions.json read; the tests stand in an unreadable one.
+    var readFile: () -> (on: Bool, mode: String)? = { FocusWatcher.read() }
 
     private static var dbDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -159,7 +172,8 @@ final class FocusWatcher {
     }
 
     func start() {
-        active = Self.read()
+        active = readFile()
+        if let active { onSettle(active.mode, active.on) }
         let fd = open(Self.dbDirectory.path, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
@@ -180,7 +194,7 @@ final class FocusWatcher {
     }
 
     private func readChanged() {
-        let now = Self.read()
+        let now = readFile()
         let same = (now?.on == active?.on && now?.mode == active?.mode)
             || (now == nil && active == nil)
         guard !same else { return }
@@ -188,6 +202,7 @@ final class FocusWatcher {
         active = now
         guard let now else { return }
         onChange(Self.announcedName(now: now, before: before), now.on)
+        onSettle(now.mode, now.on)
     }
 
     /// Off reads as the mode that just ended ("Work · Focus off"), not
@@ -202,14 +217,30 @@ final class FocusWatcher {
     /// came back unreadable — the two feeds read one file, and a
     /// readable file outranks a relayed one.
     func noteDaemon(mode: String?, source: String?) {
-        guard Self.read() == nil else { return }
-        let on = (mode ?? "normal").lowercased() != "normal"
-        let name = on ? (source.map { Self.modeName(for: $0) } ?? "Focus") : "Focus"
-        let same = (on == active?.on && name == active?.mode)
-        guard !same else { return }
-        let before = active
+        guard readFile() == nil else { return }
+        let (on, name) = Self.daemonFocus(mode: mode, source: source)
+        // The first relayed document is a baseline, like the file's
+        // first read: it settles and says nothing.
+        guard let before = active else {
+            active = (on, name)
+            onSettle(name, on)
+            return
+        }
+        guard on != before.on || name != before.mode else { return }
         active = (on, name)
         onChange(Self.announcedName(now: (on, name), before: before), on)
+        onSettle(name, on)
+    }
+
+    /// `state.focus` read as a Focus. It describes JR-Bar's whole quiet
+    /// state: `mode` is `"off"` when nothing is quiet (never "normal"),
+    /// and only `source: "focus"` is a macOS Focus — a quiet mode picked
+    /// from the menu or quiet hours are not the Mac's Focus and never
+    /// announce as one. The daemon does not name the Focus.
+    static func daemonFocus(mode: String?, source: String?) -> (on: Bool, mode: String) {
+        let mode = mode?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+        let quiet = !mode.isEmpty && mode != "off" && mode != "normal"
+        return (quiet && source?.lowercased() == "focus", "Focus")
     }
 
     /// `(mode name, focused)` — nil when the file is missing or

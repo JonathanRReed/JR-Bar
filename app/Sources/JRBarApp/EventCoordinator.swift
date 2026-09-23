@@ -47,6 +47,11 @@ final class EventCoordinator {
         }
         hud.hudLife = { [weak self] in self?.toys?.state.notch.hudDuration ?? NotchHUD.life }
         hud.earAnnouncesAudioRoute = { [weak self] in self?.toys?.notch.earNoticesLive ?? false }
+        // The Mac's Focus, said or not, is a quiet stretch the island's
+        // hold follows.
+        hud.announcements.onFocus = { [weak self] name, on in
+            self?.toys?.notch.noteMacFocus(name: name, on: on)
+        }
         // The coordinator lives for the app's lifetime; the observer's
         // weak self is cleanup enough (a nonisolated deinit could not
         // touch the isolated token anyway).
