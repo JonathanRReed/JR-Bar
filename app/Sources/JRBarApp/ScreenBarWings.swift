@@ -52,12 +52,20 @@ struct ScreenBarWingSlot: Equatable {
     /// is tucked away behind the icon — a weight, never a count. 0 draws
     /// none.
     var dots = 0
+    /// A menu bar item's own glyph as the mark — a newcomer's, or a
+    /// hidden item that changed — photographed off the bar, re-tinted
+    /// when it is a template. nil leaves the other marks to draw.
+    var glyph: ScreenBarWingGlyph?
+    /// Which of its kind this mark is, when the kind alone does not say:
+    /// two nudges both draw a glyph, and the second is news even while
+    /// the first ear is dismissed. nil for every mark that needs none.
+    var markID: String?
 
     /// Whether the slot draws a mark of its own beside any dots. A slot
     /// with neither still holds its claim with the lone resting dot.
     var hasMark: Bool {
         provider != nil || symbol != nil || meter != nil || visualizer
-            || artworkData != nil || askAge != nil || dots > 0
+            || artworkData != nil || askAge != nil || dots > 0 || glyph != nil
     }
 
     /// Whether the slot carries lit privacy dots.
@@ -70,6 +78,19 @@ struct ScreenBarWingSlot: Equatable {
         case .alert: return .red
         }
     }
+}
+
+/// A photographed menu bar glyph as an ear's mark. Equal when it is the
+/// same picture — the glyph cache hands out one image per photograph.
+struct ScreenBarWingGlyph: Equatable {
+    var image: NSImage
+    /// Drawn in the slot's tone, as the bar draws a template item.
+    var template: Bool
+
+    /// The room the mark may take inside the ear's 36 pt: a wide,
+    /// text-bearing glyph scales down to fit rather than spill.
+    static let maxWidth: CGFloat = 26
+    static let maxHeight: CGFloat = 15
 }
 
 /// The ear's second mark: an SF symbol a size down from the main one,
@@ -512,6 +533,15 @@ struct ScreenBarWingsView: View {
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 19, height: 19)
                     .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+            } else if let glyph = slot.glyph {
+                // A menu bar item's own face — a newcomer, or a hidden
+                // item that changed — at the bar's own glyph size.
+                Image(nsImage: glyph.image)
+                    .renderingMode(glyph.template ? .template : .original)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(slot.textColor)
+                    .frame(maxWidth: ScreenBarWingGlyph.maxWidth, maxHeight: ScreenBarWingGlyph.maxHeight)
             } else if slot.visualizer {
                 // The media ear: three bars bouncing on their own
                 // phases — the island strip's grammar, not a spectrum.

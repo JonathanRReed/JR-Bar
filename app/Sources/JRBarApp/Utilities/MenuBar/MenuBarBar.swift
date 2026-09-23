@@ -293,14 +293,55 @@ struct MenuBarEarFeed: Equatable {
         }
     }
 
+    /// Something on the bar worth a glance: an app whose item is new to
+    /// the menu bar, or a hidden item that changed while tucked away. The
+    /// ear shows its glyph; the peek offers Keep / Tuck away / Always.
+    /// Ignoring it changes nothing — nothing joins a section on its own.
+    struct Nudge: Equatable, Identifiable {
+        enum Kind: Equatable {
+            case newcomer, update
+        }
+
+        /// Unique per nudge — a second change of the same item is a new
+        /// subject for the ear.
+        var id: String
+        var kind: Kind
+        /// The item, and the face the cache holds for it.
+        var tile: Tile
+        /// The owner's icon, for an item never photographed.
+        var icon: NSImage?
+        /// The changed item's new title, when it has one.
+        var detail: String?
+        /// Where the item sits now — the choice already made.
+        var section: MenuBarItemSection
+
+        /// The peek's heading for it.
+        var heading: String {
+            kind == .newcomer ? "New in your menu bar" : "Changed while tucked away"
+        }
+
+        /// VoiceOver's words for the ear's mark.
+        var words: String {
+            switch kind {
+            case .newcomer:
+                return "\(tile.item.ownerName) is new in the menu bar"
+            case .update:
+                return "\(tile.item.ownerName) changed while tucked away"
+                    + (detail.map { $0.isEmpty ? "" : ": \($0)" } ?? "")
+            }
+        }
+    }
+
     /// The hidden and always-hidden runs, in the Item Bar's order.
     var hidden: [Tile] = []
     /// Why hiding stopped, in the peek's words — the ear's alert mark
     /// stands while it is set. nil while the engine is healthy.
     var failure: String?
+    /// The nudge standing now, if any — one at a time.
+    var nudge: Nudge?
 
     /// Whether there is anything of the menu bar's for the ear to show.
-    var isEmpty: Bool { hidden.isEmpty && failure == nil }
+    var isEmpty: Bool { hidden.isEmpty && failure == nil && nudge == nil }
 
     /// The failure worth an alert on the ear, or nil. Only two states
     /// are one: macOS refusing every assertion (nothing is hidden, the
@@ -325,6 +366,113 @@ struct MenuBarEarFeed: Equatable {
     static func tiles(_ items: [MenuBarItem], face: (MenuBarItem) -> MenuBarGlyphCache.Face?,
                       changed: Set<String>) -> [Tile] {
         items.map { Tile(item: $0, face: face($0), changed: changed.contains($0.id)) }
+    }
+}
+
+/// A nudge's three answers — the three sections, in the words the peek
+/// offers them. Choosing the section the item already sits in is an
+/// acknowledgement: the nudge goes and the pick is recorded explicitly.
+enum MenuBarEarChoice: CaseIterable, Sendable {
+    case keep, tuckAway, always
+
+    var section: MenuBarItemSection {
+        switch self {
+        case .keep: return .shown
+        case .tuckAway: return .hidden
+        case .always: return .alwaysHidden
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .keep: return "Keep"
+        case .tuckAway: return "Tuck away"
+        case .always: return "Always"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .keep: return "Keep it on the menu bar"
+        case .tuckAway: return "Hide it behind the icon — a hover or the peek brings it back"
+        case .always: return "Always hidden — only the Item Bar and this peek reach it"
+        }
+    }
+}
+
+/// Which apps are new to the menu bar — pure, so a test pins the rules.
+/// The first time an app's item appears on the bar the ear nudges; once,
+/// ever. The first listing JR-Bar reads is the baseline, learned in
+/// silence, so turning this on never nudges about the whole bar.
+enum MenuBarNewcomers {
+    /// The apps in `items` a nudge can speak for, in bar order, once
+    /// each: someone else's, concealable per app (Apple's own extras and
+    /// bare helpers are not), never our own family.
+    nonisolated static func candidates(_ items: [MenuBarItem], ownBundleID: String?) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for item in items where !item.isNativeOverflowControl
+            && !MenuBarItemLister.isProtected(ownerName: item.ownerName) {
+            guard let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id),
+                  !(ownBundleID.map { id == $0 || id.hasPrefix($0 + ".") } ?? false),
+                  seen.insert(id).inserted else { continue }
+            out.append(id)
+        }
+        return out
+    }
+
+    /// One listing against the memory: what to remember (nil: nothing
+    /// new to write) and which apps arrived. An empty listing teaches
+    /// nothing — the grant may be missing. No memory yet is the
+    /// baseline: everything listed, and everything already given a
+    /// section, is remembered without a word. So is every listing while
+    /// `settling` — the first seconds of a run, while the listing fills
+    /// in and login items put their icons up. After that an arrival is
+    /// an app never seen and never placed — one the person already
+    /// sorted (a profile, the card) is not news.
+    nonisolated static func step(candidates: [String], seen: Set<String>?, mapped: Set<String>,
+                                 settling: Bool = false) -> (remember: Set<String>?, arrivals: [String]) {
+        guard !candidates.isEmpty else { return (nil, []) }
+        guard let seen else { return (Set(candidates).union(mapped), []) }
+        let arrivals = candidates.filter { !seen.contains($0) && !mapped.contains($0) }
+        guard !arrivals.isEmpty else { return (nil, []) }
+        return (seen.union(arrivals), settling ? [] : arrivals)
+    }
+}
+
+/// The apps the menu bar has ever shown — the newcomer nudge's memory,
+/// kept in the app's own defaults (bundle identifiers only, on this Mac).
+/// The app delegate gives the utility one; a test utility has none, so no
+/// test learns a bar or writes the defaults.
+@MainActor
+final class MenuBarNewcomerMemory {
+    private let load: () -> [String]?
+    private let save: ([String]) -> Void
+    private var cached: Set<String>??
+
+    init(load: @escaping () -> [String]?, save: @escaping ([String]) -> Void) {
+        self.load = load
+        self.save = save
+    }
+
+    /// Backed by `defaults` under `key`.
+    convenience init(defaults: UserDefaults = .standard, key: String = "jrbar.menubar.seenMenuBarApps") {
+        self.init(load: { defaults.stringArray(forKey: key) },
+                  save: { defaults.set($0, forKey: key) })
+    }
+
+    /// Every app remembered, or nil before the baseline is learned.
+    var seen: Set<String>? {
+        if let cached { return cached }
+        let loaded = load().map(Set.init)
+        cached = .some(loaded)
+        return loaded
+    }
+
+    /// Remember `apps` — the whole set, written in one go.
+    func remember(_ apps: Set<String>) {
+        cached = .some(apps)
+        save(apps.sorted())
     }
 }
 

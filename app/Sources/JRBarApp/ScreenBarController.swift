@@ -141,7 +141,57 @@ final class ScreenBarController {
     /// draw both read this, so a flick on the moon dismisses the moon.
     private var markedWings: ScreenBarWings {
         ScreenBarEarMarks.apply(earMarks, to: ScreenBarMenuBarMarks.apply(
-            ScreenBarMenuBarMarks(feed: menuBarFeed), to: wings))
+            menuBarMarks(menuBarFeed), to: wings))
+    }
+
+    /// The menu bar's marks for `feed`: a nudge's glyph only while its
+    /// beat on the ear lasts.
+    private func menuBarMarks(_ feed: MenuBarEarFeed?) -> ScreenBarMenuBarMarks {
+        ScreenBarMenuBarMarks(feed: feed, showsNudge: nudgeMark != nil && nudgeMark?.id == feed?.nudge?.id)
+    }
+
+    /// The nudge whose glyph holds the right ear, and until when; nil
+    /// once its beat is over — the peek keeps offering its choices after.
+    private var nudgeMark: (id: String, until: Date)?
+    private var nudgeMarkWork: DispatchWorkItem?
+    /// How long a nudge's glyph holds the right ear: long enough to be
+    /// seen and reached, then the side goes back to what it showed.
+    static let nudgeMarkLife: TimeInterval = 10
+
+    /// A new nudge in the feed stands its glyph on the ear for its beat;
+    /// the beat holds while the peek is open on it.
+    private func noteNudge(_ feed: MenuBarEarFeed?) {
+        guard let id = feed?.nudge?.id else {
+            nudgeMark = nil
+            nudgeMarkWork?.cancel()
+            nudgeMarkWork = nil
+            return
+        }
+        guard nudgeMark?.id != id, id != lastNudgeID else { return }
+        lastNudgeID = id
+        nudgeMark = (id, Date().addingTimeInterval(Self.nudgeMarkLife))
+        scheduleNudgeMarkLapse(after: Self.nudgeMarkLife)
+    }
+    /// The last nudge given its beat — one beat per nudge.
+    private var lastNudgeID: String?
+
+    private func scheduleNudgeMarkLapse(after seconds: TimeInterval) {
+        nudgeMarkWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.nudgeMark != nil else { return }
+                // The person is reading its peek: the mark stays.
+                if self.peek.isShown {
+                    self.scheduleNudgeMarkLapse(after: 2)
+                    return
+                }
+                self.nudgeMark = nil
+                self.reconcileDismissals()
+                self.pushWings()
+            }
+        }
+        nudgeMarkWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
     /// What the menu bar tells the right ear — its hidden runs' tiles —
@@ -151,7 +201,9 @@ final class ScreenBarController {
     var menuBarFeed: MenuBarEarFeed? {
         didSet {
             guard menuBarFeed != oldValue else { return }
-            if ScreenBarMenuBarMarks(feed: menuBarFeed) != ScreenBarMenuBarMarks(feed: oldValue) {
+            let before = menuBarMarks(oldValue)
+            noteNudge(menuBarFeed)
+            if menuBarMarks(menuBarFeed) != before {
                 reconcileDismissals()
                 pushWings()
             }
@@ -189,6 +241,7 @@ final class ScreenBarController {
         a.provider == b.provider && a.symbol == b.symbol && a.visualizer == b.visualizer
             && (a.artworkData != nil) == (b.artworkData != nil)
             && (a.dots > 0) == (b.dots > 0)
+            && (a.glyph != nil) == (b.glyph != nil) && a.markID == b.markID
     }
     /// The device notice holding a side, and when it lets go.
     private var wingNotice: (side: ScreenBarWingSide, slot: ScreenBarWingSlot, until: Date)?
@@ -1065,6 +1118,7 @@ final class ScreenBarController {
         let tiles = menuBarFeed?.hidden ?? []
         if peek.model.tiles != tiles { peek.model.tiles = tiles }
         if peek.model.failure != menuBarFeed?.failure { peek.model.failure = menuBarFeed?.failure }
+        if peek.model.nudge != menuBarFeed?.nudge { peek.model.nudge = menuBarFeed?.nudge }
         let width = ScreenBarPeekLayout.width(tileWidths: tiles.map(\.width), hasWords: peek.model.hasWords)
         if peek.model.width != width { peek.model.width = width }
     }

@@ -37,20 +37,38 @@ struct ScreenBarMenuBarMarks: Equatable {
     /// Why hiding stopped — the alert mark's VoiceOver words; nil while
     /// the engine is healthy.
     var failure: String?
+    /// The standing nudge's mark, while its beat on the ear lasts.
+    var nudge: ScreenBarWingSlot?
 
     /// The alert mark: the menu bar itself, in the failed tone — the
     /// subject, not a generic warning, so it never reads as the band's
     /// refused program.
     static let failureSymbol = "menubar.rectangle"
 
-    init(hiddenCount: Int = 0, failure: String? = nil) {
+    init(hiddenCount: Int = 0, failure: String? = nil, nudge: ScreenBarWingSlot? = nil) {
         self.hiddenCount = hiddenCount
         self.failure = failure
+        self.nudge = nudge
     }
 
-    init(feed: MenuBarEarFeed?) {
+    /// The marks `feed` makes; `showsNudge` is whether its nudge's beat
+    /// on the ear still lasts.
+    init(feed: MenuBarEarFeed?, showsNudge: Bool = true) {
         hiddenCount = feed?.hidden.count ?? 0
         failure = feed?.failure
+        nudge = showsNudge ? feed?.nudge.map(Self.nudgeSlot) : nil
+    }
+
+    /// A nudge's mark: the item's photographed glyph, else its app's
+    /// icon, else a sparkle — never its name. The name and the change
+    /// are VoiceOver's and the peek's.
+    static func nudgeSlot(_ nudge: MenuBarEarFeed.Nudge) -> ScreenBarWingSlot {
+        let glyph = nudge.tile.face.map { ScreenBarWingGlyph(image: $0.image, template: $0.template) }
+            ?? nudge.icon.map { ScreenBarWingGlyph(image: $0, template: false) }
+        var slot = ScreenBarWingSlot(text: nudge.words, symbol: glyph == nil ? "sparkle" : nil)
+        slot.glyph = glyph
+        slot.markID = nudge.id
+        return slot
     }
 
     /// The resting mark's weight: one dot for a few, two for a handful,
@@ -71,13 +89,18 @@ struct ScreenBarMenuBarMarks: Equatable {
 
     /// `wings` with the menu bar's marks on the right ear. A failure
     /// takes the side from whatever ambient mark held it — hiding
-    /// stopped, and the person should see that where they look. The
-    /// resting dots only fill an empty side: the meter, the media ear
-    /// and a device beat all keep it, and their ear still opens the peek.
+    /// stopped, and the person should see that where they look — then a
+    /// nudge, for its beat. The resting dots only fill an empty side:
+    /// the meter, the media ear and a device beat all keep it, and their
+    /// ear still opens the peek.
     static func apply(_ marks: ScreenBarMenuBarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
         var dressed = wings
         if let failure = marks.failure {
             dressed.right = ScreenBarWingSlot(text: failure, symbol: failureSymbol, tone: .alert)
+        } else if let nudge = marks.nudge {
+            // A newcomer or a change holds the side for its beat, then
+            // the side goes back to what it showed.
+            dressed.right = nudge
         } else if dressed.right == nil, marks.hiddenCount > 0 {
             dressed.right = ScreenBarWingSlot(text: hiddenWords(marks.hiddenCount),
                                               dots: dots(hiddenCount: marks.hiddenCount))
@@ -146,12 +169,16 @@ final class ScreenBarPeekModel {
     var tiles: [MenuBarEarFeed.Tile] = []
     /// Why hiding stopped, when it has — the alert mark's reason.
     var failure: String?
+    /// The newcomer or change on offer, with its three answers.
+    var nudge: MenuBarEarFeed.Nudge?
     var width: CGFloat = ScreenBarPeekLayout.width(tileWidths: [], hasWords: false)
     /// A glyph was clicked: open that item the Item Bar's way.
     @ObservationIgnored var onOpen: @MainActor (String) -> Void = { _ in }
+    /// A nudge's answer was clicked — the only way one is ever answered.
+    @ObservationIgnored var onChoose: @MainActor (MenuBarEarChoice, String) -> Void = { _, _ in }
 
     /// Whether the peek carries sentences, which set its floor width.
-    var hasWords: Bool { failure != nil }
+    var hasWords: Bool { failure != nil || nudge != nil }
 }
 
 /// The peek's face: notch black — the reason hiding stopped, when it
@@ -175,6 +202,11 @@ struct ScreenBarPeekView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
+            }
+            if let nudge = model.nudge {
+                ScreenBarPeekNudge(nudge: nudge,
+                                   open: { model.onOpen(nudge.tile.id) },
+                                   choose: { model.onChoose($0, nudge.id) })
             }
             if !model.tiles.isEmpty {
                 tileRow
@@ -209,15 +241,73 @@ struct ScreenBarPeekView: View {
     }
 }
 
+/// A nudge in the peek: the item's glyph (a click opens it), what
+/// happened and to whom, and the three answers — the section it sits in
+/// now shown as the current one. Nothing here is answered by a hover or
+/// a timeout: only a click on one of the three.
+struct ScreenBarPeekNudge: View {
+    let nudge: MenuBarEarFeed.Nudge
+    let open: () -> Void
+    let choose: (MenuBarEarChoice) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                ScreenBarPeekTile(tile: nudge.tile, icon: nudge.icon, action: open)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(nudge.heading)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text(nudge.tile.item.ownerName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                    if let detail = nudge.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+            HStack(spacing: 6) {
+                ForEach(MenuBarEarChoice.allCases, id: \.self) { choice in
+                    let current = choice.section == nudge.section
+                    Button { choose(choice) } label: {
+                        Text(choice.title)
+                            .font(.system(size: 12, weight: current ? .semibold : .regular))
+                            .foregroundStyle(.white.opacity(current ? 0.95 : 0.8))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule(style: .continuous)
+                                .fill(.white.opacity(current ? 0.22 : 0.1)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(choice.help)
+                    .accessibilityLabel(choice.title)
+                    .accessibilityHint(choice.help)
+                    .accessibilityAddTraits(current ? .isSelected : [])
+                }
+            }
+        }
+    }
+}
+
 /// One glyph in the peek: its face, a light wash under the pointer, the
 /// change dot the Item Bar draws too.
 struct ScreenBarPeekTile: View {
     let tile: MenuBarEarFeed.Tile
-    let open: () -> Void
+    /// The app's icon when the glyph was never photographed — read once
+    /// by the caller, or here from the running app.
+    var icon: NSImage? = nil
+    let action: () -> Void
     @ViewState private var hovered = false
 
     var body: some View {
-        Button(action: open) {
+        Button(action: action) {
             face
                 .frame(width: tile.width, height: ScreenBarPeekLayout.tileHeight)
                 .background {
@@ -250,7 +340,7 @@ struct ScreenBarPeekTile: View {
                 .foregroundStyle(.white.opacity(0.92))
                 .frame(height: 20)
         } else {
-            Image(nsImage: tile.item.owner?.icon
+            Image(nsImage: icon ?? tile.item.owner?.icon
                   ?? NSImage(systemSymbolName: "questionmark.square.dashed", accessibilityDescription: nil)
                   ?? NSImage())
                 .resizable()
@@ -437,6 +527,10 @@ extension ScreenBarController {
         peek.model.onOpen = { [weak self, weak menuBar] id in
             self?.peek.hide()
             menuBar?.openFromEar(itemID: id)
+        }
+        peek.model.onChoose = { [weak self, weak menuBar] choice, nudgeID in
+            self?.peek.hide()
+            menuBar?.chooseFromEar(choice, nudgeID: nudgeID)
         }
         interaction.peekZoneAt = { [weak self] point in self?.peekZone(atScreenPoint: point) ?? false }
         interaction.peekRegion = { [weak self] in self?.peekRegion }

@@ -304,6 +304,7 @@ final class MenuBarUtility: Toy {
                 guard let self else { return }
                 self.noticeUpdates(in: self.lastPlan)
                 self.pruneUninstalledConcealedApps()
+                self.noticeNewcomers()
                 self.refreshEarFeed()
             }
         }
@@ -1260,6 +1261,7 @@ final class MenuBarUtility: Toy {
     private func start() {
         guard !running else { return }
         running = true
+        newcomersSettleUntil = Date().addingTimeInterval(Self.newcomersSettle)
         startGeneration += 1
         let generation = startGeneration
         probeAccessibility()
@@ -1319,7 +1321,12 @@ final class MenuBarUtility: Toy {
         stopDeskWatch()
         failedHotkeyActions = []
         running = false
-        // The ear lets go of the menu bar with the utility.
+        // The ear lets go of the menu bar with the utility, its nudges
+        // included — they belonged to this run.
+        earNudgeExpiry?.cancel()
+        earNudgeExpiry = nil
+        earNudge = nil
+        queuedNudges = []
         refreshEarFeed()
         // A stopped utility holds nothing: the scene and the quiet go
         // back, the layers drop — after `running` falls, so the layers'
@@ -2644,8 +2651,9 @@ final class MenuBarUtility: Toy {
             glyphCamera?.dark = { [weak self] in self?.barIsDark() ?? false }
             glyphCamera?.onChange = { [weak self] item in
                 // A picture that changed while tucked away — the next
-                // Item Bar marks it.
+                // Item Bar marks it, and the ear may say so.
                 self?.bar.updatedIDs.insert(item.id)
+                self?.noticePictureChange(item)
             }
             // Each frame is bracketed by a fresh listing: the item must
             // still be drawn, unmoved, and alone in its rect, or the
@@ -3679,8 +3687,10 @@ final class MenuBarUtility: Toy {
     /// Bartender's "show for updates": a hidden item that rewrote its
     /// title — a clock's minute, a VPN's "Connected" — reveals its run
     /// for the re-hide interval so the change is seen, then parks
-    /// again. Seeded silently on the first plan and skipped while a
-    /// reveal is open, so the feature never announces its own motion.
+    /// again; with the Screen Bar's ears up it nudges from the right ear
+    /// instead and the bar stays put. Seeded silently on the first plan
+    /// and skipped while a reveal is open, so the feature never
+    /// announces its own motion.
     private func noticeUpdates(in plan: MenuBarHidePlan) {
         guard settings().showForUpdates else {
             updateSignatures = [:]
@@ -3696,12 +3706,24 @@ final class MenuBarUtility: Toy {
         let previous = updateSignatures
         updateSignatures = result.signatures
         guard seeded, !result.sections.isEmpty, hider.revealed.isEmpty else { return }
-        let changed = plan.hidden.map { ($0, MenuBarItemSection.hidden) }
-            + plan.alwaysHidden.map { ($0, MenuBarItemSection.alwaysHidden) }
-        let reveal = Self.updateReveal(
-            changed: changed.filter { item, _ in
+        let changed = (plan.hidden.map { ($0, MenuBarItemSection.hidden) }
+            + plan.alwaysHidden.map { ($0, MenuBarItemSection.alwaysHidden) })
+            .filter { item, _ in
                 previous[item.id].map { $0 != result.signatures[item.id] } ?? false
-            },
+            }
+        // With the Screen Bar's ears up the change goes to the right ear
+        // instead: its glyph for a beat, its new title in the peek — the
+        // bar never moves. Without them the run reveals as it always did.
+        if earAvailable() {
+            if let item = Self.earUpdate(changed: changed.map(\.0),
+                                         watch: Set(settings().curation.updateWatch)) {
+                bar.updatedIDs.insert(item.id)
+                raiseEarNudge(.update, item: item, detail: item.title)
+            }
+            return
+        }
+        let reveal = Self.updateReveal(
+            changed: changed,
             watch: Set(settings().curation.updateWatch),
             concealing: concealer != nil)
         let seconds = settings().rehideSeconds
@@ -3837,12 +3859,23 @@ final class MenuBarUtility: Toy {
             if earFeed != nil { earFeed = nil }
             return
         }
+        let nudge = earNudge.flatMap { pending -> MenuBarEarFeed.Nudge? in
+            // An app that quit mid-nudge takes its mark with it; the
+            // nudge itself lapses on its own clock.
+            guard let item = listedItems.first(where: { $0.id == pending.itemID }) else { return nil }
+            return MenuBarEarFeed.Nudge(
+                id: pending.id, kind: pending.kind,
+                tile: MenuBarEarFeed.Tile(item: item, face: glyphFace(for: item)),
+                icon: pending.icon, detail: pending.detail,
+                section: effectiveSection(for: item))
+        }
         let feed = MenuBarEarFeed(
             hidden: MenuBarEarFeed.tiles(barItems(), face: { self.glyphFace(for: $0) },
                                          changed: bar.updatedIDs),
             failure: MenuBarEarFeed.failure(
                 for: engineHealth,
-                osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+                osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion),
+            nudge: nudge)
         if feed != earFeed { earFeed = feed }
     }
 
@@ -3851,6 +3884,143 @@ final class MenuBarUtility: Toy {
     func openFromEar(itemID: String) {
         guard let item = (barItems() + listedItems).first(where: { $0.id == itemID }) else { return }
         trigger(item)
+    }
+
+    // MARK: Newcomers and changes, on the ear
+
+    /// The apps the menu bar has ever shown — set by the app delegate. A
+    /// test utility has none, so it learns nothing and nudges nothing.
+    @ObservationIgnored var newcomerMemory: MenuBarNewcomerMemory?
+
+    /// One nudge as the utility holds it, before the feed dresses it
+    /// with the live item and its face.
+    private struct PendingNudge {
+        var id: String
+        var kind: MenuBarEarFeed.Nudge.Kind
+        var itemID: String
+        var detail: String?
+        /// Read once, so the ear's mark is the same picture every pass.
+        var icon: NSImage?
+    }
+
+    /// The nudge standing now, and the few waiting behind it — one mark
+    /// on the ear at a time.
+    @ObservationIgnored private var earNudge: PendingNudge?
+    @ObservationIgnored private var queuedNudges: [PendingNudge] = []
+    @ObservationIgnored private var earNudgeExpiry: Task<Void, Never>?
+    @ObservationIgnored private var earNudgeSerial = 0
+    /// How long a nudge's choices stay on offer in the peek; the ear's
+    /// mark itself is the Screen Bar's shorter beat. Past it the nudge
+    /// goes with nothing changed.
+    nonisolated static let earNudgeLife: TimeInterval = 120
+    /// How many nudges may wait behind the one standing; past it an
+    /// arrival is only remembered.
+    nonisolated static let earNudgeQueue = 3
+    /// Until when this run's listings are learned in silence — set at
+    /// start: the AX listing fills in over the first scans, and login
+    /// items put their icons up in the same seconds.
+    @ObservationIgnored private var newcomersSettleUntil = Date.distantPast
+    nonisolated static let newcomersSettle: TimeInterval = 20
+
+    /// The newcomer pass, once per plan: an app whose item is on the bar
+    /// for the first time gets a nudge on the ear — once, ever. It never
+    /// hides anything on its own, and without the ear an arrival is only
+    /// remembered: the bar never moves for it.
+    private func noticeNewcomers() {
+        guard let memory = newcomerMemory else { return }
+        let items = listedItems
+        let candidates = MenuBarNewcomers.candidates(items, ownBundleID: Bundle.main.bundleIdentifier)
+        let mapped = Set(settings().concealedApps.keys).union(curatedSettings().concealedApps.keys)
+        let step = MenuBarNewcomers.step(candidates: candidates, seen: memory.seen, mapped: mapped,
+                                         settling: Date() < newcomersSettleUntil)
+        if let remember = step.remember { memory.remember(remember) }
+        guard !step.arrivals.isEmpty, earAvailable() else { return }
+        let rows = MenuBarItemLister.menuBarRows()
+        for app in step.arrivals {
+            guard let item = items.first(where: { $0.bundleID == app }) else { continue }
+            raiseEarNudge(.newcomer, item: item, detail: nil)
+            // Its glyph for the mark: the item is on the row right now,
+            // and a new item joining just moved the bar anyway.
+            if Self.photographable(item, among: items, rows: rows,
+                                   concealed: concealer?.concealedApps ?? []) {
+                photograph([item])
+            }
+        }
+    }
+
+    /// The first changed item a show-for-updates pass lets through — the
+    /// watch list's (all of them while it is empty). Pure so a test pins
+    /// it.
+    nonisolated static func earUpdate(changed: [MenuBarItem], watch: Set<String>) -> MenuBarItem? {
+        changed.first { watch.isEmpty || watch.contains(updateWatchKey($0)) }
+    }
+
+    /// A photographed hidden item whose picture changed — a sync badge,
+    /// a VPN's glyph — while show for updates is on and the ear is up.
+    /// Not while the person is looking at the item already: a reveal, a
+    /// tile's lift, the Item Bar open.
+    private func noticePictureChange(_ item: MenuBarItem) {
+        guard running, settings().showForUpdates, earAvailable(), hider.revealed.isEmpty, !bar.isOpen,
+              !(item.bundleID.map { lifts[$0] != nil } ?? false),
+              barItems().contains(where: { $0.id == item.id }),
+              Self.earUpdate(changed: [item], watch: Set(settings().curation.updateWatch)) != nil
+        else { return }
+        raiseEarNudge(.update, item: item, detail: nil)
+    }
+
+    /// Stand a nudge on the ear, or queue it behind the one standing. A
+    /// second word about the item already standing only freshens it.
+    private func raiseEarNudge(_ kind: MenuBarEarFeed.Nudge.Kind, item: MenuBarItem, detail: String?) {
+        if var standing = earNudge, standing.itemID == item.id, standing.kind == kind {
+            standing.detail = detail ?? standing.detail
+            earNudge = standing
+            refreshEarFeed()
+            return
+        }
+        earNudgeSerial += 1
+        let nudge = PendingNudge(id: "\(kind)-\(earNudgeSerial)-\(item.id)", kind: kind, itemID: item.id,
+                                 detail: detail, icon: item.owner?.icon)
+        if earNudge == nil {
+            standEarNudge(nudge)
+        } else if queuedNudges.count < Self.earNudgeQueue,
+                  !queuedNudges.contains(where: { $0.itemID == item.id && $0.kind == kind }) {
+            queuedNudges.append(nudge)
+        }
+    }
+
+    private func standEarNudge(_ nudge: PendingNudge) {
+        earNudge = nudge
+        earNudgeExpiry?.cancel()
+        earNudgeExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.earNudgeLife * 1e9))
+            guard !Task.isCancelled, let self, self.earNudge?.id == nudge.id else { return }
+            self.finishEarNudge()
+        }
+        refreshEarFeed()
+    }
+
+    /// The standing nudge is answered or lapsed: the next one stands.
+    private func finishEarNudge() {
+        earNudgeExpiry?.cancel()
+        earNudgeExpiry = nil
+        earNudge = nil
+        if !queuedNudges.isEmpty {
+            standEarNudge(queuedNudges.removeFirst())
+        } else {
+            refreshEarFeed()
+        }
+    }
+
+    /// A nudge's answer from the peek: the item goes to that section —
+    /// the same write the card's picker makes — and the next nudge
+    /// stands. Only an explicit click lands here; a nudge that lapses
+    /// changes nothing.
+    func chooseFromEar(_ choice: MenuBarEarChoice, nudgeID: String) {
+        guard let nudge = earNudge, nudge.id == nudgeID else { return }
+        if listedItems.contains(where: { $0.id == nudge.itemID }) {
+            setSection(choice.section, for: nudge.itemID)
+        }
+        finishEarNudge()
     }
 
     // MARK: Permissions

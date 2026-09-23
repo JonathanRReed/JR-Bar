@@ -181,6 +181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The Item Bar's photographed glyphs — the app's own; tests never
         // get a camera, so no test captures the screen or writes the cache.
         utilitiesStore.menuBar.glyphCamera = MenuBarGlyphCamera()
+        // …and its memory of the apps the bar has shown, for the right
+        // ear's newcomer nudge — the app's, for the same reason.
+        utilitiesStore.menuBar.newcomerMemory = MenuBarNewcomerMemory()
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
