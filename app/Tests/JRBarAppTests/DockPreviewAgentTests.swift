@@ -162,22 +162,31 @@ struct DockPreviewAgentTests {
     }
 
     @Test("a spinner's retitles, faster than the settle, still refresh while they keep coming")
-    func observerBurstRefreshes() async throws {
+    func observerBurstRefreshes() throws {
         let observer = DockWindowObserver()
+        // The settle and the burst clock on a hand-cranked pair: a spinner
+        // retitling every 40 ms for two seconds, stepped exactly, so a
+        // crowded main queue can neither stretch the burst nor starve it.
+        let timers = ManualTimers()
+        observer.timer = { delay, work in timers.arm(delay, work) }
+        observer.uptime = { timers.now }
         var changes: [TimeInterval] = []
-        observer.onChange = { changes.append(ProcessInfo.processInfo.systemUptime) }
-        // Keep spinning until a refresh lands. A trailing-only settle can
-        // never fire while fires keep coming, however long the burst runs,
-        // so the claim holds without racing the clock: the generous
-        // deadline only bounds a broken observer, and a busy main queue
-        // under a parallel suite just makes the burst longer.
-        let start = ProcessInfo.processInfo.systemUptime
-        let deadline = DockWindowObserver.maxWait * 20
-        while changes.isEmpty, ProcessInfo.processInfo.systemUptime - start < deadline {
+        observer.onChange = { changes.append(timers.now) }
+        for _ in 0..<50 {
             observer.fire()
-            try await Task.sleep(for: .milliseconds(40))
+            timers.advance(by: 0.04)
         }
-        #expect(!changes.isEmpty, "a trailing-only settle never fired while the title kept spinning")
+        // A trailing-only settle never fires while the fires keep coming.
+        let first = try #require(changes.first, "a trailing-only settle never fired while the title kept spinning")
+        #expect(first <= DockWindowObserver.maxWait + 1e-9, "the burst refreshed by its max wait")
+        #expect(changes.count >= 3, "a burst that keeps going keeps refreshing, about twice a second")
+        #expect(zip(changes, changes.dropFirst()).allSatisfy { $1 - $0 <= DockWindowObserver.maxWait + 0.04 + 1e-9 })
+        // When the spinner stops, the settle lands once and nothing follows.
+        timers.advance(by: 1)
+        let settled = changes.count
+        timers.advance(by: 5)
+        #expect(changes.count == settled)
+        #expect(timers.live == 0)
         observer.stop()
     }
 

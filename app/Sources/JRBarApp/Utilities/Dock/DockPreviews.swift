@@ -96,6 +96,13 @@ final class DockWindowObserver {
     private var pending: DispatchWorkItem?
     /// When the pending burst's first notification landed.
     private var burstStart: TimeInterval?
+    /// Where the settle is armed, and the clock a burst is timed by —
+    /// the main queue and the system's uptime. The tests step both by
+    /// hand, so a burst proof never waits on a crowded main queue.
+    var timer: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     static let appNotifications = [kAXWindowCreatedNotification]
     static let windowNotifications = [
@@ -152,7 +159,7 @@ final class DockWindowObserver {
     /// One notification: re-arm the settle, but never past the burst's
     /// `maxWait`. Internal for the tests, which fire bursts directly.
     func fire() {
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = uptime()
         let start = burstStart ?? now
         burstStart = start
         pending?.cancel()
@@ -165,8 +172,7 @@ final class DockWindowObserver {
             }
         }
         pending = work
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + Self.delay(now: now, burstStart: start), execute: work)
+        timer(Self.delay(now: now, burstStart: start), work)
     }
 
     /// Seconds from `now` until the refresh runs: the settle, cut short
