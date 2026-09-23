@@ -391,24 +391,12 @@ struct MenuBarActionsTests {
         #expect(rows[0].verbs.first?.action == .applyProfile(id: MenuBarProfiles.noneID))
     }
 
-    @Test("the live profile is read from what hides, and its row says Current")
+    @Test("the active profile's row says Current")
     func commandActiveProfile() {
         let work = MenuBarSettings.Profile(id: "w", name: "Work", sections: ["Mail": .hidden],
                                            concealedApps: ["com.a": .hidden, "com.b": .shown])
         let home = MenuBarSettings.Profile(id: "h", name: "Home", sections: [:],
                                            concealedApps: ["com.c": .alwaysHidden])
-        // A `.shown` marker counts as nothing on either side.
-        #expect(MenuBarCommands.activeProfileID(
-            profiles: [work, home], sections: ["Mail": .hidden, "Cal": .shown],
-            concealedApps: ["com.a": .hidden]) == "w")
-        #expect(MenuBarCommands.activeProfileID(
-            profiles: [work, home], sections: [:], concealedApps: ["com.c": .alwaysHidden]) == "h")
-        #expect(MenuBarCommands.activeProfileID(
-            profiles: [work, home], sections: [:], concealedApps: ["com.z": .shown]) == MenuBarProfiles.noneID,
-                "nothing hides: the built-in None")
-        #expect(MenuBarCommands.activeProfileID(
-            profiles: [work, home], sections: [:], concealedApps: ["com.new": .hidden]) == nil,
-                "curated past every profile")
         let rows = MenuBarCommands.build(items: [], sections: [:], profiles: [work, home],
                                          activeProfileID: "h")
             .filter { $0.kind == .profile }
@@ -963,10 +951,14 @@ struct MenuBarActionsTests {
         utility.actions.commandBar.onAction(.setRuleEnabled(id: "r", false))
         #expect(box.writes == 1)
         utility.actions.commandBar.onAction(.applyProfile(id: "p"))
-        #expect(box.settings.concealedApps == ["com.example.a": .hidden])
+        // A profile is a layer: the base map stays yours, the curated
+        // maps carry its delta.
+        #expect(box.settings.curation.activeProfileID == "p")
+        #expect(box.settings.concealedApps.isEmpty)
+        #expect(MenuBarProfiles.curatedMaps(box.settings).concealedApps == ["com.example.a": .hidden])
         // An unknown id is a no-op, never a clear.
         utility.actions.commandBar.onAction(.applyProfile(id: "gone"))
-        #expect(box.settings.concealedApps == ["com.example.a": .hidden])
+        #expect(box.settings.curation.activeProfileID == "p")
         #expect(!utility.actions.commandBar.concealing(), "a parked utility runs no concealer")
         #expect(!utility.actions.commandBar.running(), "a switched-off utility answers parked")
         #expect(utility.actions.commandBar.menuBarItems().map(\.id) == ["menubar.off"])

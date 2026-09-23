@@ -398,29 +398,6 @@ enum MenuBarCommands {
         }
     }
 
-    /// The profile the bar is wearing, read from what hides: the first
-    /// saved profile whose hidden entries — item covers and apps, a
-    /// `.shown` marker counting as nothing — equal the live maps; the
-    /// built-in None when nothing hides at all; nil once the bar has
-    /// been curated past every saved profile. The truth comes from the
-    /// maps themselves, so a profile applied by a rule, a hotkey or the
-    /// card reads the same.
-    nonisolated static func activeProfileID(profiles: [MenuBarSettings.Profile],
-                                            sections: [String: MenuBarItemSection],
-                                            concealedApps: [String: MenuBarItemSection]) -> String? {
-        func hiding(_ map: [String: MenuBarItemSection]) -> [String: MenuBarItemSection] {
-            map.filter { $0.value != .shown }
-        }
-        let liveSections = hiding(sections)
-        let liveApps = hiding(concealedApps)
-        if let match = profiles.first(where: {
-            hiding($0.sections) == liveSections && hiding($0.concealedApps) == liveApps
-        }) {
-            return match.id
-        }
-        return liveSections.isEmpty && liveApps.isEmpty ? MenuBarProfiles.noneID : nil
-    }
-
     /// A rule reads as its own sentence. Return runs its action now;
     /// ⌘Return switches it on or off.
     nonisolated static func ruleRow(_ rule: MenuBarTriggerRule) -> MenuBarCommand {

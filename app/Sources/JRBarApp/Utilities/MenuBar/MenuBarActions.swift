@@ -436,9 +436,9 @@ extension MenuBarUtility {
     }
 
     func menuBarActiveProfileID(for _: MenuBarActions) -> String? {
-        let s = settings()
-        return MenuBarCommands.activeProfileID(profiles: s.profiles, sections: s.sections,
-                                               concealedApps: s.concealedApps)
+        // Profiles are layers over the base map: the active one is the
+        // layer the settings name, not a map that happens to match.
+        MenuBarProfiles.activeProfile(in: settings())?.id ?? MenuBarProfiles.noneID
     }
 
     func menuBarActions(_: MenuBarActions, applyProfileID id: String) {
