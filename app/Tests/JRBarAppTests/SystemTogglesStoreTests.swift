@@ -59,8 +59,10 @@ import Testing
         defer { defaults.removePersistentDomain(forName: suite) }
         let dock = FakeDock()
         let state = SystemTogglesStore.State(dockDriver: dock, defaults: defaults)
-        var holding = true
-        state.dockHoldActive = { holding }
+        // A mutable answer the @Sendable probe can read.
+        final class Hold: @unchecked Sendable { var active = true }
+        let hold = Hold()
+        state.dockHoldActive = { hold.active }
         let store = SystemTogglesStore(state: state)
         store.apply(.dockAutoHide)
         // Nothing touches the Dock under the hold — its restore would
@@ -69,7 +71,7 @@ import Testing
         #expect(store.lastError?.contains("preview closes") == true)
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(dock.sets.isEmpty)
-        holding = false
+        hold.active = false
         try await Task.sleep(nanoseconds: 600_000_000)
         #expect(dock.sets == [true])
         #expect(store.isOn[.dockAutoHide] == true)

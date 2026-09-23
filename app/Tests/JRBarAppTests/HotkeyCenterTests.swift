@@ -188,12 +188,14 @@ import Testing
         let center = HotkeyCenter(registrar: Recorder())
         let panel = PanelHotkey(id: PanelHotkey.panelID, title: "Show the panel",
                                 defaultChord: PanelHotkey.panelDefault, center: center)
-        var stored: HotkeyChord? = Self.chordD
-        panel.chordSource = { stored }
+        // A mutable answer the @Sendable source can read.
+        final class Stored: @unchecked Sendable { var chord: HotkeyChord? = HotkeyCenterTests.chordD }
+        let stored = Stored()
+        panel.chordSource = { stored.chord }
         panel.setEnabled(true)
         #expect(center.entries[PanelHotkey.panelID]?.chord == Self.chordD)
         // Cleared on Settings › Shortcuts: on, but holding no key.
-        stored = nil
+        stored.chord = nil
         panel.setEnabled(true)
         #expect(center.status(of: PanelHotkey.panelID) == .inactive)
         #expect(!panel.registrationFailed)
