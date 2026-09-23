@@ -74,6 +74,10 @@ public enum AquariumRules {
     public static let marathonSeconds: TimeInterval = 4 * 60 * 60
     /// The diver visits on today's nth completion.
     public static let diverCompletions = 10
+    /// "A school": this many live sub-agents with one session at once.
+    public static let schoolSize = 6
+    /// "Clean week": completion days with no failed run between them.
+    public static let cleanWeekDays = 7
 }
 
 /// The tank's shop: every spendable thing is one case. `rawValue` is
@@ -548,6 +552,10 @@ public enum AquariumEvent: Equatable, Sendable {
     case identify(id: String, label: String, provider: String)
     /// The tank window opened or closed; opening drains `away`.
     case setWindowOpen(Bool)
+    /// One daemon document's fleet facts — schools, failures, weekly
+    /// windows, banked credits — for the milestones only the daemon
+    /// could know about.
+    case fleet(AquariumFleetFacts)
 }
 
 /// A raised fish still in the tank after its session left — the
@@ -658,6 +666,9 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     public var lastWorkAt: Double
     /// Completions on the current streak day; feeds the diver.
     public var completionsToday: Int
+    /// The fleet the tank has watched, for the milestones about the
+    /// work itself (`AquariumFleetLog`).
+    public var fleet: AquariumFleetLog = AquariumFleetLog()
 
     public struct Totals: Codable, Equatable, Sendable {
         public var feedings: Int
@@ -820,6 +831,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             // The daily streak: one counted completion per calendar
             // day, consecutive days extend it, a gap restarts it.
             let today = calendar.startOfDay(for: now).timeIntervalSince1970
+            fleet.noteCompletion(day: today)
             completionsToday = lastStreakDay == today ? completionsToday + 1 : 1
             if completionsToday >= AquariumRules.diverCompletions {
                 queueVisitor(.diver, now: now, effects: &effects)
@@ -1069,6 +1081,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 windowOpen = false
                 away = AquariumAwaySummary(since: now.timeIntervalSince1970)
             }
+
+        case .fleet(let facts):
+            // Only the log moves; the milestone sweep below reads it.
+            fleet.note(facts, now: now)
         }
         checkAchievements(now: now, event: event,
                           calendar: calendar, effects: &effects)
@@ -1206,6 +1222,11 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         unlock(.treasureHunter, totals.treasuresFound >= 1)
         unlock(.marathon,
                continuousWorkSeconds >= AquariumRules.marathonSeconds)
+        // The work's own milestones, from the fleet the tank watched.
+        unlock(.school, fleet.largestSchool >= AquariumRules.schoolSize)
+        unlock(.cleanWeek, fleet.cleanDays >= AquariumRules.cleanWeekDays)
+        unlock(.underBudget, fleet.underBudgetResets >= 1)
+        unlock(.bankedCredits, fleet.creditGains >= 1)
     }
 
     /// The raised fish that keep swimming while their sessions are
@@ -1261,7 +1282,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
              dropSeq, createdAt, accessories, substrateID, backdropID,
              unlocked, dailyGoal, goalCarrySeconds, treasure, lastTreasureAt,
              pendingVisitors, lastVisitorAt, continuousWorkSeconds,
-             lastWorkAt, completionsToday
+             lastWorkAt, completionsToday, fleet
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1298,6 +1319,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         continuousWorkSeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .continuousWorkSeconds)) ?? 0)
         lastWorkAt = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastWorkAt)) ?? 0)
         completionsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .completionsToday)) ?? 0)
+        fleet = (try? c.decodeIfPresent(AquariumFleetLog.self, forKey: .fleet)) ?? AquariumFleetLog()
         // A corrupt care record can't sink the file — clamp the stage.
         for (id, var care) in pets where care.stage < 0 || care.stage > AquariumRules.maxStage {
             care.stage = min(AquariumRules.maxStage, max(0, care.stage))

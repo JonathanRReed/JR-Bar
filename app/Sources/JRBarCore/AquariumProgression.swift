@@ -54,6 +54,11 @@ public enum AquariumAchievement: String, Codable, CaseIterable, Sendable {
     case level9
     case treasureHunter
     case marathon
+    // The work's own milestones, read from the daemon's document.
+    case school
+    case cleanWeek
+    case underBudget
+    case bankedCredits
 
     public var title: String {
         switch self {
@@ -73,6 +78,10 @@ public enum AquariumAchievement: String, Codable, CaseIterable, Sendable {
         case .level9: return "Tank level 9"
         case .treasureHunter: return "Treasure hunter"
         case .marathon: return "Marathon"
+        case .school: return "A school"
+        case .cleanWeek: return "Clean week"
+        case .underBudget: return "Under budget"
+        case .bankedCredits: return "Banked"
         }
     }
 
@@ -95,6 +104,10 @@ public enum AquariumAchievement: String, Codable, CaseIterable, Sendable {
         case .level9: return "Reached tank level 9 — the whole ladder."
         case .treasureHunter: return "Dug up a buried treasure."
         case .marathon: return "Four straight hours of working sessions."
+        case .school: return "Six sub-agents swimming with one session at once."
+        case .cleanWeek: return "Completions on seven days, no failed run between them."
+        case .underBudget: return "A weekly window reset with under 80% of it spent."
+        case .bankedCredits: return "Codex's banked credits went up."
         }
     }
 
@@ -102,6 +115,10 @@ public enum AquariumAchievement: String, Codable, CaseIterable, Sendable {
     public var reward: Int {
         switch self {
         case .firstPearl, .firstPurchase: return 5
+        case .bankedCredits: return 10
+        case .school: return 15
+        case .underBudget: return 20
+        case .cleanWeek: return 30
         case .nightOwl, .earlyBird: return 10
         case .fullGrown, .treasureHunter: return 15
         case .streak7, .hundredPellets, .collector: return 20

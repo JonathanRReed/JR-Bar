@@ -594,6 +594,19 @@ final class AquariumToy: Toy {
             settings.species(for: $0)
         }
         noteCompletions(now: now)
+        noteFleet(now: now)
+    }
+
+    /// The work's own milestones (a school of six, a clean week, a week
+    /// under budget, banked credits): the document's fleet facts, folded
+    /// into the game on every change — the session list and the usage
+    /// ride the same document. Read-only; the tank only notices. A
+    /// milestone saves at once; the log's quiet moves ride the next save.
+    private func noteFleet(now: Date) {
+        guard let state = core.state else { return }
+        let effects = game.apply(.fleet(AquariumFleetFacts.read(state, now: now)), now: now)
+        note(effects, now: now)
+        if !effects.isEmpty { persist() }
     }
 
     /// The inspector's species picker writes here — a per-provider
