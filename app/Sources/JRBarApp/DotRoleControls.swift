@@ -28,11 +28,16 @@ struct DotRoleControls: View {
     /// link merely broken (`no_strip`, `failed`) changing the role is
     /// exactly how the reader fixes it.
     private var linkOff: Bool { link.map { $0.state == "off" } ?? !linked }
+    /// The daemon's lid reading: shut, an `extend` Dot plays the beacon
+    /// by the daemon's own rule, and the readout says so instead of
+    /// calling the choice unsettled.
+    private var lidClosed: Bool { store.core.state?.power?.closedLid?.lidClosed == true }
     private var readout: DotRoleReadout {
         DotRoleReadout.make(chosen: chosen, includeCompletions: includeCompletions, linked: linked,
                             link: link, linkedSkewMs: store.core.lights?.linkedSkewMs,
                             linkedSkewFresh: store.core.lights?.isLinkedSkewFresh ?? false,
                             linkedSkewCorrectedMs: store.core.lights?.linkedSkewCorrectedMs,
+                            lidClosed: lidClosed,
                             dot: store.core.lights?.dot)
     }
 

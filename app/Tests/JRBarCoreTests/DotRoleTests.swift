@@ -10,14 +10,16 @@ struct DotRoleTests {
         #expect(DotRole.parse("extend") == .extend)
         #expect(DotRole.parse("asks") == .asks)
         #expect(DotRole.parse("status") == .status)
+        #expect(DotRole.parse("call") == .call, "the daemon's busylight role is no longer read as extend")
         #expect(DotRole.parse("beacon") == .extend)
         #expect(DotRole.parse("") == .extend)
-        #expect(DotRole.allCases.map(\.rawValue) == ["extend", "asks", "status"])
+        #expect(DotRole.allCases.map(\.rawValue) == ["extend", "asks", "call", "status"])
     }
 
-    @Test("only the beacon has anything to say about completions")
+    @Test("only the beacon, and the call light between calls, speak to completions")
     func completionsApply() {
         #expect(DotRole.asks.usesCompletions)
+        #expect(DotRole.call.usesCompletions)
         #expect(!DotRole.extend.usesCompletions)
         #expect(!DotRole.status.usesCompletions)
         for role in DotRole.allCases {
@@ -78,6 +80,53 @@ struct DotRoleTests {
         #expect(headline("failed").contains("red"))
         #expect(headline("completed", include: true).contains("green"))
         #expect(headline("idle", program: "off").contains("dark"))
+    }
+
+    @Test("the call light reads red on a call or in a meeting, and the beacon between")
+    func callLight() {
+        func readout(_ why: String, program: String = "#FF2D20", include: Bool = false) -> DotRoleReadout {
+            let dot = CoreLightSurface(program: program, ledCount: 2, why: why, role: "call")
+            return DotRoleReadout.make(chosen: .call, includeCompletions: include, dot: dot)
+        }
+        let onCall = readout("on_call")
+        #expect(onCall.active == .call)
+        #expect(!onCall.settling)
+        #expect(onCall.headline == "Call light: steady red, on a call")
+        #expect(onCall.detail?.contains("camera") == true)
+        #expect(readout("in_meeting").headline == "Call light: steady red, in a meeting")
+        // Between calls it is the beacon, and says what will turn it red.
+        let waiting = readout("waiting", program: "#FF9F0A 1200ms cosine")
+        #expect(waiting.headline.contains("amber"))
+        #expect(waiting.detail?.hasSuffix("Steady red once a call has the mic or camera.") == true)
+        #expect(readout("idle", program: "off").headline.contains("dark"))
+        #expect(readout("completed", program: "#00FF66 1200ms cosine").detail?
+                    .contains("Also glow for finished runs") == true)
+        // The picker offers it, under a name of its own.
+        #expect(DotRole.call.label == "Call light")
+        #expect(DotRole.call.explanation.contains("camera"))
+    }
+
+    @Test("a shut lid's beacon on an extend Dot is the rule working, not a choice in flight")
+    func lidClosedBeacon() {
+        // With the lid shut the daemon plays `extend` as the beacon and
+        // echoes `asks` (docs/CORE-PROTOCOL.md, `auto:lid_closed`).
+        let dot = CoreLightSurface(program: "#FF9F0A 1200ms cosine", ledCount: 2, why: "waiting", role: "asks")
+        let shut = DotRoleReadout.make(chosen: .extend, includeCompletions: false, lidClosed: true, dot: dot)
+        #expect(!shut.settling)
+        #expect(shut.lidBeacon)
+        #expect(shut.active == .asks)
+        #expect(shut.headline.contains("amber"))
+        #expect(shut.detail == "The lid is shut, so the strip and the band are out of sight: the Dot is the alert beacon until it opens.")
+        // Lid open, the same frame is still a change on its way.
+        let open = DotRoleReadout.make(chosen: .extend, includeCompletions: false, lidClosed: false, dot: dot)
+        #expect(open.settling)
+        #expect(!open.lidBeacon)
+        #expect(open.detail == "The monitor has not picked this up yet.")
+        // The lid never excuses any other mismatch.
+        let status = CoreLightSurface(program: "off 200ms none", ledCount: 2)
+        #expect(DotRoleReadout.make(chosen: .extend, includeCompletions: false, lidClosed: true, dot: status).settling)
+        let extending = CoreLightSurface(program: "off", ledCount: 2, why: "idle", role: "extend")
+        #expect(DotRoleReadout.make(chosen: .asks, includeCompletions: false, lidClosed: true, dot: extending).settling)
     }
 
     @Test("a green beacon with completions off explains why it is on")

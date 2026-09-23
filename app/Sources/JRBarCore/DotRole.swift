@@ -8,6 +8,10 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
     case extend
     /// A designated attention beacon: dark until something needs the person.
     case asks
+    /// A busylight: steady red while the person is on a call or in a
+    /// meeting (`state.presence`, fed by the app's mic and camera
+    /// reading), and exactly the `asks` beacon the rest of the time.
+    case call
     /// The Dot renders its own two-LED semantic display; nothing drives it
     /// but the Dot, so `lights.surfaces.dot.role` is absent.
     case status
@@ -23,6 +27,7 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
         switch self {
         case .extend: return "Mirror the strip"
         case .asks: return "Alert beacon"
+        case .call: return "Call light"
         case .status: return "On its own"
         }
     }
@@ -35,13 +40,16 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
             return "Plays the strip's animation across both, phase-locked: the eight LEDs are folded into two bands, so a chase still sweeps and a solid colour stays solid."
         case .asks:
             return "Dark until something needs you: amber for a permission request, red for a blocked error. A glance at the Dot alone answers \"do they need me?\"."
+        case .call:
+            return "Steady red while a call has the mic or camera, or a meeting on your calendar is under way — held, never breathed, since it sits in view of the camera. Between calls it is the alert beacon."
         case .status:
             return "Its own two-LED status code, the way an unlinked Dot has always rendered. Nothing else drives it."
         }
     }
 
-    /// Whether `dot_role_include_completions` means anything for this role.
-    public var usesCompletions: Bool { self == .asks }
+    /// Whether `dot_role_include_completions` means anything for this role:
+    /// the beacon, and the call light between calls (it is the beacon then).
+    public var usesCompletions: Bool { self == .asks || self == .call }
 }
 
 /// The live reading beside the picker: what the daemon says the Dot is
@@ -65,6 +73,9 @@ public struct DotRoleReadout: Equatable, Sendable {
     /// True when the role is not in effect at all: `devices_linked` is off,
     /// so the daemon never plans the Dot and it renders itself.
     public var unlinked: Bool = false
+    /// True while a shut lid has the daemon play an `extend` Dot as the
+    /// alert beacon (`auto:lid_closed`): the role working, not settling.
+    public var lidBeacon: Bool = false
 
     public init(chosen: DotRole, active: DotRole?, rendersItself: Bool, headline: String,
                 detail: String? = nil, settling: Bool = false) {
@@ -84,10 +95,14 @@ public struct DotRoleReadout: Equatable, Sendable {
     /// `linkedSkewFresh` carry the measured gap, shown only while the
     /// measurement is still worth quoting; `linkedSkewCorrectedMs` is the
     /// shift the last write baked into the Dot's program, quoted instead
-    /// of the raw gap when a correction is in effect.
+    /// of the raw gap when a correction is in effect. `lidClosed` is the
+    /// daemon's lid reading (`state.power.closed_lid.lid_closed`): with it
+    /// shut, an `extend` Dot playing the beacon is the daemon's rule for a
+    /// lid that hides the strip and the band, not a choice still in flight.
     public static func make(chosen: DotRole, includeCompletions: Bool, linked: Bool = true,
                             link: CoreDotLink? = nil, linkedSkewMs: Double? = nil,
                             linkedSkewFresh: Bool = false, linkedSkewCorrectedMs: Double? = nil,
+                            lidClosed: Bool = false,
                             dot: CoreLightSurface?) -> DotRoleReadout {
         let active = dot?.role.map(DotRole.parse)
         let rendersItself = dot != nil && dot?.role == nil
@@ -117,8 +132,11 @@ public struct DotRoleReadout: Equatable, Sendable {
         if !linked { return unlinked(chosen: chosen, active: active, rendersItself: rendersItself) }
         // `status` is exactly the case the daemon reports by leaving `role`
         // off, so it is settled, not settling; "not picked up yet" only
-        // ever names a genuine transition, never a steady state.
-        let settling = (active ?? .status) != chosen
+        // ever names a genuine transition, never a steady state. A shut
+        // lid's beacon standing in for `extend` is a steady state too:
+        // the daemon's `auto:lid_closed`, undone when the lid opens.
+        let lidBeacon = lidClosed && chosen == .extend && active == .asks
+        let settling = !lidBeacon && (active ?? .status) != chosen
 
         var headline: String
         var detail: String?
@@ -140,6 +158,27 @@ public struct DotRoleReadout: Equatable, Sendable {
             if !includeCompletions, state.isCompletion {
                 detail = "A finished run nobody has looked at; turn on \"Also glow for finished runs\" to see it here."
             }
+            if lidBeacon {
+                detail = "The lid is shut, so the strip and the band are out of sight: the Dot is the alert beacon until it opens."
+            }
+        case .call?:
+            switch dot.why?.lowercased() {
+            case "on_call":
+                headline = "Call light: steady red, on a call"
+                detail = "Held still in view of the camera. It goes back to the alert beacon when the call ends."
+            case "in_meeting":
+                headline = "Call light: steady red, in a meeting"
+                detail = "For the whole of the meeting on your calendar; a live call names itself first."
+            default:
+                // Between calls the call light is the beacon, word for word.
+                let state = beaconState(why: dot.why, program: dot.program)
+                headline = "Beacon: \(state.word)"
+                detail = [state.detail, "Steady red once a call has the mic or camera."]
+                    .compactMap { $0 }.joined(separator: " ")
+                if !includeCompletions, state.isCompletion {
+                    detail = "A finished run nobody has looked at; turn on \"Also glow for finished runs\" to see it here."
+                }
+            }
         case .status?:
             // The daemon is not expected to send this, but a role it does
             // send is what the app reports.
@@ -151,8 +190,10 @@ public struct DotRoleReadout: Equatable, Sendable {
         if settling {
             detail = "The monitor has not picked this up yet."
         }
-        return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
-                              headline: headline, detail: detail, settling: settling)
+        var readout = DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
+                                     headline: headline, detail: detail, settling: settling)
+        readout.lidBeacon = lidBeacon
+        return readout
     }
 
     /// `dot_link.state == "no_dot"`, or no `dot` surface at all.
