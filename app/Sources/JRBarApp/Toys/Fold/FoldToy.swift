@@ -110,7 +110,9 @@ final class FoldToy: Toy {
     /// True while the fold plane is on screen — overlay guests like the
     /// island use it to let clicks fall through glass they can't see.
     var overlayOnScreen: Bool { overlay?.isVisible == true }
-    @ObservationIgnored private var capture: FoldCapture?
+    /// The frames: the ScreenCaptureKit streams, or — without Screen
+    /// Recording — the wallpaper alone (`FoldWallpaperSource`).
+    @ObservationIgnored private var capture: (any FoldFrameSource)?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// The lock and unlock broadcasts arrive on the distributed centre.
     @ObservationIgnored private var distributedObservers: [NSObjectProtocol] = []
@@ -288,9 +290,18 @@ final class FoldToy: Toy {
         if !sensor.available && simulatedAngle == nil {
             return .unavailable("No lid-angle sensor on this Mac")
         }
-        if !FoldCapturePermission.granted { return .needsPermission("Needs Screen Recording") }
+        if !FoldCapturePermission.granted && !settings.wallpaperFallback {
+            return .needsPermission("Needs Screen Recording")
+        }
         if let reason = pauseReason { return .paused(reason) }
+        if !FoldCapturePermission.granted { return .limited("Wallpaper only") }
         return .on
+    }
+
+    /// Frames can come from somewhere: the capture with Screen Recording,
+    /// or the wallpaper without it when the card allows.
+    private var canFold: Bool {
+        FoldCapturePermission.granted || settings.wallpaperFallback
     }
 
     /// Why the fold is parked right now, per the safety contract: closed
@@ -400,7 +411,7 @@ final class FoldToy: Toy {
             FoldLog.log.notice("renderer: retrying after cooldown")
             rendererFailed = false
         }
-        guard !rendererFailed, FoldCapturePermission.granted else {
+        guard !rendererFailed, canFold else {
             arming.reset()
             scheduleCooldown(nil)
             standDown()
@@ -597,7 +608,7 @@ final class FoldToy: Toy {
     /// sample is never a frame late.
     private func refreshTick() {
         let armed = settings.enabled && settings.provider == .jrbar && !paused
-            && !rendererFailed && FoldCapturePermission.granted && pauseReason == nil
+            && !rendererFailed && canFold && pauseReason == nil
         // The link exists only to move pixels: a parked fold — gate
         // shut, tracker settled — runs no timer at all. Without this
         // check the link was born and killed on every parked sensor
@@ -719,8 +730,15 @@ final class FoldToy: Toy {
     /// the band or its cooldown — so the purple indicator never outlives
     /// a fold that could be on screen.
     private func ensureCaptureRunning() {
+        // A wallpaper stand-in yields to the real capture the moment the
+        // permission lands — the next arm films the windows too.
+        if let current = capture, current is FoldWallpaperSource, FoldCapturePermission.granted {
+            self.capture = nil
+            Task { await current.stop() }
+        }
         guard capture == nil else { return }
-        let capture = FoldCapture()
+        let capture: any FoldFrameSource = FoldCapturePermission.granted
+            ? FoldCapture() : FoldWallpaperSource()
         self.capture = capture
         captureBeganAt = CACurrentMediaTime()
         capture.onFullFrame = { [weak self] buffer in
@@ -925,7 +943,7 @@ final class FoldToy: Toy {
         _ = permissionVersion
         guard settings.provider == .jrbar else { return "Handed off" }
         if let reason = pauseReason { return "Paused — \(reason)" }
-        guard FoldCapturePermission.granted else { return "Waiting for Screen Recording" }
+        guard canFold else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
         let tilted = displayedDelta * 180 / .pi
@@ -1190,6 +1208,12 @@ private struct FoldControlsView: View {
             .fixedSize()
 
             providerNote
+
+            Toggle(isOn: toy.bind(\.wallpaperFallback)) {
+                SettingLabel(title: "Wallpaper without Screen Recording",
+                             subtitle: "With no permission, the wallpaper alone folds — same motion, no windows in the room.")
+            }
+            .toggleStyle(.checkbox)
 
             if toy.isOn && !FoldCapturePermission.granted {
                 HStack(spacing: 8) {

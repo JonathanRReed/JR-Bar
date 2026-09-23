@@ -97,6 +97,10 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     public var dwellTimeout: Double
     /// Bendy's return click — a Tink when the fold fully unwinds.
     public var restoreSound: Bool
+    /// Without Screen Recording, fold the wallpaper alone (no window
+    /// cards) instead of nothing. On by default: a first try should do
+    /// something.
+    public var wallpaperFallback: Bool = true
 
     public init(enabled: Bool = false, anchor: FoldAnchor = .angle,
                 activationAngle: Double = 65,
@@ -124,6 +128,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // reads it now and a stale value like "fog" decodes fine.
         case enabled, anchor, activationAngle, style, perspective, blur, shade, jitterTolerance
         case provider, frost, holdPicture, dwellTimeout, restoreSound
+        case wallpaperFallback
     }
 
     public init(from decoder: any Decoder) throws {
@@ -151,6 +156,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         holdPicture = (try? c.decodeIfPresent(Bool.self, forKey: .holdPicture)) ?? true
         dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
         restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
+        wallpaperFallback = (try? c.decodeIfPresent(Bool.self, forKey: .wallpaperFallback)) ?? true
         // Each past default set is treated as untouched and moved to the
         // current one; any deliberate change means the file survives.
         // A file old enough to migrate never wrote `frost`, so the knob
@@ -187,6 +193,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(holdPicture, forKey: .holdPicture)
         try c.encode(dwellTimeout, forKey: .dwellTimeout)
         try c.encode(restoreSound, forKey: .restoreSound)
+        try c.encode(wallpaperFallback, forKey: .wallpaperFallback)
     }
 }
 

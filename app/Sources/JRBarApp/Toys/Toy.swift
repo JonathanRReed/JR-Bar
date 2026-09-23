@@ -13,6 +13,9 @@ enum ToyStatus: Equatable {
     case needsPermission(String)
     case external(String)
     case unavailable(String)
+    /// Working, but a missing permission holds back part of it —
+    /// "Wallpaper only".
+    case limited(String)
 
     var text: String {
         switch self {
@@ -22,6 +25,7 @@ enum ToyStatus: Equatable {
         case .needsPermission(let why): return why
         case .external(let what): return what
         case .unavailable(let why): return why
+        case .limited(let what): return what
         }
     }
 
@@ -29,7 +33,7 @@ enum ToyStatus: Equatable {
         switch self {
         case .off: return Color(nsColor: .tertiaryLabelColor)
         case .on: return .green
-        case .paused, .external: return Color(nsColor: .systemOrange)
+        case .paused, .external, .limited: return Color(nsColor: .systemOrange)
         case .needsPermission: return .red
         case .unavailable: return Color(nsColor: .secondaryLabelColor)
         }
