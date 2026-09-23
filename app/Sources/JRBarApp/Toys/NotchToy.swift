@@ -199,6 +199,8 @@ final class NotchToy: Toy {
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
         cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
+        cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
+        cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
         audioTap.onLevels = { [weak self] bands in
             self?.cardModel.utility.audioLevels = bands
         }
@@ -1876,6 +1878,39 @@ final class NotchToy: Toy {
             set: { self.setProvider($0) })
     }
 
+    /// The Calendar switch. Turning it on is the explicit ask the card's
+    /// old "Show calendar" button made — through Setup's own request
+    /// path (a denied Mac deep-links to System Settings instead) — and
+    /// a pinned card re-reads on the spot.
+    var calendarBinding: Binding<Bool> {
+        Binding(
+            get: { self.settings.calendar },
+            set: { on in
+                self.store?.state.notch.calendar = on
+                let calendar = self.cardModel.calendar
+                let card = self.cardModel
+                Task { @MainActor in
+                    if on { await SetupModel.requestCalendar() }
+                    calendar.sync(enabled: on && card.pinned)
+                }
+            })
+    }
+
+    /// The Reminders switch — the same ask-on-enable as `calendarBinding`.
+    var remindersBinding: Binding<Bool> {
+        Binding(
+            get: { self.settings.reminders },
+            set: { on in
+                self.store?.state.notch.reminders = on
+                let reminders = self.cardModel.reminders
+                let card = self.cardModel
+                Task { @MainActor in
+                    if on { await SetupModel.requestReminders() }
+                    reminders.sync(enabled: on && card.pinned)
+                }
+            })
+    }
+
     /// What the follower sees — the Capsule row under the Alcove provider.
     var capsuleFact: String {
         _ = workspaceVersion
@@ -2024,6 +2059,16 @@ private struct NotchControlsView: View {
                     .font(.callout)
                     .padding(.leading, 28)
             }
+            Toggle(isOn: toy.calendarBinding) {
+                SettingLabel(title: "Calendar",
+                             subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
+                                                       granted: "The next three events in the card, the first with Join."))
+            }
+            Toggle(isOn: toy.remindersBinding) {
+                SettingLabel(title: "Reminders",
+                             subtitle: Self.accessNote(SetupModel.reminderStatus(), app: "Reminders",
+                                                       granted: "What's due by tomorrow, with a check-off circle that writes back."))
+            }
             Toggle(isOn: toy.bind(\.mirror)) {
                 SettingLabel(title: "Mirror",
                              subtitle: "A live camera preview row in the card — boring.notch's Mirror. The camera's consent is asked when you turn it on; the lens closes when the card folds away.")
@@ -2043,6 +2088,19 @@ private struct NotchControlsView: View {
             }
         case .boringNotch:
             EmptyView()
+        }
+    }
+
+    /// A glance switch's subtitle: what it shows once access exists, or
+    /// the honest word on why it can't yet — the card itself never asks.
+    private static func accessNote(_ status: SetupPermissionStatus, app: String,
+                                   granted: String) -> String {
+        switch status {
+        case .granted: return granted
+        case .denied, .unavailable:
+            return "\(app) access is off — turning this on opens System Settings, or allow it in Setup."
+        default:
+            return "Turning this on asks for \(app) access once; Setup has the same row."
         }
     }
 

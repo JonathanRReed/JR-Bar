@@ -1,22 +1,30 @@
 import AppKit
 import EventKit
 
-/// W12's event glance: the next calendar event, read-only, with an
-/// explicit Open/Join action. Privacy is the default (T52): no
+/// W12's event glance: the next few calendar events, read-only, with
+/// explicit Open/Join actions. Privacy is the default (T52): no
 /// permission → the row is hidden entirely, never a fake "free all
-/// day"; the read happens only after the user asks for it.
+/// day". The ask is never the card's: it lives on the Notch settings'
+/// Calendar switch and Setup's permission row, and the card only reads
+/// once access exists and the switch is on.
 @MainActor
 @Observable
 final class ShelfCalendarModel {
-    /// What the card renders. `hidden` covers denied/restricted —
-    /// the system said no and we show nothing rather than a state that
-    /// pretends to know the calendar is empty.
+    /// What the card renders. `hidden` covers the switch off and
+    /// denied/restricted — the system said no and we show nothing
+    /// rather than a state that pretends to know the calendar is empty.
+    /// `needsPermission` draws nothing either: asking is Setup's job.
     enum State: Equatable {
         case hidden
         case needsPermission
-        case idle            // authorized, nothing upcoming
-        case event(Event)    // the next authorized event
+        case idle              // authorized, nothing upcoming
+        case events([Event])   // the next events, soonest first
     }
+
+    /// Events the glance shows — the first carries Join.
+    nonisolated static let eventLimit = 3
+    /// How far ahead the glance looks.
+    nonisolated static let lookahead: TimeInterval = 24 * 3600
 
     struct Event: Equatable {
         let title: String
@@ -36,65 +44,54 @@ final class ShelfCalendarModel {
     /// the stop just killed.
     private var epoch = 0
 
-    /// The explicit opt-in — called from the card's calendar button,
-    /// never at launch or on a timer.
-    func authorizeAndLoad() {
-        let store = self.store ?? EKEventStore()
-        self.store = store
-        let epoch = self.epoch
-        switch EKEventStore.authorizationStatus(for: .event) {
-        case .fullAccess:
-            loadNext(from: store)
-        case .denied, .restricted:
-            state = .hidden
-        case .notDetermined, .writeOnly:
-            store.requestFullAccessToEvents { [weak self] granted, _ in
-                Task { @MainActor [weak self] in
-                    // EKEventStore isn't Sendable — read it back off
-                    // self on the actor rather than sending it in.
-                    guard let self, let store = self.store,
-                          self.epoch == epoch else { return }
-                    if granted {
-                        self.loadNext(from: store)
-                    } else {
-                        self.state = .hidden
-                    }
-                }
-            }
-        @unknown default:
-            state = .hidden
-        }
-    }
-
     func stop() {
         epoch += 1
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
 
-    /// Pin-side entry — the refresh cadence `stop` killed on unpin has
-    /// no other restart path, so a repinned card would otherwise show
-    /// a stale event forever. Only ever reloads when access was granted
-    /// earlier; asking stays the button's job.
-    func resume() {
-        guard let store,
-              EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
-        loadNext(from: store)
+    /// Pin-side entry: the switch off hides the row; on, the glance
+    /// reads — but only where access was already granted. It never
+    /// asks: a card that pops a permission prompt (or a "Show calendar"
+    /// button on every open) is the clutter this replaces. The refresh
+    /// cadence `stop` killed on unpin restarts here.
+    func sync(enabled: Bool) {
+        guard enabled else {
+            stop()
+            state = .hidden
+            return
+        }
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess:
+            let store = self.store ?? EKEventStore()
+            self.store = store
+            loadNext(from: store)
+        case .denied, .restricted:
+            state = .hidden
+        default:
+            state = .needsPermission
+        }
     }
 
-    /// Next event within the lookahead window. `nil` is an honest
-    /// "nothing upcoming" — the row says so rather than hiding a
-    /// stale event.
+    /// The next few timed events in the lookahead window. An empty list
+    /// is an honest "nothing upcoming" — the row says so rather than
+    /// hiding a stale event.
     private func loadNext(from store: EKEventStore) {
         let now = Date()
-        let end = now.addingTimeInterval(24 * 3600)
-        let predicate = store.predicateForEvents(withStart: now, end: end, calendars: nil)
-        let next = store.events(matching: predicate)
+        let predicate = store.predicateForEvents(withStart: now, end: now.addingTimeInterval(Self.lookahead),
+                                                 calendars: nil)
+        let timed = store.events(matching: predicate)
             .filter { !$0.isAllDay }
-            .sorted { $0.startDate < $1.startDate }
-            .first
-        state = next.map { .event(Self.project($0)) } ?? .idle
+            .map(Self.project)
+        let next = Self.upcoming(timed, now: now, limit: Self.eventLimit)
+        state = next.isEmpty ? .idle : .events(next)
         scheduleRefresh()
+    }
+
+    /// Soonest first, ended ones out (a meeting still running stays —
+    /// it is the one you would Join), capped. Pure for the tests.
+    nonisolated static func upcoming(_ events: [Event], now: Date, limit: Int) -> [Event] {
+        Array(events.filter { $0.end > now }.sorted { $0.start < $1.start }.prefix(limit))
     }
 
     /// Re-read on a slow cadence while the card is pinned — events move.

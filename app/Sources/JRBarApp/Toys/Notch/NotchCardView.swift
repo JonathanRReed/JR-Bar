@@ -19,8 +19,8 @@ final class NotchCardModel {
                 utility.start()
                 tray.revalidate()
                 mirror.sync(enabled: mirrorEnabled())
-                calendar.resume()
-                reminders.resume()
+                calendar.sync(enabled: calendarEnabled())
+                reminders.sync(enabled: remindersEnabled())
                 wingHint = Self.wingHintDue()
             } else {
                 utility.stop()
@@ -78,6 +78,10 @@ final class NotchCardModel {
     /// The toys state's mirror vote — the presenter hands it through so
     /// a flip lands on the next pin without rebuilding the model.
     var mirrorEnabled: () -> Bool = { false }
+    /// The Notch settings' Calendar and Reminders switches — read on
+    /// every pin, so a flip lands on the next open.
+    var calendarEnabled: () -> Bool = { true }
+    var remindersEnabled: () -> Bool = { true }
     /// The island's content-follow gate: the expand starts with the
     /// rows hidden, and the frame spring reveals them once the frame
     /// has carried most of the way (`NotchMotion.contentRevealThreshold`)
@@ -1114,76 +1118,71 @@ private struct ShelfTimersRow: View {
     }
 }
 
-/// The card's calendar glance: the next event, hidden until the owner
-/// grants EventKit access — no permission, no row. Join only ever
-/// opens an http(s) link.
+/// The card's calendar glance: the next few timed events, soonest
+/// first — the first carries Join when it has an http(s) link, the rest
+/// whisper under it. No access or the switch off, no row: the ask lives
+/// in Setup and the Notch settings, never here.
 private struct ShelfCalendarRow: View {
     let calendar: ShelfCalendarModel
     let style: NotchCardStyle
 
     var body: some View {
         switch calendar.state {
-        case .hidden:
+        case .hidden, .needsPermission:
             EmptyView()
-        case .needsPermission:
-            Button {
-                calendar.authorizeAndLoad()
-            } label: {
-                Label("Show calendar", systemImage: "calendar")
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.faintColor)
-            }
-            .buttonStyle(.plain)
         case .idle:
-            Label("Nothing on the calendar today", systemImage: "calendar")
+            Label("Nothing in the next 24 hours", systemImage: "calendar")
                 .font(.system(size: 10))
                 .foregroundStyle(style.faintColor)
-        case .event(let event):
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 9))
-                    .foregroundStyle(style.subColor)
-                    .frame(width: 14)
-                Text(event.start.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(style.subColor)
-                Text(event.title)
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.titleColor)
-                    .lineLimit(1)
-                if event.url != nil {
-                    Button("Join") { calendar.join(event) }
-                        .controlSize(.mini)
+        case .events(let events):
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(events.enumerated()), id: \.offset) { index, event in
+                    eventLine(event, lead: index == 0)
                 }
             }
-            .contextMenu {
-                Button("Open in Calendar") { calendar.openInCalendar(event) }
+        }
+    }
+
+    private func eventLine(_ event: ShelfCalendarModel.Event, lead: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "calendar")
+                .font(.system(size: 9))
+                .foregroundStyle(style.subColor)
+                .frame(width: 14)
+                .opacity(lead ? 1 : 0)
+            Text(event.start.formatted(date: .omitted, time: .shortened))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(lead ? style.subColor : style.faintColor)
+            Text(event.title)
+                .font(.system(size: 10))
+                .foregroundStyle(lead ? style.titleColor : style.faintColor)
+                .lineLimit(1)
+            if lead, event.url != nil {
+                Button("Join") { calendar.join(event) }
+                    .controlSize(.mini)
             }
+        }
+        .contextMenu {
+            if event.url != nil {
+                Button("Join") { calendar.join(event) }
+            }
+            Button("Open in Calendar") { calendar.openInCalendar(event) }
         }
     }
 }
 
 /// The card's reminders rows: a check-off circle, the title, the due
 /// time — overdue reads "Overdue", dueless rows carry no time. Drawn
-/// only while the state has something to say; permission stays an
-/// explicit button like the calendar's.
+/// only while the state has something to say; asking for access is
+/// Setup's and the Notch settings' job, never a button here.
 private struct ShelfRemindersRow: View {
     let reminders: ShelfRemindersModel
     let style: NotchCardStyle
 
     var body: some View {
         switch reminders.state {
-        case .hidden:
+        case .hidden, .needsPermission:
             EmptyView()
-        case .needsPermission:
-            Button {
-                reminders.authorizeAndLoad()
-            } label: {
-                Label("Show reminders", systemImage: "checklist")
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.faintColor)
-            }
-            .buttonStyle(.plain)
         case .idle:
             Label("No reminders due", systemImage: "checklist")
                 .font(.system(size: 10))

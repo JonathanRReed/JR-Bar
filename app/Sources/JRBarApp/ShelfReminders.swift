@@ -4,13 +4,14 @@ import EventKit
 /// The shelf's reminders glance — Alcove's Reminders row: the next few
 /// incomplete reminders with their due times and a check-off circle
 /// that writes back to Reminders. Same privacy rule as the calendar
-/// (T52): `hidden` on denial, the read happens only after the person
-/// asks, nothing syncs anywhere.
+/// (T52): `hidden` on denial or with the switch off, the read happens
+/// only after the person granted access, nothing syncs anywhere.
 @MainActor
 @Observable
 final class ShelfRemindersModel {
-    /// What the card renders. `hidden` covers denied/restricted —
-    /// pretending the list is empty when the system said no would lie.
+    /// What the card renders. `hidden` covers the switch off and
+    /// denied/restricted — pretending the list is empty when the system
+    /// said no would lie. `needsPermission` draws nothing either.
     enum State: Equatable {
         case hidden
         case needsPermission
@@ -37,47 +38,33 @@ final class ShelfRemindersModel {
     /// How many rows the card shows before the "+N more" tail.
     nonisolated static let rowLimit = 3
 
-    /// The explicit opt-in — called from the card's reminders button,
-    /// never at launch or on a timer.
-    func authorizeAndLoad() {
-        let store = self.store ?? EKEventStore()
-        self.store = store
-        let epoch = self.epoch
-        switch EKEventStore.authorizationStatus(for: .reminder) {
-        case .fullAccess:
-            load(from: store)
-        case .denied, .restricted:
-            state = .hidden
-        case .notDetermined, .writeOnly:
-            store.requestFullAccessToReminders { [weak self] granted, _ in
-                Task { @MainActor [weak self] in
-                    guard let self, let store = self.store,
-                          self.epoch == epoch else { return }
-                    if granted {
-                        self.load(from: store)
-                    } else {
-                        self.state = .hidden
-                    }
-                }
-            }
-        @unknown default:
-            state = .hidden
-        }
-    }
-
     func stop() {
         epoch += 1
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
 
-    /// Pin-side entry — restarts the cadence `stop` killed on unpin.
-    /// Only reloads when access was granted earlier; asking stays the
-    /// button's job.
-    func resume() {
-        guard let store,
-              EKEventStore.authorizationStatus(for: .reminder) == .fullAccess else { return }
-        load(from: store)
+    /// Pin-side entry: the switch off hides the row; on, the glance
+    /// reads where access was already granted and restarts the cadence
+    /// `stop` killed on unpin. It never asks — the ask lives on the
+    /// Notch settings' Reminders switch and Setup's permission row, so
+    /// the card carries no "Show reminders" button on every open.
+    func sync(enabled: Bool) {
+        guard enabled else {
+            stop()
+            state = .hidden
+            return
+        }
+        switch EKEventStore.authorizationStatus(for: .reminder) {
+        case .fullAccess:
+            let store = self.store ?? EKEventStore()
+            self.store = store
+            load(from: store)
+        case .denied, .restricted:
+            state = .hidden
+        default:
+            state = .needsPermission
+        }
     }
 
     /// Incomplete reminders due by the end of tomorrow — overdue ones

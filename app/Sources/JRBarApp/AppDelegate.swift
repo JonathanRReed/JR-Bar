@@ -272,6 +272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The glass card's waiting rows answer through the island's own
         // answerer — one pending set, one refusal line per session.
         notchCard.model.answerer = toysStore.notch.answerer
+        // …and its calendar and reminders glances follow the Notch
+        // settings' switches, the same as the grown island's.
+        notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
+        notchCard.model.remindersEnabled = { [weak toysStore] in toysStore?.state.notch.reminders ?? true }
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.

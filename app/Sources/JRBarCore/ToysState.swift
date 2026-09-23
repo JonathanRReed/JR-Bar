@@ -751,6 +751,12 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// `hudDurationRange` is clamped when the file is read.
     public var hudDuration: Double = 2.0
     public static let hudDurationRange: ClosedRange<Double> = 1...6
+    /// The card's calendar glance. On by default — it reads only where
+    /// Calendar access was granted (the ask is Setup's and this
+    /// switch's), and off keeps the row away entirely.
+    public var calendar: Bool = true
+    /// The card's reminders glance — the same rule as `calendar`.
+    public var reminders: Bool = true
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -792,6 +798,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case simulateNotch, mirror, audioVisualizer, replaceSystemHUD
         case shelfShakeToSummon
         case hudDuration
+        case calendar, reminders
     }
 
     public init(from decoder: any Decoder) throws {
@@ -818,6 +825,8 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         shelfShakeToSummon = (try? c.decodeIfPresent(Bool.self, forKey: .shelfShakeToSummon)) ?? true
         let hud = (try? c.decodeIfPresent(Double.self, forKey: .hudDuration)) ?? 2.0
         hudDuration = min(Self.hudDurationRange.upperBound, max(Self.hudDurationRange.lowerBound, hud))
+        calendar = (try? c.decodeIfPresent(Bool.self, forKey: .calendar)) ?? true
+        reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
     }
 }
 
