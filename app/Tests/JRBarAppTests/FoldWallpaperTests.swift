@@ -77,6 +77,42 @@ struct FoldWallpaperTests {
         #expect(bottom.b > 200 && bottom.r < 50)
     }
 
+    @Test("the wallpaper file decodes into a frame off the main actor; a missing one says so")
+    func decodesFromDisk() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "jrbar-fold-wallpaper-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let source = try #require(CGContext(
+            data: nil, width: 8, height: 4, bitsPerComponent: 8, bytesPerRow: 32, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue))
+        source.setFillColor(CGColor(srgbRed: 0, green: 1, blue: 0, alpha: 1))
+        source.fill(CGRect(x: 0, y: 0, width: 8, height: 4))
+        let green = try #require(source.makeImage())
+        let png = try #require(NSBitmapImageRep(cgImage: green).representation(using: .png, properties: [:]))
+        let url = dir.appending(path: "wall.png")
+        try png.write(to: url)
+        let black = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+        let result = await FoldWallpaperSource.frame(from: url, into: CGSize(width: 16, height: 8),
+                                                     layout: .fill, fill: black)
+        let frame = try result.get()
+        #expect(CVPixelBufferGetWidth(frame.buffer) == 16)
+        #expect(CVPixelBufferGetHeight(frame.buffer) == 8)
+        CVPixelBufferLockBaseAddress(frame.buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(frame.buffer, .readOnly) }
+        let base = try #require(CVPixelBufferGetBaseAddress(frame.buffer)).assumingMemoryBound(to: UInt8.self)
+        #expect(base[1] > 200 && base[2] < 50, "the picture's green, not the fill")
+
+        let missing = await FoldWallpaperSource.frame(from: dir.appending(path: "gone.png"),
+                                                      into: CGSize(width: 16, height: 8),
+                                                      layout: .fill, fill: black)
+        guard case .failure(.noWallpaper) = missing else {
+            Issue.record("a missing wallpaper is noWallpaper")
+            return
+        }
+    }
+
     @Test("an empty canvas makes no buffer")
     func emptyCanvas() throws {
         let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))

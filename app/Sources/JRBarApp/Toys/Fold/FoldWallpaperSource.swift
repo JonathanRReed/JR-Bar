@@ -40,7 +40,9 @@ enum FoldWallpaperError: LocalizedError {
 /// becomes the room's far wall, with no window cards in front of it.
 /// Drawn once per arming into an IOSurface-backed buffer the renderer
 /// blits exactly like a captured frame, laid out the way the desktop
-/// lays it out (fill, fit, stretch or centre). No stream, no purple
+/// lays it out (fill, fit, stretch or centre). The decode and the draw
+/// run off the main actor — a 6K wallpaper is a real decode, and the
+/// lid is already moving when the fold arms. No stream, no purple
 /// indicator, nothing to stop but the buffer.
 @MainActor
 final class FoldWallpaperSource: FoldFrameSource {
@@ -51,16 +53,16 @@ final class FoldWallpaperSource: FoldFrameSource {
     var onCards: (@MainActor ([PortalDepth.Card]) -> Void)?
     var onError: (@MainActor (String) -> Void)?
     private var buffer: CVPixelBuffer?
+    /// Bumped by every start and stop: a decode that finishes after a
+    /// stop (or a newer start) hands nothing over.
+    private var generation = 0
 
     func start() async throws {
         guard let screen = FoldOverlayWindow.builtinScreen() else {
             throw FoldCaptureError.noBuiltinDisplay
         }
         let workspace = NSWorkspace.shared
-        guard let url = workspace.desktopImageURL(for: screen),
-              let image = NSImage(contentsOf: url),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else {
+        guard let url = workspace.desktopImageURL(for: screen) else {
             lastError = FoldWallpaperError.noWallpaper.localizedDescription
             throw FoldWallpaperError.noWallpaper
         }
@@ -69,9 +71,17 @@ final class FoldWallpaperSource: FoldFrameSource {
         let fill = (options[.fillColor] as? NSColor)?.usingColorSpace(.sRGB)?.cgColor
             ?? CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
         let pixels = Self.pixelSize(points: screen.frame.size, scale: screen.backingScaleFactor)
-        guard let buffer = Self.render(cgImage, into: pixels, layout: layout, fill: fill) else {
-            lastError = FoldWallpaperError.noBuffer.localizedDescription
-            throw FoldWallpaperError.noBuffer
+        generation += 1
+        let mine = generation
+        let result = await Self.frame(from: url, into: pixels, layout: layout, fill: fill)
+        guard mine == generation else { return }
+        let buffer: CVPixelBuffer
+        switch result {
+        case .success(let frame):
+            buffer = frame.buffer
+        case .failure(let error):
+            lastError = error.localizedDescription
+            throw error
         }
         self.buffer = buffer
         hasFrame = true
@@ -81,14 +91,36 @@ final class FoldWallpaperSource: FoldFrameSource {
     }
 
     func stop() async {
+        generation += 1
         buffer = nil
         hasFrame = false
+    }
+
+    /// A finished frame crossing back from the decode. The buffer is
+    /// made and filled on the decode's task and only read after that.
+    struct Frame: @unchecked Sendable {
+        let buffer: CVPixelBuffer
+    }
+
+    /// Reads the picture at `url` and draws it into a frame, on a task
+    /// of its own so the main actor never waits on the decode.
+    nonisolated static func frame(from url: URL, into pixels: CGSize, layout: Layout,
+                                  fill: CGColor) async -> Result<Frame, FoldWallpaperError> {
+        await Task.detached(priority: .userInitiated) {
+            guard let image = NSImage(contentsOf: url),
+                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            else { return .failure(.noWallpaper) }
+            guard let buffer = render(cgImage, into: pixels, layout: layout, fill: fill) else {
+                return .failure(.noBuffer)
+            }
+            return .success(Frame(buffer: buffer))
+        }.value
     }
 
     // MARK: Pure layout
 
     /// How the desktop lays its picture out, from its image options.
-    enum Layout: Equatable {
+    enum Layout: Equatable, Sendable {
         case fill, fit, stretch, center
     }
 
@@ -112,7 +144,7 @@ final class FoldWallpaperSource: FoldFrameSource {
     /// Where the picture lands on a canvas of `canvas` pixels, top-left
     /// origin. Fill covers and crops the overflow evenly, fit letterboxes,
     /// stretch covers exactly, centre keeps the image's own pixels.
-    static func drawRect(image: CGSize, canvas: CGSize, layout: Layout) -> CGRect {
+    nonisolated static func drawRect(image: CGSize, canvas: CGSize, layout: Layout) -> CGRect {
         guard image.width > 0, image.height > 0 else { return CGRect(origin: .zero, size: canvas) }
         let size: CGSize
         switch layout {
@@ -142,8 +174,8 @@ final class FoldWallpaperSource: FoldFrameSource {
     /// Draws `image` into a new BGRA, IOSurface-backed, Metal-compatible
     /// buffer — the same shape a ScreenCaptureKit frame arrives in, rows
     /// top first — over `fill` for any letterbox.
-    static func render(_ image: CGImage, into pixels: CGSize, layout: Layout,
-                       fill: CGColor) -> CVPixelBuffer? {
+    nonisolated static func render(_ image: CGImage, into pixels: CGSize, layout: Layout,
+                                   fill: CGColor) -> CVPixelBuffer? {
         let width = Int(pixels.width), height = Int(pixels.height)
         guard width > 0, height > 0 else { return nil }
         let attributes: [String: Any] = [
