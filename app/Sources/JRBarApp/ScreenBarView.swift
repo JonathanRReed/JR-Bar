@@ -456,9 +456,10 @@ final class ScreenBarView: NSView {
 
     /// The next `play` or `display` that changes the colours fades from
     /// what is on the band to the new program over `seconds`. Reduce
-    /// Motion keeps the cut, as every other band transition does.
-    func crossfadeNextChange(over seconds: CFTimeInterval) {
-        pendingCrossfade = Self.reduceMotion ? nil : seconds
+    /// Motion keeps the cut, as every other band transition does; tests
+    /// pin the setting instead of reading this Mac's.
+    func crossfadeNextChange(over seconds: CFTimeInterval, reduceMotion: Bool? = nil) {
+        pendingCrossfade = (reduceMotion ?? Self.reduceMotion) ? nil : seconds
     }
 
     /// Inside the caller's transaction: hands the layers a fade from their

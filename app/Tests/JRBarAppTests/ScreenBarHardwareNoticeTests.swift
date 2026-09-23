@@ -127,16 +127,20 @@ struct ScreenBarHardwareNoticeTests {
     }
 
     @Test func anArmedCrossfadeIsUsedByTheNextChangeOnly() {
+        // Both halves pin Reduce Motion instead of reading this Mac's:
+        // CI's runner image turns it on, and there the fade half would
+        // never run.
         let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
         view.relayout()
-        view.crossfadeNextChange(over: 1.2)
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            #expect(!view.hasPendingCrossfade, "Reduce Motion keeps the cut")
-            return
-        }
+        view.crossfadeNextChange(over: 1.2, reduceMotion: false)
         #expect(view.hasPendingCrossfade)
         view.display(colors: Array(repeating: RGB(r: 1, g: 0.5, b: 0), count: 8))
         #expect(!view.hasPendingCrossfade)
+        view.display(colors: Array(repeating: RGB(r: 0, g: 0.5, b: 1), count: 8))
+        #expect(!view.hasPendingCrossfade, "used once, not re-armed by the change after")
+
+        view.crossfadeNextChange(over: 1.2, reduceMotion: true)
+        #expect(!view.hasPendingCrossfade, "Reduce Motion keeps the cut")
     }
 
     @Test func everyMarkIsARealSymbol() {
