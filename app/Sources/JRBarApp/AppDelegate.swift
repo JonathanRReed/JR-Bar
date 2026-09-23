@@ -1389,5 +1389,10 @@ extension AppDelegate {
         SystemTogglesStore.shared.state.dockHoldActive = { [weak self] in
             self?.utilitiesStore?.dock.enhance.autohideHold.holding ?? false
         }
+        // Eject leaves every strip the daemon lists as mounted, beyond
+        // the volume-name rule it applies itself.
+        SystemTogglesStore.shared.state.protectedVolumePaths = { [weak self] in
+            self?.core?.devices.compactMap(\.path) ?? []
+        }
     }
 }

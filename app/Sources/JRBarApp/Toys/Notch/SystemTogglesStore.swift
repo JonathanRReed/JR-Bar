@@ -1,3 +1,5 @@
+import AppKit
+import AudioToolbox
 import CoreAudio
 import Foundation
 import IOKit.pwr_mgt
@@ -34,6 +36,21 @@ final class SystemTogglesStore {
         /// The last apply's honest outcome — a denied `defaults` write or
         /// an AppleScript refusal lands here so the chip can say so.
         var lastError: String?
+        /// The last verb's report when nothing failed — what Eject took
+        /// and what it left.
+        var lastNote: String?
+        /// How soon a password follows display sleep — whether the Lock
+        /// chip locks, read on each refresh.
+        var lockDelay: SystemToggle.ScreenLockDelay?
+        /// When a timed keep-awake lets go; nil while indefinite or off.
+        var awakeUntil: Date?
+        /// "Awake" holds the display on too (no screen saver, no lock)
+        /// rather than only the Mac. App-local, remembered.
+        var awakeKeepsDisplay: Bool
+        @ObservationIgnored var awakeTimer: Task<Void, Never>?
+        /// Mount paths the daemon lists as connected LED strips — Eject
+        /// leaves them. Wired by the delegate to the core's devices.
+        @ObservationIgnored var protectedVolumePaths: @MainActor () -> [String] = { [] }
         /// Which chips the strip shows, in order — One Switch's "choose
         /// which toggles show". Persisted app-locally.
         var strip: [SystemToggle]
@@ -67,6 +84,81 @@ final class SystemTogglesStore {
             self.dockDriver = dockDriver
             self.defaults = defaults
             self.strip = SystemTogglesStore.loadStrip(defaults: defaults)
+            self.awakeKeepsDisplay = defaults.bool(forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
+        }
+
+        /// Take or drop the keep-awake assertion. The kind follows
+        /// `awakeKeepsDisplay`: the Mac only (the display still sleeps
+        /// and locks), or the display too.
+        func setAwake(_ hold: Bool) {
+            if hold && !awake.held {
+                let kind = awakeKeepsDisplay
+                    ? kIOPMAssertionTypePreventUserIdleDisplaySleep
+                    : kIOPMAssertionTypeNoIdleSleep
+                var assertion = IOPMAssertionID(0)
+                let status = IOPMAssertionCreateWithName(
+                    kind as CFString,
+                    IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                    "JR-Bar Keep Awake" as CFString,
+                    &assertion)
+                if status == kIOReturnSuccess {
+                    awake.id = assertion
+                    awake.held = true
+                } else {
+                    lastError = "Awake: the power assertion was refused."
+                }
+            } else if !hold && awake.held {
+                IOPMAssertionRelease(awake.id)
+                awake.id = 0
+                awake.held = false
+            }
+            if !awake.held {
+                awakeTimer?.cancel()
+                awakeTimer = nil
+                awakeUntil = nil
+            }
+            isOn[.keepAwake] = awake.held
+        }
+
+        /// Hold for `seconds`, indefinitely (nil), or let go (0) —
+        /// Amphetamine's session vocabulary on the one assertion.
+        func holdAwake(seconds: Int?) {
+            awakeTimer?.cancel()
+            awakeTimer = nil
+            awakeUntil = nil
+            guard seconds != 0 else {
+                setAwake(false)
+                return
+            }
+            setAwake(true)
+            guard let seconds, awake.held else { return }
+            awakeUntil = Date().addingTimeInterval(TimeInterval(seconds))
+            awakeTimer = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.setAwake(false)
+            }
+        }
+
+        /// Switch the display option; a live hold is re-taken with the
+        /// new kind so the change applies at once, deadline kept.
+        func setAwakeKeepsDisplay(_ on: Bool) {
+            guard on != awakeKeepsDisplay else { return }
+            awakeKeepsDisplay = on
+            defaults.set(on, forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
+            guard awake.held else { return }
+            IOPMAssertionRelease(awake.id)
+            awake.held = false
+            let until = awakeUntil
+            let timer = awakeTimer
+            awakeTimer = nil
+            setAwake(true)
+            if awake.held {
+                awakeUntil = until
+                awakeTimer = timer
+            } else {
+                timer?.cancel()
+            }
         }
 
         deinit {
@@ -93,6 +185,29 @@ final class SystemTogglesStore {
     var applying: Set<SystemToggle> { state.applying }
     var lastError: String? { state.lastError }
     var strip: [SystemToggle] { state.strip }
+    /// The line under the strip: a refusal first, else the last verb's
+    /// report.
+    var caption: String? { state.lastError ?? state.lastNote }
+    var awakeUntil: Date? { state.awakeUntil }
+    var awakeKeepsDisplay: Bool { state.awakeKeepsDisplay }
+
+    /// The chip's word — the Lock chip says "Display" when display
+    /// sleep does not actually lock.
+    func title(for toggle: SystemToggle) -> String {
+        toggle == .lock ? SystemToggle.lockTitle(delay: state.lockDelay) : toggle.title
+    }
+
+    /// The chip's tooltip, with the facts only the store knows.
+    func help(for toggle: SystemToggle) -> String {
+        toggle.help(on: state.isOn[toggle] ?? false, lockDelay: state.lockDelay,
+                    awakeUntil: state.awakeUntil, awakeKeepsDisplay: state.awakeKeepsDisplay)
+    }
+
+    nonisolated static let awakeDisplayDefaultsKey = "keepAwakeDisplay"
+
+    /// Keep awake for `seconds`, indefinitely (nil), or let go (0).
+    func holdAwake(seconds: Int?) { state.holdAwake(seconds: seconds) }
+    func setAwakeKeepsDisplay(_ on: Bool) { state.setAwakeKeepsDisplay(on) }
 
     private nonisolated static let log = Logger(
         subsystem: "devin.jrbar", category: "toggles")
@@ -132,6 +247,15 @@ final class SystemTogglesStore {
         for toggle in SystemToggle.allCases where !toggle.isMomentary {
             refresh(toggle)
         }
+        // The Lock chip's word: `sysadminctl` reads the password delay
+        // unprivileged; a changed Lock Screen setting shows on the next
+        // card open.
+        Task {
+            let output = await Task.detached {
+                Self.shellWithError("/usr/sbin/sysadminctl -screenLock status 2>&1").output
+            }.value
+            state.lockDelay = output.flatMap(SystemToggle.screenLockDelay(fromSysadminctl:))
+        }
     }
 
     private func refresh(_ toggle: SystemToggle) {
@@ -158,7 +282,9 @@ final class SystemTogglesStore {
             return (UserDefaults.standard.persistentDomain(
                 forName: UserDefaults.globalDomain)?["AppleInterfaceStyle"] as? String) == "Dark"
         case .mute:
-            return Self.readMute()
+            return AudioMute.isMuted(.output, defaults: state.defaults)
+        case .micMute:
+            return AudioMute.isMuted(.input, defaults: state.defaults)
         case .dockAutoHide:
             return dockDriver?.isAutohideEnabled
         default:
@@ -194,7 +320,10 @@ final class SystemTogglesStore {
                 }
             }
         AudioListener.shared.onChange = {
-            Task { @MainActor in state.isOn[.mute] = Self.readMute() }
+            Task { @MainActor in
+                state.isOn[.mute] = AudioMute.isMuted(.output, defaults: state.defaults)
+                state.isOn[.micMute] = AudioMute.isMuted(.input, defaults: state.defaults)
+            }
         }
         AudioListener.shared.start()
     }
@@ -206,21 +335,44 @@ final class SystemTogglesStore {
     /// for the read-back rather than racing the system.
     func apply(_ toggle: SystemToggle) {
         guard !state.applying.contains(toggle) else { return }
+        state.lastNote = nil
         switch toggle {
         case .keepAwake:
-            setAwake(!state.awake.held)
-            state.isOn[.keepAwake] = state.awake.held
+            state.holdAwake(seconds: state.awake.held ? 0 : nil)
             return
-        case .mute:
-            let next = !Self.readMute()
-            if Self.writeMute(next) {
-                state.isOn[.mute] = next
+        case .mute, .micMute:
+            let scope: AudioMute.Scope = toggle == .mute ? .output : .input
+            let next = !AudioMute.isMuted(scope, defaults: state.defaults)
+            if AudioMute.setMuted(next, scope, defaults: state.defaults) {
+                state.lastError = nil
+                state.isOn[toggle] = AudioMute.isMuted(scope, defaults: state.defaults)
             } else {
-                state.lastError = "No output device to mute."
+                state.lastError = scope == .output
+                    ? "This output has no mute or volume to set."
+                    : "This microphone has no mute or input level to set."
             }
             return
-        case .lock, .screenSaver:
+        case .lock, .screenSaver, .sleep:
             fire(toggle, on: true)
+            return
+        case .eject:
+            ejectAll()
+            return
+        case .darkMode:
+            // A refused Automation grant is said up front instead of
+            // failing inside `osascript` (or raising a surprise prompt
+            // the chip never mentioned).
+            state.applying.insert(.darkMode)
+            Task {
+                let permission = await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
+                state.applying.remove(.darkMode)
+                if permission == .denied {
+                    state.lastError = AutomationPermission.deniedSentence
+                    return
+                }
+                let current = readInline(.darkMode) ?? false
+                fire(.darkMode, on: !current)
+            }
             return
         case .dockAutoHide:
             setDockAutohide(!(readInline(.dockAutoHide) ?? state.isOn[.dockAutoHide] ?? false))
@@ -338,71 +490,65 @@ final class SystemTogglesStore {
         }
     }
 
-    // MARK: - Keep awake (IOPMAssertion — the public, reversible path)
+    // MARK: - Eject (NSWorkspace — public, SidePulse-aware)
 
-    /// `caffeinate` without the process: an IOKit power assertion.
-    /// Off releases it — the Mac's own bookkeeping, nothing persists.
-    private func setAwake(_ hold: Bool) {
-        let awake = state.awake
-        if hold && !awake.held {
-            var assertion = IOPMAssertionID(0)
-            let status = IOPMAssertionCreateWithName(
-                kIOPMAssertionTypeNoIdleSleep as CFString,
-                IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                "JR-Bar Keep Awake" as CFString,
-                &assertion)
-            if status == kIOReturnSuccess {
-                awake.id = assertion
-                awake.held = true
-            } else {
-                state.lastError = "Awake: the power assertion was refused."
+    /// Alfred's Eject All without its wildcard list: every local,
+    /// removable or ejectable volume goes, except a SidePulse strip —
+    /// by its volume name, or because the daemon lists the mount as a
+    /// connected device. The strip is the light; ejecting it would
+    /// dark the desk mid-run. Unmounts run detached (a busy disk can
+    /// take seconds to refuse) and the caption says what went.
+    private func ejectAll() {
+        state.applying.insert(.eject)
+        state.lastError = nil
+        let protected = Set(state.protectedVolumePaths())
+        Task {
+            let outcome = await Task.detached { Self.ejectRemovableVolumes(protectedPaths: protected) }.value
+            state.applying.remove(.eject)
+            state.lastNote = SystemToggle.ejectSummary(ejected: outcome.ejected, refused: outcome.refused,
+                                                       keptLED: outcome.keptLED)
+            if !outcome.refused.isEmpty, outcome.ejected.isEmpty {
+                state.lastError = state.lastNote
+                state.lastNote = nil
             }
-        } else if !hold && awake.held {
-            IOPMAssertionRelease(awake.id)
-            awake.id = 0
-            awake.held = false
         }
     }
 
-    // MARK: - Mute (CoreAudio — public, no process)
-
-    nonisolated static func defaultOutput() -> AudioDeviceID? {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
-            &size, &device) == noErr, device != kAudioObjectUnknown else { return nil }
-        return device
-    }
-
-    private nonisolated static func readMute() -> Bool {
-        guard let device = defaultOutput() else { return false }
-        var muted: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        return AudioObjectGetPropertyData(device, &address, 0, nil, &size, &muted) == noErr
-            && muted != 0
-    }
-
-    /// The reversible flip: write `kAudioDevicePropertyMute` on the
-    /// default output. Devices without a mute property answer false —
-    /// the chip reports the error rather than claiming the silence.
-    private nonisolated static func writeMute(_ muted: Bool) -> Bool {
-        guard let device = defaultOutput() else { return false }
-        var value: UInt32 = muted ? 1 : 0
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        return AudioObjectSetPropertyData(device, &address, 0, nil,
-                                          UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+    private nonisolated static func ejectRemovableVolumes(protectedPaths: Set<String>)
+        -> (ejected: [String], refused: [(name: String, reason: String)], keptLED: [String]) {
+        let keys: [URLResourceKey] = [.volumeNameKey, .volumeIsEjectableKey, .volumeIsRemovableKey,
+                                      .volumeIsInternalKey, .volumeIsLocalKey, .volumeIsRootFileSystemKey]
+        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys,
+                                                         options: [.skipHiddenVolumes]) ?? []
+        var ejected: [String] = []
+        var refused: [(name: String, reason: String)] = []
+        var kept: [String] = []
+        for url in urls {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            let facts = SystemToggle.VolumeFacts(
+                name: values.volumeName ?? url.lastPathComponent,
+                path: url.path,
+                ejectable: values.volumeIsEjectable ?? false,
+                removable: values.volumeIsRemovable ?? false,
+                isInternal: values.volumeIsInternal ?? false,
+                local: values.volumeIsLocal ?? false,
+                root: values.volumeIsRootFileSystem ?? false)
+            guard SystemToggle.shouldEject(facts, protectedPaths: protectedPaths) else {
+                if facts.ejectable || facts.removable,
+                   SystemToggle.isLEDVolume(name: facts.name) || protectedPaths.contains(facts.path) {
+                    kept.append(facts.name)
+                }
+                continue
+            }
+            do {
+                try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+                ejected.append(facts.name)
+            } catch {
+                refused.append((facts.name, (error as NSError).localizedFailureReason
+                                    ?? "it is in use"))
+            }
+        }
+        return (ejected, refused, kept)
     }
 
     // MARK: - Processes
@@ -542,5 +688,180 @@ final class AudioListener: @unchecked Sendable {
                                          0, nil, &size, &device) == noErr,
               device != kAudioObjectUnknown else { return nil }
         return device
+    }
+}
+
+/// Mute for the default output or microphone, with the fallback One
+/// Switch and Raycast lack: a device with no settable mute property
+/// (many displays, AirPlay, some USB microphones) is muted by taking its
+/// level to zero and remembering the old level, per device, to put
+/// back — instead of the chip answering "no device to mute".
+enum AudioMute {
+    enum Scope: String, Sendable {
+        case output, input
+
+        var defaultDeviceSelector: AudioObjectPropertySelector {
+            self == .output ? kAudioHardwarePropertyDefaultOutputDevice
+                : kAudioHardwarePropertyDefaultInputDevice
+        }
+
+        /// Where the device's mute and level live: output devices
+        /// mostly answer on the global scope, inputs on the input scope.
+        var propertyScopes: [AudioObjectPropertyScope] {
+            self == .output
+                ? [kAudioObjectPropertyScopeGlobal, kAudioDevicePropertyScopeOutput]
+                : [kAudioDevicePropertyScopeInput, kAudioObjectPropertyScopeGlobal]
+        }
+
+        var levelScope: AudioObjectPropertyScope {
+            self == .output ? kAudioDevicePropertyScopeOutput : kAudioDevicePropertyScopeInput
+        }
+    }
+
+    /// The saved level's defaults key — per scope and device, so an
+    /// unmute on AirPods never restores the display's old level.
+    nonisolated static func savedLevelKey(uid: String, scope: Scope) -> String {
+        "audioMute.savedLevel.\(scope.rawValue).\(uid)"
+    }
+
+    /// Muted now: the device's own mute flag where it has one; else
+    /// its level at zero with a saved level to return to (a level the
+    /// person turned to zero by hand is not "our" mute).
+    nonisolated static func isMuted(_ scope: Scope, defaults: UserDefaults) -> Bool {
+        guard let device = AudioListener.defaultDevice(scope.defaultDeviceSelector) else { return false }
+        if let muted = readMuteFlag(device, scope) { return muted }
+        guard let uid = uid(of: device), defaults.object(forKey: savedLevelKey(uid: uid, scope: scope)) != nil,
+              let level = readLevel(device, scope) else { return false }
+        return level <= 0.001
+    }
+
+    /// Set mute. False when the device offers neither a settable mute
+    /// nor a settable level — the chip then says so.
+    nonisolated static func setMuted(_ muted: Bool, _ scope: Scope, defaults: UserDefaults) -> Bool {
+        guard let device = AudioListener.defaultDevice(scope.defaultDeviceSelector) else { return false }
+        if writeMuteFlag(device, scope, muted) { return true }
+        guard let uid = uid(of: device), let level = readLevel(device, scope),
+              levelIsSettable(device, scope) else { return false }
+        let key = savedLevelKey(uid: uid, scope: scope)
+        if muted {
+            if level > 0.001 {
+                defaults.set(Double(level), forKey: key)
+            } else if defaults.object(forKey: key) == nil {
+                defaults.set(0.5, forKey: key)
+            }
+            return writeLevel(device, scope, 0)
+        }
+        let restore = defaults.object(forKey: key) as? Double ?? 0.5
+        defaults.removeObject(forKey: key)
+        return writeLevel(device, scope, Float32(min(1, max(0.05, restore))))
+    }
+
+    // MARK: CoreAudio
+
+    private nonisolated static func muteAddress(_ scope: AudioObjectPropertyScope) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: scope,
+                                   mElement: kAudioObjectPropertyElementMain)
+    }
+
+    private nonisolated static func readMuteFlag(_ device: AudioObjectID, _ scope: Scope) -> Bool? {
+        for propertyScope in scope.propertyScopes {
+            var address = muteAddress(propertyScope)
+            guard AudioObjectHasProperty(device, &address) else { continue }
+            var value: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr {
+                return value != 0
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func writeMuteFlag(_ device: AudioObjectID, _ scope: Scope, _ muted: Bool) -> Bool {
+        for propertyScope in scope.propertyScopes {
+            var address = muteAddress(propertyScope)
+            guard AudioObjectHasProperty(device, &address) else { continue }
+            var settable = DarwinBoolean(false)
+            guard AudioObjectIsPropertySettable(device, &address, &settable) == noErr, settable.boolValue else { continue }
+            var value: UInt32 = muted ? 1 : 0
+            if AudioObjectSetPropertyData(device, &address, 0, nil,
+                                          UInt32(MemoryLayout<UInt32>.size), &value) == noErr {
+                return true
+            }
+        }
+        return false
+    }
+
+    private nonisolated static func levelAddress(_ scope: Scope) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                                   mScope: scope.levelScope, mElement: kAudioObjectPropertyElementMain)
+    }
+
+    private nonisolated static func readLevel(_ device: AudioObjectID, _ scope: Scope) -> Float32? {
+        var address = levelAddress(scope)
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var level: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &level) == noErr else { return nil }
+        return level
+    }
+
+    private nonisolated static func levelIsSettable(_ device: AudioObjectID, _ scope: Scope) -> Bool {
+        var address = levelAddress(scope)
+        var settable = DarwinBoolean(false)
+        return AudioObjectIsPropertySettable(device, &address, &settable) == noErr && settable.boolValue
+    }
+
+    private nonisolated static func writeLevel(_ device: AudioObjectID, _ scope: Scope, _ level: Float32) -> Bool {
+        var address = levelAddress(scope)
+        var value = level
+        return AudioObjectSetPropertyData(device, &address, 0, nil,
+                                          UInt32(MemoryLayout<Float32>.size), &value) == noErr
+    }
+
+    private nonisolated static func uid(of device: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &uid) == noErr,
+              let uid else { return nil }
+        return uid.takeRetainedValue() as String
+    }
+}
+
+/// Whether JR-Bar may send System Events Apple Events — the grant the
+/// Dark chip (and the Dock chip's fallback) run on. Read without asking
+/// before a flip, so a refusal is said on the chip instead of failing
+/// inside `osascript`; asked for explicitly only from Setup.
+enum AutomationPermission: Equatable, Sendable {
+    case granted
+    /// Never asked: the first use will raise macOS's prompt.
+    case needsConsent
+    case denied
+    /// System Events is not running, so macOS cannot say yet.
+    case unavailable
+
+    nonisolated static let systemEventsBundleID = "com.apple.systemevents"
+    nonisolated static let settingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!
+    nonisolated static let deniedSentence =
+        "JR-Bar may not control System Events — allow it in Privacy & Security › Automation."
+
+    /// `ask: true` blocks until the person answers the prompt — call it
+    /// off the main thread.
+    nonisolated static func systemEvents(ask: Bool) -> AutomationPermission {
+        let target = NSAppleEventDescriptor(bundleIdentifier: systemEventsBundleID)
+        guard let desc = target.aeDesc else { return .unavailable }
+        return classify(AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, ask))
+    }
+
+    nonisolated static func classify(_ status: OSStatus) -> AutomationPermission {
+        switch status {
+        case noErr: return .granted
+        case OSStatus(errAEEventWouldRequireUserConsent): return .needsConsent
+        case OSStatus(errAEEventNotPermitted): return .denied
+        default: return .unavailable
+        }
     }
 }

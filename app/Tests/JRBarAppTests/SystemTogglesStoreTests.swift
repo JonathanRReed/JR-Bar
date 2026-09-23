@@ -75,6 +75,53 @@ import Testing
         #expect(store.isOn[.dockAutoHide] == true)
     }
 
+    @Test func theLockChipsWordFollowsThePasswordDelay() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults)
+        let store = SystemTogglesStore(state: state)
+        #expect(store.title(for: .lock) == "Lock")
+        state.lockDelay = .after(seconds: 300)
+        #expect(store.title(for: .lock) == "Display")
+        #expect(store.help(for: .lock).contains("password"))
+        #expect(store.title(for: .darkMode) == "Dark")
+    }
+
+    @Test func theCaptionPutsARefusalBeforeAReport() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults)
+        let store = SystemTogglesStore(state: state)
+        #expect(store.caption == nil)
+        state.lastNote = "Ejected “USB”."
+        #expect(store.caption == "Ejected “USB”.")
+        state.lastError = "Dark: refused"
+        #expect(store.caption == "Dark: refused")
+    }
+
+    @Test func theDisplayOptionPersistsWithoutTakingAHold() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults)
+        state.setAwakeKeepsDisplay(true)
+        #expect(!state.awake.held)
+        #expect(SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults).awakeKeepsDisplay)
+    }
+
+    @Test func automationAnswersMapToWhatTheChipSays() {
+        #expect(AutomationPermission.classify(noErr) == .granted)
+        #expect(AutomationPermission.classify(OSStatus(-1744)) == .needsConsent)
+        #expect(AutomationPermission.classify(OSStatus(-1743)) == .denied)
+        // System Events not running: macOS cannot say yet.
+        #expect(AutomationPermission.classify(OSStatus(-600)) == .unavailable)
+    }
+
+    @Test func aSavedLevelIsPerScopeAndDevice() {
+        #expect(AudioMute.savedLevelKey(uid: "BuiltInSpeakerDevice", scope: .output)
+                != AudioMute.savedLevelKey(uid: "BuiltInSpeakerDevice", scope: .input))
+        #expect(AudioMute.savedLevelKey(uid: "A", scope: .output) != AudioMute.savedLevelKey(uid: "B", scope: .output))
+    }
+
     @Test func theStripPersistsInCanonicalOrder() throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

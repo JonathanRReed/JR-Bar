@@ -550,24 +550,41 @@ private struct ShelfMediaRow: View {
     }
 }
 
-/// The Control Center strip — One Switch's row as card grammar: eight
-/// chips, lit while on, dimmed while off, verbs that never latch.
-/// The state is read back from the system after every apply — a chip
-/// only ever shows what the Mac reports, and a refused write says so
-/// in a caption under the row rather than silently staying lit.
+/// The Control Center strip — One Switch's row as card grammar: the
+/// chips chosen on Settings › Shortcuts, lit while on, dimmed while
+/// off, verbs that never latch. The state is read back from the system
+/// after every apply — a chip only ever shows what the Mac reports, and
+/// a refused write says so in a caption under the row rather than
+/// silently staying lit. Past eight chips the row wraps, so every label
+/// stays readable.
 private struct ShelfTogglesRow: View {
     let toggles: SystemTogglesStore
     let style: NotchCardStyle
 
+    /// Eight across, as the strip has always been; more wrap.
+    private static let perRow = 8
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
-                    chip(toggle)
+            let chips = toggles.strip
+            let rows = stride(from: 0, to: chips.count, by: Self.perRow).map {
+                Array(chips[$0..<min($0 + Self.perRow, chips.count)])
+            }
+            ForEach(rows.indices, id: \.self) { index in
+                HStack(spacing: 5) {
+                    ForEach(rows[index], id: \.rawValue) { toggle in
+                        chip(toggle)
+                    }
+                    // A short last row keeps the chip width of the rows above.
+                    if index > 0, rows[index].count < Self.perRow {
+                        ForEach(0..<(Self.perRow - rows[index].count), id: \.self) { _ in
+                            Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
+                        }
+                    }
                 }
             }
-            if let error = toggles.lastError {
-                Text(error)
+            if let caption = toggles.caption {
+                Text(caption)
                     .font(.system(size: 9))
                     .foregroundStyle(style.faintColor)
                     .lineLimit(2)
@@ -579,14 +596,17 @@ private struct ShelfTogglesRow: View {
     private func chip(_ toggle: SystemToggle) -> some View {
         let on = toggles.isOn[toggle] ?? false
         let busy = toggles.applying.contains(toggle)
+        let title = toggles.title(for: toggle)
         return Button {
             toggles.apply(toggle)
         } label: {
             VStack(spacing: 3) {
                 Image(systemName: toggle.symbol)
                     .font(.system(size: 11, weight: .medium))
-                Text(toggle.title)
-                    .font(.system(size: 7, weight: .medium))
+                Text(title)
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .foregroundStyle(on ? style.titleColor : style.faintColor)
             .frame(maxWidth: .infinity)
@@ -599,38 +619,9 @@ private struct ShelfTogglesRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help(for: toggle, on: on))
-        .accessibilityLabel("\(toggle.title) toggle")
+        .help(toggles.help(for: toggle))
+        .accessibilityLabel("\(title) toggle")
         .accessibilityValue(toggle.isMomentary ? "action" : (on ? "on" : "off"))
-    }
-
-    /// The chip's tooltip — the verb, the honest restart warning, and
-    /// the current truth for stateful toggles.
-    private func help(for toggle: SystemToggle, on: Bool) -> String {
-        switch toggle {
-        case .keepAwake:
-            return on ? "Keeping the Mac awake — click to allow sleep."
-                        : "Keep the Mac awake (power assertion; releases when off or the app quits)."
-        case .darkMode:
-            return on ? "Dark mode is on — click for light."
-                        : "Switch to dark mode."
-        case .desktopIcons:
-            return on ? "Desktop icons visible — click to hide (restarts Finder)."
-                        : "Show desktop icons (restarts Finder)."
-        case .hiddenFiles:
-            return on ? "Hidden files visible — click to conceal (restarts Finder)."
-                        : "Show hidden files (restarts Finder)."
-        case .mute:
-            return on ? "Output muted — click to unmute."
-                        : "Mute the default output."
-        case .screenSaver:
-            return "Start the screen saver."
-        case .lock:
-            return "Sleep the display — locks on wake wherever a password is required."
-        case .dockAutoHide:
-            return on ? "Dock auto-hides — click to pin it (restarts Dock)."
-                        : "Auto-hide the Dock (restarts Dock)."
-        }
     }
 }
 
