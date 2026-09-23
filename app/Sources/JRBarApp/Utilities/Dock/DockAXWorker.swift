@@ -43,7 +43,7 @@ final class DockTapThread: @unchecked Sendable {
     /// Put the source on a fresh thread's run loop; returns once that
     /// loop is servicing it. A second start while running does nothing.
     func start() {
-        guard lock.withLock({ loop == nil }) else { return }
+        guard lock.withLock({ self.loop == nil }) else { return }
         let loop = Loop(source: source)
         let thread = Thread {
             let current = CFRunLoopGetCurrent()

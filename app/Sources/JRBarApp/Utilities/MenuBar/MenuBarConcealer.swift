@@ -827,7 +827,7 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     }
 
     func start() {
-        guard lock.withLock({ tap == nil }) else { return }
+        guard lock.withLock({ self.tap == nil }) else { return }
         let mask = (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
             | (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)
         let pointer = Unmanaged.passUnretained(self).toOpaque()

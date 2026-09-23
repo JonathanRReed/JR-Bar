@@ -728,7 +728,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// JR-Bar's main thread was doing. The callback reads the copies
     /// under `lock` and hops to main for everything it acts on.
     func start() {
-        guard lock.withLock({ tap == nil }) else { return }
+        guard lock.withLock({ self.tap == nil }) else { return }
         let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.rightMouseDown.rawValue)
