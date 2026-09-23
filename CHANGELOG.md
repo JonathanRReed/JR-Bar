@@ -4,6 +4,507 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+- Asks answer from any terminal: Claude Code's and Codex's
+  PermissionRequest hook is installed as a decide lane, so Approve, Deny
+  and the new Always Allow reply through the agent's own hook instead of
+  typing into the front window — Ghostty included, with no Accessibility
+  grant and no race over which tab is in front. The shim keeps its
+  250 ms delivery budget, then waits up to 50 s for a verdict (the hook
+  entry's 60 s timeout outlasts it). Only an explicit answer decides: a
+  hold that lapses at 45 s, a tool the agent ran anyway, a finished turn
+  or a stopping daemon prints nothing, and the agent's own prompt
+  carries on. Always Allow is Claude-only and echoes only the rules the
+  request itself suggested. A held AskUserQuestion is answered by
+  picking its options (`answer_ask`'s `answer` verb sends each
+  question's chosen label), and Deny declines it the way Esc does. Codex
+  shows its prompt only after its hooks return, so a Codex request is
+  not held while its terminal is in front, and a held one lets go within
+  about a second of that terminal coming forward. Settings › Agents
+  shows each provider's hook doctor line — events hooked, the last one's
+  age, what is queued, whether the decide lane is installed — and offers
+  Repair when the lane is missing or an older hook command is still
+  registered; an install from before the lane reads "missing" until it
+  is reinstalled. Still to check by hand: the Codex let-go on a real
+  switch to its terminal.
+- Every surface that shows an ask carries the same facts and verbs. One
+  line says what the agent wants to run — the command, the file, the
+  URL, or the MCP server and tool, token-shaped runs masked — with a red
+  destructive-command mark, from every PermissionRequest the ingress
+  sees whether or not the decide lane holds it: the preview claude-notch
+  and AgentNotch lead with. The panel's ask card, the notch capsule and
+  card rows, the Dock preview's ask row, the Overview inspector, ⌘⇧K and
+  the Deck Rail's pill (which now takes clicks, and names the ask on
+  hover) all offer Always Allow where the hook offers a rule, and a held
+  question's options in place of Approve, through one shared
+  `AskAnswerDesk`: a pick started on one surface finishes on another,
+  and every copy dims while an answer is in flight. Approve's toast
+  names the route ("sent through the agent's permission hook" or "typed
+  into the terminal"), and in ⌘⇧K typed words never promote Always Allow
+  or Deny to Return. A Stream Deck can answer too: `jrbar serve` grows
+  bearer-authenticated `GET /asks.json` and `POST /answer` (any verb
+  `answer_ask` takes, by session or 1–13 slot), acting only while the
+  new `serve_answer_enabled` is on — off by default and apart from
+  `serve_enabled` — and a standalone `jrbar serve --allow-answers` waits
+  12 s for the daemon's verdict instead of reading a slow focus check as
+  "monitor unreachable". The Stream Deck path still needs a live key.
+- Open raises the session's own window instead of starting a second
+  copy. For a live Claude or Codex CLI session `open_session` brings
+  forward the tmux pane or the Terminal.app or iTerm2 tab its tty names,
+  or the Ghostty terminal recorded when it started; a tie brings Ghostty
+  forward and never guesses, and a session running where JR-Bar cannot
+  find it refuses rather than `--resume` a second process beside it.
+  When the daemon cannot place a live local session, the panel, the
+  Overview, History and the glass card fall back to the Dock's window
+  locator, which also reaches a window on another Space. An ended
+  session resumes in the terminal it ran in (a new Ghostty tab with the
+  resume typed into the owner's shell, or a new Terminal.app or iTerm2
+  window) instead of in whatever app is in front; History's ended rows
+  gain Resume for agents whose CLI can (Claude, Codex, Devin, Grok,
+  Cursor, Hermes); and the Overview's New Session Here starts an agent
+  in a row's folder, the first prompt still the owner's to type. An
+  answer typed into Ghostty in place (a reply, or a prompt whose hold
+  lapsed) now needs the terminal recorded at SessionStart, still in the
+  session's directory — a compaction never re-records it, and a plain
+  shell in the same worktree refuses — and "quiet while you watch" asks
+  the daemon's `session_in_front` which pane is in front, so an ask in a
+  background Ghostty tab is no longer silenced. Opens run off the
+  daemon's main thread, so an Automation prompt no longer stalls its
+  refreshes. Still to check by hand in Ghostty: the surface recorded on
+  a real start, and a reply refused in a sibling split.
+- The notch speaks for the Mac and holds for the agents. An ask holds
+  the island until it is answered, opened or swiped away — who asks,
+  what, how long it has waited, and its verbs — and at the take-over
+  stage it grows into a card-wide ask with room for the whole question;
+  the amber count jumps to the oldest ask on this Mac. The Mac's own
+  news goes through the island's capsule line: a volume or brightness
+  key shows one continuous fill with its number and the output's own
+  glyph (AirPods, Beats, a display, AirPlay), a scroll over it sets the
+  level the way MediaMate and boring.notch do, a Bluetooth device says
+  goodbye as well as hello, and an announcement the island turns away or
+  gives up to newer news goes to the pill instead of vanishing. While a
+  Focus, quiet hours or a joinable meeting runs, finished runs and quota
+  resets wait and come back as one "While you were in Work · 3
+  finished"; an opt-in Meeting heads-up shows a timed event with a join
+  link two minutes out, with Join. Timers pause, take +1 or +5 minutes
+  once due, start from a ⌘-drag sideways on the notch (DynamicLake's
+  gesture), come due as their own capsule and breathe the SidePulse
+  strips orange, and two watch the agents: Remind Me When 5h Resets and
+  Nudge Me in 20 Min If Still Working. A timer or meeting capsule steps
+  aside for a click instead of making it wait. A pinch opens the island
+  and a squeeze folds it, and a two-finger pull down now opens it under
+  natural scrolling instead of folding it. The battery row holds its
+  real charge and reads "41% · ~1h 50m left · 3 agents working · held
+  awake", with a Battery low capsule under 20% while agents run. Still
+  to check by hand: a Focus ended from Control Center with the card up
+  replays its summary as the card folds.
+- The grown card has two pages, Now and Shelf, where it used to stack
+  about seventeen kinds of row in one scroll (boring.notch's Home and
+  Shelf split). Now holds the sessions, asks and failures first with
+  their verbs, their quota, who is listening ("Microphone · Zoom", from
+  CoreAudio's process list with JR-Bar left out), what is playing and
+  the battery; Shelf holds the tray, timers, weather and calendar,
+  reminders, the Mirror and the Control Center strip. The shelf draws
+  files as Quick Look tiles, offers what you copied as a Paste chip
+  (Yoink's clipboard save), stacks a live session's files under that
+  session's name, and hands a file to an agent: a chip's Hand to menu
+  puts its `@path` on the pasteboard and raises that session, or drop
+  the file straight onto a session row. The media row gains a volume
+  slider, the artwork's colour (Alcove's and boring.notch's tint) and a
+  click on the artwork that raises the player; synced lyrics sweep
+  through the line in time with the next line beneath, honour the LRC
+  offset, are cached on disk, can be switched off, and stop their clock
+  whenever the row cannot be seen. Weather never looks the Mac up by IP
+  unless asked, adds "H 21° L 12° · rain in 30 min", and takes the
+  calendar's place on an empty day. Calendar and Reminders have their
+  own switches and the card never asks for access; a "+" adds a reminder
+  from one typed line, and a session row's Remind Me About This keeps a
+  run for later. The Mirror opens only on demand (⌥-click the island, or
+  the header's camera button). Still to check by hand: a Finder file
+  dragged to the notch and on to a session row keeps the card up and
+  lands on that row.
+- The Screen Bar's ears carry marks where the eye already goes. The left
+  ear's ask sits in a ring that fills in twelfths toward the loudest
+  escalation stage that provider may reach, stepping on its own clock
+  even while no daemon frame arrives (the Control Center pad's asking
+  key wears the same ring), and a quiet that changes the light shows a
+  moon. The right ear carries the mic and camera dots at its inner edge,
+  a strip or Dot arriving or leaving (a fresh monitor's first ten
+  seconds are a baseline, not a plug), an alert mark when a program is
+  refused while the band keeps the last safe one, and a cup while your
+  keep-awake lease holds or a starred moon while a shut lid is held
+  awake, amber once the hold has yielded to heat or the battery. The
+  band holds still on camera — its brightest frame, held, so an ask
+  reads as a steady amber beside the lens — on by default, and the row
+  greys out while there is no camera reading. A Right now line says
+  which clock the band is on, why, and the cue it is playing
+  ("completed · playing Firefly"), and offline which feed it plays. In
+  full screen is now Hidden, Shown except over video, or Always shown:
+  the middle one steps aside while the front app plays a video full
+  screen and stays over a full-screen terminal. A strip powering off
+  fades the band instead of cutting it, a dimmer step eases over 0.6 s
+  instead of jumping (Reduce Motion keeps both cuts), and the band
+  follows Alcove's capsule only while Alcove is picked to draw the
+  notch. Still to check by hand: the camera hold on a FaceTime or Zoom
+  call, and no plug notice on a daemon restart.
+- Hand-written light has a native home. Effect Studio's new Program room
+  is a LEDS.LED editor judged on every keystroke by the firmware-exact
+  parser: the error at the firmware's own line and column with an
+  explanation, byte and line budget bars against the firmware's 512
+  bytes and 20 lines, the lines the Dot skips, and what the compiler
+  would slow. It previews on an 8-LED strip, a 2-LED Dot and the band
+  side by side, plays on the Screen Bar with no hardware or on a strip
+  after the one-time consent, keeps the text as the Studio program or on
+  a named shelf, and burns a device's INIT.LED behind a confirm, saying
+  "burned" only for a device the daemon says it wrote. Compose… builds a
+  program from layers — a base colour or gradient, steady, breathing or
+  rolling, a travelling accent, held LEDs, brightness — as Chroma
+  Studio's and Keychron's editors do, and writes inside the compiler's
+  limits or says what it left out. A Moments room names each ambient cue
+  the daemon layers over the base light (baton, firefly, ember,
+  rainstick and the rest) with what it means, a sketch that plays on the
+  band, a switch the daemon honours, and the odometer's count ("37
+  finished since the monitor started · next at 50"). Try a situation
+  asks the daemon's `resolve_effect` which assignment wins for an event,
+  provider, scene and project, and which rows it shadows. Save as
+  Effect… keeps a tuned effect in a local pack, Yours; Update pack
+  really replaces an installed pack; an effect's preview plays on the
+  band when no strip is attached; and the Lighting page tours a scene
+  pack on a band before Use. LEDS_FORMAT.md states the parser's real
+  rules, each claim checked against the packaged `sdled.wasm`.
+- The retiring PyObjC window's light settings are native: the calendar
+  and reminder glows (with a warning when EventKit was refused), the
+  charging fill and power-change preview, Rainstick's Also at night, the
+  milestone ladder, and a Blend picker per device so the strip can run
+  Everyone while the band stays Smooth. Settings › Devices › Calibration
+  profiles saves, applies and deletes the Day, Night and Travel slots
+  and binds one to any Focus this Mac has, custom Focuses included; a
+  calibration can start from another strip's white balance or a saved
+  profile; and a per-Focus dim rule finally sticks — its dotted Focus id
+  used to split into nested keys the daemon dropped. The Lighting page
+  names the state and provider colours that collapse for a dichromat
+  (the daemon's `check_palette`) with a one-click lightness nudge, and
+  plays each blend mode against a three-agent desk before you choose.
+  Each device card's Right now line says why it is lit, when the monitor
+  last wrote it, the program's size against 512 bytes, and how its
+  writes are going (`write_health`: latency, programs the safety
+  compiler changed, refusals) where it used to say only "Connected".
+  Ambient auto-dim stops twitching at passing shadows — brightening
+  follows in about two seconds, dimming takes most of a minute toward
+  the median of recent reads — the readout shows the raw reading beside
+  the smoothed one, and Learned from you counts panel-slider moves over
+  a strip or Dot as votes and offers a better-fitting curve without ever
+  applying it unasked. Why this light names the cue on each surface and
+  gains a short light log, the Rainstick stops dripping when JR-Bar can
+  no longer hear its agents, and escalation takes a ceiling per
+  provider, so Claude's asks may climb to the chime while another
+  agent's stay at the light.
+- Menu-bar curation survives Show all. Hide all and Show all are an
+  overlay over the apps you chose, Bartender 7's transient Focus Mode:
+  set rather than toggled, so a lock/unlock rule pair ends on your bar;
+  the overlay can lapse after five minutes or an hour, and the card
+  shows Restore and Keep (Keep is the old rewrite, only on that ask).
+  Profiles are layers over your bar rather than snapshots of it:
+  switching swaps the delta and the look, None is your bar alone, and
+  snapshot profiles migrate once to deltas that reproduce them exactly.
+  "While" rules hold a layout, a profile, an LED scene or the agents'
+  quiet for as long as a level lasts and let go on their own ("while the
+  mic is live: Meeting, the focus scene, quiet agents"); the quiet is a
+  renewed 15-minute lease that leaves a longer quiet of yours standing
+  and puts back a shorter one. Rules also hear what only JR-Bar sees —
+  agents starting, needing you or finishing, usage headroom, a SidePulse
+  strip or Dot — plus apps launching or quitting, displays, and the lid
+  shutting on an external display. A desk, the set of displays attached
+  at once keyed by vendor, model and serial, takes its profile once when
+  it arrives, the way Bartender 7 follows the monitor setup. The card's
+  list is a layout editor of Shown, Hidden and Always rows of real
+  glyphs you drag between, as in Ice and Bartender; the icon's menu
+  hides an app in one click; and a stopped or handed-over utility hears
+  the agents but acts on nothing. Still to check by hand: a while-rule's
+  quiet against a Dim set by hand on the real daemon.
+- The Item Bar and a new peek wear each app's real glyph. Under the
+  macOS 27 concealer a hidden item has no pixels, so items are
+  photographed in the moments they are legitimately drawn — before the
+  first assertion, during a reveal, after a pressed tile's menu closes —
+  as two frames bracketed by a fresh listing, so a ghost or a shifted
+  bar never files one app's glyph under another's; tiles take the item's
+  own width (22–120 pt). Only icon-sized glyphs (30 pt or narrower)
+  reach the disk, since wider ones can carry an event title or a VPN's
+  name, and none outlives thirty days. A rest, a scroll or a pull on the
+  Screen Bar's right ear hangs a black peek of the hidden glyphs below
+  the band, each one clickable, and a click on the ear pins it; a new
+  app's first item, or a watched hidden item that changed, nudges from
+  that ear with Keep, Tuck away and Always, and a run's first twenty
+  seconds are learned in silence. Opened from its hotkey the Item Bar
+  takes the keyboard (arrows, type to filter, Return, ⌘1–⌘9), and a
+  tile's Show When It Changes lets a VPN interrupt while a clock cannot.
+  The card's Right now line names the engine and its state, an alert
+  mark takes the right ear while macOS refuses every assertion, and when
+  Bartender, Ice, Hidden Bar, Vanilla, Dozer, Barbee, Tuck or SaneBar
+  runs beside it the card says so (live allowlists combine, so the other
+  manager un-hides what JR-Bar conceals) and offers Hand over or Quit.
+  The agent glance and the combined readout ride the icon's face as
+  segments, Control Center's items hide only behind a face that has
+  stood for 3 s, the combined popover carries the Bluetooth devices, Now
+  Playing and agents it hid, and Arrange stands down while macOS orders
+  the bar. Still to check by hand: the peek's gestures over a pinned
+  card, and a tile press opening a concealed app's menu with no added
+  delay.
+- ⌘⇧K is a palette for all of JR-Bar on Raycast's model rather than a
+  list of menu-bar items: glass, sectioned rows with real icons and
+  state tags, a footer naming Return and ⌘↩, a ⌘K action panel, and
+  ranking by the shared fuzzy matcher plus frecency (a four-day
+  half-life, kept in app-state.json), with Favorites (⇧⌘P) and Reset
+  Ranking. It reaches open asks (Approve ⌘↩, Deny ⌘D, and Reply… for an
+  ask that wants words, sharing the panel's draft), sessions with Snooze
+  For…, quiet presets, light scenes, LED brightness, the Screen Bar, the
+  Control Center strip, usage, the toys, every window and Settings page,
+  Why this light (⇧⌘C copies it), History and Data Hoarder transcripts
+  from three typed characters, and the frontmost app's own menus through
+  Accessibility (Raycast's Search Menu Items, capped at 800 items and
+  1.5 s). Typed arguments spell exact rows — "quiet 45m", "dim for 2h",
+  "brightness 40" — through a strict parser bounded at a day, so a held
+  digit key can no longer crash it. Menu-bar rows are one per app,
+  profiles save and rename by name and the layer the bar wears is tagged
+  Current, and with the utility off or handed to another manager ⌘⇧K
+  stays registered and lists one honest row that opens its settings.
+  Unclaimed ⌘ chords stay in the palette, so ⌘H no longer hides the
+  Screen Bar; slower sources search side by side; frecency records only
+  rows it ranks, so another app's menu titles never reach
+  app-state.json; and a verb's HUD line is only the toast that verb
+  raised.
+- ⌥⇥ and ⌘⇥ know where the agents are. The switcher runs apart from the
+  previews, with its own pick of JR-Bar, AltTab, Witch, Contexts,
+  DockDoor or Off (an upgrade leaves ⌥⇥ with whoever had it); it stamps
+  each window with the agent session it alone hosts and leads with a
+  needs-you lane — waiting windows first, longest wait first, ringed in
+  the provider's colour — so one ⌥⇥ lands on the blocked agent; `!`
+  narrows to them, and type-ahead also searches a session's label,
+  folder and provider. Hover moves the selection, type-ahead reads the
+  current keyboard layout, and a commit under a short query teaches it
+  where that query lands (Contexts' Fast Search). The strip stays live
+  while it is up, can list only this display, narrows to one app on the
+  backtick, reaches the exact window on another Space, and fills its
+  stills card by card with the Dock's badges. ⌘⇥ gains a search latch
+  (⌘/ or ⌘S; a click off it cancels), Witch's spring-loaded drill-in,
+  verb hints while ⌘ is held and ⌥⌘-arrow tiling, and ⌘W or ⌘Q on a live
+  agent's window needs a second press within two seconds. The key tap
+  runs on its own thread with a commit's Accessibility work off the main
+  thread, so a busy JR-Bar no longer delays typing on the Mac; it hands
+  events back unretained (it leaked one `CGEvent` per keystroke while ⌥⇥
+  was on); a quick tap whose release beats the strip still commits; and
+  an app that stops answering is skipped for ten seconds. Still to check
+  by hand: quick ⌥⇥ and ⌘⇥ taps and mixed modifier releases on the real
+  keyboard.
+- Dock previews are agent-aware and do more from the tile. Hovering a
+  terminal or editor names which window holds which Claude or Codex
+  session and what it is doing, rings a waiting one and answers its ask
+  in place, and × or Quit on an agent's window needs a second press. A
+  preview opens on your pick of a rest, a rest with ⌥, or a middle click
+  (DockDoor's trigger modes); opt-in, a scroll on an icon opens or hides
+  the app (HyperDock's classic), a click on the front app's icon
+  minimizes it, and ⌥` opens the front app's windows with no pointer at
+  all. The cards follow the app live, a spinning terminal title
+  refreshing them at most twice a second; a hovered card's still is
+  re-taken once it is five seconds old or its agent has moved on; an
+  opt-in live card streams the window under the pointer at eight frames
+  a second; ⌥-click raises a window and keeps the preview up; and a
+  walked card takes W, M, F and ⌥-arrows, with Space playing or pausing.
+  New presses the app's own New Window item instead of posting ⌘N, and
+  Tile To gains Center, Fill and Move To another display. ⌘-right-click
+  quick quit eats the click so Apple's Dock menu stays shut, only on a
+  running app's tile, confirms with a toast, and points at the force
+  chord when an app keeps running. Any app's Now Playing gets the player
+  row with a scrubber and the Shelf's synced lyric line; the Calendar
+  tile lists the rest of today and a Zoom, Teams, Webex or FaceTime tile
+  offers the next call's Join; Folder Pop is a grid you browse into, in
+  the tile's own Sort By with Quick Look faces; chips and document cards
+  go to the notch Shelf; and an app can be excluded from its own
+  preview, or before it ever runs. Still to check by hand: quick quit on
+  a real and on an auto-hidden Dock.
+- The panel and the Overview say what each run is on and what it cost. A
+  daemon `session_usage` command reads a session's own transcript for
+  its model, tokens, cache share, cost estimate and context, so a panel
+  row says "Opus 4.5" over a context hairline that turns amber and red
+  (claude-notch's and ClaudeCast's glance), and the Overview adds
+  sortable Model and Cost columns and fills Compare's Model, Tokens,
+  Cost, Context and Files changed rows. Typing with the panel open
+  narrows its rows, Raycast-style; a live row offers Notify When Done
+  and Quiet This Run, and a peer's row offers Screen Sharing. The
+  Overview shows each row's branch and worktree, leads the inspector
+  with the tools a run used (Agentic Radar moves under Advanced, only
+  for the row's own repository), compares a run with the previous one in
+  its folder, ends a working run's timeline on what it is doing now,
+  drills a heatmap day into that day's runs, and exports this run or
+  just the view on screen. The Agent Overview card groups by project
+  (AgentNotch's view) under a per-provider alert-rules table, where
+  Sounds or Asks off also silences the escalation chime. History is the
+  one view of the past: a row opens its timeline in place, an Events tab
+  carries Event Replay, search reaches what the transcripts said, a
+  failed session opens scrolled to its failure, and a cleaned-up
+  transcript falls back to the Data Hoarder's archived copy. The archive
+  exports a session as readable Markdown (SpecStory's move), places the
+  proxy's upstream requests between the turns they served, watches pi,
+  Gemini CLI and Grok sessions, and shows its capture health on the
+  Overview's connections strip.
+- The Usage Center catches up with CodexBar and ccusage. Each card adds
+  a verdict chip ("Runs out 16:42", "Resets first", "Holding"), a ghost
+  arc showing where the window lands at reset at this pace, the sessions
+  on this Mac burning the 5-hour window, By model bars (from
+  `usage_history`'s new per-model split), a ccusage-style By day table,
+  and a weekday-by-hour punch card with the current window outlined.
+  Pace is session-aware on every usage surface: with none of a
+  provider's agents working here a run-out verdict holds instead of
+  projecting, and with agents working the panel says whether there is
+  room for one more run before the reset. Percent mode on the usage
+  graph draws the 100% limit and marks the days an account hit it.
+  `session_usage` reads a line at a time inside a 1.5 s reply budget — a
+  cold read of this Mac's largest transcript went from +544 MB to about
+  6 MB — and answers `reading` rather than a partial total, while the
+  app backs off misses and keeps a bounded working set, so a panel
+  Approve never waits behind a usage scan.
+- Keep-awake is one lease you own, and JR-Bar says why the Mac is awake.
+  The daemon's `hold_awake` takes a duration, a local time ("until
+  8 AM", right across a daylight-saving night), until named agents
+  finish (twelve hours at most) or until turned off, optionally holding
+  the display; it survives a daemon restart, yields without ending to
+  the thermal governor and the low-battery floor, and a shut MacBook
+  sleeps when its hold drops (an unprivileged `pmset sleepnow`, only
+  with no external display holding clamshell mode). The notch's Awake
+  chip, `jrbar://awake`, the toggle links, the Shortcuts action and
+  `jrbar awake --until 8am` all drive that lease instead of a second
+  assertion: the chip reads "3 agents" while only the agents hold the
+  Mac and counts down a lease of yours, and the app's own assertion is
+  only the fallback while the daemon is away or predates the lease. The
+  panel gains one quiet line ("Awake · 42 min left", "Awake paused · too
+  warm") and the right ear its cup, Amphetamine's one state where the
+  eye already goes. A closed-lid stretch reports what finished and when
+  the Mac slept ("ran 2 h 40 m closed, 3 finished, slept at 02:14"), and
+  the low-battery warning can fire by time left, twice as early while
+  agents run on battery under a hold. The daemon also publishes the full
+  battery reading, an agent runway, a charger too weak to carry the run,
+  and which session is spending the battery (`session_energy`); nothing
+  in the app shows those yet. Still to check by hand: a held run with
+  the lid shut on the real clamshell.
+- A call quiets JR-Bar with no Focus and no Full Disk Access, the way
+  Luxafor and Kuando go quiet. The app reports a live microphone or
+  camera to the daemon's new `presence` command — renewed each minute,
+  standing three minutes so a crashed app cannot leave the Mac quiet —
+  whether or not the island is drawn, and a call takes the sounds
+  (lights and banners stay), holds the escalation ladder at the light,
+  holds celebrations and hushes the toys. A live mic now means another
+  app capturing input from a real device, read per process, so music
+  through AirPods, a system-audio visualizer and JR-Bar's own tap no
+  longer count; the notch's orange dot, the menu bar's mic trigger and
+  the Sounds page's "Quiet while the microphone is live" all share that
+  read, and JR-Bar's own Mirror is not a call. The Dot's picker offers
+  the Call light, a steady busylight red during a call and the asks
+  beacon between, and a shut lid's beacon Dot reads as the rule working
+  rather than "not picked up yet". The daemon can also take a locked
+  screen or long idle for an away quiet (Lolgato's lights-off), a Focus
+  reading and a meeting's end, but the app sends only the mic and camera
+  so far. Still to check by hand: a FaceTime or Zoom call reported
+  within about 3 s, and no call blip when the Mirror closes.
+- JR-Bar can be driven from outside its own windows. The Control Center
+  strip is one app-level state that the cards, keys, links and Shortcuts
+  all flip, holding at most one keep-awake; it gains One Switch's Mic,
+  Eject (never a SidePulse strip) and Sleep chips, a Lock chip that
+  reads the real password delay, a Dock chip that flips the running Dock
+  through CoreDock rather than restarting it, and Dark and Mute chips
+  that follow changes made elsewhere. One hotkey registry checks every
+  chord against everything JR-Bar holds before Carbon is asked, and
+  Settings › Shortcuts lists every key with a Raycast-style recorder
+  that refuses bare keys, ⌘ alone and the system's own chords and offers
+  to move a clash. `jrbar://` links and bindable keys cover the panel,
+  Settings pages, every chip, keep awake and quiet for a length or until
+  a time, deep work, the Screen Bar, confetti, the menu bar's reveals, a
+  session, the waiting ask and the shelf; a link parses whole or is
+  refused whole, and none answers an ask or rewrites the curated bar.
+  App Intents cover the main verbs for Shortcuts, though Shortcuts lists
+  them only once the bundle is built with Xcode (an Open URLs action
+  with a link works meanwhile). The CLI drives the running monitor —
+  `jrbar status`, `quiet`, `snooze`, `set`, `get`, `toggle`, `awake`,
+  `open`, `deepwork` and `confetti` — and Settings › Shortcuts links
+  `~/.local/bin/jrbar` to the bundled CLI. Deep work holds an asks-only
+  quiet for 25 minutes and ends with one line on what the agents did
+  meanwhile, One Switch's Pomodoro with a report.
+- Settings finds and explains itself. ⌘F searches every titled row,
+  page, shortcut and chip from the sidebar, with a test that fails the
+  moment a listed row stops being drawn. A Sounds page picks the sound
+  for each moment (a run finishes, an agent asks, a run fails, a usage
+  window fills, an ask is ignored) from the system's sounds and
+  ~/Library/Sounds, previews it, sets one volume, and can route every
+  sound to macOS's alert device instead of the headphones. Setup names
+  every grant JR-Bar can need — Automation, Location for Wi-Fi rules to
+  see a network's name, and the closed-lid helper included — and a grant
+  an OS update took away is named once after launch. Advanced › Report ›
+  Copy diagnostics puts one redacted block on the pasteboard, the app's
+  and the monitor's builds side by side with a mismatch said out loud,
+  and Advanced › Transfer exports every preference to one file and
+  imports what you tick, each monitor key validated on its own and an
+  imported shortcut held to the recorder's rules. Sparkle's scheduled
+  finds become a quiet "JR-Bar N is ready" on the panel instead of a
+  window over your work, a second installed copy is named once, and
+  every build carries a monotonic `CFBundleVersion` (the history's
+  commit count), shown as "0.9.9 (build 1801, 1800c0a)", so Sparkle can
+  order two builds of one release.
+- The toys read the work. Each Aquarium fish swims to a station for what
+  its agent is doing — a read forages the kelp, an edit noses the
+  stones, a test laps the wreck and bubbles green or red — earns a mark
+  from its session's real work (a tide stripe after two hours, star
+  specks for six sub-agents at once), and keeps a logbook once resident;
+  achievements count a clean week, a window reset under 80% and a school
+  of six sub-agents; the water cools as quota runs low, hazes while a
+  failure sits unreviewed and takes a warm shaft on a reset; "Follow the
+  sun" uses the time zone's own city, with no location permission; and
+  the tank can live on a chosen display as a click-through wallpaper or
+  fill free screens as an idle screensaver with a quiet clock, the saver
+  taking the key that wakes it so a Return never reaches a hidden
+  prompt. The Notch Buddy walks at the pace the agents work their tools
+  (RunCat's meter), grows from hatchling to elder on finished work,
+  takes the odd calm walk along a window's top edge, wears what the
+  tank's pearls buy, keeps a pal card of its real history, pulls on its
+  nightcap as the lid comes down, wears the Screen Bar's colour instead
+  of lighting a seam LED, and redraws at 30 fps only while something
+  moves. Fold stands down on a locked screen, folds the wallpaper when
+  Screen Recording is missing, has a Try it button, and offers an
+  optional hinge voice paced by the lid's speed. Confetti minds the
+  room — held through quiet, a Focus or a call and kept off full-screen
+  screens — fires on odometer milestones (opt-in) and from
+  `jrbar confetti` or `jrbar://confetti?provider=`, and each toy's card
+  says what it costs, measured. Still to check by hand: the screensaver
+  with a permission prompt behind it.
+- Daemon and hooks: a Claude turn that dies on an API error
+  (StopFailure) fails with the API's own text instead of going green,
+  SubagentStart shows a worker's row when it starts, and an MCP
+  elicitation or Claude's dialog notifications are asks of a new dialog
+  kind that is never offered an in-place answer; the installer writes
+  the new entries on the next reinstall. A session younger than the
+  ten-second process-table cache is found by a fresh read, so a
+  just-started agent records its terminal and opens. The lid reads null
+  while nothing watches it, so a lid opened after a run no longer keeps
+  the Dot as the asks beacon; a stale presence report stops re-arming
+  its expiry every second; a device that keeps failing broadcasts once
+  rather than at every ten-second retry; a restart that has not yet read
+  the sessions keeps an agents lease; a replaced or cancelled lease
+  sends no power event; and `list_cues` and `set_cue` give each ambient
+  cue a switch. `snooze` takes `scope: "run"` to quiet one row rather
+  than its family (a family snooze in force is never traded away), and
+  the panel's Quiet This Run sends exactly that.
+- Tests and CI: the suites no longer depend on the machine they run on —
+  the Codex trust-refresh and app-server tests name fixture binaries,
+  the pill entrance and crossfade tests pin Reduce Motion instead of
+  reading it, the PyObjC silhouette test renders at 1x and 2x (the
+  one-pixel bright rim it caught along the classic body's bottom fillets
+  is gone), and the CI job prints the runner facts tests stub — ending
+  five days of failures only GitHub's runner saw. No test opens the real
+  aquarium save any more. Timing tests are deterministic: the notch's
+  capsule line, the Dock's live-list settle and the shelf drag's leave
+  fold run on seams the tests step by hand (a wedged queue now fails in
+  0.3 s instead of waiting out a minute), the decide lane's end-to-end
+  tests wait on signals, and the remaining deadline polls take one more
+  look past their deadline and count turns as well as seconds, so a main
+  thread stalled by a parallel suite no longer fails a claim that was
+  next in line.
 - The menu-bar icon lives on the right again, flush left of Wi-Fi
   like any other status item. Measured on the notarized build: under
   the concealer macOS never draws JR-Bar's own item (the menu bar is
