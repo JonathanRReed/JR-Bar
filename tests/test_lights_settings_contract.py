@@ -142,7 +142,7 @@ def test_focus_dim_rules_survive_only_as_a_whole_object(tmp_path: Path) -> None:
 
 
 def test_ambient_marks_land_only_as_one_object(tmp_path: Path) -> None:
-    # Settings › Auto-dim writes the three ambient marks as one
+    # Settings > Auto-dim writes the three ambient marks as one
     # ``auto_dim.ambient`` object ("Use current light", "Use it"): the
     # loader resets a floor/ceiling pair whose ceiling is not above its
     # floor, which two separate writes can pass through on the way.
