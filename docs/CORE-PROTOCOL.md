@@ -91,7 +91,9 @@ protocol 1. Timestamps are Unix epoch seconds.
  ],
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
-          "answerable":true,"replyable":false,"request":"request:v1:{…}"}],
+          "answerable":true,"replyable":false,"request":"request:v1:{…}",
+          "decision":{"hold_until":1788982845.0,"always":false,"decided":false,"choices":[]},
+          "preview":"rm -rf build","risk":"destructive"}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
             {"id":"screen-bar","kind":"screen_bar","name":"Screen Bar","leds":8,"enabled":true,"brightness":100,"linked":true,"error":null}],
@@ -206,11 +208,12 @@ Vocabulary:
   to this session -- the provider's negotiated contract declares the
   `answering` capability, the invocation binds the reviewed local surface,
   a handler is registered, AND the session's host can satisfy the delivery
-  fence's exact focused-tab proof (only Terminal.app and iTerm2 name their
-  focused tab's tty). A provider that only declares `actionable_requests`
-  resolves to `false`, and so does a session hosted anywhere else -- a
-  Ghostty window, an IDE panel, an unresolved or remote host -- so the
-  button is never offered for what the daemon could only refuse.
+  fence's exact focused-tab proof (Terminal.app and iTerm2 name their
+  focused tab's tty; Ghostty names its focused terminal, which must be the
+  one recorded when the session started). A provider that only declares `actionable_requests`
+  resolves to `false`, and so does a session hosted anywhere else -- kitty,
+  WezTerm, an IDE panel, an unresolved or remote host -- so the button is
+  never offered for what the daemon could only refuse.
   `replyable` is the narrower "this ask takes free text" (`input` asks
   only). Both are `false` on a remote row's ask. `request` is the
   episode's canonical identity — `request:v1:{…}` from the request key —
@@ -219,6 +222,34 @@ Vocabulary:
   daemon refuses `stale_request` when the live request has moved on;
   `asks` itself is ordered by `opened_at` so a provider re-emitting a
   pending prompt never shuffles a card out from under the pointer.
+- `ask.decision` is non-null while the decide lane holds the request: the
+  agent's own `PermissionRequest` hook ran as `jrbar-hook --decide` and is
+  waiting on JR-Bar for a verdict (see "The decide lane" under
+  `answer_ask`). Such an ask is `answerable` whatever hosts the session --
+  Ghostty, an IDE panel, a headless run -- because an answer is the hook's
+  own reply and nothing is typed. `hold_until` is the epoch at which the
+  hold lapses and the agent's own prompt carries on; `always` says an
+  Always allow can be sent (Claude, when its `permission_suggestions`
+  carry an allow rule); `decided` is true for the few seconds after an
+  answer, while the provider's events catch up. `preview` is one bounded
+  line of what the agent wants to run (the command, the file, the URL,
+  `server · tool` for MCP; token-shaped runs masked) and `risk` is
+  `"destructive"` when a shell command matches a pattern that loses work
+  if it runs by mistake (`rm -r`, `sudo`, a forced push, `reset --hard`,
+  `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
+  ask the lane does not hold; `preview` and `risk` still come from the
+  `PermissionRequest` the ingress saw for that exact request id (Claude,
+  Codex, Devin, Grok, OpenCode, pi; remembered for an hour), and are `null`
+  when there was none.
+- `ask.decision.choices` is non-empty while the lane holds a Claude
+  `AskUserQuestion`: `[{question, header, options: [label…], multi}]`, one
+  entry per question in the agent's order (1–4 questions, 1–8 distinct
+  labels each). Such an ask is answered by picking --
+  `answer_ask {decision: "answer", answers: {<question>: <label>}}`, a list
+  of labels for a `multi` question -- from any terminal. Its `answerable`
+  and `replyable` stay what the keystroke path can do, since a bare
+  Approve never answers a question. `preview` is the first question's text
+  (`+N` for more). `choices` is `[]` for a yes/no hold.
 - `pid` is the process registry's live pid for that session (absent when
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
@@ -837,12 +868,15 @@ line the controller writes, mirrored. Bounded to 2000 characters a line.
 Commands are parsed on the socket thread and run on the AppKit main thread
 (`performSelectorOnMainThread`), one at a time, in order per client;
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
-Codex trust handshake can take seconds. Unknown args are ignored.
+Codex trust handshake can take seconds, and so do `open_session` and
+`resume_session`, whose osascript and tmux calls can wait on a first
+Automation consent prompt (the controller state they read still hops to
+the main thread). Unknown args are ignored.
 
 | name | args | effect / result |
 | --- | --- | --- |
-| `open_session` | session, action? | The controller's `open_session` (terminal launch or provider URL, honouring the session-open preference). `{session, activated, origin}`. |
-| `answer_ask` | session, decision (`approve`/`deny`), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | Answers the session's live request **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- Ghostty, kitty, WezTerm, Alacritty have no such call) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is always `focused_tab_tty` (the terminal named the focused tab and it is this session's). See the refusals below. |
+| `open_session` | session, action? | A session still running in a terminal is **raised, not resumed** (`answer_surfaces.py`): its tmux pane (`list-panes -a` matched by the session's tty, then `select-window`/`select-pane`, switching a lone client to that tmux session), its Terminal.app or iTerm2 tab (selected by tty over Apple events), or its Ghostty terminal (`focus` on the surface recorded when the session started, else the only terminal in the session's working directory, else the only one whose title carries the session's name; a tie brings Ghostty forward and never guesses); any other host app is activated. Reply `{session, activated, origin, raised: "pane"\|"tab"\|"terminal"\|"app", app, bundle_id, detail}`. Opening also lets a request the decide lane holds for that session fall through, so a Codex prompt waiting behind the hook appears at once. A live session JR-Bar cannot find refuses `not_found` ("…still running, but JR-Bar can't find its window; nothing new was started.") instead of starting a second process on it. An ended CLI session whose open is a terminal resume resumes **in the terminal it ran in** (recorded at its SessionStart), not whichever app is in front: a new tab in Ghostty's front window at the session's directory with the resume command typed into the owner's own shell (a new window through the reviewed launch plan when Ghostty refuses the Apple event), or a new Terminal.app / iTerm2 window -- `raised: "new_tab"\|"new_window"`, `detail: "resumed"`. A remote row, a session hosted by its provider's desktop app, an explicit `action` of `app`/`vscode`, or a Clicks-open / provider-profile choice of either keeps the controller's `open_session` (provider URL, or `cd <cwd> && <cli> --resume <id>` in a terminal): `{session, activated, origin}`. `action: "raise"` asks for the live path explicitly. |
+| `answer_ask` | session, decision (`approve`/`deny`, or `always` for a held request that offers it, or `answer` for a held question), answers (with `answer` only: `{<question text>: <label>}` for every question in `ask.decision.choices`, a list of labels for a `multi` one), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | A request the decide lane holds (`ask.decision` non-null) is answered first, through the agent's own `PermissionRequest` hook: `{session, decision, answered, delivered, code: "sent", message, confirmation: "provider_pending", mechanism: "permission_hook"}` -- see "The decide lane" below. Anything else is answered **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- kitty, WezTerm, Alacritty have no such call; Ghostty proves its focused terminal by it being the surface recorded at the session's SessionStart, and a session with no recorded surface stays unproven -- the only terminal in the session's directory is not proof, since a plain shell the owner opened there looks the same) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is `focused_tab_tty` (the terminal named the focused tab and it is this session's) or, in Ghostty, `recorded_surface` (its focused terminal is the one the session started in, still in the session's directory). See the refusals below. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
@@ -888,6 +922,10 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `audit_export` | scope (roster scopes), provider?, parent?, since?, format (`json`/`markdown`), path? | The redacted audit bundle over the SAME `list_roster`/`list_history` projections the surfaces show: `{format, document{t:"audit_export", schema, core_version, generated_at, scope, counts, coverage, gaps[], sessions[], activity[], pricing?, redaction, audit_only}}` — sessions/activity rows are the projected fields only (no raw provider payloads), with the home prefix collapsed to `~` and secret-shaped runs (≥24 unseparated chars) replaced by `[redacted]`. `gaps[]` names what is missing: no collector snapshot, ledger rows past the `since` cut, a usage scan still pending. `pricing` is the cached per-provider usage coverage (`records`, `estimated_records`, `unpriced_records`, `unpriced_models`, `pending`/`stale` flags over the 30d range) — the export never blocks on a cold scan. `format: "markdown"` adds `text` (the rendered report). `path` writes the bundle through `write_private_export` to a user-picked destination (`written{path, bytes}` in the reply); without it the document returns for preview. An application audit, not a compliance record. `invalid_value` for an unknown scope. |
 | `replay_events` | after?, limit? (default 500, capped at the journal size) | The event stream's resumable suffix. `after` is a `cursor` from an `event` frame or `hello`; omitting it replays the whole retained journal. Replies `{t:"events", stream, retained, dropped, events[], cursor, has_more, resync_required}` — `events` are the exact journaled frames in order, `cursor` is the last one returned, `has_more` means the page cut before the tail (call again with that `cursor`). A cursor from another stream incarnation answers `resync_required: true, reason: "foreign_stream"`; one the bounded journal already evicted answers `reason: "cursor_expired"` — never a fabricated empty catch-up. `retained`/`dropped` are the journal's coverage/gap counters. `unsupported` when the core cannot replay. |
 | `dismiss_session` | session | Acknowledges one live or stuck row until it next speaks — the same receipt `clear_completed` writes, aimed at a single session the batch clear would never touch; the row leaves `sessions` now and returns the moment a newer event lands. `not_found` for an unknown session, `refused` for a `remote:` row (the peer's to manage) or a session with an open ask (the ask is the point). |
+| `new_session` | provider, cwd, terminal? | Starts that agent's CLI (`claude`, `codex`, `devin`, `grok`, `cursor-agent`, `hermes`) in `cwd`, in the owner's own terminal: `terminal` (`com.mitchellh.ghostty`, `com.apple.Terminal`, `com.googlecode.iterm2`) when named, else the terminal the most recent recorded session ran in, else Ghostty when installed, else Terminal.app. Ghostty gets a new tab in its front window at `cwd` with the command typed into the owner's shell (a new window through the reviewed launch plan when it refuses the Apple event); Terminal.app and iTerm2 a new window. `{provider, cwd, raised: "new_tab"\|"new_window", app, bundle_id}`. `invalid_args` for an unknown agent, a relative path or an unreviewed terminal; `not_found` for a directory that does not exist; `unsupported` when the terminal could not be opened. Explicit only -- the Overview's "New session here"; the agent's first prompt is still the owner's to type. |
+| `resume_session` | session, terminal? | History's Resume, by agent id (`list_history` rows carry it). A session `sessions` still lists opens exactly as `open_session` would. One it no longer lists is found in the process registry, which knows its directory: ended, it resumes in the terminal named by `terminal` (`com.mitchellh.ghostty`, `com.apple.Terminal` or `com.googlecode.iterm2`), else **in the terminal it ran in** (recorded at its SessionStart), else the terminal of the owner's most recent session, else Ghostty when installed -- as a new Ghostty tab at the session's directory with the resume typed into the owner's own shell, or a new Terminal.app / iTerm2 window: `{session, provider, cwd, raised: "new_tab"\|"new_window", app, bundle_id, detail: "resumed"}`. Still running (cleared from the list, not ended), its own tab, pane or Ghostty terminal is raised instead -- `raised: "pane"\|"tab"\|"terminal"\|"app"` -- and one JR-Bar cannot find refuses `not_found` ("…nothing new was started."): a second process on a live session is never started. `not_found` also for no registry record or a directory that is gone; `unsupported` for a remote row, a worker, or an agent JR-Bar cannot resume (Claude, Codex, Devin, Grok, Cursor, Hermes CLIs only); `invalid_args` for another `terminal`. Explicit only. |
+| `hooks_doctor` | | `jrbar hooks doctor` as data, for a per-provider line in Settings › Agents: `{checked_at, state_dir, shim, shim_env, ingress_socket{path, answers}, core_socket{path, answers}, pending[{file, lines}], providers[{provider, label, config_path, installed, hook_events, registered[], registered_commands[], would_install, would_install_command, last_event_at, pending_lines, decide?}]}`. `last_event_at` is the provider's event log's modification time (when a hook last reached the daemon), `pending_lines` the payloads queued for it while the daemon was down, `decide` (Claude and Codex only) `installed`/`missing`/`not_installed` for the decide lane. Content free: paths, command shapes, counts and times. Repair is `install_hooks`. |
+| `session_in_front` | session | Whether the owner is looking at that session's own tab, pane or Ghostty terminal right now, for "Quiet while you watch" (every Ghostty window is one process, so the app alone cannot tell a background tab from the one in front): `{session, in_front, evidence, app}`. `in_front` is `true` only on proof -- `focused_tab_tty` (Terminal.app / iTerm2 named the focused tab and it is the session's), or `recorded_surface` (Ghostty's focused terminal is the one recorded at the session's SessionStart, still in the session's directory -- the process's, or the one it started in; being the only terminal in that directory is never enough); `false` for `other_app`, `other_tab` or `other_surface` (the focused Ghostty terminal is in another directory, or the recorded one is open and something else is focused); `null` when it cannot be told -- `tmux_unproven` (the terminal around a tmux pane is not the session's ancestor), `tab_unproven` (kitty, WezTerm, an IDE: the app is in front, the tab unknown), `automation_not_granted` (macOS has not yet allowed JR-Bar's Apple events to that terminal; this command never asks), `focused_tab_unproven`, `focused_surface_unproven`, `ownership_unproven`, `not_running`, `remote`. Nothing is raised, typed or prompted. A surface reads `null` as "keep its own rule". |
 | `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}], memory, performance}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). `performance` is `{metrics{name: {count, p50_ms, p95_ms, max_ms, outcomes}}}` (the `PerformanceRegistry` timings the legacy Why panel renders), `cpu{user_s, system_s, percent_since_last}` (rusage deltas between doctor calls; `percent_since_last` is `null` on the first), and `frames{state_generation, lights_generation, state_per_minute, lights_per_minute}` (documents actually broadcast, counted over a rolling 60 s window). `jrbar doctor` appends these as a `performance:` section when a daemon answers (its `--socket` selects another daemon); `--json` carries it under `daemon.performance`. |
 | `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records, unpriced_records, unpriced_models[]}`. `tokens_in` counts input plus cache writes. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. `unpriced_records`/`unpriced_models` are the other failure: counted records whose model has no quote at all (a provider with no price table and no reference rate) — their tokens are in the rows, the $0 they contribute is a real absence rather than a price, and they are never blended into `estimated`. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
 | `usage_graph` | days? (`7`/`30`/`90`/`365`), metric? (`tokens`/`cost`/`sessions`/`percent`), providers? (nonempty list of registry ids) | The shared-axis multi-provider usage chart — the same local-transcript scan `usage_history` runs, assembled by `usage_graph_worker.usage_graph_document` into `{graph, summary}`. `graph` is `{days, period_label, metric, labels[] (strided "MM/DD", empty slots draw no tick), series[{provider_id, values[], source_instance_id?, identity?, label?}], scale_max, heatmap, providers[], partial_provider_ids[], cost_semantics?}` — `values` and `labels` are index-aligned one slot per calendar day, and a series value `< 0` is a gap day (before the provider had samples): the client must break the line there, not bridge it. Percent mode emits one series per (provider, source instance): two rows can share `provider_id`, so chart identity must carry `source_instance_id` (`label` is the daemon's display name, `provider · instance` for a non-default instance) — keying on `provider_id` alone merges them into a fabricated single line. `providers` echoes the resolved request so a picker can tell unchecked from checked-but-empty. `heatmap` is the JSON-projected day grid `{days[] (ISO), providers{id: {provider_id, cells[{day, tokens, sessions, intensity 0–4, color, accessibility_label}], totals{tokens, sessions}, data_status}}, aggregate, timezone}` — the same GitHub-style calendar the old Settings window drew. `summary` is the scan's own sentence ("Last 30 days: Claude 12.3M · 45 sessions") including its `Partial local history:` and `API-equivalent estimate` disclosures — the client shows it verbatim rather than recomputing. All three args are per-request overrides: absent means the stored `usage_graph_*` settings, and nothing the pane picks is written back. Invalid overrides are `invalid_args`, never a silent substitution. The scan is heavy on a cold transcript cache (~30 s): the command runs on the client's socket thread at utility QoS, so the reply can take that long — clients should pass a long timeout and show a scanning state. |
@@ -904,7 +942,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
 | `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
-| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Control Center (⌘K)."; `input_check` while input check is on. |
+| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask the decide lane holds -- in any terminal, frontmost or not -- or a live ask whose terminal or origin app is frontmost, the press approves it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Control Center (⌘K)."; `input_check` while input check is on. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
 | `deck_bank` | delta | Steps the bank, wrapping. `{index, count}`. |
 | `deck_scope` | delta | Steps the board scope through `automatic` plus the configured provider scopes, wrapping (what the `next_scope` / `previous_scope` aux actions run). `{scope, scopes}`. |
@@ -959,8 +997,8 @@ can still refuse.
 | `not_found` | the daemon's canonical state has no live request for that session | `no live ask for that session` |
 | `unsupported` | the provider's contract does not declare `answering`, or the answer controller would not accept the action (a typed reply, an already-sending attempt) | `this ask cannot be answered from here` |
 | `stale_ask` | the request left the live phase between the command and the keystroke -- answered in the terminal, timed out, superseded -- or the delivery overran `answer_local.DELIVERY_BUDGET_SECONDS` (4 s). Re-checked immediately before the key is posted, so a resolved ask never leaves a keystroke pending. | reason `resolved_elsewhere`, `resolved_while_sending`, `budget_exceeded`, `not_in_canonical_state` |
-| `session_gone` | the session's process is not running, or the daemon has no row for it | reason `no_live_process`, `no_session_row` |
-| `not_frontmost` | the window in front is not this session's. Reasons: `no_frontmost_app`; `unknown_host` (JR-Bar cannot say which app hosts the session); `frontmost_is:<bundle id>`; `other_window` (the frontmost application's process is not the one the session descends from); `other_tab:<tty>` (Terminal.app / iTerm2 named a focused tab that is not this session's). | the sentence plus the reason |
+| `session_gone` | the session's process is not running, or the daemon has no row for it, or it is stopped (Ctrl-Z) so its terminal is showing the shell | reason `no_live_process`, `no_session_row`, `process_stopped` |
+| `not_frontmost` | the window in front is not this session's. Reasons: `no_frontmost_app`; `unknown_host` (JR-Bar cannot say which app hosts the session); `frontmost_is:<bundle id>`; `other_window` (the frontmost application's process is not the one the session descends from); `other_tab:<tty>` (Terminal.app / iTerm2 named a focused tab that is not this session's); `other_surface` (Ghostty's focused terminal is in another directory than the session's process). Ghostty names no tty: its proof is the focused terminal of its front window being the surface recorded when the session started, still in the session's directory (`window_evidence: "recorded_surface"`); with no recorded surface -- or a recorded one Ghostty no longer lists -- it refuses `focused_tab_unproven`, however few terminals share the directory, since an agent that moves itself into a worktree leaves a plain shell there looking like its own. With `only_if_frontmost: false` the session's own tab (by tty), tmux pane or Ghostty terminal is raised first (`answer_surfaces.raise_for_answer`), then the app. | the sentence plus the reason |
 | `accessibility_required` | `AXIsProcessTrusted()` is false, so a posted key would silently go nowhere | `JR-Bar cannot answer this ask until macOS lets it send the keystroke. Turn on System Settings > Privacy & Security > Accessibility > <row>.` The row is the daemon's own bundle name -- `jrbar-core` on an installed deployment, since the helper is a separate TCC client from JR-Bar.app. |
 | `send_failed` | macOS refused to build or deliver the event | the failure's name |
 | `busy` | the answer worker did not finish inside `ANSWER_REPLY_BUDGET_SECONDS` (6 s) | `answering did not finish in time` |
@@ -968,6 +1006,58 @@ can still refuse.
 The same surface backs the panel's Approve/Deny, the notification actions and a
 Creator Micro session key, so a refusal reads identically wherever it happens;
 the panel shows the refusal's own sentence rather than an exception name.
+
+### The decide lane
+
+Claude Code and Codex run a `PermissionRequest` hook when they are about to
+ask for approval, and take the hook's stdout as the answer (both vendors'
+hook references, checked 2026-09-22). JR-Bar installs that one hook as
+`jrbar-hook … --decide` with a 60 s timeout (Codex's entry also carries
+`statusMessage = "Waiting for an answer in JR-Bar"`); every other event keeps
+the plain shim and its 250 ms budget. The daemon (`answer_decisions.py`)
+parks the request before it queues the payload and holds it for up to 45 s.
+`answer_ask` on a held request replies to the hook instead of typing, so it
+needs no frontmost window, no focused-tab proof and no Accessibility grant,
+and it works from every surface that sends `answer_ask` -- the panel, a
+banner action, the notch, a deck key or the Rail:
+
+| decision | verdict the hook prints |
+| --- | --- |
+| `approve` | `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` |
+| `deny` | `{"behavior":"deny","message":"The user denied this tool call from JR-Bar."}` -- plus `"interrupt":true` for Claude, which stops the turn the way Esc on its own prompt does. Codex takes no `interrupt`. |
+| `always` | Claude only, and only when `ask.decision.always`: `{"behavior":"allow","updatedPermissions":[…]}` with the request's own `addRules`/`allow` suggestions copied field by field. Mode changes and directory grants are never echoed. Anything else refuses `unsupported`. |
+| `answer` | Claude's `AskUserQuestion` only, and only when `ask.decision.choices` is non-empty: `{"behavior":"allow","updatedInput":{…the agent's own input…,"answers":{"<question>":"<label>"}}}` -- the documented way to answer the tool from a hook. A `multi` question's labels are joined with `", "` in the agent's own option order. `answers` must name every question exactly and pick only offered labels, or it refuses `invalid_args` before anything is sent. |
+
+Only an explicit `answer_ask` decides. The hold ends without a verdict --
+the shim prints nothing, which both agents read as "no decision", so their
+own prompt carries on -- when it lapses, when the agent ran the tool (the
+matching `PostToolUse`) or the turn moved on (`Stop`, `StopFailure`,
+`UserPromptSubmit`, `SessionEnd`, `Interrupt`), when the hook process is
+gone, when `open_session` opens the session to answer it there, or when the
+daemon stops. Claude Code shows its own prompt while the hook runs and takes
+whichever answer comes first, so a hold costs it nothing; Codex asks its
+hooks before it shows the prompt, so a Codex request is not held while its
+terminal is the frontmost app, and a held one is let go within a second of
+its terminal coming to the front, so the owner who switched there to answer
+sees the prompt. `ExitPlanMode` is never held: its answer is
+a plan, not a yes. Claude's `AskUserQuestion` is held as a choice when every
+question and option can be offered exactly (1–4 questions with distinct
+texts, 1–8 distinct printable labels each, no comma in a multi-select
+label, the input under 24 KiB); anything else keeps the agent's own
+prompt. On a held question `approve` and `always` are never sent -- a bare
+allow would run it with no answer -- so `approve` takes the keystroke path
+it always had, and `deny` declines it like Esc. The question's request id
+ignores `answers`, so the `PostToolUse` of a question answered in its own
+prompt releases the hold. At most 16 requests are held at once; past that
+they fall through.
+
+Refusals on a held request: `stale_request` (the card's `request` is not the
+live one), `stale_ask` ("That ask was already answered from JR-Bar.", "JR-Bar's
+hold on that ask lapsed; …", "The agent stopped waiting for JR-Bar; …"),
+`unsupported` (an `always` with nothing to remember, an `answer` on an ask
+with no `choices` or with nothing held) and `invalid_args` (`answers` that
+do not pick from the offered options for every question). A request the lane
+does not hold goes through the checks above unchanged.
 
 ### subscribe
 Optional; protocol 1 always sends everything. Reserved.
@@ -1017,6 +1107,34 @@ For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
 contracts require (`--emit-empty-json` forces it for any provider);
 otherwise it prints nothing.
 
+`--decide` (the decide lane, installed only on Claude's and Codex's
+`PermissionRequest`) adds `"decide_ms":50000` to the header. Delivery and
+spooling are unchanged and keep the 250 ms budget; the shim then keeps
+reading for up to 50 s after its payload arrived. The daemon replies with
+the disposition line and, when a click decides, one more line -- the
+verdict document -- and closes the connection; the shim prints that line
+only if it is whole, follows `accepted` and opens a
+`{"hookSpecificOutput":` document (64 KiB cap). A lapsed or released hold,
+a daemon that is down, or any other reply prints nothing. `python -m
+jrbar.hook_client --decide` does the same when no shim is built. A parked
+connection hands its worker slot back before it waits, so held requests
+never starve ordinary hooks of the ingress's eight connection slots.
+
+A `SessionStart` from the shim also records where the session started, for
+`open_session`, in `<state>/session-surfaces.json` (0600, 256 sessions, 14
+days), on its own thread: the terminal app its ancestry reaches (from the
+process table -- no permission involved; a provider's desktop app and tmux
+are not recorded), and in Ghostty the exact terminal surface -- when Ghostty
+is frontmost, macOS already allows the daemon to send Ghostty Apple events
+(`AEDeterminePermissionToAutomateTarget` with `askUserIfNeeded` false:
+starting an agent never raises a permission prompt), and the focused
+terminal of its front window is in the session's directory. Every start
+the owner makes (`source` `startup`, `resume`, `clear`, `fork`, or none)
+replaces the record, and one that cannot place the session forgets the old
+surface, so a session resumed elsewhere is never raised -- or proven -- in
+the terminal it left. A `compact` start, which fires on auto-compaction with
+whatever terminal the owner is reading in front, keeps the record it finds.
+
 `install.hook_command_arguments` registers the shim when `JRBAR_HOOK_EXEC`
 names one (an empty value disables it), when a bundled copy sits beside a
 frozen executable, or when a source checkout has built
@@ -1035,7 +1153,10 @@ written. `jrbar hooks doctor` shows, per provider, the command registered
 today (read from JSON and TOML configs, folded YAML, the argv arrays
 embedded in handlers, and the Antigravity envelope) and the one an
 install would write, the shim path, whether the ingress and core sockets
-answer, and any queued payloads.
+answer, and any queued payloads; for Claude and Codex it also says whether
+the decide lane is installed (`decide=installed|missing|not_installed`).
+An install from before the lane existed keeps working and reads `missing`
+until Settings › Agents reinstalls the hooks.
 
 ### Pi and Gemini CLI
 

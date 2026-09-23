@@ -90,6 +90,16 @@ LEGACY_MANAGED_END = "# <<< agent-monitor hooks <<<"
 MANAGED_MARKERS = frozenset({MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END})
 BACKUP_MAX_FILES = 5
 MAX_CONFIG_BYTES = 1024 * 1024
+# The decide lane (answer_decisions.py): Claude's and Codex's
+# PermissionRequest hook runs the shim as ``--decide`` so an Approve or Deny
+# from any JR-Bar surface is the hook's own verdict. The entry's timeout is
+# longer than the shim's 50 s wait, so the agent never cancels a hook
+# mid-read and throws a verdict away; every other event keeps the default.
+DECIDE_HOOK_EVENTS: Final = frozenset({"PermissionRequest"})
+DECIDE_HOOK_TIMEOUT_SECONDS: Final = 60
+# Codex asks its hooks BEFORE it shows its approval prompt, so while the
+# request is held the terminal says where the answer is expected.
+CODEX_DECIDE_STATUS_MESSAGE: Final = "Waiting for an answer in JR-Bar"
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,13 +551,21 @@ def install_claude_hooks(
     original = json.dumps(data, sort_keys=True)
     hooks = _strict_hooks_object(data, path=config)
     command = hook_command("claude", target_log, python_executable)
+    decide_command = decide_hook_command("claude", target_log, python_executable)
 
     for event_name in CLAUDE_EVENTS:
         entries = hooks.get(event_name, [])
         if not isinstance(entries, list):
             raise ValueError(f"Expected hooks.{event_name} array in {config}")
         cleaned = remove_claude_hooks_for_log(entries, target_log)
-        cleaned.append({"matcher": "*", "hooks": [{"type": "command", "command": command}]})
+        handler: dict[str, Any] = {"type": "command", "command": command}
+        if event_name in DECIDE_HOOK_EVENTS and decide_command != command:
+            handler = {
+                "type": "command",
+                "command": decide_command,
+                "timeout": DECIDE_HOOK_TIMEOUT_SECONDS,
+            }
+        cleaned.append({"matcher": "*", "hooks": [handler]})
         hooks[event_name] = cleaned
 
     changed = json.dumps(data, sort_keys=True) != original
@@ -1474,6 +1492,32 @@ def hook_command_arguments(
     ]
 
 
+def decides(arguments: list[str]) -> bool:
+    """Whether this hook command understands ``--decide``: the compiled
+    shim and ``python -m jrbar.hook_client`` do. The frozen ``agent-monitor
+    hook-client`` subcommand's parser rejects unknown flags, and a legacy
+    entry point never heard of it, so those shapes keep reporting only."""
+    return bool(arguments) and (
+        Path(arguments[0]).name == HOOK_SHIM_NAME
+        or ("-m" in arguments and "jrbar.hook_client" in arguments)
+    )
+
+
+def decide_hook_command(
+    provider: str,
+    log_path: Path,
+    python_executable: str | None = None,
+) -> str:
+    """The decide lane's PermissionRequest command: the reporting command
+    with ``--decide`` on the end, when that command understands it."""
+    command = hook_command(provider, log_path, python_executable)
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return command
+    return f"{command} --decide" if decides(arguments) else command
+
+
 def verify_hook_command(arguments: list[str]) -> str | None:
     """Run a candidate hook command once and return an error, or None.
 
@@ -2025,23 +2069,28 @@ def codex_hook_block(
     python_executable: str | None = None,
 ) -> str:
     command = hook_command("codex", log_path, python_executable)
+    decide_command = decide_hook_command("codex", log_path, python_executable)
     lines = [
         MANAGED_START,
         "# Provider-neutral status collection. Do not edit inside this block.",
     ]
     for event_name in CODEX_EVENTS:
+        decides = event_name in DECIDE_HOOK_EVENTS and decide_command != command
         entry = [
             f"[[hooks.{event_name}]]",
             'matcher = "*"',
             f"[[hooks.{event_name}.hooks]]",
             'type = "command"',
-            f"command = '''{command}'''",
+            f"command = '''{decide_command if decides else command}'''",
         ]
         if event_name in {"SessionEnd", "Interrupt"}:
             # Codex runs these during teardown with a one-second default
             # and a three-second cap. Ask for the cap: a cold interpreter
             # must still land the record before the process is gone.
             entry.append("timeout = 3")
+        if decides:
+            entry.append(f"timeout = {DECIDE_HOOK_TIMEOUT_SECONDS}")
+            entry.append(f'statusMessage = "{CODEX_DECIDE_STATUS_MESSAGE}"')
         entry.append("")
         lines.extend(entry)
     lines.append(MANAGED_END)

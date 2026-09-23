@@ -68,8 +68,15 @@ CLAUDE_EVENTS = (
     "Notification",
     "PreCompact",
     "PostCompact",
+    # A worker's row appears when it starts, not only when it reports back:
+    # the session's worker count is exact while they run.
+    "SubagentStart",
     "SubagentStop",
     "Stop",
+    # Runs INSTEAD of Stop when the turn ends on an API error, with the
+    # error type (rate_limit, overloaded, authentication_failed, ...) and
+    # the error text. Without it a rate-limited turn read as a finished one.
+    "StopFailure",
     "SessionEnd",
 )
 

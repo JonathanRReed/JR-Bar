@@ -595,16 +595,42 @@ def _diff_ask_episodes(previous: dict, current: dict) -> list[tuple[str, str, ob
     return events
 
 
-@command("open_session")
+@command("open_session", main_thread=False)
 def _cmd_open_session(self, args):
-    status = _find_status(self, args.get("session"))
-    self.open_session(status, args.get("action") if isinstance(args.get("action"), str) else None, remember=False)
-    extras = self._core_extras_for(status)
-    return {
-        "session": status.agent_id,
-        "activated": (extras.terminal or {}).get("app") if extras is not None else None,
-        "origin": extras.origin if extras is not None else None,
-    }
+    """Open a session: raise a live one's own window, resume an ended one.
+
+    Runs on the socket thread, not the main run loop: finding and raising a
+    session's window is a process-table walk, osascript and tmux calls --
+    seconds on the first open, while macOS asks for Automation consent --
+    and on the main thread that stalls every refresh and timer behind it.
+    The row, its extras, Settings and the controller's own open ladder are
+    main-thread state and hop over through ``_core_on_main``.
+    """
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    status = on_main(lambda: _find_status(self, args.get("session")))
+    # A live CLI session already has a window: raise that tab, pane or
+    # Ghostty terminal instead of starting a second ``--resume`` process;
+    # an ended one resumes in the terminal it ran in (answer_surfaces.py).
+    # ``None`` is a remote or app-hosted session, an explicit app/VS Code
+    # choice, or no record of its terminal: the ladder below.
+    from .answer_surfaces import open_session_surface
+
+    raised = open_session_surface(self, status, args, on_main=on_main)
+    if raised is not None:
+        return raised
+
+    def ladder():
+        self.open_session(
+            status, args.get("action") if isinstance(args.get("action"), str) else None, remember=False
+        )
+        extras = self._core_extras_for(status)
+        return {
+            "session": status.agent_id,
+            "activated": (extras.terminal or {}).get("app") if extras is not None else None,
+            "origin": extras.origin if extras is not None else None,
+        }
+
+    return on_main(ladder)
 
 
 @command("answer_ask", main_thread=False)
@@ -644,6 +670,17 @@ def _cmd_answer_ask(self, args):
     from .answer_local import raise_application, session_host
 
     status = _find_status(self, args.get("session"))
+    # The decide lane first: a PermissionRequest the agent's own hook is
+    # holding for JR-Bar is answered by replying to that hook, from any
+    # terminal, with nothing typed (answer_decisions.py). ``None`` is "not
+    # held here" and the keystroke path below takes it as before.
+    from .answer_decisions import answer_through_decision_lane
+
+    lane_reply = answer_through_decision_lane(
+        self, status, args, journal_for=_command_journal, on_main=on_main
+    )
+    if lane_reply is not None:
+        return lane_reply
     decision = str(args.get("decision") or "approve").lower()
     if decision not in ("approve", "deny"):
         raise CommandError("invalid_args", "decision must be approve or deny")
@@ -719,6 +756,12 @@ def _cmd_answer_ask(self, args):
         if not bool(args.get("only_if_frontmost", True)):
             # Explicitly asked to answer a terminal that is not in front: raise it,
             # then let the unchanged check chain decide. Never a bypass.
+            # The session's own tab, tmux pane or Ghostty terminal first
+            # (answer_surfaces.py), so the focused-target proof can pass;
+            # the app-level raise below stays the fallback.
+            from .answer_surfaces import raise_for_answer
+
+            raise_for_answer(self, status, on_main=on_main)
             host = session_host(
                 getattr(status, "provider", None),
                 getattr(status, "session_id", None),
@@ -3021,6 +3064,69 @@ def _cmd_doctor(self, args):
     # Diagnostics shell out (codesign, probes) and scan pending-hook
     # state -- none of it belongs on the run loop that drives the daemon.
     return self._core_doctor_document()
+
+
+@command("new_session", main_thread=False)
+def _cmd_new_session(self, args):
+    """Start an agent in a directory, in the owner's own terminal -- a new
+    Ghostty tab there, or a new Terminal.app / iTerm2 window. Explicit only:
+    the Overview's "New session here"; nothing calls it on its own, and the
+    agent's first prompt is still the owner's to type (answer_surfaces.py)."""
+    from .answer_surfaces import start_session_in_terminal
+
+    return start_session_in_terminal(
+        args.get("provider"), args.get("cwd"), terminal=args.get("terminal")
+    )
+
+
+@command("resume_session", main_thread=False)
+def _cmd_resume_session(self, args):
+    """History's Resume, by agent id: a session the list still shows opens
+    exactly as ``open_session`` would (raised while it runs, resumed once it
+    has ended); one the list no longer shows is found in the process
+    registry and resumed in the terminal it ran in, or raised when it turns
+    out to be running still (answer_surfaces.py). Explicit only."""
+    from .answer_surfaces import resume_ended_session
+
+    session = args.get("session")
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+
+    def listed():
+        try:
+            return _find_status(self, session)
+        except CommandError:
+            return None
+
+    if on_main(listed) is not None:
+        # open_session hops only its main-thread pieces; its raise stays here.
+        return _cmd_open_session(self, {"session": session})
+    return resume_ended_session(session, terminal=args.get("terminal"))
+
+
+@command("session_in_front", main_thread=False)
+def _cmd_session_in_front(self, args):
+    """Whether the owner is looking at that session's own tab, pane or
+    Ghostty terminal right now, for "Quiet while you watch": ``in_front``
+    true on proof, false when something else is in front, null when it
+    cannot be told. Never raises, types or asks for a permission
+    (answer_surfaces.py)."""
+    from .answer_surfaces import session_in_front
+
+    status = _find_status(self, args.get("session"))
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    return session_in_front(self, status, on_main=on_main)
+
+
+@command("hooks_doctor", main_thread=False)
+def _cmd_hooks_doctor(self, args):
+    """``jrbar hooks doctor`` as data, for Settings > Agents: per provider,
+    whether its hooks are installed and in which shape, whether the decide
+    lane is, when its last event arrived and how many are queued. Content
+    free: paths, shapes, counts and times, never a payload. Repair is
+    ``install_hooks``."""
+    from .hook_doctor import hook_doctor_report
+
+    return hook_doctor_report()
 
 
 @command("open_legacy_window")

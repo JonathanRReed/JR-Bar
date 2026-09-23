@@ -148,9 +148,12 @@ def test_a_posted_key_reports_attempt_not_confirmation():
 
 def test_answerable_display_follows_the_provable_host():
     """``answerable`` in the state document must agree with the route that
-    can actually execute: a contract-supported ask on a Ghostty-hosted (or
-    host-unknown, or remote) session reports False so the UI offers Open
-    instead of a button that could only refuse."""
+    can actually execute: a contract-supported ask on a session hosted by a
+    terminal that can prove its focused tab or terminal (Terminal.app and
+    iTerm2 by tty, Ghostty by its focused terminal's working directory)
+    reports True; one on a host-unknown, unscriptable (kitty) or remote
+    session reports False so the UI offers Open instead of a button that
+    could only refuse."""
     from jrbar.core_projection import _answer_flags
     from jrbar.providers import negotiated_provider_sources
 
@@ -181,13 +184,14 @@ def test_answerable_display_follows_the_provable_host():
         True,
         False,
     )
-    for bundles in (
-        {"com.mitchellh.ghostty"},
-        frozenset(),
-        None,
-        {"com.apple.Terminal", "com.mitchellh.ghostty"},
+    for bundles, expected in (
+        ({"com.mitchellh.ghostty"}, True),
+        ({"net.kovidgoyal.kitty"}, False),
+        (frozenset(), False),
+        (None, False),
+        ({"com.apple.Terminal", "com.mitchellh.ghostty"}, True),
+        ({"net.kovidgoyal.kitty", "com.openai.codex"}, False),
     ):
-        expected = bundles is not None and "com.apple.Terminal" in bundles
         assert _answer_flags(request, contracts, handler, bundles) == (
             expected,
             False,
@@ -197,10 +201,65 @@ def test_answerable_display_follows_the_provable_host():
 def test_host_proof_helper_covers_exactly_the_scriptable_terminals():
     assert host_offers_focused_tab_proof({"com.apple.Terminal"})
     assert host_offers_focused_tab_proof({"com.googlecode.iterm2"})
+    assert host_offers_focused_tab_proof({"com.mitchellh.ghostty"})
     assert host_offers_focused_tab_proof(
-        frozenset({"com.mitchellh.ghostty", "com.apple.Terminal"})
+        frozenset({"net.kovidgoyal.kitty", "com.apple.Terminal"})
     )
-    assert not host_offers_focused_tab_proof({"com.mitchellh.ghostty"})
+    assert not host_offers_focused_tab_proof({"net.kovidgoyal.kitty"})
+    assert not host_offers_focused_tab_proof({"com.github.wez.wezterm"})
     assert not host_offers_focused_tab_proof(frozenset())
     assert not host_offers_focused_tab_proof(None)
     assert not host_offers_focused_tab_proof("com.apple.Terminal")
+
+
+def ghostty_facts(**changes) -> AnswerHostFacts:
+    return replace(
+        proven_terminal_facts(),
+        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        frontmost_bundle_id="com.mitchellh.ghostty",
+        focused_tab_tty=None,
+        **changes,
+    )
+
+
+def test_ghostty_answers_only_on_its_own_focused_terminal__and_4_more():
+    # --- scenario: the only terminal in the session's directory, focused, is proof
+    plan = plan_local_answer(
+        provider="claude", decision="approve", ask_live=True, facts=ghostty_facts(focused_surface_proven=True)
+    )
+    assert plan.key.label == "1"
+    assert plan.document()["host"]["window_evidence"] == "recorded_surface"
+    # And the same proof carries a typed reply.
+    reply = plan_local_reply(
+        provider="claude", reply_text="use the staging db", ask_live=True, facts=ghostty_facts(focused_surface_proven=True)
+    )
+    assert reply.text == "use the staging db"
+
+    # --- scenario: a different split or tab in front refuses by name
+    with pytest.raises(AnswerRefusal) as raised:
+        plan_local_answer(
+            provider="claude", decision="approve", ask_live=True, facts=ghostty_facts(focused_surface_proven=False)
+        )
+    assert (raised.value.code, raised.value.reason) == ("not_frontmost", "other_surface")
+
+    # --- scenario: two terminals in one directory cannot be told apart
+    with pytest.raises(AnswerRefusal) as raised:
+        plan_local_answer(
+            provider="claude", decision="approve", ask_live=True, facts=ghostty_facts(focused_surface_proven=None)
+        )
+    assert raised.value.reason == "focused_tab_unproven"
+
+    # --- scenario: the proof is Ghostty's alone; it never stands in for a tty elsewhere
+    facts = replace(proven_terminal_facts(), focused_tab_tty=None, focused_surface_proven=True)
+    with pytest.raises(AnswerRefusal) as raised:
+        plan_local_answer(provider="claude", decision="approve", ask_live=True, facts=facts)
+    assert raised.value.reason == "focused_tab_unproven"
+
+    # --- scenario: a suspended session's terminal shows the shell: refuse, anywhere
+    for facts in (
+        replace(proven_terminal_facts(), session_stopped=True),
+        ghostty_facts(focused_surface_proven=True, session_stopped=True),
+    ):
+        with pytest.raises(AnswerRefusal) as raised:
+            plan_local_answer(provider="claude", decision="approve", ask_live=True, facts=facts)
+        assert (raised.value.code, raised.value.reason) == ("session_gone", "process_stopped")

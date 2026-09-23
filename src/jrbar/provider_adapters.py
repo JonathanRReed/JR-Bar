@@ -453,8 +453,10 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "Notification": _NOTIFICATION,
         "PreCompact": _PRE_COMPACT,
         "PostCompact": _POST_COMPACT,
+        "SubagentStart": _SUBAGENT_START,
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
+        "StopFailure": _STOP_FAILURE,
         "SessionEnd": _SESSION_END,
     },
     "devin": {
@@ -952,6 +954,10 @@ def _request_identifier(value: object) -> RequestIdentifier | None:
 # tool call: Codex puts its escalation justification in tool_input as
 # ``description``, so PermissionRequest and PostToolUse would disagree.
 _REQUEST_SIGNATURE_IGNORED_INPUT: Final = frozenset({"description", "justification"})
+# Claude's AskUserQuestion is asked without ``answers`` and runs with them
+# (the owner's picks, from its own prompt or through the decide lane's
+# updatedInput): the question is the same request either way.
+_REQUEST_SIGNATURE_IGNORED_ANSWERS: Final = {"AskUserQuestion": frozenset({"answers"})}
 
 
 def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
@@ -977,10 +983,13 @@ def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
         scope = record.turn_id
     if type(scope) is not str or not scope:
         scope = record.session_id if type(record.session_id) is str else ""
+    ignored_answers = _REQUEST_SIGNATURE_IGNORED_ANSWERS.get(tool_name, frozenset())
     signature = {
         key: value
         for key, value in tool_input.items()
-        if type(key) is str and key not in _REQUEST_SIGNATURE_IGNORED_INPUT
+        if type(key) is str
+        and key not in _REQUEST_SIGNATURE_IGNORED_INPUT
+        and key not in ignored_answers
     }
     try:
         encoded = json.dumps(
@@ -990,6 +999,25 @@ def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
         return None
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
     return _request_identifier(f"derived:{digest}")
+
+
+def _record_request_identifier(record: HookEvent) -> RequestIdentifier | None:
+    """The payload's own request id, else the derived turn-and-call one."""
+    request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))
+    if request_id is None:
+        request_id = _derived_request_identifier(record)
+    return request_id
+
+
+def hook_request_identity(record: object) -> str | None:
+    """The request id a request-shaped hook record is keyed on in canonical
+    state -- the same one ``minimize_hook_event`` writes. The decide lane
+    parks a PermissionRequest under it, so an answer reaches exactly the
+    request the card shows, and the matching PostToolUse releases it."""
+    if type(record) is not HookEvent:
+        return None
+    request_id = _record_request_identifier(record)
+    return None if request_id is None else request_id.value
 
 
 def _event_token(value: object) -> EventToken | None:
@@ -1361,7 +1389,7 @@ def minimize_hook_event(
             parent_id = candidate_parent
     request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))
     if request_id is None and rule.request_state is not None:
-        request_id = _derived_request_identifier(record)
+        request_id = _record_request_identifier(record)
     sequence = _sequence(record.raw)
     token = _event_token(_first_raw_value(record.raw, _EVENT_ID_FIELDS))
     if token is None:

@@ -8,6 +8,7 @@ import os
 import socket
 import stat
 import struct
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -32,9 +33,23 @@ _LENGTHS = struct.Struct("!II")
 _HEADER_FIELDS: Final = frozenset({"version", "provider", "log_path"})
 # Set by the compiled shim (hook/jrbar-hook.c): the hook process' parent
 # pid and that process' start time, so the daemon can register the agent
-# process itself instead of forking `ps` inside the hook.
-_OPTIONAL_HEADER_FIELDS: Final = frozenset({"ppid", "ppid_start"})
+# process itself instead of forking `ps` inside the hook. ``decide_ms`` is
+# the decide lane's: the shim runs as ``--decide`` on a PermissionRequest
+# hook and will wait that long for the daemon's verdict line.
+_OPTIONAL_HEADER_FIELDS: Final = frozenset({"ppid", "ppid_start", "decide_ms"})
 MAX_HOOK_PPID: Final = 2**31 - 1
+# How long a ``--decide`` hook waits for the verdict after its payload is in
+# hand. The hook entries are installed with a 60 s provider timeout, so the
+# shim always gives up first and the agent never cancels it mid-read; the
+# daemon holds a request for less than this (answer_decisions.py).
+HOOK_DECISION_WAIT_MS: Final = 50_000
+MIN_HOOK_DECISION_WAIT_MS: Final = 1_000
+MAX_HOOK_DECISION_WAIT_MS: Final = 60_000
+# The verdict line: the provider's own hookSpecificOutput document. An
+# "always allow" echoes the request's permission suggestions, which are a
+# few hundred bytes; the bound is only there so a runaway can't be printed.
+MAX_HOOK_DECISION_BYTES: Final = 64 * 1024
+_DECISION_PREFIX: Final = b'{"hookSpecificOutput":'
 _HOOK_PROVIDERS: Final = frozenset(
     {
         "antigravity",
@@ -72,10 +87,18 @@ class HookIngressRequest:
     # When the shim spooled this payload (hook_pending); never on the wire,
     # where the daemon's own arrival time is the event's time.
     queued_at_epoch: float | None = None
+    # How long the sender will wait for a verdict line, when it is a
+    # ``--decide`` hook. ``None`` is every other hook: one disposition line.
+    decide_ms: int | None = None
 
     def __post_init__(self) -> None:
         if self.ppid is not None and (
             type(self.ppid) is not int or self.ppid <= 1 or self.ppid > MAX_HOOK_PPID
+        ):
+            raise ValueError("invalid hook ingress request")
+        if self.decide_ms is not None and (
+            type(self.decide_ms) is not int
+            or not MIN_HOOK_DECISION_WAIT_MS <= self.decide_ms <= MAX_HOOK_DECISION_WAIT_MS
         ):
             raise ValueError("invalid hook ingress request")
         if self.queued_at_epoch is not None and (
@@ -144,6 +167,8 @@ def encode_hook_ingress_request(request: HookIngressRequest) -> bytes:
         document["ppid"] = request.ppid
     if request.ppid_start is not None:
         document["ppid_start"] = float(request.ppid_start)
+    if request.decide_ms is not None:
+        document["decide_ms"] = request.decide_ms
     header = json.dumps(
         document,
         ensure_ascii=False,
@@ -200,11 +225,14 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
         return None
     ppid = document.get("ppid")
     ppid_start = document.get("ppid_start")
+    decide_ms = document.get("decide_ms")
     if ppid is not None and type(ppid) is not int:
         return None
     if ppid_start is not None and (
         type(ppid_start) not in (int, float) or not math.isfinite(float(ppid_start))
     ):
+        return None
+    if decide_ms is not None and type(decide_ms) is not int:
         return None
     try:
         return HookIngressRequest(
@@ -213,6 +241,7 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
             body,
             ppid=ppid,
             ppid_start=None if ppid_start is None else float(ppid_start),
+            decide_ms=decide_ms,
         )
     except ValueError:
         return None
@@ -245,6 +274,36 @@ def decode_hook_ingress_response(payload: bytes) -> HookIngressDisposition:
         if text == f"{disposition.value}\n":
             return disposition
     return HookIngressDisposition.UNAVAILABLE
+
+
+def encode_hook_decision(document: object) -> bytes:
+    """The verdict line a ``--decide`` hook prints: the provider's own
+    ``{"hookSpecificOutput": ...}`` document, compact, on one line."""
+    if type(document) is not dict or set(document) != {"hookSpecificOutput"}:
+        raise ValueError("invalid hook decision")
+    encoded = json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    if not encoded.startswith(_DECISION_PREFIX) or len(encoded) + 1 > MAX_HOOK_DECISION_BYTES:
+        raise ValueError("invalid hook decision")
+    return encoded + b"\n"
+
+
+def decode_hook_decision(payload: bytes) -> str | None:
+    """What a ``--decide`` hook may print from the bytes after the
+    disposition line, or ``None``: a whole line, bounded, and a
+    hookSpecificOutput document. Anything else prints nothing, so the agent
+    falls through to its own prompt."""
+    if type(payload) is not bytes or not payload.endswith(b"\n"):
+        return None
+    line = payload[:-1]
+    if b"\n" in line or len(payload) > MAX_HOOK_DECISION_BYTES or not line.startswith(_DECISION_PREFIX):
+        return None
+    try:
+        document = json.loads(line.decode("ascii"), object_pairs_hook=_strict_object)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if type(document) is not dict or set(document) != {"hookSpecificOutput"}:
+        return None
+    return line.decode("ascii")
 
 
 def _valid_timeout(value: object) -> bool:
@@ -317,20 +376,96 @@ def submit_hook_ingress(
     return HookIngressDisposition.UNAVAILABLE
 
 
+def submit_hook_ingress_for_decision(
+    request: HookIngressRequest,
+    *,
+    socket_path: Path | None = None,
+    timeout_seconds: float = HOOK_INGRESS_SEND_TIMEOUT_SECONDS,
+    socket_factory: Callable[..., socket.socket] = socket.socket,
+    require_socket_leaf: bool = True,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> tuple[HookIngressDisposition, str | None]:
+    """``submit_hook_ingress`` for a ``--decide`` hook: the same frame, then
+    the wait for the verdict line, bounded by ``request.decide_ms``.
+
+    Returns the disposition and the line to print, or ``None`` for "print
+    nothing" -- the daemon let the hold lapse, released it, or never
+    parked the request. Every failure after the frame is sent is a
+    ``None`` verdict, never a retry: the agent's own prompt is the
+    fallback, and it only appears once this hook has returned.
+    """
+    if type(request) is not HookIngressRequest or request.decide_ms is None:
+        raise ValueError("invalid hook ingress decision request")
+    encoded = encode_hook_ingress_request(request)
+    if not _valid_timeout(timeout_seconds):
+        raise ValueError("invalid hook ingress timeout")
+    deadline = monotonic() + request.decide_ms / 1000.0
+    targets = (
+        (Path(socket_path).expanduser(),)
+        if socket_path is not None
+        else candidate_hook_ingress_socket_paths()
+    )
+    for target in targets:
+        if require_socket_leaf and not _trusted_socket_leaf(target):
+            continue
+        client = None
+        connected = False
+        try:
+            client = socket_factory(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(float(timeout_seconds))
+            client.connect(str(target))
+            connected = True
+            client.sendall(encoded)
+            client.shutdown(socket.SHUT_WR)
+            received = b""
+            while len(received) <= MAX_HOOK_INGRESS_RESPONSE_BYTES + MAX_HOOK_DECISION_BYTES:
+                remaining = deadline - monotonic()
+                if remaining <= 0.0:
+                    break
+                client.settimeout(remaining)
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                received += chunk
+            head, newline, rest = received.partition(b"\n")
+            disposition = decode_hook_ingress_response(head + newline)
+            if disposition is HookIngressDisposition.UNAVAILABLE:
+                return HookIngressDisposition.SUBMISSION_AMBIGUOUS, None
+            return disposition, decode_hook_decision(rest)
+        except Exception:
+            if connected:
+                return HookIngressDisposition.SUBMISSION_AMBIGUOUS, None
+            continue
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+    return HookIngressDisposition.UNAVAILABLE, None
+
+
 __all__ = [
+    "HOOK_DECISION_WAIT_MS",
     "HOOK_INGRESS_PROTOCOL_VERSION",
     "HOOK_INGRESS_SEND_TIMEOUT_SECONDS",
     "HOOK_INGRESS_SOCKET_NAME",
+    "MAX_HOOK_DECISION_BYTES",
+    "MAX_HOOK_DECISION_WAIT_MS",
     "MAX_HOOK_INGRESS_PAYLOAD_BYTES",
     "MAX_HOOK_INGRESS_RESPONSE_BYTES",
     "MAX_HOOK_INGRESS_WIRE_BYTES",
+    "MIN_HOOK_DECISION_WAIT_MS",
     "HookIngressDisposition",
     "HookIngressRequest",
     "candidate_hook_ingress_socket_paths",
+    "decode_hook_decision",
     "decode_hook_ingress_request",
     "decode_hook_ingress_response",
     "default_hook_ingress_socket_path",
+    "encode_hook_decision",
     "encode_hook_ingress_request",
     "encode_hook_ingress_response",
     "submit_hook_ingress",
+    "submit_hook_ingress_for_decision",
 ]

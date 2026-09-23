@@ -798,9 +798,17 @@ def _answer_flags(
     contracts_by_source: object,
     has_answer_handler: object,
     host_bundle_ids: object = None,
+    *,
+    decision_parked: bool = False,
 ) -> tuple[bool, bool]:
     """``(answerable, replyable)`` for one ask, from the provider's own
     negotiated contract.
+
+    ``decision_parked`` wins over everything below: the agent's own
+    PermissionRequest hook is holding this request for JR-Bar's verdict
+    (answer_decisions.py), so an answer is a reply on that hook's socket --
+    any terminal, any host, nothing typed. A held permission prompt takes
+    no free text, so it is never ``replyable``.
 
     ``answerable`` means the answer chain can deliver a decision to this
     session: the contract declares ``answering``, the invocation binds the
@@ -819,6 +827,8 @@ def _answer_flags(
 
     if request is None:
         return (False, False)
+    if decision_parked:
+        return (True, False)
     work_key = getattr(getattr(request, "key", None), "work_key", None)
     source_key = getattr(work_key, "source_key", None)
     if source_key is None or not isinstance(contracts_by_source, Mapping):
@@ -868,6 +878,8 @@ def ask_document(
     answer_contracts: object = None,
     has_answer_handler: object = None,
     host_bundle_ids: object = None,
+    decision_lane: object = None,
+    ask_previews: object = None,
 ) -> dict[str, Any]:
     request = _request_for_status(operator_state, status)
     kind = getattr(getattr(request, "request_kind", None), "value", None)
@@ -883,8 +895,27 @@ def ask_document(
         getattr(status, "updated_at", None)
     )
     summary = getattr(status, "message", None) or getattr(status, "tool_name", None)
+    parked = None
+    preview: str | None = None
+    risk: str | None = None
+    if request is not None:
+        from .answer_decisions import ask_preview_for_request, parked_decision_for_request
+
+        parked = parked_decision_for_request(request, decision_lane)
+        if parked is not None:
+            if not parked.decided:
+                preview, risk = parked.preview, parked.risk
+        else:
+            preview, risk = ask_preview_for_request(request, ask_previews)  # type: ignore[arg-type]
     answerable, replyable = _answer_flags(
-        request, answer_contracts, has_answer_handler, host_bundle_ids
+        request,
+        answer_contracts,
+        has_answer_handler,
+        host_bundle_ids,
+        # A held question is answered by picking its options
+        # (``decision.choices``); its Approve/Deny stay the keystroke
+        # path's to offer, exactly as before it was held.
+        decision_parked=parked is not None and not parked.choices,
     )
     # The ask's exact episode identity: the canonical request key when the
     # operator state models one, ``None`` when it does not. A surface that
@@ -907,6 +938,17 @@ def ask_document(
         "answerable": answerable,
         "replyable": replyable,
         "request": request_identity,
+        # The decide lane's hold, while the agent's permission hook waits on
+        # JR-Bar: when it falls through to the agent's own prompt, whether
+        # an Always allow can be sent, whether it was just answered, and a
+        # held question's options.
+        "decision": parked.document() if parked is not None else None,
+        # What the agent wants to run, one bounded line, and a mark when it
+        # is the kind of command that loses work if it runs by mistake --
+        # from the held request, or from the PermissionRequest the ingress
+        # saw for this exact request id.
+        "preview": preview,
+        "risk": risk,
     }
     if with_session:
         document = {"session": getattr(status, "agent_id", None), **document}

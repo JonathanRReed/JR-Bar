@@ -141,8 +141,29 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     /// that pins it has the daemon refuse the answer when the live
     /// request has moved on. nil on older daemons or unmodelled asks.
     public var request: String?
+    /// The decide lane's hold: non-nil while the agent's own
+    /// PermissionRequest hook is waiting on JR-Bar for a verdict. Such an
+    /// ask is answerable from any terminal, and nothing is typed. nil on
+    /// older daemons and for asks the lane does not hold.
+    public var decision: CoreAskDecision?
+    /// One bounded line of what the agent wants to run (the command, the
+    /// file, the URL), for a held ask.
+    public var preview: String?
+    /// `"destructive"` when the command is the kind that loses work if it
+    /// runs by mistake; a mark for the card, never a block.
+    public var risk: String?
 
     public var id: String { request ?? ((session ?? "") + "|" + (summary ?? "") + "|" + String(openedAt ?? 0)) }
+
+    /// The agent's hook is holding this ask for JR-Bar's Approve/Deny.
+    public var isHeldForDecision: Bool { decision.map { !$0.decided } ?? false }
+    /// Whether an "Always allow" (`answer_ask` decision `always`) can be sent.
+    public var canAlwaysAllow: Bool { isHeldForDecision && (decision?.always ?? false) }
+    /// A held multiple-choice ask: its options can be picked from any
+    /// terminal (`answer_ask` decision `answer` with `answers`). Approve
+    /// and Deny keep following `canAnswer`.
+    public var canChoose: Bool { isHeldForDecision && !(decision?.choices.isEmpty ?? true) }
+    public var isDestructive: Bool { risk == "destructive" }
 
     /// What the buttons may claim: assume yes when the daemon is too old
     /// to say, so nothing regresses against pre-0.8.2 cores.
@@ -150,7 +171,8 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     public var wantsTextReply: Bool { replyable ?? false }
 
     public init(session: String? = nil, kind: String? = nil, openedAt: Double? = nil, summary: String? = nil,
-                answerable: Bool? = nil, replyable: Bool? = nil, request: String? = nil) {
+                answerable: Bool? = nil, replyable: Bool? = nil, request: String? = nil,
+                decision: CoreAskDecision? = nil, preview: String? = nil, risk: String? = nil) {
         self.session = session
         self.kind = kind
         self.openedAt = openedAt
@@ -158,10 +180,14 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
         self.answerable = answerable
         self.replyable = replyable
         self.request = request
+        self.decision = decision
+        self.preview = preview
+        self.risk = risk
     }
 
     enum CodingKeys: String, CodingKey {
         case session, kind, summary, answerable, replyable, request
+        case decision, preview, risk
         case openedAt = "opened_at"
     }
 
@@ -174,6 +200,61 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
         answerable = try c.decodeIfPresent(Bool.self, forKey: .answerable)
         replyable = try c.decodeIfPresent(Bool.self, forKey: .replyable)
         request = try c.decodeIfPresent(String.self, forKey: .request)
+        decision = try? c.decodeIfPresent(CoreAskDecision.self, forKey: .decision)
+        preview = try? c.decodeIfPresent(String.self, forKey: .preview)
+        risk = try? c.decodeIfPresent(String.self, forKey: .risk)
+    }
+}
+
+/// `ask.decision` (docs/CORE-PROTOCOL.md, "The decide lane").
+public struct CoreAskDecision: Codable, Hashable, Sendable {
+    /// Epoch at which the hold lapses and the agent's own prompt carries on.
+    public var holdUntil: Double?
+    /// An "Always allow" can be sent (Claude, with an allow rule offered).
+    public var always: Bool
+    /// Answered a moment ago; the provider's events have not caught up.
+    public var decided: Bool
+    /// The questions of a held multiple-choice ask (Claude's
+    /// AskUserQuestion), in the agent's order. Empty for a yes/no ask.
+    public var choices: [CoreAskChoice]
+
+    public init(holdUntil: Double? = nil, always: Bool = false, decided: Bool = false,
+                choices: [CoreAskChoice] = []) {
+        self.holdUntil = holdUntil
+        self.always = always
+        self.decided = decided
+        self.choices = choices
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case always, decided, choices
+        case holdUntil = "hold_until"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        holdUntil = try? c.decodeIfPresent(Double.self, forKey: .holdUntil)
+        always = (try? c.decodeIfPresent(Bool.self, forKey: .always)) ?? false
+        decided = (try? c.decodeIfPresent(Bool.self, forKey: .decided)) ?? false
+        choices = (try? c.decodeIfPresent([CoreAskChoice].self, forKey: .choices)) ?? []
+    }
+}
+
+/// One question of a held multiple-choice ask (`ask.decision.choices[]`).
+/// The answer names `question` exactly and picks from `options` exactly:
+/// `answers: {question: label}`, or a list of labels when `multi`.
+public struct CoreAskChoice: Codable, Hashable, Sendable {
+    public var question: String
+    /// The agent's short chip for the question ("Framework"), when given.
+    public var header: String?
+    public var options: [String]
+    public var multi: Bool
+
+    public init(question: String, header: String? = nil, options: [String], multi: Bool = false) {
+        self.question = question
+        self.header = header
+        self.options = options
+        self.multi = multi
     }
 }
 
