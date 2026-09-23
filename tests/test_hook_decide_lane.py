@@ -241,6 +241,33 @@ def test_the_wire_carries_the_decide_wait_and_the_verdict_line__and_2_more(sock_
         assert service.close(timeout_seconds=2.0)
 
 
+def test_a_session_start_from_the_shim_reaches_the_surface_recorder(shim: Path, sock_dir: Path) -> None:
+    noted: list = []
+
+    class Recorder:
+        def note_session_start(self, provider, payload_text, ppid):
+            noted.append((provider, json.loads(payload_text)["session_id"], ppid))
+            return True
+
+    service = HookIngressService(
+        process=lambda request: None,
+        socket_path=sock_dir / "hook-ingress.sock",
+        rejection_path=sock_dir / "rejections.jsonl",
+        decision_broker=_broker(),
+        surface_recorder=Recorder(),
+    )
+    service.start()
+    try:
+        start = {"hook_event_name": "SessionStart", "session_id": "surface-1", "cwd": "/tmp"}
+        _spawn(shim, sock_dir, "claude", start).communicate(timeout=5)
+        _spawn(shim, sock_dir, "claude", {"hook_event_name": "Stop", "session_id": "surface-1"}).communicate(timeout=5)
+        assert _wait_until(lambda: len(noted) == 1)
+        # The shim's parent is this test process: the pid the probe walks up from.
+        assert noted == [("claude", "surface-1", os.getpid())]
+    finally:
+        assert service.close(timeout_seconds=2.0)
+
+
 def test_python_decide_client_falls_back_without_a_verdict__and_1_more(tmp_path: Path) -> None:
     fallback: list = []
 
