@@ -155,10 +155,27 @@ final class MenuBarCombinedItem {
     /// it from the daemon feed.
     var agentLine: @MainActor () -> MenuBarSystemModel.AgentLine? = { nil }
 
+    typealias Readout = (image: NSImage?, signature: String, label: String)
+
+    /// The last read, shared for a beat: the item's own sync, the
+    /// mirror's segment and every face redraw in between ask within the
+    /// same pass, and each read is IOKit, CoreWLAN and Focus.
+    private var cachedReadout: (at: Date, read: Readout)?
+    nonisolated static let readoutShelfLife: TimeInterval = 1
+
     /// What the face shows right now: the composed image, a signature
     /// that changes only when a value does, and a spoken summary for the
-    /// mirror's segment.
-    func readout() -> (image: NSImage?, signature: String, label: String) {
+    /// mirror's segment. At most one read per `readoutShelfLife`.
+    func readout(now: Date = Date()) -> Readout {
+        if let cached = cachedReadout, now.timeIntervalSince(cached.at) < Self.readoutShelfLife {
+            return cached.read
+        }
+        let read = freshReadout()
+        cachedReadout = (now, read)
+        return read
+    }
+
+    private func freshReadout() -> Readout {
         let power = AlcovePowerMonitor.read()
         let ssid = MenuBarSystemTriggerSource.currentSSID()
         let focused = INFocusStatusCenter.default.authorizationStatus == .authorized
