@@ -203,6 +203,13 @@ final class NotchToy: Toy {
         cardModel.utility.weather.allowIPLocation = { [weak self] in
             self?.settings.weatherUseIPLocation ?? false
         }
+        // A due timer morphs the island into its capsule, and a nudge
+        // about a run only speaks while that run is still working.
+        cardModel.timers.onFireNotice = { [weak self] entry in self?.noteTimerFired(entry) }
+        cardModel.timers.firePredicate = { [weak self] entry in
+            guard let session = entry.watchSession else { return true }
+            return self?.sessionStillWorking(session) ?? true
+        }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
         audioTap.onLevels = { [weak self] bands in
@@ -1378,6 +1385,29 @@ final class NotchToy: Toy {
         guard let capsule = activeCapsule, let session = capsule.session else { return }
         answerer.open(session: session)
         dismissCapsule()
+    }
+
+    // MARK: Timers
+
+    /// A shelf timer came due: the island says so for longer than news
+    /// (`AlcoveCapsuleQueue.timerLife`) — it was set to be noticed. A
+    /// nudge names its session, so a tap on it opens the run. The card,
+    /// when grown, already shows the Done chip.
+    func noteTimerFired(_ entry: ShelfTimerModel.Entry) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
+              !islandExpanded else { return }
+        offer(AlcoveNotice(id: "timer:\(entry.id):\(Int(entry.deadline.timeIntervalSince1970))",
+                           kind: .timer, title: entry.label,
+                           subtitle: entry.watchSession != nil ? "still working" : "done",
+                           session: entry.watchSession,
+                           key: "timer:\(entry.id):\(Int(entry.deadline.timeIntervalSince1970))"))
+    }
+
+    /// Whether a session is still working — a nudge's condition.
+    func sessionStillWorking(_ id: String) -> Bool {
+        guard let session = core.state?.session(withID: id) else { return false }
+        return SessionActivity.reduce(session) == .working
     }
 
     // MARK: Takeover

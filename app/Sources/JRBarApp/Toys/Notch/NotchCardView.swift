@@ -457,6 +457,19 @@ struct NotchCardView: View {
         .onTapGesture {
             if opens { model.onOpenRow?(row.id) }
         }
+        .contextMenu {
+            if opens {
+                Button("Open \(row.label)") { model.onOpenRow?(row.id) }
+            }
+            // A timer about the run itself: it only speaks if the
+            // session is still working when it comes due.
+            if row.activity == .working {
+                Button("Nudge Me in 20 Min If Still Working") {
+                    model.timers.add(label: "\(row.label) still working", duration: 20 * 60,
+                                     watchSession: row.id)
+                }
+            }
+        }
         .help(opens ? "Open \(row.label)" : "")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(row.label), \(row.activity.word)")
@@ -503,6 +516,18 @@ struct NotchCardView: View {
                 .monospacedDigit()
                 .foregroundStyle(style.subColor)
                 .frame(width: 30, alignment: .trailing)
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            // A timer set to the window's own reset — "tell me when I
+            // can go again" without watching a countdown.
+            if let resetsAt = meter.resetsAt,
+               Date(timeIntervalSince1970: resetsAt).timeIntervalSinceNow <= ShelfTimerModel.maxDuration {
+                Button("Remind Me When \(meter.window) Resets") {
+                    model.timers.add(label: "\(ProviderStyle.style(for: meter.provider).name) \(meter.window) reset",
+                                     until: Date(timeIntervalSince1970: resetsAt))
+                }
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -1133,30 +1158,63 @@ private struct ShelfTimersRow: View {
     /// model mutates per second, so without a TimelineView the count
     /// only re-renders when the card redraws for other reasons. The
     /// periodic schedule ticks the text every second while mounted and
-    /// costs nothing once the row unmounts.
+    /// costs nothing once the row unmounts. A click pauses or resumes a
+    /// running timer; a done one offers +1 and +5 minutes, the snooze
+    /// every timer has.
     private func timerChip(_ entry: ShelfTimerModel.Entry) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
+        TimelineView(.periodic(from: .now, by: entry.paused ? 60 : 1)) { _ in
             let overdue = entry.overdue
             HStack(spacing: 3) {
-                Image(systemName: overdue ? "checkmark" : "timer")
-                    .font(.system(size: 9))
-                Text(overdue ? "Done" : remainingText(entry))
-                    .font(.system(size: 10, design: .monospaced))
-                    .lineLimit(1)
+                HStack(spacing: 3) {
+                    Image(systemName: overdue ? "checkmark" : (entry.paused ? "pause.fill" : "timer"))
+                        .font(.system(size: 9))
+                    Text(overdue ? "Done" : remainingText(entry))
+                        .font(.system(size: 10, design: .monospaced))
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !overdue else { return }
+                    if entry.paused { timers.resume(entry) } else { timers.pause(entry) }
+                }
+                if overdue {
+                    ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
+                        Button("+\(Int(seconds / 60))") { timers.extend(entry, by: seconds) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .help("Run it again for \(Int(seconds / 60)) min")
+                    }
+                }
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(style.chipFill, in: Capsule())
-            .foregroundStyle(overdue
+            .foregroundStyle(overdue || entry.paused
                 ? AnyShapeStyle(style.subColor)
                 : AnyShapeStyle(style == .island
                                 ? Color.white.opacity(0.8)
                                 : Color.primary.opacity(0.75)))
             .contextMenu {
+                if !overdue {
+                    Button(entry.paused ? "Resume" : "Pause") {
+                        if entry.paused { timers.resume(entry) } else { timers.pause(entry) }
+                    }
+                }
+                ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
+                    Button("Add \(Int(seconds / 60)) min") { timers.extend(entry, by: seconds) }
+                }
+                Divider()
                 Button("Remove", role: .destructive) { timers.remove(entry) }
             }
-            .help(overdue ? "\(entry.label) — done." : "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened))")
+            .help(help(for: entry, overdue: overdue))
         }
+    }
+
+    private func help(for entry: ShelfTimerModel.Entry, overdue: Bool) -> String {
+        if overdue { return "\(entry.label) — done." }
+        if entry.paused { return "\(entry.label) — paused. Click to resume." }
+        let watch = entry.watchSession != nil ? " Only speaks if the session is still working." : ""
+        return "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened)). Click to pause.\(watch)"
     }
 
     /// `m:ss` or `h:mm:ss` remaining — the chip counts down from the
