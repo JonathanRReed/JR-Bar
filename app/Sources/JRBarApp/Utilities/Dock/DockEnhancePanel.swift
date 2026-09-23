@@ -101,6 +101,9 @@ final class DockPreviewActions {
     /// The pointer landed on a card — the controller re-takes its still
     /// when the cached one has aged past a glance.
     var onHoverCard: (@MainActor (DockPreviewWindow) -> Void)?
+    /// The header's "Never Preview <App>" — the app joins the card's
+    /// exclusion list from where it bothered you.
+    var onExcludeApp: (@MainActor () -> Void)?
 }
 
 /// The Macs' displays as the Move To menu names them.
@@ -386,6 +389,13 @@ struct DockPreviewView: View {
                         .lineLimit(1)
                 }
                 .frame(maxWidth: 240, alignment: .leading)
+                // Exclude an app from where it bothers you — the card's
+                // list, one right-click nearer.
+                .contextMenu {
+                    if content.bundleID != nil, content.folderURL == nil {
+                        Button("Never Preview \(content.appName)") { actions.onExcludeApp?() }
+                    }
+                }
                 Spacer(minLength: 8)
                 // DockDoor's compact header: traffic-light circles, not
                 // spelled-out buttons — the row reclaims ~110pt of width.

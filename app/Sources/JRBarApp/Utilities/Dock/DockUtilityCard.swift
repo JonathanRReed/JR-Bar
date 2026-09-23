@@ -34,6 +34,9 @@ extension DockUtility: Toy {
 /// lands in `app-state.json` via `DockUtility.update`.
 struct DockUtilityControls: View {
     let utility: DockUtility
+    /// Installed apps the exclusion menu can name when they aren't
+    /// running — scanned off the main thread when the card appears.
+    @ViewState private var installed: [DockInstalledApps.App] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -219,13 +222,25 @@ struct DockUtilityControls: View {
                         exclusions.wrappedValue.append(app.bundleIdentifier!)
                     }
                 }
+                // Apps that aren't running right now — an exclusion
+                // shouldn't have to wait for the app to be open.
+                let others = DockInstalledApps.notListed(installed, excluded: exclusions.wrappedValue,
+                                                         running: filterableApps.compactMap(\.bundleIdentifier))
+                if !others.isEmpty {
+                    Divider()
+                    Menu("Other Apps") {
+                        ForEach(others, id: \.bundleID) { app in
+                            Button(app.name) { exclusions.wrappedValue.append(app.bundleID) }
+                        }
+                    }
+                }
             } label: {
                 Label("Exclude an app…", systemImage: "plus.circle")
                     .font(.callout)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .disabled(filterableApps.isEmpty)
+            .disabled(filterableApps.isEmpty && installed.isEmpty)
             if utility.isOn && !utility.enhance.accessibilityTrusted {
                 HStack(spacing: 8) {
                     Text("Hover previews need Accessibility so JR-Bar can see which Dock icon the pointer rests on.")
@@ -250,6 +265,7 @@ struct DockUtilityControls: View {
             }
         }
         .onAppear { utility.enhance.refreshPermissions(force: true) }
+        .task { installed = await DockInstalledApps.load() }
     }
 
     // Nested settings structs get their own bindings — `bind` only
@@ -326,9 +342,60 @@ struct DockUtilityControls: View {
     }
 
     /// What an excluded row reads: the running app's name, else the
-    /// bundle id so an uninstalled filter is still recognisable.
+    /// installed app's, else the bundle id so an uninstalled filter is
+    /// still recognisable.
     private func appName(for bundleID: String) -> String {
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .first?.localizedName ?? bundleID
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.localizedName
+            ?? installed.first(where: { $0.bundleID == bundleID })?.name
+            ?? bundleID
+    }
+}
+
+/// The apps installed where macOS keeps them — the exclusion menu's
+/// "Other Apps", so a filter never waits for the app to be running.
+enum DockInstalledApps {
+    struct App: Equatable, Sendable {
+        let name: String
+        let bundleID: String
+    }
+
+    static let directories: [URL] = [
+        URL(fileURLWithPath: "/Applications"),
+        URL(fileURLWithPath: "/Applications/Utilities"),
+        URL(fileURLWithPath: "/System/Applications"),
+        URL(fileURLWithPath: "/System/Applications/Utilities"),
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+    ]
+
+    /// Every `.app` directly inside `directories`, by display name, one
+    /// row per bundle id. Reads each bundle's Info.plist — off the main
+    /// thread (`load`).
+    static func scan(_ directories: [URL]) -> [App] {
+        var seen = Set<String>()
+        var apps: [App] = []
+        for directory in directories {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            for name in names where name.hasSuffix(".app") {
+                let url = directory.appendingPathComponent(name)
+                guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
+                      seen.insert(id).inserted else { continue }
+                let display = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                    ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                    ?? String(name.dropLast(4))
+                apps.append(App(name: display, bundleID: id))
+            }
+        }
+        return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    static func load() async -> [App] {
+        await Task.detached(priority: .utility) { scan(directories) }.value
+    }
+
+    /// The installed apps the menu's running half and the list don't
+    /// already carry — and never JR-Bar's own family.
+    static func notListed(_ installed: [App], excluded: [String], running: [String]) -> [App] {
+        let skip = Set(excluded).union(running)
+        return installed.filter { !skip.contains($0.bundleID) && !MenuBarUtility.isOwnFamily($0.bundleID) }
     }
 }

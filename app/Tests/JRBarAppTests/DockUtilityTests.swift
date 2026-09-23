@@ -49,4 +49,38 @@ struct DockUtilityTests {
             #expect(!DockUtility.displayName(provider).isEmpty)
         }
     }
+
+    @Test("Never Preview adds an app once, from wherever it's asked")
+    func excludeOnce() {
+        #expect(DockEnhanceMath.excluding("com.a", from: []) == ["com.a"])
+        #expect(DockEnhanceMath.excluding("com.a", from: ["com.b", "com.a"]) == ["com.b", "com.a"])
+    }
+
+    @Test("the exclusion menu names installed apps that aren't running, once each, never listed twice")
+    func installedApps() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-apps-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        func makeApp(_ dir: String, _ file: String, id: String, name: String?) throws {
+            let contents = root.appendingPathComponent(dir).appendingPathComponent(file)
+                .appendingPathComponent("Contents")
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            var plist: [String: Any] = ["CFBundleIdentifier": id, "CFBundlePackageType": "APPL"]
+            if let name { plist["CFBundleName"] = name }
+            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            try data.write(to: contents.appendingPathComponent("Info.plist"))
+        }
+        try makeApp("A", "Zed.app", id: "dev.zed", name: "Zed")
+        try makeApp("A", "Beta.app", id: "com.beta", name: nil)
+        try makeApp("B", "Zed Copy.app", id: "dev.zed", name: "Zed Copy")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("A/notes.txt"),
+                                                withIntermediateDirectories: true)
+        let apps = DockInstalledApps.scan([root.appendingPathComponent("A"), root.appendingPathComponent("B"),
+                                           root.appendingPathComponent("missing")])
+        #expect(apps == [.init(name: "Beta", bundleID: "com.beta"), .init(name: "Zed", bundleID: "dev.zed")],
+                "sorted by name, one row per bundle id, the file name when the plist names none")
+        let menu = DockInstalledApps.notListed(apps, excluded: ["com.beta"], running: [])
+        #expect(menu.map(\.bundleID) == ["dev.zed"])
+        #expect(DockInstalledApps.notListed(apps, excluded: [], running: ["dev.zed"]).map(\.bundleID) == ["com.beta"])
+    }
 }

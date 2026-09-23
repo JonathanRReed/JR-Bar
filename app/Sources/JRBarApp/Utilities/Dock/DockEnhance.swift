@@ -445,6 +445,12 @@ enum DockEnhanceMath {
         return playerBundleIDs.contains(appBundleID)
     }
 
+    /// The exclusion list with `bundleID` added once — a second "Never
+    /// Preview" on a stale panel doesn't list the app twice.
+    static func excluding(_ bundleID: String, from list: [String]) -> [String] {
+        list.contains(bundleID) ? list : list + [bundleID]
+    }
+
     /// Whether a card click keeps the panel up: ⌥ held, DockDoor's
     /// keep-open-after-activating. ⌘ and ⌃ stay the system's.
     static func keepsPanelOpen(_ flags: NSEvent.ModifierFlags) -> Bool {
@@ -2140,6 +2146,7 @@ final class DockEnhanceController {
             self?.move(window, toDisplay: display)
         }
         panel.actions.onHoverCard = { [weak self] window in self?.freshenStill(window) }
+        panel.actions.onExcludeApp = { [weak self] in self?.excludePreviewedApp() }
         self.panel = panel
         return panel
     }
@@ -2949,6 +2956,15 @@ final class DockEnhanceController {
         let panel = toast ?? DockToastPanel()
         toast = panel
         panel.show(text, over: anchor, edge: edge, screen: screen.frame, duration: duration)
+    }
+
+    /// The header's "Never Preview <App>": the app joins the exclusion
+    /// list and the panel goes. The tracker keeps the tile as shown, so
+    /// the resting pointer doesn't reopen what was just excluded.
+    private func excludePreviewedApp() {
+        guard let bundleID = preview.bundleID else { return }
+        preferences.excludedBundleIDs = DockEnhanceMath.excluding(bundleID, from: preferences.excludedBundleIDs)
+        hidePreview()
     }
 
     /// The header's "Hide" — the app's own ⌘H.
