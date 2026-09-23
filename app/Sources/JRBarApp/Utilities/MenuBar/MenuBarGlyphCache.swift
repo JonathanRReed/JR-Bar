@@ -227,8 +227,11 @@ final class MenuBarGlyphCache {
     /// it; the oldest go first.
     nonisolated static let maxEntries = 400
     /// No photograph outlives this — pruned whoever owns it. Every
-    /// launch photographs the bar before the first conceal, so a glyph
-    /// still in use is never this old.
+    /// launch photographs the bar before the first conceal, and a reveal
+    /// retakes any stale glyph it brings back, so a glyph in use is
+    /// rarely this old; one that is — an item tucked away and never
+    /// revealed through a month without a relaunch — falls back to its
+    /// app's icon until the next reveal photographs it afresh.
     nonisolated static let pruneAge: TimeInterval = 30 * 24 * 3600
     /// The widest glyph that is ever written to disk, in points. An icon
     /// is 16–24 pt with its padding; past this the item is carrying text
