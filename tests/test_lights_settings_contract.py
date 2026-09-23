@@ -139,3 +139,18 @@ def test_focus_dim_rules_survive_only_as_a_whole_object(tmp_path: Path) -> None:
     assert dotted["focus_dim_rules"] == {}
     whole = _round_trip(tmp_path, "focus_dim_rules", {"com.apple.focus.work": 0.3})
     assert whole["focus_dim_rules"] == {"com.apple.focus.work": 0.3}
+
+
+def test_ambient_marks_land_only_as_one_object(tmp_path: Path) -> None:
+    # Settings › Auto-dim writes the three ambient marks as one
+    # ``auto_dim.ambient`` object ("Use current light", "Use it"): the
+    # loader resets a floor/ceiling pair whose ceiling is not above its
+    # floor, which two separate writes can pass through on the way.
+    moved = {"min_fraction": 0.25, "lux_floor": 600.0, "lux_ceiling": 1500.0}
+    ambient = _round_trip(tmp_path, "auto_dim.ambient", dict(moved))["auto_dim"]["ambient"]
+    assert ambient == moved
+    # The same move as two writes: the floor alone lands above the old
+    # ceiling (400), and the loader throws both marks back to defaults.
+    halfway = _round_trip(tmp_path, "auto_dim.ambient.lux_floor", 600.0)["auto_dim"]["ambient"]
+    assert (halfway["lux_floor"], halfway["lux_ceiling"]) != (600.0, 400.0)
+    assert halfway["lux_floor"] < halfway["lux_ceiling"]
