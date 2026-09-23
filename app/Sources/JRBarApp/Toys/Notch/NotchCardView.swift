@@ -1218,7 +1218,7 @@ private struct ShelfStackChip: View {
                 }
             }
             .frame(width: 20, height: 13)
-            Text("\(stack.name) · \(stack.items.count)")
+            Text("\(tray.stackName(stack)) · \(stack.items.count)")
                 .font(.system(size: 10))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1248,7 +1248,7 @@ private struct ShelfStackChip: View {
     /// thins; the last one out leaves a loose chip.
     private var grid: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(stack.name)
+            Text(tray.stackName(stack))
                 .font(.system(size: 11, weight: .medium))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 56),
                                          spacing: 6)],

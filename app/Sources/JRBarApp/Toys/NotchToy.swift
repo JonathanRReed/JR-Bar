@@ -989,6 +989,14 @@ final class NotchToy: Toy {
         if let focus = cardFocus() { cardModel.focus = focus }
         let summary = islandSummary
         cardModel.rows = summary.rows.filter { $0.id != cardModel.focus.focusSession }
+        // Where each live local session works — the shelf gathers its
+        // files under its name.
+        let homes = summary.rows.compactMap { row -> ShelfTrayModel.SessionHome? in
+            guard !CoreSession.isRemoteID(row.id),
+                  let cwd = core.state?.session(withID: row.id)?.cwd, !cwd.isEmpty else { return nil }
+            return ShelfTrayModel.SessionHome(id: row.id, label: row.label, root: cwd)
+        }
+        if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
         cardModel.workingCount = summary.working
         cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
     }

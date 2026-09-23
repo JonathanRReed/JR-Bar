@@ -101,6 +101,50 @@ final class ShelfTrayModel {
 
     private(set) var entries: [ShelfEntry] = []
 
+    // MARK: Session homes
+
+    /// A live local session's working folder — files under it belong
+    /// with that session, not with whichever subfolder they sit in.
+    struct SessionHome: Equatable {
+        let id: String
+        let label: String
+        let root: String
+    }
+
+    /// The card's live local sessions and where they work — fed with the
+    /// card's rows. A session ending takes its name off its stack; the
+    /// files stay where they are.
+    var sessionHomes: [SessionHome] = []
+
+    /// The session whose folder holds `path` — the deepest one when
+    /// folders nest. A session working in the home folder or at the
+    /// root would claim every file there, so those never count.
+    nonisolated static func home(for path: String, in homes: [SessionHome],
+                                 userHome: String = NSHomeDirectory()) -> SessionHome? {
+        func trimmed(_ root: String) -> String {
+            root.count > 1 && root.hasSuffix("/") ? String(root.dropLast()) : root
+        }
+        let broad: Set<String> = ["/", trimmed(userHome), ""]
+        return homes
+            .filter { !broad.contains(trimmed($0.root)) }
+            .filter { path == trimmed($0.root) || path.hasPrefix(trimmed($0.root) + "/") }
+            .max { trimmed($0.root).count < trimmed($1.root).count }
+    }
+
+    /// The one session every file in `items` belongs to, or nil.
+    func commonHome(_ items: [Entry]) -> SessionHome? {
+        guard let first = items.first,
+              let home = Self.home(for: first.path, in: sessionHomes) else { return nil }
+        return items.allSatisfy({ Self.home(for: $0.path, in: sessionHomes)?.id == home.id }) ? home : nil
+    }
+
+    /// What a stack's chip is called now: the session it belongs to
+    /// while that session lives ("rename-the-fish"), its folder or
+    /// count otherwise.
+    func stackName(_ stack: ShelfEntry.Stack) -> String {
+        commonHome(stack.items)?.label ?? stack.name
+    }
+
     /// Every item across every chip — the verbs and the bound work on
     /// files, not tiles.
     var items: [Entry] { entries.flatMap(\.items) }
@@ -161,9 +205,38 @@ final class ShelfTrayModel {
             return
         }
 
-        // A single new file: same-folder rules — join a stack living
-        // in its folder, or stack up with a loose item from it.
+        // A single new file: a live session's own files gather first —
+        // join the stack that is all that session's, or stack up with a
+        // loose file from its folder tree.
         let item = fresh[0]
+        if let home = Self.home(for: item.path, in: sessionHomes) {
+            if let at = known.firstIndex(where: {
+                if case .stack(let stack) = $0 { return commonHome(stack.items)?.id == home.id }
+                return false
+            }), case .stack(var stack) = known[at] {
+                stack.items.append(item)
+                stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
+                stack.name = ShelfEntry.Stack.name(for: stack.items)
+                known[at] = .stack(stack)
+                finish(&known)
+                return
+            }
+            if let at = known.firstIndex(where: {
+                if case .item(let other) = $0 { return Self.home(for: other.path, in: sessionHomes)?.id == home.id }
+                return false
+            }), case .item(let other) = known[at] {
+                let items = [other, item]
+                known[at] = .stack(ShelfEntry.Stack(
+                    id: "stack-\(UUID().uuidString)",
+                    name: ShelfEntry.Stack.name(for: items),
+                    items: items,
+                    folder: ShelfEntry.Stack.commonFolder(of: items)))
+                finish(&known)
+                return
+            }
+        }
+        // Then same-folder rules — join a stack living in its folder,
+        // or stack up with a loose item from it.
         if let at = known.firstIndex(where: {
             if case .stack(let stack) = $0 {
                 return stack.folder == item.folder
