@@ -146,7 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let cardTimers = ShelfTimerModel()
         let cardTray = ShelfTrayModel()
         let toysStore = ToysStore(core: core, settings: settingsStore, state: appState.toys,
-                                  cardModel: NotchCardModel(timers: cardTimers, tray: cardTray))
+                                  cardModel: NotchCardModel(timers: cardTimers, tray: cardTray),
+                                  aquariumSave: AquariumSaveFile())
         toysStore.onPersist = { [weak self] state in
             guard let self else { return }
             self.appState.toys = state

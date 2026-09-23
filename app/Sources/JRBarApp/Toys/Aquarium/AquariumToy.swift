@@ -28,8 +28,8 @@ final class AquariumToy: Toy {
     /// written back after every batch. The game reads the session
     /// list and answers taps — it never touches the agent.
     private(set) var game: AquariumGame
-    /// Where the game lives on disk — the real state directory in the
-    /// app, a scratch file in the tests.
+    /// Where the game lives on disk — the real state directory only when
+    /// the app asks for it, a scratch file otherwise.
     @ObservationIgnored private let saveFile: AquariumSaveFile
     /// Where this tank saves — the tests check a headless store's.
     var saveLocation: URL { saveFile.url }
@@ -81,7 +81,15 @@ final class AquariumToy: Toy {
     /// observation fires on any toys-state write, most of them not ours.
     @ObservationIgnored private var ambientSynced: (idle: Int, display: String?)?
 
-    init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumSaveFile()) {
+    /// A save of its own in the temporary directory — the default for
+    /// every tank the app didn't explicitly point at the real one.
+    static func scratchSave() -> AquariumSaveFile {
+        AquariumSaveFile(url: FileManager.default.temporaryDirectory
+            .appending(path: "jrbar-scratch-\(UUID().uuidString)")
+            .appending(path: "aquarium-save.json"))
+    }
+
+    init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumToy.scratchSave()) {
         self.core = core
         self.store = store
         self.saveFile = saveFile

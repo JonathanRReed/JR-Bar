@@ -3,11 +3,27 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// A headless store — every test builds one — must never write the
-/// user's real state: its tank keeps a scratch save of its own.
+/// The real aquarium save is opt-in: only the app's own store asks for
+/// it. Any other store — headless or not, however a suite builds it —
+/// must never read or write the user's real tank.
 @Suite("Toys store isolation")
 @MainActor
 struct ToysStoreIsolationTests {
+    @Test("a store with the runtime on still keeps a scratch tank unless told otherwise")
+    func defaultSaveIsScratch() {
+        let core = CoreModel()
+        // Built the way the buddy suites build theirs: no runtime flag.
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel())
+        #expect(store.aquarium?.saveLocation != AquariumSaveFile.defaultURL())
+        #expect(store.aquarium?.saveLocation.path.hasPrefix(
+            FileManager.default.temporaryDirectory.path) == true)
+        let tank = AquariumToy(core: core, store: store)
+        #expect(tank.saveLocation != AquariumSaveFile.defaultURL(), "the toy's own default too")
+        #expect(tank.saveLocation != store.aquarium?.saveLocation, "each scratch is its own")
+        store.notch.shutdown()
+    }
+
     @Test("a headless store's tank never saves to the real state directory")
     func headlessSave() {
         let core = CoreModel()
