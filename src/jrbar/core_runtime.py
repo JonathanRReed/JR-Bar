@@ -280,11 +280,14 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("power", "battery", "draw_watts"),
         ("power", "battery", "temperature_c"),
         ("power", "battery", "runway", "minutes_left"),
-        # A device's write health moves with every write; a refusal is
-        # what earns a broadcast.
+        # A device's write health moves with every write; starting or
+        # stopping failing, or a new reason, is what earns a broadcast. The
+        # refusal count and stamp tick with every retry of a dead device.
         ("devices", "*", "write_health", "latency_ms"),
         ("devices", "*", "write_health", "writes"),
         ("devices", "*", "write_health", "transformed"),
+        ("devices", "*", "write_health", "refused"),
+        ("devices", "*", "write_health", "last_refusal_at"),
     ),
     "lights": (
         ("now",),

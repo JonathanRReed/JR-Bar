@@ -116,13 +116,14 @@ struct PowerCodecTests {
          "devices":[{"id":"pro","kind":"pro","path":"/Volumes/SidePulse","connected":true,
                      "write_health":{"latency_ms":31,"writes":12,"transformed":2,"refused":1,
                                      "last_refusal":"LED program failed the presentation safety gate.",
-                                     "last_refusal_at":1000}},
+                                     "last_refusal_at":1000,"failing":true}},
                     {"id":"dot","kind":"dot","connected":true,"write_health":{"writes":"many"}}]}
         """)
         let health = try #require(state.devices.first?.writeHealth)
         #expect(health.latencyMs == 31)
         #expect(health.refused == 1)
         #expect(health.lastRefusal?.hasPrefix("LED program") == true)
+        #expect(health.failing == true)
         #expect(state.devices.count == 2)
         #expect(state.devices.last?.writeHealth == nil)
     }

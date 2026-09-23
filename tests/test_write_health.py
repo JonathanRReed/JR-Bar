@@ -72,7 +72,39 @@ def test_the_state_carries_it_and_only_a_refusal_rebroadcasts(tmp_path: Path) ->
     write_health.record_write(root, seconds=0.9, transformed=True)
     assert doc_significant_equal("state", first, state())
     write_health.record_refusal(root, "LED program failed the presentation safety gate.")
-    assert not doc_significant_equal("state", first, state())
+    refusing = state()
+    assert not doc_significant_equal("state", first, refusing)
+    assert refusing["devices"][0]["write_health"]["failing"] is True
+
+
+def test_a_device_that_keeps_failing_is_news_once(tmp_path: Path) -> None:
+    root = str(tmp_path / "SidePulse")
+
+    def state() -> dict:
+        document = {"devices": [{"id": "pro", "kind": "pro", "path": root}]}
+        augment_device_health(document)
+        return document
+
+    write_health.record_write(root, seconds=0.03, transformed=False, at=100.0)
+    working = state()
+    assert working["devices"][0]["write_health"]["failing"] is False
+    write_health.record_refusal(root, "The device stopped answering.", at=110.0)
+    failing = state()
+    assert not doc_significant_equal("state", working, failing)
+    # The retry every few seconds fails the same way: the count moves, the
+    # news does not.
+    write_health.record_refusal(root, "The device stopped answering.", at=120.0)
+    again = state()
+    assert again["devices"][0]["write_health"]["refused"] == 2
+    assert doc_significant_equal("state", failing, again)
+    # A new reason is news; so is the device coming back.
+    write_health.record_refusal(root, "LED program failed the presentation safety gate.", at=130.0)
+    reasoned = state()
+    assert not doc_significant_equal("state", again, reasoned)
+    write_health.record_write(root, seconds=0.03, transformed=False, at=140.0)
+    recovered = state()
+    assert recovered["devices"][0]["write_health"]["failing"] is False
+    assert not doc_significant_equal("state", reasoned, recovered)
 
 
 def test_reasons_are_bounded_and_devices_are_capped() -> None:

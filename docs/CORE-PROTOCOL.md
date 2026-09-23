@@ -378,13 +378,15 @@ Vocabulary:
 - `devices[].write_health` (a hardware device, once the daemon has tried
   to write it) says why a strip looks wrong instead of only "Connected":
   `{latency_ms, writes, transformed, refused, last_refusal,
-  last_refusal_at}` -- how long the last write took, how many programs
-  reached it, how many of those the safety compiler had to change (a
-  clamped cadence, a slowed flash; not mere spelling), how many never
-  reached it and the last one's reason. Counts run since the daemon
-  started; no program text is kept. The latency and the two write counts
-  move with every write and alone never re-broadcast `state`; a refusal
-  does.
+  last_refusal_at, failing}` -- how long the last write took, how many
+  programs reached it, how many of those the safety compiler had to
+  change (a clamped cadence, a slowed flash; not mere spelling), how many
+  never reached it and the last one's reason, and whether the latest
+  attempt was one of those (`failing`). Counts run since the daemon
+  started; no program text is kept. The latency, the counts and the
+  refusal stamp move with every attempt and alone never re-broadcast
+  `state`; starting or stopping failing, or a new reason, does -- a dead
+  device's retry every few seconds is the same news each time.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was

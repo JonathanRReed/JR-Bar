@@ -910,9 +910,11 @@ public struct CoreWriteHealth: Codable, Hashable, Sendable {
     public var refused: Int?
     public var lastRefusal: String?
     public var lastRefusalAt: Double?
+    /// The latest attempt never reached the device: failing now, not once.
+    public var failing: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case writes, transformed, refused
+        case writes, transformed, refused, failing
         case latencyMs = "latency_ms"
         case lastRefusal = "last_refusal"
         case lastRefusalAt = "last_refusal_at"

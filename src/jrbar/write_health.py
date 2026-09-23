@@ -82,6 +82,13 @@ def health_document(root: str | None) -> dict[str, object] | None:
         health = _HEALTH.get(str(root))
         if health is None:
             return None
+        # Failing now: the latest attempt never reached the device. This,
+        # not the refusal count, is what the card changes on -- a device
+        # that keeps failing retries every few seconds, and each retry is
+        # the same news.
+        failing = health.last_refusal_at is not None and (
+            health.last_write_at is None or health.last_refusal_at >= health.last_write_at
+        )
         return {
             "latency_ms": health.last_latency_ms,
             "writes": health.writes,
@@ -89,6 +96,7 @@ def health_document(root: str | None) -> dict[str, object] | None:
             "refused": health.refused,
             "last_refusal": health.last_refusal,
             "last_refusal_at": health.last_refusal_at,
+            "failing": failing,
         }
 
 
