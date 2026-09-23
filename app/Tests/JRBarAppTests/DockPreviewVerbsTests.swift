@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -74,6 +75,15 @@ struct DockPreviewVerbsTests {
         #expect(moved == CGRect(x: 2000, y: 227.5, width: 800, height: 600))
         let huge = DockEnhanceMath.moveFrame(CGRect(x: 0, y: 0, width: 3000, height: 2000), to: target)
         #expect(huge == target, "a window bigger than the screen lands fitted")
+    }
+
+    @Test("⌥-click keeps the preview up; plain, ⌘ and ⌃ clicks don't")
+    func keepOpen() {
+        #expect(DockEnhanceMath.keepsPanelOpen(.option))
+        #expect(DockEnhanceMath.keepsPanelOpen([.option, .shift]))
+        #expect(!DockEnhanceMath.keepsPanelOpen([]))
+        #expect(!DockEnhanceMath.keepsPanelOpen([.option, .command]))
+        #expect(!DockEnhanceMath.keepsPanelOpen(.control))
     }
 
     // MARK: Calendar glance

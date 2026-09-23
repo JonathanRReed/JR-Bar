@@ -400,6 +400,12 @@ enum DockEnhanceMath {
         return playerBundleIDs.contains(appBundleID)
     }
 
+    /// Whether a card click keeps the panel up: ⌥ held, DockDoor's
+    /// keep-open-after-activating. ⌘ and ⌃ stay the system's.
+    static func keepsPanelOpen(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.option, .command, .control]) == .option
+    }
+
     /// "3:07", "1:02:45" — a playhead the way players print it.
     static func clock(_ seconds: Double) -> String {
         let total = max(0, Int(seconds.isFinite ? seconds.rounded(.down) : 0))
@@ -1961,6 +1967,7 @@ final class DockEnhanceController {
         if let panel { return panel }
         let panel = DockPreviewPanel(content: preview)
         panel.actions.onPick = { [weak self] window in self?.pick(window) }
+        panel.actions.onPickKeepOpen = { [weak self] window in self?.pick(window, keepOpen: true) }
         panel.actions.onClose = { [weak self] window in self?.close(window) }
         panel.actions.onMinimize = { [weak self] window in self?.toggleMinimized(window) }
         panel.actions.onFullScreen = { [weak self] window in self?.toggleFullScreen(window) }
@@ -2174,12 +2181,21 @@ final class DockEnhanceController {
 
     // MARK: Verbs
 
-    /// A window card's click — raise it and bring the app forward.
-    private func pick(_ window: DockPreviewWindow) {
+    /// A window card's click — raise it and bring the app forward. With
+    /// `keepOpen` (⌥-click) the panel stays and the raised card becomes
+    /// the walked one, so the next ⌥-click, arrow or W carries on from it.
+    private func pick(_ window: DockPreviewWindow, keepOpen: Bool = false) {
         let app = preview.processIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
         AppleDockReader.raise(window, app: app)
-        tracker.reset()
-        hidePreview()
+        guard keepOpen else {
+            tracker.reset()
+            hidePreview()
+            return
+        }
+        preview.selectedWindowID = window.id
+        if let index = preview.windows.firstIndex(where: { $0.id == window.id }) {
+            preview.windows[index].minimized = false
+        }
     }
 
     /// A key the switcher's tap ate for the floating preview — Esc

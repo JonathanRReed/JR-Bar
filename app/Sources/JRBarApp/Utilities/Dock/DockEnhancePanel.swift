@@ -45,6 +45,15 @@ final class DockPreviewActions {
 
     /// A window card's click — the controller raises it.
     var onPick: (@MainActor (DockPreviewWindow) -> Void)?
+    /// A window card's ⌥-click — raise it and keep the panel up, so a
+    /// set of windows can be compared or raised in one hover.
+    var onPickKeepOpen: (@MainActor (DockPreviewWindow) -> Void)?
+
+    /// A card's click, read with the modifiers held at the time: ⌥ keeps
+    /// the panel (DockDoor's keep-open-after-activating), plain closes it.
+    func pick(_ snapshot: DockPreviewWindow, flags: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        performWindowAction(snapshot, DockEnhanceMath.keepsPanelOpen(flags) ? onPickKeepOpen : onPick)
+    }
     /// The card's × — close that window.
     var onClose: (@MainActor (DockPreviewWindow) -> Void)?
     /// The card's – — minimize, or bring a minimized window back.
@@ -656,7 +665,7 @@ struct DockPreviewCard: View {
     var body: some View {
         VStack(spacing: 4) {
             ZStack(alignment: .topLeading) {
-                Button { actions.performWindowAction(window, actions.onPick) } label: {
+                Button { actions.pick(window) } label: {
                     face
                 }
                 .buttonStyle(.plain)
@@ -677,6 +686,7 @@ struct DockPreviewCard: View {
                 // hover pills offer plus the tile grid.
                 .contextMenu {
                     Button("Raise") { actions.performWindowAction(window, actions.onPick) }
+                    Button("Raise, Keep Preview") { actions.performWindowAction(window, actions.onPickKeepOpen) }
                     Divider()
                     Button(window.minimized ? "Bring Back" : "Minimize") {
                         actions.performWindowAction(window, actions.onMinimize)
@@ -1066,7 +1076,7 @@ private struct DockPreviewCompactRow: View {
     @ViewState private var hovering = false
 
     var body: some View {
-        Button { actions.performWindowAction(window, actions.onPick) } label: {
+        Button { actions.pick(window) } label: {
             HStack(spacing: 6) {
                 if let agent {
                     DockAgentDot(mark: agent, size: 7)

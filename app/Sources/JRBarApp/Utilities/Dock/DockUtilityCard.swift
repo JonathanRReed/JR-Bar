@@ -66,7 +66,7 @@ struct DockUtilityControls: View {
 
             Toggle(isOn: hoverPreviews) {
                 SettingLabel(title: "Hover previews",
-                             subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window, hover it for × (close), – (minimize) and full screen; New, Hide and Quit sit in the header. Apps with no windows open nothing. Off keeps the switcher below on its own.")
+                             subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window (⌥-click keeps the preview up), hover it for × (close), – (minimize) and full screen; New, Hide and Quit sit in the header. Apps with no windows open nothing. Off keeps the switcher below on its own.")
             }
             LabeledContent {
                 HStack(spacing: 10) {
