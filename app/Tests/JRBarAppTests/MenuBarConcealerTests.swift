@@ -200,15 +200,22 @@ struct MenuBarConcealerTests {
         concealer.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
         try? await Task.sleep(nanoseconds: 100_000_000)
         #expect(fake.n == 1)
-        // The lift lands, then the window stays open ~0.5 s.
-        await concealer.suspend(for: 0.5)
+        // The lift lands, then the window stays open. It is wide on
+        // purpose: the mid-window look below must land inside it even on
+        // a runner a parallel suite has slowed to a crawl.
+        await concealer.suspend(for: 3)
         #expect(!concealer.isConcealing)
         // An apply inside the window waits for the restore — the bar
         // must not see a concealment flash mid-click.
         concealer.apply(concealed: ["h.app", "s.app"], running: ["h.app", "s.app"])
         try? await Task.sleep(nanoseconds: 150_000_000)
         #expect(fake.n == 1, "mid-window apply must not activate: \(fake.log)")
-        try? await Task.sleep(nanoseconds: 600_000_000)
+        // Wait for the restore itself rather than guessing its moment.
+        let start = ContinuousClock.now
+        while fake.n < 2, ContinuousClock.now - start < .seconds(15) {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
         // The restore converged once with the deferred target — the
         // queued apply found nothing left to do.
         #expect(fake.n == 2, "\(fake.log)")
