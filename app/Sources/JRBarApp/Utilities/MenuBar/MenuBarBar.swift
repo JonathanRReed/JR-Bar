@@ -748,14 +748,16 @@ final class MenuBarBar {
             matching: .keyDown,
             handler: { [weak self] event in
                 guard let self else { return event }
-                // The keyboard's bar answers its keys; a pointer's bar
-                // only folds on Esc.
+                // The keyboard's bar owns the keys while it holds key:
+                // it answers its own and swallows the rest, so a stray
+                // ⌘Q or ⌘W never reaches JR-Bar's menus from under it.
+                // A pointer's bar only folds on Esc.
                 if self.model.keys != nil {
-                    guard let key = MenuBarBarKeys.key(keyCode: event.keyCode,
-                                                       characters: event.charactersIgnoringModifiers,
-                                                       modifiers: event.modifierFlags)
-                    else { return event }
-                    self.press(key)
+                    if let key = MenuBarBarKeys.key(keyCode: event.keyCode,
+                                                    characters: event.charactersIgnoringModifiers,
+                                                    modifiers: event.modifierFlags) {
+                        self.press(key)
+                    }
                     return nil
                 }
                 guard event.keyCode == UInt16(kVK_Escape) else { return event }
