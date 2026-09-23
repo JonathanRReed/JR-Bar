@@ -968,6 +968,10 @@ final class DockSwitcherController {
 
     private let tap = SwitcherKeyTap()
     private var panel: DockSwitcherPanel?
+    /// Click-away for a latched strip: with no held modifier left to
+    /// release, the latch would otherwise keep every keystroke on the
+    /// Mac until esc or ↩. A click anywhere off the strip cancels it.
+    private let latchWatchers = DockPanelWatchers()
     private(set) var model = SwitcherModel()
     /// Which strip is up — the ⌥⇥ window cards or the ⌘⇥ app row.
     private(set) var appMode = false
@@ -1169,6 +1173,14 @@ final class DockSwitcherController {
     func latch() {
         guard panel?.isVisible == true else { return }
         panel?.setLatched(true)
+        latchWatchers.isInside = { [weak self] in
+            self?.panel?.frame.contains(NSEvent.mouseLocation) ?? false
+        }
+        latchWatchers.onOutside = { [weak self] in
+            guard let self, self.tap.isLatched else { return }
+            self.cancel()
+        }
+        latchWatchers.start(escape: false, clickAway: true)
     }
 
     /// ⌥⌘ + arrow: the pick goes to that half of the screen it's on
@@ -1529,6 +1541,7 @@ final class DockSwitcherController {
     /// here: the tap stops owning the keyboard, the live watch and the
     /// scope end, and a half-armed guard is forgotten.
     private func closeStrip() {
+        latchWatchers.stop()
         agentGuard.reset()
         appMode = false
         drilledApp = nil
