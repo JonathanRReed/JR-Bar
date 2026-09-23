@@ -187,6 +187,19 @@ struct NotchAskTests {
         #expect(NotchIsland.summarize([working]).oldestWaiting == nil)
     }
 
+    @Test("a peer's older ask is counted but the jump goes to the local one")
+    func oldestSkipsPeers() {
+        let peer = CoreSession(id: "remote:studio:claude:p", provider: "claude", label: "peer",
+                               since: 1, ask: CoreAsk(openedAt: 10, summary: "peer"))
+        let local = CoreSession(id: "claude:here", provider: "claude", label: "here",
+                                since: 5, ask: CoreAsk(openedAt: 500, summary: "here"))
+        let summary = NotchIsland.summarize([peer, local])
+        #expect(summary.waiting == 2)
+        #expect(summary.oldestWaiting == "claude:here")
+        #expect(NotchIsland.summarize([peer]).oldestWaiting == nil,
+                "only a peer waiting: the click grows the card instead")
+    }
+
     // MARK: Queue
 
     @Test("resolving an ask drops it from the waiting slot and names the shown one")

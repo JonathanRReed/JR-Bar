@@ -101,7 +101,10 @@ public struct NotchIslandSummary: Equatable, Sendable {
     public var statusLine = "Nothing on the clock"
     /// The session that has waited longest on an answer — the amber
     /// count's click goes straight there. Ordered by the ask's own
-    /// `opened_at`, then the session's `since`; nil when nobody waits.
+    /// `opened_at`, then the session's `since`; nil when nobody waits
+    /// here. A peer's ask counts in `waiting` but is never the jump:
+    /// its terminal is on another Mac, so a click on it would open
+    /// nothing.
     public var oldestWaiting: String?
 
     public init() {}
@@ -154,6 +157,7 @@ public enum NotchIsland {
                 tally[session.provider, default: 0] += 1
             case .waiting:
                 s.waiting += 1
+                guard !CoreSession.isRemoteID(session.id) else { break }
                 // Unknown times sort last, so a stamped ask always wins
                 // the jump over one the daemon could not date.
                 let at = session.ask?.openedAt ?? session.since ?? .greatestFiniteMagnitude
