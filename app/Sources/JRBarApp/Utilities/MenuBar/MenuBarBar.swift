@@ -4,13 +4,18 @@ import JRBarCore
 import QuartzCore
 import SwiftUI
 
-/// The Item Bar's geometry, pure so a test can pin it: one row of fixed
-/// tiles hung under the menu bar's right end. The bar floats, so the
-/// material rule lets it be glass.
+/// The Item Bar's geometry, pure so a test can pin it: one row of tiles
+/// hung under the menu bar's right end. A tile carrying a real glyph
+/// takes the item's own width, so "72°" or a VPN's name reads whole; an
+/// app-icon fallback stays square. The bar floats, so the material rule
+/// lets it be glass.
 enum MenuBarBarLayout {
     /// A tile's square edge — big enough to read a menu bar glyph, small
-    /// enough that a packed bar stays a strip.
+    /// enough that a packed bar stays a strip. Also the tile's height.
     static let tileSize: CGFloat = 30
+    /// A glyph tile's width range: the item's own width, clamped.
+    static let minTileWidth: CGFloat = 22
+    static let maxTileWidth: CGFloat = 120
     /// Air between tiles.
     static let tileGap: CGFloat = 4
     /// Breathing room inside the glass, around the row.
@@ -25,18 +30,39 @@ enum MenuBarBarLayout {
 
     static let scrollIndicatorHeight: CGFloat = 16
 
+    /// A row of `itemCount` square tiles. Arithmetic, never an array of
+    /// widths: a caller may ask about any count at all.
     static func rowWidth(itemCount: Int) -> CGFloat {
         let count = CGFloat(max(0, itemCount))
         return count * tileSize + max(0, count - 1) * tileGap
     }
 
+    /// A row of tiles of these widths, with the gaps between.
+    static func rowWidth(widths: [CGFloat]) -> CGFloat {
+        widths.reduce(0, +) + CGFloat(max(0, widths.count - 1)) * tileGap
+    }
+
     /// Limit the viewport, never the items. Reserve scrollbar room only
     /// when content overflows, including on screens narrower than 24 tiles.
     static func contentSize(itemCount: Int, availableWidth: CGFloat = .greatestFiniteMagnitude) -> NSSize {
-        let fullWidth = itemCount > 0 ? rowWidth(itemCount: itemCount) + 2 * padding : 128
+        contentSize(rowWidth: itemCount > 0 ? rowWidth(itemCount: itemCount) : nil,
+                    availableWidth: availableWidth)
+    }
+
+    /// The same for tiles of their own widths. The viewport cap stays
+    /// the width of `maxTiles` square tiles, so wide glyphs scroll
+    /// rather than stretch the glass across the screen.
+    static func contentSize(widths: [CGFloat], availableWidth: CGFloat = .greatestFiniteMagnitude) -> NSSize {
+        contentSize(rowWidth: widths.isEmpty ? nil : rowWidth(widths: widths),
+                    availableWidth: availableWidth)
+    }
+
+    /// The glass around a row this wide — nil for the empty bar's note.
+    private static func contentSize(rowWidth row: CGFloat?, availableWidth: CGFloat) -> NSSize {
+        let fullWidth = row.map { $0 + 2 * padding } ?? 128
         let width = min(fullWidth, rowWidth(itemCount: maxTiles) + 2 * padding,
                         max(0, availableWidth))
-        let overflow = itemCount > 0 && fullWidth > width
+        let overflow = row != nil && fullWidth > width
         return NSSize(width: width,
                       height: tileSize + 2 * padding + (overflow ? scrollIndicatorHeight : 0))
     }
@@ -46,11 +72,35 @@ enum MenuBarBarLayout {
     /// row's thickness — the status bar's, or the notch's where it
     /// reaches deeper.
     static func frame(itemCount: Int, menuBarDepth: CGFloat, on screenFrame: NSRect) -> NSRect {
-        let size = contentSize(itemCount: itemCount,
-                               availableWidth: screenFrame.width - 2 * edgeMargin)
-        return NSRect(x: screenFrame.maxX - size.width - edgeMargin,
+        frame(size: contentSize(itemCount: itemCount,
+                                availableWidth: screenFrame.width - 2 * edgeMargin),
+              menuBarDepth: menuBarDepth, on: screenFrame, anchorMaxX: nil)
+    }
+
+    /// The same for tiles of their own widths. `anchorMaxX`, when given,
+    /// hangs the bar's right edge under that x — the icon's ‹ — kept on
+    /// the screen.
+    static func frame(widths: [CGFloat], menuBarDepth: CGFloat, on screenFrame: NSRect,
+                      anchorMaxX: CGFloat? = nil) -> NSRect {
+        frame(size: contentSize(widths: widths,
+                                availableWidth: screenFrame.width - 2 * edgeMargin),
+              menuBarDepth: menuBarDepth, on: screenFrame, anchorMaxX: anchorMaxX)
+    }
+
+    private static func frame(size: NSSize, menuBarDepth: CGFloat, on screenFrame: NSRect,
+                              anchorMaxX: CGFloat?) -> NSRect {
+        let rightmost = screenFrame.maxX - edgeMargin
+        let leftmost = screenFrame.minX + edgeMargin
+        let maxX = anchorMaxX.map { min(rightmost, max(leftmost + size.width, $0)) } ?? rightmost
+        return NSRect(x: maxX - size.width,
                       y: screenFrame.maxY - menuBarDepth - barGap - size.height,
                       width: size.width, height: size.height)
+    }
+
+    /// A tile's width: a glyph's own width, clamped; the square for an
+    /// app icon.
+    static func tileWidth(glyphWidth: CGFloat?) -> CGFloat {
+        glyphWidth.map(MenuBarGlyphProcessing.tileWidth(pointWidth:)) ?? tileSize
     }
 }
 
@@ -64,6 +114,20 @@ final class MenuBarBarModel {
     /// Items macOS parked off the row — no pixels to capture, so their
     /// tiles carry the state glyph instead of pretending otherwise.
     var parkedIDs: Set<String> = []
+    /// Photographed glyphs by item id — the real face a concealed item
+    /// has no pixels for right now.
+    var glyphs: [String: MenuBarGlyphCache.Face] = [:]
+    /// Items whose picture changed since the bar last closed — a sync
+    /// badge, a VPN's state — marked with a dot.
+    var updatedIDs: Set<String> = []
+
+    /// Each tile's width, in order: a live capture's or a glyph's own
+    /// width, clamped; the square otherwise.
+    func tileWidths(liveWidths: [String: CGFloat]) -> [CGFloat] {
+        items.map { item in
+            MenuBarBarLayout.tileWidth(glyphWidth: liveWidths[item.id] ?? glyphs[item.id]?.width)
+        }
+    }
 }
 
 /// The floating panel itself: borderless, nonactivating, glass-backed,
@@ -122,12 +186,12 @@ final class MenuBarBarPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// The tiles' SwiftUI half: a row of live captures — each tile shows a
-/// `SCScreenshotManager` one-shot of the item's real on-screen rect
-/// while the bar is up, falling back to the owner app's icon when
-/// capture has nothing honest to show (no Screen Recording, a parked
-/// item). Click triggers the item, ⌘-click reveals it, right-click
-/// offers the section moves.
+/// The tiles' SwiftUI half: each tile shows the item's own face — a
+/// `SCScreenshotManager` one-shot of its on-screen rect when it stands
+/// on the row, else the glyph photographed while it last did — falling
+/// back to the owner app's icon only when neither is honest to show (no
+/// Screen Recording, never photographed). Click triggers the item,
+/// ⌘-click reveals it, right-click offers the section moves.
 struct MenuBarBarView: View {
     let model: MenuBarBarModel
     let tiles: MenuBarLiveTiles
@@ -143,6 +207,7 @@ struct MenuBarBarView: View {
     private var items: [MenuBarItem] { model.items }
 
     var body: some View {
+        let widths = model.tileWidths(liveWidths: tiles.imageWidths)
         Group {
             if items.isEmpty {
                 Text("No hidden items")
@@ -152,10 +217,10 @@ struct MenuBarBarView: View {
                     .frame(height: MenuBarBarLayout.tileSize)
             } else {
                 GeometryReader { geometry in
-                    let overflow = MenuBarBarLayout.rowWidth(itemCount: items.count) > geometry.size.width
+                    let overflow = MenuBarBarLayout.rowWidth(widths: widths) > geometry.size.width
                     ScrollView(.horizontal) {
                         HStack(spacing: MenuBarBarLayout.tileGap) {
-                            ForEach(items, id: \.id) { item in
+                            ForEach(Array(zip(items, widths)), id: \.0.id) { item, width in
                                 Button {
                                     if NSEvent.modifierFlags.contains(.command) {
                                         onRevealItem(item)
@@ -163,7 +228,7 @@ struct MenuBarBarView: View {
                                         onTrigger(item)
                                     }
                                 } label: {
-                                    tileLabel(for: item)
+                                    tileLabel(for: item, width: width)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(itemLabel(for: item))
@@ -185,31 +250,57 @@ struct MenuBarBarView: View {
         return "\(item.ownerName) · \(title)"
     }
 
-    /// The tile face: the live capture when one exists, else the owner
-    /// app's icon — with the parked glyph when the item has no
-    /// on-screen pixels to capture at all.
+    /// The tile face, best first: the live capture of an item standing
+    /// on the row; its photographed glyph (a template tinted in the bar's
+    /// own label colour); the owner app's icon. A parked item with no
+    /// glyph carries the parked mark; an item whose picture changed since
+    /// the bar last closed carries a dot.
     @ViewBuilder
-    private func tileLabel(for item: MenuBarItem) -> some View {
-        Image(nsImage: tiles.images[item.id]
-              ?? item.owner?.icon
-              ?? NSImage(systemSymbolName: "questionmark.square.dashed",
-                         variableValue: 0,
-                         accessibilityDescription: nil)
-              ?? NSImage())
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: 22, height: 22)
-            .frame(width: MenuBarBarLayout.tileSize, height: MenuBarBarLayout.tileSize)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottomTrailing) {
-                if model.parkedIDs.contains(item.id) {
-                    Image(systemName: "arrow.down.forward.and.arrow.up.backward")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .padding(1)
-                        .background(.regularMaterial, in: Circle())
-                }
+    private func tileLabel(for item: MenuBarItem, width: CGFloat) -> some View {
+        Group {
+            if let live = tiles.images[item.id] {
+                Image(nsImage: live)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 22)
+            } else if let glyph = model.glyphs[item.id] {
+                Image(nsImage: glyph.image)
+                    .renderingMode(glyph.template ? .template : .original)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(.primary)
+                    .frame(height: 22)
+            } else {
+                Image(nsImage: item.owner?.icon
+                      ?? NSImage(systemSymbolName: "questionmark.square.dashed",
+                                 variableValue: 0,
+                                 accessibilityDescription: nil)
+                      ?? NSImage())
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 22)
             }
+        }
+        .frame(width: width, height: MenuBarBarLayout.tileSize)
+        .contentShape(Rectangle())
+        .overlay(alignment: .bottomTrailing) {
+            if model.parkedIDs.contains(item.id), model.glyphs[item.id] == nil,
+               tiles.images[item.id] == nil {
+                Image(systemName: "arrow.down.forward.and.arrow.up.backward")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(1)
+                    .background(.regularMaterial, in: Circle())
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if model.updatedIDs.contains(item.id) {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 5, height: 5)
+                    .accessibilityLabel("Changed")
+            }
+        }
     }
 
     /// The right-click menu: re-home the item to whichever sections it
@@ -254,9 +345,19 @@ final class MenuBarBar {
     /// Open changes, so the reveal can hold while the pointer is on it
     /// and start a short clock when it folds.
     var onOpenChange: @MainActor (Bool) -> Void = { _ in }
+    /// A photographed glyph for an item, when the cache has one.
+    var glyphFace: @MainActor (MenuBarItem) -> MenuBarGlyphCache.Face? = { _ in nil }
+    /// Where the bar hangs: the icon's frame in AppKit screen coordinates
+    /// (its ‹ sits at the left edge) — nil hangs it at the screen's edge.
+    var anchorFrame: @MainActor () -> NSRect? = { nil }
+    /// Ids whose picture changed since the bar last closed.
+    var updatedIDs: Set<String> = [] {
+        didSet { model.updatedIDs = updatedIDs }
+    }
 
-    /// The live thumbnails — the capture loop exists only while the
-    /// bar is up, so a hidden menu bar pays nothing.
+    /// The live thumbnails — one pass when the bar opens, never a loop:
+    /// every capture lights the screen-recording indicator, which shifts
+    /// the whole bar.
     let tiles = MenuBarLiveTiles()
     /// What the open panel lists — refreshed on every reconcile while
     /// the bar is up, so the tiles are never a frozen snapshot.
@@ -297,6 +398,7 @@ final class MenuBarBar {
         model.parkedIDs = Set(listed.filter { item in
             !rows.contains { $0.intersects(item.bounds) }
         }.map(\.id))
+        model.glyphs = glyphs(for: listed)
         let panel = MenuBarBarPanel(
             model: model,
             tiles: tiles,
@@ -308,23 +410,52 @@ final class MenuBarBar {
             onMoveItem: { [weak self] item, section in
                 self?.onMoveItem(item, section)
             })
-        let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
-        panel.setFrame(MenuBarBarLayout.frame(itemCount: listed.count,
-                                              menuBarDepth: depth,
-                                              on: screen.frame),
-                       display: false)
+        panel.setFrame(frame(on: screen), display: false)
         panel.orderFrontRegardless()
         self.panel = panel
         isOpen = true
         openedAtUptime = ProcessInfo.processInfo.systemUptime
         onOpenChange(true)
         installDismissMonitors()
-        // The capture loop's whole lifetime is the bar's: items come
-        // from the same provider the tiles were built from, and close()
-        // stops it outright.
+        // One capture pass for whatever stands on the row now; the
+        // photographed glyphs carry the rest.
         tiles.itemsProvider = items
         tiles.rowRects = { MenuBarItemLister.menuBarRows() }
         tiles.start()
+    }
+
+    /// The photographed faces for `items`.
+    private func glyphs(for items: [MenuBarItem]) -> [String: MenuBarGlyphCache.Face] {
+        var faces: [String: MenuBarGlyphCache.Face] = [:]
+        for item in items {
+            if let face = glyphFace(item) { faces[item.id] = face }
+        }
+        return faces
+    }
+
+    /// The panel's frame for the current tiles: under the icon's ‹ when
+    /// it stands on this screen, else at the screen's right end.
+    private func frame(on screen: NSScreen) -> NSRect {
+        let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
+        let anchor = anchorFrame().flatMap { frame in
+            screen.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) ? frame.maxX : nil
+        }
+        return MenuBarBarLayout.frame(widths: model.tileWidths(liveWidths: tiles.imageWidths),
+                                      menuBarDepth: depth, on: screen.frame, anchorMaxX: anchor)
+    }
+
+    /// The glyph cache filed new photographs — the open bar wears them.
+    func glyphsChanged() {
+        guard isOpen, let panel else { return }
+        let faces = glyphs(for: model.items)
+        guard faces.mapValues(\.width) != model.glyphs.mapValues(\.width)
+                || Set(faces.keys) != Set(model.glyphs.keys) else {
+            model.glyphs = faces
+            return
+        }
+        model.glyphs = faces
+        guard let screen = panel.screen ?? pointerScreen else { return }
+        panel.setFrame(frame(on: screen), display: true)
     }
 
     /// Push the provider's current list into the open bar — called on
@@ -341,12 +472,9 @@ final class MenuBarBar {
         guard listed != model.items || parked != model.parkedIDs else { return }
         model.items = listed
         model.parkedIDs = parked
+        model.glyphs = glyphs(for: listed)
         guard let screen = panel.screen ?? pointerScreen else { return }
-        let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
-        panel.setFrame(MenuBarBarLayout.frame(itemCount: listed.count,
-                                              menuBarDepth: depth,
-                                              on: screen.frame),
-                       display: true)
+        panel.setFrame(frame(on: screen), display: true)
     }
 
     func close() {
@@ -357,6 +485,8 @@ final class MenuBarBar {
         panel?.orderOut(nil)
         panel = nil
         isOpen = false
+        // Seen: the change marks clear with the bar.
+        updatedIDs = []
         onOpenChange(false)
     }
 

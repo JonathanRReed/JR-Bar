@@ -177,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The app's own status item is the Menu Bar utility's boundary:
         // everything left of it is the hidden run.
         utilitiesStore.menuBar.host = statusItem
+        // The Item Bar's photographed glyphs — the app's own; tests never
+        // get a camera, so no test captures the screen or writes the cache.
+        utilitiesStore.menuBar.glyphCamera = MenuBarGlyphCamera()
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater

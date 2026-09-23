@@ -290,6 +290,7 @@ final class MenuBarUtility: Toy {
             self.pollDisplayProfile()
             self.bar.syncItems()
             self.refreshExtrasFaces()
+            self.photographReveal()
             // The writing passes land off the plan's stack — a settings
             // write inside `onPlan` would nest a whole reconcile inside
             // one, and the updates pass can itself reveal. Deferred like
@@ -399,6 +400,15 @@ final class MenuBarUtility: Toy {
             self?.hider.hide()
         }
         bar.items = { [weak self] in self?.barItems() ?? [] }
+        bar.glyphFace = { [weak self] item in
+            guard let self, let camera = self.glyphCamera else { return nil }
+            return camera.cache.face(for: item, dark: self.barIsDark())
+        }
+        // The bar hangs under the icon's ‹ while the mirror carries it.
+        bar.anchorFrame = { [weak self] in
+            guard let self, self.iconMirrored else { return nil }
+            return self.standingMirrorFrame
+        }
         // A concealed item's ghost reports a frozen on-row frame but
         // draws nothing — capturing that rect would tile empty bar.
         // Ghosts take the owner's app icon like parked items do.
@@ -425,6 +435,11 @@ final class MenuBarUtility: Toy {
             if !open {
                 self.barClosedAtUptime = ProcessInfo.processInfo.systemUptime
                 self.reveal.noteBarClosed()
+            } else if self.concealer == nil {
+                // Under the spacer engine a covered item still renders
+                // under our shutter: photograph the stale ones for the
+                // day the concealer takes over.
+                self.photograph(self.onRowItems(in: self.barItems()))
             }
         }
         actions.delegate = self
@@ -675,7 +690,7 @@ final class MenuBarUtility: Toy {
 
     /// The listed items "hide all" reaches: foreign, named, unprotected,
     /// never the native overflow control and never our own family.
-    private static func hideAllTargets(_ items: [MenuBarItem]) -> [MenuBarItem] {
+    nonisolated private static func hideAllTargets(_ items: [MenuBarItem]) -> [MenuBarItem] {
         items.filter {
             !MenuBarItemLister.isProtected($0) && !$0.ownerName.isEmpty
                 && !$0.isNativeOverflowControl && !isOwnFamily($0.bundleID)
@@ -1550,6 +1565,7 @@ final class MenuBarUtility: Toy {
         concealer.onChange = { [weak self] in self?.concealerChanged() }
         self.concealer = concealer
         concealerStartedAt = Date()
+        prePhotographPending = true
         hider.shuttersSuppressed = true
         // No affordance under the agent: nothing of ours grows while the
         // agent hides — the icon is the mirror's.
@@ -2354,8 +2370,22 @@ final class MenuBarUtility: Toy {
         // assertion is still draining for a beat after the engine comes
         // up. Nothing else gates it — macOS never draws our own item
         // under our assertion, so there is no adoption to wait for.
-        guard concealer.isConcealing
-                || Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionGrace else { return }
+        let inGrace = Date().timeIntervalSince(concealerStartedAt) < Self.adoptionGrace
+        if prePhotographPending, !concealer.isConcealing {
+            // The one moment every app about to be hidden is still drawn:
+            // photograph them (and the shown ones) before the first
+            // assertion takes their pixels.
+            if !inGrace {
+                prePhotographPending = false
+            } else {
+                let standing = onRowItems(in: listedItems)
+                if !standing.isEmpty {
+                    prePhotographPending = false
+                    photograph(standing)
+                }
+            }
+        }
+        guard concealer.isConcealing || !inGrace else { return }
         let concealed = concealTarget()
         concealer.apply(concealed: concealed, running: runningApps.snapshot())
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
@@ -2366,6 +2396,128 @@ final class MenuBarUtility: Toy {
         refreshChevron()
         updateIconMirror()
         engineVersion += 1
+    }
+
+    // MARK: The glyph camera
+
+    /// Photographs items while they are legitimately drawn and files
+    /// their glyphs for the Item Bar. Set by the app delegate — a test
+    /// utility has none, so no test ever captures the screen or writes
+    /// the cache.
+    @ObservationIgnored var glyphCamera: MenuBarGlyphCamera? {
+        didSet {
+            glyphCamera?.dark = { [weak self] in self?.barIsDark() ?? false }
+            glyphCamera?.onChange = { [weak self] item in
+                // A picture that changed while tucked away — the next
+                // Item Bar marks it.
+                self?.bar.updatedIDs.insert(item.id)
+            }
+            // Each frame is bracketed by a fresh listing: the item must
+            // still be drawn, unmoved, and alone in its rect, or the
+            // photograph is someone else's.
+            glyphCamera?.locate = { [weak self] item in
+                let listed = await MenuBarItemLister.refreshAXItems()
+                guard let self, let fresh = listed.first(where: { $0.id == item.id }) else { return nil }
+                return Self.photographable(fresh, among: listed,
+                                           rows: MenuBarItemLister.menuBarRows(),
+                                           concealed: self.concealer?.concealedApps ?? [])
+                    ? fresh : nil
+            }
+            pruneGlyphs()
+        }
+    }
+    /// The engine just came up: photograph before the first assertion.
+    @ObservationIgnored private var prePhotographPending = false
+    /// This reveal's photographs are taken (or under way).
+    @ObservationIgnored private var revealPhotographed = false
+
+    /// The menu bar's appearance — the icon's, which follows the
+    /// wallpaper under the bar, not the app's.
+    private func barIsDark() -> Bool {
+        let appearance = host?.face.appearance ?? NSApp.effectiveAppearance
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    /// The items among `items` that stand on a bar and are someone
+    /// else's to photograph — never ours, never the protected system
+    /// items, and never an app the live assertion conceals right now
+    /// (its frame is a ghost that draws nothing). Before the first
+    /// assertion, and for the apps a reveal or a lift narrowed out of
+    /// it, the items are drawn.
+    private func onRowItems(in items: [MenuBarItem]) -> [MenuBarItem] {
+        let rows = MenuBarItemLister.menuBarRows()
+        let concealedNow = concealer?.concealedApps ?? []
+        return items.filter {
+            Self.photographable($0, among: items, rows: rows, concealed: concealedNow)
+        }
+    }
+
+    /// Whether `item` can be photographed as itself: someone else's
+    /// (never ours, never a protected system item, never the «), on a
+    /// row, not concealed by the live assertion, and alone in its rect.
+    /// A concealed app's ghost keeps reporting its old frame after the
+    /// row repacks, so two listed items sharing a stretch of bar means
+    /// one of them is a ghost over the other — and a photograph of that
+    /// rect could file one app's glyph under the other's name. Pure so a
+    /// test pins it.
+    nonisolated static func photographable(_ item: MenuBarItem, among items: [MenuBarItem],
+                                           rows: [CGRect], concealed: Set<String>) -> Bool {
+        guard !hideAllTargets([item]).isEmpty,
+              rows.contains(where: { $0.intersects(item.bounds) }),
+              !(item.bundleID.map(concealed.contains) ?? false) else { return false }
+        return !items.contains { other in
+            other.id != item.id && other.bounds.intersection(item.bounds).width >= 4
+        }
+    }
+
+    /// Drop the photographs of apps long gone: an owner that neither
+    /// runs nor resolves on disk, photographed more than a month ago. A
+    /// helper bundled inside another app resolves neither lookup, so the
+    /// age is what keeps its glyph through a quiet spell. Launch-time
+    /// housekeeping, a beat after the camera is set.
+    private func pruneGlyphs() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let camera = self?.glyphCamera else { return }
+            let now = Date()
+            camera.cache.prune { owner, capturedAt in
+                now.timeIntervalSince(capturedAt) < MenuBarGlyphCache.pruneAge
+                    || !owner.contains(".")
+                    || !NSRunningApplication.runningApplications(withBundleIdentifier: owner).isEmpty
+                    || NSWorkspace.shared.urlForApplication(withBundleIdentifier: owner) != nil
+            }
+        }
+    }
+
+    /// One photograph pass, off the caller's stack.
+    private func photograph(_ items: [MenuBarItem]) {
+        guard let camera = glyphCamera, !items.isEmpty else { return }
+        Task { [weak self] in
+            let stored = await camera.photograph(items, rows: MenuBarItemLister.menuBarRows())
+            if !stored.isEmpty { self?.bar.glyphsChanged() }
+        }
+    }
+
+    /// While a reveal holds the concealed apps on the row, photograph
+    /// them once — after a beat, so the fade-in has landed.
+    private func photographReveal() {
+        guard concealer != nil, glyphCamera != nil else { return }
+        guard !hider.revealed.isEmpty else {
+            revealPhotographed = false
+            return
+        }
+        guard !revealPhotographed else { return }
+        revealPhotographed = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard let self, !self.hider.revealed.isEmpty else { return }
+            let tucked = MenuBarConcealPlan.concealed(apps: self.curatedSettings().concealedApps,
+                                                      revealed: [])
+            let standing = self.onRowItems(in: self.listedItems).filter {
+                $0.bundleID.map(tucked.contains) ?? false
+            }
+            self.photograph(standing)
+        }
     }
 
     // MARK: Engine health and rivals
@@ -2672,6 +2824,14 @@ final class MenuBarUtility: Toy {
                         fresh = found
                         if MenuBarItemLister.onAnyMenuBarRow(found.bounds) { break }
                     }
+                }
+                // The narrow lift is one of the moments the item is
+                // drawn: photograph it (only when its glyph is stale)
+                // before the press opens its menu over it.
+                if let camera = self.glyphCamera,
+                   MenuBarItemLister.onAnyMenuBarRow(fresh.bounds) {
+                    let stored = await camera.photograph([fresh], rows: MenuBarItemLister.menuBarRows())
+                    if !stored.isEmpty { self.bar.glyphsChanged() }
                 }
                 if !MenuBarAX.press(fresh) {
                     await MainActor.run { self.clickFallback(fresh) }
