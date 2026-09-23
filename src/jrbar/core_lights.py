@@ -428,6 +428,52 @@ def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- colour vision ---------------------------------------------------------------------------
+
+_MAX_CANDIDATE_COLORS = 64
+
+
+def check_palette(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Which of the person's colours read as one light for a colourblind
+    viewer, and the smallest nudge that pulls each pair apart
+    (``colors.check_palette``). ``colors`` previews an edit before it is
+    saved: ``{"agent:claude": "#hex", "state:ask": "#hex"}`` on top of the
+    saved palette. Nothing is written."""
+    from . import colors as colors_module
+    from .providers import PROVIDER_SPECS
+
+    settings = getattr(controller, "settings", None)
+    saved = getattr(settings, "colors", None)
+    if not isinstance(saved, colors_module.ColorSettings):
+        saved = colors_module.ColorSettings.defaults()
+    providers = tuple(spec.provider for spec in PROVIDER_SPECS)
+    palette = colors_module.palette_colors(saved, providers)
+    shipped = colors_module.palette_colors(colors_module.ColorSettings.defaults(), providers)
+    candidate = args.get("colors") or {}
+    if not isinstance(candidate, dict) or len(candidate) > _MAX_CANDIDATE_COLORS:
+        raise _command_error("invalid_args", "colors must map agent:<id> or state:<key> to a hex colour")
+    for key, value in candidate.items():
+        if key not in palette:
+            raise _command_error("invalid_args", f"unknown colour {str(key)[:64]!r}")
+        if not isinstance(value, str) or colors_module.normalize_hex(value, "") != value.upper():
+            raise _command_error("invalid_args", f"{key} must be a #RRGGBB colour")
+        palette[key] = value.upper()
+    visions = args.get("visions", list(colors_module.DICHROMACY_VISIONS))
+    if (
+        not isinstance(visions, list)
+        or not visions
+        or any(vision not in colors_module.VISION_MODELS for vision in visions)
+    ):
+        raise _command_error("invalid_args", "visions must list normal, deuteranopia, protanopia or tritanopia")
+    pairs = colors_module.check_palette(palette, shipped=shipped, visions=tuple(dict.fromkeys(visions)))
+    return {
+        "min_separation": colors_module.MIN_VISION_SEPARATION_DE,
+        "visions": list(dict.fromkeys(visions)),
+        "checked": len(palette),
+        "pairs": pairs,
+    }
+
+
 # --- the light log -------------------------------------------------------------------------
 
 
@@ -493,6 +539,7 @@ __all__ = [
     "augment_lights_cues",
     "burn_init",
     "calibration_profile",
+    "check_palette",
     "list_cues",
     "list_focuses",
     "list_light_log",

@@ -2485,6 +2485,13 @@ def _cmd_list_focuses(self, args):
     return core_lights.list_focuses(self, args)
 
 
+@command("check_palette", main_thread=False)
+def _cmd_check_palette(self, args):
+    from . import core_lights
+
+    return core_lights.check_palette(self, args)
+
+
 @command("preview_fleet", main_thread=False)
 def _cmd_preview_fleet(self, args):
     from . import core_lights
