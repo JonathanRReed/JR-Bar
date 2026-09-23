@@ -172,8 +172,12 @@ struct PaletteInput {
     var initial: @MainActor () -> String = { "" }
     /// Every edit, so a half-typed line outlives a fold.
     var onChange: (@MainActor (String) -> Void)?
-    /// Runs with the trimmed, non-empty words. The returned line is the
-    /// HUD's, as `PaletteAction.run`'s is.
+    /// Whether the trimmed words can be sent — a name the store would
+    /// refuse keeps the field open and Send dimmed, rather than folding
+    /// on a claim that did not land.
+    var accepts: @MainActor (String) -> Bool = { _ in true }
+    /// Runs with the trimmed, non-empty, accepted words. The returned
+    /// line is the HUD's, as `PaletteAction.run`'s is.
     let submit: @MainActor (String) -> String?
 }
 

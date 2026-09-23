@@ -82,6 +82,11 @@ protocol MenuBarActionsDelegate: AnyObject {
     func menuBarActions(_ actions: MenuBarActions, applyProfileID id: String)
     /// Switch one rule on or off — the card's toggle.
     func menuBarActions(_ actions: MenuBarActions, setRule id: String, enabled: Bool)
+    /// Save the live layout as a profile named `name` — the card's Save
+    /// (`MenuBarProfiles.saveCurrent`): a same-named one updates in place.
+    func menuBarActions(_ actions: MenuBarActions, saveProfileNamed name: String)
+    /// Rename a saved profile — the card's rename.
+    func menuBarActions(_ actions: MenuBarActions, renameProfile id: String, to name: String)
 }
 
 extension MenuBarActionsDelegate {
@@ -90,6 +95,8 @@ extension MenuBarActionsDelegate {
     func menuBarActiveProfileID(for _: MenuBarActions) -> String? { nil }
     func menuBarActions(_: MenuBarActions, applyProfileID _: String) {}
     func menuBarActions(_: MenuBarActions, setRule _: String, enabled _: Bool) {}
+    func menuBarActions(_: MenuBarActions, saveProfileNamed _: String) {}
+    func menuBarActions(_: MenuBarActions, renameProfile _: String, to _: String) {}
 }
 
 /// The ACTIONS track's single owner: arrange mode, the ⌘⇧K command
@@ -320,6 +327,14 @@ final class MenuBarActions {
             perform(rule.action)
         case .setRuleEnabled(let id, let enabled):
             delegate.menuBarActions(self, setRule: id, enabled: enabled)
+        case .saveProfile(let name):
+            // Built unnamed and filled by the palette's field; an empty
+            // name would save nothing the card could list.
+            guard MenuBarProfiles.validName(name) != nil else { return }
+            delegate.menuBarActions(self, saveProfileNamed: name)
+        case .renameProfile(let id, let name):
+            guard MenuBarProfiles.validName(name) != nil else { return }
+            delegate.menuBarActions(self, renameProfile: id, to: name)
         }
     }
 
@@ -395,8 +410,9 @@ final class MenuBarActions {
 
 /// `MenuBarUtility`'s side of the palette's newer delegate calls — the
 /// same writes the card's own controls make: `applyProfile(id:)` keeps
-/// the hotkey cycle's cursor honest, and a rule's switch lands through
-/// the utility's settings write so the trigger feed re-arms.
+/// the hotkey cycle's cursor honest, a rule's switch lands through the
+/// utility's settings write so the trigger feed re-arms, and a profile
+/// saved or renamed from the palette is the card's own save or rename.
 extension MenuBarUtility {
     func menuBarConcealing(for _: MenuBarActions) -> Bool { concealing }
 
@@ -422,5 +438,13 @@ extension MenuBarUtility {
               draft.triggerRules[index].enabled != enabled else { return }
         draft.triggerRules[index].enabled = enabled
         onSettingsChange?(draft)
+    }
+
+    func menuBarActions(_: MenuBarActions, saveProfileNamed name: String) {
+        saveProfileAs(name)
+    }
+
+    func menuBarActions(_: MenuBarActions, renameProfile id: String, to name: String) {
+        renameProfile(id: id, to: name)
     }
 }

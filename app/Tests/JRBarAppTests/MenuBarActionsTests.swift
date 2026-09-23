@@ -385,7 +385,7 @@ struct MenuBarActionsTests {
                                                            "com.c": .shown])
         let rows = MenuBarCommands.build(items: [], sections: [:], profiles: [work])
             .filter { $0.kind == .profile }
-        #expect(rows.map(\.title) == [MenuBarProfiles.noneName, "Work"])
+        #expect(rows.map(\.title) == [MenuBarProfiles.noneName, "Work", "Save Layout as Profile…"])
         #expect(rows[1].subtitle == "Hides 3 apps")
         #expect(rows[1].verbs.first?.action == .applyProfile(id: "p1"))
         #expect(rows[0].verbs.first?.action == .applyProfile(id: MenuBarProfiles.noneID))
@@ -412,7 +412,7 @@ struct MenuBarActionsTests {
         let rows = MenuBarCommands.build(items: [], sections: [:], profiles: [work, home],
                                          activeProfileID: "h")
             .filter { $0.kind == .profile }
-        #expect(rows.map(\.note) == [nil, nil, "Current"])
+        #expect(rows.map(\.note) == [nil, nil, "Current", nil])
     }
 
     @Test("a rule reads as its sentence: Return runs it, ⌘Return switches it")
@@ -809,6 +809,12 @@ struct MenuBarActionsTests {
         func menuBarActions(_ actions: MenuBarActions, setRule id: String, enabled: Bool) {
             calls.append("rule:\(id):\(enabled)")
         }
+        func menuBarActions(_ actions: MenuBarActions, saveProfileNamed name: String) {
+            calls.append("save:\(name)")
+        }
+        func menuBarActions(_ actions: MenuBarActions, renameProfile id: String, to name: String) {
+            calls.append("rename:\(id):\(name)")
+        }
     }
 
     /// A delegate that answers only the original requirements — the
@@ -864,6 +870,42 @@ struct MenuBarActionsTests {
     }
 
     @MainActor
+    @Test("a profile saves and renames by the name typed into the palette, and a refused name sends nothing")
+    func paletteProfileNames() {
+        let desk = MenuBarSettings.Profile(id: "p", name: "Desk", sections: [:])
+        let rows = MenuBarCommands.build(items: [], sections: [:], profiles: [desk])
+            .filter { $0.kind == .profile }
+        let save = rows.last
+        #expect(save?.id == "menubar.profile.save")
+        #expect(save?.verbs.first?.action == .saveProfile(name: ""))
+        #expect(save?.verbs.first?.input?.existingNames == ["Desk"])
+        #expect(rows[1].verbs.map(\.id) == ["apply", "rename"])
+        #expect(rows[1].verbs[1].input?.initial == "Desk", "a rename starts from the name")
+        // As the palette draws them: each is a field, filled on Send.
+        var performed: [MenuBarCommandAction] = []
+        let saveItem = save?.paletteItem { performed.append($0) }
+        let field = saveItem?.primary?.input
+        #expect(field?.prompt == "Name this layout…")
+        #expect(field?.accepts("Travel") == true)
+        #expect(field?.accepts("none") == false, "the built-in's name is taken")
+        #expect(field?.submit("Travel") == "Profile “Travel” saved")
+        #expect(field?.submit("desk") == "Profile “desk” updated", "a saved name updates in place")
+        let rename = rows[1].paletteItem { performed.append($0) }.actions.first { $0.id == "rename" }?.input
+        #expect(rename?.submit("Office") == "Renamed to “Office”")
+        #expect(performed == [.saveProfile(name: "Travel"), .saveProfile(name: "desk"),
+                              .renameProfile(id: "p", name: "Office")])
+        // Through the facade, a name the card would refuse goes nowhere.
+        let actions = MenuBarActions(bindings: [])
+        let delegate = FakeDelegate()
+        actions.delegate = delegate
+        actions.commandBar.onAction(.saveProfile(name: "Travel"))
+        actions.commandBar.onAction(.saveProfile(name: "  "))
+        actions.commandBar.onAction(.renameProfile(id: "p", name: "None"))
+        actions.commandBar.onAction(.renameProfile(id: "p", name: "Office"))
+        #expect(delegate.calls == ["save:Travel", "rename:p:Office"])
+    }
+
+    @MainActor
     @Test("a delegate without the palette's calls still compiles and answers safely")
     func paletteRoutingDefaults() {
         let actions = MenuBarActions(bindings: [])
@@ -908,6 +950,12 @@ struct MenuBarActionsTests {
         #expect(!utility.actions.commandBar.concealing(), "a parked utility runs no concealer")
         #expect(utility.actions.commandBar.profiles().map(\.id) == ["p"])
         #expect(utility.actions.commandBar.activeProfileID() == "p", "the applied profile reads Current")
+        // Save and rename are the card's own writes.
+        utility.actions.commandBar.onAction(.saveProfile(name: "Travel"))
+        #expect(box.settings.profiles.map(\.name) == ["Desk", "Travel"])
+        #expect(box.settings.profiles.last?.concealedApps == ["com.example.a": .hidden], "the live layout")
+        utility.actions.commandBar.onAction(.renameProfile(id: "p", name: "Office"))
+        #expect(box.settings.profiles.map(\.name) == ["Office", "Travel"])
     }
 
     @MainActor

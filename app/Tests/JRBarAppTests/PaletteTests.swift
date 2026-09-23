@@ -424,6 +424,36 @@ struct PaletteTests {
         #expect(recorded.ran == ["ask.x"], "the send is the row's use")
     }
 
+    @Test("words the verb refuses keep the field open and send nothing")
+    func controllerInputRefused() {
+        let log = Log()
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.sources = {
+            [PaletteClosureSource(build: {
+                [PaletteItem(id: "menubar.profile.save", title: "Save Layout as Profile…",
+                             icon: .symbol("circle", .gray), kind: "Profile", section: .automation,
+                             actions: [PaletteAction(id: "save", title: "Save as Profile…", symbol: "circle",
+                                                     input: PaletteInput(
+                                                        prompt: "Name this layout…", submitTitle: "Save Profile",
+                                                        accepts: { $0.lowercased() != "none" },
+                                                        submit: { log.ran.append("save:\($0)"); return nil }))])]
+            })]
+        }
+        controller.open()
+        defer { controller.close() }
+        controller.handle(.submit)
+        #expect(controller.model.inputActive, "Return on the row opens its field")
+        controller.model.inputText = "None"
+        controller.handle(.submit)
+        #expect(controller.isOpen && controller.model.inputActive)
+        #expect(log.ran.isEmpty)
+        controller.model.inputText = "Travel"
+        controller.handle(.submit)
+        #expect(!controller.isOpen)
+        #expect(log.ran == ["save:Travel"])
+    }
+
     @Test("the field closes when its row goes away — an ask answered in its own window")
     func controllerInputRowGone() async {
         let fact = PaletteSourcesTests.Fact()

@@ -220,9 +220,10 @@ struct PaletteView: View {
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let input {
+                let words = model.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
                 PaletteFooterButton(title: input.submitTitle, caps: PaletteShortcut.primary.keycaps,
                                     action: onSubmitInput)
-                    .disabled(model.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(words.isEmpty || !input.accepts(words))
                 footerRule
                 PaletteFooterButton(title: "Cancel", caps: ["⎋"], action: onCancelInput)
             } else if let item = model.selected, !model.actionsOpen {

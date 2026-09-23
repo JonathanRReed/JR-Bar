@@ -360,14 +360,15 @@ final class PaletteController {
     }
 
     /// Return in the field: hand the words over and fold. Nothing but
-    /// whitespace sends nothing — the field stays open.
+    /// whitespace, or words the verb would refuse, sends nothing — the
+    /// field stays open.
     func submitInput() {
         guard let item = model.inputItem, let action = model.inputAction, let input = action.input else {
             model.endInput()
             return
         }
         let words = model.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !words.isEmpty else { return }
+        guard !words.isEmpty, input.accepts(words) else { return }
         finish(item: item, action: action) { input.submit(words) }
     }
 

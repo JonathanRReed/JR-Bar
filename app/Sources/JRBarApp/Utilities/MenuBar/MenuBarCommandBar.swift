@@ -29,9 +29,37 @@ enum MenuBarCommandAction: Equatable, Sendable {
     case arrange
     /// A saved profile, or `MenuBarProfiles.noneID`.
     case applyProfile(id: String)
+    /// The live layout saved under a name — a same-named profile is
+    /// updated in place, as the card's Save does. Built with an empty
+    /// name; the typed words fill it (`filled(with:)`).
+    case saveProfile(name: String)
+    /// A saved profile renamed to the typed words.
+    case renameProfile(id: String, name: String)
     /// A rule's action, now — Bartender's "run now".
     case runRule(id: String)
     case setRuleEnabled(id: String, Bool)
+}
+
+extension MenuBarCommandAction {
+    /// The action with the typed words as its name — the profile verbs
+    /// that ask for one; every other action is returned as it is.
+    func filled(with text: String) -> MenuBarCommandAction {
+        switch self {
+        case .saveProfile: return .saveProfile(name: text)
+        case .renameProfile(let id, _): return .renameProfile(id: id, name: text)
+        default: return self
+        }
+    }
+}
+
+/// The words a menu-bar verb waits for: a profile's name.
+struct MenuBarCommandInput: Equatable, Sendable {
+    let prompt: String
+    let submitTitle: String
+    var initial = ""
+    /// The saved names, so the HUD can say "updated" for a name that
+    /// already exists rather than "saved" for a profile that is new.
+    var existingNames: [String] = []
 }
 
 /// One verb on a menu-bar row.
@@ -43,6 +71,8 @@ struct MenuBarCommandVerb: Equatable, Sendable {
     var shortcut: PaletteShortcut?
     /// The HUD line after it runs; nil where the result shows itself.
     var confirmation: String?
+    /// A verb that asks for words first; `action` is filled with them.
+    var input: MenuBarCommandInput?
 }
 
 /// One menu-bar row: an app (every item it owns), a bar-wide command,
@@ -279,8 +309,9 @@ enum MenuBarCommands {
     }
 
     /// The built-in "None" first, then the saved profiles in the card's
-    /// order. The subtitle says what the profile hides; the one the bar
-    /// is wearing now is tagged Current.
+    /// order — each renameable by name — and last, saving the live
+    /// layout as one. The subtitle says what a profile hides; the one
+    /// the bar is wearing now is tagged Current.
     nonisolated static func profileRows(_ profiles: [MenuBarSettings.Profile],
                                         active: String? = nil) -> [MenuBarCommand] {
         var rows = [MenuBarCommand(
@@ -299,11 +330,51 @@ enum MenuBarCommands {
                 subtitle: hidden == 0 ? "Hides nothing" : "Hides \(hidden) \(hidden == 1 ? "app" : "apps")",
                 symbol: "rectangle.3.group", tint: .purple, keywords: ["menu bar profile", "layout"],
                 note: active == profile.id ? "Current" : nil,
-                verbs: [MenuBarCommandVerb(id: "apply", title: "Apply Profile", symbol: "checkmark.circle",
-                                           action: .applyProfile(id: profile.id),
-                                           confirmation: "Profile “\(profile.name)” applied")]))
+                verbs: [
+                    MenuBarCommandVerb(id: "apply", title: "Apply Profile", symbol: "checkmark.circle",
+                                       action: .applyProfile(id: profile.id),
+                                       confirmation: "Profile “\(profile.name)” applied"),
+                    MenuBarCommandVerb(id: "rename", title: "Rename…", symbol: "pencil",
+                                       action: .renameProfile(id: profile.id, name: ""),
+                                       input: MenuBarCommandInput(prompt: "Rename “\(profile.name)”…",
+                                                                  submitTitle: "Rename",
+                                                                  initial: profile.name)),
+                ]))
         }
+        rows.append(MenuBarCommand(
+            id: "menubar.profile.save", kind: .profile, title: "Save Layout as Profile…",
+            subtitle: "What hides and how the bar looks, kept under a name",
+            symbol: "square.and.arrow.down", tint: .purple,
+            keywords: ["new profile", "save profile", "preset", "menu bar profile"],
+            verbs: [MenuBarCommandVerb(
+                id: "save", title: "Save as Profile…", symbol: "square.and.arrow.down",
+                action: .saveProfile(name: ""),
+                input: MenuBarCommandInput(prompt: "Name this layout…", submitTitle: "Save Profile",
+                                           existingNames: profiles.map(\.name)))]))
         return rows
+    }
+
+    /// Whether `text` works as what the action asks for — a profile's
+    /// name, by the card's own rule.
+    nonisolated static func accepts(_ text: String, for action: MenuBarCommandAction) -> Bool {
+        switch action {
+        case .saveProfile, .renameProfile: return MenuBarProfiles.validName(text) != nil
+        default: return true
+        }
+    }
+
+    /// The HUD line once typed words have filled an action.
+    nonisolated static func confirmation(for action: MenuBarCommandAction,
+                                         existingNames: [String] = []) -> String? {
+        switch action {
+        case .saveProfile(let name):
+            let updates = existingNames.contains { $0.localizedCaseInsensitiveCompare(name) == .orderedSame }
+            return updates ? "Profile “\(name)” updated" : "Profile “\(name)” saved"
+        case .renameProfile(_, let name):
+            return "Renamed to “\(name)”"
+        default:
+            return nil
+        }
     }
 
     /// The profile the bar is wearing, read from what hides: the first
@@ -393,11 +464,24 @@ extension MenuBarCommand {
             tags: tags, kind: kindWord,
             section: kind == .profile || kind == .rule ? .automation : .menuBar,
             actions: verbs.map { verb in
-                PaletteAction(id: verb.id, title: verb.title, symbol: verb.symbol,
-                              shortcut: verb.shortcut) {
-                    perform(verb.action)
-                    return verb.confirmation
+                guard let input = verb.input else {
+                    return PaletteAction(id: verb.id, title: verb.title, symbol: verb.symbol,
+                                         shortcut: verb.shortcut) {
+                        perform(verb.action)
+                        return verb.confirmation
+                    }
                 }
+                return PaletteAction(
+                    id: verb.id, title: verb.title, symbol: verb.symbol, shortcut: verb.shortcut,
+                    input: PaletteInput(
+                        prompt: input.prompt, submitTitle: input.submitTitle,
+                        initial: { input.initial },
+                        accepts: { MenuBarCommands.accepts($0, for: verb.action) },
+                        submit: { words in
+                            let filled = verb.action.filled(with: words)
+                            perform(filled)
+                            return MenuBarCommands.confirmation(for: filled, existingNames: input.existingNames)
+                        }))
             })
     }
 }
