@@ -603,8 +603,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     var onTile: (_ code: Int64) -> Void = { _ in }
     /// ⌘ went down or up while a strip is open — the verb hints' cue.
     var onCommandHeld: (_ held: Bool) -> Void = { _ in }
-    /// ⌘-right-click inside the Dock's reach (Quartz point, force with
-    /// ⌥): eaten here so Apple's Dock menu never pops over the quit.
+    /// ⌘-right-click on a tile quick quit can act on (Quartz point,
+    /// force with ⌥): eaten here so Apple's Dock menu never pops over
+    /// the quit.
     var onQuickQuit: (_ point: CGPoint, _ force: Bool) -> Void = { _, _ in }
     /// ⌥` with no strip up and the card's opt-in on: preview the front
     /// app's windows on its Dock tile.
@@ -656,15 +657,16 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return latched
     }
-    /// The Dock list's reach in Quartz space, mirrored from the preview
-    /// watcher's cache — nil while it isn't watching (no quick quit).
-    nonisolated(unsafe) private var dockReach: CGRect?
+    /// The Dock tiles quick quit can act on — running apps' tile frames
+    /// in Quartz space, mirrored from the preview watcher's cache; empty
+    /// while it isn't watching (no quick quit).
+    nonisolated(unsafe) private var quitTargets: [CGRect] = []
     /// An eaten ⌘-right-click's up edge is eaten too — the Dock must
     /// never see half a click.
     nonisolated(unsafe) private var eatRightUp = false
 
-    func setDockReach(_ reach: CGRect?) {
-        lock.lock(); dockReach = reach; lock.unlock()
+    func setQuickQuitTargets(_ targets: [CGRect]) {
+        lock.lock(); quitTargets = targets; lock.unlock()
     }
 
     /// The letters the floating preview wants beyond its arrows — empty
@@ -902,13 +904,14 @@ final class SwitcherKeyTap: @unchecked Sendable {
     }
 
     /// DockDoor's quick quit without Apple's menu flashing over it: a
-    /// ⌘-right-click inside the Dock's reach is consumed (down and its
-    /// up) and handed to the quit; every other right click passes
+    /// ⌘-right-click on a running app's tile is consumed (down and its
+    /// up) and handed to the quit; every other right click — the air
+    /// above the Dock, a folder, the Trash, a window's own — passes
     /// untouched. Nothing is synthesized — a real event is just not
     /// delivered.
     private func handleRightMouse(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         lock.lock()
-        let reach = dockReach
+        let targets = quitTargets
         let eatUp = eatRightUp
         if type == .rightMouseUp { eatRightUp = false }
         lock.unlock()
@@ -916,7 +919,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
             return eatUp ? nil : Unmanaged.passRetained(event)
         }
         let point = event.location
-        guard event.flags.contains(.maskCommand), let reach, reach.contains(point) else {
+        guard event.flags.contains(.maskCommand), targets.contains(where: { $0.contains(point) }) else {
             return Unmanaged.passRetained(event)
         }
         let force = event.flags.contains(.maskAlternate)
@@ -1014,14 +1017,15 @@ final class DockSwitcherController {
     /// enhance controller's show/hide drives it.
     func setPreviewOpen(_ value: Bool) { tap.setPreviewOpen(value) }
     /// The preview watcher's quick quit — the tap eats a ⌘-right-click
-    /// inside `setDockReach`'s rect and hands it here.
+    /// inside one of `setQuickQuitTargets`' tiles and hands it here.
     var onQuickQuit: ((CGPoint, Bool) -> Void)?
     /// ⌥` — the watcher previews the front app from its Dock tile.
     var onFrontPreview: (() -> Void)?
     /// The front-app chord's opt-in, read on every settings apply.
     var isFrontAllowed: () -> Bool = { false }
-    /// The Dock's reach (Quartz), mirrored into the tap by the watcher.
-    func setDockReach(_ reach: CGRect?) { tap.setDockReach(reach) }
+    /// The tiles quick quit can act on (Quartz), mirrored into the tap
+    /// by the watcher.
+    func setQuickQuitTargets(_ targets: [CGRect]) { tap.setQuickQuitTargets(targets) }
     /// The preview's action keys (W/M/F/Space/⌥-arrow tiling) — what
     /// the watcher wants the tap to eat right now, and where they go.
     var onPreviewAction: ((String) -> Void)?

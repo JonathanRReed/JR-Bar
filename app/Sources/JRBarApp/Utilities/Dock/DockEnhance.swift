@@ -1595,8 +1595,13 @@ final class DockEnhanceController {
     @ObservationIgnored private var agentGuard = DockAgentGuard()
     /// The open panel's live list — the previewed app's window events.
     @ObservationIgnored private let windowObserver = DockWindowObserver()
-    /// The Dock reach last mirrored into the switcher's tap.
-    @ObservationIgnored private var mirroredReach: CGRect?
+    /// The quick-quit tiles last mirrored into the switcher's tap, and
+    /// the tile read they came from.
+    @ObservationIgnored private var mirroredQuitTargets: [CGRect] = []
+    @ObservationIgnored private var quitTargetsStamp: (at: TimeInterval, listFrame: CGRect)?
+    /// Tile URL → bundle id, so the mirror never re-opens a bundle it
+    /// already read. A tile no bundle answers for stays nil.
+    @ObservationIgnored private var tileBundleIDs: [URL: String?] = [:]
     /// The preview action keys last mirrored into the tap.
     @ObservationIgnored private var mirroredChars: Set<String> = []
     /// Windows whose hovered still is being re-taken — one capture each.
@@ -1765,8 +1770,9 @@ final class DockEnhanceController {
         panelWarmupTimer = nil
         tracker.reset()
         cachedList = nil
-        mirroredReach = nil
-        switcher.setDockReach(nil)
+        mirroredQuitTargets = []
+        quitTargetsStamp = nil
+        switcher.setQuickQuitTargets([])
         if let quickQuitMonitor { NSEvent.removeMonitor(quickQuitMonitor) }
         quickQuitMonitor = nil
         installGestureMonitors()
@@ -1876,13 +1882,9 @@ final class DockEnhanceController {
                 hovered = tiles(of: list).first { $0.frame.contains(axPoint) }
             }
         }
-        // The tap decides synchronously whether a ⌘-right-click is the
-        // Dock's — it reads this mirror, not the main-actor cache.
-        let reach = cachedList.map { Self.listReach(of: $0.frame) }
-        if reach != mirroredReach {
-            mirroredReach = reach
-            switcher.setDockReach(reach)
-        }
+        // The tap decides synchronously whether a ⌘-right-click is a
+        // quick quit — it reads this mirror, not the main-actor cache.
+        mirrorQuickQuitTargets()
         let chars = tracker.shown == nil ? [] : Self.previewChars(
             walked: preview.selectedWindowID != nil, media: preview.media != nil,
             pointerInPanel: inPanel)
@@ -1907,6 +1909,50 @@ final class DockEnhanceController {
         case .none:
             if let hovered, hovered.hoverID == tracker.shown { anchorPanel(to: hovered) }
         }
+    }
+
+    /// Mirror the tiles quick quit can act on into the tap, re-derived
+    /// only when the tile read or the list's frame changed: the tick
+    /// re-reads the tiles whenever the pointer is in the Dock's reach,
+    /// so a ⌘-right-click on a tile always meets a fresh mirror. A list
+    /// that moved or hid since its tiles were read mirrors nothing.
+    private func mirrorQuickQuitTargets() {
+        var targets: [CGRect] = []
+        if let list = cachedList, let cached = cachedItems, cached.listFrame == list.frame {
+            if let stamp = quitTargetsStamp, stamp.at == cached.at, stamp.listFrame == list.frame {
+                return
+            }
+            quitTargetsStamp = (cached.at, list.frame)
+            let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+            targets = Self.quickQuitTargets(
+                cached.items.map { ($0.frame, $0.kind, $0.url.flatMap(bundleID(forTile:))) },
+                running: running)
+        } else {
+            quitTargetsStamp = nil
+        }
+        guard targets != mirroredQuitTargets else { return }
+        mirroredQuitTargets = targets
+        switcher.setQuickQuitTargets(targets)
+    }
+
+    /// The frames a ⌘-right-click is eaten over: the tiles quick quit
+    /// acts on — a running app that isn't JR-Bar. Folders, the Trash, a
+    /// pinned app that isn't running and the air above the tiles all
+    /// keep their click, and so does the window under them.
+    static func quickQuitTargets(_ tiles: [(frame: CGRect, kind: DockAXItem.Kind, bundleID: String?)],
+                                 running: Set<String>) -> [CGRect] {
+        tiles.compactMap { tile in
+            guard tile.kind == .app, let id = tile.bundleID, running.contains(id),
+                  !MenuBarUtility.isOwnFamily(id) else { return nil }
+            return tile.frame
+        }
+    }
+
+    private func bundleID(forTile url: URL) -> String? {
+        if let known = tileBundleIDs[url] { return known }
+        let id = Bundle(url: url)?.bundleIdentifier
+        tileBundleIDs[url] = .some(id)
+        return id
     }
 
     /// The list's app tiles — the cached read while it is fresh and the
@@ -3060,9 +3106,9 @@ final class DockEnhanceController {
 
     /// DockDoor's quick-quit: ⌘+right-click a Dock icon terminates the
     /// app, ⌘⌥+right-click force-quits it. The switcher's tap eats the
-    /// click inside the Dock's reach so Apple's menu never pops over
+    /// click on a running app's tile so Apple's menu never pops over
     /// the quit; this global monitor path (AppKit point) is the
-    /// fallback while the tap's mirrored reach is stale.
+    /// fallback while the tap's mirrored tiles are stale.
     private func quickQuit(at point: NSPoint, force: Bool) {
         quickQuit(axPoint: DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight()),
                   force: force)

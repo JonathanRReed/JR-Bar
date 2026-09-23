@@ -97,7 +97,7 @@ struct DockSwitcherKeysTests {
         #expect(DockSwitcherList.verbHints(appMode: false, drilled: false).contains("tile"))
     }
 
-    @Test("a ⌘-right-click inside the Dock's reach is eaten, down and up; every other right click passes")
+    @Test("a ⌘-right-click on a quick-quit tile is eaten, down and up; every other right click passes")
     func quickQuitClick() throws {
         let tap = SwitcherKeyTap()
         func click(_ type: CGEventType, at point: CGPoint, command: Bool) throws -> Bool {
@@ -106,14 +106,39 @@ struct DockSwitcherKeysTests {
             event.flags = command ? .maskCommand : []
             return tap.handle(type: type, event: event)?.takeRetainedValue() == nil
         }
-        let inside = CGPoint(x: 500, y: 1100), outside = CGPoint(x: 500, y: 300)
-        #expect(try !click(.rightMouseDown, at: inside, command: true), "no reach mirrored: nothing eaten")
-        tap.setDockReach(CGRect(x: 0, y: 1000, width: 1440, height: 200))
+        // Two app tiles on a bottom Dock whose list spans 400–1040 × 1110–1170.
+        let tiles = [CGRect(x: 420, y: 1112, width: 56, height: 56),
+                     CGRect(x: 480, y: 1112, width: 56, height: 56)]
+        let inside = CGPoint(x: 500, y: 1140), outside = CGPoint(x: 500, y: 300)
+        #expect(try !click(.rightMouseDown, at: inside, command: true), "no tiles mirrored: nothing eaten")
+        tap.setQuickQuitTargets(tiles)
         #expect(try click(.rightMouseDown, at: inside, command: true))
         #expect(try click(.rightMouseUp, at: inside, command: true), "its up edge goes with it")
         #expect(try !click(.rightMouseUp, at: inside, command: true), "…once")
         #expect(try !click(.rightMouseDown, at: inside, command: false), "a plain right click is the Dock's menu")
         #expect(try !click(.rightMouseDown, at: outside, command: true), "outside the Dock, ⌘-right-click is the app's")
+        #expect(try !click(.rightMouseDown, at: CGPoint(x: 500, y: 1062), command: true),
+                "50 pt above the list is a window's own click, not the Dock's")
+        #expect(try !click(.rightMouseDown, at: CGPoint(x: 900, y: 1140), command: true),
+                "a folder, the Trash or a separator keeps its click")
+        tap.setQuickQuitTargets([])
+        #expect(try !click(.rightMouseDown, at: inside, command: true), "the watcher stopping clears them")
+    }
+
+    @Test("quick quit's targets are running apps' tiles — never a folder, a pinned app at rest, or JR-Bar")
+    func quickQuitTargets() {
+        let a = CGRect(x: 0, y: 0, width: 50, height: 50), b = CGRect(x: 60, y: 0, width: 50, height: 50)
+        let c = CGRect(x: 120, y: 0, width: 50, height: 50), d = CGRect(x: 180, y: 0, width: 50, height: 50)
+        let e = CGRect(x: 240, y: 0, width: 50, height: 50)
+        let own = Bundle.main.bundleIdentifier
+        let targets = DockEnhanceController.quickQuitTargets([
+            (a, .app, "com.apple.Safari"),
+            (b, .app, "com.example.pinned"),
+            (c, .folder, nil),
+            (d, .minimizedWindow, "com.apple.Safari"),
+            (e, .app, own),
+        ], running: Set(["com.apple.Safari", "com.example.other"] + [own].compactMap { $0 }))
+        #expect(targets == [a])
     }
 
     @Test("the preview's action keys are eaten only while it asked for them")
