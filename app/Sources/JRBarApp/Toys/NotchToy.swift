@@ -1103,6 +1103,8 @@ final class NotchToy: Toy {
         // A latched ask answered anywhere else steps down on the
         // document that says so.
         noteAskState()
+        // A quiet stretch ending replays what it held.
+        noteQuietChange()
         // The weather toggle or city text changed — re-read now rather
         // than on the half-hour tick.
         cardModel.utility.weather.reload()
@@ -1274,6 +1276,10 @@ final class NotchToy: Toy {
             presentFeedback(notice)
             return
         }
+        noteFocusName(notice)
+        // A quiet stretch holds good news back for one summary later;
+        // asks and failures are not held.
+        if settings.holdNewsWhileQuiet, quietContext != nil, capsuleQueue.hold(notice) { return }
         if let pending = capsuleQueue.pending,
            notice.kind.queueRank > pending.kind.queueRank { return }
         if notice.kind == .ask { askTrack[notice.id] = (Date(), false) }
@@ -1400,6 +1406,48 @@ final class NotchToy: Toy {
         guard let capsule = activeCapsule, let session = capsule.session else { return }
         answerer.open(session: session)
         dismissCapsule()
+    }
+
+    // MARK: Quiet hold
+
+    /// The quiet stretch the Mac is in, by name — nil when it isn't.
+    /// The daemon's `state.focus` is the signal (a macOS Focus synced
+    /// in, quiet hours, or a quiet mode picked by hand); a Focus goes by
+    /// the name the Mac's own announcement last gave it.
+    var quietContext: String? {
+        guard let focus = core.state?.focus else { return nil }
+        return AlcoveCapsuleQueue.quietContext(mode: focus.mode, source: focus.source,
+                                               focusName: lastFocusName)
+    }
+
+    /// The last quiet stretch seen — its end is what replays the hold.
+    @ObservationIgnored private var lastQuiet: String?
+    /// The Focus the Mac last said turned on ("Work"), so a summary can
+    /// say where the person was; nil once it says one turned off.
+    @ObservationIgnored private var lastFocusName: String?
+
+    /// A Focus announcement passing through: remember its name.
+    private func noteFocusName(_ notice: AlcoveNotice) {
+        guard notice.kind == .focus else { return }
+        lastFocusName = notice.key == "focus:on" ? notice.title : nil
+    }
+
+    /// The state moved: a quiet stretch that just ended replays what it
+    /// held as one summary capsule ("While you were in Work · 3
+    /// finished"). `reconcile` calls it; internal for the tests. A
+    /// daemon that is away is not a quiet stretch ending — the hold
+    /// waits for a state that says so.
+    func noteQuietChange() {
+        guard core.state != nil else { return }
+        let now = quietContext
+        defer { lastQuiet = now }
+        guard now == nil, let ended = lastQuiet,
+              let summary = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended)
+        else { return }
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled, s.capsuleNotifications,
+              islandVisible else { return }
+        offer(summary)
     }
 
     // MARK: Timers
@@ -2114,6 +2162,10 @@ private struct NotchControlsView: View {
                 }
                 Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
                     SettingLabel(title: "Power", subtitle: "Plugging in, switching to battery, fully charged.")
+                }
+                Toggle(isOn: toy.bind(\.holdNewsWhileQuiet)) {
+                    SettingLabel(title: "Hold news while quiet",
+                                 subtitle: "During a Focus or a quiet mode, finished runs and quota resets wait and come back as one summary when it ends. Asks and failures still show.")
                 }
             }
             Toggle(isOn: Binding(

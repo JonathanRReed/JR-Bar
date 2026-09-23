@@ -765,6 +765,10 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// Synced lyrics from LRCLIB under the card's media row. On by
     /// default, as it shipped; off, nothing about the track is sent.
     public var lyrics: Bool = true
+    /// While the Mac is quiet (a Focus synced in, or a quiet mode),
+    /// completions and quota resets wait and replay as one summary
+    /// capsule afterwards; asks and failures still show.
+    public var holdNewsWhileQuiet: Bool = true
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -809,6 +813,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case calendar, reminders
         case weatherUseIPLocation
         case lyrics
+        case holdNewsWhileQuiet
     }
 
     public init(from decoder: any Decoder) throws {
@@ -839,6 +844,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
         weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
         lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? true
+        holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
     }
 }
 

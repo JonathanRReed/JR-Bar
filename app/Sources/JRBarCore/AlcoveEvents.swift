@@ -477,6 +477,77 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         current = shown
     }
 
+    // MARK: Quiet hold
+
+    /// News held while the Mac is quiet (a Focus, a quiet mode) — kept
+    /// in arrival order, bounded, replayed as one summary afterwards.
+    public private(set) var held: [AlcoveNotice] = []
+    public static let heldLimit = 50
+
+    /// The kinds a quiet stretch holds back: news about work that went
+    /// fine. Asks, failures, timers and the Mac's own announcements
+    /// still speak — those are the things a person in a Focus still
+    /// wants to know now.
+    public static func holdsWhileQuiet(_ kind: AlcoveNoticeKind) -> Bool {
+        kind == .completed || kind == .quotaReset
+    }
+
+    /// The quiet stretch `state.focus` describes, by the name a summary
+    /// says it in — nil when nothing quiet is in effect. The daemon
+    /// writes `mode: "off"` (never null, never "normal") for that, and
+    /// names the source `focus` (a macOS Focus synced in), `override`
+    /// (the quiet menu) or `schedule`. A Focus goes by its own name when
+    /// the Mac's watcher knew it ("Work"), else plain "Focus".
+    public static func quietContext(mode: String?, source: String?,
+                                    focusName: String? = nil) -> String? {
+        let mode = mode?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+        guard !mode.isEmpty, mode != "off", mode != "normal" else { return nil }
+        switch source?.lowercased() {
+        case "focus":
+            if let focusName, !focusName.isEmpty { return focusName }
+            return "Focus"
+        case "schedule": return "quiet hours"
+        default: return "quiet mode"
+        }
+    }
+
+    /// Hold `notice` for the summary instead of showing it. False when
+    /// the kind is not one a quiet stretch holds.
+    @discardableResult
+    public mutating func hold(_ notice: AlcoveNotice) -> Bool {
+        guard Self.holdsWhileQuiet(notice.kind) else { return false }
+        held.append(notice)
+        if held.count > Self.heldLimit { held.removeFirst(held.count - Self.heldLimit) }
+        return true
+    }
+
+    /// The quiet stretch ended: everything held becomes one notice —
+    /// "3 finished · 1 quota reset", titled with where the person was
+    /// ("While you were in Work") — and the hold empties. nil when
+    /// nothing was held.
+    public mutating func releaseHeld(id: String, during context: String?) -> AlcoveNotice? {
+        guard !held.isEmpty else { return nil }
+        defer { held.removeAll() }
+        return Self.summary(of: held, id: id, during: context)
+    }
+
+    public static func summary(of held: [AlcoveNotice], id: String,
+                               during context: String?) -> AlcoveNotice? {
+        let finished = held.filter { $0.kind == .completed }.count
+        let resets = held.filter { $0.kind == .quotaReset }.count
+        guard finished + resets > 0 else { return nil }
+        var parts: [String] = []
+        if finished > 0 { parts.append("\(finished) finished") }
+        if resets > 0 { parts.append(resets == 1 ? "1 quota reset" : "\(resets) quota resets") }
+        let title = context.map { "While you were in \($0)" } ?? "While you were away"
+        // One finished run keeps its session, so a tap opens it.
+        let single = held.count == 1 ? held.first?.session : nil
+        return AlcoveNotice(id: id, kind: finished > 0 ? .completed : .quotaReset,
+                            title: title, subtitle: parts.joined(separator: " · "),
+                            provider: held.count == 1 ? held.first?.provider : nil,
+                            session: single, key: "held:\(id)")
+    }
+
     // MARK: Feedback
 
     /// Whether key feedback may draw over the island now: nothing is
