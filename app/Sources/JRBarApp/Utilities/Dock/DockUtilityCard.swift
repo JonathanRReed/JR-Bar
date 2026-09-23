@@ -108,7 +108,7 @@ struct DockUtilityControls: View {
             .disabled(!ownPreviews)
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
-                             subtitle: "A capture of each window, kept for half a minute (needs Screen Recording — each fresh capture flashes macOS's recording dot); off shows icon + title cards.")
+                             subtitle: "A capture of each window, kept for half a minute; the card you point at re-takes one older than a few seconds. Needs Screen Recording, and each fresh capture flashes macOS's recording dot. Off shows icon + title cards.")
             }
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
