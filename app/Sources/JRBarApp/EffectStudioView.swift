@@ -778,6 +778,12 @@ struct EffectAssignmentsPane: View {
                 .padding(.vertical, 8)
                 Divider()
             }
+            if store.assignments != nil {
+                EffectSituationPanel(store: store)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+            }
             if let document = store.assignments, !document.assignments.isEmpty {
                 List {
                     ForEach(document.byScope, id: \.scope) { group in
