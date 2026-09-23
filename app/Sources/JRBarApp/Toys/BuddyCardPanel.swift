@@ -2,6 +2,48 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
+/// Growth that follows the work (docs/TOYS.md): the buddy grows up on
+/// the crumbs finished sessions feed it — hatchling, grown, elder — over
+/// weeks of real runs, and never shrinks back. Tamagotchi's life stages
+/// without the neglect death: the stage reads the lifetime crumb count,
+/// which only ever goes up.
+enum BuddyStage: Int, CaseIterable, Comparable {
+    case hatchling, grown, elder
+
+    /// Crumbs to grow up, and to become an elder.
+    static let grownAt = 30
+    static let elderAt = 400
+
+    static func of(crumbs: Int) -> BuddyStage {
+        crumbs >= elderAt ? .elder : (crumbs >= grownAt ? .grown : .hatchling)
+    }
+
+    var word: String {
+        switch self {
+        case .hatchling: return "Hatchling"
+        case .grown: return "Grown"
+        case .elder: return "Elder"
+        }
+    }
+
+    /// "Hatchling · 12 crumbs to grown", "Grown · 188 crumbs to elder",
+    /// "Elder".
+    static func line(crumbs: Int) -> String {
+        let stage = of(crumbs: crumbs)
+        func left(_ target: Int) -> String {
+            let n = max(1, target - crumbs)
+            return n == 1 ? "1 crumb" : "\(n) crumbs"
+        }
+        switch stage {
+        case .hatchling: return "Hatchling · \(left(grownAt)) to grown"
+        case .grown: return "Grown · \(left(elderAt)) to elder"
+        case .elder: return "Elder"
+        }
+    }
+
+    static func < (a: BuddyStage, b: BuddyStage) -> Bool { a.rawValue < b.rawValue }
+}
+
 /// The pal card's facts, pure: what the care log adds up to, in words.
 /// Claude Code's /buddy had a stats card built on a hash; this one is
 /// built on the log — every line is something that actually happened
@@ -19,6 +61,9 @@ struct BuddyPalCard: Equatable {
     var favourite: String?
     /// "Longest ask sat through: 14 min"; nil before any.
     var longestAsk: String?
+    /// "Grown · 188 crumbs to elder".
+    var growth: String = ""
+    var stage: BuddyStage = .grown
 
     static func make(care: BuddyCare, now: Date = Date(),
                      providerName: (String) -> String = { SessionLabel.providerName($0) }) -> BuddyPalCard {
@@ -45,7 +90,9 @@ struct BuddyPalCard: Equatable {
         let longestAsk = care.longestAskSeconds >= 1
             ? "Longest ask sat through: \(duration(care.longestAskSeconds))" : nil
         return BuddyPalCard(feeling: feeling, since: since, tally: tally,
-                            favourite: favourite, longestAsk: longestAsk)
+                            favourite: favourite, longestAsk: longestAsk,
+                            growth: BuddyStage.line(crumbs: care.crumbsEaten),
+                            stage: BuddyStage.of(crumbs: care.crumbsEaten))
     }
 
     /// "45 s", "14 min", "2 h 5 min".
@@ -73,7 +120,7 @@ struct BuddyCardView: View {
                 BuddyFigure(character: character, mood: .pacing, tint: .accentColor,
                             phase: 0, hopProgress: nil, waveAge: nil, slumpAge: nil,
                             leans: false, still: true, askCount: 0, care: .content,
-                            trick: nil, treatAge: nil, crumbAge: nil)
+                            trick: nil, treatAge: nil, crumbAge: nil, stage: card.stage)
                     .frame(width: 18, height: 18)
                     .scaleEffect(1.6)
                     .frame(width: 30, height: 30)
@@ -91,6 +138,7 @@ struct BuddyCardView: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 if let since = card.since { line(since) }
+                line(card.growth)
                 line(card.tally)
                 if let favourite = card.favourite { line(favourite) }
                 if let longestAsk = card.longestAsk { line(longestAsk) }

@@ -84,7 +84,8 @@ struct NotchBuddyView: View {
                 trick: trick(at: context.date),
                 treatAge: age(of: toy.treatBurstAt, at: context.date),
                 crumbAge: age(of: toy.crumbAt, at: context.date),
-                stride: toy.walkPhase(at: context.date)
+                stride: toy.walkPhase(at: context.date),
+                stage: toy.stage
             )
             .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
             .scaleEffect(x: dress.squash.width, y: dress.squash.height, anchor: .bottom)
@@ -332,6 +333,20 @@ struct BuddyFigure: View {
     /// while the agents hammer their tools, slower while they think.
     /// nil walks on `phase`, the fixed cadence the roster strip keeps.
     var stride: TimeInterval? = nil
+    /// Its life stage (`BuddyStage`): a hatchling is smaller and rounder,
+    /// an elder stands a touch taller and wears a longer nightcap with a
+    /// gold pom. The roster strip shows every body grown.
+    var stage: BuddyStage = .grown
+
+    /// The stage's proportions, applied to the body only — the shadow,
+    /// the "!" and the effects keep their places.
+    private var stageScale: CGSize {
+        switch stage {
+        case .hatchling: return CGSize(width: 0.86, height: 0.82)
+        case .grown: return CGSize(width: 1, height: 1)
+        case .elder: return CGSize(width: 1, height: 1.07)
+        }
+    }
 
     /// The clock the pacing and gathering poses step on.
     private var walk: TimeInterval { stride ?? phase }
@@ -739,6 +754,7 @@ struct BuddyFigure: View {
                 if mood == .asleep { cap }
                 if pose.blush > 0.01 { cheeks }
             }
+            .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
             .scaleEffect(x: pose.squash.width, y: pose.squash.height)
             .rotationEffect(.degrees(pose.lean + pose.spin))
             .offset(x: pose.offset.width + hover.width,
@@ -837,6 +853,7 @@ struct BuddyFigure: View {
     /// Drawn in a 10×6 box whose base sits on the blob's crown.
     private var cap: some View {
         let droop = still ? 6.0 : 6 + 5 * sin(phase * 1.1 - 0.7)
+        let elder = stage == .elder
         return ZStack {
             Path { p in
                 p.move(to: CGPoint(x: 1.0, y: 5.2))
@@ -847,15 +864,17 @@ struct BuddyFigure: View {
             .fill(Color(red: 0.55, green: 0.62, blue: 0.90))
             .frame(width: 10, height: 6)
             Circle()
-                .fill(.white.opacity(0.85))
-                .frame(width: 1.7, height: 1.7)
-                .offset(x: 4.2, y: 0.8)          // the pom on the tip
+                .fill(elder ? Color(red: 1.0, green: 0.82, blue: 0.36) : .white.opacity(0.85))
+                .frame(width: elder ? 1.9 : 1.7, height: elder ? 1.9 : 1.7)
+                .offset(x: elder ? 5.4 : 4.2, y: 0.8)   // the pom on the tip
             Capsule()
                 .fill(.white.opacity(0.5))
                 .frame(width: 7.4, height: 1.2)
                 .offset(x: -1.0, y: 2.0)         // the folded brim
         }
         .frame(width: 10, height: 6)
+        // An elder's cap has had years to stretch: a longer tassel.
+        .scaleEffect(x: elder ? 1.25 : 1, y: 1, anchor: UnitPoint(x: 0.1, y: 0.85))
         .rotationEffect(.degrees(droop), anchor: UnitPoint(x: 0.15, y: 0.85))
         .offset(y: -6.7)
     }

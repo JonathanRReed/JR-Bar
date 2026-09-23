@@ -96,6 +96,11 @@ final class NotchBuddyToy: Toy {
         return isTucked ? .paused("Tucked away") : .on
     }
 
+    /// Where the buddy is in life, from the crumbs it has eaten.
+    var stage: BuddyStage {
+        BuddyStage.of(crumbs: store?.state.notchBuddy.care.crumbsEaten ?? 0)
+    }
+
     /// Frames the notch (or floating) buddy actually drew — its view's
     /// timeline ticks it; the card's roster strip doesn't.
     @ObservationIgnored let meter = ToyMeter()
@@ -859,7 +864,10 @@ final class NotchBuddyToy: Toy {
         stayLively(from: now)
         let provider = event.provider
             ?? event.session.flatMap { core.state?.session(withID: $0) }?.provider
+        let before = stage
         store?.state.notchBuddy.care.eat(at: now, count: 1, provider: provider)
+        // A crumb that grows it up: the hearts, once — unless hushed.
+        if stage > before, store?.hushReason(now: now) == nil { treatBurstAt = now }
     }
 
     private func wakeForActivity() {
