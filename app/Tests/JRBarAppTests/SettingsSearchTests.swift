@@ -36,6 +36,11 @@ import Testing
         #expect(hits.first?.page == .shortcuts)
     }
 
+    @Test func theCommandLineToolIsFoundByTerminalWords() {
+        #expect(SettingsSearch.search("cli", in: entries).first?.title == "jrbar in Terminal")
+        #expect(SettingsSearch.search("terminal", in: entries).first?.page == .shortcuts)
+    }
+
     @Test func accentsCaseAndPunctuationDoNotMatter() {
         #expect(SettingsSearch.search("COLOUR-calibration", in: entries).first?.title == "Colour calibration")
         #expect(SettingsSearch.search("  ", in: entries).isEmpty)
@@ -51,7 +56,9 @@ import Testing
             .appending(path: "Sources/JRBarApp")
         let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
         var text = ""
-        for case let url as URL in files where url.pathExtension == "swift" {
+        // The index itself quotes every title, so it cannot vouch for one.
+        for case let url as URL in files
+        where url.pathExtension == "swift" && url.lastPathComponent != "SettingsSearch.swift" {
             text += (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         }
         #expect(!text.isEmpty)

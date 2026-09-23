@@ -131,6 +131,8 @@ enum SettingsSearch {
         .init(.devices, "Stream Deck", "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote."),
         .init(.devices, "Stream Deck", "Endpoint"),
         .init(.devices, "Stream Deck", "Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts."),
+        .init(.shortcuts, "Command line", "jrbar in Terminal", subtitle: "Links ~/.local/bin/jrbar to this app's own CLI.",
+              keywords: ["cli", "terminal", "path", "install", "command line tool"]),
         .init(.advanced, "Diagnostics", "State folder", subtitle: "The monitor's data on this Mac."),
         .init(.advanced, "Diagnostics", "Doctor", subtitle: "Checks the monitor's health."),
         .init(.advanced, "Diagnostics", "Reset to defaults", subtitle: "Rarely needed — puts one page's settings back."),

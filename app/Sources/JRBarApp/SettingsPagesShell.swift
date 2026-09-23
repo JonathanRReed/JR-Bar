@@ -141,6 +141,60 @@ struct ShortcutsPage: View {
         }
 
         LinksGroup()
+        CommandLineGroup()
+    }
+}
+
+/// `jrbar` in any terminal: a link at ~/.local/bin/jrbar to this app's
+/// own CLI, installed or removed here, never over someone else's file.
+private struct CommandLineGroup: View {
+    @ViewState private var state: CommandLineTool.State = .unavailable
+    @ViewState private var failure: String?
+
+    private var bundled: String? { CoreSupervisor.bundledCore(in: .main)?.executable }
+    private var link: URL { CommandLineTool.linkURL() }
+
+    private var subtitle: String {
+        switch state {
+        case .unavailable: return "This build carries no bundled jrbar; a source checkout's own venv has one."
+        case .notInstalled: return "Links ~/.local/bin/jrbar to this app's jrbar. ~/.local/bin must be on your PATH."
+        case .installed: return "~/.local/bin/jrbar runs this app's jrbar — try jrbar status."
+        case .stale: return "~/.local/bin/jrbar points at an older JR-Bar; Install moves it to this one."
+        case .occupied: return "~/.local/bin/jrbar is another program, so JR-Bar leaves it alone."
+        }
+    }
+
+    var body: some View {
+        SettingGroup("Command line", note: failure) {
+            SettingRow("jrbar in Terminal", subtitle: subtitle) {
+                switch state {
+                case .notInstalled, .stale:
+                    Button("Install") { run { try CommandLineTool.install(link: link, bundled: $0) } }
+                        .controlSize(.small)
+                case .installed:
+                    Button("Remove") { run { _ in try CommandLineTool.uninstall(link: link, bundled: bundled) } }
+                        .controlSize(.small)
+                case .unavailable, .occupied:
+                    EmptyView()
+                }
+            }
+        }
+        .onAppear { refresh() }
+    }
+
+    private func refresh() {
+        state = CommandLineTool.state(link: link, bundled: bundled)
+    }
+
+    private func run(_ change: (String) throws -> Void) {
+        guard let bundled else { return }
+        do {
+            try change(bundled)
+            failure = nil
+        } catch {
+            failure = error.localizedDescription
+        }
+        refresh()
     }
 }
 
