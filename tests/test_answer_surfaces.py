@@ -336,6 +336,20 @@ def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> 
     assert answer_local.ghostty_focused_surface_proven(500, FakeRunner(focused="T1\t/x")) is None
 
 
+def test_a_ghostty_terminal_with_no_directory_leaves_the_proof_unknown__and_1_more(monkeypatch) -> None:
+    from jrbar import answer_local
+
+    monkeypatch.setattr(answer_local, "process_cwd", lambda pid: "/Users/me/repo")
+
+    # --- scenario: a terminal that names no directory could be the session's own
+    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T1\t/Users/me/repo\tzsh\nT2\t\tclaude\n")
+    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+
+    # --- scenario: the one terminal in the directory must be the focused one
+    runner = FakeRunner(focused="T1\t/Users/me/repo", ghostty_terminals="T3\t/Users/me/repo\tzsh\nT2\t/tmp\tx\n")
+    assert answer_local.ghostty_focused_surface_proven(500, runner) is None
+
+
 def test_answer_raise_brings_the_exact_surface_forward(tmp_path: Path) -> None:
     runner = FakeRunner(ghostty_terminals="T1\t/Users/me/repo\tcodex\n")
     controller, status = _live()

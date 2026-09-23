@@ -28,7 +28,8 @@ therefore the whole risk, and every check below exists to refuse instead:
   Terminal.app and iTerm2 expose that proof. Ghostty names no tty, so its
   proof is the focused terminal of its front window being in the session
   process's working directory while no other Ghostty terminal is; two
-  terminals in one directory cannot be told apart and refuse. A session
+  terminals in one directory cannot be told apart and refuse, and so does
+  a terminal that names no directory, which could be the session's. A session
   hosted anywhere else -- or whose own tty could not be resolved -- has no
   safe in-place answer and refuses, leaving Open-in-terminal as the honest
   path;
@@ -793,7 +794,13 @@ def ghostty_focused_surface_proven(session_pid: object, runner: object = None) -
     other Ghostty terminal is; ``False`` when the focused terminal is in
     another directory; ``None`` when it cannot be told -- two terminals in
     that directory, an Apple event macOS refused, no directory to compare.
-    Ghostty 1.3 names no tty, so a directory only it holds is the proof."""
+    Ghostty 1.3 names no tty, so a directory only it holds is the proof.
+
+    "Only it" has to cover every terminal: one that names no directory at
+    all (started with a command instead of a shell, or with no shell
+    integration) could be the session's own, leaving the focused terminal
+    a plain shell that merely shares its directory -- so any such terminal
+    makes the proof unknown, never a yes."""
     session_cwd = process_cwd(session_pid)
     if not session_cwd:
         return None
@@ -809,18 +816,21 @@ def ghostty_focused_surface_proven(session_pid: object, runner: object = None) -
     code, output = scripts.osascript(_GHOSTTY_FOCUSED_TERMINAL)  # type: ignore[attr-defined]
     if code != 0 or not output:
         return None
-    _terminal_id, _sep, focused_cwd = output.partition("\t")
+    focused_id, _sep, focused_cwd = output.partition("\t")
     if not _same_directory(focused_cwd.strip(), session_cwd):
         return False
     code, output = scripts.osascript(_GHOSTTY_LIST_TERMINALS)  # type: ignore[attr-defined]
     if code != 0:
         return None
+    terminals = parse_ghostty_terminals(output)
+    if any(not terminal.working_directory for terminal in terminals):
+        return None
     sharing = [
         terminal
-        for terminal in parse_ghostty_terminals(output)
+        for terminal in terminals
         if _same_directory(terminal.working_directory, session_cwd)
     ]
-    return True if len(sharing) == 1 else None
+    return True if len(sharing) == 1 and sharing[0].id == focused_id.strip() else None
 
 
 #: The hosts that can satisfy the fence's exact focused-target proof:
