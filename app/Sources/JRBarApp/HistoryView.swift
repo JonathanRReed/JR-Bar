@@ -147,7 +147,8 @@ struct HistoryFilterBar: View {
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.system(size: 12))
-                    TextField("Search sessions, details…", text: $store.filter.text)
+                    TextField(store.canSearchTranscripts ? "Search sessions, details, transcripts…" : "Search sessions, details…",
+                              text: $store.filter.text)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                     if !store.filter.text.isEmpty {
@@ -342,6 +343,24 @@ struct HistoryRowView: View {
         }
     }
 
+    /// The snippet with the index's « » markers turned into emphasis.
+    static func marked(_ snippet: String) -> AttributedString {
+        var out = AttributedString()
+        var emphasised = false
+        var run = ""
+        func flush() {
+            var piece = AttributedString(run)
+            if emphasised { piece.inlinePresentationIntent = .stronglyEmphasized; piece.foregroundColor = .primary }
+            out.append(piece)
+            run = ""
+        }
+        for character in snippet {
+            if character == "«" { flush(); emphasised = true } else if character == "»" { flush(); emphasised = false } else { run.append(character) }
+        }
+        flush()
+        return out
+    }
+
     private var header: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 10) {
@@ -362,7 +381,16 @@ struct HistoryRowView: View {
                             Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Newer than your last visit here")
                         }
                     }
-                    if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle {
+                    if let snippet = store.transcriptSnippet(for: row) {
+                        // Found in what was said, not in the row's own
+                        // words: the archive's snippet, matches marked.
+                        HStack(spacing: 4) {
+                            Image(systemName: "text.magnifyingglass").font(.system(size: 9))
+                            Text(Self.marked(snippet)).lineLimit(1).truncationMode(.tail)
+                        }
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .help("Said in the archived transcript")
+                    } else if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle {
                         Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     } else {
                         Text(style.name).font(.system(size: 11)).foregroundStyle(.tertiary)

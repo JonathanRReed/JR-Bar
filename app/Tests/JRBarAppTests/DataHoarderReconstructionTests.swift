@@ -215,6 +215,22 @@ struct DataHoarderReconstructionTests {
         #expect(text.contains("boom: permission denied"))
     }
 
+    @Test func historySearchReadsWhatTranscriptsSaid() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await transcriptRecord(in: archive, intent: "please rotate the signing keys")
+        let proxy = try await archive.createLiveRecord(
+            name: "req.log", sourcePath: "/tmp/req.log", provider: "cliproxy", sessionID: "sess-proxy")
+        _ = try await archive.appendSegment(recordID: proxy.id, data: cliproxyLog(status: 200), byteOffset: 0)
+        _ = try await archive.indexPendingSegments()
+        let hits = await DataHoarderModel.transcriptHits(in: archive, query: "signing")
+        #expect(Array(hits.keys) == ["sess-1"])
+        #expect(hits["sess-1"]?.contains("«signing»") == true)
+        // Proxy logs are not transcripts, and a miss is empty, not an error.
+        #expect(await DataHoarderModel.transcriptHits(in: archive, query: "overloaded").isEmpty)
+        #expect(await DataHoarderModel.transcriptHits(in: archive, query: "nothing-like-this").isEmpty)
+    }
+
     @Test func gapStateAndSegmentNotesAreSurfaced() async throws {
         let (root, archive) = try makeArchive()
         defer { try? FileManager.default.removeItem(at: root) }

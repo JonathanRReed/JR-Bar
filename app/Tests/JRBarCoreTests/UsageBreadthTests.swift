@@ -133,6 +133,22 @@ struct UsageBreadthTests {
         #expect(UsagePunchCard.cells(from: start, to: start - 1, calendar: calendar).isEmpty)
     }
 
+    @Test("History's text passes a row its archived transcript matched, by session uuid")
+    func historyTranscriptHits() {
+        let uuid = "8870963f-850a-4bd2-9a4f-0c1a2b3c4d5e"
+        let row = CoreHistoryRow(at: 1, kind: "completed", provider: "claude", session: "claude:session:\(uuid)", label: "Refactor")
+        let filter = HistoryFilter(text: "middleware")
+        #expect(!filter.matchesOwnWords(row))
+        #expect(!filter.matches(row))
+        #expect(filter.matches(row, transcriptHits: [uuid]))
+        #expect(filter.apply([row], transcriptHits: [uuid]) == [row])
+        // A hit never overrides the other chips.
+        var kinds = filter
+        kinds.kinds = ["failed"]
+        #expect(!kinds.matches(row, transcriptHits: [uuid]))
+        #expect(HistoryFilter().matchesOwnWords(row))
+    }
+
     @Test("History's day filter keeps one calendar day, and parses the heatmap's key")
     func historyDay() throws {
         let day = try #require(HistoryDayParse.date("2026-09-16"))

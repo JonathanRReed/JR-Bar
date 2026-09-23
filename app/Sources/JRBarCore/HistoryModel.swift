@@ -117,19 +117,32 @@ public struct HistoryFilter: Equatable, Sendable {
         providers.isEmpty && kinds.isEmpty && text.trimmingCharacters(in: .whitespaces).isEmpty && day == nil
     }
 
-    public func matches(_ row: CoreHistoryRow) -> Bool {
+    /// `transcriptHits` are the session uuids whose archived transcript
+    /// matched the text (the Data Hoarder's full-text index): a row about
+    /// one of them passes the text test even when its own words do not.
+    public func matches(_ row: CoreHistoryRow, transcriptHits: Set<String> = []) -> Bool {
         if let day, !Calendar.current.isDate(row.date, inSameDayAs: day) { return false }
         if !providers.isEmpty, !providers.contains(row.provider ?? "") { return false }
         if !kinds.isEmpty, !kinds.contains(row.kind) { return false }
-        let needle = text.trimmingCharacters(in: .whitespaces).lowercased()
-        if !needle.isEmpty {
-            let haystack = [row.label, row.detail, row.provider, row.session, row.kindWord].compactMap { $0?.lowercased() }
-            if !haystack.contains(where: { $0.contains(needle) }) { return false }
+        if !matchesOwnWords(row) {
+            guard let uuid = HistoryTimelineRequest.sessionUUID(from: row.session),
+                  transcriptHits.contains(uuid) else { return false }
         }
         return true
     }
 
-    public func apply(_ rows: [CoreHistoryRow]) -> [CoreHistoryRow] { rows.filter(matches) }
+    /// The text test against the row's own words (label, detail,
+    /// provider, session id, kind); an empty text passes.
+    public func matchesOwnWords(_ row: CoreHistoryRow) -> Bool {
+        let needle = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return true }
+        let haystack = [row.label, row.detail, row.provider, row.session, row.kindWord].compactMap { $0?.lowercased() }
+        return haystack.contains { $0.contains(needle) }
+    }
+
+    public func apply(_ rows: [CoreHistoryRow], transcriptHits: Set<String> = []) -> [CoreHistoryRow] {
+        rows.filter { matches($0, transcriptHits: transcriptHits) }
+    }
 }
 
 /// Rows for one calendar day, newest first.

@@ -1007,6 +1007,21 @@ final class DataHoarderModel {
         }.value
     }
 
+    /// History's transcript search: session uuid → the best readable
+    /// snippet, from full-text hits in Claude and Codex transcripts only
+    /// (a metadata hit on a folder name says nothing about what was said).
+    nonisolated static func transcriptHits(in archive: DataHoarderArchive, query: String,
+                                           limit: Int = 100) async -> [String: String] {
+        let filter = ArchiveSearchFilter(providers: ["claude", "codex"])
+        guard let results = try? await archive.search(query: query, filter: filter, limit: limit) else { return [:] }
+        var hits: [String: String] = [:]
+        for result in results where result.rank != nil {
+            guard let session = result.record.sessionID, !session.isEmpty, hits[session] == nil else { continue }
+            hits[session] = result.snippets.first.map(TranscriptSnippet.readable) ?? ""
+        }
+        return hits
+    }
+
     /// The proxy's requests for one session id, for a timeline built
     /// elsewhere (the Overview's live transcript).
     nonisolated static func proxyRequests(in archive: DataHoarderArchive,

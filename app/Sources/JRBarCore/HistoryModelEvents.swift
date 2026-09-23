@@ -148,6 +148,24 @@ public enum LightLog {
     }
 }
 
+// MARK: - Transcript hits
+
+public enum TranscriptSnippet {
+    /// A full-text snippet cut from a stored JSONL line, made readable:
+    /// escapes undone, JSON keys, brackets and quotes dropped, runs of
+    /// space collapsed. The « » the index puts around matched terms stay,
+    /// so the view can mark them.
+    public static func readable(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\\n", with: " ")
+            .replacingOccurrences(of: "\\t", with: " ")
+            .replacingOccurrences(of: "\"[A-Za-z_]+\"\\s*:", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "[{}\\[\\]\"\\\\]", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: " ,", with: ",")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ", ").union(.whitespacesAndNewlines))
+    }
+}
+
 // MARK: - Days
 
 public enum HistoryDayParse {

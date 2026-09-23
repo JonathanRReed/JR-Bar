@@ -33,6 +33,47 @@ import JRBarCore
         #expect(store.expandedID == nil)
     }
 
+    @Test("a search finds runs by what their archived transcript said, and names the snippet")
+    func transcriptSearch() async {
+        let store = HistoryStore(core: CoreModel())
+        let said = CoreHistoryRow(at: 10, kind: "completed", provider: "claude", session: "claude:session:\(Self.uuid)", label: "Refactor")
+        let other = CoreHistoryRow(at: 11, kind: "completed", provider: "claude", session: "claude:session:1b2c3d4e-0000-4000-8000-000000000000", label: "Docs")
+        let named = CoreHistoryRow(at: 12, kind: "completed", provider: "codex", label: "auth follow-up")
+        store.rows = [said, other, named]
+        var asked: [String] = []
+        store.archiveSearch = { query in
+            asked.append(query)
+            return [Self.uuid: "fixed the «auth» middleware"]
+        }
+        #expect(!store.canSearchTranscripts)
+        store.archiveSearchAvailable = { true }
+        #expect(store.canSearchTranscripts)
+
+        store.filter.text = "auth"
+        store.searchTranscripts(debounce: .zero)
+        await store.transcriptSearch?.value
+        #expect(asked.last == "auth")
+        #expect(Set(store.filtered.map(\.id)) == [said.id, named.id])
+        #expect(store.transcriptSnippet(for: said) == "fixed the «auth» middleware")
+        // A row its own words already match shows its detail, not a snippet.
+        #expect(store.transcriptSnippet(for: named) == nil)
+
+        // The text moves on: the old hits stop counting before the new
+        // answer lands, and two letters never reach the archive.
+        store.filter.text = "mi"
+        #expect(store.filtered.isEmpty)
+        await store.transcriptSearch?.value
+        #expect(asked == ["auth"])
+        #expect(store.transcriptSnippet(for: said) == nil)
+    }
+
+    @Test("the snippet reads as words, matches still marked")
+    func snippetReadable() {
+        let raw = #"…"content":"please «deploy» the build\nnow"}]},"uuid":"u1…"#
+        #expect(TranscriptSnippet.readable(raw) == "… please «deploy» the build now, u1…")
+        #expect(String(HistoryRowView.marked("a «b» c").characters) == "a b c")
+    }
+
     @Test("the Events tab filters the journal the Replay store read")
     func events() {
         let store = HistoryStore(core: CoreModel())

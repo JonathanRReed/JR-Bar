@@ -381,6 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyStore = historyStore
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+        // History's search also reads what was said, when the Data
+        // Hoarder keeps transcripts.
+        historyStore.archiveSearch = { [weak utilitiesStore] query in
+            guard let hoarder = utilitiesStore?.dataHoarder, hoarder.model.enabled else { return [:] }
+            return await DataHoarderModel.transcriptHits(in: hoarder.model.archive, query: query)
+        }
+        historyStore.archiveSearchAvailable = { [weak utilitiesStore] in
+            utilitiesStore?.dataHoarder.model.enabled ?? false
+        }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
         // Overview window (⌘O): the scoped roster workspace.
