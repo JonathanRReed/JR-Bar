@@ -302,12 +302,9 @@ enum QuietPaletteRows {
         // label names the minute the quiet actually ends on.
         let morning = Date(timeIntervalSince1970:
             ((now.timeIntervalSince1970 + Double(toMorning)) / 60).rounded() * 60)
-        let presets: [(id: String, label: String, seconds: Int)] = [
-            ("30m", "30 Minutes", 30 * 60),
-            ("1h", "1 Hour", 60 * 60),
-            ("4h", "4 Hours", 4 * 60 * 60),
-            ("morning", PanelStore.morningLabel(verb: "Until", target: morning), toMorning),
-        ]
+        let presets: [(id: String, label: String, seconds: Int)] =
+            fixedPresets.map { ($0.id, PaletteArguments.durationLabel($0.seconds), $0.seconds) }
+            + [("morning", PanelStore.morningLabel(verb: "Until", target: morning), toMorning)]
         let current = PanelStore.quietModes.first { $0.id == mode } ?? PanelStore.quietModes[0]
         var items: [PaletteItem] = []
         if let quietLabel, quietIsOurs {
@@ -325,26 +322,55 @@ enum QuietPaletteRows {
         for preset in presets {
             let phrase = preset.id == "morning" ? preset.label : "for \(preset.label)"
             let title = preset.id == "morning" ? "Quiet \(preset.label)" : "Quiet for \(preset.label)"
-            var actions = [PaletteAction(id: current.id, title: "\(current.label) \(phrase)",
-                                         symbol: symbol(for: current.id)) {
-                verbs.quiet(current.id, preset.seconds)
-                return nil
-            }]
-            for other in PanelStore.quietModes where other.id != current.id {
-                actions.append(PaletteAction(id: other.id, title: "\(other.label) \(phrase)",
-                                             symbol: symbol(for: other.id)) {
-                    verbs.quiet(other.id, preset.seconds)
-                    return nil
-                })
-            }
             items.append(PaletteItem(
                 id: "quiet.\(preset.id)", title: title,
                 subtitle: "\(current.label) — \(modeLines[current.id] ?? "quiet")",
                 keywords: ["dnd", "do not disturb", "pause", "mute", "silence", "snooze"],
                 icon: .symbol("moon.zzz.fill", .purple), kind: "Quiet", section: .quiet,
-                actions: actions))
+                actions: modeActions(leading: current.id, phrase: phrase, seconds: preset.seconds, verbs: verbs)))
         }
         return items
+    }
+
+    /// The presets with a fixed length — their ids are what a typed
+    /// length of the same size answers to.
+    static let fixedPresets: [(id: String, seconds: Int)] = [
+        ("30m", 30 * 60), ("1h", 60 * 60), ("4h", 4 * 60 * 60),
+    ]
+
+    /// Every mode for one length: `leading` first (Return), the rest one
+    /// ⌘K away.
+    @MainActor
+    static func modeActions(leading: String, phrase: String, seconds: Int,
+                            verbs: QuietPaletteVerbs) -> [PaletteAction] {
+        let lead = PanelStore.quietModes.first { $0.id == leading } ?? PanelStore.quietModes[0]
+        return ([lead] + PanelStore.quietModes.filter { $0.id != lead.id })
+            .map { mode in
+                PaletteAction(id: mode.id, title: "\(mode.label) \(phrase)", symbol: symbol(for: mode.id)) {
+                    verbs.quiet(mode.id, seconds)
+                    return nil
+                }
+            }
+    }
+
+    /// A quiet of a typed length — "quiet 45m", "dim for 2h", "mute
+    /// 1:30". The named mode leads (the remembered one for "quiet"),
+    /// the subtitle names the minute it ends, and a length a preset
+    /// already has takes that preset's row and its habit.
+    @MainActor
+    static func typedItems(query: String, mode remembered: String, now: Date,
+                           verbs: QuietPaletteVerbs) -> [PaletteItem] {
+        guard let asked = PaletteArguments.quiet(query) else { return [] }
+        let lead = PanelStore.quietModes.first { $0.id == (asked.mode ?? remembered) }
+            ?? PanelStore.quietModes[0]
+        let label = PaletteArguments.durationLabel(asked.seconds)
+        let ends = PanelStore.clockTime(now.addingTimeInterval(TimeInterval(asked.seconds)))
+        let preset = fixedPresets.first { $0.seconds == asked.seconds }
+        return [PaletteItem(
+            id: "quiet.\(preset?.id ?? "typed")", title: "Quiet for \(label)",
+            subtitle: "\(lead.label) — \(modeLines[lead.id] ?? "quiet"), until \(ends)",
+            icon: .symbol("moon.zzz.fill", .purple), kind: "Quiet", section: .quiet,
+            actions: modeActions(leading: lead.id, phrase: "for \(label)", seconds: asked.seconds, verbs: verbs))]
     }
 
     static func symbol(for mode: String) -> String {
@@ -420,6 +446,23 @@ enum LightsPaletteRows {
                 return screenBarShown ? "Screen Bar hidden" : "Screen Bar shown"
             }]))
         return items
+    }
+
+    /// "brightness 40", "led 40%" — one row that sets exactly that,
+    /// standing in for the Brightness menu while a strip or Dot is
+    /// attached (`brightness` nil means none is, and nothing is offered).
+    @MainActor
+    static func typedItems(query: String, brightness: Double?, verbs: LightsPaletteVerbs) -> [PaletteItem] {
+        guard let now = brightness, let asked = PaletteArguments.brightness(query) else { return [] }
+        return [PaletteItem(
+            id: "lights.brightness", title: "Set LED Brightness to \(percent(asked))",
+            subtitle: "Now \(percent(now))",
+            icon: .symbol(asked >= 0.75 ? "sun.max.fill" : "sun.min.fill", .orange),
+            kind: "Lights", section: .lights,
+            actions: [PaletteAction(id: "set", title: "Set Brightness", symbol: "sun.max") {
+                verbs.setBrightness(asked)
+                return "Brightness \(percent(asked))"
+            }])]
     }
 
     static func percent(_ value: Double) -> String { "\(Int((value * 100).rounded()))%" }

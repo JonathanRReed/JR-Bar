@@ -214,6 +214,119 @@ struct PaletteSourcesTests {
         #expect(!focus.contains { $0.id == "quiet.end" }, "a Focus's quiet is not ours to end")
     }
 
+    // MARK: Typed arguments
+
+    @Test("a typed length reads the ways people write one, and nothing else")
+    func typedDurations() {
+        #expect(PaletteArguments.duration("45") == 45 * 60, "a bare number is minutes")
+        #expect(PaletteArguments.duration("45m") == 45 * 60)
+        #expect(PaletteArguments.duration("45 min") == 45 * 60)
+        #expect(PaletteArguments.duration("90 minutes") == 90 * 60)
+        #expect(PaletteArguments.duration("2h") == 2 * 3600)
+        #expect(PaletteArguments.duration("2 Hours") == 2 * 3600)
+        #expect(PaletteArguments.duration("1.5h") == 90 * 60)
+        #expect(PaletteArguments.duration("1h30") == 90 * 60, "minutes after hours may go bare")
+        #expect(PaletteArguments.duration("1h 30m") == 90 * 60)
+        #expect(PaletteArguments.duration("1:30") == 90 * 60)
+        #expect(PaletteArguments.duration("24h") == 24 * 3600)
+        for nonsense in ["", "0", "25h", "1:5", "1:75", "30m1h", "45m30", "2x", "h", "1h2h", "1h30m20",
+                         "-5", "1.2.3", "forty"] {
+            #expect(PaletteArguments.duration(nonsense) == nil, "“\(nonsense)”")
+        }
+        #expect(PaletteArguments.durationLabel(45 * 60) == "45 Minutes")
+        #expect(PaletteArguments.durationLabel(60) == "1 Minute")
+        #expect(PaletteArguments.durationLabel(3600) == "1 Hour")
+        #expect(PaletteArguments.durationLabel(90 * 60) == "1 Hour 30 Minutes")
+    }
+
+    @Test("a quiet command names its mode or leaves the remembered one, and needs a length")
+    func typedQuietCommand() {
+        #expect(PaletteArguments.quiet("quiet 45m")?.seconds == 45 * 60)
+        #expect(PaletteArguments.quiet("quiet 45m")?.mode == .some(nil), "“quiet” keeps the remembered mode")
+        #expect(PaletteArguments.quiet("Dim for 2h")?.mode == "dim")
+        #expect(PaletteArguments.quiet("asks only 1:30")?.mode == "asks_only")
+        #expect(PaletteArguments.quiet("mute 1h 30m")?.seconds == 90 * 60)
+        #expect(PaletteArguments.quiet("quiet") == nil)
+        #expect(PaletteArguments.quiet("quiet for") == nil)
+        #expect(PaletteArguments.quiet("quiet mode") == nil)
+        #expect(PaletteArguments.quiet("dark mode") == nil, "Dark Mode is a toggle, not a quiet")
+        #expect(PaletteArguments.quiet("hide 1p") == nil)
+    }
+
+    @Test("a typed brightness is a whole percent after the command's name")
+    func typedBrightnessCommand() {
+        #expect(PaletteArguments.brightness("brightness 40") == 0.4)
+        #expect(PaletteArguments.brightness("LED 40%") == 0.4)
+        #expect(PaletteArguments.brightness("leds to 75") == 0.75)
+        #expect(PaletteArguments.brightness("led brightness 0") == 0)
+        #expect(PaletteArguments.brightness("brightness") == nil)
+        #expect(PaletteArguments.brightness("brightness 400") == nil)
+        #expect(PaletteArguments.brightness("brightness 4 0") == nil)
+        #expect(PaletteArguments.brightness("screen brightness 40") == nil)
+    }
+
+    @Test("“quiet 45m” is one row: its mode on Return, every other mode behind ⌘K, the minute it ends named")
+    func typedQuietRow() {
+        let log = Log()
+        let verbs = QuietPaletteVerbs(quiet: { log.calls.append("\($0):\($1)") }, end: {})
+        let rows = QuietPaletteRows.typedItems(query: "quiet 45m", mode: "dim", now: now, verbs: verbs)
+        #expect(rows.count == 1)
+        let row = rows[0]
+        #expect(row.id == "quiet.typed")
+        #expect(row.title == "Quiet for 45 Minutes")
+        let ends = PanelStore.clockTime(now.addingTimeInterval(45 * 60))
+        #expect(row.subtitle == "Dim — stills the lights, until \(ends)")
+        #expect(row.primary?.title == "Dim for 45 Minutes")
+        #expect(row.actions.count == PanelStore.quietModes.count)
+        _ = row.primary?.run()
+        let named = QuietPaletteRows.typedItems(query: "mute for 2h", mode: "dim", now: now, verbs: verbs)
+        #expect(named.first?.primary?.title == "Mute for 2 Hours", "a named mode leads")
+        _ = named.first?.primary?.run()
+        #expect(log.calls == ["dim:2700", "mute:7200"])
+        // A preset's length is that preset's row — its habit included.
+        #expect(QuietPaletteRows.typedItems(query: "quiet 60", mode: "dim", now: now, verbs: verbs)
+            .first?.id == "quiet.1h")
+        #expect(QuietPaletteRows.typedItems(query: "quiet", mode: "dim", now: now, verbs: verbs).isEmpty)
+    }
+
+    @Test("“brightness 40” sets exactly that, and only with a strip or Dot to set")
+    func typedBrightnessRow() {
+        let log = Log()
+        let verbs = LightsPaletteVerbs(setScene: { _ in }, setBrightness: { log.calls.append("b:\($0)") },
+                                       setScreenBar: { _ in })
+        let rows = LightsPaletteRows.typedItems(query: "brightness 40", brightness: 0.6, verbs: verbs)
+        #expect(rows.map(\.title) == ["Set LED Brightness to 40%"])
+        #expect(rows.first?.subtitle == "Now 60%")
+        #expect(rows.first?.primary?.run() == "Brightness 40%")
+        #expect(log.calls == ["b:0.4"])
+        #expect(LightsPaletteRows.typedItems(query: "brightness 40", brightness: nil, verbs: verbs).isEmpty)
+    }
+
+    @Test("typed rows lead Results and stand in for the row they are")
+    func typedRowsLeadResults() {
+        let verbs = QuietPaletteVerbs(quiet: { _, _ in }, end: {})
+        let presets = QuietPaletteRows.items(mode: "pause", quietLabel: nil, quietIsOurs: false, now: now,
+                                             verbs: verbs)
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.sources = {
+            [PaletteClosureSource(build: { presets }, typed: {
+                QuietPaletteRows.typedItems(query: $0, mode: "pause", now: self.now, verbs: verbs)
+            })]
+        }
+        controller.open()
+        defer { controller.close() }
+        controller.model.query = "quiet 90"
+        #expect(controller.model.rows.first?.title == "Quiet for 1 Hour 30 Minutes",
+                "a title the fuzzy match would never find still leads")
+        #expect(controller.model.selectedID == "quiet.typed")
+        controller.model.query = "quiet 1h"
+        #expect(controller.model.rows.filter { $0.id == "quiet.1h" }.count == 1, "said once")
+        #expect(controller.model.rows.first?.subtitle?.contains("until") == true, "the typed one")
+        controller.model.query = "quiet"
+        #expect(!controller.model.rows.contains { $0.id == "quiet.typed" })
+    }
+
     // MARK: Lights
 
     @Test("scenes mark the live one; brightness is a menu of steps; the Screen Bar says its state")

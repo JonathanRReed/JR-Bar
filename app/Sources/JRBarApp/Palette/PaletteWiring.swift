@@ -83,38 +83,49 @@ enum PaletteWiring {
     /// footer's Mode menu does. Nothing to offer before the daemon is
     /// live — `quiet` would go nowhere.
     static func quiet(panel: PanelStore) -> PaletteClosureSource {
-        PaletteClosureSource {
+        let verbs = QuietPaletteVerbs(
+            quiet: { mode, seconds in
+                panel.quietMode = mode
+                panel.quietFor(seconds: seconds)
+            },
+            end: { panel.endQuiet() })
+        return PaletteClosureSource(build: {
             guard panel.core.isLive else { return [] }
             return QuietPaletteRows.items(
                 mode: panel.quietMode, quietLabel: panel.quietLabel, quietIsOurs: panel.quietIsOurs,
-                now: Date(),
-                verbs: QuietPaletteVerbs(
-                    quiet: { mode, seconds in
-                        panel.quietMode = mode
-                        panel.quietFor(seconds: seconds)
-                    },
-                    end: { panel.endQuiet() }))
-        }
+                now: Date(), verbs: verbs)
+        }, typed: { query in
+            // "quiet 45m", "dim for 2h" — any length, not just a preset's.
+            guard panel.core.isLive else { return [] }
+            return QuietPaletteRows.typedItems(query: query, mode: panel.quietMode, now: Date(), verbs: verbs)
+        })
     }
 
     /// Scenes through the Effect Studio's store (which re-reads the
     /// assignments after the write); brightness through the panel's
-    /// slider path, only while a strip or Dot is attached; the Screen
+    /// slider path, only while a strip or Dot is attached — a menu of
+    /// steps, or exactly what was typed ("brightness 40"); the Screen
     /// Bar through the delegate's own switch.
     static func lights(panel: PanelStore, effects: EffectStudioStore) -> PaletteClosureSource {
-        PaletteClosureSource {
+        let verbs = LightsPaletteVerbs(
+            setScene: { effects.setActiveScene($0) },
+            setBrightness: { panel.setBrightness($0, final: true) },
+            setScreenBar: { shown in
+                if panel.screenBarShown != shown { panel.toggleScreenBar() }
+            })
+        return PaletteClosureSource(build: {
             guard panel.core.isLive else { return [] }
             return LightsPaletteRows.items(
                 activeScene: effects.activeScene,
                 brightness: panel.hasHardware ? panel.brightness : nil,
                 screenBarShown: panel.screenBarShown,
-                verbs: LightsPaletteVerbs(
-                    setScene: { effects.setActiveScene($0) },
-                    setBrightness: { panel.setBrightness($0, final: true) },
-                    setScreenBar: { shown in
-                        if panel.screenBarShown != shown { panel.toggleScreenBar() }
-                    }))
-        }
+                verbs: verbs)
+        }, typed: { query in
+            guard panel.core.isLive else { return [] }
+            return LightsPaletteRows.typedItems(query: query,
+                                                brightness: panel.hasHardware ? panel.brightness : nil,
+                                                verbs: verbs)
+        })
     }
 
     /// The notch card's strip. `prepare` asks it to re-read the system

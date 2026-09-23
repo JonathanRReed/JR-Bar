@@ -198,7 +198,7 @@ struct PaletteView: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
             if !model.searching {
-                Text("Try an app, a session, or a verb — “hide”, “quiet”, “scene”.")
+                Text("Try an app, a session, or a verb — “hide”, “quiet 45m”, “scene”.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
             }

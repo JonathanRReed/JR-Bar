@@ -292,11 +292,18 @@ protocol PaletteSource {
     /// for …" row. Async so a slow store can never stall typing; the
     /// palette drops an answer whose query has moved on.
     func results(for query: String) async -> [PaletteItem]
+    /// Rows the query itself spells — a command with its argument typed
+    /// inline ("quiet 45m", "brightness 40"). Asked on every keystroke,
+    /// so it is pure over the text and cheap; what it returns leads the
+    /// results, since the query was written for it, and replaces any
+    /// row of the same id.
+    func typedItems(for query: String) -> [PaletteItem]
 }
 
 extension PaletteSource {
     func prepare() {}
     func results(for query: String) async -> [PaletteItem] { [] }
+    func typedItems(for query: String) -> [PaletteItem] { [] }
 }
 
 /// A source made of a closure — the wiring's shape for sources whose
@@ -306,13 +313,16 @@ struct PaletteClosureSource: PaletteSource {
     let build: @MainActor () -> [PaletteItem]
     var search: (@MainActor (String) async -> [PaletteItem])?
     var onPrepare: (@MainActor () -> Void)?
+    var typed: (@MainActor (String) -> [PaletteItem])?
 
     init(prepare: (@MainActor () -> Void)? = nil,
          build: @escaping @MainActor () -> [PaletteItem],
-         search: (@MainActor (String) async -> [PaletteItem])? = nil) {
+         search: (@MainActor (String) async -> [PaletteItem])? = nil,
+         typed: (@MainActor (String) -> [PaletteItem])? = nil) {
         self.onPrepare = prepare
         self.build = build
         self.search = search
+        self.typed = typed
     }
 
     func prepare() { onPrepare?() }
@@ -321,5 +331,9 @@ struct PaletteClosureSource: PaletteSource {
 
     func results(for query: String) async -> [PaletteItem] {
         await search?(query) ?? []
+    }
+
+    func typedItems(for query: String) -> [PaletteItem] {
+        typed?(query) ?? []
     }
 }

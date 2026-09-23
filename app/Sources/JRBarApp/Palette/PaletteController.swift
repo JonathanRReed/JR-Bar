@@ -204,6 +204,9 @@ final class PaletteController {
         activeSources = sources()
         for source in activeSources { source.prepare() }
         isOpen = true
+        model.typedRows = { [weak self] query in
+            self?.activeSources.flatMap { $0.typedItems(for: query) } ?? []
+        }
         model.load(items: gather(), usage: usage())
         guard presentsWindow else { return }
         let view = PaletteView(

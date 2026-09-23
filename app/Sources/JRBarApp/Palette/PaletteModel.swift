@@ -25,6 +25,9 @@ final class PaletteModel {
     private(set) var searching = false
     var usage = PaletteUsage()
     var now = Date()
+    /// The rows a query spells with an argument ("quiet 45m"), asked on
+    /// every refilter — the controller points it at its sources.
+    var typedRows: @MainActor (String) -> [PaletteItem] = { _ in [] }
 
     var query = "" {
         didSet {
@@ -108,7 +111,9 @@ final class PaletteModel {
 
     func refilter(keepSelection: Bool) {
         let previous = selectedID
-        var arranged = PaletteRanking.arrange(items, query: query, usage: usage, now: now)
+        let trimmedQuery = Self.trimmed(query)
+        let typed = trimmedQuery.isEmpty ? [] : typedRows(trimmedQuery)
+        var arranged = PaletteRanking.arrange(items, typed: typed, query: query, usage: usage, now: now)
         if !Self.trimmed(query).isEmpty, !searchResults.isEmpty {
             // Each slower source's hits under its own heading — the
             // frontmost app's menus, then the archive — in source order.

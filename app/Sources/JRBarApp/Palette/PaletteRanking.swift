@@ -32,11 +32,17 @@ enum PaletteRanking {
     /// What a favorite adds — a tie, and a little more.
     static let favoriteBonus = 8
 
-    static func arrange(_ items: [PaletteItem], query: String, usage: PaletteUsage,
-                        now: Date = Date()) -> [PaletteListSection] {
+    /// `typed` are the rows the query spelled with an argument ("quiet
+    /// 45m"): they lead Results unranked — the words were written for
+    /// them — and stand in for any row of the same id, so a typed "quiet
+    /// 1h" is the 1-hour preset's row, habit and all, said once.
+    static func arrange(_ items: [PaletteItem], typed: [PaletteItem] = [], query: String,
+                        usage: PaletteUsage, now: Date = Date()) -> [PaletteListSection] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return home(items, usage: usage, now: now) }
-        let ranked = rank(items, query: trimmed, usage: usage, now: now)
+        let typedIDs = Set(typed.map(\.id))
+        let ranked = typed + rank(items.filter { !typedIDs.contains($0.id) }, query: trimmed,
+                                  usage: usage, now: now)
         return ranked.isEmpty ? [] : [PaletteListSection(section: .results, items: ranked)]
     }
 
