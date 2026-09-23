@@ -113,6 +113,16 @@ final class NotchCardModel {
     /// every pin, so a flip lands on the next open.
     var calendarEnabled: () -> Bool = { true }
     var remindersEnabled: () -> Bool = { true }
+
+    /// On a day with nothing on the calendar the weather takes the
+    /// calendar's place — Alcove's empty-day conditions — instead of a
+    /// "Nothing in the next 24 hours" line under a separate weather row.
+    static func weatherTakesCalendarSlot(calendar: ShelfCalendarModel.State, hasWeather: Bool) -> Bool {
+        hasWeather && calendar == .idle
+    }
+    var weatherInCalendarSlot: Bool {
+        Self.weatherTakesCalendarSlot(calendar: calendar.state, hasWeather: utility.weather.reading != nil)
+    }
     /// The island's content-follow gate: the expand starts with the
     /// rows hidden, and the frame spring reveals them once the frame
     /// has carried most of the way (`NotchMotion.contentRevealThreshold`)
@@ -273,7 +283,9 @@ struct NotchCardView: View {
             revealRow(9, ShelfMediaRow(utility: model.utility, style: style))
             revealRow(10, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
                                           heldAwake: model.heldAwake(), style: style))
-            revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
+            if !model.weatherInCalendarSlot {
+                revealRow(11, ShelfWeatherRow(weather: model.utility.weather, style: style))
+            }
             revealRow(12, ShelfTrayRow(tray: model.tray, style: style,
                                        handTargets: model.handTargets,
                                        onHand: { entry, session in
@@ -282,7 +294,11 @@ struct NotchCardView: View {
             if !model.timers.entries.isEmpty {
                 revealRow(13, ShelfTimersRow(timers: model.timers, style: style))
             }
-            revealRow(14, ShelfCalendarRow(calendar: model.calendar, style: style))
+            if model.weatherInCalendarSlot {
+                revealRow(14, ShelfWeatherRow(weather: model.utility.weather, style: style))
+            } else {
+                revealRow(14, ShelfCalendarRow(calendar: model.calendar, style: style))
+            }
             revealRow(15, ShelfRemindersRow(reminders: model.reminders, style: style))
             revealRow(16, ShelfMirrorRow(mirror: model.mirror, style: style))
             revealRow(17, ShelfTogglesRow(toggles: model.utility.toggles, style: style))

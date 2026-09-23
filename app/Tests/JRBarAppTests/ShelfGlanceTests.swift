@@ -27,6 +27,18 @@ struct ShelfGlanceTests {
         #expect(ShelfCalendarModel.upcoming([], now: now, limit: 3).isEmpty)
     }
 
+    @Test("on an empty calendar day the weather takes the calendar's place")
+    func weatherInEmptyCalendarSlot() {
+        #expect(NotchCardModel.weatherTakesCalendarSlot(calendar: .idle, hasWeather: true))
+        #expect(!NotchCardModel.weatherTakesCalendarSlot(calendar: .idle, hasWeather: false),
+                "no weather: the honest empty line stays")
+        #expect(!NotchCardModel.weatherTakesCalendarSlot(calendar: .events([event("Standup", startIn: 10)]),
+                                                         hasWeather: true),
+                "a day with events keeps both rows")
+        #expect(!NotchCardModel.weatherTakesCalendarSlot(calendar: .hidden, hasWeather: true),
+                "the calendar switched off leaves the weather where it was")
+    }
+
     @Test("a switched-off glance hides without ever asking")
     func switchedOff() {
         let calendar = ShelfCalendarModel()
