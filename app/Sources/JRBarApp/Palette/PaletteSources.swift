@@ -630,6 +630,9 @@ enum ControlCenterPaletteRows {
         case .screenSaver: return "Start Screen Saver"
         case .lock: return "Lock Screen"
         case .dockAutoHide: return "Dock Auto-Hide"
+        case .micMute: return "Mute Microphone"
+        case .eject: return "Eject Disks"
+        case .sleep: return "Sleep Now"
         }
     }
 
@@ -648,6 +651,9 @@ enum ControlCenterPaletteRows {
         case .screenSaver: return ["saver"]
         case .lock: return ["sleep", "display", "away"]
         case .dockAutoHide: return ["dock", "autohide", "hide dock"]
+        case .micMute: return ["microphone", "mic", "input", "call", "meeting"]
+        case .eject: return ["disks", "volumes", "drive", "usb", "unmount"]
+        case .sleep: return ["sleep", "suspend", "rest", "night"]
         }
     }
 
@@ -661,6 +667,9 @@ enum ControlCenterPaletteRows {
         case .screenSaver: return .purple
         case .lock: return .gray
         case .dockAutoHide: return .blue
+        case .micMute: return .orange
+        case .eject: return .gray
+        case .sleep: return .indigo
         }
     }
 }
@@ -960,6 +969,8 @@ enum WindowPaletteRows {
         case .notifications: return ["focus", "banners", "sounds", "escalation", "quiet hours"]
         case .remote: return ["peers", "mirror", "network", "other mac"]
         case .advanced: return ["debug", "reset", "logs", "diagnostics"]
+        case .shortcuts: return ["hotkeys", "keyboard", "shortcut", "recorder", "chords"]
+        case .sounds: return ["sound", "chime", "alert", "audio", "silence"]
         }
     }
 
@@ -973,6 +984,8 @@ enum WindowPaletteRows {
         case .lighting, .toys: return .pink
         case .notifications: return .red
         case .remote: return .teal
+        case .shortcuts: return .yellow
+        case .sounds: return .mint
         }
     }
 }
