@@ -579,6 +579,15 @@ def _diff_ask_episodes(previous: dict, current: dict) -> list[tuple[str, str, ob
 @command("open_session")
 def _cmd_open_session(self, args):
     status = _find_status(self, args.get("session"))
+    # A live CLI session already has a window: raise that tab, pane or
+    # Ghostty terminal instead of starting a second ``--resume`` process
+    # (answer_surfaces.py). ``None`` is an ended, remote or app-hosted
+    # session, or an explicit app/VS Code choice: the ladder below.
+    from .answer_surfaces import open_live_session
+
+    raised = open_live_session(self, status, args)
+    if raised is not None:
+        return raised
     self.open_session(status, args.get("action") if isinstance(args.get("action"), str) else None, remember=False)
     extras = self._core_extras_for(status)
     return {

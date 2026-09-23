@@ -255,6 +255,7 @@ class HookIngressService:
         peer_uid_reader: Callable[[socket.socket], int] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         decision_broker: object | None = None,
+        surface_recorder: object | None = None,
     ) -> None:
         if not callable(process):
             raise ValueError("invalid hook ingress processor")
@@ -288,6 +289,9 @@ class HookIngressService:
         # constructing a service stays free of the decide lane's imports.
         self._decision_broker = decision_broker
         self._parked: set[object] = set()
+        # Records which Ghostty terminal each session started in
+        # (answer_surfaces.py), so opening it later lands on that pane.
+        self._surface_recorder = surface_recorder
 
         self._condition = threading.Condition()
         self._pending: deque[_AcceptedHook] = deque()
@@ -671,6 +675,23 @@ class HookIngressService:
         except Exception:
             pass
 
+    def _note_surface(self, request: HookIngressRequest) -> None:
+        """A SessionStart from the compiled shim carries the agent's pid:
+        the moment to note which terminal surface the session lives in.
+        Returns at once; the probe runs on the recorder's own thread."""
+        if request.ppid is None or '"SessionStart"' not in request.payload_text:
+            return
+        try:
+            if self._surface_recorder is None:
+                from .answer_surfaces import default_surface_recorder
+
+                self._surface_recorder = default_surface_recorder()
+            self._surface_recorder.note_session_start(
+                request.provider, request.payload_text, request.ppid
+            )
+        except Exception:
+            pass
+
     def _park_decision(self, request: HookIngressRequest):
         """A ``--decide`` request the lane can hold, parked BEFORE the payload
         is queued, so the state that shows the ask already shows it as
@@ -766,6 +787,8 @@ class HookIngressService:
             if parked is not None and disposition is not HookIngressDisposition.ACCEPTED:
                 self._unpark(parked)
                 parked = None
+            if disposition is HookIngressDisposition.ACCEPTED:
+                self._note_surface(request)
         if not self._send_response(connection, disposition) and parked is not None:
             # The hook went away before it heard the disposition: nobody is
             # left to print a verdict.
