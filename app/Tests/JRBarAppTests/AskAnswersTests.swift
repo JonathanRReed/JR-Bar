@@ -187,6 +187,31 @@ struct AskAnswersTests {
         #expect(!refused.ok && refused.line.contains("studio"))
         #expect(await desk.answer(Self.held(choices: [Self.single]), .choose(["Which database?": .string("MySQL")])).ok == false)
         #expect(sent.calls.isEmpty)
+
+        // A second click while the first answer is still on its way —
+        // the double click on the notch, Dock or Rail — sends nothing.
+        let inFlight = Sent()
+        var gate: CheckedContinuation<Void, Never>?
+        let slow = AskAnswerDesk(send: { session, verdict, request in
+            inFlight.calls.append((session, verdict, request))
+            // Only the first send waits: a second that got through would
+            // come straight back and fail the count, never hang.
+            if inFlight.calls.count == 1 { await withCheckedContinuation { gate = $0 } }
+            return Self.reply(mechanism: "permission_hook")
+        })
+        let first = Task { await slow.answer(Self.held(always: true), .always) }
+        await AskSurfacesTests.waitFor { gate != nil }
+        #expect(slow.isPending(Self.session), "the first answer is on its way")
+        let second = await slow.answer(Self.held(always: true), .always)
+        #expect(!second.ok && second.line == "An answer is already on its way")
+        guard let open = gate else {
+            Issue.record("the first send never started")
+            return
+        }
+        open.resume()
+        #expect(await first.value.ok)
+        #expect(inFlight.calls.count == 1, "the second click sent nothing")
+        #expect(!slow.isPending(Self.session))
     }
 
     @Test("a refusal is the daemon's, the ask stays open, and the picks survive it")
