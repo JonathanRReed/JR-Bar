@@ -1564,6 +1564,16 @@ struct PanelFooter: View {
                   ?? "Quiet the lights and sounds for a while")
             .accessibilityLabel(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
             Spacer()
+            if let hold = store.awakeHold {
+                // The hold on sleep is a mark, not a sentence: the words
+                // live in the tooltip, and a click opens the Power rows.
+                Button { store.openSettings(page: .notifications) } label: {
+                    Image(systemName: hold.symbol).font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
+                .help(hold.text)
+                .accessibilityLabel(hold.text)
+            }
             // While a quiet is in effect its label needs the room the
             // shortcut hints take; the shortcuts themselves still work
             // and the .help texts keep naming them.

@@ -726,6 +726,32 @@ final class PanelStore {
         return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
     }
 
+    // MARK: The awake hold
+
+    /// The daemon's hold on sleep, as the footer's mark says it — why
+    /// the Mac is awake and when it lets go; nil while nothing holds it.
+    var awakeHold: (symbol: String, text: String)? {
+        Self.awakeHold(power: core.state?.power,
+                       working: rows.filter { $0.activity == .working && !$0.isRemote }.count)
+    }
+
+    /// Amphetamine's lesson: the hold is state worth a glance. A closed
+    /// lid held open outranks the plain keep-awake, since it is the one
+    /// that keeps a shut laptop running.
+    nonisolated static func awakeHold(power: CorePower?, working: Int) -> (symbol: String, text: String)? {
+        guard let power else { return nil }
+        let agents = working == 1 ? "1 agent works" : "\(working) agents work"
+        if power.closedLid?.holding == true {
+            return ("laptopcomputer", working > 0
+                ? "Running with the lid closed while \(agents); it sleeps once they stop"
+                : "Running with the lid closed; it sleeps once the agents stop")
+        }
+        guard power.keepAwake == true else { return nil }
+        return ("cup.and.saucer.fill", working > 0
+            ? "Keeping this Mac awake while \(agents); it lets go a few minutes after they stop"
+            : "Keeping this Mac awake; it lets go a few minutes after the agents stop")
+    }
+
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
 
