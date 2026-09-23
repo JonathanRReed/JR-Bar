@@ -121,11 +121,84 @@ struct LightMoment: Identifiable, Equatable {
     ]
 }
 
+/// One cue as the monitor's `list_cues` reports it: whether it is on,
+/// what switches it, and for the milestone odometer where the count
+/// stands. A monitor without the command answers `unknown_command`, and
+/// the room keeps the switches it always had.
+struct LightCueState: Decodable, Equatable {
+    let id: String
+    let enabled: Bool
+    let defaultEnabled: Bool?
+    let setting: String?
+    /// Milestone odometer only: completions counted since the monitor
+    /// started, and the next step above them (nil past the last).
+    let count: Int?
+    let nextStep: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, enabled, setting, count
+        case defaultEnabled = "default_enabled"
+        case nextStep = "next_step"
+    }
+
+    init(id: String, enabled: Bool, defaultEnabled: Bool? = nil, setting: String? = nil,
+         count: Int? = nil, nextStep: Int? = nil) {
+        self.id = id
+        self.enabled = enabled
+        self.defaultEnabled = defaultEnabled
+        self.setting = setting
+        self.count = count
+        self.nextStep = nextStep
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        defaultEnabled = try c.decodeIfPresent(Bool.self, forKey: .defaultEnabled)
+        setting = try c.decodeIfPresent(String.self, forKey: .setting)
+        count = try? c.decodeIfPresent(Int.self, forKey: .count)
+        nextStep = try? c.decodeIfPresent(Int.self, forKey: .nextStep)
+    }
+}
+
+/// `list_cues` / `set_cue` replies: `{cues: [...]}` (with `generation`
+/// on a set).
+struct LightCueList: Decodable {
+    let cues: [LightCueState]
+}
+
+/// What a moment's switch is: the monitor's own cue switch when it lists
+/// the cue, the older opt-in setting when it does not, else nothing to
+/// switch (the Dot's heartbeat is a display, not a cue).
+enum MomentSwitch: Equatable {
+    case cue(LightCueState)
+    case setting(String)
+    case always
+
+    static func of(_ moment: LightMoment, cues: [String: LightCueState]?) -> MomentSwitch {
+        if let cue = cues?[moment.id] { return .cue(cue) }
+        if let setting = moment.setting { return .setting(setting) }
+        return .always
+    }
+
+    /// "37 finished · next at 50", "120 finished · past the last step".
+    static func milestoneLine(_ cue: LightCueState) -> String? {
+        guard let count = cue.count else { return nil }
+        let finished = "\(count) finished since the monitor started"
+        guard let next = cue.nextStep else { return finished + " · past the last step" }
+        return finished + " · next at \(next)"
+    }
+}
+
 /// The Moments room of Effect Studio: every ambient cue by name, what it
 /// means, when it plays, its switch where it has one, and a sketch that
 /// can be played on the Screen Bar.
 struct LightMomentsView: View {
     @Bindable var store: EffectStudioStore
+    /// The monitor's cue switches by id; nil until `list_cues` answers
+    /// (and for good on a monitor without it).
+    @ViewState private var cues: [String: LightCueState]?
 
     var body: some View {
         ScrollView {
@@ -138,7 +211,9 @@ struct LightMomentsView: View {
                 }
                 VStack(spacing: 0) {
                     ForEach(LightMoment.all) { moment in
-                        MomentRow(store: store, moment: moment)
+                        MomentRow(store: store, moment: moment, control: MomentSwitch.of(moment, cues: cues)) { enabled in
+                            setCue(moment.id, enabled: enabled)
+                        }
                         if moment.id != LightMoment.all.last?.id { Divider().padding(.leading, 44) }
                     }
                 }
@@ -149,15 +224,50 @@ struct LightMomentsView: View {
             .frame(maxWidth: 820, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        // The settings generation moves when a cue is switched from
+        // anywhere; the list follows it.
+        .task(id: "\(store.isLive)-\(store.core.settings?.generation ?? 0)") { await loadCues() }
+    }
+
+    private func loadCues() async {
+        guard store.isLive else { return }
+        do {
+            let list = try await store.core.request("list_cues", as: LightCueList.self)
+            cues = Dictionary(list.cues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        } catch {
+            // unknown_command: an older monitor. The rows keep the
+            // switches they always had.
+            cues = nil
+        }
+    }
+
+    private func setCue(_ id: String, enabled: Bool) {
+        Task {
+            do {
+                let list = try await store.core.request("set_cue", args: ["id": .string(id), "enabled": .bool(enabled)],
+                                                        as: LightCueList.self)
+                cues = Dictionary(list.cues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            } catch {
+                store.fail("Cue not changed: \(EffectStudioStore.describe(error))")
+            }
+        }
     }
 }
 
 private struct MomentRow: View {
     @Bindable var store: EffectStudioStore
     let moment: LightMoment
+    let control: MomentSwitch
+    let setCue: (Bool) -> Void
 
     private var document: SettingsDocument { SettingsDocument(store.core.settings?.document ?? .object([:])) }
-    private var isOn: Bool { moment.setting.map { document.bool(SettingsPath($0)) ?? false } ?? true }
+    private var isOn: Bool {
+        switch control {
+        case .cue(let cue): return cue.enabled
+        case .setting(let setting): return document.bool(SettingsPath(setting)) ?? false
+        case .always: return true
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -172,6 +282,9 @@ private struct MomentRow: View {
                 Text("\(moment.plays) · \(moment.surfaces.map(EffectInspectorPane.surfaceName).joined(separator: ", "))")
                     .font(.caption).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                if case .cue(let cue) = control, let line = MomentSwitch.milestoneLine(cue) {
+                    Text(line).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 8) {
@@ -182,20 +295,15 @@ private struct MomentRow: View {
                     .opacity(isOn ? 1 : 0.4)
                     .accessibilityLabel("\(moment.name) sketch")
                 HStack(spacing: 8) {
-                    if let setting = moment.setting {
-                        Toggle("On", isOn: Binding(
-                            get: { isOn },
-                            set: { on in
-                                Task { try? await store.core.setSetting(SettingsPath(setting), value: .bool(on)) }
-                            }
-                        ))
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .labelsHidden()
-                        .disabled(!store.isLive)
-                        .help(isOn ? "Turn \(moment.name) off" : "Turn \(moment.name) on")
-                    } else {
+                    if control == .always {
                         Text("Always on").font(.caption).foregroundStyle(.tertiary)
+                    } else {
+                        Toggle("On", isOn: Binding(get: { isOn }, set: { on in apply(on) }))
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .labelsHidden()
+                            .disabled(!store.isLive)
+                            .help(isOn ? "Turn \(moment.name) off" : "Turn \(moment.name) on")
                     }
                     if moment.surfaces.contains("screen_bar") {
                         Button {
@@ -212,6 +320,17 @@ private struct MomentRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// The switch moved: through the monitor's cue switch when it has
+    /// one, else the cue's own opt-in setting.
+    private func apply(_ on: Bool) {
+        switch control {
+        case .cue: setCue(on)
+        case .setting(let setting):
+            Task { try? await store.core.setSetting(SettingsPath(setting), value: .bool(on)) }
+        case .always: break
+        }
     }
 }
 
