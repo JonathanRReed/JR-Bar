@@ -63,6 +63,47 @@ import JRBarCore
         #expect(finished.liveContextFraction == nil)
     }
 
+    @Test("type to find: every word must appear in what the row shows or knows")
+    func find() {
+        var row = SessionRow(session: CoreSession(id: "claude:a", provider: "claude", label: "auth refactor",
+                                                  cwd: "/Users/j/Downloads/JR-Bar", mode: "working", tool: "Bash"),
+                             pinnedAsk: nil)
+        row.usage = SessionUsage(model: "claude-opus-4-5")
+        #expect(row.matches("auth"))
+        #expect(row.matches("OPUS jr-bar"))
+        #expect(row.matches("claude bash"))
+        #expect(!row.matches("auth codex"))
+        #expect(!row.matches("   "))
+    }
+
+    @Test("the find field takes printable keys, and a space only inside a query")
+    func findCharacters() {
+        #expect(PanelStore.isFindCharacter("a", query: ""))
+        #expect(PanelStore.isFindCharacter("-", query: ""))
+        #expect(!PanelStore.isFindCharacter(" ", query: ""))
+        #expect(PanelStore.isFindCharacter(" ", query: "auth"))
+        #expect(!PanelStore.isFindCharacter("\r", query: ""))
+        #expect(!PanelStore.isFindCharacter("\u{F700}", query: ""))
+        #expect(!PanelStore.isFindCharacter("ab", query: ""))
+    }
+
+    @Test("the find query narrows, backspaces and clears; closing the panel forgets it")
+    func findLifecycle() {
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.test.find.\(UUID().uuidString)")!,
+                               screenBarShown: false)
+        store.appendFind("o")
+        store.appendFind("p")
+        #expect(store.findQuery == "op")
+        #expect(store.deleteFindCharacter())
+        #expect(store.findQuery == "o")
+        #expect(store.clearFind())
+        #expect(!store.clearFind())
+        #expect(!store.deleteFindCharacter())
+        store.appendFind("x")
+        store.panelDidClose()
+        #expect(store.findQuery.isEmpty)
+    }
+
     @Test("the model breakdown shares follow the card's metric")
     func modelShares() {
         let models = [

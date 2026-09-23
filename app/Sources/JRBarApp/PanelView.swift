@@ -349,23 +349,23 @@ struct SessionsSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SectionLabel(text: "Sessions", trailing: store.rows.isEmpty ? nil : "\(store.rows.count)")
-            if store.rows.isEmpty {
+            SectionLabel(text: "Sessions", trailing: sessionsTrailing)
+            if store.visibleRows.isEmpty {
                 SessionsEmptyState(store: store)
             } else {
                 ScrollView(.vertical) {
                     VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
-                        ForEach(store.askRows) { row in
+                        ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
-                        ForEach(store.plainRows) { row in
+                        ForEach(store.visiblePlainRows) { row in
                             SessionRowView(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
                     .padding(.bottom, CGFloat(PanelLayout.listBottomPadding))
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.rows.map(\.id))
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRows.map(\.id))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.sessionsHeight))
@@ -384,6 +384,14 @@ struct SessionsSection: View {
         .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.hiddenCount > 0)
+    }
+
+    /// "3" — or, while a find query narrows the list, "“opus” · 2 of 5".
+    private var sessionsTrailing: String? {
+        if !store.findQuery.isEmpty {
+            return "“\(store.findQuery)” · \(store.visibleRows.count) of \(store.rows.count)"
+        }
+        return store.rows.isEmpty ? nil : "\(store.rows.count)"
     }
 }
 
@@ -510,16 +518,25 @@ struct SessionsEmptyState: View {
 
     private var live: Bool { store.isLive }
 
+    /// A find query narrowed every row away — a different state from an
+    /// empty roster, and it says how to get the rows back.
+    private var finding: Bool { !store.findQuery.isEmpty && !store.rows.isEmpty }
+
     private var symbol: String {
-        live ? "moon.stars" : "antenna.radiowaves.left.and.right.slash"
+        if finding { return "magnifyingglass" }
+        return live ? "moon.stars" : "antenna.radiowaves.left.and.right.slash"
     }
 
     private var headline: String {
+        if finding { return "Nothing matches “\(store.findQuery)”" }
         if live { return store.hiddenCount > 0 ? "All clear" : "No agents right now" }
         return store.coreMayBeStarting ? "Starting…" : "Monitor not connected"
     }
 
     private var detail: String {
+        if finding {
+            return "Searched labels, models, folders and asks across \(store.rows.count) session\(store.rows.count == 1 ? "" : "s"). ⌫ edits, Esc clears."
+        }
         if live {
             if let stale = store.staleDetail {
                 return "\(stale); showing what it last sent."
@@ -560,7 +577,7 @@ struct SessionsEmptyState: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            if live && !store.missingHooks.isEmpty {
+            if live && !finding && !store.missingHooks.isEmpty {
                 // The one thing this state needs is a way forward.
                 Button("Set up agents…") { store.openSettings(page: .agents) }
                     .buttonStyle(PillButtonStyle(prominent: false))

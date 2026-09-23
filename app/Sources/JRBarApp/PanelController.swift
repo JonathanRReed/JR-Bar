@@ -289,13 +289,20 @@ final class PanelController {
                 store.denySelectedAsk()
                 return nil
             }
+            // A reply field being typed into keeps its own characters.
+            let typingInField = panel.firstResponder is NSTextView
             switch event.keyCode {
-            case 53: close(); return nil                            // Esc
+            case 53:                                                // Esc
+                // A find query goes first; the next Esc closes.
+                if !typingInField, store.clearFind() { return nil }
+                close(); return nil
             case 51:                                                // ⌘⌫ on the selected row
                 // Dismiss a stuck/quiet row (hides until it next speaks),
                 // clear a finished/ended/stale one. Pinned by an open ask
                 // or remote, there is nothing to take back.
                 if flags.contains(.command), store.dismissSelected() { return nil }
+                // Plain ⌫ edits the find query.
+                if flags.isEmpty, !typingInField, store.deleteFindCharacter() { return nil }
                 return event
             case 125: store.moveSelection(by: 1); return nil       // Down
             case 126: store.moveSelection(by: -1); return nil      // Up
@@ -308,7 +315,17 @@ final class PanelController {
                 return event
             case 48:                                                // Tab: keep focus inside
                 store.moveSelection(by: flags.contains(.shift) ? -1 : 1); return nil
-            default: return event
+            default:
+                // Type to find: a printable key with no ⌘/⌃/⌥ narrows the
+                // list, Raycast-style — the first match is selected, so
+                // Return opens it.
+                if !typingInField, flags.intersection([.command, .control, .option]).isEmpty,
+                   PanelStore.isFindCharacter(event.characters, query: store.findQuery),
+                   let characters = event.characters {
+                    store.appendFind(characters)
+                    return nil
+                }
+                return event
             }
         default:
             return event

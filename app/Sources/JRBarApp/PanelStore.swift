@@ -161,6 +161,20 @@ struct SessionRow: Identifiable, Equatable {
         return stale || activity == .idle || activity == .working || activity == .ended
     }
 
+    /// Type-to-find: every word of `query` appears somewhere the row
+    /// shows or knows — label, provider, model, folder, the hook's last
+    /// word, the ask, the launcher, the peer. Case and diacritics ignored.
+    func matches(_ query: String) -> Bool {
+        let haystack = [label, style.name, style.id, usage?.modelName, usage?.model, cwd, activityFact,
+                        ask?.summary, ask?.kind, originLabel, remoteMachine, activity.word]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        let words = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: \.isWhitespace)
+        return !words.isEmpty && words.allSatisfy { haystack.contains($0) }
+    }
+
     /// How full a still-running session's context window is. A finished,
     /// ended, failed or stale run's context is history, not a warning.
     var liveContextFraction: Double? {
@@ -415,6 +429,7 @@ final class PanelStore {
         animationsArmed = false
         selectedID = nil
         selectionByKeyboard = false
+        findQuery = ""
         clock?.invalidate()
         clock = nil
     }
@@ -425,7 +440,7 @@ final class PanelStore {
     /// usage providers take a row each ("setup needed"), so they count
     /// toward the section's height.
     var layoutContent: PanelLayout.Content {
-        PanelLayout.Content(asks: askRows.count, sessions: plainRows.count, hasWhyRow: lightExplanation != nil,
+        PanelLayout.Content(asks: visibleAskRows.count, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
                             usageProviders: usage.count + windowlessUsage.count, hasHiddenFooter: hiddenCount > 0)
     }
 
@@ -674,6 +689,60 @@ final class PanelStore {
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
+
+    // MARK: Type to find
+
+    /// What the user typed while the panel was open — Raycast's defining
+    /// gesture: start typing and the list narrows. Only the panel's own
+    /// list narrows; the Screen Bar, the icon and the header counts keep
+    /// reading every row.
+    private(set) var findQuery = ""
+
+    /// The rows the panel draws: every row, or the ones the query finds.
+    var visibleRows: [SessionRow] {
+        let query = findQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return rows }
+        return rows.filter { $0.matches(query) }
+    }
+    var visibleAskRows: [SessionRow] { visibleRows.filter { $0.ask != nil } }
+    var visiblePlainRows: [SessionRow] { visibleRows.filter { $0.ask == nil } }
+
+    /// Typing lands here: the query grows, and the first match becomes the
+    /// keyboard selection so Return opens it straight away.
+    func find(_ query: String) {
+        findQuery = String(query.prefix(64))
+        selectionByKeyboard = true
+        selectedID = visibleRows.first?.id
+    }
+
+    func appendFind(_ text: String) { find(findQuery + text) }
+
+    /// ⌫ takes one character back; true when there was one to take.
+    @discardableResult
+    func deleteFindCharacter() -> Bool {
+        guard !findQuery.isEmpty else { return false }
+        find(String(findQuery.dropLast()))
+        if findQuery.isEmpty { selectedID = nil }
+        return true
+    }
+
+    /// Esc clears a query before it closes the panel.
+    @discardableResult
+    func clearFind() -> Bool {
+        guard !findQuery.isEmpty else { return false }
+        findQuery = ""
+        selectedID = nil
+        selectionByKeyboard = false
+        return true
+    }
+
+    /// A key the find field takes: printable, no ⌘/⌃/⌥, and not a space
+    /// opening a query (space alone is nothing to find).
+    nonisolated static func isFindCharacter(_ text: String?, query: String) -> Bool {
+        guard let text, text.count == 1, let scalar = text.unicodeScalars.first else { return false }
+        if scalar == " " { return !query.isEmpty }
+        return CharacterSet.alphanumerics.union(.punctuationCharacters).union(.symbols).contains(scalar)
+    }
     /// What "Clear finished" acknowledges: finished runs, ended ones and
     /// anything the daemon has marked stale — the same rows
     /// `clear_completed {sessions: "all"}` clears daemon-side.
@@ -1289,11 +1358,14 @@ final class PanelStore {
     /// With two or more asks open, the selected card is the target — the
     /// shortcuts never answer a card the user is not looking at.
     var selectedAsk: SessionRow? {
-        askRows.first { $0.id == selectedID }
+        visibleAskRows.first { $0.id == selectedID }
     }
 
+    /// Only asks the list is showing: a query that filtered a card out
+    /// must not let ⌘↩ answer it unseen.
     var keyboardAsk: SessionRow? {
         if let selectedAsk { return selectedAsk }
+        let askRows = visibleAskRows
         return askRows.first { $0.ask?.canAnswer == true && !($0.isRemote) } ?? askRows.first
     }
 
@@ -1457,7 +1529,7 @@ final class PanelStore {
     // MARK: Keyboard
 
     func moveSelection(by delta: Int) {
-        let rows = rows
+        let rows = visibleRows
         guard !rows.isEmpty else { return }
         selectionByKeyboard = true
         let current = rows.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : rows.count)
@@ -1466,7 +1538,7 @@ final class PanelStore {
     }
 
     func activateSelection() {
-        guard let row = rows.first(where: { $0.id == selectedID }) else { return }
+        guard let row = visibleRows.first(where: { $0.id == selectedID }) else { return }
         open(row)
     }
 
