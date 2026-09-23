@@ -345,10 +345,15 @@ Vocabulary:
   charging, plugged, minutes_left, minutes_to_full, health_percent,
   cycle_count, temperature_c, condition, draw_watts, adapter_watts,
   runway}`, every estimate null while macOS is still estimating;
-  `runway` is `{agents, minutes_left, short}` and `short` is true only on
-  battery, with agents working and a hold keeping the Mac up, when fewer
-  than 30 minutes remain. The estimates, the draw and the temperature move
-  on every read and alone never re-broadcast `state`.
+  `runway` is `{agents, minutes_left, short, adapter_short,
+  full_speed_watts}` and `short` is true only on battery, with agents
+  working and a hold keeping the Mac up, when fewer than 30 minutes remain.
+  `adapter_short` is true while the charger is in, agents are working and
+  the battery still falls by 1.5 W or more (it clears under 0.5 W, so a
+  spike at the edge does not flap it): the charger cannot carry the run.
+  `full_speed_watts` is then the adapter this Mac charges at full speed on,
+  else null. The estimates, the draw and the temperature move on every read
+  and alone never re-broadcast `state`.
 - `presence` is the one presence fact from the app's `presence` reports:
   `{on_call, mic, camera, screen_shared, since, in_meeting, meeting_until,
   away, fresh, quiet, escalation_ceiling, celebrations_held}`. `on_call`,

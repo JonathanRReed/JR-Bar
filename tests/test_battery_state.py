@@ -8,8 +8,11 @@ from types import SimpleNamespace
 
 from jrbar.battery import BatterySnapshot
 from jrbar.battery_runtime import (
+    ADAPTER_SHORT_CLEAR_WATTS,
+    ADAPTER_SHORT_DRAIN_WATTS,
     AGENT_RUNWAY_WARNING_MINUTES,
     BATTERY_TIME_UNKNOWN,
+    adapter_short,
     battery_state_document,
 )
 from jrbar.core_runtime import doc_significant_equal
@@ -43,7 +46,13 @@ def test_the_document_reads_the_snapshot_honestly() -> None:
         "condition": "Normal",
         "draw_watts": 18.0,
         "adapter_watts": None,
-        "runway": {"agents": 2, "minutes_left": 95, "short": False},
+        "runway": {
+            "agents": 2,
+            "minutes_left": 95,
+            "short": False,
+            "adapter_short": False,
+            "full_speed_watts": None,
+        },
     }
 
 
@@ -54,7 +63,13 @@ def test_the_runway_is_short_only_on_battery_with_a_held_run() -> None:
     assert battery_state_document(low, agents_working=1, hold_active=False)["runway"]["short"] is False
     plugged = replace(low, is_plugged=True, adapter_watts=67, battery_watts=20.0)
     document = battery_state_document(plugged, agents_working=1, hold_active=True)
-    assert document["runway"] == {"agents": 1, "minutes_left": None, "short": False}
+    assert document["runway"] == {
+        "agents": 1,
+        "minutes_left": None,
+        "short": False,
+        "adapter_short": False,
+        "full_speed_watts": None,
+    }
     assert document["adapter_watts"] == 67.0 and document["draw_watts"] is None
 
 
@@ -129,4 +144,72 @@ def test_the_state_carries_the_battery(monkeypatch) -> None:
     )
     document = {"power": {"keep_awake": True, "closed_lid": {"policy": "never"}}}
     core_power.augment_power_document(controller, document)
-    assert document["power"]["battery"]["runway"] == {"agents": 1, "minutes_left": 95, "short": False}
+    assert document["power"]["battery"]["runway"] == {
+        "agents": 1,
+        "minutes_left": 95,
+        "short": False,
+        "adapter_short": False,
+        "full_speed_watts": None,
+    }
+
+
+PLUGGED_AND_FALLING = replace(
+    ON_BATTERY,
+    is_plugged=True,
+    adapter_watts=30,
+    battery_watts=-6.0,
+    full_charge_watts=96.0,
+)
+
+
+def test_a_charger_that_cannot_carry_the_run_is_named() -> None:
+    document = battery_state_document(PLUGGED_AND_FALLING, agents_working=3, hold_active=True)
+    assert document["runway"]["adapter_short"] is True
+    assert document["runway"]["full_speed_watts"] == 96.0
+    assert document["adapter_watts"] == 30.0
+    # Idle, a slow charger is nobody's problem; on battery there is no
+    # charger to blame; a charge paused at 80 % is not a drain.
+    assert adapter_short(PLUGGED_AND_FALLING, agents_working=0) is False
+    assert adapter_short(replace(PLUGGED_AND_FALLING, is_plugged=False), agents_working=3) is False
+    assert adapter_short(replace(PLUGGED_AND_FALLING, battery_watts=0.0), agents_working=3) is False
+    assert adapter_short(replace(PLUGGED_AND_FALLING, battery_watts=12.0), agents_working=3) is False
+    assert adapter_short(None, agents_working=3) is False
+    quiet = battery_state_document(replace(PLUGGED_AND_FALLING, battery_watts=4.0), agents_working=3)
+    assert quiet["runway"]["adapter_short"] is False and quiet["runway"]["full_speed_watts"] is None
+
+
+def test_the_adapter_flag_does_not_flap_at_its_edge() -> None:
+    between = replace(
+        PLUGGED_AND_FALLING,
+        battery_watts=-(ADAPTER_SHORT_CLEAR_WATTS + ADAPTER_SHORT_DRAIN_WATTS) / 2,
+    )
+    assert adapter_short(between, agents_working=1, previously=False) is False
+    assert adapter_short(between, agents_working=1, previously=True) is True
+    settled = replace(PLUGGED_AND_FALLING, battery_watts=-(ADAPTER_SHORT_CLEAR_WATTS / 2))
+    assert adapter_short(settled, agents_working=1, previously=True) is False
+
+
+def test_the_daemon_carries_the_adapter_flag_between_reads() -> None:
+    from jrbar import core_power
+
+    keep = SimpleNamespace(working_count=2, process_running=lambda: True, hold_document=lambda: {})
+    observation = SimpleNamespace(snapshot=PLUGGED_AND_FALLING)
+    controller = SimpleNamespace(
+        keep_awake=keep,
+        closed_lid_awake=SimpleNamespace(active=lambda: False, sleeper=None),
+        _production_battery_observation=observation,
+        last_lid_closed=False,
+    )
+
+    def runway() -> dict:
+        document = {"power": {"keep_awake": True, "closed_lid": {"policy": "never"}}}
+        core_power.augment_power_document(controller, document)
+        return document["power"]["battery"]["runway"]
+
+    assert runway()["adapter_short"] is True
+    observation.snapshot = replace(PLUGGED_AND_FALLING, battery_watts=-1.0)
+    assert runway()["adapter_short"] is True
+    observation.snapshot = replace(PLUGGED_AND_FALLING, battery_watts=-0.2)
+    assert runway()["adapter_short"] is False
+    observation.snapshot = replace(PLUGGED_AND_FALLING, battery_watts=-1.0)
+    assert runway()["adapter_short"] is False

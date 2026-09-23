@@ -1340,15 +1340,21 @@ public struct CorePowerRelease: Codable, Hashable, Sendable {
 
 /// `state.power.battery.runway`: will the run holding the Mac awake
 /// outlast the battery. `short` only on battery, with agents working and a
-/// hold up, under half an hour left.
+/// hold up, under half an hour left. `adapterShort` while the charger is in
+/// and the battery still falls under the agents' load, with
+/// `fullSpeedWatts` the adapter this Mac charges at full speed on.
 public struct CoreBatteryRunway: Codable, Hashable, Sendable {
     public var agents: Int?
     public var minutesLeft: Int?
     public var short: Bool?
+    public var adapterShort: Bool?
+    public var fullSpeedWatts: Double?
 
     enum CodingKeys: String, CodingKey {
         case agents, short
         case minutesLeft = "minutes_left"
+        case adapterShort = "adapter_short"
+        case fullSpeedWatts = "full_speed_watts"
     }
 }
 

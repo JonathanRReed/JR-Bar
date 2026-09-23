@@ -299,7 +299,12 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
             (callable(process_running) and process_running())
             or (callable(lid_active) and lid_active())
         ),
+        adapter_was_short=bool(getattr(controller, "_core_adapter_short", False)),
     )
+    runway = (power["battery"] or {}).get("runway")
+    # The last answer is the hysteresis for the next: one spike at the edge
+    # must not flap the flag and re-broadcast the state.
+    controller._core_adapter_short = bool(isinstance(runway, dict) and runway.get("adapter_short"))
     if isinstance(closed_lid, dict):
         lid_closed = getattr(controller, "last_lid_closed", None)
         closed_lid["lid_closed"] = lid_closed if isinstance(lid_closed, bool) else None

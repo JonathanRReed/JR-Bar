@@ -76,6 +76,22 @@ struct PowerCodecTests {
         #expect(battery.adapterWatts == nil)
         #expect(battery.runway?.short == true)
         #expect(battery.runway?.agents == 2)
+        #expect(battery.runway?.adapterShort == nil)
+    }
+
+    @Test("a charger that cannot carry the run decodes with the watts it needs")
+    func adapterShort() throws {
+        let state = try Self.state("""
+        {"t":"state","v":1,"generation":6,"aggregate":{},"sessions":[],"asks":[],"devices":[],
+         "power":{"keep_awake":true,
+                  "battery":{"percent":62,"charging":false,"plugged":true,"adapter_watts":30.0,
+                             "runway":{"agents":3,"minutes_left":null,"short":false,
+                                       "adapter_short":true,"full_speed_watts":96.0}}}}
+        """)
+        let runway = try #require(state.power?.battery?.runway)
+        #expect(runway.adapterShort == true)
+        #expect(runway.fullSpeedWatts == 96)
+        #expect(state.power?.battery?.adapterWatts == 30)
     }
 
     @Test("a call decodes, and the quiet it caused reads as sounds off")
