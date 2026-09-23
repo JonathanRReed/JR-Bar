@@ -104,12 +104,7 @@ struct LightingPage: View {
         SettingGroup("Scene") {
             SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
-            if let pack = store.document.string("active_scene_pack"), !pack.isEmpty {
-                Text("Scene pack “\(pack)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            ScenePackPicker(store: store)
             SettingRow("Effect Studio", subtitle: "Tune effects live and assign looks to states, scenes, providers and devices.") {
                 Button("Effect Studio…") { store.onOpenEffects?() }
             }
@@ -185,6 +180,100 @@ struct LightingPage: View {
             if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
+    }
+}
+
+/// Scene packs on the Lighting page: try one on the strip before it
+/// takes over, then use it — Hue Sync lets you look at an area before
+/// switching to it. The pack's tour (`preview_scene_pack`) plays one step
+/// per scene it overrides, in that scene's colour, at its brightness and
+/// motion. Installing and removing packs stays in Effect Studio. A core
+/// without scene-pack commands keeps the old one-line note.
+struct ScenePackPicker: View {
+    @Bindable var store: SettingsStore
+    @ViewState private var packs: [ScenePackSummary] = []
+    @ViewState private var supported = false
+    /// The pack on the preview strip: the active one until another is
+    /// picked; "" is the built-in scenes.
+    @ViewState private var trying: String?
+    @ViewState private var preview: EffectPreview?
+
+    private var active: String { store.document.string("active_scene_pack") ?? "" }
+    private var shown: String { trying ?? active }
+
+    var body: some View {
+        Group {
+            if supported, !packs.isEmpty {
+                SettingRow("Scene pack", subtitle: subtitle) {
+                    HStack(spacing: 10) {
+                        if let preview, !shown.isEmpty {
+                            LEDStripPreview(program: preview.program, ledCount: preview.ledCount,
+                                            style: .band, dotSize: 5, showsBackground: false)
+                                .frame(width: 96)
+                                .accessibilityLabel("Preview of \(name(shown))")
+                        }
+                        Picker("Scene pack", selection: Binding(get: { shown }, set: { trying = $0 })) {
+                            Text("Built-in scenes").tag("")
+                            Divider()
+                            ForEach(packs) { Text($0.displayName).tag($0.id) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        if shown != active {
+                            Button("Use") {
+                                store.set("active_scene_pack", shown.isEmpty ? .null : .string(shown))
+                                trying = nil
+                            }
+                        }
+                    }
+                }
+            } else if !active.isEmpty {
+                Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .task(id: store.core.isLive) { await load() }
+        .task(id: shown) { await loadPreview() }
+    }
+
+    private var subtitle: String {
+        guard !shown.isEmpty else { return "The built-in scenes' own policies. Install packs in Effect Studio." }
+        let scenes = packs.first { $0.id == shown }?.scenes ?? []
+        let overrides = scenes.isEmpty ? "" : " Overrides \(ScenePackPicker.sceneList(scenes))."
+        return shown == active
+            ? "In use — its policies override the built-in scenes.\(overrides)"
+            : "Previewing — nothing changes until you use it.\(overrides)"
+    }
+
+    private func name(_ id: String) -> String {
+        packs.first { $0.id == id }?.displayName ?? id
+    }
+
+    /// "Focus, Night and Calm" from the pack's scene ids.
+    static func sceneList(_ scenes: [String]) -> String {
+        let names = scenes.map { id in LightingPage.scenes.first { $0.value == id }?.label ?? id.capitalized }
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+    }
+
+    private func load() async {
+        guard store.core.isLive else { supported = false; return }
+        do {
+            packs = try await store.core.listScenePacks()
+            supported = true
+        } catch {
+            packs = []
+            supported = false
+        }
+    }
+
+    private func loadPreview() async {
+        let id = shown
+        guard !id.isEmpty, store.core.isLive else { preview = nil; return }
+        preview = try? await store.core.previewScenePack(packID: id, ledCount: 8)
     }
 }
 

@@ -41,6 +41,14 @@ struct LightsSettingsRowsTests {
         }
     }
 
+    @Test func aScenePacksOverridesReadAsWords() {
+        #expect(ScenePackPicker.sceneList(["focus"]) == "Focus")
+        #expect(ScenePackPicker.sceneList(["focus", "night"]) == "Focus and Night")
+        #expect(ScenePackPicker.sceneList(["calm", "dnd", "travel"]) == "Calm, Do Not Disturb and Travel")
+        #expect(ScenePackPicker.sceneList(["gallery"]) == "Gallery", "an unknown scene keeps its own name")
+        #expect(ScenePackPicker.sceneList([]) == "")
+    }
+
     @Test func refusedEventKitGrantsAreNamed() {
         #expect(EventKitAccessNote.isRefused(.denied))
         #expect(EventKitAccessNote.isRefused(.restricted))
