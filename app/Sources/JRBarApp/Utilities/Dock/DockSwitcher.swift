@@ -638,15 +638,14 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// the keys the panel reads.
     nonisolated(unsafe) private var previewOpen = false
     /// The commit arm for each chord: an eaten Tab arms it and the
-    /// watched modifier's 1→0 edge fires it. Tracked here, not via
+    /// watched modifier's release fires it. Tracked here, not via
     /// `open`, because `open` lands through an async hop and a quick
-    /// tap's release can pass through before it — the unarmed edge is
-    /// the lost commit that once left the strip eating keystrokes.
+    /// tap's release can pass through before it — the unarmed release
+    /// is the lost commit that once left the strip eating keystrokes.
     nonisolated(unsafe) private var pendingOptionCommit = false
     nonisolated(unsafe) private var pendingCmdCommit = false
-    /// The modifier state at the last event — edges are computed here
-    /// so a release that races the async open still resolves.
-    nonisolated(unsafe) private var prevOption = false
+    /// ⌘'s state at the last modifier change — the edge the verb hints
+    /// (`onCommandHeld`) follow.
     nonisolated(unsafe) private var prevCmd = false
     /// The ⌘⇥ search latch — set on the tap thread the moment ⌘/ lands,
     /// so a ⌘ release racing the async hop still finds the strip pinned.
@@ -804,11 +803,17 @@ final class SwitcherKeyTap: @unchecked Sendable {
             if code == 48, flags.contains(.maskAlternate),
                !flags.contains(.maskCommand), isEnabled {
                 let shifted = flags.contains(.maskShift)
+                // Armed here and now: option can lift before main has
+                // opened the strip, and that release is still its commit.
+                lock.withLock { pendingOptionCommit = true }
                 DispatchQueue.main.async { [weak self] in self?.onTab(shifted) }
                 return nil
             }
             if code == 48, flags.contains(.maskCommand), isCmdEnabled {
                 let shifted = flags.contains(.maskShift)
+                // The app strip takes over from a held ⌥⇥ one: command's
+                // release commits it, option's no longer does.
+                lock.withLock { pendingCmdCommit = true; pendingOptionCommit = false }
                 DispatchQueue.main.async { [weak self] in self?.onCmdTab(shifted) }
                 return nil
             }
@@ -902,34 +907,38 @@ final class SwitcherKeyTap: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
+        guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
         // ⌘'s edge is tracked on every modifier change, open or not, so
         // the first change after an open compares against the truth.
         let commandDown = flags.contains(.maskCommand)
-        var commandChanged = false
-        if type == .flagsChanged {
-            lock.lock()
-            commandChanged = commandDown != prevCmd
-            prevCmd = commandDown
-            lock.unlock()
+        let optionDown = flags.contains(.maskAlternate)
+        // A release commits the strip that is up or the one its chord's
+        // eaten Tab armed: a quick tap's release can reach this thread
+        // before main has opened anything, and main's queue is FIFO, so
+        // the commit still lands after the open. The arm is spent here.
+        lock.lock()
+        let commandChanged = commandDown != prevCmd
+        prevCmd = commandDown
+        let (openNow, cmdOpenNow) = (open, cmdOpen)
+        var commitCmd = false, commitOption = false
+        if !commandDown, cmdOpenNow || pendingCmdCommit {
+            // Command lifted — the app switcher's commit, unless the
+            // search latch pinned the strip for typing (↩ commits).
+            if !latched { pendingCmdCommit = false; commitCmd = true }
+        } else if !optionDown, !cmdOpenNow, !pendingCmdCommit, openNow || pendingOptionCommit {
+            // Option lifted — the window switcher's commit,
+            // AltTab-style.
+            pendingOptionCommit = false
+            commitOption = true
         }
-        if type == .flagsChanged, isOpen {
-            lock.lock()
-            let isLatched = latched
-            lock.unlock()
-            if commandChanged {
-                DispatchQueue.main.async { [weak self] in self?.onCommandHeld(commandDown) }
-            }
-            if isCmdOpen, !commandDown {
-                // Command lifted — the app switcher's commit, unless the
-                // search latch pinned the strip for typing (↩ commits).
-                if !isLatched {
-                    DispatchQueue.main.async { [weak self] in self?.onCmdCommit() }
-                }
-            } else if !isCmdOpen, !flags.contains(.maskAlternate) {
-                // Option lifted — the window switcher's commit,
-                // AltTab-style.
-                DispatchQueue.main.async { [weak self] in self?.onCommit() }
-            }
+        lock.unlock()
+        if commandChanged, openNow {
+            DispatchQueue.main.async { [weak self] in self?.onCommandHeld(commandDown) }
+        }
+        if commitCmd {
+            DispatchQueue.main.async { [weak self] in self?.onCmdCommit() }
+        } else if commitOption {
+            DispatchQueue.main.async { [weak self] in self?.onCommit() }
         }
         return Unmanaged.passUnretained(event)
     }
@@ -1484,6 +1493,10 @@ final class DockSwitcherController {
     /// front-window behaviour decides which window lands. A drilled
     /// strip commits the window instead, like the ⌥⇥ path.
     func cmdCommit() {
+        // An armed release can follow an open that found nothing or was
+        // refused: no strip up, nothing to land — the model still holds
+        // the last strip's pick.
+        guard panel?.isVisible == true else { return cancel() }
         let item = model.selected
         let drilled = drilledApp != nil
         learn(item)
@@ -1546,7 +1559,8 @@ final class DockSwitcherController {
     }
 
     func commit() {
-        guard let item = model.selected else { return cancel() }
+        // No strip up (see `cmdCommit`): the old pick is not this tap's.
+        guard panel?.isVisible == true, let item = model.selected else { return cancel() }
         learn(item)
         closeStrip()
         Self.land(SwitcherCommitTarget(item), window: true)

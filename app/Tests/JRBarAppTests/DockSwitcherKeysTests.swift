@@ -82,6 +82,65 @@ struct DockSwitcherKeysTests {
         #expect(try !eaten(tap, 0), "closing hands the keyboard back")
     }
 
+    /// A modifier change as the tap sees it — `flags` is what is still held.
+    private func modifiers(_ tap: SwitcherKeyTap, _ flags: CGEventFlags) throws {
+        let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 58, keyDown: true))
+        event.flags = flags
+        #expect(tap.handle(type: .flagsChanged, event: event) != nil, "a modifier change is never eaten")
+    }
+
+    /// Every block the tap has handed main so far has run — the queue is
+    /// FIFO, so a block enqueued behind them runs last.
+    private func drainMain() async {
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+    }
+
+    @Test("a quick ⌥⇥ or ⌘⇥ commits even when its release reaches the tap before the open does")
+    func releaseBeforeOpen() async throws {
+        let tap = SwitcherKeyTap()
+        tap.keyboard = DockKeyboardLayout()
+        var calls: [String] = []
+        tap.onTab = { _ in calls.append("tab") }
+        tap.onCommit = { calls.append("commit") }
+        tap.onCmdTab = { _ in calls.append("cmdTab") }
+        tap.onCmdCommit = { calls.append("cmdCommit") }
+
+        // Main never gets as far as `setOpen`: the strip is still being
+        // built when option lifts.
+        try modifiers(tap, [])
+        #expect(try eaten(tap, 48, flags: .maskAlternate))
+        try modifiers(tap, [])
+        try modifiers(tap, [.maskShift])
+        await drainMain()
+        #expect(calls == ["tab", "commit"], "an unarmed change commits nothing; the arm fires once, after the open")
+
+        calls = []
+        tap.setCmdEnabled(true)
+        #expect(try eaten(tap, 48, flags: .maskCommand))
+        try modifiers(tap, [])
+        await drainMain()
+        #expect(calls == ["cmdTab", "cmdCommit"])
+
+        // ⌘⇥ under a held ⌥⇥ takes the strip over: option lifting first
+        // is no longer a commit, command's release is.
+        calls = []
+        #expect(try eaten(tap, 48, flags: .maskAlternate))
+        #expect(try eaten(tap, 48, flags: [.maskAlternate, .maskCommand]))
+        try modifiers(tap, .maskCommand)
+        try modifiers(tap, [])
+        await drainMain()
+        #expect(calls == ["tab", "cmdTab", "cmdCommit"])
+
+        // An open strip with no arm still commits on option's release.
+        calls = []
+        tap.setOpen(true)
+        try modifiers(tap, .maskAlternate)
+        try modifiers(tap, [])
+        await drainMain()
+        #expect(calls == ["commit"])
+        tap.setOpen(false)
+    }
+
     @Test("⌘/ pins the ⌘⇥ strip for typing; closing it forgets the latch")
     func searchLatch() throws {
         let tap = SwitcherKeyTap()
