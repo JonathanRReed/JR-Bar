@@ -130,6 +130,12 @@ final class NotchToy: Toy {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
     @ObservationIgnored var capsuleClock: () -> Date = { Date() }
+    /// A notice the island took, then gave up from the waiting slot to
+    /// newer news of equal or higher rank (`AlcoveCapsuleQueue.onEvict`)
+    /// — reported here instead of vanishing. The delegate hands the
+    /// Mac's own announcements among them to the HUD's pill; the agents'
+    /// news is still on the card's rows.
+    @ObservationIgnored var onCapsuleEvicted: (AlcoveNotice) -> Void = { _ in }
     /// A capsule promoted into its show-gap the moment the island grew:
     /// it could never draw over the card, so `expand` shelves it here
     /// and `collapseIsland` re-shows it while it is still fresh.
@@ -203,6 +209,11 @@ final class NotchToy: Toy {
             self?.resolveAsk(session: session, request: request)
         }
         cardModel.answerer = answerer
+        // The queue only ever runs on the main actor, inside the toy's
+        // own calls — its eviction report lands back here in turn.
+        capsuleQueue.onEvict = { [weak self] notice in
+            MainActor.assumeIsolated { self?.onCapsuleEvicted(notice) }
+        }
         cardModel.onOpenRow = { [weak self] session in
             guard let self else { return }
             self.collapseIsland()

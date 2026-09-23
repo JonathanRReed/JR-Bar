@@ -305,6 +305,27 @@ struct NotchAskFlowTests {
         #expect(!other.presentSystemNotice(news(.display, id: "x")))
     }
 
+    @Test("an announcement the island queued, then gave up to newer news, is handed back")
+    func displacedAnnouncementIsReported() {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        var evicted: [String] = []
+        toy.onCapsuleEvicted = { evicted.append($0.id) }
+        toy.offer(news(.failed, id: "f"))
+        #expect(toy.presentSystemNotice(news(.device, id: "d")),
+                "the island takes it — it waits behind the failure, and the pill stays down")
+        #expect(toy.capsuleQueue.pending?.id == "d")
+        // An agent's finish outranks a device and takes the one slot:
+        // the island's yes has lapsed, and the toy says so.
+        #expect(toy.offer(news(.completed, id: "c")))
+        #expect(toy.capsuleQueue.pending?.id == "c")
+        #expect(evicted == ["d"])
+        // Turned away at the door, a notice displaces nothing.
+        #expect(!toy.offer(news(.charging, id: "p")))
+        #expect(evicted == ["d"])
+        #expect(AlcoveNoticeKind.device.isMacAnnouncement, "the HUD's pill is the one to say it")
+    }
+
     @Test("the amber count opens the longest-waiting session")
     func oldestAsk() {
         let older = CoreSession(id: "claude:old", provider: "claude", since: 1,

@@ -100,6 +100,14 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
     /// as the queue's overlay — never waiting behind news, never
     /// spending a cooldown — and a repeat press updates it in place.
     public var isFeedback: Bool { self == .level || self == .capsLock }
+
+    /// The Mac's own announcements that wait in the line like news — a
+    /// Focus, a device (the app's toasts ride this kind too), a display.
+    /// `NotchHUD` offers them to the island and hangs its glass pill for
+    /// any the island will not say, then or after the waiting slot gave
+    /// them up. Feedback never waits, and the rest are the agents' news
+    /// or the island's own.
+    public var isMacAnnouncement: Bool { self == .focus || self == .device || self == .display }
 }
 
 /// One capsule's worth of copy, fully resolved: the view is a renderer,
@@ -356,8 +364,36 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
     private var currentShownAt: Date?
     private var lastShownAt: Date?
     private var pendingAt: Date?
+    /// Told about a waiting notice a newer one pushed out of the slot —
+    /// an `offer` of the same or a higher rank, or a takeover parking
+    /// the shown ask there. `.queued` promised the island would say it,
+    /// so the owner hears when that promise lapses and can say it some
+    /// other way. A waiting notice already past `pendingStaleAfter` is
+    /// history and goes quietly, as `finish` would have dropped it.
+    /// Resolved asks, a dismissal and a parked island are the person's
+    /// or the island's own doing, not displacements, and report nothing.
+    public var onEvict: (@Sendable (AlcoveNotice) -> Void)?
 
     public init() {}
+
+    /// The line's state, not who is listening to it.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.current == rhs.current && lhs.pending == rhs.pending && lhs.overlay == rhs.overlay
+            && lhs.recent == rhs.recent && lhs.currentShownAt == rhs.currentShownAt
+            && lhs.lastShownAt == rhs.lastShownAt && lhs.pendingAt == rhs.pendingAt
+            && lhs.held == rhs.held
+    }
+
+    /// Put `notice` in the waiting slot, reporting whatever it displaces.
+    private mutating func wait(_ notice: AlcoveNotice, at now: Date) {
+        if let displaced = pending, displaced.id != notice.id {
+            let fresh = displaced.kind == .ask
+                || pendingAt.map { now.timeIntervalSince($0) < Self.pendingStaleAfter } ?? true
+            if fresh { onEvict?(displaced) }
+        }
+        pending = notice
+        pendingAt = now
+    }
 
     @discardableResult
     public mutating func offer(_ notice: AlcoveNotice, at now: Date) -> AlcoveCapsuleVerdict {
@@ -367,8 +403,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         }
         recent[notice.key] = now
         guard current == nil else {
-            pending = notice
-            pendingAt = now
+            wait(notice, at: now)
             return .queued
         }
         current = notice
@@ -469,8 +504,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
             return
         }
         if let shown = current, shown.kind == .ask {
-            pending = shown
-            pendingAt = now
+            wait(shown, at: now)
         }
         var escalated = notice
         escalated.takeover = true

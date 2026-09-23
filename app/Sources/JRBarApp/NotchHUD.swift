@@ -92,6 +92,16 @@ final class NotchHUD {
              symbol: notice.symbol)
     }
 
+    /// The island said yes to `notice`, then gave its waiting slot to
+    /// newer news (`NotchToy.onCapsuleEvicted`): the pill says it now,
+    /// so an announcement never falls between the two after all. Only
+    /// the Mac's own announcements are the HUD's to say.
+    func islandDropped(_ notice: AlcoveNotice) {
+        guard notice.kind.isMacAnnouncement else { return }
+        pill(notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)",
+             symbol: notice.symbol)
+    }
+
     /// Everything that reaches outside the process — the media-key tap,
     /// the Focus, Bluetooth, Caps Lock and display watchers — starts
     /// here, never in init: the delegate calls it once the real notch

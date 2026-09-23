@@ -634,6 +634,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         toysStore.notch.onMediaGateChanged = { [weak events] in
             events?.hud.syncMediaTap()
         }
+        // An announcement the island queued, then gave up to newer news,
+        // takes the pill instead of vanishing.
+        toysStore.notch.onCapsuleEvicted = { [weak events] notice in
+            events?.hud.islandDropped(notice)
+        }
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
         // Approve/Deny on a banner are awaited, so a refused answer is
         // heard: the bridge turns it into a follow-up banner that opens
