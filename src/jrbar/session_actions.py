@@ -218,6 +218,19 @@ def session_resume_command(status: AgentStatus) -> str | None:
     return f"cd {cwd} && {executable} {resume_argument} {session_id}"
 
 
+def session_resume_parts(status: AgentStatus) -> tuple[str, str] | None:
+    """``(cwd, command)`` for resuming an ended CLI session in a terminal
+    that is already in ``cwd`` -- ``session_resume_command`` without its
+    ``cd``, for a terminal tab opened in the session's own directory."""
+    if not _valid_session_id(status.session_id) or not _valid_session_cwd(status.cwd):
+        return None
+    opener = SESSION_TERMINAL_OPENERS.get(status.provider.lower())
+    if opener is None:
+        return None
+    executable, resume_argument = opener
+    return status.cwd, f"{executable} {resume_argument} {shlex.quote(status.session_id)}"
+
+
 def provider_session_opener_providers() -> tuple[str, ...]:
     return HOOK_PROVIDERS
 

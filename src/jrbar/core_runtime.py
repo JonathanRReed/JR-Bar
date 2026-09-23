@@ -580,12 +580,13 @@ def _diff_ask_episodes(previous: dict, current: dict) -> list[tuple[str, str, ob
 def _cmd_open_session(self, args):
     status = _find_status(self, args.get("session"))
     # A live CLI session already has a window: raise that tab, pane or
-    # Ghostty terminal instead of starting a second ``--resume`` process
-    # (answer_surfaces.py). ``None`` is an ended, remote or app-hosted
-    # session, or an explicit app/VS Code choice: the ladder below.
-    from .answer_surfaces import open_live_session
+    # Ghostty terminal instead of starting a second ``--resume`` process;
+    # an ended one resumes in the terminal it ran in (answer_surfaces.py).
+    # ``None`` is a remote or app-hosted session, an explicit app/VS Code
+    # choice, or no record of its terminal: the ladder below.
+    from .answer_surfaces import open_session_surface
 
-    raised = open_live_session(self, status, args)
+    raised = open_session_surface(self, status, args)
     if raised is not None:
         return raised
     self.open_session(status, args.get("action") if isinstance(args.get("action"), str) else None, remember=False)

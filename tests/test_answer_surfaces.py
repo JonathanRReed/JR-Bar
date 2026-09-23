@@ -57,7 +57,11 @@ class FakeRunner(SurfaceRunner):
         activate: bool = True,
         permitted: bool | None = True,
         frontmost: str | None = "com.mitchellh.ghostty",
+        new_tab: bool = True,
+        launch: bool = True,
     ) -> None:
+        self.new_tab = new_tab
+        self.launch = launch
         self.ghostty_terminals = ghostty_terminals
         self.tab_found = tab_found
         self.focused = focused
@@ -78,6 +82,9 @@ class FakeRunner(SurfaceRunner):
         if script == surfaces._GHOSTTY_FOCUSED_TERMINAL:
             self.calls.append(("ghostty-focused",))
             return 0, self.focused
+        if script == surfaces._GHOSTTY_NEW_TAB:
+            self.calls.append(("ghostty-new-tab", *arguments))
+            return (0, "tab") if self.new_tab else (1, "")
         if script in (surfaces._TERMINAL_RAISE_BY_TTY, surfaces._ITERM_RAISE_BY_TTY):
             self.calls.append(("tab", "terminal" if script == surfaces._TERMINAL_RAISE_BY_TTY else "iterm", *arguments))
             return 0, "tab" if self.tab_found else "missing"
@@ -94,6 +101,10 @@ class FakeRunner(SurfaceRunner):
     def activate(self, bundle_id):
         self.calls.append(("activate", bundle_id))
         return self.activate_result
+
+    def launch_in_terminal(self, bundle_id, command):
+        self.calls.append(("launch", bundle_id, command))
+        return self.launch
 
     def frontmost_bundle(self):
         return self.frontmost
@@ -140,8 +151,9 @@ def test_ghostty_picks_one_terminal_or_admits_a_tie__and_3_more() -> None:
     assert [terminal.id for terminal in terminals] == ["T1", "T2", "T3"]
     assert terminals[2] == GhosttyTerminal("T3", "/Users/me/other", "zsh")
 
-    # --- scenario: the surface recorded at SessionStart wins
+    # --- scenario: the surface recorded at SessionStart wins, while it is still in the session's directory
     assert choose_ghostty_terminal(terminals, recorded_id="T2", cwd="/Users/me/repo", title=None).id == "T2"
+    assert choose_ghostty_terminal(terminals, recorded_id="T3", cwd="/Users/me/repo", title=None) is None
 
     # --- scenario: the only terminal in the session's directory
     assert choose_ghostty_terminal(terminals, recorded_id=None, cwd="/Users/me/other/", title=None).id == "T3"
@@ -231,42 +243,55 @@ def test_session_start_records_the_ghostty_terminal__and_4_more(tmp_path: Path) 
             path=path, runner=runner, process_table=lambda: GHOSTTY_CODEX, wall_clock=clock, synchronous=True
         )
 
-    # --- scenario: the focused terminal in the session's directory is recorded, and kept
+    # --- scenario: the host app and the focused terminal in the session's directory are recorded, and kept
     runner = FakeRunner(focused="T7\t/Users/me/repo")
     assert recorder(runner).note_session_start("codex", _start(), 500)
-    assert recorder(FakeRunner()).recorded("codex", "s-1") == "T7"
+    reloaded = recorder(FakeRunner())
+    assert reloaded.recorded("codex", "s-1") == "T7"
+    assert reloaded.recorded_host("codex", "s-1") == "com.mitchellh.ghostty"
     assert oct(path.stat().st_mode & 0o777) == "0o600"
 
-    # --- scenario: never an Apple event macOS has not already allowed
-    path.unlink()
+    # --- scenario: never an Apple event macOS has not already allowed -- the app still is
     for permitted in (None, False):
         runner = FakeRunner(focused="T7\t/Users/me/repo", permitted=permitted)
-        recorder(runner).note_session_start("codex", _start(), 500)
+        subject = recorder(runner)
+        subject.note_session_start("codex", _start("s-2"), 500)
         assert ("ghostty-focused",) not in runner.calls
-    assert not path.exists()
+        assert subject.recorded("codex", "s-2") is None
+        assert subject.recorded_host("codex", "s-2") == "com.mitchellh.ghostty"
 
-    # --- scenario: Ghostty not in front, or a terminal in another directory, records nothing
+    # --- scenario: Ghostty not in front, or a terminal elsewhere, proves no surface; a restart replaces the old one
     for runner in (
         FakeRunner(focused="T7\t/Users/me/repo", frontmost="com.apple.Terminal"),
-        FakeRunner(focused="T7\t/somewhere/else"),
+        FakeRunner(focused="T9\t/somewhere/else"),
     ):
-        recorder(runner).note_session_start("codex", _start(), 500)
-    assert not path.exists()
+        subject = recorder(runner)
+        subject.note_session_start("codex", _start(), 500)
+        assert subject.recorded("codex", "s-1") is None
 
-    # --- scenario: other events, no pid, or another host are not probed
+    # --- scenario: other events, no pid, a Terminal.app host (no Apple event needed) and an app host
     runner = FakeRunner(focused="T7\t/Users/me/repo")
     subject = recorder(runner)
     assert not subject.note_session_start("codex", json.dumps({"hook_event_name": "Stop", "session_id": "s"}), 500)
-    subject.note_session_start("codex", _start(), None)
-    SurfaceRecorder(
-        path=path, runner=runner, process_table=lambda: _table(_entry(500, 1, "/bin/codex")), synchronous=True
-    ).note_session_start("codex", _start(), 500)
+    subject.note_session_start("codex", _start("s-3"), None)
+    assert subject.recorded_host("codex", "s-3") is None
+    terminal_host = _table(
+        _entry(500, 400, "/bin/codex"), _entry(400, 1, "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal")
+    )
+    subject = SurfaceRecorder(path=path, runner=runner, process_table=lambda: terminal_host, synchronous=True)
+    subject.note_session_start("codex", _start("s-4"), 500)
+    assert subject.recorded_host("codex", "s-4") == "com.apple.Terminal"
+    assert subject.recorded("codex", "s-4") is None
+    app_host = _table(_entry(500, 400, "/bin/codex"), _entry(400, 1, "/Applications/Codex.app/Contents/MacOS/Codex"))
+    subject = SurfaceRecorder(path=path, runner=runner, process_table=lambda: app_host, synchronous=True)
+    subject.note_session_start("codex", _start("s-5"), 500)
+    assert subject.recorded_host("codex", "s-5") is None
     assert runner.calls == []
 
     # --- scenario: old records age out on load
     recorder(FakeRunner(focused="T7\t/Users/me/repo")).note_session_start("codex", _start(), 500)
     later = recorder(FakeRunner(), clock=lambda: 1_000.0 + surfaces.RECORDED_SURFACE_TTL_SECONDS + 1)
-    assert later.recorded("codex", "s-1") is None
+    assert later.recorded("codex", "s-1") is None and later.recorded_host("codex", "s-1") is None
 
 
 def test_process_probes_and_the_ghostty_focus_proof__and_4_more(monkeypatch) -> None:
@@ -408,3 +433,55 @@ def test_open_session_raises_a_live_session_instead_of_resuming_it__and_4_more(t
         )
     assert error.value.code == "not_found"
     assert "nothing new was started" in str(error.value)
+
+
+def _ended(tmp_path: Path, host: str | None, action=None):
+    """An ended Codex CLI row whose SessionStart recorded ``host``."""
+    recorder = SurfaceRecorder(path=tmp_path / "surfaces.json", runner=FakeRunner(permitted=None), synchronous=True)
+    if host is not None:
+        recorder._store("codex", "s-1", host_bundle=host, terminal_id=None, cwd="/Users/me/repo")
+    controller = SimpleNamespace(settings=_Settings(action), _core_extras_for=lambda status: SimpleNamespace(pid=None))
+    status = SimpleNamespace(
+        agent_id="codex:session:s-1",
+        provider="codex",
+        session_id="s-1",
+        origin="Codex CLI",
+        cwd="/Users/me/repo",
+    )
+    return controller, status, recorder
+
+
+def test_an_ended_session_resumes_in_the_terminal_it_ran_in__and_4_more(tmp_path: Path) -> None:
+    from jrbar.answer_surfaces import open_session_surface, resume_in_own_terminal
+
+    # --- scenario: Ghostty: a new tab in the session's directory, the resume typed into the shell
+    controller, status, recorder = _ended(tmp_path, "com.mitchellh.ghostty")
+    runner = FakeRunner()
+    reply = open_session_surface(controller, status, {}, runner=runner, recorder=recorder)
+    assert reply["raised"] == "new_tab" and reply["activated"] == "Ghostty"
+    assert runner.calls == [("ghostty-new-tab", "/Users/me/repo", "codex resume s-1\n")]
+
+    # --- scenario: a Ghostty that refuses the Apple event gets a new window through the reviewed plan
+    runner = FakeRunner(new_tab=False)
+    reply = resume_in_own_terminal(controller, status, {}, runner=runner, recorder=recorder)
+    assert reply["raised"] == "new_window"
+    assert runner.calls[-1] == ("launch", "com.mitchellh.ghostty", "cd /Users/me/repo && codex resume s-1")
+
+    # --- scenario: Terminal.app: a new window there, not in whatever app is in front
+    controller, status, recorder = _ended(tmp_path, "com.apple.Terminal")
+    runner = FakeRunner()
+    reply = resume_in_own_terminal(controller, status, {}, runner=runner, recorder=recorder)
+    assert reply["activated"] == "Terminal" and reply["raised"] == "new_window"
+    assert runner.calls == [("launch", "com.apple.Terminal", "cd /Users/me/repo && codex resume s-1")]
+
+    # --- scenario: an explicit app or VS Code open, or no record of the terminal, keeps the ladder
+    controller, status, recorder = _ended(tmp_path, "com.mitchellh.ghostty", action="app")
+    assert resume_in_own_terminal(controller, status, {}, runner=FakeRunner(), recorder=recorder) is None
+    controller, status, recorder = _ended(tmp_path, "com.mitchellh.ghostty")
+    assert resume_in_own_terminal(controller, status, {"action": "vscode"}, runner=FakeRunner(), recorder=recorder) is None
+    controller, status, recorder = _ended(tmp_path / "none", None)
+    assert resume_in_own_terminal(controller, status, {}, runner=FakeRunner(), recorder=recorder) is None
+
+    # --- scenario: a terminal with no reviewed plan keeps the ladder too
+    controller, status, recorder = _ended(tmp_path, "com.apple.Terminal")
+    assert resume_in_own_terminal(controller, status, {}, runner=FakeRunner(launch=False), recorder=recorder) is None

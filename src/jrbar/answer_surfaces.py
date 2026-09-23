@@ -148,6 +148,27 @@ on run argv
 end run
 """
 
+# A new tab in Ghostty's front window (a new window when it has none), in the
+# session's directory, with the resume command typed into the owner's own
+# shell -- so the shell, its environment and its history are the usual ones
+# and the tab stays open when the agent exits.
+_GHOSTTY_NEW_TAB: Final = """
+on run argv
+  set wd to item 1 of argv
+  set typed to item 2 of argv
+  tell application id "com.mitchellh.ghostty"
+    set cfg to {initial working directory:wd, initial input:typed}
+    if (count of windows) > 0 then
+      new tab in front window with configuration cfg
+    else
+      new window with configuration cfg
+    end if
+    activate
+  end tell
+  return "tab"
+end run
+"""
+
 _GHOSTTY_FOCUSED_TERMINAL: Final = """
 set sep to character id 9
 tell application id "com.mitchellh.ghostty"
@@ -251,13 +272,17 @@ def choose_ghostty_terminal(
 ) -> GhosttyTerminal | None:
     """The one terminal this session is in, or ``None`` for a tie or a miss.
 
-    The surface recorded at SessionStart is the strongest evidence; then
-    the only terminal in the session's working directory; then, among
-    several there, the only one whose title carries the session's name.
+    The surface recorded at SessionStart is the strongest evidence, while
+    it is still in the session's directory (a terminal the session has left
+    may be running something else by now); then the only terminal in the
+    session's working directory; then, among several there, the only one
+    whose title carries the session's name.
     """
     if recorded_id:
         for terminal in terminals:
-            if terminal.id == recorded_id:
+            if terminal.id == recorded_id and (
+                not cwd or not terminal.working_directory or _same_directory(terminal.working_directory, cwd)
+            ):
                 return terminal
     in_directory = [terminal for terminal in terminals if _same_directory(terminal.working_directory, cwd)]
     if len(in_directory) == 1:
@@ -357,6 +382,26 @@ class SurfaceRunner:
         from .answer_local import raise_application
 
         return raise_application(bundle_id, timeout_seconds=1.0)
+
+    def launch_in_terminal(self, bundle_id: str, command: str) -> bool:
+        """Run ``command`` in a new window of that terminal, through the
+        reviewed launch plans the rest of the app uses. ``False`` when that
+        terminal has no reviewed plan here (the plan fell back to another
+        app): the caller's own ladder decides then."""
+        from ._status_bar_launch_legacy import resolve_terminal_launch, terminal_launch_arguments
+
+        try:
+            plan = resolve_terminal_launch(bundle_id)
+            if plan.selected_bundle_identifier != bundle_id:
+                return False
+            subprocess.Popen(
+                terminal_launch_arguments(plan, command),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            return False
+        return True
 
     def frontmost_bundle(self) -> str | None:
         from .answer_local import frontmost_application
@@ -513,7 +558,11 @@ def _surface_key(provider: str, session_id: str) -> str:
 
 
 class SurfaceRecorder:
-    """The Ghostty terminal each session started in, kept across restarts.
+    """Where each session started, kept across restarts: the terminal app
+    that hosts it (from the process table, no permission needed) and, in
+    Ghostty, the exact terminal surface (when Apple events are already
+    allowed). The app is what resumes an ended session in its own terminal;
+    the surface is what raises a live one.
 
     ``note_session_start`` is called by the hook ingress for every
     SessionStart and returns at once; the probe runs on one worker thread
@@ -543,12 +592,20 @@ class SurfaceRecorder:
     # -- reading --
 
     def recorded(self, provider: object, session_id: object) -> str | None:
+        """The Ghostty terminal the session started in, if one was proven."""
+        return self._field(provider, session_id, "ghostty_terminal")
+
+    def recorded_host(self, provider: object, session_id: object) -> str | None:
+        """The bundle id of the terminal app the session started in."""
+        return self._field(provider, session_id, "host_bundle")
+
+    def _field(self, provider: object, session_id: object, name: str) -> str | None:
         if type(provider) is not str or type(session_id) is not str:
             return None
         with self._lock:
             record = self._loaded().get(_surface_key(provider, session_id))
-        terminal = record.get("ghostty_terminal") if isinstance(record, dict) else None
-        return terminal if type(terminal) is str and terminal else None
+        value = record.get(name) if isinstance(record, dict) else None
+        return value if type(value) is str and value else None
 
     # -- recording --
 
@@ -610,20 +667,29 @@ class SurfaceRecorder:
         # The shim's parent is the agent (or the shell the agent ran the
         # hook through); either way the host is above it.
         _app, bundle, in_tmux = host_from_ancestry(ppid, table)
-        if in_tmux or bundle != GHOSTTY_BUNDLE_ID:
+        if in_tmux or bundle is None or bundle in APP_HOSTED_BUNDLE_IDS:
             return
+        self._store(provider, session_id, host_bundle=bundle, terminal_id=self._ghostty_surface(bundle, cwd), cwd=cwd)
+
+    def _ghostty_surface(self, bundle: str, cwd: str) -> str | None:
+        """The focused Ghostty terminal, when it is provably this session's:
+        Apple events already allowed, Ghostty in front, and its focused
+        terminal in the session's directory -- the one the command was just
+        typed into."""
+        if bundle != GHOSTTY_BUNDLE_ID:
+            return None
         runner = self._runner
         if runner.automation_permitted(GHOSTTY_BUNDLE_ID) is not True:
-            return
+            return None
         if runner.frontmost_bundle() != GHOSTTY_BUNDLE_ID:
-            return
+            return None
         code, output = runner.osascript(_GHOSTTY_FOCUSED_TERMINAL)
         if code != 0:
-            return
+            return None
         terminal_id, _sep, working_directory = output.partition(_SEP)
         if not terminal_id.strip() or not _same_directory(working_directory.strip(), cwd):
-            return
-        self._store(provider, session_id, terminal_id.strip(), cwd)
+            return None
+        return terminal_id.strip()
 
     # -- persistence --
 
@@ -643,29 +709,40 @@ class SurfaceRecorder:
             rows = document.get("surfaces") if isinstance(document, dict) else None
             if isinstance(rows, dict):
                 for key, row in rows.items():
-                    if (
+                    if not (
                         type(key) is str
                         and isinstance(row, dict)
-                        and type(row.get("ghostty_terminal")) is str
                         and type(row.get("recorded_at")) in (int, float)
                         and now - float(row["recorded_at"]) < RECORDED_SURFACE_TTL_SECONDS
                     ):
-                        records[key] = {
-                            "ghostty_terminal": row["ghostty_terminal"],
-                            "cwd": row.get("cwd") if type(row.get("cwd")) is str else None,
-                            "recorded_at": float(row["recorded_at"]),
-                        }
+                        continue
+                    kept = {
+                        name: row[name]
+                        for name in ("host_bundle", "ghostty_terminal", "cwd")
+                        if type(row.get(name)) is str and row[name]
+                    }
+                    if "host_bundle" in kept or "ghostty_terminal" in kept:
+                        records[key] = {**kept, "recorded_at": float(row["recorded_at"])}
         self._records = records
         return records
 
-    def _store(self, provider: str, session_id: str, terminal_id: str, cwd: str) -> None:
+    def _store(
+        self,
+        provider: str,
+        session_id: str,
+        *,
+        host_bundle: str,
+        terminal_id: str | None,
+        cwd: str,
+    ) -> None:
+        row: dict[str, Any] = {"host_bundle": host_bundle, "cwd": cwd, "recorded_at": self._wall()}
+        if terminal_id:
+            row["ghostty_terminal"] = terminal_id
         with self._lock:
             records = self._loaded()
-            records[_surface_key(provider, session_id)] = {
-                "ghostty_terminal": terminal_id,
-                "cwd": cwd,
-                "recorded_at": self._wall(),
-            }
+            # Every start replaces the record: a session resumed in another
+            # terminal must not be raised in the one it left.
+            records[_surface_key(provider, session_id)] = row
             while len(records) > MAX_RECORDED_SURFACES:
                 oldest = min(records, key=lambda key: records[key]["recorded_at"])
                 del records[oldest]
@@ -796,6 +873,116 @@ def raise_for_answer(
         return None
 
 
+def _resolved_open_action(controller: object, status: object, args: Mapping[str, Any]) -> str | None:
+    """The open action the controller's own ladder would take: the command's
+    ``action``, a provider profile's, Settings' Clicks-open, else the row's
+    default (a CLI session's is the terminal)."""
+    action = args.get("action") if isinstance(args.get("action"), str) else None
+    if action is not None:
+        return action
+    try:
+        from .provider_usage_controller_actions import profile_session_action
+
+        configured = profile_session_action(controller, status, None)
+    except Exception:
+        configured = None
+    if configured is None:
+        try:
+            configured = controller.settings.session_open_action(  # type: ignore[attr-defined]
+                str(getattr(status, "provider", "")).lower(), getattr(status, "origin", None)
+            )
+        except Exception:
+            configured = None
+    if configured is not None:
+        return configured
+    try:
+        from .session_actions import default_session_open_action
+
+        return default_session_open_action(status)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def resume_in_own_terminal(
+    controller: object,
+    status: object,
+    args: Mapping[str, Any],
+    *,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+) -> dict[str, Any] | None:
+    """``open_session`` for an ENDED CLI session whose open is a terminal
+    resume: resume it in the terminal it ran in -- a new Ghostty tab in the
+    session's directory, or a new Terminal.app/iTerm2 window -- rather than
+    whichever app happened to be in front. ``None`` leaves it to the
+    controller's ladder (no record of the terminal, a live or remote
+    session, an app or VS Code open, a terminal with no reviewed plan)."""
+    from .session_actions import SESSION_OPEN_TERMINAL, session_resume_command, session_resume_parts
+
+    agent_id = getattr(status, "agent_id", "") or ""
+    provider = getattr(status, "provider", None)
+    session_id = getattr(status, "session_id", None)
+    if not isinstance(agent_id, str) or agent_id.startswith("remote:"):
+        return None
+    if type(provider) is not str or type(session_id) is not str or not session_id:
+        return None
+    if _resolved_open_action(controller, status, args) not in (SESSION_OPEN_TERMINAL, "raise"):
+        return None
+    host = (recorder or default_surface_recorder()).recorded_host(provider, session_id)
+    if host not in (GHOSTTY_BUNDLE_ID, TERMINAL_BUNDLE_ID, ITERM_BUNDLE_ID):
+        return None
+    runner = runner or SurfaceRunner()
+    try:
+        parts = session_resume_parts(status)  # type: ignore[arg-type]
+        command = session_resume_command(status)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if parts is None or command is None:
+        return None
+    opened = None
+    if host == GHOSTTY_BUNDLE_ID:
+        cwd, typed = parts
+        code, output = runner.osascript(_GHOSTTY_NEW_TAB, cwd, typed + "\n")
+        if code == 0 and output == "tab":
+            opened = "new_tab"
+    if opened is None and runner.launch_in_terminal(host, command):
+        opened = "new_window"
+    if opened is None:
+        return None
+    names = {GHOSTTY_BUNDLE_ID: "Ghostty", TERMINAL_BUNDLE_ID: "Terminal", ITERM_BUNDLE_ID: "iTerm"}
+    return {
+        "session": agent_id,
+        "activated": names[host],
+        "origin": None,
+        "raised": opened,
+        "app": names[host],
+        "bundle_id": host,
+        "detail": "resumed",
+    }
+
+
+def open_session_surface(
+    controller: object,
+    status: object,
+    args: Mapping[str, Any],
+    *,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+    process_table: Callable[[], Mapping[int, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """``open_session`` through the session's own terminal: raise it while
+    it runs, resume it there once it has ended. ``None`` is the controller's
+    ladder (provider links, VS Code, the frontmost terminal)."""
+    raised = open_live_session(
+        controller, status, args, runner=runner, recorder=recorder, process_table=process_table
+    )
+    if raised is not None:
+        return raised
+    if _live_host(controller, status, process_table=process_table) is not None:
+        return None
+    return resume_in_own_terminal(controller, status, args, runner=runner, recorder=recorder)
+
+
 def open_live_session(
     controller: object,
     status: object,
@@ -885,9 +1072,11 @@ __all__ = [
     "default_surface_recorder",
     "host_from_ancestry",
     "open_live_session",
+    "open_session_surface",
     "parse_ghostty_terminals",
     "parse_tmux_pane_for_tty",
     "raise_for_answer",
     "raise_session_host",
+    "resume_in_own_terminal",
     "tmux_clients",
 ]
