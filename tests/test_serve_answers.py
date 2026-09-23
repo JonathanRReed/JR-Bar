@@ -15,6 +15,7 @@ from jrbar.cli_control import ControlError
 from jrbar.core_server import CommandError
 from jrbar.serve import create_serve_server
 from jrbar.serve_answers import (
+    ANSWER_SOCKET_TIMEOUT_SECONDS,
     DECK_SLOTS,
     ControllerAnswers,
     CoreSocketAnswers,
@@ -186,18 +187,56 @@ class _Connection:
 
 def test_a_standalone_serve_answers_over_the_core_socket() -> None:
     connection = _Connection()
-    answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=lambda _path: connection)
+    answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=lambda _path, **_kw: connection)
     assert answers.enabled() and len(answers.asks()) == 2
     assert answers.answer({"session": "s", "decision": "always"}) == {"answered": True}
     assert connection.commands == [("answer_ask", {"session": "s", "decision": "always", "only_if_frontmost": True})]
-    off = CoreSocketAnswers(Path("/x"), connect=lambda _path: _Connection(settings={"document": {}}))
+    off = CoreSocketAnswers(Path("/x"), connect=lambda _path, **_kw: _Connection(settings={"document": {}}))
     assert not off.enabled()
     refused = CoreSocketAnswers(
-        Path("/x"), connect=lambda _path: _Connection(error=ControlError("deck_answer: no ask", 1, code="not_found"))
+        Path("/x"),
+        connect=lambda _path, **_kw: _Connection(error=ControlError("deck_answer: no ask", 1, code="not_found")),
     )
     with pytest.raises(ServeAnswerRefused) as refusal:
         refused.answer({"slot": 1, "decision": "approve"})
     assert refusal.value.code == "not_found" and refusal.value.http_status == 404
+
+
+def test_a_standalone_answer_outwaits_the_daemons_answer_budget() -> None:
+    # The daemon replies to answer_ask only once the surface has spoken --
+    # up to its reply budget -- so a shorter recv timeout would report a
+    # refusal for an answer that still gets typed.
+    from jrbar.core_runtime import ANSWER_REPLY_BUDGET_SECONDS
+
+    opened: list[tuple[str, float]] = []
+
+    def connect(path: Path, *, timeout: float) -> _Connection:
+        opened.append((str(path), timeout))
+        return _Connection()
+
+    answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=connect)
+    assert answers.enabled() and answers.asks()
+    answers.answer({"slot": 3, "decision": "deny"})
+    reads, answer = opened[:2], opened[2]
+    assert answer == ("/tmp/core.sock", ANSWER_SOCKET_TIMEOUT_SECONDS)
+    assert ANSWER_SOCKET_TIMEOUT_SECONDS > ANSWER_REPLY_BUDGET_SECONDS + 2.0
+    # The reads stay quick: a wedged monitor must not hold /asks.json.
+    assert all(timeout < ANSWER_REPLY_BUDGET_SECONDS for _path, timeout in reads)
+
+
+def test_the_real_core_connection_is_opened_with_the_answer_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import jrbar.cli_control as cli_control
+
+    made: list[float] = []
+
+    class _Recording(_Connection):
+        def __init__(self, path: Path, timeout: float = 3.0) -> None:
+            super().__init__()
+            made.append(timeout)
+
+    monkeypatch.setattr(cli_control, "CoreConnection", _Recording)
+    CoreSocketAnswers(Path("/tmp/core.sock")).answer({"session": "s", "decision": "approve"})
+    assert made == [ANSWER_SOCKET_TIMEOUT_SECONDS]
 
 
 class _Answers:

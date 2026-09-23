@@ -33,6 +33,16 @@ MAX_REQUEST_IDENTITY: Final = 1024
 MAX_SESSION_ID: Final = 512
 MAX_PREVIEW: Final = 120
 MAX_PUBLIC_ASKS: Final = 64
+#: How long a standalone serve waits on core.sock for an answer's reply.
+#: The daemon holds ``answer_ask`` open until the answer surface's own
+#: verdict -- up to ``core_runtime.ANSWER_REPLY_BUDGET_SECONDS`` (6 s), plus
+#: the hops to its main thread for the journal and the refresh -- and may send
+#: nothing on the socket meanwhile. This must stay above that, or a slow
+#: first focus check reads as "monitor unreachable" while the answer is
+#: still typed, and the key's next press answers whatever ask comes next.
+ANSWER_SOCKET_TIMEOUT_SECONDS: Final = 12.0
+#: The reads (the switch, the waiting asks) come back at once.
+READ_SOCKET_TIMEOUT_SECONDS: Final = 3.0
 #: What a receipt may carry back over HTTP: the verdict, never the host's
 #: pid, tty or window evidence.
 _RECEIPT_FIELDS: Final = frozenset(
@@ -269,16 +279,16 @@ class CoreSocketAnswers:
     """A standalone ``jrbar serve --allow-answers``: the same three reads and
     the one command, over the daemon's core socket."""
 
-    def __init__(self, socket_path: Path, *, connect: Callable[[Path], Any] | None = None) -> None:
+    def __init__(self, socket_path: Path, *, connect: Callable[..., Any] | None = None) -> None:
         self._socket_path = socket_path
         self._connect = connect
 
-    def _connection(self):
+    def _connection(self, timeout: float = READ_SOCKET_TIMEOUT_SECONDS):
         if self._connect is not None:
-            return self._connect(self._socket_path)
+            return self._connect(self._socket_path, timeout=timeout)
         from .cli_control import CoreConnection
 
-        return CoreConnection(self._socket_path)
+        return CoreConnection(self._socket_path, timeout=timeout)
 
     def enabled(self) -> bool:
         from .cli_control import ControlError
@@ -306,7 +316,10 @@ class CoreSocketAnswers:
 
         name, args = _command_for(target)
         try:
-            with self._connection() as core:
+            # Its own, longer wait: the daemon replies only once the answer
+            # surface has said what happened, and a timeout here would call
+            # a delivered answer a refusal.
+            with self._connection(ANSWER_SOCKET_TIMEOUT_SECONDS) as core:
                 return core.command(name, args)
         except ControlError as error:
             raise ServeAnswerRefused(error.code or "unavailable", str(error)) from None
@@ -314,6 +327,7 @@ class CoreSocketAnswers:
 
 __all__ = [
     "ANSWER_DECISIONS",
+    "ANSWER_SOCKET_TIMEOUT_SECONDS",
     "DECK_SLOTS",
     "MAX_ANSWER_BODY_BYTES",
     "ControllerAnswers",

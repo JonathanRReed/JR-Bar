@@ -1094,7 +1094,10 @@ bearer-authenticated like `/status.json` -- never anonymous, whatever
 `serve_enabled`, since reading the fleet and answering for the owner are
 different grants). The daemon's own server reads the switch on every
 request; a standalone `jrbar serve --allow-answers` reaches the daemon over
-`core.sock` and reads the same switch.
+`core.sock` and reads the same switch. Its answer waits up to 12 s for the
+reply -- past `answer_ask`'s own 6 s budget and the hops to the main
+thread -- so a slow focus check is never reported as an unreachable monitor
+while the answer is still delivered.
 
 - `GET /asks.json` → `{ok: true, asks: [{session, provider, label, slot,
   kind, request, opened_at, preview, risk, decisions, choices}]}`: what is
