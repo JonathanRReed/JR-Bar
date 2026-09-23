@@ -404,10 +404,7 @@ final class MenuBarUtility: Toy {
             self?.hider.hide()
         }
         bar.items = { [weak self] in self?.barItems() ?? [] }
-        bar.glyphFace = { [weak self] item in
-            guard let self, let camera = self.glyphCamera else { return nil }
-            return camera.cache.face(for: item, dark: self.barIsDark())
-        }
+        bar.glyphFace = { [weak self] item in self?.glyphFace(for: item) }
         // The bar hangs under the icon's ‹ while the mirror carries it.
         bar.anchorFrame = { [weak self] in
             guard let self, self.iconMirrored else { return nil }
@@ -2571,6 +2568,12 @@ final class MenuBarUtility: Toy {
                     || NSWorkspace.shared.urlForApplication(withBundleIdentifier: owner) != nil
             }
         }
+    }
+
+    /// The photographed glyph for an item in the bar's appearance — the
+    /// card's layout editor wears the Item Bar's faces.
+    func glyphFace(for item: MenuBarItem) -> MenuBarGlyphCache.Face? {
+        glyphCamera?.cache.face(for: item, dark: barIsDark())
     }
 
     /// One photograph pass, off the caller's stack.

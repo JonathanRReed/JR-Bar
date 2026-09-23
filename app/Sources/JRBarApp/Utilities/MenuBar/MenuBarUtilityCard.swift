@@ -68,8 +68,8 @@ struct MenuBarUtilityControls: View {
 
             SettingLabel(title: "How it works",
                          subtitle: utility.concealing
-                            ? "Pick Hidden or Always for an app under Overrides and macOS hides it. The JR-Bar icon stands at the right end of the gap it leaves, with a ‹ that brings hidden items back. Hidden apps keep running and remain accessible in the Item Bar."
-                            : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
+                            ? "Drag an app to Hidden or Always below and macOS hides it. The JR-Bar icon stands at the right end of the gap it leaves, with a ‹ that brings hidden items back. Hidden apps keep running and remain accessible in the Item Bar."
+                            : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon, or drag its tile below, to hide or show it.")
             if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
                     SettingLabel(title: "Hide the way macOS hides",
@@ -136,13 +136,9 @@ struct MenuBarUtilityControls: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !hideable.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(hideable, id: \.id) { item in
-                        itemRow(item)
-                    }
-                }
-                .padding(.top, 2)
+            if !utility.profileSubjects.isEmpty {
+                MenuBarLayoutEditorView(utility: utility, placement: placement(of:))
+                    .padding(.top, 2)
             }
 
             Divider()
@@ -383,22 +379,6 @@ struct MenuBarUtilityControls: View {
         parts.append("\(max(0, shown)) shown")
         if utility.listedItems.isEmpty { return "Nothing listed yet" }
         return parts.joined(separator: " · ")
-    }
-
-    /// One item: the owner's icon and name, then where it is.
-    private func itemRow(_ item: MenuBarItem) -> some View {
-        HStack(spacing: 8) {
-            Image(nsImage: item.owner?.icon ?? NSImage())
-                .resizable()
-                .frame(width: 16, height: 16)
-            Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 8)
-            Text(placement(of: item))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     /// The override picker for one item.
