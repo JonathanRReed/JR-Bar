@@ -390,6 +390,87 @@ def test_what_is_never_parked__and_2_more() -> None:
     assert seen == [("codex", 4321)]
 
 
+def test_a_held_codex_prompt_lets_go_when_its_terminal_comes_forward__and_3_more(monkeypatch) -> None:
+    codex = _facts(provider="codex", session_id="codex-session-1", always_rules=())
+
+    # --- scenario: the owner switches to the terminal mid-hold: released within one tick, nothing printed
+    at_terminal = threading.Event()
+    asked: list = []
+
+    def watching(facts, pid):
+        asked.append(pid)
+        return at_terminal.is_set()
+
+    broker = _broker(watching=watching)
+    slot = broker.park(codex, wait_limit_seconds=50.0, host_pid=4321)
+    assert slot is not None and asked == [4321]
+    received: list = []
+    thread = threading.Thread(target=lambda: received.append(broker.wait(slot, check_seconds=0.01)), daemon=True)
+    thread.start()
+    at_terminal.set()
+    thread.join(2.0)
+    assert not thread.is_alive() and received == [None]
+    assert broker.parked("codex", "derived:abc") is None
+    assert set(asked) == {4321}
+
+    # --- scenario: a click still decides while the owner is elsewhere
+    broker = _broker(watching=lambda facts, pid: False)
+    slot = broker.park(codex, wait_limit_seconds=50.0, host_pid=4321)
+    received = []
+
+    def serve() -> None:
+        verdict = broker.wait(slot, check_seconds=0.01)
+        received.append(verdict)
+        broker.delivered(slot, verdict is not None)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    assert broker.decide("codex", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.SENT
+    thread.join(2.0)
+    assert received == [decision_document("codex", DecisionVerb.ALLOW)]
+
+    # --- scenario: Claude shows its prompt during the hook, so its hold is never watched
+    ticks = threading.Event()
+    counted: list = []
+
+    def alive() -> bool:
+        counted.append(1)
+        if len(counted) >= 3:
+            ticks.set()
+        return True
+
+    asked = []
+    broker = _broker(watching=lambda facts, pid: asked.append(facts.provider) or True)
+    slot = broker.park(_facts(), wait_limit_seconds=50.0, host_pid=4321)
+    assert slot is not None
+    received = []
+    thread = threading.Thread(
+        target=lambda: received.append(broker.wait(slot, alive=alive, check_seconds=0.01)), daemon=True
+    )
+    thread.start()
+    assert ticks.wait(2.0)
+    assert asked == [] and received == []
+    broker.release_slot(slot)
+    thread.join(2.0)
+    assert received == [None]
+
+    # --- scenario: the default watch reads the frontmost app each tick and the ancestry once
+    from jrbar import answer_local
+    from jrbar.answer_decisions import _FrontmostWatch
+
+    front = [(None, 900)]
+    walks: list = []
+    monkeypatch.setattr(answer_local, "frontmost_application", lambda: front[0])
+    monkeypatch.setattr(answer_local, "process_ancestry", lambda pid: walks.append(pid) or (400, 300, 200))
+    watch = _FrontmostWatch()
+    assert watch(codex, 4321) is False
+    front[0] = ("com.mitchellh.ghostty", 200)
+    assert watch(codex, 4321) is True
+    assert walks == [4321]
+    assert watch(_facts(), 4321) is False
+    assert watch(codex, None) is False
+
+
 # --- answer_ask through the lane -----------------------------------------------
 
 

@@ -21,7 +21,9 @@ One of four things ends the wait:
 * the request resolves without us: the agent ran the tool (the matching
   ``PostToolUse``), or the turn ended or moved on (``Stop``,
   ``UserPromptSubmit``, ``SessionEnd``) -- nothing is printed;
-* the owner opens the session to answer it there, or the daemon stops.
+* the owner goes to the session to answer it there -- opens it from
+  JR-Bar, or brings a Codex session's terminal to the front -- or the
+  daemon stops.
 
 Only a click decides. Nothing here ever answers on a timer, a rule or a
 default, and "Always allow" is a verb of its own: it echoes the agent's
@@ -37,8 +39,9 @@ never answers a question; it keeps the keystroke path it always had.
 Claude Code shows its own prompt while the hook runs and takes whichever
 answer comes first, so a hold costs nothing there. Codex asks its hooks
 before it shows the prompt, so a hold delays the prompt; a Codex request
-is therefore not parked while its terminal is the frontmost app -- the
-owner is at the terminal and the prompt should appear at once.
+is therefore not parked while its terminal is the frontmost app, and a
+parked one lets go the moment its terminal comes to the front -- the owner
+is at the terminal and the prompt should appear at once.
 """
 
 from __future__ import annotations
@@ -72,6 +75,10 @@ DECIDED_TOMBSTONE_SECONDS: Final = 15.0
 DELIVERY_WAIT_SECONDS: Final = 2.0
 
 DECIDE_PROVIDERS: Final = frozenset({"claude", "codex"})
+#: Agents that ask their hooks BEFORE they show the prompt, so a hold hides
+#: the prompt from an owner who is at the terminal. Claude Code shows its
+#: prompt while the hook runs.
+PROMPT_BEHIND_HOOK_PROVIDERS: Final = frozenset({"codex"})
 #: Claude takes ``updatedPermissions`` on an allow; Codex rejects the
 #: field ("reserved for future behavior and fail closed today").
 ALWAYS_ALLOW_PROVIDERS: Final = frozenset({"claude"})
@@ -569,16 +576,27 @@ class _Slot:
         "event",
         "facts",
         "hold_until_epoch",
+        "host_pid",
         "state",
         "token",
         "verdict",
     )
 
-    def __init__(self, token: int, facts: PermissionFacts, deadline: float, hold_until_epoch: float) -> None:
+    def __init__(
+        self,
+        token: int,
+        facts: PermissionFacts,
+        deadline: float,
+        hold_until_epoch: float,
+        host_pid: int | None = None,
+    ) -> None:
         self.token = token
         self.facts = facts
         self.deadline = deadline
         self.hold_until_epoch = hold_until_epoch
+        #: The hook's parent, the agent side of the request: its terminal
+        #: coming to the front lets a prompt behind the hook go.
+        self.host_pid = host_pid
         self.state = "parked"
         self.verdict: dict[str, Any] | None = None
         self.event = threading.Event()
@@ -586,21 +604,61 @@ class _Slot:
         self.delivered_event = threading.Event()
 
 
-def _default_watching(facts: PermissionFacts, host_pid: int | None) -> bool:
-    """Whether the owner is at the session's terminal right now: the
-    frontmost app is on the agent process's ancestry. Only asked for a
-    Codex request, whose prompt waits behind the hook."""
-    if facts.provider != "codex" or type(host_pid) is not int or host_pid <= 1:
-        return False
-    try:
-        from .answer_local import frontmost_application, process_ancestry
+class _FrontmostWatch:
+    """The default ``watching``: is the owner at the session's terminal
+    right now -- is the frontmost app on the agent process's ancestry? Only
+    asked for a request whose prompt waits behind the hook.
 
-        _bundle, frontmost_pid = frontmost_application()
-        if frontmost_pid is None:
+    Asked when a request parks and then every second while it waits, so it
+    is cheap: the frontmost app is NSWorkspace's (no fork), and the
+    ancestry is one process-table walk per host pid, remembered."""
+
+    _MAX_CHAINS: Final = 4 * MAX_PARKED_DECISIONS
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._chains: dict[int, tuple[int, ...]] = {}
+
+    def __call__(self, facts: PermissionFacts, host_pid: int | None) -> bool:
+        if (
+            facts.provider not in PROMPT_BEHIND_HOOK_PROVIDERS
+            or type(host_pid) is not int
+            or host_pid <= 1
+        ):
             return False
-        return frontmost_pid == host_pid or frontmost_pid in process_ancestry(host_pid)
-    except Exception:
-        return False
+        try:
+            from .answer_local import frontmost_application
+
+            _bundle, frontmost_pid = frontmost_application()
+            if frontmost_pid is None:
+                return False
+            return frontmost_pid == host_pid or frontmost_pid in self._chain(host_pid)
+        except Exception:
+            return False
+
+    def _chain(self, host_pid: int) -> tuple[int, ...]:
+        with self._lock:
+            chain = self._chains.get(host_pid)
+        if chain is not None:
+            return chain
+        from .answer_local import process_ancestry
+
+        chain = process_ancestry(host_pid)
+        if chain:
+            with self._lock:
+                while len(self._chains) >= self._MAX_CHAINS:
+                    self._chains.pop(next(iter(self._chains)))
+                self._chains[host_pid] = chain
+        return chain
+
+
+def _default_watching(facts: PermissionFacts, host_pid: int | None) -> bool:
+    """Whether the owner is at the session's terminal right now (see
+    ``_FrontmostWatch``)."""
+    return _FRONTMOST_WATCH(facts, host_pid)
+
+
+_FRONTMOST_WATCH: Final = _FrontmostWatch()
 
 
 class DecisionBroker:
@@ -652,7 +710,7 @@ class DecisionBroker:
         hold = min(self._hold, float(wait_limit_seconds) - DECISION_MARGIN_SECONDS)
         if not math.isfinite(hold) or hold < MIN_DECISION_HOLD_SECONDS:
             return None
-        if self._watching(facts, host_pid):
+        if facts.provider in PROMPT_BEHIND_HOOK_PROVIDERS and self._watching(facts, host_pid):
             return None
         now = self._clock()
         with self._lock:
@@ -660,7 +718,13 @@ class DecisionBroker:
             if len(self._slots) >= self._capacity:
                 return None
             self._token += 1
-            slot = _Slot(self._token, facts, now + hold, self._wall() + hold)
+            slot = _Slot(
+                self._token,
+                facts,
+                now + hold,
+                self._wall() + hold,
+                host_pid if type(host_pid) is int and host_pid > 1 else None,
+            )
             self._slots[slot.token] = slot
             self._decided.pop((facts.provider, facts.request_id), None)
             return slot
@@ -677,12 +741,19 @@ class DecisionBroker:
 
         ``alive`` is asked every ``check_seconds``: a hook process the agent
         has already let go of cannot print a verdict, so its request stops
-        looking answerable instead of taking a click that goes nowhere."""
+        looking answerable instead of taking a click that goes nowhere.
+
+        A request whose prompt waits behind the hook (Codex) is also let go
+        as soon as the owner is at its terminal: parked while they were in
+        another app, it would otherwise hide the prompt they came back to
+        answer until the hold lapsed."""
+        watched = slot.host_pid is not None and slot.facts.provider in PROMPT_BEHIND_HOOK_PROVIDERS
+        ticking = alive is not None or watched
         while True:
             remaining = slot.deadline - self._clock()
             if remaining <= 0:
                 break
-            if slot.event.wait(remaining if alive is None else min(remaining, check_seconds)):
+            if slot.event.wait(min(remaining, check_seconds) if ticking else remaining):
                 break
             if alive is not None:
                 try:
@@ -690,6 +761,14 @@ class DecisionBroker:
                 except Exception:
                     still_there = True
                 if not still_there:
+                    self.release_slot(slot)
+                    break
+            if watched:
+                try:
+                    at_terminal = bool(self._watching(slot.facts, slot.host_pid))
+                except Exception:
+                    at_terminal = False
+                if at_terminal:
                     self.release_slot(slot)
                     break
         with self._lock:
@@ -1211,6 +1290,7 @@ __all__ = [
     "MAX_CHOICE_OPTIONS",
     "MAX_CHOICE_QUESTIONS",
     "MAX_PARKED_DECISIONS",
+    "PROMPT_BEHIND_HOOK_PROVIDERS",
     "UNDECIDABLE_TOOLS",
     "AskPreviews",
     "ChoiceQuestion",

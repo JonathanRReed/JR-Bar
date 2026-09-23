@@ -925,7 +925,9 @@ gone, when `open_session` opens the session to answer it there, or when the
 daemon stops. Claude Code shows its own prompt while the hook runs and takes
 whichever answer comes first, so a hold costs it nothing; Codex asks its
 hooks before it shows the prompt, so a Codex request is not held while its
-terminal is the frontmost app. `ExitPlanMode` is never held: its answer is
+terminal is the frontmost app, and a held one is let go within a second of
+its terminal coming to the front, so the owner who switched there to answer
+sees the prompt. `ExitPlanMode` is never held: its answer is
 a plan, not a yes. Claude's `AskUserQuestion` is held as a choice when every
 question and option can be offered exactly (1–4 questions with distinct
 texts, 1–8 distinct printable labels each, no comma in a multi-select
