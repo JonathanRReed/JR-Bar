@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -102,6 +103,40 @@ struct DockPreviewAgentTests {
                 "two windows claim it — the caller falls back to open_session")
         #expect(SessionWindowLocator.locate(sessionID: "claude:session:zzz", marks: marks,
                                             items: items, bundleID: { _ in Self.ghostty }) == nil)
+    }
+
+    @Test("a live refresh keeps surviving cards' ids and stills and adds newcomers")
+    func liveMerge() {
+        let still = NSImage(size: NSSize(width: 4, height: 4))
+        var a = DockPreviewWindow(id: 101, title: "Old title", minimized: false, fullScreen: nil,
+                                  frame: nil, thumbnail: still, element: nil, windowID: 1)
+        a.thumbnail = still
+        let b = DockPreviewWindow(id: 102, title: "Closed", minimized: false, fullScreen: nil,
+                                  frame: nil, thumbnail: nil, element: nil, windowID: 2)
+        let fresh = [
+            DockPreviewWindow(id: 900, title: "New title", minimized: true, fullScreen: nil,
+                              frame: nil, thumbnail: nil, element: nil, windowID: 1),
+            DockPreviewWindow(id: 901, title: "Brand new", minimized: false, fullScreen: nil,
+                              frame: nil, thumbnail: nil, element: nil, windowID: 3),
+        ]
+        let merged = DockEnhanceMath.mergeWindows(old: [a, b], new: fresh)
+        #expect(merged.map(\.id) == [101, 901], "the survivor keeps its card id; the closed one leaves")
+        #expect(merged[0].title == "New title" && merged[0].minimized, "its state is the new truth")
+        #expect(merged[0].thumbnail === still, "its still survives the refresh")
+        #expect(DockEnhanceMath.cardsDiffer([a, b], merged))
+        #expect(!DockEnhanceMath.cardsDiffer(merged, merged), "a no-op burst re-lays out nothing")
+        let titleless = DockPreviewWindow(id: 5, title: "x", minimized: false, fullScreen: nil,
+                                          frame: nil, thumbnail: nil, element: nil)
+        #expect(!DockEnhanceMath.sameWindow(titleless, titleless),
+                "with no id and no element, nothing proves two rows are one window")
+    }
+
+    @Test("stopping the live watch forgets the app")
+    func observerStops() {
+        let observer = DockWindowObserver()
+        observer.observe(pid: ProcessInfo.processInfo.processIdentifier, windows: [])
+        observer.stop()
+        #expect(observer.pid == nil)
     }
 
     @Test("an ask the daemon can't type into, or one with no session, never sends")

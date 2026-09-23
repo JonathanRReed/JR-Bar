@@ -517,6 +517,37 @@ enum DockEnhanceMath {
         return (cards, app)
     }
 
+    /// A live refresh's card list: the app's windows as they are now, in
+    /// AX order, with each surviving window keeping its card id (so an
+    /// in-flight action or thumbnail still lands on it) and its still.
+    /// Survival is the native window id, else the same AX element —
+    /// never a title, which is exactly what just changed.
+    static func mergeWindows(old: [DockPreviewWindow], new: [DockPreviewWindow]) -> [DockPreviewWindow] {
+        new.map { fresh in
+            guard let prior = old.first(where: { sameWindow($0, fresh) }) else { return fresh }
+            return DockPreviewWindow(id: prior.id, title: fresh.title, minimized: fresh.minimized,
+                                     fullScreen: fresh.fullScreen, frame: fresh.frame,
+                                     documentURL: fresh.documentURL, thumbnail: prior.thumbnail,
+                                     element: fresh.element, windowID: fresh.windowID)
+        }
+    }
+
+    static func sameWindow(_ a: DockPreviewWindow, _ b: DockPreviewWindow) -> Bool {
+        if let x = a.windowID, let y = b.windowID { return x == y }
+        if let x = a.element, let y = b.element { return x == y }
+        return false
+    }
+
+    /// Whether a refresh changed anything the cards draw — a no-op burst
+    /// (focus moving, a retitle to the same title) must not re-lay out.
+    static func cardsDiffer(_ a: [DockPreviewWindow], _ b: [DockPreviewWindow]) -> Bool {
+        guard a.count == b.count else { return true }
+        return zip(a, b).contains { lhs, rhs in
+            lhs.id != rhs.id || lhs.title != rhs.title || lhs.minimized != rhs.minimized
+                || lhs.fullScreen != rhs.fullScreen
+        }
+    }
+
     /// "Only windows on this display": cards whose window's centre sits
     /// on `display` (Quartz space). Minimized and frameless windows stay
     /// — they belong to no display, and the filter never hides what it
@@ -1105,6 +1136,8 @@ final class DockEnhanceController {
     }
     /// × / Quit on a window or app hosting a live agent needs a second press.
     @ObservationIgnored private var agentGuard = DockAgentGuard()
+    /// The open panel's live list — the previewed app's window events.
+    @ObservationIgnored private let windowObserver = DockWindowObserver()
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1137,6 +1170,7 @@ final class DockEnhanceController {
         self.switcher.onPreviewKey = { [weak self] code in
             self?.previewTapKey(code)
         }
+        windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
     }
 
     isolated deinit {
@@ -1438,6 +1472,14 @@ final class DockEnhanceController {
         panel.present(frame: target, dockedAt: edge)
         watchers.start(escape: true, clickAway: true)
         switcher.setPreviewOpen(true)
+        // An app tile's cards follow the app while the panel is up — a
+        // window opened or closed elsewhere lands without a re-hover. A
+        // minimized-window tile previews its one window, never the list.
+        if item.kind == .app, let pid = preview.processIdentifier {
+            windowObserver.observe(pid: pid, windows: preview.windows.compactMap(\.element))
+        } else {
+            windowObserver.stop()
+        }
 
         // A folder's entries list on a background queue — one stall
         // inside the directory must never reach the main thread. The
@@ -1524,12 +1566,54 @@ final class DockEnhanceController {
     private func hidePreview() {
         generation += 1
         anchor = nil
+        windowObserver.stop()
         if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
         mediaToken = nil
         watchers.stop()
         switcher.setPreviewOpen(false)
         panel?.dismiss()
         autohideHold.release()
+    }
+
+    /// The previewed app's windows changed under the open panel — a new
+    /// one, a closed one, a retitle, a minimize. Re-list, keep every
+    /// surviving card's id and still, watch the newcomers, and fetch
+    /// stills only for cards that have none.
+    private func refreshLiveWindows(force: Bool = false) {
+        guard let panel, panel.isVisible, let pid = preview.processIdentifier,
+              force || windowObserver.pid == pid, preview.folderURL == nil else { return }
+        let merged = DockEnhanceMath.mergeWindows(old: preview.windows, new: listWindows(pid: pid))
+        guard DockEnhanceMath.cardsDiffer(preview.windows, merged) else { return }
+        preview.windows = merged
+        windowObserver.watch(merged.compactMap(\.element))
+        if let selected = preview.selectedWindowID, !merged.contains(where: { $0.id == selected }) {
+            preview.selectedWindowID = nil
+        }
+        applyAgents(to: preview)
+        let earnsRow = preview.bundleID.map {
+            DockEnhanceMath.playerBundleIDs.contains($0) || $0 == DockEnhanceMath.calendarBundleID
+        } ?? false
+        if merged.isEmpty, !earnsRow {
+            // The app's last window closed elsewhere — nothing left to raise.
+            tracker.reset()
+            hidePreview()
+            return
+        }
+        preview.compact = DockEnhanceMath.compactList(
+            windowCount: merged.count, limit: preferences.compactListLimit)
+        reframe()
+        guard preferences.showThumbnails, !preview.compact, screenCaptureGranted,
+              merged.contains(where: { $0.thumbnail == nil }) else { return }
+        let generationAtRefresh = generation
+        let bundleID = preview.bundleID
+        let offscreen = preferences.includeOffscreenWindows
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await DockThumbnailer.attach(
+                to: self.preview, bundleID: bundleID, pid: pid,
+                includeOffscreen: offscreen,
+                isStale: { [weak self] in self?.generation != generationAtRefresh })
+        }
     }
 
     /// Keep the visible panel on its tile: the tile's frame moves while
@@ -1868,9 +1952,9 @@ final class DockEnhanceController {
         _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: quartz))
     }
 
-    /// The header's "New" — the app's ⌘N. The window list refreshes a
-    /// beat later so the card for the new window lands while the panel
-    /// is still up.
+    /// The header's "New" — the app's ⌘N. The live list usually lands
+    /// the new card by itself; a beat later the same refresh runs once
+    /// more for apps that post no window-created notification.
     private func newWindow() {
         let app = preview.processIdentifier
             .flatMap { NSRunningApplication(processIdentifier: $0) }
@@ -1878,23 +1962,8 @@ final class DockEnhanceController {
         let generationAtNew = generation
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
-            guard let self, self.generation == generationAtNew,
-                  let pid = self.preview.processIdentifier else { return }
-            self.preview.windows = self.listWindows(pid: pid)
-            self.applyAgents(to: self.preview)
-            self.reframe()
-            // The refill's rows carry no thumbnails — re-attach so the
-            // cards don't fall back to "No preview" until the next
-            // hover (the 30 s capture cache makes it nearly free).
-            if self.preferences.showThumbnails, !self.preview.compact,
-               self.screenCaptureGranted {
-                let bundleID = self.preview.bundleID
-                let offscreen = self.preferences.includeOffscreenWindows
-                await DockThumbnailer.attach(
-                    to: self.preview, bundleID: bundleID, pid: pid,
-                    includeOffscreen: offscreen,
-                    isStale: { [weak self] in self?.generation != generationAtNew })
-            }
+            guard let self, self.generation == generationAtNew else { return }
+            self.refreshLiveWindows(force: true)
         }
     }
 

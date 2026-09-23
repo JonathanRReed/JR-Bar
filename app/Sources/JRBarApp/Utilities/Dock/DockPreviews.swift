@@ -70,6 +70,86 @@ final class DockPanelWatchers {
     isolated deinit { stop() }
 }
 
+/// Keeps an open preview's card list live: an `AXObserver` on the
+/// previewed app for new windows, and on each listed window for its
+/// close, retitle, minimize and restore. Bursts coalesce into one
+/// `onChange` a beat later (a new window posts created, titled and
+/// focused in a row). DockDoor 1.40's live list — the cards follow the
+/// app instead of only our own verbs.
+@MainActor
+final class DockWindowObserver {
+    var onChange: (@MainActor () -> Void)?
+    /// A burst's settle time before one refresh runs.
+    static let debounce: TimeInterval = 0.15
+
+    private var observer: AXObserver?
+    private(set) var pid: pid_t?
+    private var watched = Set<AXUIElement>()
+    private var pending: DispatchWorkItem?
+
+    static let appNotifications = [kAXWindowCreatedNotification]
+    static let windowNotifications = [
+        kAXUIElementDestroyedNotification, kAXTitleChangedNotification,
+        kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification,
+    ]
+
+    /// Watch `pid`'s window list and each of `windows`. Replaces any
+    /// earlier watch; fails soft (no watch) without Accessibility.
+    func observe(pid: pid_t, windows: [AXUIElement]) {
+        stop()
+        var created: AXObserver?
+        let callback: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            let me = Unmanaged<DockWindowObserver>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { me.fire() }
+        }
+        guard AXObserverCreate(pid, callback, &created) == .success, let created else { return }
+        observer = created
+        self.pid = pid
+        let app = AXUIElementCreateApplication(pid)
+        for name in Self.appNotifications {
+            AXObserverAddNotification(created, app, name as CFString, refcon)
+        }
+        watch(windows)
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .commonModes)
+    }
+
+    /// Start watching windows that arrived since `observe` — a window
+    /// that just opened must report its own close too.
+    func watch(_ windows: [AXUIElement]) {
+        guard let observer else { return }
+        for window in windows where watched.insert(window).inserted {
+            for name in Self.windowNotifications {
+                AXObserverAddNotification(observer, window, name as CFString, refcon)
+            }
+        }
+    }
+
+    func stop() {
+        pending?.cancel()
+        pending = nil
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+        }
+        observer = nil
+        pid = nil
+        watched = []
+    }
+
+    private var refcon: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
+
+    private func fire() {
+        pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.onChange?() }
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
+    }
+
+    isolated deinit { stop() }
+}
+
 /// One-shot `SCScreenshotManager` captures matched to preview cards by
 /// frame (title as the fallback). No stream, so no purple indicator;
 /// every step fails soft to the icon + title card.
