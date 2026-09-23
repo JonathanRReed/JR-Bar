@@ -246,3 +246,111 @@ def test_command_refuses_an_empty_request():
     with pytest.raises(CommandError) as error:
         _cmd_session_usage(SimpleNamespace(last_snapshot=None), {"ids": []})
     assert error.value.code == "invalid_value"
+
+
+def test_a_transcript_past_the_cap_is_read_a_line_at_a_time(tmp_path):
+    """A first read of a long run never holds the unread region whole."""
+    import tracemalloc
+
+    path = _claude_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    filler = (json.dumps({"type": "user", "message": {"content": "x" * 16_000}}) + "\n").encode()
+    head = (json.dumps(_assistant("msg_head", out=999)) + "\n").encode()
+    tail = [(json.dumps(_assistant(f"msg_{n}", out=7)) + "\n").encode() for n in range(3)]
+    with path.open("wb") as handle:
+        handle.write(head)
+        written = len(head)
+        chunk = filler * 64
+        while written < session_usage.SESSION_USAGE_MAX_BYTES + 1024 * 1024:
+            handle.write(chunk)
+            written += len(chunk)
+        for line in tail:
+            handle.write(line)
+    try:
+        tracemalloc.start()
+        doc, gap = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+        path.unlink()
+
+    assert gap is None
+    # Only the newest 64 MB are read; the head's turn is not in the total.
+    assert doc["partial"] is True
+    assert doc["turns"] == 3
+    assert doc["tokens"]["output"] == 21
+    # The old whole-region read peaked past 128 MB here (bytes plus text).
+    assert peak < 8 * 1024 * 1024
+
+
+def test_a_request_over_its_budget_answers_reading_and_the_next_one_finishes(tmp_path):
+    path = _claude_path(tmp_path)
+    _write(path, [_assistant(f"msg_{n}", at=f"2026-09-13T10:{n:02d}:00Z") for n in range(12)])
+    ticks = iter(range(1_000))
+
+    def clock():
+        return float(next(ticks))
+
+    # The clock advances once per check, so the budget runs out a few
+    # lines into the file.
+    reply = session_usage_document([("a", "claude", SID, "/tmp/work")], home=tmp_path, budget=5, clock=clock)
+
+    assert reply["sessions"] == {}
+    assert reply["gaps"] == {"a": "reading"}
+
+    reply = session_usage_document([("a", "claude", SID, "/tmp/work")], home=tmp_path)
+    # The saved offset carried on: every turn counted exactly once.
+    assert reply["gaps"] == {}
+    assert reply["sessions"]["a"]["turns"] == 12
+
+
+def test_ids_past_a_spent_budget_answer_reading_without_a_lookup(tmp_path, monkeypatch):
+    calls = []
+    real = session_usage.find_transcript
+
+    def counting(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(session_usage, "find_transcript", counting)
+    _write(_claude_path(tmp_path), [_assistant("msg_1")])
+
+    reply = session_usage_document([("a", "claude", SID, "/tmp/work")], home=tmp_path, budget=0)
+
+    assert reply["gaps"] == {"a": "reading"}
+    assert calls == []
+
+
+def test_a_missing_transcript_is_looked_up_once_a_minute(tmp_path, monkeypatch):
+    calls = []
+    real = session_usage.find_transcript
+
+    def counting(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(session_usage, "find_transcript", counting)
+    for _ in range(3):
+        reply = session_usage_document([("b", "claude", SID, "/nowhere")], home=tmp_path)
+        assert reply["gaps"] == {"b": "transcript_not_found"}
+    assert len(calls) == 1
+
+    # Once the miss is older than its TTL the next request looks again,
+    # and finds a transcript written since.
+    monkeypatch.setattr(session_usage, "_MISS_TTL_SECONDS", 0.0)
+    _write(tmp_path / ".claude" / "projects" / "-nowhere" / f"{SID}.jsonl", [_assistant("msg_1")])
+    reply = session_usage_document([("b", "claude", SID, "/nowhere")], home=tmp_path)
+    assert reply["sessions"]["b"]["turns"] == 1
+    assert len(calls) == 2
+
+
+def test_a_line_past_the_line_cap_is_skipped_not_held(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_usage, "_MAX_LINE_BYTES", 1024)
+    monkeypatch.setattr(session_usage, "_SKIP_CHUNK", 100)
+    path = _claude_path(tmp_path)
+    huge = _assistant("msg_huge")
+    huge["message"]["content"] = [{"type": "text", "text": "y" * 5_000}]
+    _write(path, [_assistant("msg_1"), huge, _assistant("msg_2")])
+    doc, _ = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
+    assert doc["turns"] == 2
+    assert doc["tokens"]["output"] == 100

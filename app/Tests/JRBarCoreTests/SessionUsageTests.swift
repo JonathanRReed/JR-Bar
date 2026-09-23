@@ -89,5 +89,6 @@ struct SessionUsageTests {
     func gapWords() {
         #expect(SessionUsageDocument.gapText("remote") == "The transcript is on the peer Mac")
         #expect(SessionUsageDocument.gapText("some_new_gap") == "some new gap")
+        #expect(SessionUsageDocument.gapText("reading") == "Still reading the transcript")
     }
 }

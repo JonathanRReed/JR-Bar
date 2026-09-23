@@ -465,7 +465,13 @@ final class UsageCenterStore {
     /// spent since the card's headline window opened.
     private(set) var burners: [String: [WindowBurner]] = [:]
     @ObservationIgnored private var burnersFetchedAt: [String: Date] = [:]
-    static let burnersInterval: TimeInterval = 30
+    nonisolated static let burnersInterval: TimeInterval = 30
+
+    /// True when the daemon's reply budget ran out before every session's
+    /// transcript was read: the ranking would be missing someone.
+    nonisolated static func burnersStillReading(_ gaps: [String: String]) -> Bool {
+        gaps.values.contains("reading")
+    }
 
     func burners(for provider: CoreProviderUsage) -> [WindowBurner] { burners[provider.identity] ?? [] }
 
@@ -473,6 +479,9 @@ final class UsageCenterStore {
     /// headline window's start as `since`, at most every
     /// `burnersInterval`. The share is of the tokens those sessions spent
     /// — what this Mac can see — not of the provider's percentage.
+    /// A reply still `reading` a session keeps the ranking it had (one
+    /// missing that session would misstate every share) and asks again
+    /// soon; a failed one waits the interval like an answer.
     func loadBurners(for provider: CoreProviderUsage, force: Bool = false) {
         guard core.isLive, let window = Self.featuredWindow(of: provider),
               let resetsAt = window.resetsAt,
@@ -491,11 +500,16 @@ final class UsageCenterStore {
             guard let self else { return }
             do {
                 let document = try await self.core.sessionUsage(ids: Array(labels.keys.prefix(SessionUsageStore.batchLimit)), since: since)
+                if Self.burnersStillReading(document.gaps) {
+                    self.burnersFetchedAt[identity] = self.now.addingTimeInterval(SessionUsageStore.readingRetry - Self.burnersInterval)
+                    return
+                }
                 self.burners[identity] = WindowBurner.rank(document.sessions.compactMap { id, usage in
                     usage.tokensSince.map { (id: id, label: labels[id] ?? id, tokens: $0) }
                 })
             } catch {
-                self.burnersFetchedAt[identity] = nil
+                // The send's stamp stands, so the one-second clock does not
+                // resend while the daemon is still working on this one.
             }
         }
     }

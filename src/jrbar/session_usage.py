@@ -15,6 +15,16 @@ that shrank or was replaced (a different inode) is re-read from the start.
 The per-file state is a small LRU; losing it costs one re-read, never a
 wrong number.
 
+Reads are also bounded, because the daemon runs one client's commands in
+order: a panel Approve sent behind this request waits for it. A file is
+read a line at a time (never the whole unread region at once), each file
+has its own lock so the module lock is held only to find the entry, and a
+request stops reading after ``SESSION_USAGE_REPLY_BUDGET_SECONDS``. An id
+whose file has not caught up comes back as a ``reading`` gap, never as
+partial totals, and the saved offset lets the next request carry on. A
+lookup that finds no transcript is remembered for a minute, so a row
+whose file is gone does not walk the projects tree on every request.
+
 Counting follows ``usage_stats``: Claude repeats a message's ``usage`` once
 per content block and again in resumed files, so the first sighting of a
 message id wins; Codex ``token_count`` rows carry a per-turn delta
@@ -36,8 +46,11 @@ newest main-chain turn's prompt; Codex states its window
 from __future__ import annotations
 
 import json
+import math
 import threading
+import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -53,8 +66,23 @@ SESSION_USAGE_MAX_IDS: Final = 64
 #: says so (``partial``); the head of a run that long is mostly cache
 #: reads already priced into the turns that follow.
 SESSION_USAGE_MAX_BYTES: Final = 64 * 1024 * 1024
+#: How long one request may spend reading before it answers: the app's
+#: other commands queue behind it on the same connection (an Approve waits
+#: 8 s), and usage_history holds itself to 2 s for the same reason.
+SESSION_USAGE_REPLY_BUDGET_SECONDS: Final = 1.5
 #: Per-file state kept between requests (offset, totals, turns).
 _CACHE_MAX_FILES: Final = 64
+#: Transcript lookups kept, found or not: the Overview asks about 48 rows,
+#: and session_timeline's own path cache holds only a handful.
+_LOOKUP_MAX: Final = 256
+#: A lookup that found nothing is trusted this long. A session that has
+#: not written its first turn yet is found on the first ask after it has.
+_MISS_TTL_SECONDS: Final = 60.0
+#: A line longer than this is skipped, never held whole. No line carrying
+#: usage comes near it; a pasted image or a huge tool result can.
+_MAX_LINE_BYTES: Final = 16 * 1024 * 1024
+#: The read size while skipping past such a line or a tail's cut line.
+_SKIP_CHUNK: Final = 1024 * 1024
 #: Turns kept per file for ``tokens_since`` -- a very long run keeps its
 #: newest turns, which are the ones a quota window asks about.
 _MAX_TURNS: Final = 20_000
@@ -68,6 +96,9 @@ CLAUDE_LONG_CONTEXT: Final = 1_000_000
 
 _USAGE_MARKER: Final = '"usage"'
 _CODEX_MARKERS: Final = ('"token_count"', '"turn_context"')
+#: The same markers as bytes: a line is decoded only when it can matter.
+_CLAUDE_BYTE_MARKERS: Final = (b'"usage"',)
+_CODEX_BYTE_MARKERS: Final = (b'"token_count"', b'"turn_context"')
 
 
 @dataclass(slots=True)
@@ -92,16 +123,25 @@ class _FileUsage:
     codex_previous: tuple[int, int, int, int] | None = None
     codex_model: str | None = None
     malformed: int = 0
+    #: Held while this file is read or its document built; ``_lock`` only
+    #: guards the table, so two files are read at once without waiting.
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
 
 _lock = threading.Lock()
 _files: OrderedDict[str, _FileUsage] = OrderedDict()
+_lookup_lock = threading.Lock()
+#: (provider, session, cwd, home) -> (path, monotonic time of a miss). A
+#: found path is kept while it is still a file; a miss for ``_MISS_TTL``.
+_lookups: OrderedDict[tuple[str, str, str | None, str | None], tuple[Path | None, float]] = OrderedDict()
 
 
 def reset_cache() -> None:
-    """Forget every file's state (tests; a daemon never needs to)."""
+    """Forget every file's state and lookup (tests; a daemon never needs to)."""
     with _lock:
         _files.clear()
+    with _lookup_lock:
+        _lookups.clear()
 
 
 def _epoch(value: object) -> float | None:
@@ -233,36 +273,64 @@ def _codex_line(state: _FileUsage, line: str) -> None:
     _record(state, state.codex_model or "codex", parts, _epoch(row.get("timestamp")))
 
 
-def _read_new_text(path: Path, state: _FileUsage, size: int) -> str:
-    """The complete lines written since ``state.offset``; advances it."""
-    start = state.offset
-    if start == 0 and size > SESSION_USAGE_MAX_BYTES:
-        start = size - SESSION_USAGE_MAX_BYTES
-        state.partial = True
-    try:
-        with path.open("rb") as handle:
-            handle.seek(start)
-            payload = handle.read(size - start)
-    except OSError:
-        return ""
-    if start > state.offset:
-        # Landed mid-line: the first partial line belongs to the skipped head.
-        newline = payload.find(b"\n")
-        payload = payload[newline + 1 :] if newline >= 0 else b""
-        start = size - len(payload)
-    cut = payload.rfind(b"\n")
-    if cut < 0:
-        state.offset = start
-        return ""
-    state.offset = start + cut + 1
-    return payload[: cut + 1].decode("utf-8", errors="replace")
+def _skip_line(handle: Any) -> bool:
+    """Read past the rest of the current line; False at EOF without one."""
+    while True:
+        chunk = handle.readline(_SKIP_CHUNK)
+        if not chunk:
+            return False
+        if chunk.endswith(b"\n"):
+            return True
 
 
-def _refresh(provider: str, path: Path) -> _FileUsage | None:
-    try:
-        info = path.stat()
-    except OSError:
-        return None
+def _read_lines(
+    path: Path,
+    state: _FileUsage,
+    size: int,
+    *,
+    deadline: float,
+    clock: Callable[[], float],
+) -> bool:
+    """Parse the complete lines between ``state.offset`` and ``size``.
+
+    One line at a time: a first read of a long run is tens of megabytes,
+    and holding it as bytes, then text, then a list of lines put half a
+    gigabyte into the daemon for one request. Markers are checked on the
+    raw bytes, so only a line that can carry usage is decoded and parsed.
+    ``state.offset`` advances per complete line, so a read the deadline
+    cuts short resumes exactly where it stopped. True when nothing
+    complete is left below ``size``; an ``OSError`` propagates.
+    """
+    parse = _claude_line if state.provider == "claude" else _codex_line
+    markers = _CLAUDE_BYTE_MARKERS if state.provider == "claude" else _CODEX_BYTE_MARKERS
+    with path.open("rb") as handle:
+        if state.offset == 0 and size > SESSION_USAGE_MAX_BYTES:
+            handle.seek(size - SESSION_USAGE_MAX_BYTES)
+            state.partial = True
+            # Landed mid-line: the first partial line belongs to the skipped head.
+            _skip_line(handle)
+            state.offset = handle.tell()
+        else:
+            handle.seek(state.offset)
+        while state.offset < size:
+            line = handle.readline(_MAX_LINE_BYTES)
+            if not line.endswith(b"\n"):
+                if len(line) < _MAX_LINE_BYTES or not _skip_line(handle):
+                    # A partial trailing line waits for its newline.
+                    return True
+                state.malformed += 1
+                state.offset = handle.tell()
+            else:
+                state.offset += len(line)
+                if any(marker in line for marker in markers):
+                    parse(state, line.decode("utf-8", errors="replace"))
+            if clock() >= deadline:
+                return state.offset >= size
+    return True
+
+
+def _entry(provider: str, path: Path, info: Any) -> _FileUsage:
+    """The file's state, reset when it is a different or shorter file."""
     key = str(path)
     with _lock:
         state = _files.get(key)
@@ -278,13 +346,86 @@ def _refresh(provider: str, path: Path) -> _FileUsage | None:
         _files.move_to_end(key)
         while len(_files) > _CACHE_MAX_FILES:
             _files.popitem(last=False)
-        if info.st_size > state.offset:
-            text = _read_new_text(path, state, info.st_size)
-            parse = _claude_line if provider == "claude" else _codex_line
-            for line in text.splitlines():
-                if line:
-                    parse(state, line)
         return state
+
+
+def _read_session(
+    provider: str,
+    path: Path,
+    *,
+    since: float | None,
+    deadline: float,
+    clock: Callable[[], float],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """(document, None) once the file is read up to its size, else a gap.
+
+    The size is the one seen when this request reached the file: bytes
+    written after that are the next request's. A file the deadline stops
+    short of answers ``reading``, never a partial total.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return None, "transcript_unreadable"
+    state = _entry(provider, path, info)
+    # Another client reading the same file holds its lock; wait for it
+    # only as long as this reply's budget allows.
+    if not state.lock.acquire(timeout=max(0.0, min(deadline - clock(), threading.TIMEOUT_MAX))):
+        return None, "reading"
+    try:
+        if info.st_size > state.offset:
+            if clock() >= deadline:
+                return None, "reading"
+            try:
+                caught_up = _read_lines(path, state, info.st_size, deadline=deadline, clock=clock)
+            except OSError:
+                return None, "transcript_unreadable"
+            if not caught_up:
+                return None, "reading"
+        return usage_document(provider, state, since=since), None
+    finally:
+        state.lock.release()
+
+
+def _locate(
+    provider: str,
+    session_id: str | None,
+    *,
+    cwd: str | None,
+    home: Path | None,
+    may_search: bool,
+) -> tuple[Path | None, str | None]:
+    """(path, None), or (None, gap) from the lookup cache or a fresh search.
+
+    A search walks the projects tree when the cwd's own folder does not
+    hold the file (every Codex lookup does), so a result is kept either
+    way. ``may_search`` is False once the reply budget is spent: an id
+    nothing is known about then answers ``reading`` and is looked up by
+    the next request.
+    """
+    key = (provider, (session_id or "").strip(), cwd, str(home) if home is not None else None)
+    now = time.monotonic()
+    with _lookup_lock:
+        cached = _lookups.get(key)
+        if cached is not None:
+            _lookups.move_to_end(key)
+    if cached is not None:
+        path, missed_at = cached
+        if path is None and now - missed_at < _MISS_TTL_SECONDS:
+            return None, "transcript_not_found"
+        if path is not None and path.is_file():
+            return path, None
+    if not may_search:
+        return None, "reading"
+    found = find_transcript(provider, session_id, cwd=cwd, home=home)
+    with _lookup_lock:
+        _lookups[key] = (found, time.monotonic())
+        _lookups.move_to_end(key)
+        while len(_lookups) > _LOOKUP_MAX:
+            _lookups.popitem(last=False)
+    if found is None:
+        return None, "transcript_not_found"
+    return found, None
 
 
 def _cost(provider: str, models: dict[str, list[int]]) -> tuple[float | None, bool, list[str]]:
@@ -362,18 +503,19 @@ def session_usage(
     cwd: str | None = None,
     since: float | None = None,
     home: Path | None = None,
+    deadline: float = math.inf,
+    clock: Callable[[], float] = time.monotonic,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """(document, None) for a readable transcript, else (None, gap)."""
+    """(document, None) for a readable transcript, else (None, gap).
+
+    ``deadline`` is on ``clock``; without one the file is read to its end.
+    """
     if provider not in SUPPORTED_PROVIDERS:
         return None, "unsupported_provider"
-    path = find_transcript(provider, session_id, cwd=cwd, home=home)
+    path, gap = _locate(provider, session_id, cwd=cwd, home=home, may_search=clock() < deadline)
     if path is None:
-        return None, "transcript_not_found"
-    state = _refresh(provider, path)
-    if state is None:
-        return None, "transcript_unreadable"
-    with _lock:
-        return usage_document(provider, state, since=since), None
+        return None, gap
+    return _read_session(provider, path, since=since, deadline=deadline, clock=clock)
 
 
 def session_usage_document(
@@ -381,15 +523,20 @@ def session_usage_document(
     *,
     since: float | None = None,
     home: Path | None = None,
+    budget: float = SESSION_USAGE_REPLY_BUDGET_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """The ``session_usage`` reply for ``(id, provider, session, cwd)`` rows.
 
     Every id lands in exactly one of ``sessions`` (its usage) or ``gaps``
     (why there is none), so a surface can tell "not read yet" from "no
-    transcript" from "this provider keeps none" without guessing.
+    transcript" from "this provider keeps none" without guessing. The
+    ``budget`` is shared by the whole request and checked between lines
+    and between files; ids it did not reach answer ``reading``.
     """
     from . import usage_stats
 
+    deadline = clock() + budget
     sessions: dict[str, Any] = {}
     gaps: dict[str, str] = {}
     for agent_id, provider, session_id, cwd in requests[:SESSION_USAGE_MAX_IDS]:
@@ -397,7 +544,8 @@ def session_usage_document(
             gaps[agent_id] = "not_found"
             continue
         document, gap = session_usage(
-            provider, session_id, cwd=cwd, since=since, home=home
+            provider, session_id, cwd=cwd, since=since, home=home,
+            deadline=deadline, clock=clock,
         )
         if document is None:
             gaps[agent_id] = gap or "transcript_not_found"

@@ -46,6 +46,52 @@ import JRBarCore
         #expect(SessionUsageIndex.shared.model(for: "claude:a") == "Opus 4.5")
     }
 
+    @Test("reading comes back soon; a missing transcript backs off, doubling to the cap")
+    func backoff() {
+        let store = SessionUsageStore(core: CoreModel())
+        func due(_ id: String, after seconds: TimeInterval) -> Bool {
+            SessionUsageStore.due([id], fetchedAt: store.fetchedAt, inFlight: [], now: Self.now.addingTimeInterval(seconds)) == [id]
+        }
+        store.apply(SessionUsageDocument(gaps: ["claude:r": "reading"]), asked: ["claude:r"], now: Self.now)
+        #expect(!due("claude:r", after: 2))
+        #expect(due("claude:r", after: 3))
+        #expect(store.gap(for: "claude:r") == "reading")
+
+        store.apply(SessionUsageDocument(gaps: ["claude:m": "transcript_not_found"]), asked: ["claude:m"], now: Self.now)
+        #expect(!due("claude:m", after: 59))
+        #expect(due("claude:m", after: 60))
+        store.apply(SessionUsageDocument(gaps: ["claude:m": "transcript_not_found"]), asked: ["claude:m"], now: Self.now)
+        #expect(!due("claude:m", after: 119))
+        #expect(due("claude:m", after: 120))
+
+        store.apply(SessionUsageDocument(gaps: ["grok:g": "unsupported_provider"]), asked: ["grok:g"], now: Self.now)
+        #expect(!due("grok:g", after: 599))
+        #expect(due("grok:g", after: 600))
+
+        // An answer resets the backoff: the next miss starts at a minute again.
+        store.apply(SessionUsageDocument(sessions: ["claude:m": SessionUsage(model: "claude-opus-4-5")]), asked: ["claude:m"], now: Self.now)
+        store.apply(SessionUsageDocument(gaps: ["claude:m": "transcript_not_found"]), asked: ["claude:m"], now: Self.now)
+        #expect(due("claude:m", after: 60))
+    }
+
+    @Test("the backoff stamps: cadence for the unknown, the cap for what cannot change")
+    func stamps() {
+        let freshFor = SessionUsageStore.freshFor
+        #expect(SessionUsageStore.stamp(gap: nil, repeats: 0, now: Self.now) == Self.now)
+        #expect(SessionUsageStore.stamp(gap: "transcript_unreadable", repeats: 3, now: Self.now) == Self.now)
+        #expect(SessionUsageStore.stamp(gap: "not_found", repeats: 9, now: Self.now)
+                == Self.now.addingTimeInterval(SessionUsageStore.settledBackoffCap - freshFor))
+        #expect(SessionUsageStore.stamp(gap: "remote", repeats: 1, now: Self.now)
+                == Self.now.addingTimeInterval(SessionUsageStore.settledBackoffCap - freshFor))
+    }
+
+    @Test("burners wait for every transcript before they rank")
+    func burnersReading() {
+        #expect(UsageCenterStore.burnersStillReading(["claude:a": "reading"]))
+        #expect(!UsageCenterStore.burnersStillReading(["claude:a": "transcript_not_found"]))
+        #expect(!UsageCenterStore.burnersStillReading([:]))
+    }
+
     @Test("only a live row draws its context; the tooltip carries the summary")
     func rowContext() {
         let usage = SessionUsage(model: "claude-opus-4-5", tokens: SessionUsageTokens(input: 10, output: 5),

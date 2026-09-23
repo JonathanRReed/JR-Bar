@@ -193,6 +193,7 @@ public struct SessionUsageDocument: Decodable, Hashable, Sendable {
         case "transcript_not_found": return "No transcript found for this session"
         case "transcript_unreadable": return "The transcript could not be read"
         case "not_found": return "The monitor no longer holds this session"
+        case "reading": return "Still reading the transcript"
         default: return gap.replacingOccurrences(of: "_", with: " ")
         }
     }
