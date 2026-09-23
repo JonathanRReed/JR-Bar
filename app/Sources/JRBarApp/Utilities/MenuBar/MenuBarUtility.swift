@@ -1131,7 +1131,8 @@ final class MenuBarUtility: Toy {
     /// match, on an unnotarized build.
     private func syncConcealerChoice() {
         guard MenuBarAssessmentBackend.isAvailable, host != nil, let notarized else { return }
-        let wanted = notarized || settings().concealUnnotarized
+        let wanted = (notarized || settings().concealUnnotarized)
+            && !settings().curation.forceSpacerEngine
         if wanted, concealer == nil {
             startConcealer()
         } else if !wanted, concealer != nil {
@@ -1193,7 +1194,9 @@ final class MenuBarUtility: Toy {
                 let notarized = await MenuBarAssessmentBackend.bundleIsNotarized()
                 guard let self, self.running, self.startGeneration == generation else { return }
                 self.notarized = notarized
-                if notarized || self.settings().concealUnnotarized {
+                if self.settings().curation.forceSpacerEngine {
+                    MenuBarAssessmentBackend.log.notice("conceal: the spacer engine is forced in Advanced")
+                } else if notarized || self.settings().concealUnnotarized {
                     self.startConcealer()
                     self.hider.reconcile()
                 } else {
@@ -2362,7 +2365,68 @@ final class MenuBarUtility: Toy {
         clickBridge?.update(items: lastPlan.shown, concealing: concealer?.isConcealing ?? false)
         refreshChevron()
         updateIconMirror()
+        engineVersion += 1
     }
+
+    // MARK: Engine health and rivals
+
+    /// Bumped whenever the engine's state moves, so the card's line
+    /// observes it — the concealer itself is not observable.
+    private(set) var engineVersion = 0
+
+    /// Which engine hides the bar, and whether it is healthy.
+    var engineHealth: MenuBarEngineHealth {
+        _ = engineVersion
+        return .assess(.init(
+            running: running,
+            frameworkAvailable: concealerAvailable,
+            forced: settings().curation.forceSpacerEngine,
+            notarized: notarized,
+            concealUnnotarized: settings().concealUnnotarized,
+            engineUp: concealer != nil,
+            assertionLive: concealer?.isConcealing ?? false,
+            activationFailing: concealer?.activationFailing ?? false,
+            inStartGrace: Date().timeIntervalSince(concealerStartedAt) < Self.adoptionGrace,
+            concealedCount: concealer?.concealedApps.count ?? 0))
+    }
+
+    /// The card's "Right now" line.
+    var engineLine: String {
+        let health = engineHealth
+        if case .spacer = health { return health.line(fitEdge: hider.fitEdge) }
+        return health.line()
+    }
+
+    /// Other menu-bar managers running while ours renders — their
+    /// assertions un-hide what ours conceals. Empty while a counterpart
+    /// is the pick (then running it is the point) or ours is parked.
+    var runningRivals: [MenuBarRivals.Rival] {
+        _ = workspaceVersion
+        guard settings().provider == .jrbar, settings().enabled else { return [] }
+        return MenuBarRivals.runningNow()
+    }
+
+    /// The guard's "Hand over": the rival renders, ours parks.
+    func handOver(to rival: MenuBarRivals.Rival) {
+        guard let provider = rival.handoff else { return }
+        update { $0.provider = provider }
+    }
+
+    /// The guard's "Quit": ask the rival to quit — the person's click.
+    func quitRival(_ rival: MenuBarRivals.Rival) {
+        MenuBarRivals.quit(rival)
+    }
+
+    /// The diagnostic toggle: keep the spacer engine even where the
+    /// concealer resolves. The apply brings the engine up or down.
+    func setForceSpacerEngine(_ on: Bool) {
+        update { $0.curation.forceSpacerEngine = on }
+        engineVersion += 1
+    }
+
+    /// The fit-edge dial for the spacer engine — a nudge, a reset.
+    func nudgeFitEdge(by delta: CGFloat) { hider.nudgeFitEdge(by: delta) }
+    func resetFitEdge() { hider.forgetFitEdge() }
 
     /// A held-back click on the clock, battery or Wi-Fi: lift, replay,
     /// let concealment return.

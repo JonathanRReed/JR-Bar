@@ -452,6 +452,21 @@ final class MenuBarItemHider {
     /// The fit edge in use: the learned one, else the guess.
     var fitEdge: CGFloat? { learnedFitEdge ?? guessedFitEdge() }
 
+    /// Move the fit edge by hand — the card's ±4 pt dial for when the
+    /// «-proof misfires. The nudged edge is kept as the learned one for
+    /// this screen, so the reset above undoes it.
+    func nudgeFitEdge(by delta: CGFloat) {
+        guard let current = fitEdge else { return }
+        let next = current + delta
+        learnedFitEdge = next
+        edgeStore.save(next, key: edgeKey())
+        resetCaps()
+        reconcile()
+    }
+
+    /// Whether the edge in use was learned (or nudged) rather than guessed.
+    var fitEdgeLearned: Bool { learnedFitEdge != nil }
+
     /// Load the edge remembered for the current screen.
     private func reloadFitEdge() {
         let key = edgeKey()

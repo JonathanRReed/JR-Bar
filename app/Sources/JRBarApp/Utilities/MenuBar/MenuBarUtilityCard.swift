@@ -77,12 +77,23 @@ struct MenuBarUtilityControls: View {
                 }
             }
 
+            if !utility.runningRivals.isEmpty {
+                rivalsGuard
+            }
+
             LabeledContent {
                 Text(countsText)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } label: {
-                SettingLabel(title: "Right now")
+                SettingLabel(title: "Right now", subtitle: utility.engineLine)
+            }
+            if utility.engineHealth.isAlert {
+                Label("Hiding stopped — the Item Bar still reaches every app, and JR-Bar retries on the next change.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
@@ -315,6 +326,7 @@ struct MenuBarUtilityControls: View {
                         SettingLabel(title: "Custom spacing",
                                      subtitle: "An exact gap in points — the presets above all live on this dial.")
                     }
+                    engineControls
                     Divider()
                         .padding(.vertical, 4)
                     MenuBarProfilesControls(utility: utility)
@@ -329,6 +341,30 @@ struct MenuBarUtilityControls: View {
             }
         }
         .onAppear { utility.refreshListing() }
+    }
+
+    /// Another manager running beside ours: say what it costs and offer
+    /// the two ways out — never automatic.
+    @ViewBuilder
+    private var rivalsGuard: some View {
+        ForEach(utility.runningRivals, id: \.name) { rival in
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text("\(rival.name) is also managing the menu bar. Two managers fight — its hiding can undo what JR-Bar hides.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if rival.handoff != nil {
+                    Button("Hand over") { utility.handOver(to: rival) }
+                        .controlSize(.small)
+                        .help("Let \(rival.name) render the bar; JR-Bar's engine parks")
+                }
+                Button("Quit \(rival.name)") { utility.quitRival(rival) }
+                    .controlSize(.small)
+            }
+        }
     }
 
     /// Every listed item the utility could hide, in bar order.
@@ -390,6 +426,44 @@ struct MenuBarUtilityControls: View {
                     .truncationMode(.tail)
             }
         }
+    }
+
+    /// The engine diagnostics: force the spacer engine (so the fallback
+    /// can be proven on a Mac that never needs it) and, while it runs,
+    /// the learned fit edge with a nudge and a reset.
+    @ViewBuilder
+    private var engineControls: some View {
+        if utility.concealerAvailable {
+            Toggle(isOn: Binding(
+                get: { utility.settings().curation.forceSpacerEngine },
+                set: { on in utility.setForceSpacerEngine(on) })) {
+                SettingLabel(title: "Force the spacer engine",
+                             subtitle: "A diagnostic: hide with JR-Bar's own spacer instead of macOS's concealer, the way it falls back when the concealer is missing.")
+            }
+        }
+        if utility.running, !utility.concealing, let edge = utility.hider.fitEdge {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    ValueText(text: "\(Int(edge.rounded())) pt")
+                    Button { utility.nudgeFitEdge(by: -4) } label: { Image(systemName: "minus") }
+                        .controlSize(.small)
+                        .help("Four points left")
+                    Button { utility.nudgeFitEdge(by: 4) } label: { Image(systemName: "plus") }
+                        .controlSize(.small)
+                        .help("Four points right")
+                    Button("Reset") { utility.resetFitEdge() }
+                        .controlSize(.small)
+                        .disabled(!utility.hider.fitEdgeLearned)
+                }
+            } label: {
+                SettingLabel(title: "Fit edge on this screen",
+                             subtitle: utility.hider.fitEdgeLearned
+                                ? "Learned from macOS's overflow — nudge it if an icon keeps slipping behind the «."
+                                : "Guessed from the notch — it learns from the overflow as items move.")
+            }
+        }
+        Divider()
+            .padding(.vertical, 4)
     }
 
     /// The spacer/label item rows plus the add button.

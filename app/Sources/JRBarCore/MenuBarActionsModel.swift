@@ -86,9 +86,12 @@ public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
     /// Apply a `MenuBarSettings.Profile` by name — resolved against
     /// `MenuBarSettings.profiles` (or the built-in "None").
     case applyProfile(name: String)
-    /// Every listed unprotected item → hidden.
+    /// The quiet bar laid over your curation — or, over a standing
+    /// "show everything", your curated bar back (`MenuBarOverlay`). The
+    /// map itself is never written.
     case hideAll
-    /// Clear every assignment.
+    /// Show everything over your curation — or, over a standing quiet
+    /// bar, your curated bar back.
     case showAll
     /// Drop the covers for `seconds` — the reveal gesture with an
     /// explicit clock.
@@ -168,9 +171,10 @@ public enum MenuBarHotkeyAction: String, Codable, CaseIterable, Sendable {
     /// The deeper run's own gesture: a temporary reveal of the
     /// always-hidden section — the Item Bar is its only other way out.
     case revealAlwaysHidden
-    /// Every listed unprotected item behind the covers.
+    /// The quiet bar over your curation (`MenuBarOverlay.afterHideAll`).
     case hideAll
-    /// Clear every assignment.
+    /// Show everything over your curation, or restore it over the quiet
+    /// bar (`MenuBarOverlay.afterShowAll`).
     case showAll
     /// The ⌘⇧K palette.
     case commandBar
@@ -295,22 +299,28 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// ends — so a relaunch mid-rule still restores what you had, and
     /// never mistakes the rule's own scene for yours.
     public var sceneBeforeRule: String?
+    /// Keep the spacer engine even where macOS's concealer resolves — a
+    /// diagnostic, so the fallback can be proven on a Mac that never
+    /// needs it.
+    public var forceSpacerEngine: Bool
 
     /// The profile model this build writes.
     public static let currentProfileModel = 1
 
     public init(overlay: MenuBarOverlay? = nil, activeProfileID: String? = nil,
                 profileModel: Int = MenuBarCuration.currentProfileModel,
-                stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil) {
+                stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil,
+                forceSpacerEngine: Bool = false) {
         self.overlay = overlay
         self.activeProfileID = activeProfileID
         self.profileModel = profileModel
         self.stateRules = stateRules
         self.sceneBeforeRule = sceneBeforeRule
+        self.forceSpacerEngine = forceSpacerEngine
     }
 
     private enum CodingKeys: String, CodingKey {
-        case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule
+        case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule, forceSpacerEngine
     }
 
     /// One element that swallows its own decode failure — a rule written
@@ -329,6 +339,7 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
         stateRules = ((try? c.decodeIfPresent([Lossy<MenuBarStateRule>].self,
                                               forKey: .stateRules)) ?? []).compactMap(\.value)
         sceneBeforeRule = (try? c.decodeIfPresent(String.self, forKey: .sceneBeforeRule)) ?? nil
+        forceSpacerEngine = (try? c.decodeIfPresent(Bool.self, forKey: .forceSpacerEngine)) ?? false
     }
 }
 
