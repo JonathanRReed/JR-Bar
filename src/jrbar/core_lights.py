@@ -94,6 +94,37 @@ def set_cue(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: The ambient dispatch's surfaces by their ``lights.surfaces`` names.
+_CUE_SURFACE_NAMES = {
+    "screen_bar": "screen_bar",
+    "sidepulse_pro": "hardware",
+    "sidepulse_dot": "dot",
+}
+
+
+def augment_lights_cues(controller: Any, document: dict[str, Any]) -> None:
+    """Name the cue staged on each surface -- "Handoff baton" instead of an
+    unexplained sweep -- as ``lights.surfaces.<name>.cue``."""
+    from .ambient_effect_dispatch import AmbientEffectSurface
+    from .ambient_effect_runtime import active_ambient_surface_output
+
+    surfaces = document.get("surfaces")
+    if not isinstance(surfaces, dict):
+        return
+    for surface in AmbientEffectSurface:
+        name = _CUE_SURFACE_NAMES.get(surface.value)
+        entry = surfaces.get(name) if name else None
+        if not isinstance(entry, dict):
+            continue
+        active = active_ambient_surface_output(controller, surface)
+        if active is None:
+            continue
+        family = getattr(getattr(active[0], "family", None), "value", None)
+        cue = cue_for_id(family)
+        if cue is not None:
+            entry["cue"] = {"id": cue.id, "name": cue.name}
+
+
 # --- INIT.LED -------------------------------------------------------------------------
 
 
@@ -315,6 +346,7 @@ def list_focuses(_controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "MAX_BURN_PROGRAM_CHARACTERS",
+    "augment_lights_cues",
     "burn_init",
     "calibration_profile",
     "list_cues",

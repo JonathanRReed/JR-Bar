@@ -6293,6 +6293,12 @@ def build_headless_controller_class() -> type:
                 document["linked_skew_at"] = self._core_linked_skew_at
                 if self._core_linked_corrected_ms is not None:
                     document["linked_skew_corrected_ms"] = self._core_linked_corrected_ms
+            try:
+                from . import core_lights
+
+                core_lights.augment_lights_cues(self, document)
+            except Exception:
+                legacy.log_status_bar(f"core: cue naming failed: {traceback.format_exc(limit=3)}")
             return document
 
         def _core_dot_link(self, dot_connected: bool, strip_connected: bool, dot_role: str) -> dict[str, Any]:

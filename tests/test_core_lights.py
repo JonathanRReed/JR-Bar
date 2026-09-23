@@ -89,6 +89,28 @@ def test_a_switched_off_cue_never_reaches_the_dispatch(monkeypatch: pytest.Monke
         assert seen[kept] is sentinel, kept
 
 
+def test_the_lights_document_names_the_cue_on_each_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jrbar import ambient_effect_runtime as runtime
+    from jrbar.ambient_effect_dispatch import AmbientEffectSurface
+    from jrbar.core_lights import augment_lights_cues
+
+    staged = {
+        AmbientEffectSurface.SCREEN_BAR: SimpleNamespace(family=AmbientEffectFamily.HANDOFF_BATON),
+        AmbientEffectSurface.SIDEPULSE_DOT: SimpleNamespace(family=AmbientEffectFamily.DOT_BINARY_HEARTBEAT),
+    }
+    monkeypatch.setattr(
+        runtime,
+        "active_ambient_surface_output",
+        lambda controller, surface: (staged[surface], 0.0) if surface in staged else None,
+    )
+    document = {"surfaces": {"screen_bar": {"program": "x"}, "hardware": {"program": "y"}, "dot": {"program": "z"}}}
+    augment_lights_cues(SimpleNamespace(), document)
+    assert document["surfaces"]["screen_bar"]["cue"] == {"id": "handoff_baton", "name": "Handoff baton"}
+    # The Dot's own heartbeat is a display, not a cue; nothing is staged on the strip.
+    assert "cue" not in document["surfaces"]["dot"]
+    assert "cue" not in document["surfaces"]["hardware"]
+
+
 # --- the commands ---------------------------------------------------------------------
 
 
