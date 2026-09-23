@@ -47,6 +47,17 @@ final class AquariumToy: Toy {
     /// The window is covered or hidden; the view pauses its timeline.
     var windowOccluded = false
 
+    /// The Toys page's room rule (`ToysStore.hushReason`): while JR-Bar
+    /// is quiet, a Focus is on or a call has the mic, the tank keeps its
+    /// game moments to itself — no toast, no reward card sliding in, no
+    /// visitor parade. The game still counts every one of them: a
+    /// visitor waits in its queue, a reward card waits in `heldNotice`,
+    /// and both come out once the room clears.
+    var hushed: Bool { store?.hushReason() != nil }
+    /// The reward card the room held back, shown on the first tick
+    /// after it clears. The newest wins, like the live card.
+    @ObservationIgnored private var heldNotice: (title: String, reward: String?, symbol: String)?
+
     @ObservationIgnored private var windowController: AquariumWindowController?
     @ObservationIgnored private var gameTimer: Timer?
     /// The tank outside its window: the live wallpaper and the idle
@@ -336,6 +347,7 @@ final class AquariumToy: Toy {
         if let notice, now.timeIntervalSince(notice.at) > 6 {
             self.notice = nil
         }
+        roomChanged(at: now)
         // A live tick almost always moves the document (every working
         // fish's nourish stamp), so the heartbeat alone would write the
         // save every twenty seconds forever. Writes batch instead: at
@@ -466,6 +478,15 @@ final class AquariumToy: Toy {
         persist()
     }
 
+    /// The room may have cleared: a held reward card comes out. The
+    /// store calls this on the call-presence edge; quiet and Focus
+    /// changes arrive with the daemon's document, and the tick looks.
+    func roomChanged(at now: Date = Date()) {
+        guard let held = heldNotice, !hushed else { return }
+        heldNotice = nil
+        notice = (UUID(), held.title, held.reward, held.symbol, now)
+    }
+
     func dismissAwayNotice() { awayNotice = nil }
     func dismissToast() { toast = nil }
     /// The view's fade timer answers with the card it drew; a stale
@@ -482,6 +503,8 @@ final class AquariumToy: Toy {
     /// level is a milestone, and asks Confetti for a burst — the toy
     /// decides whether its Milestones trigger is on.
     private func note(_ effects: [AquariumGameEffect], now: Date) {
+        let toastBefore = toast?.at
+        let noticeBefore = notice?.id
         var earned = 0
         var milestone = game.tankLevel > knownLevel
         knownLevel = max(knownLevel, game.tankLevel)
@@ -517,6 +540,15 @@ final class AquariumToy: Toy {
         }
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
+        }
+        // A hushed room: this batch's toast is dropped (a toast is a
+        // passing remark) and its reward card is held for later.
+        if hushed {
+            if toast?.at != toastBefore { toast = nil }
+            if let card = notice, card.id != noticeBefore {
+                heldNotice = (card.title, card.reward, card.symbol)
+                notice = nil
+            }
         }
         if milestone { store?.confetti.fire(reason: .milestone, at: now) }
     }

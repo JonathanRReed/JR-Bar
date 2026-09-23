@@ -135,6 +135,7 @@ final class ToysStore {
         guard self.onCall != onCall else { return }
         self.onCall = onCall
         confetti.roomChanged()
+        aquarium?.roomChanged()
     }
 
     /// Why the toys are keeping it down right now, or nil when they may

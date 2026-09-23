@@ -4294,9 +4294,12 @@ struct AquariumView: View {
                              t: Double, now: Date) {
         // Claim the queue's head when the lane is free. The claim lands
         // on `activeVisitor` now; the game's `visitorShown` waits for
-        // the post-pass drain like every draw-time event.
+        // the post-pass drain like every draw-time event. A hushed room
+        // (quiet, a Focus, a call) leaves the visitor in its queue until
+        // it clears — asked last, so the room is only read when someone
+        // is actually waiting to swim by.
         if !ambient, motion.activeVisitor == nil, now >= motion.visitorCooldownUntil,
-           let next = game?.pendingVisitors.first {
+           let next = game?.pendingVisitors.first, toy?.hushed != true {
             motion.activeVisitor = (next, now)
             motion.pendingEvents.append(.visitorShown(next))
             queueEventDrain()
