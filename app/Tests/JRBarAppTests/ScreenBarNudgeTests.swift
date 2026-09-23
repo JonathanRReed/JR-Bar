@@ -130,6 +130,23 @@ struct ScreenBarNudgeTests {
         #expect(bare.glyph == nil && bare.symbol == "sparkle")
     }
 
+    @Test func aFaceCarryingWordsNeverReachesTheEar() throws {
+        // A VPN's "Connected", 58 pt wide: a photograph of words.
+        let words = NSImage(size: NSSize(width: 58, height: 24))
+        let wide = MenuBarGlyphCache.Face(image: words, width: 58, template: true)
+        let icon = NSImage(size: NSSize(width: 32, height: 32))
+        let withIcon = ScreenBarMenuBarMarks.nudgeSlot(nudge(kind: .update, face: wide, icon: icon))
+        let glyph = try #require(withIcon.glyph)
+        #expect(glyph.image === icon && !glyph.template, "the app's icon stands in for the words")
+        #expect(withIcon.symbol == nil)
+        let bare = ScreenBarMenuBarMarks.nudgeSlot(nudge(kind: .update, face: wide))
+        #expect(bare.glyph == nil && bare.symbol == "sparkle", "no icon: the sparkle, still never the words")
+        // The cache's own icon width is the line: at it, the photograph is the mark.
+        let edge = MenuBarGlyphCache.Face(image: words, width: CGFloat(MenuBarGlyphCache.persistMaxWidth),
+                                          template: true)
+        #expect(ScreenBarMenuBarMarks.nudgeSlot(nudge(face: edge, icon: icon)).glyph?.image === words)
+    }
+
     @Test func aChangeSaysWhatItBecameInThePeekNotOnTheEar() {
         let change = nudge(kind: .update, detail: "Connected", section: .hidden)
         #expect(change.heading == "Changed while tucked away")

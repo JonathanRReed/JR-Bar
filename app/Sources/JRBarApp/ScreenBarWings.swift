@@ -83,8 +83,10 @@ struct ScreenBarWingGlyph: Equatable {
     /// Drawn in the slot's tone, as the bar draws a template item.
     var template: Bool
 
-    /// The room the mark may take inside the ear's 36 pt: a wide,
-    /// text-bearing glyph scales down to fit rather than spill.
+    /// The room the mark may take inside the ear's 36 pt. Only an
+    /// icon-sized photograph or an app icon reaches the ear — a glyph
+    /// carrying text is the peek's, never the ear's — so the cap only
+    /// ever eases a wide icon in a point or two rather than let it spill.
     static let maxWidth: CGFloat = 26
     static let maxHeight: CGFloat = 15
 }

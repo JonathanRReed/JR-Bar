@@ -63,12 +63,18 @@ struct ScreenBarMenuBarMarks: Equatable {
         nudge = showsNudge ? feed?.nudge.map(Self.nudgeSlot) : nil
     }
 
-    /// A nudge's mark: the item's photographed glyph, else its app's
-    /// icon, else a sparkle — never its name. The name and the change
-    /// are VoiceOver's and the peek's.
+    /// A nudge's mark: the item's photographed glyph while it is only an
+    /// icon, else its app's icon, else a sparkle — never its name, and
+    /// never a photograph of words: a face wider than the glyph cache's
+    /// icon width carries text (a title, a VPN's "Connected", a clock),
+    /// so the ear draws the app's icon instead. The name, the change and
+    /// the wide face are VoiceOver's and the peek's.
     static func nudgeSlot(_ nudge: MenuBarEarFeed.Nudge) -> ScreenBarWingSlot {
-        let glyph = nudge.tile.face.map { ScreenBarWingGlyph(image: $0.image, template: $0.template) }
-            ?? nudge.icon.map { ScreenBarWingGlyph(image: $0, template: false) }
+        let photo = nudge.tile.face.flatMap { face in
+            MenuBarGlyphCache.persists(width: Double(face.width))
+                ? ScreenBarWingGlyph(image: face.image, template: face.template) : nil
+        }
+        let glyph = photo ?? nudge.icon.map { ScreenBarWingGlyph(image: $0, template: false) }
         var slot = ScreenBarWingSlot(text: nudge.words, symbol: glyph == nil ? "sparkle" : nil)
         slot.glyph = glyph
         slot.markID = nudge.id
