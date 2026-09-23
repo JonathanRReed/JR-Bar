@@ -34,6 +34,7 @@ struct LightingPage: View {
                 }
             }
             .padding(.vertical, 2)
+            ColorVisionNote(store: store, colors: providerColorsInUse)
         }
 
         SettingGroup("Blend") {
@@ -64,6 +65,7 @@ struct LightingPage: View {
                 }
             }
             .padding(.vertical, 2)
+            ColorVisionNote(store: store, colors: stateColors)
         }
 
         SettingGroup("Pulse range") {
@@ -123,6 +125,32 @@ struct LightingPage: View {
         }
     }
 
+    /// The lit states' colours for the vision check — idle is the dark
+    /// resting whisper, never read against the others.
+    private var stateColors: [ColorVisionNote.Entry] {
+        SettingsKey.modes.filter { $0 != "idle" }.map { mode in
+            let path = "colors.mode_colors.\(mode)"
+            return ColorVisionNote.Entry(
+                id: mode, name: ModeSwatch.labels[mode]?.name ?? mode.capitalized, path: path,
+                hex: store.document.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
+        }
+    }
+
+    /// The providers worth comparing: the ones this Mac actually runs —
+    /// a live session or an installed hook. Twelve hues all against each
+    /// other would flag pairs nobody will ever see side by side.
+    private var providerColorsInUse: [ColorVisionNote.Entry] {
+        let running = Set(store.core.sessions.map(\.provider))
+        return SettingsKey.providers
+            .filter { running.contains($0) || (store.hookStatus($0).map { $0 != "missing" } ?? false) }
+            .map { provider in
+                let style = ProviderStyle.style(for: provider)
+                let path = "colors.agent_colors.\(provider)"
+                return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
+                                             hex: store.document.string(SettingsPath(path)) ?? style.accentHex)
+            }
+    }
+
     private var blendDetail: String {
         let mode = store.document.string("colors.blend_mode") ?? "color_blend"
         return Self.blendModes.first { $0.value == mode }?.detail ?? ""
@@ -135,6 +163,47 @@ struct LightingPage: View {
             if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
+    }
+}
+
+/// Pairs of light colours that read as one for some viewer — typical
+/// vision or a simulated dichromacy — each with a one-click nudge that
+/// moves the second colour apart by lightness, hue kept. Silent when
+/// every pair stays apart.
+struct ColorVisionNote: View {
+    struct Entry: Equatable {
+        let id: String
+        let name: String
+        let path: String
+        let hex: String
+    }
+
+    @Bindable var store: SettingsStore
+    let colors: [Entry]
+
+    private var collisions: [ColorVision.Collision] {
+        ColorVision.collisions(colors.map { (id: $0.id, hex: $0.hex) })
+    }
+
+    var body: some View {
+        let entries = Dictionary(uniqueKeysWithValues: colors.map { ($0.id, $0) })
+        ForEach(collisions) { collision in
+            if let first = entries[collision.first], let second = entries[collision.second] {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "eye.trianglebadge.exclamationmark").foregroundStyle(.orange)
+                    Text("\(first.name) and \(second.name) look alike with \(collision.vision.name).")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    if let nudged = ColorVision.nudge(second.hex, awayFrom: first.hex) {
+                        Button("Nudge \(second.name) apart") { store.set(second.path, .string(nudged)) }
+                            .controlSize(.small)
+                            .disabled(!store.isProvided(second.path))
+                            .help("Sets \(second.name) to \(nudged): the same hue, lighter or darker until every vision tells them apart")
+                    }
+                }
+            }
+        }
     }
 }
 
