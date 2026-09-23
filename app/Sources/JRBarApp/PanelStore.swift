@@ -1622,7 +1622,9 @@ final class PanelStore {
     /// quiet until it needs you.
     func quietRun(_ row: SessionRow, seconds: Int) {
         guard Self.canQuietRun(row), seconds > 0 else { return }
-        core.snooze(session: row.id, seconds: seconds)
+        // This run alone — a worker quieted here leaves its family's
+        // other runs speaking, which the family-wide snooze did not.
+        core.quietRun(session: row.id, seconds: seconds)
         let until = Date().addingTimeInterval(TimeInterval(seconds))
         show(toast: "\(row.label) is quiet until \(Self.clockTime(until)) unless it asks")
     }
