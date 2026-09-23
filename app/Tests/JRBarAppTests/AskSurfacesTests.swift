@@ -140,6 +140,42 @@ struct AskSurfacesTests {
         #expect(PaletteRanking.promoting("clear", in: clear).primary?.id == "open")
     }
 
+    // MARK: A verb's own toast
+
+    @Test("a verb's ticket hears the toasts it raised — now or from its task — and no other")
+    func ticketHearsOnlyItsVerb() async {
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+                               screenBarShown: false)
+        let ticket = PaletteVerbTicket()
+        PaletteVerbScope.$ticket.withValue(ticket) {
+            store.show(toast: "now")
+            Task { store.show(toast: "later") }
+        }
+        store.show(toast: "unrelated")
+        await Self.waitFor { ticket.lines.count >= 2 }
+        #expect(ticket.lines == ["now", "later"])
+    }
+
+    @Test("a verb run from a key monitor — no task around it — still passes its ticket to the tasks it starts")
+    func ticketOutsideATask() async {
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+                               screenBarShown: false)
+        let ticket = PaletteVerbTicket()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    PaletteVerbScope.$ticket.withValue(ticket) {
+                        Task {
+                            store.show(toast: "from the task")
+                            done.resume()
+                        }
+                    }
+                }
+            }
+        }
+        #expect(ticket.lines == ["from the task"])
+    }
+
     // MARK: Panel
 
     @Test("⌘↩ on a held question sends nothing and says to pick an option")

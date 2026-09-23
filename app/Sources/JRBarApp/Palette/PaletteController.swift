@@ -139,6 +139,31 @@ final class PaletteHUD {
     }
 }
 
+/// One verb's claim on the toasts it raises. The palette runs every
+/// verb under a fresh ticket (`PaletteVerbScope.ticket`); a store that
+/// reports through a toast hands each line to the ticket it runs under.
+/// The verb's own call and every task it starts inherit the ticket, so
+/// the daemon's late verdict is heard as that verb's answer — and a
+/// toast an unrelated event raised a second later is not.
+@MainActor
+@Observable
+final class PaletteVerbTicket {
+    /// What the verb raised, oldest first; the HUD shows the newest.
+    private(set) var lines: [String] = []
+
+    nonisolated init() {}
+
+    func hear(_ line: String) {
+        guard !line.isEmpty else { return }
+        lines.append(line)
+    }
+}
+
+/// The ticket the running code answers to, if a palette verb started it.
+enum PaletteVerbScope {
+    @TaskLocal static var ticket: PaletteVerbTicket?
+}
+
 extension NSScreen {
     /// The screen under the pointer — where the person is looking.
     @MainActor
@@ -170,10 +195,13 @@ final class PaletteController {
     /// off every row.
     var forgetUse: (@MainActor (String) -> Void)?
     /// A store that reports through its own toast (the panel's): after
-    /// a verb runs, the palette listens to it for a few seconds and
-    /// shows what it says in the HUD, so "Approved · typed into the
-    /// session's terminal" or a refusal is heard even with the panel
-    /// shut.
+    /// a verb runs, the palette listens for a few seconds and shows the
+    /// lines that verb raised in the HUD, so "Approved · sent through
+    /// the agent's permission hook" or a refusal is heard even with the
+    /// panel shut. Which lines count is the verb's ticket's call
+    /// (`PaletteVerbTicket`), never the clock's: a toast some other
+    /// event raised meanwhile is not this verb's answer. nil hears
+    /// nothing.
     var toastFeed: (@MainActor () -> String?)?
     /// The field's placeholder.
     var prompt = "Search menu bar, sessions and commands…"
@@ -377,9 +405,14 @@ final class PaletteController {
         let ranked = model.items.contains { $0.id == item.id }
         close()
         if ranked { recordUse(item.id) }
-        listenForToast(until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)
+        let ticket = PaletteVerbTicket()
+        if toastFeed != nil {
+            listen(to: ticket, until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)
+        }
         Self.log.debug("run \(item.id, privacy: .private) · \(action.id, privacy: .public)")
-        if let line = run() {
+        // The verb runs under its ticket: the toast it raises now, or
+        // from a task it starts, is heard as its answer.
+        if let line = PaletteVerbScope.$ticket.withValue(ticket, operation: run) {
             hud.show(line, near: anchor)
         }
     }
@@ -554,21 +587,22 @@ final class PaletteController {
 
     // MARK: The store's answer
 
-    /// Watches `toastFeed` until `deadline`: each new line it reports
-    /// becomes the HUD. Armed before the verb runs, so a toast the verb
-    /// raises synchronously is caught as surely as a daemon's late
-    /// reply.
-    private func listenForToast(until deadline: Date, anchor: NSRect?) {
-        guard let feed = toastFeed else { return }
+    /// Watches the verb's ticket until `deadline`: each line the verb
+    /// raised becomes the HUD. Armed before the verb runs, so a toast
+    /// the verb raises synchronously is caught as surely as a daemon's
+    /// late reply — and a toast nothing this verb did raised is never
+    /// shown as its answer.
+    private func listen(to ticket: PaletteVerbTicket, until deadline: Date, anchor: NSRect?) {
+        let heard = ticket.lines.count
         withObservationTracking {
-            _ = feed()
+            _ = ticket.lines
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, Date() < deadline else { return }
-                if let line = feed(), !line.isEmpty {
+                if ticket.lines.count > heard, let line = ticket.lines.last, !line.isEmpty {
                     self.hud.show(line, symbol: "text.bubble.fill", near: anchor)
                 }
-                self.listenForToast(until: deadline, anchor: anchor)
+                self.listen(to: ticket, until: deadline, anchor: anchor)
             }
         }
     }

@@ -1746,6 +1746,9 @@ final class PanelStore {
 
     private func present(toast text: String, life: TimeInterval) {
         toast = text
+        // A palette verb's answer: the ticket it runs under hears it, so
+        // the palette's HUD says this line and no other.
+        PaletteVerbScope.ticket?.hear(text)
         toastClear?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.toast = nil; self?.toastAction = nil }
