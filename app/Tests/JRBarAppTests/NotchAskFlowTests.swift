@@ -111,8 +111,10 @@ struct NotchAskFlowTests {
         }
         toy.offer(askNotice())
         #expect(toy.askVerbs(for: toy.activeCapsule!) == .answer)
-        toy.answerCapsule(approve: true)
-        try await waitUntil { toy.activeCapsule == nil }
+        // The answer is awaited, not polled: a congested main queue in
+        // the parallel suite can outlast any fixed wait.
+        await toy.answerCapsule(approve: true)?.value
+        #expect(toy.activeCapsule == nil)
         #expect(sent.count == 1)
         #expect(sent.first?.0 == Self.session)
         #expect(sent.first?.1 == true)
@@ -127,8 +129,7 @@ struct NotchAskFlowTests {
             CoreReply(id: "1", ok: false, error: CoreReplyError(code: "stale_request"))
         }
         toy.offer(askNotice())
-        toy.answerCapsule(approve: false)
-        try await waitUntil { toy.answerer.note(for: Self.session) != nil }
+        await toy.answerCapsule(approve: false)?.value
         #expect(toy.activeCapsule?.id == "a")
         #expect(toy.answerer.note(for: Self.session) == "That request changed — nothing was sent")
     }
@@ -284,16 +285,5 @@ struct NotchAskFlowTests {
         toy.answerer.openSession = { opened.append($0) }
         toy.openOldestAsk()
         #expect(opened == ["claude:old"])
-    }
-
-    /// Poll a condition across main-actor hops — the answer is a Task.
-    private func waitUntil(timeout: Duration = .seconds(5),
-                           _ condition: @MainActor () -> Bool) async throws {
-        let start = ContinuousClock.now
-        while ContinuousClock.now - start < timeout {
-            if condition() { return }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        Issue.record("condition never held")
     }
 }

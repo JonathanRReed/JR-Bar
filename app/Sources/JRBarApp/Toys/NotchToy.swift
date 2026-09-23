@@ -1358,13 +1358,15 @@ final class NotchToy: Toy {
 
     /// Approve or Deny on the ask face — only ever from a click on a
     /// button `askVerbs` allowed. The pin is the episode the capsule
-    /// shows; answerability is the live ask's.
-    func answerCapsule(approve: Bool) {
+    /// shows; answerability is the live ask's. The returned task is the
+    /// answer in flight — the button forgets it, tests await it.
+    @discardableResult
+    func answerCapsule(approve: Bool) -> Task<Void, Never>? {
         guard let capsule = activeCapsule, capsule.kind == .ask,
-              let session = capsule.session else { return }
+              let session = capsule.session else { return nil }
         var ask = liveAsk(for: capsule) ?? capsule.ask
         if let pinned = capsule.ask?.request { ask?.request = pinned }
-        Task { [weak self] in
+        return Task { [weak self] in
             await self?.answerer.answer(session: session, ask: ask, approve: approve)
         }
     }
