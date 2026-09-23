@@ -612,11 +612,20 @@ final class PaletteController {
     /// the verb raises synchronously is caught as surely as a daemon's
     /// late reply — and a toast nothing this verb did raised is never
     /// shown as its answer.
+    ///
+    /// The ticket's own registrar keeps the change handler, so the
+    /// handler holds the ticket weakly: a verb that raises nothing (open
+    /// an app, hide an item) frees its ticket once it returns rather
+    /// than waiting on a line that never comes. A task the verb started
+    /// keeps its ticket through the task-local, so a late toast is
+    /// still heard; the handler runs inside the ticket's own change,
+    /// with the ticket alive, and holds it strongly only for the hop.
     private func listen(to ticket: PaletteVerbTicket, until deadline: Date, anchor: NSRect?) {
         let heard = ticket.lines.count
         withObservationTracking {
             _ = ticket.lines
-        } onChange: { [weak self] in
+        } onChange: { [weak self, weak ticket] in
+            guard let ticket else { return }
             Task { @MainActor [weak self] in
                 guard let self, Date() < deadline else { return }
                 if ticket.lines.count > heard, let line = ticket.lines.last, !line.isEmpty {

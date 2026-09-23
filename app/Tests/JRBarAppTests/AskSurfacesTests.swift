@@ -264,6 +264,25 @@ struct AskSurfacesTests {
         #expect(ticket.lines == ["from the task"])
     }
 
+    @Test("a verb that raises no toast lets its ticket go as soon as it has run")
+    func silentVerbFreesItsTicket() {
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.toastFeed = { nil }
+        var ran = false
+        weak var seen: PaletteVerbTicket?
+        let action = PaletteAction(id: "go", title: "Go", symbol: "circle") {
+            ran = PaletteVerbScope.ticket != nil
+            seen = PaletteVerbScope.ticket
+            return nil
+        }
+        let item = PaletteItem(id: "x", title: "x", icon: .symbol("circle", .gray), kind: "T",
+                               section: .archive, actions: [action])
+        controller.run(action, of: item)
+        #expect(ran, "the verb ran under a ticket")
+        #expect(seen == nil, "nothing holds a silent verb's ticket once it has run")
+    }
+
     // MARK: Panel
 
     @Test("a refused open tries the window locator only for a live local row the daemon could not find")
