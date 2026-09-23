@@ -739,9 +739,21 @@ struct AutoDimReadoutRow: View {
             .contentTransition(.numericText())
             .animation(.easeInOut(duration: 0.2), value: line)
         } label: {
-            SettingLabel(title: "Right now")
+            SettingLabel(title: "Right now", subtitle: AutoDimReadoutRow.smoothingNote(result))
         }
         .accessibilityLabel("Auto-dim right now: \(line)")
+    }
+
+    /// The raw sensor beside the smoothed reading, when a passing shadow
+    /// or a lamp just switched on has them apart: the lights follow the
+    /// smoothed one, brightening quickly and dimming slowly.
+    static func smoothingNote(_ result: CoreAutoDim?) -> String? {
+        guard let result, result.source == "ambient", let raw = result.raw, let reading = result.reading,
+              raw.isFinite, reading.isFinite else { return nil }
+        let apart = abs(raw - reading) >= max(1, 0.1 * max(raw, reading))
+        guard apart else { return nil }
+        let direction = raw < reading ? "dimming slowly, in case it is a passing shadow" : "brightening quickly"
+        return "The sensor reads \(AutoDimLearning.lux(raw)) this second; the lights follow the smoothed \(AutoDimLearning.lux(reading)), \(direction)."
     }
 
     private var symbol: String {

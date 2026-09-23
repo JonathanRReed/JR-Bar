@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import Testing
 import JRBarLEDS
+@testable import JRBarCore
 @testable import JRBarApp
 
 /// The Settings rows brought over from the legacy window: the previews
@@ -72,6 +73,18 @@ struct LightsSettingsRowsTests {
         #expect(waiting(4, "needs_range").contains("three times brighter or darker"))
         #expect(waiting(5, "already_fits") == "5 slider moves, and the curve set now already fits them.")
         #expect(waiting(1, "no_fit") == "1 slider move that no single curve fits yet.")
+    }
+
+    @Test func theReadoutNamesTheRawSensorWhenSmoothingHoldsItBack() throws {
+        let shadow = try JSONDecoder().decode(CoreAutoDim.self, from: Data(#"{"mode": "ambient", "source": "ambient", "factor": 0.6, "available": true, "reading": 120.0, "raw": 20.0}"#.utf8))
+        #expect(shadow.raw == 20)
+        #expect(AutoDimReadoutRow.smoothingNote(shadow) == "The sensor reads 20 lux this second; the lights follow the smoothed 120 lux, dimming slowly, in case it is a passing shadow.")
+        let lamp = CoreAutoDim(mode: "ambient", source: "ambient", reading: 40, raw: 300)
+        #expect(AutoDimReadoutRow.smoothingNote(lamp)?.hasSuffix("brightening quickly.") == true)
+        // Settled, on the display fallback, or from a daemon without the raw value: nothing to add.
+        #expect(AutoDimReadoutRow.smoothingNote(CoreAutoDim(mode: "ambient", source: "ambient", reading: 100, raw: 104)) == nil)
+        #expect(AutoDimReadoutRow.smoothingNote(CoreAutoDim(mode: "ambient", source: "display", reading: 0.6, raw: 0.2)) == nil)
+        #expect(AutoDimReadoutRow.smoothingNote(CoreAutoDim(mode: "ambient", source: "ambient", reading: 100)) == nil)
     }
 
     @Test func customFocusesFollowTheFourEveryMacHas() {

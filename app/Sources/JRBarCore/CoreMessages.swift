@@ -1586,16 +1586,21 @@ public struct CoreAutoDim: Codable, Hashable, Sendable {
     public var factor: Double?
     public var available: Bool
     public var reading: Double?
+    /// Additive: the sensor's unsmoothed value behind an ambient `reading`
+    /// (the daemon smooths shadows out of it); nil on daemons without it.
+    public var raw: Double?
 
-    public init(mode: String = "off", source: String = "off", factor: Double? = nil, available: Bool = true, reading: Double? = nil) {
+    public init(mode: String = "off", source: String = "off", factor: Double? = nil, available: Bool = true,
+                reading: Double? = nil, raw: Double? = nil) {
         self.mode = mode
         self.source = source
         self.factor = factor
         self.available = available
         self.reading = reading
+        self.raw = raw
     }
 
-    enum CodingKeys: String, CodingKey { case mode, source, factor, available, reading }
+    enum CodingKeys: String, CodingKey { case mode, source, factor, available, reading, raw }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1604,6 +1609,7 @@ public struct CoreAutoDim: Codable, Hashable, Sendable {
         factor = try? c.decodeIfPresent(Double.self, forKey: .factor)
         available = try c.decodeIfPresent(Bool.self, forKey: .available) ?? true
         reading = try? c.decodeIfPresent(Double.self, forKey: .reading)
+        raw = try? c.decodeIfPresent(Double.self, forKey: .raw)
     }
 
     /// The setting is doing something.
