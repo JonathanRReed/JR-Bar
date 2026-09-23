@@ -1,5 +1,6 @@
 import JRBarUI
 import JRBarCore
+import JRBarLEDS
 import SwiftUI
 
 // MARK: - General
@@ -505,6 +506,8 @@ struct DevicesPage: View {
             DeviceCard(store: store, device: device)
         }
 
+        CalibrationProfilesSection(store: store)
+
         SettingGroup("Pro & Dot", note: "The role is what the Dot is for; the link is whether the monitor drives it at all.") {
             SettingToggle(store, "Dot follows strip", subtitle: "The Dot mirrors the Pro instead of rendering its own; which cue is the role below.",
                           path: "devices_linked", default: true)
@@ -542,6 +545,14 @@ struct DeviceCard: View {
 
     var body: some View {
         SettingGroup {
+            if state?.isPresent == true {
+                // The age ticks between core pushes; a coarse clock is
+                // enough for "written 40 s ago".
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    SettingRow("Right now", subtitle: DeviceHealthLine.describe(
+                        device: state, surface: surface, now: context.date)) { EmptyView() }
+                }
+            }
             SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
             SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
             SettingToggle(store, "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight.",
@@ -563,6 +574,17 @@ struct DeviceCard: View {
                     SettingLabel(title: "Asks only", subtitle: "Mutes courtesy signals; agent status, asks and low battery still show.")
                 }
                 .settingRowStyle()
+            }
+            Provided(store, "\(device.prefix).blend_mode") {
+                Picker(selection: store.optionalString("\(device.prefix).blend_mode")) {
+                    Text("Same as Lighting").tag("")
+                    Divider()
+                    ForEach(LightingPage.blendModes, id: \.value) { Text($0.label).tag($0.value) }
+                } label: {
+                    SettingLabel(title: "Blend", subtitle: blendSubtitle)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
             }
             SettingRow("Colour calibration", subtitle: calibrationSummary) {
                 Button("Calibrate…") { store.calibrating = device.id }
@@ -589,6 +611,25 @@ struct DeviceCard: View {
     private var calibrationSummary: String {
         SettingsStore.calibrationSummary(document: store.document, prefix: device.prefix)
     }
+
+    /// The program this device was last sent, from the `lights` push.
+    private var surface: CoreLightSurface? {
+        guard let state else { return nil }
+        return DeviceHealthLine.surface(for: state, lights: store.core.lights, devices: store.core.devices)
+    }
+
+    /// The per-device blend's note: what it does, and the case for it —
+    /// on eight discrete LEDs per-agent blocks read cleanly even while
+    /// the Screen Bar keeps Smooth, where they would turn to mud.
+    private var blendSubtitle: String {
+        let mode = store.document.string(SettingsPath("\(device.prefix).blend_mode"))
+        guard let mode, let entry = LightingPage.blendModes.first(where: { $0.value == mode }) else {
+            let global = store.document.string("colors.blend_mode") ?? "color_blend"
+            let label = LightingPage.blendModes.first { $0.value == global }?.label ?? global
+            return "Follows Settings › Lighting (\(label)). A strip can take its own — Everyone reads cleanly on eight LEDs while the band stays Smooth."
+        }
+        return entry.detail
+    }
 }
 
 extension SettingsStore {
@@ -607,6 +648,63 @@ extension SettingsStore {
             summary += String(format: " · %d%%", Int((brightness / 255 * 100).rounded()))
         }
         return summary
+    }
+}
+
+/// A device card's "Right now" line — blink(1)'s device status, for a
+/// light that says "Connected" and nothing else: why it is lit, whether
+/// the last write failed, how long ago the monitor last wrote it (the
+/// firmware restarts on every write, and a keepalive rewrites it), the
+/// program's size against the firmware's 512-byte / 20-line budget, the
+/// firmware's own verdict when it would refuse the text, and the drive
+/// the device is actually at. nil while the device is away — the header
+/// already says so.
+enum DeviceHealthLine {
+    /// The `lights` surface a device plays: the Dot's own; a strip's own
+    /// `hardware:<id>` when it is not the first; the first connected
+    /// strip's `hardware`.
+    static func surface(for device: CoreDevice, lights: CoreLights?, devices: [CoreDevice]) -> CoreLightSurface? {
+        guard let lights else { return nil }
+        if device.kind == "dot" { return lights.dot }
+        if let own = lights.surfaces["hardware:\(device.id)"] { return own }
+        let first = devices.first { $0.kind == "pro" && $0.isPresent }
+        return first?.id == device.id ? lights.hardware : nil
+    }
+
+    static func describe(device: CoreDevice?, surface: CoreLightSurface?, now: Date) -> String? {
+        guard let device, device.isPresent else { return nil }
+        var parts: [String] = []
+        if let why = surface?.why, !why.isEmpty {
+            let words = why.replacingOccurrences(of: "_", with: " ")
+            parts.append(words.prefix(1).uppercased() + words.dropFirst())
+        }
+        if let cue = surface?.cue?.name, !cue.isEmpty { parts.append("playing \(cue)") }
+        if let error = device.error, !error.isEmpty {
+            parts.append("the last write failed (\(error.replacingOccurrences(of: "_", with: " ")))")
+        }
+        if let written = device.lastWrite {
+            parts.append("written \(age(now.timeIntervalSince1970 - written)) ago")
+        } else {
+            parts.append("not written since the monitor started")
+        }
+        if let program = surface?.program, !program.isEmpty {
+            let analysis = LEDSStudioAnalysis(program)
+            parts.append("\(analysis.lines) line\(analysis.lines == 1 ? "" : "s"), \(analysis.bytes) of \(LEDSLimits.maxProgramBytes) bytes")
+            let verdict = device.kind == "dot" ? analysis.dot : analysis.strip
+            if let error = verdict.error { parts.append(error.description) }
+        }
+        if let drive = surface?.brightness {
+            parts.append("driven at \(Int((min(1, max(0, drive)) * 100).rounded()))%")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "4 s", "12 min", "3 h" — a clock step behind is harmless.
+    static func age(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        if seconds < 60 { return "\(Int(seconds)) s" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) min" }
+        return "\(Int(seconds / 3600)) h"
     }
 }
 
@@ -801,11 +899,38 @@ struct CreatorMicroCard: View {
 
 struct ScreenBarCard: View {
     @Bindable var store: SettingsStore
+    /// The camera hold is the app's own: the band is drawn here, and the
+    /// camera reading is the app's too — the notch island's poll, so the
+    /// row follows `ScreenBarCameraHold`.
+    @AppStorage(ScreenBarController.stillOnCameraDefaultsKey) private var stillOnCamera = true
+    /// The video guard is the app's too: it reads the now-playing app and
+    /// the frontmost window, neither of which the daemon sees.
+    @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
+        SettingRow("Right now", subtitle: rightNow) {
+            EmptyView()
+        }
         SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
-        SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
+        Provided(store, "screen_bar_show_in_full_screen") {
+            Picker(selection: Binding(
+                get: { ScreenBarFullScreen(shows: store.document.bool("screen_bar_show_in_full_screen") ?? true,
+                                           hideOverVideo: hideOverVideo) },
+                set: { mode in
+                    store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
+                    if mode != .hidden { hideOverVideo = mode == .notOverVideo }
+                }
+            )) {
+                ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
+            } label: {
+                SettingLabel(title: "In full screen", subtitle: ScreenBarFullScreen(
+                    shows: store.document.bool("screen_bar_show_in_full_screen") ?? true,
+                    hideOverVideo: hideOverVideo).detail)
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+        }
         SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
         SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,
                       path: "screen_bar_notch_profile",
@@ -817,6 +942,12 @@ struct ScreenBarCard: View {
                           default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
         }
         SettingToggle(store, "Mirror hardware strip", subtitle: "Play the strip's program on its clock; off, the bar renders its own display.", path: "link_screen_bar_to_hardware", default: true)
+        Toggle(isOn: $stillOnCamera) {
+            SettingLabel(title: "Hold still on camera",
+                         subtitle: ScreenBarCameraHold.subtitle(cameraReadable: ScreenBarLiveStatus.shared.cameraReadable))
+        }
+        .disabled(!ScreenBarLiveStatus.shared.cameraReadable)
+        .settingRowStyle()
         DisclosureRow("Advanced", subtitle: "Phase, geometry and the band's dim floor.") {
             SettingSlider(store, "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back.",
                           path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
@@ -832,6 +963,25 @@ struct ScreenBarCard: View {
         }
     }
 
+    /// The "Right now" line: which clock the band is on, whether it
+    /// turned a program away, and why it might be still.
+    private var rightNow: String {
+        let status = ScreenBarLiveStatus.shared
+        let core = store.core
+        return ScreenBarSourceLine.describe(
+            live: core.isLive,
+            mirrorSetting: store.document.bool("link_screen_bar_to_hardware") ?? true,
+            stripPresent: core.devices.contains { $0.kind == "pro" && $0.isPresent },
+            phaseOffsetMs: store.document.double("screen_bar_phase_offset_ms"),
+            why: core.lights?.screenBar?.why,
+            rejection: status.rejection,
+            motionNote: status.motionNote,
+            followingAlcove: status.followingAlcove,
+            steppedAsideForVideo: status.steppedAsideForVideo,
+            cue: core.lights?.screenBar?.cue?.name,
+            offlineFeed: status.offlineFeed)
+    }
+
     /// The picker's note: what the machine reports and what the tray's
     /// corners follow. The radius itself is measured — ~8 pt on every
     /// notched MacBook — so the named models agree; the picker is for
@@ -845,6 +995,55 @@ struct ScreenBarCard: View {
             return "Uncalibrated"
         }
         return SettingsStore.calibrationSummary(document: store.document, prefix: "devices.\(index)")
+    }
+}
+
+/// "Hold still on camera" and what it leans on. The band has no camera
+/// reading of its own: the notch island's privacy-dot poll is the only
+/// one, and it runs only while JR-Bar draws the island with its Mic &
+/// camera indicators on. With the Notch toy off, Alcove or Boring Notch
+/// drawing, or the island hidden, the hold could never engage — so the
+/// row names the dependency and greys out rather than reading On.
+enum ScreenBarCameraHold {
+    /// Whether the camera hold can see a camera: the island shown (the
+    /// Notch toy on, rendered by JR-Bar, the island switch on) and its
+    /// indicators polling.
+    static func readable(islandVisible: Bool, indicatorsOn: Bool) -> Bool {
+        islandVisible && indicatorsOn
+    }
+
+    static func subtitle(cameraReadable: Bool) -> String {
+        cameraReadable
+            ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber. Uses the notch island's camera reading."
+            : "Uses the notch island's camera reading, which is off. Under Toys › Notch, render with JR-Bar, then turn on Show the island and Mic & camera indicators."
+    }
+}
+
+/// Where the band goes in full screen: the daemon's
+/// `screen_bar_show_in_full_screen` plus the app's own video guard, as one
+/// choice. A band over a full-screen movie reads as a glitch (the daemon's
+/// own default says so); over a full-screen terminal it is the point.
+enum ScreenBarFullScreen: CaseIterable, Hashable {
+    case hidden, notOverVideo, always
+
+    init(shows: Bool, hideOverVideo: Bool) {
+        self = !shows ? .hidden : hideOverVideo ? .notOverVideo : .always
+    }
+
+    var title: String {
+        switch self {
+        case .hidden: return "Hidden"
+        case .notOverVideo: return "Shown, not over video"
+        case .always: return "Always shown"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .hidden: return "Full-screen apps have the top of the screen to themselves."
+        case .notOverVideo: return "Over full-screen apps, but it steps aside while the app in front is playing a video."
+        case .always: return "Over every full-screen app, videos included."
+        }
     }
 }
 

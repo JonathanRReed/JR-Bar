@@ -28,6 +28,11 @@ or
 To recap, write to LEDS.LED what you want displayed.
 That's all you have to know.
 
+In JR-Bar, Effect Studio › Program writes and checks these programs: it judges
+every keystroke with the rules the firmware uses (the line and column of any
+error), shows the byte and line budget, previews the program on the strip, the
+Dot and the Screen Bar, composes one from layers, and can burn it into INIT.LED.
+
 ## Initial state.
 
 The content in INIT.LED is played on power up. It can be anything supported by LEDS.LED.

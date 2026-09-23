@@ -1925,10 +1925,14 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
     /// (`docs/CORE-PROTOCOL.md`, "The Dot's role"): `extend` or `asks`.
     /// Absent when the Dot renders its own display, and never on a preview.
     public var role: String?
+    /// Additive: the ambient cue staged on this surface right now
+    /// (`{id, name}`, "Handoff baton"), so a sweep has a name; nil when
+    /// none plays, and on daemons that predate it.
+    public var cue: CoreLightCue?
 
     public init(program: String, ledCount: Int? = nil, anchor: Double? = nil, motion: String? = nil,
                 staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil,
-                whyDetail: CoreWhyDetail? = nil, role: String? = nil) {
+                whyDetail: CoreWhyDetail? = nil, role: String? = nil, cue: CoreLightCue? = nil) {
         self.program = program
         self.ledCount = ledCount
         self.anchor = anchor
@@ -1938,10 +1942,11 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         self.why = why
         self.whyDetail = whyDetail
         self.role = role
+        self.cue = cue
     }
 
     enum CodingKeys: String, CodingKey {
-        case program, anchor, motion, brightness, why, role
+        case program, anchor, motion, brightness, why, role, cue
         case ledCount = "led_count"
         case staticFallback = "static_fallback"
         case whyDetail = "why_detail"
@@ -1958,6 +1963,18 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         why = try c.decodeIfPresent(String.self, forKey: .why)
         whyDetail = try? c.decodeIfPresent(CoreWhyDetail.self, forKey: .whyDetail)
         role = try c.decodeIfPresent(String.self, forKey: .role)
+        cue = try? c.decodeIfPresent(CoreLightCue.self, forKey: .cue)
+    }
+}
+
+/// `lights.surfaces.<name>.cue`: the ambient cue a surface is playing.
+public struct CoreLightCue: Codable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
     }
 }
 
@@ -1972,16 +1989,21 @@ public struct CoreAutoDim: Codable, Hashable, Sendable {
     public var factor: Double?
     public var available: Bool
     public var reading: Double?
+    /// Additive: the sensor's unsmoothed value behind an ambient `reading`
+    /// (the daemon smooths shadows out of it); nil on daemons without it.
+    public var raw: Double?
 
-    public init(mode: String = "off", source: String = "off", factor: Double? = nil, available: Bool = true, reading: Double? = nil) {
+    public init(mode: String = "off", source: String = "off", factor: Double? = nil, available: Bool = true,
+                reading: Double? = nil, raw: Double? = nil) {
         self.mode = mode
         self.source = source
         self.factor = factor
         self.available = available
         self.reading = reading
+        self.raw = raw
     }
 
-    enum CodingKeys: String, CodingKey { case mode, source, factor, available, reading }
+    enum CodingKeys: String, CodingKey { case mode, source, factor, available, reading, raw }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1990,6 +2012,7 @@ public struct CoreAutoDim: Codable, Hashable, Sendable {
         factor = try? c.decodeIfPresent(Double.self, forKey: .factor)
         available = try c.decodeIfPresent(Bool.self, forKey: .available) ?? true
         reading = try? c.decodeIfPresent(Double.self, forKey: .reading)
+        raw = try? c.decodeIfPresent(Double.self, forKey: .raw)
     }
 
     /// The setting is doing something.

@@ -1,4 +1,5 @@
 import AppKit
+import EventKit
 import JRBarCore
 import SwiftUI
 import UserNotifications
@@ -33,6 +34,7 @@ struct LightingPage: View {
                 }
             }
             .padding(.vertical, 2)
+            ColorVisionNote(store: store, colors: providerColorsInUse)
         }
 
         SettingGroup("Blend") {
@@ -45,6 +47,7 @@ struct LightingPage: View {
                 .pickerStyle(.menu)
                 .fixedSize()
             }
+            FleetPreviewRow(store: store, sketch: fleetProgram)
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
@@ -63,6 +66,7 @@ struct LightingPage: View {
                 }
             }
             .padding(.vertical, 2)
+            ColorVisionNote(store: store, colors: stateColors, others: providerColorsInUse)
         }
 
         SettingGroup("Pulse range") {
@@ -92,23 +96,69 @@ struct LightingPage: View {
         SettingGroup("Scene") {
             SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
-            if let pack = store.document.string("active_scene_pack"), !pack.isEmpty {
-                Text("Scene pack “\(pack)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            ScenePackPicker(store: store)
             SettingRow("Effect Studio", subtitle: "Tune effects live and assign looks to states, scenes, providers and devices.") {
                 Button("Effect Studio…") { store.onOpenEffects?() }
             }
         }
 
-        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb, night and low power.") {
+        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb and low power. Effect Studio › Moments lists every cue the lights can play.") {
             SettingToggle(store, "Rainstick idle", subtitle: "A dim pixel drifts along the strip every thirty seconds while nothing else needs it.",
                           path: "rainstick_idle_enabled")
+            SettingToggle(store, "Also at night", subtitle: "The Night scene withholds the drip unless you allow it here.",
+                          path: "rainstick_night_enabled")
+                .disabled(!(store.document.bool("rainstick_idle_enabled") ?? false))
+            SettingRow("Rainstick preview", subtitle: "Shown twenty-five times faster and brighter than the strip plays it.") {
+                LEDStripPreview(program: LightingPreviewPrograms.rainstick(), style: .dots, dotSize: 9, spacing: 6)
+                    .frame(width: 168)
+                    .opacity((store.document.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
+                    .accessibilityLabel("Rainstick idle preview")
+            }
             SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
                           path: "milestone_odometer_enabled")
+            MilestoneStepsField(store: store)
+                .disabled(!(store.document.bool("milestone_odometer_enabled") ?? false))
         }
+    }
+
+    /// The lit states' colours for the vision check — idle is the dark
+    /// resting whisper, never read against the others.
+    private var stateColors: [ColorVisionNote.Entry] {
+        SettingsKey.modes.filter { $0 != "idle" }.map { mode in
+            let path = "colors.mode_colors.\(mode)"
+            return ColorVisionNote.Entry(
+                id: mode, name: ModeSwatch.labels[mode]?.name ?? mode.capitalized, path: path,
+                hex: store.document.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
+        }
+    }
+
+    /// The providers worth comparing: the ones this Mac actually runs —
+    /// a live session or an installed hook. Twelve hues all against each
+    /// other would flag pairs nobody will ever see side by side.
+    private var providerColorsInUse: [ColorVisionNote.Entry] {
+        let running = Set(store.core.sessions.map(\.provider))
+        return SettingsKey.providers
+            .filter { running.contains($0) || (store.hookStatus($0).map { $0 != "missing" } ?? false) }
+            .map { provider in
+                let style = ProviderStyle.style(for: provider)
+                let path = "colors.agent_colors.\(provider)"
+                return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
+                                             hex: store.document.string(SettingsPath(path)) ?? style.accentHex)
+            }
+    }
+
+    /// The local sketch of the fleet preview: Claude and Codex working in
+    /// their colours and a third agent done, under the chosen blend.
+    private var fleetProgram: String {
+        func accent(_ provider: String) -> String {
+            store.document.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
+        }
+        return LightingPreviewPrograms.fleet(
+            blendMode: store.document.string("colors.blend_mode") ?? "color_blend",
+            working: (accent("claude"), accent("codex")),
+            doneHex: store.document.string("colors.mode_colors.done") ?? ModeSwatch.defaults["done"] ?? "#00FF66",
+            workingStateHex: store.document.string("colors.mode_colors.working") ?? ModeSwatch.defaults["working"] ?? "#00E5FF",
+            cycleSeconds: store.document.double("colors.cycle_speed_seconds") ?? 2.2)
     }
 
     private var blendDetail: String {
@@ -123,6 +173,345 @@ struct LightingPage: View {
             if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
+    }
+}
+
+/// Scene packs on the Lighting page: try one on the strip before it
+/// takes over, then use it — Hue Sync lets you look at an area before
+/// switching to it. The pack's tour (`preview_scene_pack`) plays one step
+/// per scene it overrides, in that scene's colour, at its brightness and
+/// motion. Installing and removing packs stays in Effect Studio. A core
+/// without scene-pack commands keeps the old one-line note.
+struct ScenePackPicker: View {
+    @Bindable var store: SettingsStore
+    @ViewState private var packs: [ScenePackSummary] = []
+    @ViewState private var supported = false
+    /// The pack on the preview strip: the active one until another is
+    /// picked; "" is the built-in scenes.
+    @ViewState private var trying: String?
+    @ViewState private var preview: EffectPreview?
+
+    private var active: String { store.document.string("active_scene_pack") ?? "" }
+    private var shown: String { trying ?? active }
+
+    var body: some View {
+        Group {
+            if supported, !packs.isEmpty {
+                SettingRow("Scene pack", subtitle: subtitle) {
+                    HStack(spacing: 10) {
+                        if let preview, !shown.isEmpty {
+                            LEDStripPreview(program: preview.program, ledCount: preview.ledCount,
+                                            style: .band, dotSize: 5, showsBackground: false)
+                                .frame(width: 96)
+                                .accessibilityLabel("Preview of \(name(shown))")
+                        }
+                        Picker("Scene pack", selection: Binding(get: { shown }, set: { trying = $0 })) {
+                            Text("Built-in scenes").tag("")
+                            Divider()
+                            ForEach(packs) { Text($0.displayName).tag($0.id) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        if shown != active {
+                            Button("Use") {
+                                store.set("active_scene_pack", shown.isEmpty ? .null : .string(shown))
+                                trying = nil
+                            }
+                        }
+                    }
+                }
+            } else if !active.isEmpty {
+                Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .task(id: store.core.isLive) { await load() }
+        .task(id: shown) { await loadPreview() }
+    }
+
+    private var subtitle: String {
+        guard !shown.isEmpty else { return "The built-in scenes' own policies. Install packs in Effect Studio." }
+        let scenes = packs.first { $0.id == shown }?.scenes ?? []
+        let overrides = scenes.isEmpty ? "" : " Overrides \(ScenePackPicker.sceneList(scenes))."
+        return shown == active
+            ? "In use — its policies override the built-in scenes.\(overrides)"
+            : "Previewing — nothing changes until you use it.\(overrides)"
+    }
+
+    private func name(_ id: String) -> String {
+        packs.first { $0.id == id }?.displayName ?? id
+    }
+
+    /// "Focus, Night and Calm" from the pack's scene ids.
+    static func sceneList(_ scenes: [String]) -> String {
+        let names = scenes.map { id in LightingPage.scenes.first { $0.value == id }?.label ?? id.capitalized }
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+    }
+
+    private func load() async {
+        guard store.core.isLive else { supported = false; return }
+        do {
+            packs = try await store.core.listScenePacks()
+            supported = true
+        } catch {
+            packs = []
+            supported = false
+        }
+    }
+
+    private func loadPreview() async {
+        let id = shown
+        guard !id.isEmpty, store.core.isLive else { preview = nil; return }
+        preview = try? await store.core.previewScenePack(packID: id, ledCount: 8)
+    }
+}
+
+/// Lighting › Blend › "With three agents": the chosen blend against a
+/// busy desk. The monitor's `preview_fleet` renders it exactly as a strip
+/// would play it — the person's own colours through the real renderer and
+/// the compiler — so that is what plays whenever the monitor has it; the
+/// local sketch stands in for a monitor without the command.
+struct FleetPreviewRow: View {
+    @Bindable var store: SettingsStore
+    /// `LightingPreviewPrograms.fleet` for the current document.
+    let sketch: String
+    @ViewState private var rendered: (key: String, program: String, label: String)?
+
+    struct Reply: Decodable {
+        let program: String
+        let label: String?
+    }
+
+    /// What the render depends on: the blend, its speed, the palette.
+    private var key: String {
+        "\(store.core.isLive)|\(store.core.settings?.generation ?? 0)"
+    }
+
+    var body: some View {
+        let live = rendered.flatMap { $0.key == key ? $0 : nil }
+        let program = live?.program ?? sketch
+        SettingRow("With three agents", subtitle: live.map { "\($0.label) — as the monitor renders it." }
+                   ?? "Two working and one done: how a busy desk reads in this mode. An ask takes the whole strip under every blend, so it has no part here.") {
+            VStack(alignment: .trailing, spacing: 6) {
+                LEDStripPreview(program: program, style: .dots, dotSize: 9, spacing: 6)
+                    .frame(width: 168)
+                LEDStripPreview(program: program, style: .band, dotSize: 5, showsBackground: false)
+                    .frame(width: 150)
+            }
+            .accessibilityLabel("Three agents under the chosen blend")
+        }
+        .task(id: key) {
+            let key = self.key
+            guard store.core.isLive,
+                  let reply = try? await store.core.request("preview_fleet", args: ["led_count": .number(8)], as: Reply.self),
+                  !reply.program.isEmpty else { rendered = nil; return }
+            rendered = (key, reply.program, reply.label ?? "Three agents: two working, one done")
+        }
+    }
+}
+
+/// Pairs of light colours that read as one for some viewer — typical
+/// vision or a simulated dichromacy — each with a one-click nudge that
+/// moves the second colour apart by lightness, hue kept. Silent when
+/// every pair stays apart.
+struct ColorVisionNote: View {
+    struct Entry: Equatable {
+        let id: String
+        let name: String
+        let path: String
+        let hex: String
+
+        /// The monitor's key for this colour (`check_palette`):
+        /// `agent:<provider>` or `state:<mode>`.
+        var paletteKey: String? {
+            if path.hasPrefix("colors.agent_colors.") { return "agent:" + id }
+            if path.hasPrefix("colors.mode_colors.") { return "state:" + id }
+            return nil
+        }
+    }
+
+    @Bindable var store: SettingsStore
+    let colors: [Entry]
+    /// The other group's colours, for pairs across the two (a provider's
+    /// colour against a state's). Only one note gets them, so a cross
+    /// pair is named once.
+    var others: [Entry] = []
+
+    /// `check_palette`'s reply for `checkKey`, while the monitor has it.
+    @ViewState private var checked: (key: String, pairs: [PaletteCheck.Pair])?
+
+    private var collisions: [ColorVision.Collision] {
+        ColorVision.collisions(colors.map { (id: $0.id, hex: $0.hex) })
+    }
+
+    /// The palette as the note knows it: a new colour anywhere re-asks.
+    private var checkKey: String {
+        "\(store.core.isLive)|" + (colors + others).map { "\($0.id)=\($0.hex)" }.joined(separator: ",")
+    }
+
+    var body: some View {
+        Group {
+            if let checked, checked.key == checkKey {
+                ForEach(PaletteCheck.rows(checked.pairs, own: colors, others: others), id: \.id) { row in
+                    pairRow(row.text) {
+                        if let nudge = row.nudge {
+                            Button("Nudge \(nudge.entry.name) apart") { store.set(nudge.entry.path, .string(nudge.color)) }
+                                .controlSize(.small)
+                                .disabled(!store.isProvided(nudge.entry.path))
+                                .help("Sets \(nudge.entry.name) to \(nudge.color): lighter or darker, same hue, until it stands apart from every other light")
+                        }
+                    }
+                }
+            } else {
+                let entries = Dictionary(uniqueKeysWithValues: colors.map { ($0.id, $0) })
+                ForEach(collisions) { collision in
+                    if let first = entries[collision.first], let second = entries[collision.second] {
+                        pairRow("\(first.name) and \(second.name) look alike with \(collision.vision.name).") {
+                            if let nudged = ColorVision.nudge(second.hex, awayFrom: first.hex) {
+                                Button("Nudge \(second.name) apart") { store.set(second.path, .string(nudged)) }
+                                    .controlSize(.small)
+                                    .disabled(!store.isProvided(second.path))
+                                    .help("Sets \(second.name) to \(nudged): the same hue, lighter or darker until every vision tells them apart")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: checkKey) {
+            let key = checkKey
+            guard store.core.isLive,
+                  let reply = try? await store.core.request("check_palette", args: ["visions": .array(PaletteCheck.visions.map(JSONValue.string))],
+                                                            as: PaletteCheck.self) else { checked = nil; return }
+            checked = (key, reply.pairs)
+        }
+    }
+
+    private func pairRow<Trailing: View>(_ text: String, @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "eye.trianglebadge.exclamationmark").foregroundStyle(.orange)
+            Text(text)
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            trailing()
+        }
+    }
+}
+
+/// `check_palette`: the monitor's colour-vision check of the whole
+/// palette — every provider and state, the error colour as the lights
+/// paint it, and a nudge that clears the moved colour from every other
+/// light, not just its pair. The note prefers it to the local check
+/// whenever the monitor has it, so the page and the monitor never
+/// disagree about which colours collide; the local check answers for a
+/// monitor that predates it.
+struct PaletteCheck: Decodable {
+    struct Suggestion: Decodable, Equatable {
+        let key: String
+        let color: String
+    }
+
+    struct Pair: Decodable, Equatable {
+        let left: String
+        let right: String
+        let vision: String
+        let shipped: Bool?
+        let suggestion: Suggestion?
+    }
+
+    let pairs: [Pair]
+
+    /// Every vision, tritanopia included: the page has always named a
+    /// blue-blind collapse, even the one the shipped palette carries.
+    static let visions = ["normal", "deuteranopia", "protanopia", "tritanopia"]
+
+    static func visionName(_ vision: String) -> String {
+        switch vision {
+        case "normal": return ColorVision.typical.name
+        case "protanopia": return ColorVision.protan.name
+        case "deuteranopia": return ColorVision.deutan.name
+        case "tritanopia": return ColorVision.tritan.name
+        default: return vision
+        }
+    }
+
+    struct Row: Equatable {
+        let id: String
+        let text: String
+        let nudge: (entry: ColorVisionNote.Entry, color: String)?
+
+        static func == (a: Row, b: Row) -> Bool {
+            a.id == b.id && a.text == b.text && a.nudge?.entry == b.nudge?.entry && a.nudge?.color == b.nudge?.color
+        }
+    }
+
+    /// The pairs one note names: both colours its own, or — when it is
+    /// given the other group — one its own and one from there. Colours
+    /// the page does not show (providers this Mac never runs) are never
+    /// named.
+    static func rows(_ pairs: [Pair], own: [ColorVisionNote.Entry], others: [ColorVisionNote.Entry]) -> [Row] {
+        let mine = Dictionary(own.compactMap { entry in entry.paletteKey.map { ($0, entry) } }, uniquingKeysWith: { first, _ in first })
+        let theirs = Dictionary(others.compactMap { entry in entry.paletteKey.map { ($0, entry) } }, uniquingKeysWith: { first, _ in first })
+        return pairs.compactMap { pair in
+            let left = mine[pair.left] ?? theirs[pair.left]
+            let right = mine[pair.right] ?? theirs[pair.right]
+            guard let left, let right, mine[pair.left] != nil || mine[pair.right] != nil else { return nil }
+            let shipped = pair.shipped == true ? " — both as shipped" : ""
+            let text = "\(left.name) and \(right.name) look alike with \(visionName(pair.vision))\(shipped)."
+            let moved = pair.suggestion.flatMap { suggestion in
+                (mine[suggestion.key] ?? theirs[suggestion.key]).map { (entry: $0, color: suggestion.color) }
+            }
+            return Row(id: "\(pair.left)|\(pair.right)", text: text, nudge: moved)
+        }
+    }
+}
+
+/// The milestone ladder as one comma-separated field. The daemon keeps
+/// positive whole counts, sorted, deduplicated, at most sixteen, and
+/// falls back to 10, 25, 50, 100 when nothing valid is left — the field
+/// shows that same normalisation the moment it commits, so what is typed
+/// is never silently different from what fires.
+struct MilestoneStepsField: View {
+    @Bindable var store: SettingsStore
+    @ViewState private var draft = ""
+    @FocusState private var focused: Bool
+
+    private var current: [Int] {
+        (store.document.array("milestone_odometer_steps") ?? []).compactMap(\.intValue)
+    }
+    private var currentText: String {
+        (current.isEmpty ? SettingsKey.defaultMilestoneSteps : current).map(String.init).joined(separator: ", ")
+    }
+
+    var body: some View {
+        Provided(store, "milestone_odometer_steps") {
+            LabeledContent {
+                TextField("", text: Binding(get: { focused ? draft : currentText }, set: { draft = $0 }),
+                          prompt: Text("10, 25, 50, 100"))
+                    .labelsHidden()
+                    .focused($focused)
+                    .onChange(of: focused) { _, now in
+                        if now { draft = currentText } else { commit() }
+                    }
+                    .onSubmit { commit() }
+                    .textFieldStyle(.roundedBorder)
+                    .monospacedDigit()
+                    .frame(width: 180)
+            } label: {
+                SettingLabel(title: "Milestones", subtitle: "Finished-session counts that earn the cue — up to sixteen.")
+            }
+        }
+    }
+
+    private func commit() {
+        let steps = SettingsKey.milestoneSteps(parsing: draft)
+        guard steps != current else { return }
+        store.set("milestone_odometer_steps", .array(steps.map { .number(Double($0)) }))
     }
 }
 
@@ -179,6 +568,7 @@ struct AutoDimSection: View {
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxFloor, unit: "lux")
                 SettingNumberField(store, "Bright above", subtitle: "Full brightness at this reading; must be above the dark mark.", path: AutoDimSettings.ambientLuxCeilingPath.description,
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxCeiling, unit: "lux")
+                AutoDimLearningRow(store: store)
                 Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
                     SettingRow("Marks from room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.") {
                         Button("Use current light") { useRoomLight() }
@@ -217,8 +607,112 @@ struct AutoDimSection: View {
 
     private func useRoomLight() {
         guard let marks = roomMarks else { return }
-        store.set(AutoDimSettings.ambientLuxFloorPath.description, .number(marks.floor))
-        store.set(AutoDimSettings.ambientLuxCeilingPath.description, .number(marks.ceiling))
+        // Both marks in one write: a new floor above the old ceiling,
+        // written alone, is a pair the loader drops back to defaults.
+        store.set("auto_dim.ambient", .object([
+            "min_fraction": .number(settings.ambientMinFraction),
+            "lux_floor": .number(marks.floor),
+            "lux_ceiling": .number(marks.ceiling),
+        ]))
+    }
+}
+
+/// `auto_dim_learning`: what the panel's brightness slider has taught the
+/// ambient curve. Every slider move in Ambient mode is a vote — at this
+/// light, this level — and once the votes span enough light the monitor
+/// offers a curve that fits them better than the one set now. It is only
+/// ever offered: "Use it" writes the three marks and the level, "Forget"
+/// clears the votes. A monitor without the command shows nothing.
+struct AutoDimLearning: Decodable, Equatable {
+    struct Suggestion: Decodable, Equatable {
+        let brightness: Double
+        let minFraction: Double
+        let luxFloor: Double
+        let luxCeiling: Double
+
+        enum CodingKeys: String, CodingKey {
+            case brightness
+            case minFraction = "min_fraction"
+            case luxFloor = "lux_floor"
+            case luxCeiling = "lux_ceiling"
+        }
+    }
+
+    let votes: Int
+    let ready: Bool
+    let reason: String?
+    let suggested: Suggestion?
+
+    /// The row's sentence for where the learning stands.
+    var sentence: String {
+        let moves = votes == 1 ? "1 slider move" : "\(votes) slider moves"
+        if ready, let suggested {
+            return "From \(moves), a curve that fits you better: never below \(Int((suggested.minFraction * 100).rounded())) %, "
+                + "dark below \(Self.lux(suggested.luxFloor)), bright above \(Self.lux(suggested.luxCeiling)), "
+                + "at \(Int((suggested.brightness * 100).rounded())) % overall."
+        }
+        switch reason {
+        case "needs_votes":
+            return votes == 0
+                ? "Move the panel's brightness slider in the light you have; after three moves the curve can learn from you."
+                : "\(moves) so far; three are needed before the curve can learn from you."
+        case "needs_range":
+            return "\(moves), all in similar light. A move in a room at least three times brighter or darker lets it learn."
+        case "already_fits":
+            return "\(moves), and the curve set now already fits them."
+        default:
+            return "\(moves) that no single curve fits yet."
+        }
+    }
+
+    static func lux(_ value: Double) -> String {
+        value < 10 ? String(format: "%.1f lux", value) : "\(Int(value.rounded())) lux"
+    }
+}
+
+struct AutoDimLearningRow: View {
+    @Bindable var store: SettingsStore
+    @ViewState private var learning: AutoDimLearning?
+
+    var body: some View {
+        Group {
+            if let learning {
+                SettingRow("Learned from you", subtitle: learning.sentence) {
+                    HStack(spacing: 6) {
+                        if learning.ready, learning.suggested != nil {
+                            Button("Use it") { apply() }
+                        }
+                        if learning.votes > 0 {
+                            Button("Forget") { Task { await load(clear: true) } }
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+        // A vote lands with every slider move, which moves the lights.
+        .task(id: "\(store.core.isLive)-\(store.core.settings?.generation ?? 0)-\(store.core.lights?.autoDim?.factor ?? -1)") {
+            await load(clear: false)
+        }
+    }
+
+    private func load(clear: Bool) async {
+        guard store.core.isLive else { learning = nil; return }
+        learning = try? await store.core.request("auto_dim_learning", args: clear ? ["clear": .bool(true)] : [:],
+                                                 as: AutoDimLearning.self)
+    }
+
+    private func apply() {
+        guard let suggested = learning?.suggested else { return }
+        // One write for the three marks: the loader drops a ceiling that
+        // is not above the floor, which two separate writes could pass
+        // through on the way.
+        store.set("auto_dim.ambient", .object([
+            "min_fraction": .number(suggested.minFraction),
+            "lux_floor": .number(suggested.luxFloor),
+            "lux_ceiling": .number(suggested.luxCeiling),
+        ]))
+        store.core.setBrightness(value: suggested.brightness)
     }
 }
 
@@ -245,9 +739,21 @@ struct AutoDimReadoutRow: View {
             .contentTransition(.numericText())
             .animation(.easeInOut(duration: 0.2), value: line)
         } label: {
-            SettingLabel(title: "Right now")
+            SettingLabel(title: "Right now", subtitle: AutoDimReadoutRow.smoothingNote(result))
         }
         .accessibilityLabel("Auto-dim right now: \(line)")
+    }
+
+    /// The raw sensor beside the smoothed reading, when a passing shadow
+    /// or a lamp just switched on has them apart: the lights follow the
+    /// smoothed one, brightening quickly and dimming slowly.
+    static func smoothingNote(_ result: CoreAutoDim?) -> String? {
+        guard let result, result.source == "ambient", let raw = result.raw, let reading = result.reading,
+              raw.isFinite, reading.isFinite else { return nil }
+        let apart = abs(raw - reading) >= max(1, 0.1 * max(raw, reading))
+        guard apart else { return nil }
+        let direction = raw < reading ? "dimming slowly, in case it is a passing shadow" : "brightening quickly"
+        return "The sensor reads \(AutoDimLearning.lux(raw)) this second; the lights follow the smoothed \(AutoDimLearning.lux(reading)), \(direction)."
     }
 
     private var symbol: String {
@@ -400,6 +906,8 @@ struct NotificationsPage: View {
                           path: "completion_sweep_enabled", default: true)
         }
 
+        CalendarGlowSection(store: store)
+
         SettingGroup("Escalation") {
             SettingPicker(store, "Loudest stage", subtitle: "How far an ignored ask may escalate.", path: "escalation_tier", options: [
                 ("light", "Light only"), ("menu_bar", "Menu bar"), ("chime", "Chime"), ("takeover", "Take over"),
@@ -409,6 +917,13 @@ struct NotificationsPage: View {
             SettingNumberField(store, "Final stage after", path: "escalation_final_seconds", in: 5...14400, default: 300, unit: "s")
             SettingStepper(store, "Alert burst", subtitle: "Repetitions a courtesy signal gets before it settles; critical signals ignore this.",
                            path: "alert_burst", in: 1...10, default: 3, unit: "×")
+            Provided(store, "escalation_tier_by_provider") {
+                DisclosureRow("Per provider", subtitle: "Hold one agent's asks lower than the stage above — Claude's may chime while another's never pass the light.") {
+                    ForEach(escalationProviders, id: \.self) { provider in
+                        EscalationCeilingRow(store: store, provider: provider)
+                    }
+                }
+            }
         }
 
         SettingGroup("Quiet hours") {
@@ -433,9 +948,11 @@ struct NotificationsPage: View {
             SettingToggle(store, "React to Focus modes", subtitle: "Reads the active Focus; needs Full Disk Access for this app.", path: "focus_sync_enabled")
             SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
                 .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
-            ForEach(Self.knownFocuses, id: \.id) { focus in
-                FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
-                    .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
+            FocusRoster(store: store) { focuses in
+                ForEach(focuses, id: \.id) { focus in
+                    FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
+                        .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
+                }
             }
         }
 
@@ -453,8 +970,28 @@ struct NotificationsPage: View {
                           path: "battery_monitoring.low_battery_alert_enabled", default: true)
             SettingSlider(store, "Below", path: "battery_monitoring.low_battery_threshold_percent", in: 1...50, step: 1, default: 5) { "\(Int($0)) %" }
                 .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
+            SettingSlider(store, "Or with less left than",
+                          subtitle: "Time left, not charge: a fast drain at 20 % can be nearer empty than a slow one at 8 %. Twice as early while agents run under a keep-awake hold; never on macOS's first guess, never plugged in.",
+                          path: "battery_monitoring.low_battery_threshold_minutes", in: 0...120, step: 5, default: 0) { minutes in
+                minutes < 1 ? "Off" : "\(Int(minutes)) min"
+            }
+            .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
+            SettingToggle(store, "Charging fill when idle", subtitle: "While plugged in and nothing is running, the strip fills to the charge level instead of the idle whisper. Agents always break through.",
+                          path: "battery_monitoring.charging_idle_enabled", default: true)
+            SettingToggle(store, "Show power changes", subtitle: "Plugging in or unplugging shows the charge on the lights for a few seconds.",
+                          path: "battery_monitoring.show_on_power_change", default: true)
         }
         .task { store.refreshNotificationPermission() }
+    }
+
+    /// The providers worth a ceiling row: the ones this Mac runs (a live
+    /// session or an installed hook) and any that already has one.
+    private var escalationProviders: [String] {
+        let running = Set(store.core.sessions.map(\.provider))
+        let ceilings = store.document.object("escalation_tier_by_provider") ?? [:]
+        return SettingsKey.providers.filter {
+            running.contains($0) || ceilings[$0] != nil || (store.hookStatus($0).map { $0 != "missing" } ?? false)
+        }
     }
 
     private var closedLidNote: String {
@@ -467,12 +1004,171 @@ struct NotificationsPage: View {
     }
 }
 
+/// The Focuses a rule can name: the four every Mac has, then the ones
+/// this Mac has configured (`list_focuses`), so a custom "Deep Work"
+/// Focus can take a dim rule or a calibration profile too. A monitor
+/// without the command, or without the grant it needs to read the roster,
+/// leaves the four.
+struct FocusRoster<Content: View>: View {
+    @Bindable var store: SettingsStore
+    @ViewBuilder let content: ([(id: String, name: String)]) -> Content
+    @ViewState private var reported: [(id: String, name: String)] = []
+
+    struct Reply: Decodable {
+        struct Focus: Decodable { let id: String; let name: String? }
+        let available: Bool?
+        let focuses: [Focus]?
+    }
+
+    var body: some View {
+        content(Self.merge(known: NotificationsPage.knownFocuses, reported: reported))
+            .task(id: store.core.isLive) {
+                guard store.core.isLive,
+                      let reply = try? await store.core.request("list_focuses", as: Reply.self),
+                      reply.available != false else { reported = []; return }
+                reported = (reply.focuses ?? []).map { ($0.id, $0.name ?? $0.id) }
+            }
+    }
+
+    /// The built-in four first, in their order, then the rest by name; a
+    /// reported Focus the four already cover is not listed twice, and one
+    /// with an empty id is dropped.
+    static func merge(known: [(id: String, name: String)], reported: [(id: String, name: String)]) -> [(id: String, name: String)] {
+        let knownIDs = Set(known.map(\.id))
+        var seen = knownIDs
+        var extra: [(id: String, name: String)] = []
+        for focus in reported where !focus.id.isEmpty && !seen.contains(focus.id) {
+            seen.insert(focus.id)
+            extra.append(focus)
+        }
+        return known + extra.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+
+/// One provider's escalation ceiling (`escalation_tier_by_provider`):
+/// "Same as above" or a lower stage. The object is written whole, like
+/// the Focus rules, so clearing a row removes its entry.
+struct EscalationCeilingRow: View {
+    @Bindable var store: SettingsStore
+    let provider: String
+
+    static let stages: [(value: String, label: String)] = [
+        ("light", "Light only"), ("menu_bar", "Menu bar"), ("chime", "Chime"), ("takeover", "Take over"),
+    ]
+
+    var body: some View {
+        let ceilings = store.document.object("escalation_tier_by_provider")
+        let current = ceilings?[provider]?.stringValue ?? ""
+        Picker(selection: Binding(
+            get: { current },
+            set: { value in
+                store.set("escalation_tier_by_provider",
+                          LightProfiles.rules(ceilings, setting: provider, to: value.isEmpty ? nil : .string(value)))
+            }
+        )) {
+            Text("Same as above").tag("")
+            Divider()
+            ForEach(Self.stages, id: \.value) { Text($0.label).tag($0.value) }
+        } label: {
+            SettingLabel(title: ProviderStyle.style(for: provider).name, subtitle: note(current))
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+        .settingRowStyle()
+    }
+
+    /// A ceiling at or above the global stage changes nothing; say so.
+    private func note(_ current: String) -> String? {
+        guard !current.isEmpty else { return nil }
+        let global = store.document.string("escalation_tier") ?? "menu_bar"
+        return EventPolicy.escalationCeiling(current) >= EventPolicy.escalationCeiling(global)
+            ? "No lower than the stage above, so it changes nothing." : nil
+    }
+}
+
+/// Settings › Notifications › Calendar & reminders: the daemon's two
+/// EventKit glows — a calm purple breathe before a timed event, and an
+/// amber glow when a Reminder comes due. Both read in the monitor; macOS
+/// asks for access the first time one is on, and a refused grant says
+/// so here instead of glowing never.
+struct CalendarGlowSection: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Calendar & reminders", note: "Read on this Mac only; the glow carries no title, just the moment. Why this light names the event while it plays.") {
+            SettingToggle(store, "Glow before events", subtitle: "A calm purple breathe before a timed event starts.",
+                          path: "calendar_alerts_enabled")
+            SettingSlider(store, "Lead time", subtitle: "How long before the start the glow begins.",
+                          path: "calendar_lead_minutes", in: 1...60, step: 1, default: 5, format: SettingsStore.minutes)
+                .disabled(!(store.document.bool("calendar_alerts_enabled") ?? false))
+            if store.document.bool("calendar_alerts_enabled") ?? false {
+                EventKitAccessNote(entity: .event)
+            }
+            SettingToggle(store, "Glow for due reminders", subtitle: "An amber glow when a Reminder with a time comes due.",
+                          path: "reminder_alerts_enabled")
+            if store.document.bool("reminder_alerts_enabled") ?? false {
+                EventKitAccessNote(entity: .reminder)
+            }
+        }
+    }
+}
+
+/// A warning under an EventKit glow when macOS has refused the grant —
+/// the glow would otherwise just never come. Nothing here asks: the
+/// first prompt belongs to the monitor turning the glow on, and a
+/// refusal only deep-links to the pane that can undo it.
+struct EventKitAccessNote: View {
+    let entity: EKEntityType
+
+    private var status: EKAuthorizationStatus { EKEventStore.authorizationStatus(for: entity) }
+
+    var body: some View {
+        if Self.isRefused(status) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(entity == .event
+                     ? "macOS has Calendar access turned off for JR-Bar — the glow cannot see your events until it is allowed."
+                     : "macOS has Reminders access turned off for JR-Bar — the glow cannot see your reminders until it is allowed.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Open Settings") {
+                    let pane = entity == .event ? "Privacy_Calendars" : "Privacy_Reminders"
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Denied and restricted are refusals; write-only calendar access is
+    /// one too, since a glow needs to read the event's start.
+    static func isRefused(_ status: EKAuthorizationStatus) -> Bool {
+        switch status {
+        case .denied, .restricted, .writeOnly: return true
+        default: return false
+        }
+    }
+}
+
 struct FocusRuleRow: View {
     @Bindable var store: SettingsStore
     let focusID: String
     let name: String
 
-    private var rule: Double? { store.document.double(SettingsPath("focus_dim_rules.\(focusID)")) }
+    /// The rule for this Focus, read out of the rules object: the id is
+    /// dotted, so it is a key, never a path.
+    private var rule: Double? { store.document.object("focus_dim_rules")?[focusID]?.doubleValue }
+
+    /// Writes the rules object whole with this Focus's entry set or
+    /// removed. `focus_dim_rules.<id>` would split the dotted id into
+    /// nested objects, which the daemon's loader drops — the rule never
+    /// stuck.
+    private func write(_ value: Double?, throttled: Bool = false) {
+        let rules = LightProfiles.rules(store.document.object("focus_dim_rules"), setting: focusID,
+                                        to: value.map(JSONValue.number))
+        store.set("focus_dim_rules", rules, throttled: throttled)
+    }
 
     var body: some View {
         Provided(store, "focus_dim_rules") {
@@ -485,10 +1181,10 @@ struct FocusRuleRow: View {
             HStack(spacing: 10) {
                 Toggle("Rule", isOn: Binding(
                     get: { rule != nil },
-                    set: { on in store.set("focus_dim_rules.\(focusID)", on ? .number(0.3) : .null) }
+                    set: { on in write(on ? 0.3 : nil) }
                 ))
                 .toggleStyle(.checkbox)
-                Slider(value: Binding(get: { rule ?? 0.3 }, set: { store.set("focus_dim_rules.\(focusID)", .number($0), throttled: true) }), in: 0...1)
+                Slider(value: Binding(get: { rule ?? 0.3 }, set: { write($0, throttled: true) }), in: 0...1)
                     .frame(width: 130)
                     .disabled(rule == nil)
                 ValueText(text: rule.map(SettingsStore.percent) ?? "idle dim")

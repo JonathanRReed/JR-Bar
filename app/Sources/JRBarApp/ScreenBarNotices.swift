@@ -25,6 +25,78 @@ enum ScreenBarNotices {
                                  tone: .attention)
     }
 
+    /// A refused program → a right-wing slot: an alert-toned warning mark
+    /// for a beat, the reason in VoiceOver. The band keeps the last safe
+    /// program, so the mark is the only sign anything was turned away.
+    static func refused(_ reason: String?) -> ScreenBarWingSlot? {
+        guard let reason, !reason.isEmpty else { return nil }
+        return ScreenBarWingSlot(text: "Program refused, holding the last safe one · \(reason)",
+                                 symbol: "exclamationmark.triangle.fill", tone: .alert)
+    }
+
+    /// How long a newly live monitor's device lists keep moving the
+    /// baseline without speaking. The daemon publishes its first state
+    /// before its device scan lands — the scan runs on a worker, and a
+    /// sleeping card reader can hold its /Volumes stat for seconds — so
+    /// a strip plugged in all along would otherwise "connect" on every
+    /// monitor start.
+    static let hardwareSettle: TimeInterval = 10
+
+    /// Whether a device list read at `now` still belongs to the baseline
+    /// of a monitor that went live at `liveSince` (nil: not live yet).
+    static func hardwareSettling(liveSince: Date?, now: Date) -> Bool {
+        guard let liveSince else { return true }
+        return now.timeIntervalSince(liveSince) < hardwareSettle
+    }
+
+    /// A strip or Dot arriving or leaving → a right-wing slot: the
+    /// device's own glyph, filled as it arrives, hollow and amber as it
+    /// goes. An unplugged Pro used to just go dark with no word why.
+    ///
+    /// `old` nil is the baseline — a launch, or the monitor coming back —
+    /// so nothing moved and nothing speaks. Only the strip and the Dot
+    /// count: the Screen Bar's own row is not hardware. A row that
+    /// vanishes from the list while present is a device leaving. The
+    /// same device again inside the cooldown (the MacBook's SD reader
+    /// powering the Pro off and on) is strobe, not news. The first flip
+    /// wins the beat, the strip before the Dot.
+    static func hardware(from old: [CoreDevice]?, to new: [CoreDevice],
+                         recent: [String: Date], now: Date) -> (slot: ScreenBarWingSlot?, recent: [String: Date]) {
+        var recent = recent.filter { now.timeIntervalSince($0.value) < cooldown }
+        guard let old else { return (nil, recent) }
+        func isHardware(_ device: CoreDevice) -> Bool { device.kind == "pro" || device.kind == "dot" }
+        func order(_ device: CoreDevice) -> (Int, String) { (device.kind == "pro" ? 0 : 1, device.id) }
+        let before = Dictionary(old.filter(isHardware).map { ($0.id, $0.isPresent) }, uniquingKeysWith: { first, _ in first })
+        let current = Set(new.map(\.id))
+        var flips: [(device: CoreDevice, present: Bool)] = []
+        for device in new.filter(isHardware) where (before[device.id] ?? false) != device.isPresent {
+            flips.append((device, device.isPresent))
+        }
+        for device in old.filter(isHardware) where device.isPresent && !current.contains(device.id) {
+            flips.append((device, false))
+        }
+        flips.sort { order($0.device) < order($1.device) }
+        for flip in flips {
+            let key = "device:\(flip.device.id)"
+            if let seen = recent[key], now.timeIntervalSince(seen) < cooldown { continue }
+            recent[key] = now
+            return (hardwareSlot(flip.device, present: flip.present), recent)
+        }
+        return (nil, recent)
+    }
+
+    /// The mark for one device's arrival or departure — the glyph the
+    /// Devices page draws beside its name.
+    static func hardwareSlot(_ device: CoreDevice, present: Bool) -> ScreenBarWingSlot {
+        let dot = device.kind == "dot"
+        let name = device.name.flatMap { $0.isEmpty ? nil : $0 } ?? (dot ? "SidePulse Dot" : "SidePulse Pro")
+        let glyph = dot ? "circle.grid.2x1" : "light.beacon.max"
+        return present
+            ? ScreenBarWingSlot(text: "\(name) connected", symbol: glyph + ".fill", tone: .neutral)
+            : ScreenBarWingSlot(text: "\(name) unplugged — its light is dark until it is back",
+                                symbol: glyph, tone: .attention)
+    }
+
     /// An output-route change → a right-wing slot ("AirPods Pro"), or
     /// nil when the reroute repeated inside the cooldown — a Bluetooth
     /// flap is strobe, not a new connection. `now` is the caller's clock

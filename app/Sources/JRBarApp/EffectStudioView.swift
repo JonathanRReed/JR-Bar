@@ -2,12 +2,91 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
-/// The Effect Studio: library (left), the selected effect with its live
-/// preview and parameters (centre), and the assignments (right).
+/// The Effect Studio's three rooms. Effects: library (left), the selected
+/// effect with its live preview and parameters (centre), and the
+/// assignments (right). Program: the hand-written LEDS.LED editor.
+/// Moments: the ambient cues the lights play, by name.
 struct EffectStudioView: View {
     @Bindable var store: EffectStudioStore
 
     var body: some View {
+        Group {
+            switch store.mode {
+            case .effects: effectsRoom
+            case .program: LEDSStudioView(store: store, model: store.ledsStudio)
+            case .moments: LightMomentsView(store: store)
+            }
+        }
+        .frame(minWidth: 900, minHeight: 540)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Room", selection: $store.mode) {
+                    ForEach(EffectStudioStore.Mode.allCases) { mode in
+                        Label(mode.label, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help("Effects to assign, a hand-written program, or the moments the lights play")
+            }
+        }
+        .toolbar {
+            if store.mode == .effects { effectsToolbar }
+        }
+        .overlay(alignment: .bottom) {
+            if let text = store.lastError ?? store.status {
+                Label(text, systemImage: store.lastError == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(store.lastError == nil ? Color.primary : Color.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.bottom, 12)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: (store.lastError ?? store.status) == nil)
+        .sheet(isPresented: $store.assigning) {
+            AssignSheet(store: store)
+        }
+        .alert("Preview on hardware?", isPresented: $store.askingConsent) {
+            Button("Preview") { store.grantConsent(and: store.selected) }
+            Button("Cancel", role: .cancel) {
+                store.askingConsent = false
+                store.pendingHardwarePlay = nil
+            }
+        } message: {
+            Text("The monitor will play this on the connected SidePulse hardware for a few seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
+        }
+        .alert("Save as Effect", isPresented: Binding(
+            get: { store.savingEffect != nil },
+            set: { if !$0 { store.savingEffect = nil } }
+        )) {
+            TextField("Name", text: $store.saveName)
+            Button("Save") {
+                if let effect = store.savingEffect { store.saveAsEffect(effect, name: store.saveName) }
+                store.savingEffect = nil
+            }
+            .disabled(store.saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { store.savingEffect = nil }
+        } message: {
+            Text("Keeps \(store.savingEffect?.label ?? "this effect") with the parameters you set as a new effect in Yours. Assign it like any other; the original stays as it was.")
+        }
+        .alert("Pack already installed", isPresented: Binding(
+            get: { store.packConflict != nil },
+            set: { if !$0 { store.packConflict = nil } }
+        )) {
+            Button("Update pack") { store.updatePack() }
+            Button("Keep installed copy", role: .cancel) { store.packConflict = nil }
+        } message: {
+            Text("A pack with this id is already installed. Update replaces the installed copy with \(store.packConflict?.name ?? "the file").")
+        }
+    }
+
+    /// The effect library room: library, inspector, assignments.
+    @ViewBuilder
+    private var effectsRoom: some View {
         Group {
             if !store.isLive {
                 UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
@@ -30,74 +109,44 @@ struct EffectStudioView: View {
                 }
             }
         }
-        .frame(minWidth: 900, minHeight: 540)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button { store.importPack() } label: { Label("Import…", systemImage: "square.and.arrow.down") }
-                    .help("Import a data-only effect pack (JSON v2); the monitor validates it")
-                    .disabled(!store.isLive)
-            }
-            ToolbarItem(placement: .automatic) {
-                Menu {
-                    if let effect = store.selected {
-                        Button("Export “\(effect.label)”…") { store.exportPack(ids: [effect.id], suggestedName: effect.label) }
-                        if let pack = effect.pack, let entry = store.catalog?.pack(pack) {
-                            Button("Export pack “\(entry.name)” (\(entry.effectIDs.count))…") { store.exportPack(ids: entry.effectIDs, suggestedName: entry.name) }
-                            Divider()
-                            Button("Remove pack “\(entry.name)”…") { store.removePack(entry) }
-                        }
-                        Divider()
-                    }
-                    Button("Export every provider animation…") {
-                        let ids = store.catalog?.effects.filter { $0.catalog == "provider_animation" }.map(\.id) ?? []
-                        store.exportPack(ids: ids, suggestedName: "Provider animations")
-                    }
-                } label: {
-                    Label("Export…", systemImage: "square.and.arrow.up")
-                }
-                .help("Write a data-only pack with the current parameters as defaults")
+    }
+
+    /// Import, export and refresh belong to the effect library alone.
+    @ToolbarContentBuilder
+    private var effectsToolbar: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            Button { store.importPack() } label: { Label("Import…", systemImage: "square.and.arrow.down") }
+                .help("Import a data-only effect pack (JSON v2); the monitor validates it")
                 .disabled(!store.isLive)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { store.reload() } label: {
-                    if store.loading { ProgressView().controlSize(.small) } else { Label("Refresh", systemImage: "arrow.clockwise") }
+        }
+        ToolbarItem(placement: .automatic) {
+            Menu {
+                if let effect = store.selected {
+                    Button("Export “\(effect.label)”…") { store.exportPack(ids: [effect.id], suggestedName: effect.label) }
+                    if let pack = effect.pack, let entry = store.catalog?.pack(pack) {
+                        Button("Export pack “\(entry.name)” (\(entry.effectIDs.count))…") { store.exportPack(ids: entry.effectIDs, suggestedName: entry.name) }
+                        Divider()
+                        Button("Remove pack “\(entry.name)”…") { store.removePack(entry) }
+                    }
+                    Divider()
                 }
-                .help("Re-read the registry and assignments (⌘R)")
-                .keyboardShortcut("r", modifiers: .command)
-                .disabled(!store.isLive || store.loading)
+                Button("Export every provider animation…") {
+                    let ids = store.catalog?.effects.filter { $0.catalog == "provider_animation" }.map(\.id) ?? []
+                    store.exportPack(ids: ids, suggestedName: "Provider animations")
+                }
+            } label: {
+                Label("Export…", systemImage: "square.and.arrow.up")
             }
+            .help("Write a data-only pack with the current parameters as defaults")
+            .disabled(!store.isLive)
         }
-        .overlay(alignment: .bottom) {
-            if let text = store.lastError ?? store.status {
-                Label(text, systemImage: store.lastError == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(store.lastError == nil ? Color.primary : Color.red)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 12)
-                    .transition(.opacity)
+        ToolbarItem(placement: .primaryAction) {
+            Button { store.reload() } label: {
+                if store.loading { ProgressView().controlSize(.small) } else { Label("Refresh", systemImage: "arrow.clockwise") }
             }
-        }
-        .animation(.easeInOut(duration: 0.15), value: (store.lastError ?? store.status) == nil)
-        .sheet(isPresented: $store.assigning) {
-            AssignSheet(store: store)
-        }
-        .alert("Preview on hardware?", isPresented: $store.askingConsent) {
-            Button("Preview for 5 seconds") { store.grantConsent(and: store.selected) }
-            Button("Cancel", role: .cancel) { store.askingConsent = false }
-        } message: {
-            Text("The monitor will play this effect on the connected SidePulse hardware for five seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
-        }
-        .alert("Pack already installed", isPresented: Binding(
-            get: { store.packConflict != nil },
-            set: { if !$0 { store.packConflict = nil } }
-        )) {
-            Button("Update pack") { store.updatePack() }
-            Button("Keep installed copy", role: .cancel) { store.packConflict = nil }
-        } message: {
-            Text("A pack with this id is already installed. Update replaces the installed copy with \(store.packConflict?.name ?? "the file").")
+            .help("Re-read the registry and assignments (⌘R)")
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!store.isLive || store.loading)
         }
     }
 }
@@ -250,6 +299,17 @@ struct EffectLibraryRow: View {
             }
             .disabled(!store.hasHardware)
             Divider()
+            if EffectStudioYours.canSave(effect), !effect.parameters.isEmpty {
+                Button("Save as Effect…") {
+                    store.selectedID = effect.id
+                    store.beginSaving(effect)
+                }
+                .disabled(store.yoursBusy)
+            }
+            if EffectStudioYours.isYours(effect) {
+                Button("Delete from Yours") { store.deleteFromYours(effect) }
+                    .disabled(store.yoursBusy)
+            }
             Button("Export “\(effect.label)”…") { store.exportPack(ids: [effect.id], suggestedName: effect.label) }
             if let pack = effect.pack, let entry = store.catalog?.pack(pack) {
                 Button("Export pack “\(entry.name)”…") { store.exportPack(ids: entry.effectIDs, suggestedName: entry.name) }
@@ -353,13 +413,14 @@ struct EffectInspectorPane: View {
                     store.previewOnHardware(effect)
                 } label: {
                     if store.hardwarePreviewActive {
-                        Label("On \(store.previewSurface?.name ?? "hardware") · \(store.hardwarePreviewRemaining) s", systemImage: "light.beacon.max.fill")
+                        Label("On \(store.playSurface.name) · \(store.hardwarePreviewRemaining) s", systemImage: "light.beacon.max.fill")
                     } else {
-                        Label(store.previewSurface.map { "Preview on \($0.name)" } ?? "Preview on hardware", systemImage: "light.beacon.max")
+                        Label("Preview on \(store.playSurface.name)", systemImage: store.hasHardware ? "light.beacon.max" : "rectangle.topthird.inset.filled")
                     }
                 }
-                .disabled(store.hardwarePreviewActive || store.hardwarePreviewInFlight || !store.isLive || !store.hasHardware)
-                .help(store.previewSurface.map { "Play this effect on \($0.name) (\($0.ledCount) LEDs) for 5 seconds, then revert" } ?? "No strip or Dot is connected, so there is nothing to play it on")
+                .disabled(store.hardwarePreviewActive || store.hardwarePreviewInFlight || !store.isLive)
+                .help(store.previewSurface.map { "Play this effect on \($0.name) (\($0.ledCount) LEDs) for 5 seconds, then revert" }
+                      ?? "No strip or Dot is connected — play it on the Screen Bar for 5 seconds, then revert")
                 Button {
                     store.beginAssigning(effect)
                 } label: {
@@ -429,6 +490,12 @@ struct EffectInspectorPane: View {
             Spacer()
             if store.hasEdits(effect) {
                 Button("Reset to defaults") { store.resetParameters(effect) }.controlSize(.small)
+            }
+            if EffectStudioYours.canSave(effect), !effect.parameters.isEmpty {
+                Button("Save as Effect…") { store.beginSaving(effect) }
+                    .controlSize(.small)
+                    .disabled(store.yoursBusy)
+                    .help("Keep these parameters as a new effect of your own, in Yours")
             }
         }
         if effect.parameters.isEmpty {
@@ -709,6 +776,12 @@ struct EffectAssignmentsPane: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                Divider()
+            }
+            if store.assignments != nil {
+                EffectSituationPanel(store: store)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 Divider()
             }
             if let document = store.assignments, !document.assignments.isEmpty {

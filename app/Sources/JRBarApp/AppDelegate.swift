@@ -346,6 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // never the daemon doc — a dead core must not un-bare the
         // island over the bar's ears.
         toysStore.notch.screenBarShown = { [weak store] in store?.screenBarShown ?? false }
+        observeSensorDots()
         // Wing gestures: an outward flick dismisses a side, a horizontal
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
@@ -596,6 +597,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source, anchor in
             guard let self else { return }
+            // A strip giving way to the idle breath fades rather than cuts.
+            if case .device = self.lastFileProgram?.source, source == .builtInIdle {
+                self.screenBar?.crossfadeNextProgram()
+            }
             self.lastFileProgram = (text, source, anchor)
             self.store?.feedDescription = source.description
             if self.core?.isLive != true { self.applyFileProgram() }
@@ -1153,9 +1158,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    /// The island's mic/camera reading, carried onto the ears: with the
+    /// ears drawn the island rests bare, so the dots it would show ride
+    /// the right ear instead. Re-armed after every change, like
+    /// `observeCore`; the island's own switch and poll lifetime decide
+    /// what the reading is — and whether there is one, which the Screen
+    /// Bar card's camera hold row reads.
+    private func observeSensorDots() {
+        guard let notch = toysStore?.notch else { return }
+        screenBar?.sensors = notch.sensorState
+        let readable = ScreenBarCameraHold.readable(islandVisible: notch.islandVisible,
+                                                    indicatorsOn: notch.sensorIndicatorsEnabled)
+        let status = ScreenBarLiveStatus.shared
+        if status.cameraReadable != readable { status.cameraReadable = readable }
+        withObservationTracking {
+            _ = notch.sensorState
+            _ = notch.islandVisible
+            _ = notch.sensorIndicatorsEnabled
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observeSensorDots() }
+        }
+    }
+
     private func coreDidChange() {
         screenBar?.updateAccessibility()
         screenBar?.wings = store?.screenBarWings ?? .empty
+        screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
+        screenBar?.hardware = core?.isLive == true ? core?.devices : nil
+        screenBar?.nowPlaying = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:
@@ -1446,6 +1476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // on every LEDS.LED write, so the bar phase-locks to that, not
         // to whenever this read landed.
         screenBar.apply(programText: last.text, anchorEpoch: last.anchor)
+        ScreenBarLiveStatus.shared.noteOfflineFeed(last.source)
         let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
         if description != lastLightsSource {
             lastLightsSource = description

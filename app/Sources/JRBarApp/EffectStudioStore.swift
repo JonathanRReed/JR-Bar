@@ -101,6 +101,7 @@ final class EffectStudioStore {
         // alert or a stale toast must not greet the next open.
         assigning = false
         askingConsent = false
+        pendingHardwarePlay = nil
         packConflict = nil
         scenePreview = nil
         status = nil
@@ -392,6 +393,18 @@ final class EffectStudioStore {
 
     var hasHardware: Bool { previewSurface != nil }
 
+    /// Where a preview plays: the connected strip or Dot, else the Screen
+    /// Bar — always on screen, so an effect can be auditioned with no
+    /// hardware at all (`preview_program` takes the `screen_bar` surface).
+    var playSurface: (surface: String, ledCount: Int, name: String) {
+        previewSurface ?? ("screen_bar", ScreenBarGeometry.ledCount, "Screen Bar")
+    }
+
+    /// Whether a preview on `surface` needs the one-time hardware consent:
+    /// a strip or a Dot lights the desk; the Screen Bar is the screen's
+    /// own light and needs none.
+    static func needsConsent(surface: String) -> Bool { surface != "screen_bar" }
+
     /// A `preview_program` request on the wire; the button stays enabled
     /// until the daemon answers without this, so a fast double-tap would
     /// queue two previews on the hardware.
@@ -406,12 +419,9 @@ final class EffectStudioStore {
     }
 
     func previewOnHardware(_ effect: EffectDefinition) {
-        guard hardwareConsent else { askingConsent = true; return }
+        let target = playSurface
+        guard hardwareConsent || !Self.needsConsent(surface: target.surface) else { askingConsent = true; return }
         guard !hardwarePreviewInFlight else { return }
-        guard let target = previewSurface else {
-            fail("Nothing to play on: no strip or Dot is connected")
-            return
-        }
         let program = previewProgram(for: effect)
         hardwarePreviewInFlight = true
         Task { [weak self] in
@@ -435,8 +445,60 @@ final class EffectStudioStore {
     func grantConsent(and effect: EffectDefinition?) {
         hardwareConsent = true
         askingConsent = false
-        if let effect { previewOnHardware(effect) }
+        // A LEDS Studio play waiting on the consent goes first: it is what
+        // the person pressed.
+        if let pending = pendingHardwarePlay {
+            pendingHardwarePlay = nil
+            pending()
+        } else if let effect {
+            previewOnHardware(effect)
+        }
     }
+
+    /// A LEDS Studio play parked behind the consent alert.
+    @ObservationIgnored var pendingHardwarePlay: (@MainActor () -> Void)?
+
+    // MARK: Studio modes
+
+    /// The window's three rooms: the effect library, the hand-written
+    /// LEDS program, and the ambient moments the lights can play.
+    enum Mode: String, CaseIterable, Identifiable {
+        case effects, program, moments
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .effects: return "Effects"
+            case .program: return "Program"
+            case .moments: return "Moments"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .effects: return "sparkles.rectangle.stack"
+            case .program: return "chevron.left.forwardslash.chevron.right"
+            case .moments: return "sparkle"
+            }
+        }
+    }
+
+    /// The room on screen — remembered per Mac, a viewer convenience.
+    var mode: Mode = Mode(rawValue: UserDefaults.standard.string(forKey: "effectStudioMode") ?? "") ?? .effects {
+        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "effectStudioMode") }
+    }
+
+    /// The hand-written program's editor state.
+    @ObservationIgnored private(set) lazy var ledsStudio: LEDSStudioModel = {
+        let model = LEDSStudioModel(core: core)
+        model.onStatus = { [weak self] text in self?.show(status: text) }
+        model.onError = { [weak self] text in self?.fail(text) }
+        model.requestHardwareConsent = { [weak self] play in
+            guard let self else { return }
+            if self.hardwareConsent { play(); return }
+            self.pendingHardwarePlay = play
+            self.askingConsent = true
+        }
+        return model
+    }()
 
     // MARK: Assignments
 
@@ -859,9 +921,100 @@ final class EffectStudioStore {
         }
     }
 
+    // MARK: Yours
+
+    /// The effect "Save as Effect…" is naming, and the name so far —
+    /// the alert's state.
+    var savingEffect: EffectDefinition?
+    var saveName = ""
+    /// A save or delete in flight; the buttons wait for it.
+    private(set) var yoursBusy = false
+
+    func beginSaving(_ effect: EffectDefinition) {
+        saveName = effect.label
+        savingEffect = effect
+    }
+
+    /// Keeps `effect` with its tuned parameters as a new effect in Yours:
+    /// Yours and the source are exported by the monitor, the source's row
+    /// is copied under the new name with these values, and the pack goes
+    /// back in (`update` when Yours already exists). Two exports, not one,
+    /// so a source whose row id Yours already uses cannot collide.
+    func saveAsEffect(_ effect: EffectDefinition, name: String) {
+        let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, !yoursBusy else { return }
+        let values = values(for: effect)
+        let yours = catalog?.pack(EffectStudioYours.packID)
+        yoursBusy = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.yoursBusy = false }
+            let scratch = FileManager.default.temporaryDirectory
+            let yoursURL = scratch.appendingPathComponent("jrbar-yours-\(UUID().uuidString).json")
+            let sourceURL = scratch.appendingPathComponent("jrbar-source-\(UUID().uuidString).json")
+            defer {
+                try? FileManager.default.removeItem(at: yoursURL)
+                try? FileManager.default.removeItem(at: sourceURL)
+            }
+            do {
+                var installed: JSONValue?
+                if let yours, !yours.effectIDs.isEmpty {
+                    try await self.core.exportEffectPack(ids: yours.effectIDs, path: yoursURL.path, name: EffectStudioYours.packName)
+                    installed = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: yoursURL))
+                }
+                try await self.core.exportEffectPack(ids: [effect.id], path: sourceURL.path, name: EffectStudioYours.packName)
+                let source = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: sourceURL))
+                let newID = EffectStudioYours.slug(label, taken: Set(EffectStudioYours.rowIDs(installed)))
+                let pack = try EffectStudioYours.pack(yours: installed, source: source, sourceLabel: effect.label,
+                                                      newID: newID, label: label, values: values)
+                let text = EffectStudioYours.text(pack) { [catalog = self.catalog] row in
+                    row == newID ? EffectStudioYours.floatKeys(of: effect)
+                        : EffectStudioYours.floatKeys(of: catalog?.effect(EffectStudioYours.effectID(local: row)))
+                }
+                try Data(text.utf8).write(to: yoursURL)
+                self.catalog = try await self.core.importEffectPack(path: yoursURL.path, update: installed != nil)
+                self.catalogDidChange()
+                self.selectedID = EffectStudioYours.effectID(local: newID)
+                self.show(status: "Saved “\(label)” to Yours")
+            } catch {
+                self.fail("Save refused: \(Self.describe(error))")
+            }
+        }
+    }
+
+    /// Takes one effect out of Yours; the last one removes the pack.
+    func deleteFromYours(_ effect: EffectDefinition) {
+        guard EffectStudioYours.isYours(effect), !yoursBusy,
+              let yours = catalog?.pack(EffectStudioYours.packID) else { return }
+        yoursBusy = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.yoursBusy = false }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-yours-\(UUID().uuidString).json")
+            defer { try? FileManager.default.removeItem(at: url) }
+            do {
+                try await self.core.exportEffectPack(ids: yours.effectIDs, path: url.path, name: EffectStudioYours.packName)
+                let installed = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+                if let rest = EffectStudioYours.pack(yours: installed, removing: EffectStudioYours.localID(effect.id)) {
+                    let text = EffectStudioYours.text(rest) { [catalog = self.catalog] row in
+                        EffectStudioYours.floatKeys(of: catalog?.effect(EffectStudioYours.effectID(local: row)))
+                    }
+                    try Data(text.utf8).write(to: url)
+                    self.catalog = try await self.core.importEffectPack(path: url.path, update: true)
+                } else {
+                    self.catalog = try await self.core.removeEffectPack(packID: EffectStudioYours.packID)
+                }
+                self.catalogDidChange()
+                self.show(status: "Deleted “\(effect.label)” from Yours")
+            } catch {
+                self.fail("Delete refused: \(Self.describe(error))")
+            }
+        }
+    }
+
     // MARK: Messages
 
-    private func show(status text: String) {
+    func show(status text: String) {
         status = text
         lastError = nil
         statusClear?.cancel()
@@ -870,7 +1023,7 @@ final class EffectStudioStore {
         DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
     }
 
-    private func fail(_ text: String) {
+    func fail(_ text: String) {
         lastError = text
         status = nil
         statusClear?.cancel()

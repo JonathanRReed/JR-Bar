@@ -112,6 +112,15 @@ struct CalibrationSheet: View {
             HStack {
                 Toggle("Compare with before", isOn: $comparing).toggleStyle(.button)
                 Button("Reset to default") { model.reset() }
+                if !startingPoints.isEmpty {
+                    Menu("Start from") {
+                        ForEach(startingPoints) { point in
+                            Button(point.title) { start(from: point) }
+                        }
+                    }
+                    .fixedSize()
+                    .help("Begin from a look you already have instead of from scratch")
+                }
                 Spacer()
                 Button("Cancel") { endPreview(); dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Apply") {
@@ -160,6 +169,27 @@ struct CalibrationSheet: View {
             Slider(value: value, in: CalibrationModel.gainRange)
             ValueText(text: String(format: "%.2f", value.wrappedValue), width: 48)
         }
+    }
+
+    /// Looks this device can start from: another strip or Dot's white
+    /// balance (the same LEDs behind the same diffuser), and this device's
+    /// own saved Day, Night or Travel profile.
+    private var startingPoints: [CalibrationStartingPoint] {
+        guard !isScreenBar else { return [] }
+        let entries = store.deviceEntries.map { entry in
+            (id: entry.id, name: entry.name, kind: entry.kind,
+             fields: store.document.deviceEntries.first { $0.id == entry.id }?.entry ?? [:])
+        }
+        return CalibrationStartingPoint.options(for: deviceID, devices: entries, document: store.document)
+    }
+
+    private func start(from point: CalibrationStartingPoint) {
+        whiteMatched = false
+        model.red = CalibrationStartingPoint.clampGain(point.red)
+        model.green = CalibrationStartingPoint.clampGain(point.green)
+        model.blue = CalibrationStartingPoint.clampGain(point.blue)
+        if let brightness = point.brightness { model.brightness = min(1, max(0, brightness)) }
+        if let glow = point.glow { model.glow = min(CalibrationModel.glowRange.upperBound, max(CalibrationModel.glowRange.lowerBound, glow)) }
     }
 
     private func nudge(_ nudge: CalibrationModel.Nudge) {
@@ -242,5 +272,56 @@ struct CalibrationSheet: View {
         previewWork?.cancel()
         previewWork = nil
         store.core.endCalibrationPreview(device: deviceID)
+    }
+}
+
+/// Where a calibration can begin besides the die as shipped — Ambilight
+/// offers presets for the wall behind the set; the honest version here is
+/// looks this Mac already has. Another strip's or Dot's white balance is
+/// the same LEDs behind the same diffuser, so its gains are a fair first
+/// guess (not its brightness or glow, which are that device's own). A
+/// saved profile's entry for this very device brings back all of it.
+/// The Screen Bar is a display, not a die: nothing carries across.
+struct CalibrationStartingPoint: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let red: Double
+    let green: Double
+    let blue: Double
+    /// 0…1, when the starting point carries a level.
+    let brightness: Double?
+    let glow: Double?
+
+    static func options(for deviceID: String,
+                        devices: [(id: String, name: String, kind: String, fields: [String: JSONValue])],
+                        document: SettingsDocument) -> [CalibrationStartingPoint] {
+        var options: [CalibrationStartingPoint] = []
+        for device in devices where device.id != deviceID && (device.kind == "pro" || device.kind == "dot") {
+            let red = device.fields["red_gain"]?.doubleValue ?? 1
+            let green = device.fields["green_gain"]?.doubleValue ?? 1
+            let blue = device.fields["blue_gain"]?.doubleValue ?? 1
+            guard red != 1 || green != 1 || blue != 1 else { continue }
+            options.append(CalibrationStartingPoint(
+                id: "device:\(device.id)",
+                title: "\(device.name)'s white balance",
+                red: red, green: green, blue: blue, brightness: nil, glow: nil))
+        }
+        let profiles = document.object("calibration_profiles") ?? [:]
+        for slot in LightProfiles.savedSlots(in: document) {
+            guard let saved = profiles[slot]?[deviceID]?.objectValue else { continue }
+            options.append(CalibrationStartingPoint(
+                id: "profile:\(slot)",
+                title: "The \(slot) profile",
+                red: saved["red_gain"]?.doubleValue ?? 1,
+                green: saved["green_gain"]?.doubleValue ?? 1,
+                blue: saved["blue_gain"]?.doubleValue ?? 1,
+                brightness: saved["brightness"]?.doubleValue.map { $0 / 255 },
+                glow: saved["resting_glow"]?.doubleValue))
+        }
+        return options
+    }
+
+    static func clampGain(_ value: Double) -> Double {
+        min(CalibrationModel.gainRange.upperBound, max(CalibrationModel.gainRange.lowerBound, value))
     }
 }

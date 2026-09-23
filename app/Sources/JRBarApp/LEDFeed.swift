@@ -214,8 +214,9 @@ final class LEDFeed {
                     next = .builtInIdle
                 }
                 self.installWatchers(for: next, pendingVolume: pendingVolume)
+                let previous = self.source
                 self.source = next
-                self.scheduleRead()
+                self.scheduleRead(after: Self.readDelay(from: previous, to: next))
             }
         }
     }
@@ -272,14 +273,28 @@ final class LEDFeed {
         fileWatcher?.start()
     }
 
-    private func scheduleRead() {
+    /// How long a device has to come back before the bar gives up on it:
+    /// the MacBook's SD reader can power the Pro off and on by itself,
+    /// and the bar keeps the strip's last program on its own clock for
+    /// that long instead of dropping to the idle breath and back.
+    nonisolated static let unplugGrace: TimeInterval = 3
+
+    /// When a resolve's read lands: after the unplug grace when a device
+    /// just gave way to the idle breath (a remount inside it re-resolves
+    /// and cancels the read), else the usual burst debounce.
+    nonisolated static func readDelay(from previous: Source, to next: Source) -> TimeInterval {
+        if case .device = previous, next == .builtInIdle { return unplugGrace }
+        return 0.08
+    }
+
+    private func scheduleRead(after delay: TimeInterval = 0.08) {
         pendingRead?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.readAndPublish() }
         }
         pendingRead = work
         // Writers land in bursts (truncate, write, fsync); one read per burst.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func readAndPublish() {

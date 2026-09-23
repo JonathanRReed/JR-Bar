@@ -273,7 +273,8 @@ final class ScreenBarView: NSView {
         // is only the ceiling on the room it may take, never its width.
         // The ear's own bounds are what hit regions answer to, so empty
         // claim space is not a dead-zone magnet.
-        func earRect(_ side: ScreenBarWingSide, hasContent: Bool) -> CGRect? {
+        func earRect(_ side: ScreenBarWingSide, slot: ScreenBarWingSlot?) -> CGRect? {
+            let hasContent = slot != nil
             guard let claim = ScreenBarGeometry.wingSlotRect(side, in: size, geometry: wingGeometry)
             else { return nil }
             // Notch-less: the capsule chip carries itself in the claim.
@@ -285,7 +286,7 @@ final class ScreenBarView: NSView {
             // The right ear carries the menu handle's slice too — a slim
             // outer cap past the mark's span.
             let handleW: CGFloat = (side == .right && menuHandleRevealed != nil) ? Self.handleWidth : 0
-            var width = min(claim.width, (hasContent ? Self.earWidth : 0) + handleW)
+            var width = min(claim.width, Self.contentWidth(slot) + handleW)
             // Each ear yields to the nearest status item or menu title
             // on its flank: a wing that paves one hides it and eats its
             // clicks.
@@ -299,8 +300,8 @@ final class ScreenBarView: NSView {
             let x = side == .left ? claim.maxX - width : claim.minX
             return CGRect(x: x, y: size.height - depth, width: width, height: depth)
         }
-        let leftRect = earRect(.left, hasContent: wings.left != nil)
-        let rightRect = earRect(.right, hasContent: wings.right != nil)
+        let leftRect = earRect(.left, slot: wings.left)
+        let rightRect = earRect(.right, slot: wings.right)
         // The handle's slice: the right ear's outer cap — only while the
         // provider says there is a run for it to toggle. A nil answer
         // draws no glyph and keeps no hit slice; carving it anyway left a
@@ -396,6 +397,17 @@ final class ScreenBarView: NSView {
     /// lobe read as a slab where the references keep slim caps.
     private static let earWidth: CGFloat = 36
 
+    /// The room a slot asks of its ear, before the flank and the claim
+    /// cap it: the mark's fixed width, plus the privacy dots' lead when
+    /// they ride along — or, for a dots-only ear, the dots between two
+    /// insets.
+    static func contentWidth(_ slot: ScreenBarWingSlot?) -> CGFloat {
+        guard let slot else { return 0 }
+        guard slot.showsSensors else { return earWidth }
+        let lead = ScreenBarSensorDots.lead(slot.sensors)
+        return slot.hasMark ? lead + earWidth : lead + ScreenBarSensorDots.inset
+    }
+
     /// A dismiss-pull drags the ear off the bezel: outward travel only
     /// (inward pulls meet the notch), eased by `tanh` so it resists as
     /// it leaves. Direct writes while the finger moves — the ear keeps
@@ -438,6 +450,35 @@ final class ScreenBarView: NSView {
     /// A repeat call with the same plan at the same phase is a no-op:
     /// re-arming the same animations just re-renders every keyframe's
     /// colours on the main thread for a window move the band cannot see.
+    /// A cross-fade the next program change plays instead of a cut —
+    /// armed by the controller when a strip leaves, used once.
+    private var pendingCrossfade: CFTimeInterval?
+
+    /// The next `play` or `display` that changes the colours fades from
+    /// what is on the band to the new program over `seconds`. Reduce
+    /// Motion keeps the cut, as every other band transition does; tests
+    /// pin the setting instead of reading this Mac's.
+    func crossfadeNextChange(over seconds: CFTimeInterval, reduceMotion: Bool? = nil) {
+        pendingCrossfade = (reduceMotion ?? Self.reduceMotion) ? nil : seconds
+    }
+
+    /// Inside the caller's transaction: hands the layers a fade from their
+    /// current presentation to whatever this transaction sets.
+    private func consumeCrossfade() {
+        guard let seconds = pendingCrossfade else { return }
+        pendingCrossfade = nil
+        for layer in [bandLayer, haloLayer] {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = seconds
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(fade, forKey: kCATransition)
+        }
+    }
+
+    /// Whether a cross-fade is armed and not yet used (tests).
+    var hasPendingCrossfade: Bool { pendingCrossfade != nil }
+
     func play(plan: LEDSKeyframePlan, anchor: CFTimeInterval) {
         let width = bandRect.width
         guard width > 0 else { return }
@@ -462,6 +503,7 @@ final class ScreenBarView: NSView {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        consumeCrossfade()
         for layer in [bandLayer, haloLayer] {
             layer.removeAnimation(forKey: Self.leadKey)
             layer.removeAnimation(forKey: Self.loopKey)
@@ -569,6 +611,7 @@ final class ScreenBarView: NSView {
         let locations = stops.map { NSNumber(value: Double($0.location)) }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        consumeCrossfade()
         if stops.isEmpty {
             bandLayer.colors = nil
             haloLayer.colors = nil

@@ -288,22 +288,13 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             keys.append(SettingsKey(.lighting, "colors.mode_colors.\(mode)", .string))
         }
         // Preferences only the retiring PyObjC window used to write: the
-        // calendar and reminder glows, the closed-lid grace, the charging
-        // fill and power-change preview, the Rainstick's night consent, the
-        // odometer's steps and the per-device blend. Saved data (calibration
-        // slots, Focus rules) stays out of the catalogue so a page reset
-        // never wipes it.
-        keys += [
-            SettingsKey(.notifications, "calendar_alerts_enabled", .bool),
-            SettingsKey(.notifications, "calendar_lead_minutes", .number),
-            SettingsKey(.notifications, "reminder_alerts_enabled", .bool),
-            SettingsKey(.notifications, "closed_lid_grace_minutes", .number),
-            SettingsKey(.notifications, "battery_monitoring.charging_idle_enabled", .bool),
-            SettingsKey(.notifications, "battery_monitoring.show_on_power_change", .bool),
-            SettingsKey(.lighting, "rainstick_night_enabled", .bool),
-            SettingsKey(.lighting, "milestone_odometer_steps", .numberList),
-            SettingsKey(.devices, "devices[].blend_mode", .nullableString),
-        ]
+        // calendar and reminder glows, the charging fill and power-change
+        // preview, the Rainstick's night consent, the odometer's steps and
+        // the per-device blend (`lightsKeys`), plus the closed-lid grace.
+        // Saved data (calibration slots, Focus rules) stays out of the
+        // catalogue so a page reset never wipes it.
+        keys += lightsKeys
+        keys.append(SettingsKey(.notifications, "closed_lid_grace_minutes", .number))
         return keys
     }()
 
@@ -342,5 +333,63 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             }
             return [key.path]
         }
+    }
+}
+
+// MARK: - Lights brought over from the legacy window
+
+extension SettingsKey {
+    /// Light preferences the daemon has always honoured that only the
+    /// retiring PyObjC window could reach: the calendar and reminder
+    /// glows, the idle charging fill and the power-change preview,
+    /// Rainstick's night consent, the milestone steps, and each device's
+    /// own blend mode (null follows the Lighting page's).
+    public static let lightsKeys: [SettingsKey] = [
+        SettingsKey(.notifications, "calendar_alerts_enabled", .bool),
+        SettingsKey(.notifications, "calendar_lead_minutes", .number),
+        SettingsKey(.notifications, "reminder_alerts_enabled", .bool),
+        SettingsKey(.notifications, "battery_monitoring.charging_idle_enabled", .bool),
+        SettingsKey(.notifications, "battery_monitoring.show_on_power_change", .bool),
+        SettingsKey(.lighting, "rainstick_night_enabled", .bool),
+        SettingsKey(.lighting, "milestone_odometer_steps", .numberList),
+        SettingsKey(.devices, "devices[].blend_mode", .nullableString),
+    ]
+
+    /// The person's own light documents: saved calibration profiles, the
+    /// Focus → profile rules, the hand-written Studio program and the
+    /// shelf of named programs (`[[name, program]]`). The pages read and
+    /// write them, but they are work rather than preferences, so they
+    /// stay out of `all` — a page's "Reset to defaults" must never wipe a
+    /// saved profile or a program.
+    public static let lightsDocuments: [SettingsKey] = [
+        SettingsKey(.devices, "calibration_profiles", .object),
+        SettingsKey(.notifications, "focus_profile_rules", .object),
+        SettingsKey(.lighting, "studio_program", .string),
+        SettingsKey(.lighting, "studio_library", .object),
+    ]
+
+    /// `_settings_legacy.CALIBRATION_PROFILE_SLOTS`: the only names the
+    /// daemon keeps a Focus → profile rule for.
+    public static let calibrationProfileSlots = ["Day", "Night", "Travel"]
+
+    /// `_settings_legacy.MAX_MILESTONE_ODOMETER_STEP_COUNT`.
+    public static let maxMilestoneSteps = 16
+    /// `_settings_legacy.DEFAULT_MILESTONE_ODOMETER_STEPS`.
+    public static let defaultMilestoneSteps = [10, 25, 50, 100]
+
+    /// The daemon's own normalisation of `milestone_odometer_steps`:
+    /// positive whole counts, sorted, deduplicated, at most sixteen, and
+    /// the default ladder when nothing valid is left — so the steps field
+    /// shows exactly what the daemon will keep.
+    public static func normalizedMilestoneSteps(_ steps: [Int]) -> [Int] {
+        let kept = Array(Set(steps.filter { $0 > 0 }).sorted().prefix(maxMilestoneSteps))
+        return kept.isEmpty ? defaultMilestoneSteps : kept
+    }
+
+    /// Parses the steps field's text — numbers separated by commas or
+    /// spaces — into the daemon's ladder. Words that are not counts drop.
+    public static func milestoneSteps(parsing text: String) -> [Int] {
+        let pieces = text.split { $0 == "," || $0 == " " || $0 == ";" || $0 == "\n" }
+        return normalizedMilestoneSteps(pieces.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) })
     }
 }
