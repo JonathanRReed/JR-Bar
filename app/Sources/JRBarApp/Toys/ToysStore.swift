@@ -62,8 +62,15 @@ final class ToysStore {
     /// `cardModel` is the grown island's model — the delegate builds it
     /// on the shared timer/tray stores so the glass card and the island
     /// card can never disagree about a timer or a tray file.
+    ///
+    /// `aquariumSave` is where the tank keeps its game. The app's store
+    /// (the runtime on) uses the real state directory; a headless store
+    /// (`notchRuntimeEnabled: false`, the tests) gets a scratch file of
+    /// its own, so a test's completed session can never pay pearls into
+    /// the real save.
     init(core: CoreModel, settings: SettingsStore, state: ToysState,
-         cardModel: NotchCardModel, notchRuntimeEnabled: Bool = true) {
+         cardModel: NotchCardModel, notchRuntimeEnabled: Bool = true,
+         aquariumSave: AquariumSaveFile? = nil) {
         self.core = core
         self.settings = settings
         self.state = state
@@ -76,7 +83,12 @@ final class ToysStore {
         self.toys = []
         var cards: [any Toy] = []
         cards.append(FoldToy(core: core, store: self))
-        cards.append(AquariumToy(core: core, store: self))
+        let save = aquariumSave ?? (notchRuntimeEnabled
+            ? AquariumSaveFile()
+            : AquariumSaveFile(url: FileManager.default.temporaryDirectory
+                .appending(path: "jrbar-headless-\(UUID().uuidString)")
+                .appending(path: "aquarium-save.json")))
+        cards.append(AquariumToy(core: core, store: self, saveFile: save))
         notchBuddy.store = self
         cards.append(notchBuddy)
         confetti.store = self

@@ -31,6 +31,8 @@ final class AquariumToy: Toy {
     /// Where the game lives on disk — the real state directory in the
     /// app, a scratch file in the tests.
     @ObservationIgnored private let saveFile: AquariumSaveFile
+    /// Where this tank saves — the tests check a headless store's.
+    var saveLocation: URL { saveFile.url }
     /// The "while you were away" summary the tank shows once, when the
     /// window reopens after earning with it closed.
     private(set) var awayNotice: AquariumAwaySummary?
