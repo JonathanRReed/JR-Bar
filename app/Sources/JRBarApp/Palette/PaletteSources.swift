@@ -22,6 +22,13 @@ struct AgentPaletteVerbs {
     var reveal: @MainActor (SessionRow) -> Void
     var dismiss: @MainActor (SessionRow) -> Void
     var clear: @MainActor (SessionRow) -> Void
+    /// A reply-kind ask's words, through the panel's `reply` — the same
+    /// `answer_ask` with `reply_text`, pinned to the request.
+    var reply: @MainActor (CoreAsk, String) -> Void = { _, _ in }
+    /// The panel's half-typed reply for the ask, both ways, so a line
+    /// started in the panel finishes here and the other way round.
+    var replyDraft: @MainActor (CoreAsk) -> String = { _ in "" }
+    var setReplyDraft: @MainActor (CoreAsk, String) -> Void = { _, _ in }
 }
 
 enum AgentPaletteRows {
@@ -43,10 +50,11 @@ enum AgentPaletteRows {
     }
 
     /// An open ask. Return opens the session — the one verb that is
-    /// safe to fire without reading — and Approve (⌘↩) and Deny (⌘D),
-    /// the panel's own chords, appear only where the daemon says an
-    /// answer can land: not for a peer's row, not for an ask that wants
-    /// typed words, not where `canAnswer` is false.
+    /// safe to fire without reading — and ⌘↩ answers: Approve (with
+    /// Deny on ⌘D, the panel's own chords), or for an ask that wants
+    /// words, Reply…, which opens the palette's field for them. Either
+    /// appears only where the daemon says an answer can land: not for a
+    /// peer's row, not where `canAnswer` is false.
     @MainActor
     static func askItem(row: SessionRow, ask: CoreAsk, now: Date, verbs: AgentPaletteVerbs) -> PaletteItem {
         var actions = [PaletteAction(id: "open", title: "Open Session", symbol: "macwindow") {
@@ -54,6 +62,20 @@ enum AgentPaletteRows {
             return nil
         }]
         let answerable = ask.canAnswer && !row.isRemote && !ask.wantsTextReply
+        // A field is only worth opening where the words can land: the
+        // panel's own reply row asks the same of the ask.
+        if ask.canAnswer, !row.isRemote, ask.wantsTextReply, ask.session?.isEmpty == false {
+            actions.append(PaletteAction(
+                id: "reply", title: "Reply…", symbol: "text.bubble", shortcut: approveChord,
+                input: PaletteInput(
+                    prompt: "Reply to \(row.label)…", submitTitle: "Send Reply",
+                    initial: { verbs.replyDraft(ask) },
+                    onChange: { verbs.setReplyDraft(ask, $0) },
+                    submit: { words in
+                        verbs.reply(ask, words)
+                        return nil
+                    })))
+        }
         if answerable {
             actions.append(PaletteAction(id: "approve", title: "Approve", symbol: "checkmark.circle",
                                          shortcut: approveChord) {
@@ -81,8 +103,6 @@ enum AgentPaletteRows {
         let note: String?
         if row.isRemote {
             note = "Runs on \(row.remoteMachine ?? "another Mac") — answer it there"
-        } else if ask.wantsTextReply {
-            note = "Wants a typed reply — open the session or the panel"
         } else if !ask.canAnswer {
             note = "Answer it in the session's own window"
         } else {
@@ -90,8 +110,9 @@ enum AgentPaletteRows {
         }
         return PaletteItem(
             id: "ask.\(row.id)", title: row.label,
-            subtitle: ask.summary ?? "Needs your answer",
-            keywords: ["answer", "ask", row.style.name] + (row.cwdTail.map { [$0] } ?? []),
+            subtitle: ask.summary ?? (ask.wantsTextReply ? "Wants a typed reply" : "Needs your answer"),
+            keywords: ["answer", "ask", row.style.name] + (ask.wantsTextReply ? ["reply"] : [])
+                + (row.cwdTail.map { [$0] } ?? []),
             icon: .provider(row.style.id), tags: tags, kind: "Ask", section: .needsYou,
             actions: actions, urgent: true, accessibilityNote: note)
     }

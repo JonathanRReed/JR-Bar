@@ -49,6 +49,20 @@ final class PaletteModel {
     }
     private(set) var actionSelection = 0
 
+    // MARK: A verb's words (PaletteInput)
+
+    /// The row and verb whose field is open, by id — the row may be
+    /// re-ranked or re-gathered underneath without losing its place.
+    struct InputTarget: Equatable {
+        let rowID: String
+        let actionID: String
+    }
+
+    private(set) var inputTarget: InputTarget?
+    /// What has been typed into the verb's field.
+    var inputText = ""
+    var inputActive: Bool { inputTarget != nil }
+
     // MARK: Loading
 
     func load(items: [PaletteItem], usage: PaletteUsage, now: Date = Date()) {
@@ -60,6 +74,7 @@ final class PaletteModel {
         searching = false
         actionsOpen = false
         actionQuery = ""
+        endInput()
         query = ""
         refilter(keepSelection: false)
     }
@@ -68,12 +83,14 @@ final class PaletteModel {
     /// ask that lands mid-search appears under Needs You, a toggle's
     /// read-back settles its tag. The query, the archive's hits, the
     /// selection and an open action panel all stay where they were; the
-    /// panel folds only if its row went away.
+    /// panel folds only if its row went away, and so does a verb's
+    /// field — an ask answered in its own window takes its Reply with it.
     func reload(items: [PaletteItem]) {
         self.items = items
         let previous = selectedID
         refilter(keepSelection: true)
         if actionsOpen, selectedID != previous { closeActions() }
+        if inputActive, inputAction == nil { endInput() }
     }
 
     /// A slower source's answer. Kept only while the query still reads
@@ -183,6 +200,40 @@ final class PaletteModel {
     var selectedAction: PaletteAction? {
         let visible = visibleActions
         return visible.indices.contains(actionSelection) ? visible[actionSelection] : nil
+    }
+
+    // MARK: A verb's field
+
+    /// Open `action`'s field on `item`: the action panel folds, the
+    /// field starts from the verb's draft, and the query waits
+    /// untouched for ⎋. False for a verb that takes no words.
+    @discardableResult
+    func beginInput(_ action: PaletteAction, of item: PaletteItem) -> Bool {
+        guard let input = action.input else { return false }
+        closeActions()
+        inputTarget = InputTarget(rowID: item.id, actionID: action.id)
+        inputText = input.initial()
+        selectedID = item.id
+        return true
+    }
+
+    func endInput() {
+        inputTarget = nil
+        inputText = ""
+    }
+
+    /// The row the open field belongs to, found wherever it lives now —
+    /// ranked, re-gathered or a slower source's hit.
+    var inputItem: PaletteItem? {
+        guard let target = inputTarget else { return nil }
+        return rows.first { $0.id == target.rowID }
+            ?? items.first { $0.id == target.rowID }
+            ?? searchResults.first { $0.id == target.rowID }
+    }
+
+    var inputAction: PaletteAction? {
+        guard let target = inputTarget else { return nil }
+        return inputItem?.actions.first { $0.id == target.actionID && $0.input != nil }
     }
 
     // MARK: Helpers

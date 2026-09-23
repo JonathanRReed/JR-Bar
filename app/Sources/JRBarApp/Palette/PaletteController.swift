@@ -211,7 +211,10 @@ final class PaletteController {
             onQueryChange: { [weak self] in self?.queryChanged() },
             onActivate: { [weak self] id in self?.activate(rowID: id) },
             onRun: { [weak self] rowID, actionID in self?.run(rowID: rowID, actionID: actionID) },
-            onToggleActions: { [weak self] in self?.toggleActions() })
+            onToggleActions: { [weak self] in self?.toggleActions() },
+            onInputChange: { [weak self] in self?.inputChanged() },
+            onSubmitInput: { [weak self] in self?.submitInput() },
+            onCancelInput: { [weak self] in self?.cancelInput() })
         let panel = PalettePanel(content: view)
         let visible = (NSScreen.screenWithMouse ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -275,6 +278,7 @@ final class PaletteController {
         panel = nil
         isOpen = false
         activeSources = []
+        model.endInput()
         PaletteAppIcons.reset()
     }
 
@@ -286,8 +290,11 @@ final class PaletteController {
 
     // MARK: Running verbs
 
-    /// A click on a row: select it, then do what Return would.
+    /// A click on a row: select it, then do what Return would. The row
+    /// a verb's field answers is context while the field is open, not a
+    /// button.
     func activate(rowID: String) {
+        guard !model.inputActive else { return }
         model.select(id: rowID)
         submit()
     }
@@ -318,20 +325,53 @@ final class PaletteController {
     /// answer, run, and show the verb's own line if it has one.
     func run(_ action: PaletteAction, of item: PaletteItem) {
         model.closeActions()
+        // A verb that takes words opens its field; Return there is the run.
+        if model.beginInput(action, of: item) { return }
         if action.keepsOpen {
             _ = action.run()
             model.usage = usage()
             if isOpen { model.reload(items: gather()) }
             return
         }
+        finish(item: item, action: action) { action.run() }
+    }
+
+    /// Fold, record, listen, run — the tail every verb shares, the
+    /// field's submit included.
+    private func finish(item: PaletteItem, action: PaletteAction, run: () -> String?) {
         let anchor = panel?.frame
         close()
         recordUse(item.id)
         listenForToast(until: Date().addingTimeInterval(Self.toastWindow), anchor: anchor)
         Self.log.debug("run \(item.id, privacy: .public) · \(action.id, privacy: .public)")
-        if let line = action.run() {
+        if let line = run() {
             hud.show(line, near: anchor)
         }
+    }
+
+    // MARK: A verb's field
+
+    /// Every edit reaches the verb's draft keeper.
+    func inputChanged() {
+        model.inputAction?.input?.onChange?(model.inputText)
+    }
+
+    /// Return in the field: hand the words over and fold. Nothing but
+    /// whitespace sends nothing — the field stays open.
+    func submitInput() {
+        guard let item = model.inputItem, let action = model.inputAction, let input = action.input else {
+            model.endInput()
+            return
+        }
+        let words = model.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return }
+        finish(item: item, action: action) { input.submit(words) }
+    }
+
+    /// ⎋ in the field: back to the list, the query as it was. The draft
+    /// has been kept edit by edit.
+    func cancelInput() {
+        model.endInput()
     }
 
     // MARK: Keys
@@ -352,6 +392,19 @@ final class PaletteController {
     /// Applies one key command; true when the palette used it.
     @discardableResult
     func handle(_ command: PaletteKeyCommand) -> Bool {
+        if model.inputActive {
+            // The verb's field: Return — or the ⌘↩ that opened it —
+            // sends, ⎋ backs out, the list stays still underneath.
+            switch command {
+            case .submit, .chord(.secondary): submitInput()
+            case .cancel: cancelInput()
+            case .up, .down, .pageUp, .pageDown: break
+            case .chord(let chord):
+                return chord == .actionPanel ? true : unclaimed(chord)
+            case .passThrough: return false
+            }
+            return true
+        }
         if model.actionsOpen {
             switch command {
             case .up: model.moveAction(-1)

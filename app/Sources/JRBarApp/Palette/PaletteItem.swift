@@ -156,6 +156,26 @@ struct PaletteShortcut: Hashable, Sendable {
     }
 }
 
+/// The words a verb waits for before it runs — Raycast's argument. The
+/// palette's field turns into this verb's field (the row stays in view
+/// as the context), Return hands the words over, ⎋ backs out to the
+/// list with the query as it was.
+struct PaletteInput {
+    /// The field's placeholder while it waits: "Reply to fix-ci…".
+    let prompt: String
+    /// Return's name in the footer: "Send Reply".
+    let submitTitle: String
+    /// What the field starts with, read when the verb opens — a draft
+    /// some other surface kept — so a builder never reads it under the
+    /// palette's observation.
+    var initial: @MainActor () -> String = { "" }
+    /// Every edit, so a half-typed line outlives a fold.
+    var onChange: (@MainActor (String) -> Void)?
+    /// Runs with the trimmed, non-empty words. The returned line is the
+    /// HUD's, as `PaletteAction.run`'s is.
+    let submit: @MainActor (String) -> String?
+}
+
 /// One verb on a row.
 struct PaletteAction: Identifiable {
     let id: String
@@ -171,6 +191,9 @@ struct PaletteAction: Identifiable {
     /// A verb about the palette itself (pin a favorite): it runs with
     /// the palette still up, and the list redraws around it.
     var keepsOpen = false
+    /// A verb that needs words first. Picking it opens its field rather
+    /// than running; `input.submit` is the run.
+    var input: PaletteInput?
     /// Runs the verb. The returned line, if any, is the confirmation the
     /// palette's HUD shows after it folds ("1Password hidden"); nil for
     /// a verb whose result is its own proof (a menu opening, a window
@@ -187,6 +210,13 @@ struct PaletteAction: Identifiable {
         self.isDestructive = isDestructive
         self.keepsOpen = keepsOpen
         self.run = run
+    }
+
+    /// A verb that asks for a line of words before it runs.
+    init(id: String, title: String, symbol: String, shortcut: PaletteShortcut? = nil,
+         input: PaletteInput) {
+        self.init(id: id, title: title, symbol: symbol, shortcut: shortcut) { nil }
+        self.input = input
     }
 }
 

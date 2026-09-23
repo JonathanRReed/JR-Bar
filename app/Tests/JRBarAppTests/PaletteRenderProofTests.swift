@@ -6,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 /// Render proof for the palette: the list, a selected row, tags, the
-/// footer and the ⌘K panel at 2×, over a dark and a light backdrop, so
+/// footer, the ⌘K panel and an ask's reply field at 2×, over a dark and a light backdrop, so
 /// a human can eyeball the Raycast-grade layout. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write /tmp/palette-proof PNGs (or
 /// `JRBAR_RENDER_PROOF_DIR` to pick the folder).
@@ -25,6 +25,13 @@ struct PaletteRenderProofTests {
         let rows = [
             SessionRow(session: CoreSession(id: "claude:fix-ci", provider: "claude", label: "fix-ci",
                                             cwd: "/Users/me/src/jr-bar", mode: "waiting", ask: ask),
+                       pinnedAsk: nil),
+            SessionRow(session: CoreSession(id: "codex:branch", provider: "codex", label: "release notes",
+                                            cwd: "/Users/me/src/jr-bar", mode: "waiting",
+                                            ask: CoreAsk(session: "codex:branch",
+                                                         openedAt: now.timeIntervalSince1970 - 60,
+                                                         summary: "Which branch should the notes cover?",
+                                                         answerable: true, replyable: true, request: "b")),
                        pinnedAsk: nil),
             SessionRow(session: CoreSession(id: "codex:docs", provider: "codex", label: "docs pass",
                                             cwd: "/Users/me/src/site", mode: "working",
@@ -52,14 +59,20 @@ struct PaletteRenderProofTests {
         var usage = PaletteUsage()
         usage.record("quiet.1h", at: now)
         usage.record("system.darkMode", at: now)
-        let shots: [(name: String, query: String, actions: Bool)] = [
-            ("home", "", false), ("query", "hide 1p", false), ("actions", "", true),
+        let shots: [(name: String, query: String, actions: Bool, reply: Bool)] = [
+            ("home", "", false, false), ("query", "hide 1p", false, false), ("actions", "", true, false),
+            ("reply", "", false, true),
         ]
         for shot in shots {
             let model = PaletteModel()
             model.load(items: items, usage: usage, now: now)
             model.query = shot.query
             if shot.actions { model.openActions() }
+            if shot.reply, let ask = items.first(where: { $0.id == "ask.codex:branch" }),
+               let reply = ask.actions.first(where: { $0.id == "reply" }) {
+                model.beginInput(reply, of: ask)
+                model.inputText = "main — and flag anything touching the concealer"
+            }
             for dark in [true, false] {
                 let palette = PaletteView(model: model, prompt: "Search menu bar, sessions and commands…",
                                           onQueryChange: {}, onActivate: { _ in }, onRun: { _, _ in },

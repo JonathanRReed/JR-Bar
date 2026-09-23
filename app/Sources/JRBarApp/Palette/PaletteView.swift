@@ -22,6 +22,11 @@ struct PaletteView: View {
     /// VoiceOver's actions rotor — row id, action id.
     let onRun: @MainActor (String, String) -> Void
     let onToggleActions: @MainActor () -> Void
+    /// A verb's field (`PaletteInput`): an edit, the footer's Send, the
+    /// footer's Cancel.
+    var onInputChange: @MainActor () -> Void = {}
+    var onSubmitInput: @MainActor () -> Void = {}
+    var onCancelInput: @MainActor () -> Void = {}
     /// The render proof's still: `ImageRenderer` draws neither a text
     /// field nor a scroll view's contents, so a snapshot swaps in their
     /// static twins. Never set in the app.
@@ -50,33 +55,53 @@ struct PaletteView: View {
         .frame(width: PalettePanel.width, height: PalettePanel.height)
         .onAppear { focus = .search }
         .onChange(of: model.actionsOpen) { _, open in focus = open ? .actions : .search }
+        .onChange(of: model.inputActive) { _, _ in focus = .search }
     }
 
     // MARK: Search
 
+    /// The open verb's field, when one is open.
+    private var input: PaletteInput? { model.inputAction?.input }
+
+    /// One field, two jobs: the query, or — while a verb waits for
+    /// words — those words, so focus never has to move between them.
+    private var fieldText: Binding<String> {
+        Binding(
+            get: { model.inputActive ? model.inputText : model.query },
+            set: { text in
+                if model.inputActive {
+                    model.inputText = text
+                    onInputChange()
+                } else {
+                    model.query = text
+                    onQueryChange()
+                }
+            })
+    }
+
     private var searchBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
+        let shown = model.inputActive ? model.inputText : model.query
+        let placeholder = input?.prompt ?? prompt
+        return HStack(spacing: 10) {
+            Image(systemName: model.inputActive ? "text.cursor" : "magnifyingglass")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             if snapshot {
-                Text(model.query.isEmpty ? prompt : model.query)
+                Text(shown.isEmpty ? placeholder : shown)
                     .font(.system(size: 17))
-                    .foregroundStyle(model.query.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                    .foregroundStyle(shown.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                TextField("", text: Binding(
-                    get: { model.query },
-                    set: { model.query = $0; onQueryChange() }),
-                          prompt: Text(prompt))
+                TextField("", text: fieldText, prompt: Text(placeholder))
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .focused($focus, equals: .search)
-                    .accessibilityLabel("Search JR-Bar")
+                    .accessibilityLabel(input?.prompt ?? "Search JR-Bar")
             }
-            if let selected = model.selected, model.actionsOpen {
-                // Raycast's breadcrumb: the panel is about this row.
+            if let selected = model.inputItem ?? (model.actionsOpen ? model.selected : nil) {
+                // Raycast's breadcrumb: the panel, or the field, is about
+                // this row.
                 Text(selected.title)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -95,7 +120,12 @@ struct PaletteView: View {
 
     @ViewBuilder
     private var list: some View {
-        if model.rows.isEmpty {
+        if let item = model.inputItem {
+            // The field's context: the row it answers, alone and held
+            // still — its subtitle is the question.
+            rows([PaletteListSection(section: item.section, items: [item])])
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        } else if model.rows.isEmpty {
             emptyState
         } else if snapshot {
             // `ImageRenderer` draws no scroll view contents: the render
@@ -185,11 +215,17 @@ struct PaletteView: View {
                 .resizable()
                 .frame(width: 16, height: 16)
                 .accessibilityHidden(true)
-            Text(model.selected?.section.title ?? "JR-Bar")
+            Text((model.inputItem ?? model.selected)?.section.title ?? "JR-Bar")
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            if let item = model.selected, !model.actionsOpen {
+            if let input {
+                PaletteFooterButton(title: input.submitTitle, caps: PaletteShortcut.primary.keycaps,
+                                    action: onSubmitInput)
+                    .disabled(model.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                footerRule
+                PaletteFooterButton(title: "Cancel", caps: ["⎋"], action: onCancelInput)
+            } else if let item = model.selected, !model.actionsOpen {
                 if let primary = item.primary {
                     PaletteFooterButton(title: primary.title, caps: PaletteShortcut.primary.keycaps) {
                         onRun(item.id, primary.id)
@@ -208,10 +244,12 @@ struct PaletteView: View {
                 }
                 footerRule
             }
-            PaletteFooterButton(title: model.actionsOpen ? "Close Actions" : "Actions",
-                         caps: PaletteShortcut.actionPanel.keycaps,
-                         action: onToggleActions)
-                .disabled(model.selected?.actions.isEmpty ?? true)
+            if input == nil {
+                PaletteFooterButton(title: model.actionsOpen ? "Close Actions" : "Actions",
+                                    caps: PaletteShortcut.actionPanel.keycaps,
+                                    action: onToggleActions)
+                    .disabled(model.selected?.actions.isEmpty ?? true)
+            }
         }
         .font(.system(size: 12))
         .padding(.horizontal, 14)

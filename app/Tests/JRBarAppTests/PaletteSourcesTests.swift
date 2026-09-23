@@ -79,6 +79,49 @@ struct PaletteSourcesTests {
         #expect(!remote.actions.contains { $0.id == "approve" || $0.id == "snooze" })
     }
 
+    @Test("an ask that wants words gets Reply… on ⌘↩: its field starts from the panel's draft and sends through the panel")
+    func askReply() {
+        let log = Log()
+        var verbs = agentVerbs(log)
+        verbs.reply = { log.calls.append("reply:\($0.request ?? ""):\($1)") }
+        verbs.replyDraft = { _ in "use the" }
+        verbs.setReplyDraft = { log.calls.append("draft:\($1)") }
+        let ask = CoreAsk(session: "claude:s2", summary: "Which branch?", answerable: true, replyable: true,
+                          request: "req-2")
+        let item = AgentPaletteRows.askItem(row: session("claude:s2", mode: "waiting", ask: ask),
+                                            ask: ask, now: now, verbs: verbs)
+        #expect(item.primary?.title == "Open Session", "Return still only opens")
+        let reply = item.action(for: .secondary)
+        #expect(reply?.title == "Reply…")
+        #expect(!item.actions.contains { $0.id == "approve" || $0.id == "deny" }, "words, not a verdict")
+        #expect(reply?.input?.prompt == "Reply to claude:s2…")
+        #expect(reply?.input?.submitTitle == "Send Reply")
+        #expect(reply?.input?.initial() == "use the")
+        #expect(reply?.run() == nil)
+        #expect(log.calls.isEmpty, "picking Reply… sends nothing by itself")
+        reply?.input?.onChange?("use the main branch")
+        #expect(reply?.input?.submit("use the main branch") == nil, "the panel's toast is the answer")
+        #expect(log.calls == ["draft:use the main branch", "reply:req-2:use the main branch"])
+        #expect(item.accessibilityNote == nil)
+        #expect(PaletteRanking.rank([item], query: "reply s2", usage: PaletteUsage(), now: now)
+            .first?.primary?.title == "Reply…")
+        // Where the words cannot land, no field opens.
+        let blocked = CoreAsk(session: "claude:s3", summary: "Which?", answerable: false, replyable: true)
+        let noText = AgentPaletteRows.askItem(row: session("claude:s3", mode: "waiting", ask: blocked),
+                                              ask: blocked, now: now, verbs: verbs)
+        #expect(!noText.actions.contains { $0.id == "reply" })
+        #expect(noText.accessibilityNote == "Answer it in the session's own window")
+        let peer = CoreAsk(session: "remote:studio:claude:s4", summary: "Which?", answerable: true, replyable: true)
+        let remote = AgentPaletteRows.askItem(
+            row: session("remote:studio:claude:s4", mode: "waiting", ask: peer, remote: true),
+            ask: peer, now: now, verbs: verbs)
+        #expect(!remote.actions.contains { $0.id == "reply" })
+        let orphan = CoreAsk(session: nil, summary: "Which?", answerable: true, replyable: true)
+        let lost = AgentPaletteRows.askItem(row: session("claude:s5", mode: "waiting", ask: orphan),
+                                            ask: orphan, now: now, verbs: verbs)
+        #expect(!lost.actions.contains { $0.id == "reply" }, "no session left to type into")
+    }
+
     @Test("a typed “approve” runs Approve, and a lone letter never does")
     func askVerbSearch() {
         let log = Log()

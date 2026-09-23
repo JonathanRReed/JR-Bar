@@ -359,6 +359,96 @@ struct PaletteTests {
         #expect(controller.model.sections.first?.section != .favorites)
     }
 
+    /// A row whose second verb takes words, logging each stage.
+    private func replyRow(_ log: Log, draft: String = "") -> PaletteItem {
+        PaletteItem(
+            id: "ask.x", title: "fix-ci", subtitle: "Which branch?", icon: .symbol("circle", .gray),
+            kind: "Ask", section: .needsYou,
+            actions: [
+                PaletteAction(id: "open", title: "Open Session", symbol: "circle") {
+                    log.ran.append("open")
+                    return nil
+                },
+                PaletteAction(id: "reply", title: "Reply…", symbol: "circle", shortcut: .secondary,
+                              input: PaletteInput(
+                                prompt: "Reply to fix-ci…", submitTitle: "Send Reply",
+                                initial: { draft },
+                                onChange: { log.ran.append("draft:\($0)") },
+                                submit: { log.ran.append("send:\($0)"); return nil })),
+            ],
+            urgent: true)
+    }
+
+    @Test("a verb that takes words opens its field: typing keeps a draft, ⎋ backs out, Return sends and folds")
+    func controllerInput() {
+        let log = Log()
+        let recorded = Log()
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.recordUse = { recorded.ran.append($0) }
+        controller.sources = { [PaletteClosureSource(build: { [self.replyRow(log, draft: "ma")] })] }
+        controller.open()
+        defer { controller.close() }
+        controller.model.query = "fix"
+        #expect(controller.handle(.chord(.secondary)))
+        #expect(controller.isOpen, "the field opens in the palette")
+        #expect(controller.model.inputActive)
+        #expect(controller.model.inputText == "ma", "the draft comes back")
+        #expect(controller.model.inputItem?.id == "ask.x")
+        #expect(controller.model.query == "fix", "the query waits for ⎋")
+        #expect(log.ran.isEmpty && recorded.ran.isEmpty, "opening the field runs nothing")
+        // The list holds still and ⌘K has nothing to add.
+        #expect(controller.handle(.down))
+        #expect(controller.handle(.chord(.actionPanel)))
+        #expect(!controller.model.actionsOpen)
+        #expect(!controller.handle(.passThrough), "letters are the field's")
+        controller.model.inputText = "main"
+        controller.inputChanged()
+        #expect(log.ran == ["draft:main"])
+        // ⎋ backs out to the list, the query as it was.
+        controller.handle(.cancel)
+        #expect(!controller.model.inputActive)
+        #expect(controller.isOpen)
+        #expect(controller.model.query == "fix")
+        // Blank words send nothing; real ones send once, and fold.
+        controller.handle(.chord(.secondary))
+        controller.model.inputText = "   "
+        controller.handle(.submit)
+        #expect(controller.isOpen)
+        #expect(!log.ran.contains { $0.hasPrefix("send:") })
+        controller.model.inputText = "  main please "
+        controller.handle(.submit)
+        #expect(!controller.isOpen)
+        #expect(!controller.model.inputActive)
+        #expect(log.ran.last == "send:main please")
+        #expect(recorded.ran == ["ask.x"], "the send is the row's use")
+    }
+
+    @Test("the field closes when its row goes away — an ask answered in its own window")
+    func controllerInputRowGone() async {
+        let fact = PaletteSourcesTests.Fact()
+        fact.asks = 1
+        let log = Log()
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.sources = {
+            [PaletteClosureSource(build: { fact.asks > 0 ? [self.replyRow(log)] : [] })]
+        }
+        controller.open()
+        defer { controller.close() }
+        controller.model.select(id: "ask.x")
+        controller.handle(.chord(.secondary))
+        #expect(controller.model.inputActive)
+        // A click on the context row is not a button while the field is open.
+        controller.activate(rowID: "ask.x")
+        #expect(log.ran.isEmpty)
+        fact.asks = 0
+        for _ in 0..<200 where controller.model.inputActive { await Task.yield() }
+        #expect(!controller.model.inputActive)
+        controller.handle(.submit)
+        #expect(!log.ran.contains { $0.hasPrefix("send:") })
+    }
+
     @Test("⎋ clears the query first, and only then folds")
     func controllerEscape() {
         let controller = PaletteController()
