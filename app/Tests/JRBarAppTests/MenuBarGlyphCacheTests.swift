@@ -152,22 +152,110 @@ struct MenuBarGlyphCacheTests {
         let dir = tempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let cache = MenuBarGlyphCache(directory: dir)
-        let tile = item("Example·VPN")
+        let tile = item("Example·Sync")
         let glyph = try #require(MenuBarGlyphProcessing.extract(raster()))
-        #expect(!cache.store(glyph, for: tile, dark: true, pointSize: CGSize(width: 58, height: 24)),
+        #expect(!cache.store(glyph, for: tile, dark: true, pointSize: CGSize(width: 22, height: 24)),
                 "a first photograph is not a change")
-        #expect(cache.face(for: tile, dark: true)?.width == 58)
+        #expect(cache.face(for: tile, dark: true)?.width == 22)
         #expect(cache.face(for: tile, dark: false)?.template == true, "the other appearance stands in")
-        #expect(!cache.store(glyph, for: tile, dark: true, pointSize: CGSize(width: 58, height: 24)))
+        #expect(!cache.store(glyph, for: tile, dark: true, pointSize: CGSize(width: 22, height: 24)))
         let moved = try #require(MenuBarGlyphProcessing.extract(raster(offset: 2)))
-        #expect(cache.store(moved, for: tile, dark: true, pointSize: CGSize(width: 58, height: 24)))
+        #expect(cache.store(moved, for: tile, dark: true, pointSize: CGSize(width: 22, height: 24)))
 
         let reopened = MenuBarGlyphCache(directory: dir)
         let face = try #require(reopened.face(for: tile, dark: true))
-        #expect(face.width == 58)
+        #expect(face.width == 22)
         #expect(face.template)
         #expect(face.image.isTemplate)
         #expect(reopened.face(for: item("other"), dark: true) == nil)
+    }
+
+    @MainActor
+    @Test("a glyph wide enough to carry text is kept in memory only and never reaches the disk")
+    func wideGlyphsStayInMemory() throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = MenuBarGlyphCache(directory: dir)
+        let vpn = item("Example·VPN")
+        let glyph = try #require(MenuBarGlyphProcessing.extract(raster()))
+        // A VPN's name, a clock, an event title: 58 pt of the person's words.
+        cache.store(glyph, for: vpn, dark: true, pointSize: CGSize(width: 58, height: 24))
+        #expect(cache.face(for: vpn, dark: true)?.width == 58, "this run still wears it")
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(!files.contains { $0.hasSuffix(".png") }, "no picture of it is written")
+        #expect(MenuBarGlyphCache(directory: dir).face(for: vpn, dark: true) == nil,
+                "a relaunch photographs it afresh")
+        // The cap is the icon's width, inclusive.
+        #expect(MenuBarGlyphCache.persists(width: MenuBarGlyphCache.persistMaxWidth))
+        #expect(!MenuBarGlyphCache.persists(width: MenuBarGlyphCache.persistMaxWidth + 0.5))
+    }
+
+    @MainActor
+    @Test("an icon that grows text takes its file with it")
+    func glyphThatGrowsText() throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = MenuBarGlyphCache(directory: dir)
+        let clock = item("Example·Timer")
+        let glyph = try #require(MenuBarGlyphProcessing.extract(raster()))
+        cache.store(glyph, for: clock, dark: true, pointSize: CGSize(width: 20, height: 24))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".png") }.count == 1)
+        cache.store(glyph, for: clock, dark: true, pointSize: CGSize(width: 64, height: 24))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".png") }.isEmpty)
+        #expect(MenuBarGlyphCache(directory: dir).index.isEmpty)
+    }
+
+    @MainActor
+    @Test("a cache written before the width cap drops its wide photographs on first open")
+    func legacyWideEntriesGo() throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let wide = MenuBarGlyphCache.Entry(file: "wide.png", width: 72, height: 24, template: true,
+                                           capturedAt: Date().timeIntervalSince1970, fingerprint: 1)
+        let icon = MenuBarGlyphCache.Entry(file: "icon.png", width: 22, height: 24, template: true,
+                                           capturedAt: Date().timeIntervalSince1970, fingerprint: 2)
+        try JSONEncoder().encode(["a|wide|dark": wide, "a|icon|dark": icon])
+            .write(to: dir.appendingPathComponent("index.json"))
+        try Data([1]).write(to: dir.appendingPathComponent("wide.png"))
+        try Data([1]).write(to: dir.appendingPathComponent("icon.png"))
+        let cache = MenuBarGlyphCache(directory: dir)
+        #expect(Array(cache.index.keys) == ["a|icon|dark"])
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(!files.contains("wide.png"))
+        #expect(files.contains("icon.png"))
+        #expect(MenuBarGlyphCache(directory: dir).index.count == 1, "the index on disk says so too")
+    }
+
+    @MainActor
+    @Test("nothing outlives thirty days, whoever owns it — and a photograph pass holds the cap")
+    func ageCap() async throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = MenuBarGlyphCache(directory: dir)
+        let glyph = try #require(MenuBarGlyphProcessing.extract(raster()))
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        cache.store(glyph, for: item("running", bundle: "com.apple.finder"), dark: true,
+                    pointSize: CGSize(width: 16, height: 16),
+                    now: now.addingTimeInterval(-MenuBarGlyphCache.pruneAge - 60))
+        cache.store(glyph, for: item("fresh", bundle: "com.example.fresh"), dark: true,
+                    pointSize: CGSize(width: 16, height: 16), now: now.addingTimeInterval(-3600))
+        cache.expire(now: now)
+        #expect(Set(cache.index.keys.map { String($0.split(separator: "|")[1]) }) == ["fresh"],
+                "an app still installed and running is no exemption")
+        #expect(MenuBarGlyphCache(directory: dir).index.count == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".png") }.count == 1)
+
+        // The camera expires at the start of every pass.
+        let camera = MenuBarGlyphCamera(cache: cache)
+        camera.permitted = { true }
+        camera.dark = { true }
+        camera.capture = { _ in self.cgImage(self.raster()) }
+        let later = now.addingTimeInterval(MenuBarGlyphCache.pruneAge)
+        _ = await camera.photograph([item("new")], rows: [CGRect(x: 0, y: 0, width: 2000, height: 24)],
+                                    now: { later })
+        #expect(cache.index.keys.contains { $0.contains("|new|") })
+        #expect(!cache.index.keys.contains { $0.contains("|fresh|") }, "a month on, the pass forgot it")
     }
 
     @MainActor

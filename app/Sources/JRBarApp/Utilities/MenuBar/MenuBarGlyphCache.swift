@@ -14,9 +14,15 @@ import OSLog
 /// since each frame lights the recording indicator and shifts the bar.
 /// Each photograph is taken twice and
 /// kept only when the two frames agree (a mid-fade frame never lands),
-/// lifted off the bar's own material, stored per item and appearance
-/// under Application Support, and re-tinted when the glyph is a template
-/// — so the tile draws in the Item Bar's own label colour.
+/// lifted off the bar's own material, stored per item and appearance,
+/// and re-tinted when the glyph is a template — so the tile draws in the
+/// Item Bar's own label colour.
+///
+/// What reaches the disk is only ever an icon: a glyph up to
+/// `persistMaxWidth` wide is filed under Application Support, and a
+/// wider one — the width text takes, an event title, a VPN's name, a
+/// clock — stays in memory for this run and is photographed afresh the
+/// next. Nothing on disk outlives `pruneAge`, whoever owns it.
 
 // MARK: - Pure pixel work
 
@@ -206,8 +212,10 @@ final class MenuBarGlyphCache {
         var fingerprint: UInt64
     }
 
-    /// A tile's face from the cache.
-    struct Face {
+    /// A tile's face from the cache. Equal when it is the same picture —
+    /// the cache hands out one image per photograph, so a face that did
+    /// not change compares equal and re-lays nothing.
+    struct Face: Equatable {
         var image: NSImage
         var width: CGFloat
         var template: Bool
@@ -218,9 +226,29 @@ final class MenuBarGlyphCache {
     /// only an app that names its item afresh every launch ever reaches
     /// it; the oldest go first.
     nonisolated static let maxEntries = 400
-    /// A photograph this old, of an app that no longer resolves, is
-    /// pruned.
+    /// No photograph outlives this — pruned whoever owns it. Every
+    /// launch photographs the bar before the first conceal, and a reveal
+    /// retakes any stale glyph it brings back, so a glyph in use is
+    /// rarely this old; one that is — an item tucked away and never
+    /// revealed through a month without a relaunch — falls back to its
+    /// app's icon until the next reveal photographs it afresh.
     nonisolated static let pruneAge: TimeInterval = 30 * 24 * 3600
+    /// The widest glyph that is ever written to disk, in points. An icon
+    /// is 16–24 pt with its padding; past this the item is carrying text
+    /// — a calendar title, a VPN's name, a clock, the weather — which is
+    /// the person's own words, so it stays in memory for this run only.
+    nonisolated static let persistMaxWidth: Double = 30
+
+    /// Whether a photograph `width` points wide may be written to disk.
+    nonisolated static func persists(width: Double) -> Bool {
+        width <= persistMaxWidth
+    }
+
+    /// Whether a photograph taken at `capturedAt` is past `pruneAge` at
+    /// `now`.
+    nonisolated static func expired(capturedAt: Double, now: Date) -> Bool {
+        now.timeIntervalSince1970 - capturedAt > pruneAge
+    }
 
     let directory: URL
     private(set) var index: [String: Entry] = [:]
@@ -242,6 +270,14 @@ final class MenuBarGlyphCache {
         if let data = try? Data(contentsOf: directory.appendingPathComponent("index.json")),
            let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
             index = decoded
+        }
+        // A cache from before the width cap may hold text on disk: those
+        // photographs go, file and all, the first time this build opens
+        // it.
+        let wide = index.filter { !Self.persists(width: $0.value.width) }
+        if !wide.isEmpty {
+            for key in wide.keys { drop(key) }
+            writeIndex()
         }
     }
 
@@ -266,8 +302,10 @@ final class MenuBarGlyphCache {
 
     /// File a glyph. Returns whether the item's picture changed — a new
     /// fingerprint over a remembered one (a first photograph is not a
-    /// change). The index is written with it; a failed write keeps the
-    /// glyph in memory for this run.
+    /// change). An icon-sized glyph is written with the index; a wider
+    /// one is kept in memory only, and takes any older file of the same
+    /// item with it. A failed write keeps the glyph in memory for this
+    /// run.
     @discardableResult
     func store(_ glyph: MenuBarGlyphProcessing.Glyph, for item: MenuBarItem, dark: Bool,
                pointSize: CGSize, now: Date = Date()) -> Bool {
@@ -283,9 +321,29 @@ final class MenuBarGlyphCache {
         images[key.storageKey] = image
         let evicted = Self.overflow(index, keeping: key.storageKey)
         for storageKey in evicted { drop(storageKey) }
-        persist(glyph, file: file)
+        if Self.persists(width: entry.width) {
+            persist(glyph, file: file)
+        } else {
+            // The item grew text since its last photograph: the icon on
+            // disk is not what it shows any more, and the new face is
+            // not for disk at all.
+            if let previous, Self.persists(width: previous.width) {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(previous.file))
+            }
+            writeIndex()
+        }
         version += 1
         return previous.map { $0.fingerprint != fingerprint } ?? false
+    }
+
+    /// Drop every photograph past `pruneAge` at `now`, whoever owns it —
+    /// launch housekeeping, and the start of each photograph pass, so a
+    /// Mac that never quits still forgets.
+    func expire(now: Date = Date()) {
+        let old = index.filter { Self.expired(capturedAt: $0.value.capturedAt, now: now) }
+        guard !old.isEmpty else { return }
+        for key in old.keys { drop(key) }
+        writeIndex()
     }
 
     /// The keys past `maxEntries`, oldest first — never `keeping`, the
@@ -317,8 +375,15 @@ final class MenuBarGlyphCache {
         images[storageKey] = nil
         // Two keys never share a file name in practice (a 64-bit hash of
         // the key), but a collision must not delete the survivor's PNG.
-        guard !index.values.contains(where: { $0.file == entry.file }) else { return }
+        guard !index.values.contains(where: { $0.file == entry.file && Self.persists(width: $0.width) })
+        else { return }
         try? FileManager.default.removeItem(at: directory.appendingPathComponent(entry.file))
+    }
+
+    /// The part of the index that is written down: the icon-sized
+    /// photographs. A wide one lives in `index` and `images` alone.
+    nonisolated static func persisted(_ index: [String: Entry]) -> [String: Entry] {
+        index.filter { persists(width: $0.value.width) }
     }
 
     // MARK: Files
@@ -356,7 +421,7 @@ final class MenuBarGlyphCache {
     }
 
     private func writeIndex() {
-        guard let data = try? JSONEncoder().encode(index) else { return }
+        guard let data = try? JSONEncoder().encode(Self.persisted(index)) else { return }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? data.write(to: directory.appendingPathComponent("index.json"), options: .atomic)
     }
@@ -439,6 +504,8 @@ final class MenuBarGlyphCamera {
         guard !busy, !items.isEmpty, permitted() else { return [] }
         busy = true
         defer { busy = false }
+        // The age cap holds on a Mac that never quits, too.
+        cache.expire(now: now())
         let dark = dark()
         var stored: [String] = []
         for item in items {

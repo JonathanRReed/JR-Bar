@@ -112,6 +112,31 @@ final class ScreenBarInteraction {
     var menuHandleAt: @MainActor (NSPoint) -> Bool = { _ in false }
     /// The handle was clicked — reveal or rehide the run.
     var onMenuHandle: @MainActor () -> Void = {}
+    /// The right ear as the menu bar's surface: whether a screen point is
+    /// on the part of it that answers with the black peek of hidden
+    /// glyphs — the whole ear but the ‹ slice — and false while there is
+    /// nothing to peek at. That zone is the peek's alone: the card and
+    /// the island never arm from it.
+    var peekZoneAt: @MainActor (NSPoint) -> Bool = { _ in false }
+    /// The hanging peek's frame; nil while it is down.
+    var peekPanel: @MainActor () -> NSRect? = { nil }
+    /// Whether a screen point is on the corridor from the ear down to
+    /// the hanging peek — never on the ‹ slice, which stays the handle's
+    /// while the peek hangs; false while it is down.
+    var peekCorridorAt: @MainActor (NSPoint) -> Bool = { _ in false }
+    /// Whether the peek hangs, and whether a click pinned it there.
+    var peekState: @MainActor () -> (shown: Bool, pinned: Bool) = { (false, false) }
+    /// Hang, pin, toggle or fold the peek.
+    var onPeek: @MainActor (ScreenBarPeekIntent) -> Void = { _ in }
+    /// How long the pointer rests on the ear before the peek hangs — the
+    /// menu bar's own reveal dwell, so a pointer crossing to the clock
+    /// never drops it.
+    static let peekDelay: TimeInterval = 0.18
+    /// Points of vertical finger travel on the ear before a trackpad
+    /// scroll hangs the peek — a quarter of the swipe's commit.
+    nonisolated static let peekScrollThreshold: CGFloat = 10
+    private var peekShowWork: DispatchWorkItem?
+    private var peekHideWork: DispatchWorkItem?
 
     /// Points of vertical travel before a press-on-the-band becomes a
     /// swipe — small enough that a deliberate pull feels instant, large
@@ -246,6 +271,7 @@ final class ScreenBarInteraction {
                 let point = NSEvent.mouseLocation
                 let top = NSScreen.screens.first { $0.frame.contains(point) }?.frame.maxY ?? point.y
                 let near = top - point.y <= Self.nearReach || self.hovering || self.isTooltipShown
+                    || self.peekState().shown
                 self.scheduleMovePoll(after: near ? Self.moveInterval : Self.farMoveInterval)
             }
         })
@@ -255,6 +281,9 @@ final class ScreenBarInteraction {
     }
 
     func stop() {
+        peekShowWork?.cancel(); peekShowWork = nil
+        peekHideWork?.cancel(); peekHideWork = nil
+        onPeek(.close)
         for monitor in globalMonitors + localMonitors { NSEvent.removeMonitor(monitor) }
         globalMonitors = []
         localMonitors = []
@@ -324,11 +353,20 @@ final class ScreenBarInteraction {
         // next pointer event instead of doubling the island — or
         // lingering as the one thing a switched-off utility drew.
         if isTooltipShown, card.surface() != .glass { hideTooltip() }
-        let inside = pointerInHitRegion()
+        // The right ear's peek zone, the peek and the corridor between
+        // them are the menu bar's surface: the card's machine reads them
+        // as outside, so crossing from the band to the ear hands over
+        // from one surface to the other.
+        let point = NSEvent.mouseLocation
+        let region = Self.pointerRegion(onPeekZone: peekZoneAt(point),
+                                        onPeek: peekCorridorAt(point),
+                                        inHitRegion: pointerInHitRegion())
+        notePeekHover(region == .peek)
+        let inside = region == .band
         // The ear tell tracks every tick while the pointer is in the
         // region, not just the region's edges — crossing between ears
         // and tray inside it is the whole point of the tell.
-        let wing = inside ? wingSideAt(NSEvent.mouseLocation) : nil
+        let wing = region == .outside ? nil : wingSideAt(point)
         if wing != hoveredWing {
             hoveredWing = wing
             onWingHover(wing)
@@ -372,6 +410,114 @@ final class ScreenBarInteraction {
             hideWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeGrace, execute: work)
         }
+    }
+
+    /// Which surface the pointer is on: the menu bar's peek (the right
+    /// ear's zone, the hanging peek, the corridor between), the band's
+    /// card region, or neither. The peek wins where they overlap — the
+    /// ear is in both.
+    enum PointerRegion: Equatable { case peek, band, outside }
+
+    nonisolated static func pointerRegion(onPeekZone: Bool, onPeek: Bool, inHitRegion: Bool) -> PointerRegion {
+        if onPeekZone || onPeek { return .peek }
+        return inHitRegion ? .band : .outside
+    }
+
+    /// The peek's hover: resting on the ear hangs it after `peekDelay`
+    /// — never over a pinned card, which only a click or a pull trades
+    /// for it — and leaving the ear and the peek folds an unpinned one
+    /// after the card's own grace.
+    private func notePeekHover(_ onSurface: Bool) {
+        let state = peekState()
+        if onSurface {
+            peekHideWork?.cancel()
+            peekHideWork = nil
+            guard !state.shown, peekShowWork == nil, !cardPinned() else { return }
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.peekShowWork = nil
+                    guard self.pointerOnPeekSurface() else { return }
+                    self.requestPeek(.hover)
+                }
+            }
+            peekShowWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.peekDelay, execute: work)
+        } else {
+            peekShowWork?.cancel()
+            peekShowWork = nil
+            guard state.shown, !state.pinned, peekHideWork == nil else { return }
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.peekHideWork = nil
+                    guard !self.pointerOnPeekSurface(), !self.peekState().pinned else { return }
+                    self.onPeek(.close)
+                }
+            }
+            peekHideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeGrace, execute: work)
+        }
+    }
+
+    /// Whether the pointer is on the ear's zone, the peek, or between.
+    private func pointerOnPeekSurface() -> Bool {
+        let point = NSEvent.mouseLocation
+        return peekZoneAt(point) || peekCorridorAt(point)
+    }
+
+    /// Every gesture that asks for the peek — the rest, the wheel, the
+    /// trackpad, the click, the pull — asks here, so the rule holds on
+    /// each: a pinned card or grown island folds only for a click or a
+    /// pull, and a glass card still in its leave grace goes now — one
+    /// surface under the notch at a time.
+    private func requestPeek(_ intent: ScreenBarPeekIntent) {
+        let gesture = Self.peekGesture(intent: intent, cardPinned: cardPinned())
+        guard gesture.open else { return }
+        if gesture.unpinFirst {
+            unpin()
+        } else if isTooltipShown {
+            hideTooltip()
+        }
+        onPeek(intent)
+    }
+
+    /// What a gesture asking for the peek does about the card — pure: a
+    /// pinned card (or the grown island) is traded for the peek only by
+    /// a deliberate press on the ear, a click or a pull, which folds it
+    /// first; a rest or a scroll leaves it standing and hangs nothing.
+    nonisolated static func peekGesture(intent: ScreenBarPeekIntent,
+                                        cardPinned: Bool) -> (unpinFirst: Bool, open: Bool) {
+        guard cardPinned else { return (false, true) }
+        switch intent {
+        case .hover: return (false, false)
+        case .pin, .toggle: return (true, true)
+        case .close: return (false, true)
+        }
+    }
+
+    /// What a press does to the peek — pure: a press on the peek's own
+    /// panel is its tiles' and buttons' (the band's machine never arms
+    /// it); a press on the ear's zone is the ear's (a click toggles the
+    /// peek, a pull hangs it); a press anywhere else folds a peek that
+    /// hangs, and then goes on to be whatever it was.
+    enum PeekPress: Equatable { case panel, ear, foldAndContinue, none }
+
+    nonisolated static func peekPress(onPanel: Bool, onZone: Bool, peekShown: Bool) -> PeekPress {
+        if onPanel { return .panel }
+        if onZone { return .ear }
+        return peekShown ? .foldAndContinue : .none
+    }
+
+    /// Whether a scroll opens the peek — pure: a wheel's notch (no
+    /// phases) on the ear does at once; a trackpad gesture that began on
+    /// the ear does once its vertical travel passes the threshold and
+    /// wins over the horizontal, which stays the ear's dismiss flick.
+    nonisolated static func scrollOpensPeek(precise: Bool, beganOnPeek: Bool, onPeekZone: Bool,
+                                            accumX: CGFloat, accumY: CGFloat,
+                                            threshold: CGFloat = peekScrollThreshold) -> Bool {
+        guard precise else { return onPeekZone }
+        return beganOnPeek && abs(accumY) > abs(accumX) && abs(accumY) >= threshold
     }
 
     /// What a click in the hit region does next — factored pure so the
@@ -438,6 +584,10 @@ final class ScreenBarInteraction {
     /// island's gesture, never the band's.
     private var swipeStart: NSPoint?
     private var swipeRegion: SwipeRegion = .band
+    /// The press began on the right ear's peek zone: its click is the
+    /// peek's toggle and a downward pull hangs the peek — the card's
+    /// vertical gestures never arm from there.
+    private var swipeOnPeek = false
     private var swipePinnedAtDown = false
     private var swipeFired = false
     /// A press that began on the island's frame: the island's hosting
@@ -453,6 +603,21 @@ final class ScreenBarInteraction {
         let islandRects = self.extraHitRects().map { String(describing: $0) }.joined(separator: ";")
         Self.diag("down (\(Int(point.x)),\(Int(point.y))) islandRects=\(islandRects)")
         pressOnIsland = false
+        swipeOnPeek = false
+        switch Self.peekPress(onPanel: peekPanel()?.contains(point) ?? false,
+                              onZone: peekZoneAt(point), peekShown: peekState().shown) {
+        case .panel:
+            // The peek's glyphs and buttons answer this press; it is
+            // inside, so it is never the outside-click dismissal either.
+            swipeStart = nil
+            return
+        case .ear:
+            swipeOnPeek = true
+        case .foldAndContinue:
+            onPeek(.close)
+        case .none:
+            break
+        }
         if onIsland(point) {
             Self.diag("island press unarmed")
             // The island's window answers its own presses — tap to
@@ -513,6 +678,15 @@ final class ScreenBarInteraction {
             }
             return
         }
+        // A pull down on the right ear hangs the peek — the menu bar's
+        // own surface — and never slides the card out under it.
+        if swipeOnPeek {
+            if point.y - start.y <= -Self.swipeThreshold {
+                swipeFired = true
+                requestPeek(.pin)
+            }
+            return
+        }
         // A downward pull that has not committed still slides the card
         // out under the pointer.
         if point.y - start.y <= -Self.swipeThreshold * 0.25, !isTooltipShown {
@@ -545,7 +719,16 @@ final class ScreenBarInteraction {
         // A release resolves only a press that armed here — a swipe
         // that already fired, and an island press (the island's window
         // owns its own verdicts), both skip.
+        let pressedEar = swipeOnPeek
+        swipeOnPeek = false
         guard !wasSwipe, !onIsland, armed else { return }
+        // A press on the right ear's peek zone: a fast pull down hangs
+        // the peek, anything else is the click that toggles it — whether
+        // or not a card is pinned, which the click or pull trades away.
+        if pressedEar {
+            requestPeek(flick <= -NotchPullGesture.flickVelocity ? .pin : .toggle)
+            return
+        }
         // The flick: a fast pull released short of the travel
         // threshold is still the swipe it felt like.
         switch Self.flickOutcome(pinnedAtDown: pinnedAtDown, velocityY: flick) {
@@ -585,12 +768,26 @@ final class ScreenBarInteraction {
     private var scrollFired = false
     private var scrollPinnedAtStart = false
     private var scrollRegion: SwipeRegion = .band
+    /// The gesture began on the right ear's peek zone.
+    private var scrollOnPeek = false
 
     private func pointerScrolled(_ event: NSEvent) {
-        // Only a trackpad gesture carries phases; a wheel's deltas and a
-        // gesture's momentum tail arrive with `phase` empty.
-        guard event.hasPreciseScrollingDeltas, event.phase != [] else { return }
+        // A mouse wheel carries no phases: a notch of it on the right
+        // ear hangs the peek at once — the menu bar's scroll-to-reveal,
+        // answered where the ear stands.
+        if !event.hasPreciseScrollingDeltas {
+            if Self.scrollOpensPeek(precise: false, beganOnPeek: false,
+                                    onPeekZone: peekZoneAt(NSEvent.mouseLocation),
+                                    accumX: 0, accumY: 0) {
+                requestPeek(.hover)
+            }
+            return
+        }
+        // Only a trackpad gesture carries phases; a gesture's momentum
+        // tail arrives with `phase` empty.
+        guard event.phase != [] else { return }
         if event.phase.contains(.began) {
+            scrollOnPeek = peekZoneAt(NSEvent.mouseLocation)
             // A two-finger gesture that began on the island's window is
             // the island's own — its hosting view reads the same scroll
             // stream, so both machines counting one flick would double
@@ -620,6 +817,8 @@ final class ScreenBarInteraction {
                     case .none:
                         break
                     }
+                } else if scrollOnPeek, abs(scrollAccumY) >= commit {
+                    requestPeek(.hover)
                 } else if abs(scrollAccumY) >= commit {
                     switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart,
                                              deltaY: scrollAccumY, threshold: commit) {
@@ -676,6 +875,16 @@ final class ScreenBarInteraction {
                 onWingRestore()
             case .none:
                 return
+            }
+            return
+        }
+        // Vertical travel on the right ear hangs the peek, never the
+        // card: either direction, a quarter of the way to a commit.
+        if scrollOnPeek {
+            if Self.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: true,
+                                    accumX: scrollAccumX, accumY: scrollAccumY) {
+                scrollFired = true
+                requestPeek(.hover)
             }
             return
         }

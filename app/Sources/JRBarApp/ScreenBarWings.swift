@@ -43,12 +43,25 @@ struct ScreenBarWingSlot: Equatable {
     /// draws none.
     var sensors: NotchSensorState?
     var tone: Tone = .neutral
+    /// A second, smaller mark at the ear's outer end — the keep-awake
+    /// cup or the closed-lid moon riding beside whatever the ear shows,
+    /// so a hold that lasts all afternoon never takes the meter's place.
+    /// nil draws none.
+    var accessory: ScreenBarWingAccessory?
+    /// A menu bar item's own glyph as the mark — a newcomer's, or a
+    /// hidden item that changed — photographed off the bar, re-tinted
+    /// when it is a template. nil leaves the other marks to draw.
+    var glyph: ScreenBarWingGlyph?
+    /// Which of its kind this mark is, when the kind alone does not say:
+    /// two nudges both draw a glyph, and the second is news even while
+    /// the first ear is dismissed. nil for every mark that needs none.
+    var markID: String?
 
     /// Whether the slot draws a mark of its own beside any dots. A slot
     /// with neither still holds its claim with the lone resting dot.
     var hasMark: Bool {
         provider != nil || symbol != nil || meter != nil || visualizer
-            || artworkData != nil || askAge != nil
+            || artworkData != nil || askAge != nil || glyph != nil
     }
 
     /// Whether the slot carries lit privacy dots.
@@ -61,6 +74,34 @@ struct ScreenBarWingSlot: Equatable {
         case .alert: return .red
         }
     }
+}
+
+/// A photographed menu bar glyph as an ear's mark. Equal when it is the
+/// same picture — the glyph cache hands out one image per photograph.
+struct ScreenBarWingGlyph: Equatable {
+    var image: NSImage
+    /// Drawn in the slot's tone, as the bar draws a template item.
+    var template: Bool
+
+    /// The room the mark may take inside the ear's 36 pt. Only an
+    /// icon-sized photograph or an app icon reaches the ear — a glyph
+    /// carrying text is the peek's, never the ear's — so the cap only
+    /// ever eases a wide icon in a point or two rather than let it spill.
+    static let maxWidth: CGFloat = 26
+    static let maxHeight: CGFloat = 15
+}
+
+/// The ear's second mark: an SF symbol a size down from the main one,
+/// at the ear's outer end, in its own tone.
+struct ScreenBarWingAccessory: Equatable {
+    var symbol: String
+    var tone: ScreenBarWingSlot.Tone = .neutral
+
+    /// The room it adds to its ear.
+    static let width: CGFloat = 14
+    /// Its point size — the menu bar's small glyphs, beside the 13 pt
+    /// mark.
+    static let size: CGFloat = 10
 }
 
 /// The two slots: nil means the side draws nothing and claims no room —
@@ -219,9 +260,10 @@ struct ScreenBarAskAgeSchedule: TimelineSchedule {
 }
 
 /// What the ears add on top of the panel store's slots — facts only the
-/// Screen Bar draws: the ask-age ring on the asking session's mark, and
-/// the moon while a quiet is dimming the lights. The store's slots stay
-/// the one pick of who is on top; these only dress them.
+/// Screen Bar draws: the ask-age ring on the asking session's mark, the
+/// moon while a quiet is dimming the lights, and the keep-awake mark on
+/// the right. The store's slots stay the one pick of who is on top;
+/// these only dress them.
 struct ScreenBarEarMarks: Equatable {
     /// The quiet in force, as the ear shows it: a mark, and the words
     /// the peek and VoiceOver read ("Paused until 14:30").
@@ -230,8 +272,66 @@ struct ScreenBarEarMarks: Equatable {
         var text: String
     }
 
+    /// The daemon's hold on sleep, as the right ear shows it: the cup
+    /// while the person's own lease holds, the moon while the closed-lid
+    /// hold runs; the words for the peek and VoiceOver ("Held awake
+    /// until 14:30"). Amber when heat or the battery floor made it yield.
+    struct Awake: Equatable {
+        var symbol: String
+        var text: String
+        var tone: ScreenBarWingSlot.Tone = .neutral
+    }
+
     var askAge: ScreenBarAskAge?
     var quiet: Quiet?
+    var awake: Awake?
+
+    /// The lease's cup — Amphetamine's mark, the notch chip's glyph.
+    static let leaseSymbol = "cup.and.saucer.fill"
+    /// The closed-lid hold's moon — the stars keep it apart from the
+    /// quiet's plain moon on the other ear.
+    static let lidSymbol = "moon.stars.fill"
+
+    /// The mark for `state.power`, or nil while neither hold runs. The
+    /// agents' own automatic hold is not shown: it comes and goes with
+    /// every run, and the band already says the agents are working. The
+    /// closed-lid hold outranks a lease — it is the one that keeps a
+    /// shut laptop running. A lease's end reads as a clock time, so the
+    /// words only move when the lease does.
+    static func awake(power: CorePower?, calendar: Calendar = .current) -> Awake? {
+        guard let power else { return nil }
+        if let lid = power.closedLid, lid.holding == true {
+            return Awake(symbol: lidSymbol,
+                         text: lid.lidClosed == true ? "Running with the lid closed"
+                             : "Keeps running if the lid closes")
+        }
+        guard let hold = power.hold, hold.isManual, let lease = hold.lease else { return nil }
+        if let yielded = hold.suspended {
+            let why = yielded == "thermal" ? "the Mac is too warm"
+                : yielded == "battery" ? "the battery is low" : "it yielded"
+            return Awake(symbol: leaseSymbol, text: "Keep-awake paused — \(why)", tone: .attention)
+        }
+        var text: String
+        switch lease.kind {
+        case "duration":
+            if let until = lease.until {
+                let formatter = DateFormatter()
+                formatter.calendar = calendar
+                formatter.timeZone = calendar.timeZone
+                formatter.dateStyle = .none
+                formatter.timeStyle = .short
+                text = "Held awake until \(formatter.string(from: Date(timeIntervalSince1970: until)))"
+            } else {
+                text = "Held awake"
+            }
+        case "agents":
+            text = "Held awake until the agents finish"
+        default:
+            text = "Held awake until you turn it off"
+        }
+        if lease.display == true { text += ", the screen too" }
+        return Awake(symbol: leaseSymbol, text: text)
+    }
 
     /// The quiet modes that change the light. Mute stills only the
     /// sounds — the band is as bright as ever, so it needs no moon.
@@ -256,7 +356,9 @@ struct ScreenBarEarMarks: Equatable {
     /// provider's glyph). The moon takes a left ear that has nothing
     /// louder to say — empty, or a working or finished session — and
     /// never an ask, a failure, or the media ear, which is a live
-    /// activity of its own.
+    /// activity of its own. The keep-awake mark rides the right ear as
+    /// its accessory, beside whatever it shows, or is the ear's own
+    /// mark when nothing else claims the side.
     static func apply(_ marks: ScreenBarEarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
         var dressed = wings
         if let age = marks.askAge, var left = dressed.left, left.tone == .attention,
@@ -276,6 +378,15 @@ struct ScreenBarEarMarks: Equatable {
                 dressed.left = ScreenBarWingSlot(text: quiet.text, symbol: quiet.symbol)
             }
         }
+        if let awake = marks.awake {
+            if var right = dressed.right {
+                right.accessory = ScreenBarWingAccessory(symbol: awake.symbol, tone: awake.tone)
+                right.text += " · " + awake.text
+                dressed.right = right
+            } else {
+                dressed.right = ScreenBarWingSlot(text: awake.text, symbol: awake.symbol, tone: awake.tone)
+            }
+        }
         return dressed
     }
 }
@@ -283,7 +394,8 @@ struct ScreenBarEarMarks: Equatable {
 extension PanelStore {
     /// The ears' own marks for this moment: the longest-waiting ask's
     /// age (the same row the left ear names — asks lead `rows`, oldest
-    /// first) and the light-changing quiet, if one is in force.
+    /// first), the light-changing quiet, if one is in force, and the
+    /// keep-awake hold read from `state.power`.
     var screenBarEarMarks: ScreenBarEarMarks {
         var marks = ScreenBarEarMarks()
         let document = settingsDocument ?? SettingsDocument()
@@ -293,6 +405,10 @@ extension PanelStore {
         if let quiet {
             marks.quiet = ScreenBarEarMarks.quiet(mode: quiet.mode, word: Self.quietWord(quiet.mode),
                                                   until: quiet.until)
+        }
+        // A dead daemon holds nothing: its last word is not a hold.
+        if core.isLive {
+            marks.awake = ScreenBarEarMarks.awake(power: core.state?.power)
         }
         return marks
     }
@@ -415,6 +531,15 @@ struct ScreenBarWingsView: View {
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 19, height: 19)
                     .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+            } else if let glyph = slot.glyph {
+                // A menu bar item's own face — a newcomer, or a hidden
+                // item that changed — at the bar's own glyph size.
+                Image(nsImage: glyph.image)
+                    .renderingMode(glyph.template ? .template : .original)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(slot.textColor)
+                    .frame(maxWidth: ScreenBarWingGlyph.maxWidth, maxHeight: ScreenBarWingGlyph.maxHeight)
             } else if slot.visualizer {
                 // The media ear: three bars bouncing on their own
                 // phases — the island strip's grammar, not a spectrum.
@@ -456,11 +581,17 @@ struct ScreenBarWingsView: View {
         .scaleEffect(swell ? Self.swellScale : 1)
         .opacity(1 - min(1, abs(pull) / 40))
         // The privacy dots sit at the ear's inner edge, beside the bezel
-        // — the camera LED's own neighbourhood — and the mark centres in
-        // what is left of the zone.
+        // — the camera LED's own neighbourhood — the accessory at its
+        // outer end, and the mark centres in what is left of the zone.
+        // A flank too tight for both gives up the accessory first.
         let lead = slot.showsSensors ? ScreenBarSensorDots.lead(slot.sensors) : 0
-        let markZone = CGRect(x: rect.minX + lead, y: rect.minY,
-                              width: max(0, rect.width - lead), height: rect.height)
+        let accessoryW: CGFloat = slot.accessory != nil
+            && rect.width - lead >= ScreenBarView.markMinWidth + ScreenBarWingAccessory.width
+            ? ScreenBarWingAccessory.width : 0
+        let markZone = CGRect(x: rect.minX + lead + (side == .left ? accessoryW : 0), y: rect.minY,
+                              width: max(0, rect.width - lead - accessoryW), height: rect.height)
+        let accessoryZone = CGRect(x: side == .left ? rect.minX : markZone.maxX, y: rect.minY,
+                                   width: accessoryW, height: rect.height)
 
         if model.tray != nil {
             // The wash covers the ear's full span — the mark's zone plus
@@ -486,6 +617,12 @@ struct ScreenBarWingsView: View {
                     mark
                         .offset(x: markZone.midX - wash.midX + pull + reach)
                 }
+                if let accessory = slot.accessory, accessoryW > 0 {
+                    accessoryMark(accessory)
+                        .scaleEffect(swell ? Self.swellScale : 1)
+                        .opacity(1 - min(1, abs(pull) / 40))
+                        .offset(x: accessoryZone.midX - wash.midX + pull + reach)
+                }
                 // The dots outrank the mark for room: a privacy light
                 // is never the thing a crowded flank squeezes out.
                 if let sensors = slot.sensors, sensors.anyInUse,
@@ -505,7 +642,9 @@ struct ScreenBarWingsView: View {
         } else {
             HStack(spacing: ScreenBarSensorDots.inset) {
                 if let sensors = slot.sensors, sensors.anyInUse { sensorDots(sensors) }
+                if side == .left, let accessory = slot.accessory { accessoryMark(accessory) }
                 mark
+                if side == .right, let accessory = slot.accessory { accessoryMark(accessory) }
             }
                 .padding(.vertical, 4)
                 .fixedSize()
@@ -516,6 +655,14 @@ struct ScreenBarWingsView: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(slot.text))
         }
+    }
+
+    /// The ear's second mark — a symbol a size down, in its own tone.
+    private func accessoryMark(_ accessory: ScreenBarWingAccessory) -> some View {
+        Image(systemName: accessory.symbol)
+            .font(.system(size: ScreenBarWingAccessory.size, weight: .semibold))
+            .foregroundStyle(ScreenBarWingSlot(text: "", tone: accessory.tone).textColor)
+            .accessibilityHidden(true)
     }
 
     /// The privacy dots — macOS's own convention in the island's dot
