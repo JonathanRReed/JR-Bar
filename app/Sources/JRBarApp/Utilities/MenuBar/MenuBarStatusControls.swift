@@ -63,4 +63,24 @@ enum MenuBarCombinedMenu {
         }
         return entries
     }
+
+    /// One row of the menu's profile list.
+    struct ProfileRow: Equatable, Sendable {
+        var id: String
+        var title: String
+        var active: Bool
+    }
+
+    /// The profile rows the menu carries under the hidden items — the
+    /// built-in "None" first, a checkmark on the active one. Empty while
+    /// there are no saved profiles: a lone "None" says nothing.
+    nonisolated static func profileRows(profiles: [MenuBarSettings.Profile],
+                                        activeID: String?) -> [ProfileRow] {
+        guard !profiles.isEmpty else { return [] }
+        let active = activeID.flatMap { id in profiles.contains { $0.id == id } ? id : nil }
+            ?? MenuBarProfiles.noneID
+        return [ProfileRow(id: MenuBarProfiles.noneID, title: MenuBarProfiles.noneName,
+                           active: active == MenuBarProfiles.noneID)]
+            + profiles.map { ProfileRow(id: $0.id, title: $0.name, active: $0.id == active) }
+    }
 }

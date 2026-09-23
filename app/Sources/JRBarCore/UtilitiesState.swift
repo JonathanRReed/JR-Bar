@@ -555,7 +555,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         displayProfiles = (try? c.decodeIfPresent([String: String].self,
                                                  forKey: .displayProfiles)) ?? [:]
         showForUpdates = (try? c.decodeIfPresent(Bool.self, forKey: .showForUpdates)) ?? false
-        curation = (try? c.decodeIfPresent(MenuBarCuration.self, forKey: .curation)) ?? MenuBarCuration()
+        // A file from before the layers: its profiles are snapshots.
+        curation = (try? c.decodeIfPresent(MenuBarCuration.self, forKey: .curation))
+            ?? MenuBarCuration(profileModel: profiles.isEmpty ? MenuBarCuration.currentProfileModel : 0)
     }
 }
 

@@ -527,23 +527,26 @@ struct MenuBarUtilityControls: View {
     }
 }
 
-/// The Profiles rows: a picker that applies a saved arrangement (or the
-/// built-in "None"), and a name field that saves the current one. A
-/// profile is sections plus appearance — applying it is a settings
-/// write like any other, so the reconcile path does the rest.
+/// The Profiles rows: which profile is laid over your bar, a name field
+/// that saves the current look, and — for the active profile — the
+/// editor for what it changes. A profile is a delta over your bar plus
+/// a look: switching swaps the layer, so nothing you picked for your
+/// bar is ever rewritten.
 private struct MenuBarProfilesControls: View {
     let utility: MenuBarUtility
-    /// The picker selection — a profile id, or "none".
-    @ViewState private var selection = MenuBarProfiles.noneID
     /// The save/rename field.
     @ViewState private var nameDraft = ""
+    /// The active profile's editor.
+    @ViewState private var showEditor = false
 
     var body: some View {
         SettingLabel(title: "Profiles",
-                     subtitle: "Saved arrangements — the section map plus the cover look — applied in one move.")
+                     subtitle: "A look plus what it changes about your bar. Apps you hide on your bar stay hidden in every profile that doesn't say otherwise.")
 
         LabeledContent {
-            Picker(selection: $selection) {
+            Picker(selection: Binding(
+                get: { utility.activeProfileID },
+                set: { utility.applyProfile(id: $0) })) {
                 Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneID)
                 ForEach(utility.settings().profiles) { profile in
                     Text(profile.name).tag(profile.id)
@@ -552,12 +555,9 @@ private struct MenuBarProfilesControls: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
-            .onChange(of: selection) { _, id in
-                utility.applyProfile(id: id)
-            }
         } label: {
-            SettingLabel(title: "Apply",
-                         subtitle: "Switching writes the whole arrangement at once.")
+            SettingLabel(title: "Active",
+                         subtitle: "Switching swaps the layer and the look — also from the icon's right-click menu.")
         }
 
         LabeledContent {
@@ -567,32 +567,80 @@ private struct MenuBarProfilesControls: View {
                     .frame(width: 120)
                 Button("Save") {
                     if let id = utility.saveProfileAs(nameDraft) {
-                        selection = id
+                        utility.applyProfile(id: id)
                         nameDraft = ""
+                        showEditor = true
                     }
                 }
                 .controlSize(.small)
                 .disabled(MenuBarProfiles.validName(nameDraft) == nil)
             }
         } label: {
-            SettingLabel(title: "Save current as",
-                         subtitle: "Sections, cover look and control layout, captured together.")
+            SettingLabel(title: "Save current look as",
+                         subtitle: "The cover look, the reveal and the spacing — then pick below what the profile changes.")
         }
 
-        if selection != MenuBarProfiles.noneID,
-           utility.settings().profiles.contains(where: { $0.id == selection }) {
+        if let profile = MenuBarProfiles.activeProfile(in: utility.settings()) {
             HStack(spacing: 8) {
                 Button("Rename to field") {
-                    utility.renameProfile(id: selection, to: nameDraft)
+                    utility.renameProfile(id: profile.id, to: nameDraft)
                 }
                 .controlSize(.small)
                 .disabled(MenuBarProfiles.validName(nameDraft) == nil)
                 Button("Delete") {
-                    utility.deleteProfile(id: selection)
-                    selection = MenuBarProfiles.noneID
+                    utility.deleteProfile(id: profile.id)
                 }
                 .controlSize(.small)
                 Spacer(minLength: 0)
+            }
+            DisclosureGroup(isExpanded: $showEditor) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if utility.profileSubjects.isEmpty {
+                        Text("Nothing listed yet — the menu bar's items appear here once Accessibility can read them.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(utility.profileSubjects) { subject in
+                        profileRow(subject, profile: profile)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "What “\(profile.name)” changes",
+                             subtitle: "“Your bar” follows your own picks; anything else holds only while this profile is active.")
+            }
+        }
+    }
+
+    private func profileRow(_ subject: MenuBarProfileSubject,
+                            profile: MenuBarSettings.Profile) -> some View {
+        LabeledContent {
+            Picker(selection: Binding<MenuBarItemSection?>(
+                get: { subject.isApp ? profile.concealedApps[subject.key] : profile.sections[subject.key] },
+                set: { section in
+                    if subject.isApp {
+                        utility.setProfileDelta(section, forApp: subject.key, profileID: profile.id)
+                    } else {
+                        utility.setProfileDelta(section, forItem: subject.key, profileID: profile.id)
+                    }
+                })) {
+                Text("Your bar").tag(MenuBarItemSection?.none)
+                Text(subject.isApp ? "Shown" : "Auto").tag(MenuBarItemSection?.some(.shown))
+                Text(subject.isApp ? "Hidden" : "Cover").tag(MenuBarItemSection?.some(.hidden))
+                Text("Always").tag(MenuBarItemSection?.some(.alwaysHidden))
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        } label: {
+            HStack(spacing: 8) {
+                Image(nsImage: subject.item.owner?.icon ?? NSImage())
+                    .resizable()
+                    .frame(width: 14, height: 14)
+                Text(subject.title)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
     }

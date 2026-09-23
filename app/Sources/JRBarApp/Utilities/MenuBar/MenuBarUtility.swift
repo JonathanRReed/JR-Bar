@@ -64,9 +64,6 @@ final class MenuBarUtility: Toy {
     private(set) var lastArrangeOutcome: MenuBarArrangeOutcome?
     /// True while an arrange is dragging — the card disables its button.
     private(set) var arranging = false
-    /// Where the profile-cycling cursor sits: 0 is the built-in "None",
-    /// i > 0 is `profiles[i - 1]`. `applyProfile` keeps it honest.
-    @ObservationIgnored private var profileCursor = 0
 
     /// The latest layout — the card's count row and item list read it.
     /// While the utility runs the hider keeps it fresh; while it is
@@ -516,38 +513,59 @@ final class MenuBarUtility: Toy {
                   !Self.isOwnFamily(item.bundleID) else { return }
             if let bundleID = item.bundleID, MenuBarConcealPlan.canConcealApp(bundleID) {
                 update { draft in
-                    // `.shown` is written, not deleted: the explicit
-                    // marker records a deliberate pick, and absent keys
-                    // read as shown the same way.
-                    draft.concealedApps[bundleID] = section
+                    // A profile that already speaks for the app takes
+                    // the pick; otherwise it lands on the base, so it
+                    // holds in every profile. `.shown` is written, not
+                    // deleted: the explicit marker records a deliberate
+                    // pick, and absent keys read as shown the same way.
+                    if MenuBarProfiles.pickTargetsProfile(appID: bundleID, in: draft),
+                       let profileID = draft.curation.activeProfileID {
+                        MenuBarProfiles.setDelta(appID: bundleID, to: section,
+                                                 profileID: profileID, in: &draft)
+                    } else {
+                        draft.concealedApps[bundleID] = section
+                    }
                 }
             } else {
                 // Apple's own extras and bare helpers have no concealment
                 // path through the agent — cover them where they sit
                 // instead, Ice-style, via the positional map the
                 // cover-fallback in `concealedPlan` reads.
-                update { draft in
-                    draft.sections = MenuBarItemHider.updatedSections(
-                        items: listedItems, sections: draft.sections,
-                        changedID: itemID, target: section)
-                }
+                writeCoverPick(section, for: itemID)
             }
             hider.reconcile()
             return
         }
+        writeCoverPick(section, for: itemID)
+    }
+
+    /// A positional pick: into the active profile's delta when it speaks
+    /// for the item (kept explicit — a delta's Shown must outrank the
+    /// base), else onto the base map.
+    private func writeCoverPick(_ section: MenuBarItemSection, for itemID: String) {
         update { draft in
-            draft.sections = MenuBarItemHider.updatedSections(
-                items: listedItems, sections: draft.sections,
-                changedID: itemID, target: section)
+            if MenuBarProfiles.pickTargetsProfile(itemID: itemID, in: draft),
+               let profileID = draft.curation.activeProfileID {
+                MenuBarProfiles.setDelta(itemID: itemID, to: section,
+                                         profileID: profileID, in: &draft)
+            } else {
+                draft.sections = MenuBarItemHider.updatedSections(
+                    items: listedItems, sections: draft.sections,
+                    changedID: itemID, target: section)
+            }
         }
     }
 
     /// The section an item's app is in under the concealer; the item
     /// map's answer otherwise.
     func effectiveSection(for item: MenuBarItem) -> MenuBarItemSection {
-        Self.effectiveSection(itemID: item.id, bundleID: item.bundleID,
-                              sections: settings().sections,
-                              concealedApps: settings().concealedApps,
+        // The curated truth — the base with the active profile laid over
+        // it. A standing Hide all / Show all is not a pick and never
+        // shows in the pickers.
+        let curated = curatedSettings()
+        return Self.effectiveSection(itemID: item.id, bundleID: item.bundleID,
+                              sections: curated.sections,
+                              concealedApps: curated.concealedApps,
                               concealing: concealer != nil,
                               ownBundleID: Bundle.main.bundleIdentifier)
     }
@@ -582,12 +600,18 @@ final class MenuBarUtility: Toy {
         MenuBarLayers.overlayNote(settings().curation.overlay)
     }
 
+    /// The curated maps: the base with the active profile's deltas laid
+    /// over it — what the pickers show.
+    func curatedSettings() -> MenuBarSettings {
+        MenuBarProfiles.curated(settings())
+    }
+
     /// The settings the engines converge to: the curated maps with the
     /// standing overlay laid over them. Writes always go to `settings()`.
     func liveSettings() -> MenuBarSettings {
-        let base = settings()
-        guard let overlay = activeOverlay else { return base }
-        return MenuBarLayers.live(base, overlay: overlay,
+        let curated = curatedSettings()
+        guard let overlay = activeOverlay else { return curated }
+        return MenuBarLayers.live(curated, overlay: overlay,
                                   apps: overlay == .hideEverything ? overlayApps() : [],
                                   itemIDs: overlay == .hideEverything ? overlayItemIDs() : [])
     }
@@ -745,12 +769,45 @@ final class MenuBarUtility: Toy {
     /// settings write, so the reconcile path restyles and re-covers.
     func applyProfile(id: String) {
         let profile = settings().profiles.first { $0.id == id }
-        // Keep the hotkey cycle cursor honest: None is index 0, the
-        // profiles follow in list order.
-        profileCursor = profile.map { p in
-            (settings().profiles.firstIndex(where: { $0.id == p.id }) ?? 0) + 1
-        } ?? 0
         update { MenuBarProfiles.apply(profile, to: &$0) }
+    }
+
+    /// The active profile's id, or the built-in None's.
+    var activeProfileID: String {
+        MenuBarProfiles.activeProfile(in: settings())?.id ?? MenuBarProfiles.noneID
+    }
+
+    /// The profile editor's rows: every app the agent can take (one row
+    /// per bundle, not per item — the concealer hides whole apps) and
+    /// every item it cannot, which covers in place. Under the spacer
+    /// engine every listed item is its own row. Protected items and our
+    /// own family never.
+    var profileSubjects: [MenuBarProfileSubject] {
+        var seenApps: Set<String> = []
+        var rows: [MenuBarProfileSubject] = []
+        for item in Self.hideAllTargets(listedItems) {
+            if concealer != nil, let app = item.bundleID, MenuBarConcealPlan.canConcealApp(app) {
+                guard seenApps.insert(app).inserted else { continue }
+                rows.append(MenuBarProfileSubject(key: app, isApp: true, title: item.ownerName, item: item))
+            } else {
+                rows.append(MenuBarProfileSubject(
+                    key: item.id, isApp: false,
+                    title: item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName, item: item))
+            }
+        }
+        return rows
+    }
+
+    /// The profile editor's write — nil makes the app follow the base.
+    func setProfileDelta(_ section: MenuBarItemSection?, forApp appID: String, profileID: String) {
+        update { MenuBarProfiles.setDelta(appID: appID, to: section, profileID: profileID, in: &$0) }
+        hider.reconcile()
+    }
+
+    /// The same for a covered item.
+    func setProfileDelta(_ section: MenuBarItemSection?, forItem itemID: String, profileID: String) {
+        update { MenuBarProfiles.setDelta(itemID: itemID, to: section, profileID: profileID, in: &$0) }
+        hider.reconcile()
     }
 
     /// Save the current arrangement under `name`; returns the saved
@@ -994,14 +1051,18 @@ final class MenuBarUtility: Toy {
         let current = settings()
         let legacy = current.layoutModel < MenuBarSettings.currentLayoutModel
         let supported = current.concealedApps.filter { MenuBarConcealPlan.canConcealApp($0.key) }
-        guard legacy || supported != current.concealedApps else { return }
+        let snapshots = current.curation.profileModel < MenuBarCuration.currentProfileModel
+        guard legacy || snapshots || supported != current.concealedApps else { return }
         update { draft in
+            // Profiles move to deltas against today's base first, so
+            // each keeps exactly the layout it had.
+            MenuBarProfiles.migrateToDeltas(&draft)
             if legacy {
                 draft.sections = [:]
                 draft.concealedApps = [:]
                 draft.concealSeeded = true
                 draft.layoutModel = MenuBarSettings.currentLayoutModel
-            } else {
+            } else if supported != current.concealedApps {
                 // Old positional learning put Apple extras in a second
                 // map their picker never reads or clears. Keep the actual
                 // per-item choices and remove only those invalid entries.
@@ -2474,7 +2535,32 @@ final class MenuBarUtility: Toy {
                 menu.addItem(menuItem)
             }
         }
+        // Which profile is laid over the bar, and a click away from the
+        // others — no trip to Settings to see or switch.
+        let rows = MenuBarCombinedMenu.profileRows(profiles: settings().profiles,
+                                                   activeID: settings().curation.activeProfileID)
+        if !rows.isEmpty {
+            menu.addItem(.separator())
+            let header = NSMenuItem(title: "Profile", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for row in rows {
+                let menuItem = NSMenuItem(title: row.title,
+                                          action: #selector(MenuBarChevronActions.menuApplyProfile(_:)),
+                                          keyEquivalent: "")
+                menuItem.target = chevronActions
+                menuItem.representedObject = row.id
+                menuItem.state = row.active ? .on : .off
+                menu.addItem(menuItem)
+            }
+        }
         return menu
+    }
+
+    /// The menu's profile rows land here.
+    fileprivate func menuProfileActivated(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        applyProfile(id: id)
     }
 
     /// The menu's hidden-item rows land here: activate the item the
@@ -2962,17 +3048,26 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         // to `apply(nil)` on a mistyped trigger.
     }
 
-    /// The profile cursor for cycling — which id is live, tracked at
-    /// runtime (the card's picker owns its own selection). Index 0 is
-    /// the built-in "None".
+    /// The hotkeys' step through the profiles — from the active one,
+    /// persisted, so the cycle picks up where the card or a rule left it.
+    /// The built-in "None" sits first.
     func menuBarActions(_: MenuBarActions, cycleProfile direction: Int) {
         let profiles = settings().profiles
-        let count = profiles.count + 1
-        guard count > 1 else { return }
-        profileCursor = ((profileCursor + direction) % count + count) % count
-        applyProfile(id: profileCursor == 0 ? MenuBarProfiles.noneID
-                                            : profiles[profileCursor - 1].id)
+        guard !profiles.isEmpty else { return }
+        applyProfile(id: MenuBarProfiles.cycled(from: settings().curation.activeProfileID,
+                                                profiles: profiles, direction: direction))
     }
+}
+
+/// One row of a profile's editor: an app (keyed by bundle id) under the
+/// concealer, or an item (keyed by its identity) that covers in place.
+struct MenuBarProfileSubject: Identifiable, Equatable {
+    var key: String
+    var isApp: Bool
+    var title: String
+    /// A listed item of the subject's, for the row's icon.
+    var item: MenuBarItem
+    var id: String { (isApp ? "app:" : "item:") + key }
 }
 
 /// The boundary's host: what the Menu Bar utility needs from the app's
@@ -3036,5 +3131,9 @@ private final class MenuBarChevronActions: NSObject {
 
     @objc func menuItemClicked(_ sender: NSMenuItem) {
         utility?.menuItemActivated(sender)
+    }
+
+    @objc func menuApplyProfile(_ sender: NSMenuItem) {
+        utility?.menuProfileActivated(sender)
     }
 }

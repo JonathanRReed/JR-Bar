@@ -279,15 +279,33 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// "Hide all" / "Show all" as they stand right now; nil is the
     /// curated bar.
     public var overlay: MenuBarOverlay?
+    /// The profile laid over the base map right now — nil is the base
+    /// map alone (the built-in "None").
+    public var activeProfileID: String?
+    /// How a profile's maps are read. 0: a snapshot that replaced the
+    /// live maps wholesale on apply — an app hidden after the profile
+    /// was saved came back on every switch. 1: a delta over the base
+    /// map — only what the profile says differently. Snapshots are
+    /// migrated once, to the deltas that reproduce them exactly.
+    public var profileModel: Int
 
-    public init(overlay: MenuBarOverlay? = nil) {
+    /// The profile model this build writes.
+    public static let currentProfileModel = 1
+
+    public init(overlay: MenuBarOverlay? = nil, activeProfileID: String? = nil,
+                profileModel: Int = MenuBarCuration.currentProfileModel) {
         self.overlay = overlay
+        self.activeProfileID = activeProfileID
+        self.profileModel = profileModel
     }
 
-    private enum CodingKeys: String, CodingKey { case overlay }
+    private enum CodingKeys: String, CodingKey { case overlay, activeProfileID, profileModel }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         overlay = (try? c.decodeIfPresent(MenuBarOverlay.self, forKey: .overlay)) ?? nil
+        activeProfileID = (try? c.decodeIfPresent(String.self, forKey: .activeProfileID)) ?? nil
+        // Absent means a build that stored snapshots — migrate.
+        profileModel = (try? c.decodeIfPresent(Int.self, forKey: .profileModel)) ?? 0
     }
 }
