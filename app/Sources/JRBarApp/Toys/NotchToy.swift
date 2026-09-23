@@ -2207,6 +2207,7 @@ final class NotchToy: Toy {
             _ = core.sessions
             _ = core.state?.asks          // a pinned ask answered elsewhere steps its capsule down
             _ = core.state?.usage
+            _ = core.state?.focus         // a quiet stretch ending replays what it held
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
             _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb
             _ = displayVersion
