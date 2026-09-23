@@ -22,6 +22,14 @@ struct ShelfPasteTests {
         #expect(!ShelfTrayDrop.hasShelfable([]))
     }
 
+    @Test("the strip is one row of tiles until the shelf fills, then two")
+    func stripRows() {
+        #expect(ShelfTrayModel.stripRows(tiles: 0) == 1)
+        #expect(ShelfTrayModel.stripRows(tiles: 4) == 1)
+        #expect(ShelfTrayModel.stripRows(tiles: 5) == 2)
+        #expect(ShelfTrayModel.stripRows(tiles: 40) == 2)
+    }
+
     @Test("copied files paste as themselves")
     func files() {
         let board = privatePasteboard()

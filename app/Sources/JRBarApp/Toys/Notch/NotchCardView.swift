@@ -1145,11 +1145,23 @@ private struct ShelfTrayRow: View {
     var handTargets: [(id: String, label: String)] = []
     var onHand: (ShelfTrayModel.ShelfEntry, String) -> Void = { _, _ in }
 
+    /// The shelf's tiles: a thumbnail over the name, Yoink's grammar —
+    /// the shelf has its own page now, so a file shows its face rather
+    /// than an 11 pt glyph. One row until the shelf fills, then two,
+    /// scrolling sideways.
+    static let tileWidth: CGFloat = 58
+    static let tileHeight: CGFloat = 48
+    static let tileSpacing: CGFloat = 4
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             if !tray.entries.isEmpty || tray.pasteOffered {
+                let rows = ShelfTrayModel.stripRows(tiles: tray.entries.count + (tray.pasteOffered ? 1 : 0))
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
+                    LazyHGrid(rows: Array(repeating: GridItem(.fixed(Self.tileHeight),
+                                                              spacing: Self.tileSpacing),
+                                          count: rows),
+                              spacing: Self.tileSpacing) {
                         if tray.pasteOffered { pasteChip }
                         ForEach(tray.entries) { entry in
                             trayChip(entry)
@@ -1157,6 +1169,7 @@ private struct ShelfTrayRow: View {
                     }
                 }
                 .frame(maxWidth: 280)
+                .frame(height: CGFloat(rows) * Self.tileHeight + CGFloat(rows - 1) * Self.tileSpacing)
             }
             if let notice = tray.evictionNotice {
                 Text(notice)
@@ -1179,17 +1192,18 @@ private struct ShelfTrayRow: View {
     /// paste here can join the shelf in one click.
     private var pasteChip: some View {
         Button { tray.paste() } label: {
-            HStack(spacing: 3) {
+            VStack(spacing: 3) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 9))
+                    .font(.system(size: 15))
+                    .frame(height: 26)
                 Text("Paste")
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 8.5, weight: .medium))
             }
             .foregroundStyle(style.subColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Capsule(style: .continuous).fill(style.chipFill))
-            .contentShape(Capsule())
+            .frame(width: Self.tileWidth, height: Self.tileHeight)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(style.faintColor, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .help("Put what you copied on the shelf")
@@ -1285,28 +1299,32 @@ private struct ShelfTrayRow: View {
     /// gestures so a stack can answer a plain click with its grid.
     private func itemFace(_ item: ShelfTrayModel.Entry,
                           entry: ShelfTrayModel.ShelfEntry) -> some View {
-        HStack(spacing: 3) {
+        VStack(spacing: 3) {
             if item.missing {
                 Image(systemName: "doc.questionmark")
-                    .font(.system(size: 9))
+                    .font(.system(size: 15))
+                    .frame(width: 26, height: 26)
             } else {
-                // The file's own Finder face — Yoink's tray grammar,
-                // not a generic glyph.
+                // The file's own face — its Quick Look thumbnail once one
+                // lands, the Finder icon until then.
                 Image(nsImage: tray.icon(for: item))
                     .resizable()
-                    .frame(width: 11, height: 11)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 26, height: 26)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             }
             Text(item.missing ? "\(item.name) (moved)" : item.name)
-                .font(.system(size: 10))
+                .font(.system(size: 8.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(width: Self.tileWidth - 8)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .frame(width: Self.tileWidth, height: Self.tileHeight)
         .background(item.missing
                     ? AnyShapeStyle(style.chipFaint)
                     : AnyShapeStyle(style.chipFill),
-                    in: Capsule())
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .foregroundStyle(item.missing ? style.faintColor : style.subColor)
         .onTapGesture(count: 2) {
             if !item.missing { tray.quickLook(entry) }
@@ -1339,29 +1357,33 @@ private struct ShelfStackChip: View {
     @ViewState private var open = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        VStack(spacing: 3) {
+            // The fan: the first three faces, tilted like a stack of
+            // prints — the tile's own tell that it holds more than one.
             ZStack {
                 ForEach(Array(stack.items.prefix(3).enumerated()),
                         id: \.element.id) { index, item in
                     Image(nsImage: tray.icon(for: item))
                         .resizable()
-                        .frame(width: 10, height: 10)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 20, height: 20)
                         .rotationEffect(.degrees(Double(index - 1) * 9))
-                        .offset(x: CGFloat(index - 1) * 3.5)
+                        .offset(x: CGFloat(index - 1) * 6)
                 }
             }
-            .frame(width: 20, height: 13)
+            .frame(width: 40, height: 26)
             Text("\(tray.stackName(stack)) · \(stack.items.count)")
-                .font(.system(size: 10))
+                .font(.system(size: 8.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(width: ShelfTrayRow.tileWidth - 8)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .frame(width: ShelfTrayRow.tileWidth, height: ShelfTrayRow.tileHeight)
         .background(stack.items.allSatisfy(\.missing)
                     ? AnyShapeStyle(style.chipFaint)
                     : AnyShapeStyle(style.chipFill),
-                    in: Capsule())
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .foregroundStyle(stack.items.allSatisfy(\.missing)
                          ? style.faintColor : style.subColor)
         .onTapGesture {

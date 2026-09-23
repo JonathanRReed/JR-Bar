@@ -344,7 +344,8 @@ final class ShelfTrayModel {
         guard pendingThumbs.insert(path).inserted else { return }
         let request = QLThumbnailGenerator.Request(
             fileAt: URL(fileURLWithPath: path),
-            size: CGSize(width: 22, height: 22),
+            // The tile's 26 pt face, with room to stay sharp.
+            size: CGSize(width: 32, height: 32),
             scale: NSScreen.main?.backingScaleFactor ?? 2,
             representationTypes: .thumbnail)
         QLThumbnailGenerator.shared.generateBestRepresentation(
@@ -539,6 +540,10 @@ final class ShelfTrayModel {
 
     /// Mark missing entries by re-reading the filesystem — the same
     /// check the read path makes, so the strip and reads never disagree.
+    /// Rows the shelf page's strip lays its tiles in: one while a row
+    /// holds them all, two once the shelf fills, scrolling sideways.
+    nonisolated static func stripRows(tiles: Int) -> Int { tiles > 4 ? 2 : 1 }
+
     // MARK: Paste
 
     /// Something copied the shelf could take, not yet pasted here — the
