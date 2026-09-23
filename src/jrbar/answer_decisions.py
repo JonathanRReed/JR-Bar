@@ -45,7 +45,6 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any, Final
 
 #: How long a parked request waits for a click. Short enough that a
@@ -129,14 +128,17 @@ class PermissionFacts:
 
 
 def _request_identity(provider: str, payload_text: str) -> tuple[str, Any] | None:
-    """``(actual provider, HookEvent)`` through the exact path the ingress
-    worker takes, so the id computed here is the one the canonical state
-    keys the request on (provider_adapters.hook_request_identity)."""
-    from .hook import routed_hook_payload
+    """``(actual provider, HookEvent)`` through the path the ingress worker
+    takes, so the id computed here is the one the canonical state keys the
+    request on (provider_adapters.hook_request_identity). The worker also
+    annotates the hook's origin; that forks ``ps`` per ancestor and has no
+    part in a request's identity, so it is skipped here."""
+    from .hook import format_hook_payload, infer_provider_from_hook_line
     from .providers import parse_log_line
 
     try:
-        actual, _log, line = routed_hook_payload(provider, Path("/dev/null"), payload_text)
+        line = format_hook_payload(provider, payload_text, include_origin=False)
+        actual = infer_provider_from_hook_line(provider, line)
         record = parse_log_line(actual, json.dumps(line, separators=(",", ":"), ensure_ascii=False))
     except Exception:
         return None
