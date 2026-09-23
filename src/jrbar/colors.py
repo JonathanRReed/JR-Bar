@@ -3810,6 +3810,19 @@ def _scenario_full_team(now: datetime) -> tuple[AgentStatus, ...]:
     )
 
 
+def _scenario_fleet(now: datetime) -> tuple[AgentStatus, ...]:
+    # The desk a blend mode is really chosen for: three agents in three
+    # colours, two working and one done. A single swatch hides how a mixed
+    # desk reads; this is the mixed desk. No one asks: an ask takes the
+    # whole strip whatever the blend, so it would make every mode look
+    # the same.
+    return (
+        _preview_status("claude", AgentMode.WORKING, agent_id="claude:preview", now=now),
+        _preview_status("codex", AgentMode.WORKING, agent_id="codex:preview", now=now),
+        _preview_status("gemini", AgentMode.COMPLETED, agent_id="gemini:preview", now=now),
+    )
+
+
 def _scenario_busy_team(now: datetime) -> tuple[AgentStatus, ...]:
     # More active sessions than either device has LEDs (2 or 8) -- shows
     # how each blend mode degrades gracefully when it has to wrap or share.
@@ -3831,6 +3844,7 @@ PREVIEW_SCENARIO_SAME_PROVIDER_DUO = "same_provider_duo"
 PREVIEW_SCENARIO_PAIR = "pair"
 PREVIEW_SCENARIO_FULL_TEAM = "full_team"
 PREVIEW_SCENARIO_BUSY_TEAM = "busy_team"
+PREVIEW_SCENARIO_FLEET = "fleet"
 
 # PREVIEW_SCENARIO_LIVE is handled by the caller (use the real snapshot when
 # one exists) and isn't in this table -- everything else maps straight to a
@@ -3843,6 +3857,7 @@ _PREVIEW_SCENARIO_BUILDERS: dict[str, Any] = {
     PREVIEW_SCENARIO_PAIR: _scenario_pair,
     PREVIEW_SCENARIO_FULL_TEAM: _scenario_full_team,
     PREVIEW_SCENARIO_BUSY_TEAM: _scenario_busy_team,
+    PREVIEW_SCENARIO_FLEET: _scenario_fleet,
 }
 
 PREVIEW_SCENARIO_CHOICES: tuple[str, ...] = (
@@ -3854,6 +3869,7 @@ PREVIEW_SCENARIO_CHOICES: tuple[str, ...] = (
     PREVIEW_SCENARIO_PAIR,
     PREVIEW_SCENARIO_FULL_TEAM,
     PREVIEW_SCENARIO_BUSY_TEAM,
+    PREVIEW_SCENARIO_FLEET,
 )
 
 PREVIEW_SCENARIO_LABELS: dict[str, str] = {
@@ -3865,6 +3881,7 @@ PREVIEW_SCENARIO_LABELS: dict[str, str] = {
     PREVIEW_SCENARIO_PAIR: "Two Different Agents",
     PREVIEW_SCENARIO_FULL_TEAM: "Full Team, Mixed States",
     PREVIEW_SCENARIO_BUSY_TEAM: "Busy Team (more agents than LEDs)",
+    PREVIEW_SCENARIO_FLEET: "Three Agents: Two Working, One Done",
 }
 
 

@@ -374,3 +374,75 @@ def test_list_focuses_names_the_configured_focuses_or_says_why_not(
     monkeypatch.setattr(focus_sync, "configured_focus_modes", locked)
     reply = core_runtime._cmd_list_focuses(daemon, {})
     assert reply == {"available": False, "reason": "Operation not permitted", "focuses": [], "active": []}
+
+
+def test_a_blend_mode_previews_against_a_mixed_fleet() -> None:
+    from jrbar import colors as colors_module
+    from jrbar.animation import firmware_parse_error
+
+    settings = AgentMonitorSettings()
+    daemon = SimpleNamespace(settings=settings)
+    reply = core_runtime._cmd_preview_fleet(daemon, {})
+    assert reply["scenario"] == "fleet"
+    assert reply["label"] == "Three Agents: Two Working, One Done"
+    assert reply["blend_mode"] == settings.colors.blend_mode
+    assert reply["agents"] == [
+        {"provider": "claude", "mode": "working"},
+        {"provider": "codex", "mode": "working"},
+        {"provider": "gemini", "mode": "completed"},
+    ]
+    assert firmware_parse_error(reply["program"], 8) is None
+
+    # Every blend mode renders its own playable strip for the same desk.
+    programs = {}
+    for blend in colors_module.BLEND_MODE_CHOICES:
+        played = core_runtime._cmd_preview_fleet(daemon, {"blend_mode": blend})
+        assert played["blend_mode"] == blend
+        assert firmware_parse_error(played["program"], 8) is None
+        programs[blend] = played["program"]
+    assert len(set(programs.values())) == len(colors_module.BLEND_MODE_CHOICES)
+    # An ask takes the strip whatever the blend: that is the preview's answer.
+    asking = {
+        core_runtime._cmd_preview_fleet(daemon, {"scenario": "one_needs_you", "blend_mode": blend})["program"]
+        for blend in colors_module.BLEND_MODE_CHOICES
+    }
+    assert len(asking) == 1
+
+    # The asked speed is the speed the mode plays at, even over its override.
+    overridden = settings.colors.with_speed_override(colors_module.BLEND_MODE_ROUND_ROBIN, 9.0)
+    daemon.settings = settings.with_colors(overridden)
+    fast = core_runtime._cmd_preview_fleet(
+        daemon, {"blend_mode": colors_module.BLEND_MODE_ROUND_ROBIN, "cycle_speed_seconds": 2.0}
+    )
+    assert fast["cycle_speed_seconds"] == 2.0
+
+    dot = core_runtime._cmd_preview_fleet(daemon, {"scenario": "busy_team", "led_count": 2})
+    assert dot["led_count"] == 2 and firmware_parse_error(dot["program"], 2) is None
+
+
+def test_a_fleet_preview_follows_a_devices_own_blend_and_refuses_nonsense() -> None:
+    from jrbar import colors as colors_module
+
+    daemon = SimpleNamespace(
+        settings=SimpleNamespace(
+            colors=colors_module.ColorSettings.defaults(),
+            device_blend_mode=lambda device: colors_module.BLEND_MODE_ROUND_ROBIN if device == "pro" else None,
+        )
+    )
+    assert core_runtime._cmd_preview_fleet(daemon, {"device": "pro"})["blend_mode"] == "round_robin"
+    assert (
+        core_runtime._cmd_preview_fleet(daemon, {"device": "dot"})["blend_mode"]
+        == colors_module.ColorSettings.defaults().blend_mode
+    )
+    for bad in (
+        {"scenario": "live"},
+        {"scenario": "everything"},
+        {"blend_mode": "plaid"},
+        {"led_count": 5},
+        {"led_count": True},
+        {"cycle_speed_seconds": "fast"},
+        {"device": ""},
+    ):
+        with pytest.raises(CommandError):
+            core_runtime._cmd_preview_fleet(daemon, bad)
+    assert "preview_fleet" in core_runtime.command_names()

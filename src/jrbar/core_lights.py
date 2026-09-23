@@ -360,6 +360,74 @@ def resolve_effect(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- a blend mode against a fleet --------------------------------------------------------
+
+#: The largest strip a preview renders for: the Pro's eight and the Dot's
+#: two are the devices; the band renders the strip's program.
+_PREVIEW_LED_COUNTS = (2, 8)
+
+
+def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """A blend mode played against a synthetic fleet, before choosing it.
+
+    People pick a blend mode on a single swatch, but the real decision is
+    how a mixed desk reads: three agents in three colours turn to mud under
+    Smooth on eight LEDs, and read at a glance under Everyone. This renders
+    the person's own colours for a canned scenario (``fleet`` by default:
+    two working, one done) under any blend mode and cycle speed, compiled
+    exactly as the device would play it. A scenario with an ask in it shows
+    the same strip under every blend, because an ask takes the strip --
+    that is the answer, not a bug. Nothing is written to a device."""
+    from . import colors as colors_module
+    from .animation import normalize_led_count
+    from .presentation_compiler import compile_presentation_program
+
+    scenario = args.get("scenario", colors_module.PREVIEW_SCENARIO_FLEET)
+    if scenario not in colors_module.PREVIEW_SCENARIO_CHOICES or scenario == colors_module.PREVIEW_SCENARIO_LIVE:
+        raise _command_error("invalid_args", "scenario must name a preview scenario (fleet, pair, busy_team, ...)")
+    led_count = args.get("led_count", 8)
+    if isinstance(led_count, bool) or led_count not in _PREVIEW_LED_COUNTS:
+        raise _command_error("invalid_args", "led_count must be 2 or 8")
+    led_count = normalize_led_count(led_count)
+    settings = getattr(controller, "settings", None)
+    palette = getattr(settings, "colors", None)
+    if not isinstance(palette, colors_module.ColorSettings):
+        palette = colors_module.ColorSettings.defaults()
+    device = args.get("device")
+    if device is not None and (type(device) is not str or not device.strip()):
+        raise _command_error("invalid_args", "device must be a nonempty string")
+    blend = args.get("blend_mode")
+    if blend is None and device is not None:
+        lookup = getattr(settings, "device_blend_mode", None)
+        blend = lookup(device.strip()) if callable(lookup) else None
+    if blend is not None:
+        if blend not in colors_module.BLEND_MODE_CHOICES:
+            raise _command_error("invalid_args", "unknown blend mode")
+        palette = palette.with_blend_mode(blend)
+    speed = args.get("cycle_speed_seconds")
+    if speed is not None:
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+            raise _command_error("invalid_args", "cycle_speed_seconds must be a number")
+        # The speed asked for is the speed this mode plays at, even where
+        # the person gave the mode its own override.
+        palette = palette.with_cycle_speed(float(speed))
+        if palette.blend_mode in colors_module.SPEED_OVERRIDE_MODES:
+            palette = palette.with_global_speed_for_mode(palette.blend_mode)
+    statuses = colors_module.preview_statuses_for_scenario(scenario)
+    _state, source = colors_module.program_for_snapshot(statuses, led_count=led_count, colors=palette)
+    compiled = compile_presentation_program(source, led_count=led_count)
+    return {
+        "scenario": scenario,
+        "label": colors_module.PREVIEW_SCENARIO_LABELS[scenario],
+        "blend_mode": palette.blend_mode,
+        "cycle_speed_seconds": palette.effective_speed_seconds(palette.blend_mode),
+        "led_count": led_count,
+        "program": compiled.program,
+        "transformed": bool(compiled.transformed),
+        "agents": [{"provider": status.provider, "mode": status.mode.value} for status in statuses],
+    }
+
+
 # --- the light log -------------------------------------------------------------------------
 
 
@@ -428,5 +496,6 @@ __all__ = [
     "list_cues",
     "list_focuses",
     "list_light_log",
+    "preview_fleet",
     "set_cue",
 ]
