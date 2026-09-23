@@ -360,7 +360,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // What moves those answers re-syncs it: the daemon coming or
         // going, the band shown or hidden, a capsule on its flanks, the
         // wings setting.
-        let presence = PresenceReporter(core: core)
+        // JR-Bar's own Mirror, on either card surface, is the camera in
+        // use but not a call.
+        let presence = PresenceReporter(core: core, cards: { [weak toysStore, weak glassCard = notchCard.model] in
+            [toysStore?.notch.cardModel, glassCard].compactMap { $0 }
+        })
         self.presence = presence
         toysStore.notch.onSensorsChanged = { [weak presence] in presence?.noteSensors($0) }
         toysStore.notch.sensorsWantedForPresence = { [weak presence] in presence?.wantsSensors ?? false }

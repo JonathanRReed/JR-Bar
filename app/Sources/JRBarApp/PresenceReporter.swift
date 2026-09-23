@@ -11,6 +11,12 @@ import Observation
 /// daemon is connected, whether or not anything draws the dots: a call is
 /// a call with the island off.
 ///
+/// JR-Bar's own lens is not a call. The camera reading is the whole
+/// device's (`kCMIODevicePropertyDeviceIsRunningSomewhere`), so the card's
+/// own Mirror reads as a camera in use; the report and the toys' fact
+/// leave it out while it is up, the way the mic reading leaves JR-Bar's
+/// own process out — one rule everywhere.
+///
 /// Nothing leaves the Mac — the report goes over the daemon's local
 /// socket — and nothing is read that the dots do not already read: running
 /// state, never a sample or a frame.
@@ -22,6 +28,14 @@ final class PresenceReporter {
     /// One report; true when the daemon took it.
     private let send: @MainActor (CorePresenceReport) async -> Bool
     private let clock: @MainActor () -> Date
+    /// JR-Bar's own Mirror has the camera: live, or asked for and on its
+    /// way up.
+    private let ownCameraLive: @MainActor () -> Bool
+    /// How long the camera stays the Mirror's after it closes: its session
+    /// winds down on its own queue, so the device flag still reads it for
+    /// a beat. Ending it on a guess of "now" would report a call the
+    /// length of that beat on every close.
+    private let ownCameraGrace: TimeInterval
 
     /// The monitor's latest reading, as the notch hands it over.
     private(set) var reading = NotchSensorState()
@@ -44,30 +58,57 @@ final class PresenceReporter {
     /// that owes nothing new leaves it sleeping.
     private var check: Task<Void, Never>?
     private var checkAt: Date?
+    /// The Mirror had the camera as last seen, and the beat after it
+    /// closed while the camera is still counted as its own.
+    private var ownCamera = false
+    private var ownCameraSettling: Task<Void, Never>?
 
     init(isConnected: @escaping @MainActor () -> Bool,
          presence: @escaping @MainActor () -> CorePresence?,
          send: @escaping @MainActor (CorePresenceReport) async -> Bool,
-         clock: @escaping @MainActor () -> Date = { Date() }) {
+         clock: @escaping @MainActor () -> Date = { Date() },
+         ownCameraLive: @escaping @MainActor () -> Bool = { false },
+         ownCameraGrace: TimeInterval = PresenceReporter.mirrorWindDown) {
         self.isConnected = isConnected
         self.presence = presence
         self.send = send
         self.clock = clock
+        self.ownCameraLive = ownCameraLive
+        self.ownCameraGrace = ownCameraGrace
     }
 
+    /// The Mirror's beat after it closes: long enough for its session's
+    /// `stopRunning` and the camera daemon's flag to follow it.
+    static let mirrorWindDown: TimeInterval = 3
+
     /// The production reporter: the core's connection and presence, its
-    /// `presence` command, and an observation that re-arms itself.
-    convenience init(core: CoreModel) {
+    /// `presence` command, the cards whose Mirror is JR-Bar's own lens,
+    /// and observations that re-arm themselves.
+    convenience init(core: CoreModel, cards: @escaping @MainActor () -> [NotchCardModel]) {
         self.init(isConnected: { [weak core] in core?.connection.isConnected ?? false },
                   presence: { [weak core] in core?.isLive == true ? core?.state?.presence : nil },
                   send: { [weak core] report in
                       guard let core else { return false }
                       return (try? await core.reportPresence(report))?.ok == true
-                  })
+                  },
+                  ownCameraLive: { cards().contains(where: Self.mirrorHasCamera) })
         observe(core)
+        observeMirrors(cards)
     }
 
-    isolated deinit { check?.cancel() }
+    isolated deinit {
+        check?.cancel()
+        ownCameraSettling?.cancel()
+    }
+
+    /// A card's Mirror has the camera: live, or asked for on a pinned
+    /// card and still coming up — `mirrorSummoned` is set before the
+    /// session starts, and the lens can light before the row says live.
+    /// A lens refused or missing is not the Mirror's.
+    static func mirrorHasCamera(_ card: NotchCardModel) -> Bool {
+        card.mirror.state == .live
+            || (card.pinned && card.mirrorSummoned && card.mirror.state == .off)
+    }
 
     /// Whether the sensor monitor must run for the report: while the
     /// daemon is there to hear it.
@@ -77,7 +118,26 @@ final class PresenceReporter {
     func noteSensors(_ state: NotchSensorState) {
         guard state != reading else { return }
         reading = state
+        // The closed Mirror's lens is seen to go dark: the beat is over.
+        if !state.cameraInUse, ownCameraSettling != nil {
+            ownCameraSettling?.cancel()
+            ownCameraSettling = nil
+        }
         refresh()
+    }
+
+    /// The Mirror opened or closed. The device flag has no edge of its
+    /// own when another app still holds the lens, so the reading is
+    /// looked at again here.
+    func ownCameraChanged() {
+        refresh()
+    }
+
+    /// The reading as the daemon and the toys take it: JR-Bar's own
+    /// Mirror left out of the camera.
+    var callReading: NotchSensorState {
+        NotchSensorState(microphoneInUse: reading.microphoneInUse,
+                         cameraInUse: reading.cameraInUse && !ownCamera && ownCameraSettling == nil)
     }
 
     /// The connection or the daemon's presence moved.
@@ -107,8 +167,41 @@ final class PresenceReporter {
         }
     }
 
+    private func observeMirrors(_ cards: @escaping @MainActor () -> [NotchCardModel]) {
+        withObservationTracking {
+            for card in cards() { _ = Self.mirrorHasCamera(card) }
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.ownCameraChanged()
+                self.observeMirrors(cards)
+            }
+        }
+    }
+
+    /// Whether the Mirror has the camera moved: opening, the camera is
+    /// ours at once; closing, it stays ours for the beat its session takes
+    /// to wind down, then the reading is looked at again — whatever still
+    /// holds the lens is another app's.
+    private func noteOwnCamera() {
+        let live = ownCameraLive()
+        guard live != ownCamera else { return }
+        ownCamera = live
+        ownCameraSettling?.cancel()
+        ownCameraSettling = nil
+        guard !live else { return }
+        let grace = ownCameraGrace
+        ownCameraSettling = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(grace))
+            guard !Task.isCancelled, let self else { return }
+            self.ownCameraSettling = nil
+            self.refresh()
+        }
+    }
+
     private func refresh() {
-        let call = PresenceReporting.onCall(reading: reading, presence: presence())
+        noteOwnCamera()
+        let call = PresenceReporting.onCall(reading: callReading, presence: presence())
         if call != onCall {
             onCall = call
             onCallChanged?(call)
@@ -120,7 +213,7 @@ final class PresenceReporter {
     private func pump() {
         guard !sending else { return }
         let connected = isConnected()
-        guard let report = reporting.due(reading: reading, connected: connected, now: clock()) else {
+        guard let report = reporting.due(reading: callReading, connected: connected, now: clock()) else {
             schedule(at: reporting.nextCheck(connected: connected))
             return
         }

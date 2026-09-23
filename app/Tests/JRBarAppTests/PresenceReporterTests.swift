@@ -16,6 +16,8 @@ struct PresenceReporterTests {
         var presence: CorePresence?
         var takes = true
         var sent: [CorePresenceReport] = []
+        /// JR-Bar's own Mirror has the camera.
+        var mirror = false
     }
 
     private func reporter(_ daemon: FakeDaemon) -> PresenceReporter {
@@ -132,5 +134,82 @@ struct PresenceReporterTests {
         #expect(presence.onCall)
         presence.coreChanged()
         #expect(heard == [true, false, true], "edges only")
+    }
+
+    /// A reporter whose Mirror is a switch the test flips.
+    private func mirrored(_ daemon: FakeDaemon, grace: TimeInterval) -> PresenceReporter {
+        PresenceReporter(isConnected: { daemon.connected },
+                         presence: { daemon.presence },
+                         send: { report in
+                             daemon.sent.append(report)
+                             return daemon.takes
+                         },
+                         ownCameraLive: { daemon.mirror },
+                         ownCameraGrace: grace)
+    }
+
+    @Test("JR-Bar's own Mirror is not a call, and a lens still held after it closes is")
+    func ownMirror() async {
+        let daemon = FakeDaemon()
+        daemon.connected = true
+        daemon.mirror = true
+        let presence = mirrored(daemon, grace: 0.05)
+        presence.noteSensors(NotchSensorState(cameraInUse: true))
+        await settle { daemon.sent.count == 1 }
+        #expect(daemon.sent == [CorePresenceReport(mic: false, camera: false)])
+        #expect(!presence.onCall, "the toys stay awake for the person's own look")
+        // The Mirror closes while another app still holds the lens: the
+        // device flag has no edge, so the close itself looks again.
+        daemon.mirror = false
+        presence.ownCameraChanged()
+        await settle { daemon.sent.count == 2 }
+        #expect(daemon.sent.last == CorePresenceReport(mic: false, camera: true))
+        #expect(presence.onCall)
+    }
+
+    @Test("the beat while the Mirror's session winds down reports no call")
+    func ownMirrorWindsDown() async {
+        let daemon = FakeDaemon()
+        daemon.connected = true
+        daemon.mirror = true
+        let presence = mirrored(daemon, grace: 60)
+        var heard: [Bool] = []
+        presence.onCallChanged = { heard.append($0) }
+        presence.noteSensors(NotchSensorState(cameraInUse: true))
+        await settle { daemon.sent.count == 1 }
+        // Closed: the flag still reads the Mirror's session for a beat,
+        // then drops.
+        daemon.mirror = false
+        presence.ownCameraChanged()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        presence.noteSensors(NotchSensorState())
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(daemon.sent.allSatisfy { !$0.camera }, "no call the length of a stopRunning")
+        #expect(heard.isEmpty)
+        // A camera another app starts after the beat is a call at once.
+        presence.noteSensors(NotchSensorState(cameraInUse: true))
+        await settle { daemon.sent.count == 2 }
+        #expect(daemon.sent.last?.camera == true)
+        #expect(heard == [true])
+    }
+
+    @Test("a card's Mirror is watched: asked for on a pinned card, the lens is ours")
+    func mirrorOnACard() async {
+        let timers = ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-presence-timers-\(UUID().uuidString).json"))
+        let card = NotchCardModel(timers: timers, tray: ShelfTrayModel(), runtimeEnabled: false)
+        card.mirrorEnabled = { true }
+        let presence = PresenceReporter(core: CoreModel(), cards: { [card] })
+        presence.noteSensors(NotchSensorState(cameraInUse: true))
+        #expect(presence.onCall, "no Mirror: a live camera is someone's call")
+        #expect(!PresenceReporter.mirrorHasCamera(card))
+        card.pinned = true
+        card.summonMirror()
+        // Summoned before its session is up: the lens can light first.
+        #expect(PresenceReporter.mirrorHasCamera(card))
+        await settle { !presence.onCall }
+        #expect(!presence.onCall, "the Mirror's own lens, seen without a sensor edge")
+        card.pinned = false
+        #expect(!PresenceReporter.mirrorHasCamera(card), "folding the card puts the lens away")
     }
 }
