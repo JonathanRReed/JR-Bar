@@ -333,10 +333,13 @@ Vocabulary:
   lid shut and `AppleClamshellCausesSleep` says no external display is
   keeping clamshell mode; heat and the battery floor release even the
   `always` policy), `last_sleep_at` and `sleep_error`. `last_release` is
-  the newest release worth reading, `{kind, reason, at, duration}`: `kind`
-  `lease_ended` (`reason` `expired`/`finished`), `suspended`
-  (`thermal`/`battery`), `lid_hold_ended` (`duration` the held stretch)
-  or `slept`; a lease the person cancelled is not one. The same log backs
+  the newest release worth reading, `{kind, reason, at, duration,
+  finished, slept_at}`: `kind` `lease_ended` (`reason`
+  `expired`/`finished`), `suspended` (`thermal`/`battery`),
+  `lid_hold_ended` (`duration` the held stretch, `finished` how many runs
+  the activity ledger saw finish during it) or `slept` (carrying the
+  stretch it closed, so one row reads "ran 2 h 40 m closed, 3 finished,
+  slept at 02:14"); a lease the person cancelled is not one. The same log backs
   the `power` rows in `list_history` and the `power` event. `battery`
   (null on a Mac with no battery) is the daemon's reading: `{percent,
   charging, plugged, minutes_left, minutes_to_full, health_percent,
@@ -503,6 +506,11 @@ end) and with every refresh.
   at the signal's own intensity (the strip's N over the strip's signal
   plan). The strip's drive bytes are never replayed on a display that
   has no die to calibrate.
+- `cue` (on `screen_bar`, `hardware` or `dot`, only while one is staged
+  there) names the semantic ambient cue on that surface, `{id, name}` --
+  `{"id":"handoff_baton","name":"Handoff baton"}` -- so Why this light can
+  say "Handoff baton" instead of an unexplained sweep. The ids are
+  `list_cues`'; the Dot's binary heartbeat is a display and never named.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when
   `linked` (the `link_screen_bar_to_hardware` setting) and a strip is
@@ -658,8 +666,9 @@ applied refresh, never on daemon start).
 entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
 `detail` its reason (`expired`, `finished`, `thermal`, `battery`,
 `agents_idle`, `policy`), `label` History's words for it ("Keep awake let
-go", "Put the Mac to sleep") and `duration` the held stretch where there
-is one.
+go", "Put the Mac to sleep"), `duration` the held stretch where there
+is one and, on `lid_hold_ended`, `finished` the runs that finished during
+it -- the lid-open report's "3 finished".
 
 ### settings
 Full settings document, sent on connect and after every change from any

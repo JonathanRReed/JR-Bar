@@ -141,6 +141,50 @@ def before_keep_awake_sync(controller: Any) -> None:
     observe_environment(controller)
 
 
+def finished_during(controller: Any, start: float, end: float) -> int | None:
+    """How many runs finished between ``start`` and ``end`` -- the "3
+    finished" in "ran 2 h 40 m closed, 3 finished, slept at 02:14" -- read
+    from the activity ledger. None when the ledger cannot say."""
+    ledger = getattr(controller, "activity_ledger", None)
+    entries = getattr(ledger, "entries", None)
+    if entries is None:
+        return None
+    count = 0
+    for entry in entries:
+        kind = getattr(getattr(entry, "kind", None), "value", None)
+        at = getattr(entry, "occurred_at_epoch", None)
+        if kind == "completed" and isinstance(at, (int, float)) and start <= at <= end:
+            count += 1
+    return count
+
+
+def _release_document(controller: Any, log: PowerLog, last: Any) -> dict[str, Any]:
+    """``state.power.last_release``. A closed-lid stretch and the sleep that
+    ended it are one story -- "ran 2 h 40 m closed, 3 finished, slept at
+    02:14" -- so a sleep carries the stretch it closed."""
+    stretch = last
+    slept_at = None
+    if last.kind == POWER_SLEPT:
+        slept_at = last.at
+        before = [event for event in log.events if event.kind == POWER_LID_HOLD_ENDED]
+        if before and 0.0 <= last.at - before[-1].at <= 5.0:
+            stretch = before[-1]
+    return {
+        "kind": last.kind,
+        "reason": last.reason,
+        "at": last.at,
+        "duration": stretch.duration,
+        "finished": _held_stretch_finished(controller, stretch),
+        "slept_at": slept_at,
+    }
+
+
+def _held_stretch_finished(controller: Any, event: Any) -> int | None:
+    if event.kind != POWER_LID_HOLD_ENDED or event.duration is None:
+        return None
+    return finished_during(controller, event.at - event.duration, event.at)
+
+
 def after_keep_awake_sync(controller: Any) -> None:
     """Publish the power events this sync recorded, once each."""
     log = getattr(controller, "_core_power_log", None)
@@ -168,6 +212,7 @@ def after_keep_awake_sync(controller: Any) -> None:
             detail=event.reason,
             power=event.kind,
             duration=event.duration,
+            finished=_held_stretch_finished(controller, event),
             at=event.at,
         )
 
@@ -241,11 +286,7 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
     )
     if last is not None and last.kind == POWER_LEASE_ENDED and last.reason == LEASE_END_CANCELLED:
         last = None
-    power["last_release"] = (
-        None
-        if last is None
-        else {"kind": last.kind, "reason": last.reason, "at": last.at, "duration": last.duration}
-    )
+    power["last_release"] = None if last is None else _release_document(controller, log, last)
     closed_lid = power.get("closed_lid")
     lid = getattr(controller, "closed_lid_awake", None)
     battery = getattr(getattr(controller, "_production_battery_observation", None), "snapshot", None)

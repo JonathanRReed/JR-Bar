@@ -179,6 +179,49 @@ def test_the_grace_epoch_is_stable_across_builds(powered) -> None:
     assert first is not None and first == second
 
 
+def test_a_closed_lid_stretch_reports_what_finished_and_when_it_slept() -> None:
+    from jrbar.keep_awake import POWER_LID_HOLD_ENDED, POWER_SLEPT, PowerLog
+
+    log = PowerLog(clock=lambda: 10_000.0)
+    log.record(POWER_LID_HOLD_ENDED, reason="agents_idle", duration=9_600.0, at=10_000.0)
+    log.record(POWER_SLEPT, reason="agents_idle", at=10_001.0)
+    completed = SimpleNamespace(value="completed")
+    asked = SimpleNamespace(value="asked")
+    ledger = SimpleNamespace(
+        entries=(
+            # Finished before the lid was shut: not part of the stretch.
+            SimpleNamespace(kind=completed, occurred_at_epoch=300.0),
+            SimpleNamespace(kind=completed, occurred_at_epoch=5_000.0),
+            SimpleNamespace(kind=asked, occurred_at_epoch=6_000.0),
+            SimpleNamespace(kind=completed, occurred_at_epoch=9_990.0),
+        )
+    )
+    published: list[tuple[str, dict]] = []
+    controller = SimpleNamespace(
+        keep_awake=SimpleNamespace(hold_document=lambda: {}, working_count=0, process_running=lambda: False),
+        closed_lid_awake=SimpleNamespace(active=lambda: False, sleeper=None),
+        _core_power_log=log,
+        _core_power_published=None,
+        activity_ledger=ledger,
+        _core_publish_event=lambda kind, **fields: published.append((kind, fields)),
+    )
+    document = {"power": {"closed_lid": {}}}
+    core_power.augment_power_document(controller, document)
+    assert document["power"]["last_release"] == {
+        "kind": "slept",
+        "reason": "agents_idle",
+        "at": 10_001.0,
+        "duration": 9_600.0,
+        "finished": 2,
+        "slept_at": 10_001.0,
+    }
+    core_power.after_keep_awake_sync(controller)
+    assert [(fields["power"], fields.get("finished")) for _kind, fields in published] == [
+        ("lid_hold_ended", 2),
+        ("slept", None),
+    ]
+
+
 def test_the_daemons_low_power_reads_time_left_too(powered) -> None:
     from jrbar.battery import BatterySnapshot
 
