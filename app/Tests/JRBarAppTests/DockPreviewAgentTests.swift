@@ -166,9 +166,14 @@ struct DockPreviewAgentTests {
         let observer = DockWindowObserver()
         var changes: [TimeInterval] = []
         observer.onChange = { changes.append(ProcessInfo.processInfo.systemUptime) }
+        // Keep spinning until a refresh lands. A trailing-only settle can
+        // never fire while fires keep coming, however long the burst runs,
+        // so the claim holds without racing the clock: the generous
+        // deadline only bounds a broken observer, and a busy main queue
+        // under a parallel suite just makes the burst longer.
         let start = ProcessInfo.processInfo.systemUptime
-        let burst = DockWindowObserver.maxWait * 3
-        while ProcessInfo.processInfo.systemUptime - start < burst {
+        let deadline = DockWindowObserver.maxWait * 20
+        while changes.isEmpty, ProcessInfo.processInfo.systemUptime - start < deadline {
             observer.fire()
             try await Task.sleep(for: .milliseconds(40))
         }
