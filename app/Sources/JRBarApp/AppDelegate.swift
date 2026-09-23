@@ -248,6 +248,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let notchCard = NotchCardPresenter(
             model: NotchCardModel(timers: cardTimers, tray: cardTray))
         notchCard.model.utility.weather.settings = weatherSettings
+        // The Dock's player row borrows the Shelf's synced line — one
+        // LRCLIB cache for the notch and the Dock, never a second lookup.
+        utilitiesStore.dock.enhance.lyrics = { [weak notchCard, weak toysStore] in
+            notchCard?.model.utility.lyrics.lyrics ?? toysStore?.notch.cardModel.utility.lyrics.lyrics
+        }
         notchCard.model.mirrorEnabled = { [weak toysStore] in toysStore?.state.notch.mirror ?? false }
         notchCard.focus = { [weak self] in self?.store?.screenBarFocus }
         notchCard.sessionRows = { [weak self] in

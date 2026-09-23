@@ -1472,6 +1472,11 @@ final class DockEnhanceController {
     @ObservationIgnored private var mediaToken: UUID?
     /// The daemon's live sessions as marks — wired by `DockUtility`.
     @ObservationIgnored var agentMarks: @MainActor () -> [DockAgentMark] = { [] }
+    /// The notch Shelf's synced lyrics for the playing track — wired by
+    /// the app delegate; the player row shows its current line.
+    @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil } {
+        didSet { panel?.actions.lyrics = lyrics }
+    }
     /// A preview ask row's Approve / Deny; returns the line to show.
     @ObservationIgnored var answerAsk: @MainActor (CoreAsk, Bool) async -> String = { _, _ in
         "The monitor is not answering"
@@ -2131,6 +2136,7 @@ final class DockEnhanceController {
         panel.actions.onOpen = { [weak self] url in self?.openItem(url) }
         panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
         panel.actions.onMediaSeek = { MediaFeed.shared.seek(to: $0) }
+        panel.actions.lyrics = lyrics
         panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
         panel.actions.onSwipeMinimize = { [weak self] window, minimize in
             self?.swipeMinimize(window, minimize)

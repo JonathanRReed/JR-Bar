@@ -85,6 +85,9 @@ final class DockPreviewActions {
     var onMediaCommand: (@MainActor (MediaRemoteBridge.Command) -> Void)?
     /// The player row's scrubber — seek to a playhead in seconds.
     var onMediaSeek: (@MainActor (Double) -> Void)?
+    /// The synced lyrics the notch Shelf already holds for the playing
+    /// track — read, never fetched: nil unless the Shelf has them.
+    @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil }
     /// The calendar row's "Show events" — asks for the grant.
     var onCalendarAuth: (@MainActor () -> Void)?
     /// The calendar row's "Join" — opens the meeting link.
@@ -1216,6 +1219,21 @@ private struct DockMediaRow: View {
             // named both a playhead and a length — never a bar at 0:00.
             if let duration = media.duration, duration > 0, media.elapsed != nil {
                 DockMediaScrubber(media: media, duration: duration) { actions.onMediaSeek?($0) }
+            }
+            // The line the notch Shelf is singing — its own LRCLIB cache,
+            // stepped to this row's playhead; no lookup of the Dock's own.
+            // Silent between stamps and whenever the Shelf has no lyrics.
+            if let synced = actions.lyrics() {
+                TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
+                    if let line = synced.line(at: media.liveElapsed(at: context.date) ?? 0) {
+                        Text(line)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
         }
     }

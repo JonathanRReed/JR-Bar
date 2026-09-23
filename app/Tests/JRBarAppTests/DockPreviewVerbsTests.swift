@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
+@testable import JRBarCore
 
 /// The preview's window and app verbs: where New presses, and where
 /// Center, Fill and Move To put a window.
@@ -58,6 +59,16 @@ struct DockPreviewVerbsTests {
         #expect(!DockEnhanceMath.readsMedia(appBundleID: "com.apple.Safari", feedRunning: false),
                 "a hover never spawns the media helper to check a browser")
         #expect(DockEnhanceMath.readsMedia(appBundleID: "com.apple.Safari", feedRunning: true))
+    }
+
+    @Test("the player row's lyrics are the Shelf's: none unless handed in, never looked up")
+    @MainActor
+    func lyricsAreBorrowed() {
+        let actions = DockPreviewActions(content: DockPreviewContent())
+        #expect(actions.lyrics() == nil, "the Dock has no lyrics of its own to fetch")
+        let shelf = SyncedLyrics.parse("[00:01.00]first\n[00:05.00]second")
+        actions.lyrics = { shelf }
+        #expect(actions.lyrics()?.line(at: 6) == "second")
     }
 
     @Test("the scrubber prints playheads the way players do")
