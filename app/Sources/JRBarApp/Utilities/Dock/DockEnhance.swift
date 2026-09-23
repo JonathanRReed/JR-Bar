@@ -1015,6 +1015,9 @@ final class DockPreviewContent {
     /// The header's one-line note: a guarded Quit's first press, or the
     /// windows Close all kept because an agent runs in them.
     var headerNote: String?
+    /// Quit was asked and the app is still here a beat later — the
+    /// header's power disc becomes Force Quit.
+    var stillRunning = false
 
     /// The waiting sessions the ask rows offer, most urgent first,
     /// capped so a busy terminal can't grow the panel into a list.
@@ -1138,6 +1141,8 @@ final class DockEnhanceController {
     @ObservationIgnored private var agentGuard = DockAgentGuard()
     /// The open panel's live list — the previewed app's window events.
     @ObservationIgnored private let windowObserver = DockWindowObserver()
+    /// The Dock reach last mirrored into the switcher's tap.
+    @ObservationIgnored private var mirroredReach: CGRect?
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1169,6 +1174,9 @@ final class DockEnhanceController {
         // the panel, the tap fires with it parked on the Dock too.
         self.switcher.onPreviewKey = { [weak self] code in
             self?.previewTapKey(code)
+        }
+        self.switcher.onQuickQuit = { [weak self] point, force in
+            self?.quickQuit(axPoint: point, force: force)
         }
         windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
     }
@@ -1222,6 +1230,8 @@ final class DockEnhanceController {
         panelWarmupTimer = nil
         tracker.reset()
         cachedList = nil
+        mirroredReach = nil
+        switcher.setDockReach(nil)
         if let quickQuitMonitor { NSEvent.removeMonitor(quickQuitMonitor) }
         quickQuitMonitor = nil
         hidePreview()
@@ -1327,6 +1337,13 @@ final class DockEnhanceController {
             if Self.listReach(of: list.frame).contains(axPoint) {
                 hovered = tiles(of: list).first { $0.frame.contains(axPoint) }
             }
+        }
+        // The tap decides synchronously whether a ⌘-right-click is the
+        // Dock's — it reads this mirror, not the main-actor cache.
+        let reach = cachedList.map { Self.listReach(of: $0.frame) }
+        if reach != mirroredReach {
+            mirroredReach = reach
+            switcher.setDockReach(reach)
         }
         let action = tracker.note(hovered: hovered?.hoverID, pointerInPanel: inPanel,
                                   now: CACurrentMediaTime(), delay: preferences.previewDelay)
@@ -1697,6 +1714,7 @@ final class DockEnhanceController {
         content.armedWindowID = nil
         content.armedNote = nil
         content.headerNote = nil
+        content.stillRunning = false
         agentGuard.reset()
         if item.kind == .folder {
             content.folderURL = appURL
@@ -1982,11 +2000,37 @@ final class DockEnhanceController {
             }
             return
         }
-        preview.processIdentifier
-            .flatMap { NSRunningApplication(processIdentifier: $0) }?
-            .terminate()
-        tracker.reset()
-        hidePreview()
+        guard let app = preview.processIdentifier
+            .flatMap({ NSRunningApplication(processIdentifier: $0) }) else { return }
+        if preview.stillRunning {
+            // The second Quit on an app that ignored the first is the
+            // force the header now offers.
+            app.forceTerminate()
+            tracker.reset()
+            hidePreview()
+            return
+        }
+        app.terminate()
+        // Quit is a request. The panel stays a beat: an app that goes
+        // takes its cards with it (the live list hides the panel); one
+        // that blocks the quit, or keeps running in the background —
+        // macOS 27's gray dot — gets an honest "still running" and a
+        // Force Quit instead of a panel that closed as if it worked.
+        preview.headerNote = "Quitting…"
+        reframe()
+        let generationAtQuit = generation
+        let name = preview.appName
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.quitFollowThrough) { [weak self] in
+            guard let self, self.generation == generationAtQuit else { return }
+            if app.isTerminated {
+                self.tracker.reset()
+                self.hidePreview()
+            } else {
+                self.preview.stillRunning = true
+                self.preview.headerNote = "\(name) is still running — Quit again to force it"
+                self.reframe()
+            }
+        }
     }
 
     /// A guarded verb's first press lapses with the guard's window —
@@ -2195,10 +2239,23 @@ final class DockEnhanceController {
     }
 
     /// DockDoor's quick-quit: ⌘+right-click a Dock icon terminates the
-    /// app, ⌘⌥+right-click force-quits it. A global monitor — the Dock
-    /// keeps its own menu; ours just rides the same press.
+    /// app, ⌘⌥+right-click force-quits it. The switcher's tap eats the
+    /// click inside the Dock's reach so Apple's menu never pops over
+    /// the quit; this global monitor path (AppKit point) is the
+    /// fallback while the tap's mirrored reach is stale.
     private func quickQuit(at point: NSPoint, force: Bool) {
-        let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight())
+        quickQuit(axPoint: DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight()),
+                  force: force)
+    }
+
+    private func quickQuit(axPoint: CGPoint, force: Bool) {
+        // The tap and the fallback monitor can both see one click; the
+        // second report of the same press is the same press — never the
+        // confirming second click an agent guard waits for.
+        let now = CACurrentMediaTime()
+        if let last = lastQuickQuit, now - last.at < 0.3,
+           hypot(last.point.x - axPoint.x, last.point.y - axPoint.y) < 3 { return }
+        lastQuickQuit = (axPoint, now)
         guard let list = dockList(near: axPoint),
               Self.listReach(of: list.frame).contains(axPoint),
               let item = tiles(of: list).first(where: { $0.frame.contains(axPoint) }),
@@ -2210,10 +2267,56 @@ final class DockEnhanceController {
         // own tile would self-terminate.
         guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               !MenuBarUtility.isOwnFamily(bundleID) else { return }
+        let name = app.localizedName ?? "the app"
+        // A reflexive quit must not end a mid-task agent run: a terminal
+        // or IDE hosting a working or waiting session asks for the same
+        // click twice.
+        let live = agentMarks().first { $0.hosts.contains(bundleID) && $0.isLive }
+        let key = "quickquit:\(app.processIdentifier)"
+        guard agentGuard.confirm(key, guarded: live != nil, now: CACurrentMediaTime()) else {
+            if let live {
+                showToast(DockAgentGuard.note(for: live, again: "⌘-right-click again to quit"),
+                          over: item, duration: DockAgentGuard.window)
+            }
+            return
+        }
         Self.log.notice("quick quit: \(bundleID, privacy: .public) force=\(force, privacy: .public)")
         if force { app.forceTerminate() } else { app.terminate() }
         tracker.reset()
         hidePreview()
+        showToast(force ? "Force quit \(name)" : "Quit \(name)", over: item)
+        // Quit is a request: an app that blocks it, or keeps running in
+        // the background (macOS 27's gray dot), says so rather than the
+        // toast claiming a quit that never happened.
+        guard !force else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.quitFollowThrough) { [weak self] in
+            guard let self, !app.isTerminated else { return }
+            self.showToast("\(name) is still running — ⌘⌥-right-click to force quit", over: item,
+                           duration: 2.4)
+        }
+    }
+
+    /// How long a plain quit gets before "still running" is the truth.
+    static let quitFollowThrough: TimeInterval = 1.2
+    @ObservationIgnored private var lastQuickQuit: (point: CGPoint, at: TimeInterval)?
+
+    /// The glass line above a tile — what a gesture did, or why it waited.
+    @ObservationIgnored private var toast: DockToastPanel?
+
+    private func showToast(_ text: String, over item: DockAXItem, duration: TimeInterval = 1.4) {
+        let mainHeight = Self.mainScreenHeight()
+        let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: mainHeight)
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })
+                ?? NSScreen.screens.first(where: { $0.frame.contains(tile.origin) }) ?? NSScreen.main
+        else { return }
+        let listFrame = cachedList.map { DockEnhanceMath.appKitRect($0.frame, mainScreenHeight: mainHeight) } ?? tile
+        let edge = DockEnhanceMath.dockEdge(listFrame: listFrame, screen: screen.frame)
+        let anchor = magnificationOn
+            ? DockEnhanceMath.magnifiedAnchor(tile: tile, edge: edge, pointer: pointer) : tile
+        let panel = toast ?? DockToastPanel()
+        toast = panel
+        panel.show(text, over: anchor, edge: edge, screen: screen.frame, duration: duration)
     }
 
     /// The header's "Hide" — the app's own ⌘H.

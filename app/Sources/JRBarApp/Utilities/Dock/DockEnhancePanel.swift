@@ -200,6 +200,88 @@ final class DockPreviewPanel: NSPanel {
     }
 }
 
+/// A one-line glass toast just above a Dock tile — what an invisible
+/// gesture did ("Quit Safari", "Force quit Xcode") or why it waited
+/// ("Claude is working here — ⌘-right-click again to quit"). It never
+/// takes a click or focus, and fades on its own.
+@MainActor
+final class DockToastPanel: NSPanel {
+    @MainActor @Observable final class Model { var text = "" }
+    private let model = Model()
+    private let hosting: NSHostingView<DockToastView>
+    private var fadeWork: DispatchWorkItem?
+
+    init() {
+        hosting = NSHostingView(rootView: DockToastView(model: model))
+        hosting.sizingOptions = [.intrinsicContentSize]
+        let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 160, height: 30))
+        glass.cornerRadius = 12
+        glass.style = .regular
+        hosting.frame = glass.bounds
+        hosting.autoresizingMask = [.width, .height]
+        glass.contentView = hosting
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 160, height: 30),
+                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: 12)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        ignoresMouseEvents = true
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        isExcludedFromWindowsMenu = true
+        animationBehavior = .none
+        sharingType = .none
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .fullScreenAuxiliary, .ignoresCycle]
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+        title = "JR-Bar Dock Toast"
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    /// Show `text` over `tile` (AppKit space) off the Dock's `edge`,
+    /// for `duration`, then fade.
+    func show(_ text: String, over tile: CGRect, edge: DockEdge, screen: CGRect,
+              duration: TimeInterval = 1.4) {
+        model.text = text
+        hosting.invalidateIntrinsicContentSize()
+        hosting.layoutSubtreeIfNeeded()
+        let fit = hosting.intrinsicContentSize
+        let size = CGSize(width: min(max(fit.width, 80), 420), height: max(fit.height, 28))
+        setFrame(DockEnhanceMath.panelFrame(anchor: tile, edge: edge, size: size,
+                                            screen: screen, gap: 10), display: true)
+        fadeWork?.cancel()
+        alphaValue = 1
+        orderFrontRegardless()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
+                    self.animator().alphaValue = 0
+                }, completionHandler: { [weak self] in
+                    MainActor.assumeIsolated { self?.orderOut(nil) }
+                })
+            }
+        }
+        fadeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+    }
+}
+
+struct DockToastView: View {
+    let model: DockToastPanel.Model
+
+    var body: some View {
+        Text(model.text)
+            .font(.callout.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+    }
+}
+
 /// The panel's body: app header with its verbs, then the window cards
 /// — thumbnail when Screen Recording granted one, the app icon
 /// otherwise — each with hover-revealed close and minimize buttons.
@@ -271,8 +353,10 @@ struct DockPreviewView: View {
                     }
                 } else if content.isRunning {
                     HStack(spacing: 4) {
-                        headerVerb("power", tint: Color(red: 0.93, green: 0.34, blue: 0.32),
-                                   label: "Quit \(content.appName)") {
+                        headerVerb(content.stillRunning ? "bolt.horizontal.fill" : "power",
+                                   tint: Color(red: 0.93, green: 0.34, blue: 0.32),
+                                   label: content.stillRunning ? "Force quit \(content.appName)"
+                                                               : "Quit \(content.appName)") {
                             actions.onQuitApp?()
                         }
                         if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {

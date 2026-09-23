@@ -495,6 +495,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     var onTile: (_ code: Int64) -> Void = { _ in }
     /// ⌘ went down or up while a strip is open — the verb hints' cue.
     var onCommandHeld: (_ held: Bool) -> Void = { _ in }
+    /// ⌘-right-click inside the Dock's reach (Quartz point, force with
+    /// ⌥): eaten here so Apple's Dock menu never pops over the quit.
+    var onQuickQuit: (_ point: CGPoint, _ force: Bool) -> Void = { _, _ in }
     /// The preview panel's keys — Esc/arrows/Return — while its flag is
     /// set. The events are eaten either way: the panel can't take key
     /// status, so a pass-through would land them in the front app too.
@@ -534,6 +537,16 @@ final class SwitcherKeyTap: @unchecked Sendable {
     var isLatched: Bool {
         lock.lock(); defer { lock.unlock() }
         return latched
+    }
+    /// The Dock list's reach in Quartz space, mirrored from the preview
+    /// watcher's cache — nil while it isn't watching (no quick quit).
+    nonisolated(unsafe) private var dockReach: CGRect?
+    /// An eaten ⌘-right-click's up edge is eaten too — the Dock must
+    /// never see half a click.
+    nonisolated(unsafe) private var eatRightUp = false
+
+    func setDockReach(_ reach: CGRect?) {
+        lock.lock(); dockReach = reach; lock.unlock()
     }
 
     func setEnabled(_ value: Bool) {
@@ -575,6 +588,8 @@ final class SwitcherKeyTap: @unchecked Sendable {
         guard tap == nil else { return }
         let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << CGEventType.rightMouseDown.rawValue)
+            | (1 << CGEventType.rightMouseUp.rawValue)
         tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                                 options: .defaultTap, eventsOfInterest: mask,
                                 callback: { _, type, event, refcon in
@@ -612,6 +627,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.unlock()
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+
+        if type == .rightMouseDown || type == .rightMouseUp {
+            return handleRightMouse(type: type, event: event)
+        }
 
         if type == .keyDown {
             // 48 is Tab. Option alone is the window switcher; command
@@ -731,6 +750,30 @@ final class SwitcherKeyTap: @unchecked Sendable {
         return Unmanaged.passRetained(event)
     }
 
+    /// DockDoor's quick quit without Apple's menu flashing over it: a
+    /// ⌘-right-click inside the Dock's reach is consumed (down and its
+    /// up) and handed to the quit; every other right click passes
+    /// untouched. Nothing is synthesized — a real event is just not
+    /// delivered.
+    private func handleRightMouse(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        lock.lock()
+        let reach = dockReach
+        let eatUp = eatRightUp
+        if type == .rightMouseUp { eatRightUp = false }
+        lock.unlock()
+        if type == .rightMouseUp {
+            return eatUp ? nil : Unmanaged.passRetained(event)
+        }
+        let point = event.location
+        guard event.flags.contains(.maskCommand), let reach, reach.contains(point) else {
+            return Unmanaged.passRetained(event)
+        }
+        let force = event.flags.contains(.maskAlternate)
+        lock.lock(); eatRightUp = true; lock.unlock()
+        DispatchQueue.main.async { [weak self] in self?.onQuickQuit(point, force) }
+        return nil
+    }
+
     private var isCmdOpenNow: Bool {
         lock.lock(); defer { lock.unlock() }
         return cmdOpen
@@ -815,6 +858,11 @@ final class DockSwitcherController {
     /// Mirrors the preview panel's visibility into the tap — the
     /// enhance controller's show/hide drives it.
     func setPreviewOpen(_ value: Bool) { tap.setPreviewOpen(value) }
+    /// The preview watcher's quick quit — the tap eats a ⌘-right-click
+    /// inside `setDockReach`'s rect and hands it here.
+    var onQuickQuit: ((CGPoint, Bool) -> Void)?
+    /// The Dock's reach (Quartz), mirrored into the tap by the watcher.
+    func setDockReach(_ reach: CGRect?) { tap.setDockReach(reach) }
     /// An open can land while the last open's captures still run —
     /// the generation tells a stale async batch from the live strip.
     private var thumbGeneration = 0
@@ -854,6 +902,7 @@ final class DockSwitcherController {
         tap.onLatch = { [weak self] in self?.latch() }
         tap.onTile = { [weak self] code in self?.tile(code) }
         tap.onCommandHeld = { [weak self] held in self?.commandHeld(held) }
+        tap.onQuickQuit = { [weak self] point, force in self?.onQuickQuit?(point, force) }
         // The layout the type-ahead spells through — read now on the
         // main thread and again on every input-source switch.
         tap.keyboard.startWatching()

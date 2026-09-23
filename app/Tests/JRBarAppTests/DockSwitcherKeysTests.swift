@@ -97,6 +97,25 @@ struct DockSwitcherKeysTests {
         #expect(DockSwitcherList.verbHints(appMode: false, drilled: false).contains("tile"))
     }
 
+    @Test("a ⌘-right-click inside the Dock's reach is eaten, down and up; every other right click passes")
+    func quickQuitClick() throws {
+        let tap = SwitcherKeyTap()
+        func click(_ type: CGEventType, at point: CGPoint, command: Bool) throws -> Bool {
+            let event = try #require(CGEvent(mouseEventSource: nil, mouseType: type,
+                                             mouseCursorPosition: point, mouseButton: .right))
+            event.flags = command ? .maskCommand : []
+            return tap.handle(type: type, event: event)?.takeRetainedValue() == nil
+        }
+        let inside = CGPoint(x: 500, y: 1100), outside = CGPoint(x: 500, y: 300)
+        #expect(try !click(.rightMouseDown, at: inside, command: true), "no reach mirrored: nothing eaten")
+        tap.setDockReach(CGRect(x: 0, y: 1000, width: 1440, height: 200))
+        #expect(try click(.rightMouseDown, at: inside, command: true))
+        #expect(try click(.rightMouseUp, at: inside, command: true), "its up edge goes with it")
+        #expect(try !click(.rightMouseUp, at: inside, command: true), "…once")
+        #expect(try !click(.rightMouseDown, at: inside, command: false), "a plain right click is the Dock's menu")
+        #expect(try !click(.rightMouseDown, at: outside, command: true), "outside the Dock, ⌘-right-click is the app's")
+    }
+
     @Test("hover selects only once the pointer has moved since the strip opened")
     func hoverGate() {
         var gate = SwitcherHoverGate()
