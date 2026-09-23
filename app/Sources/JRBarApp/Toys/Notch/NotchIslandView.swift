@@ -497,8 +497,11 @@ struct NotchIslandView: View {
     private func askFace(_ notice: AlcoveNotice) -> some View {
         let verbs = toy.askVerbs(for: notice)
         let session = notice.session ?? ""
-        let pending = toy.answerer.isPending(session)
-        let refusal = toy.answerer.note(for: session)
+        let live = toy.liveAsk(for: notice)
+        let desk = AskAnswerDesk.shared
+        let pending = toy.answerer.isPending(session) || (desk?.isPending(session) ?? false)
+        let deskNote = desk?.note(for: session)
+        let refusal = toy.answerer.note(for: session) ?? deskNote.flatMap { $0.refused ? $0.text : nil }
         let lines = toy.askSummaryLines
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
@@ -511,7 +514,10 @@ struct NotchIslandView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
-                if let opened = toy.liveAsk(for: notice)?.openedAt ?? notice.ask?.openedAt {
+                if live?.isDestructive == true {
+                    AskRiskMark(size: 9.5)
+                }
+                if let opened = live?.openedAt ?? notice.ask?.openedAt {
                     TimelineView(.periodic(from: .now, by: 15)) { context in
                         Text(Self.waited(since: opened, now: context.date))
                             .font(.system(size: 9.5, design: .rounded))
@@ -521,7 +527,8 @@ struct NotchIslandView: View {
                 }
             }
             .frame(height: NotchIslandLayout.askTitleLine)
-            Text(toy.askSummary(notice))
+            NotchAskCopy.line(toy.askSummary(notice), preview: live?.previewLine,
+                              destructive: live?.isDestructive == true)
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.62))
                 .lineLimit(lines)
@@ -532,7 +539,9 @@ struct NotchIslandView: View {
                        alignment: .topLeading)
             Spacer(minLength: NotchIslandLayout.askGap)
             HStack(spacing: 6) {
-                if let line = refusal ?? verbs.note {
+                // A held question answers here whatever the keystroke
+                // path says, so its "answer it in its window" is moot.
+                if let line = refusal ?? (live.map(AskVerbs.chooses) == true ? nil : verbs.note) {
                     Text(line)
                         .font(.system(size: 9.5))
                         .foregroundStyle(refusal != nil
@@ -542,9 +551,22 @@ struct NotchIslandView: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 4)
-                if verbs.answers {
+                if let live, let desk, !CoreSession.isRemoteID(session), AskVerbs.chooses(live) {
+                    // A held question: Deny declines it through its hook,
+                    // and its options are the answer.
+                    NotchVerbButton(title: "Deny", style: .island, busy: pending) {
+                        Task { await desk.answer(live, .deny) }
+                    }
+                    NotchAskChoices(ask: live, desk: desk, style: .island, busy: pending)
+                } else if verbs.answers {
                     NotchVerbButton(title: "Deny", style: .island, busy: pending) {
                         toy.answerCapsule(approve: false)
+                    }
+                    if let live, let desk, AskVerbs.alwaysAllows(live) {
+                        NotchVerbButton(title: "Always", style: .island, busy: pending) {
+                            Task { await desk.answer(live, .always) }
+                        }
+                        .help("Approve, and let the agent remember the rule it offered")
                     }
                     NotchVerbButton(title: "Approve", style: .island, prominent: true, busy: pending) {
                         toy.answerCapsule(approve: true)

@@ -644,10 +644,19 @@ struct NotchCardView: View {
         let verbs = row.activity == .waiting
             ? NotchAskVerbs.resolve(live: row.ask, session: row.id) : .none
         let answerer = model.answerer
-        let pending = answerer?.isPending(row.id) ?? false
-        let second = answerer?.note(for: row.id)
-            ?? row.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
+        let desk = AskAnswerDesk.shared
+        let pending = (answerer?.isPending(row.id) ?? false) || (desk?.isPending(row.id) ?? false)
+        let refusal = answerer?.note(for: row.id) ?? desk?.note(for: row.id)?.text
+        let summary = row.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
         let opens = !CoreSession.isRemoteID(row.id) && model.onOpenRow != nil
+        // The ask as the desk answers it: the row's own, with its id.
+        let ask = row.ask.map { ask -> CoreAsk in
+            var ask = ask
+            if ask.session == nil { ask.session = row.id }
+            return ask
+        }
+        let choosing = row.activity == .waiting && !CoreSession.isRemoteID(row.id)
+            && ask.map(AskVerbs.chooses) == true && desk != nil
         return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Circle()
@@ -659,10 +668,26 @@ struct NotchCardView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
-                if verbs.answers, let answerer {
+                if row.activity == .waiting, ask?.isDestructive == true {
+                    AskRiskMark(size: 8.5)
+                }
+                if choosing, let ask, let desk {
+                    // A held question: Deny declines it through its
+                    // hook, and its options are the answer.
+                    NotchVerbButton(title: "Deny", style: style, prominent: false, busy: pending) {
+                        Task { await desk.answer(ask, .deny) }
+                    }
+                    NotchAskChoices(ask: ask, desk: desk, style: style, busy: pending)
+                } else if verbs.answers, let answerer {
                     NotchVerbButton(title: "Deny", style: style, prominent: false,
                                     busy: pending) {
                         Task { await answerer.answer(session: row.id, ask: row.ask, approve: false) }
+                    }
+                    if let ask, let desk, AskVerbs.alwaysAllows(ask) {
+                        NotchVerbButton(title: "Always", style: style, prominent: false, busy: pending) {
+                            Task { await desk.answer(ask, .always) }
+                        }
+                        .help("Approve, and let the agent remember the rule it offered")
                     }
                     NotchVerbButton(title: "Approve", style: style, prominent: true,
                                     busy: pending) {
@@ -674,11 +699,19 @@ struct NotchCardView: View {
                         .foregroundStyle(row.activity.wordColor)
                 }
             }
-            if let second {
-                Text(second)
+            if let refusal {
+                Text(refusal)
                     .font(.system(size: 9.5))
-                    .foregroundStyle(answerer?.note(for: row.id) != nil
-                                     ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.faintColor))
+                    .foregroundStyle(desk?.note(for: row.id)?.refused == false && answerer?.note(for: row.id) == nil
+                                     ? AnyShapeStyle(style.faintColor) : AnyShapeStyle(Color.orange))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 11)
+            } else if let summary {
+                NotchAskCopy.line(summary, preview: row.activity == .waiting ? ask?.previewLine : nil,
+                                  destructive: ask?.isDestructive == true, style: style, size: 9)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(style.faintColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.leading, 11)
@@ -1840,6 +1873,67 @@ struct NotchVerbButton: View {
         .buttonStyle(.plain)
         .disabled(busy)
         .accessibilityLabel(title)
+    }
+}
+
+/// An ask's words at the notch: the question, then — monospaced, after
+/// a dot — what the agent wants to run, red when it is destructive. One
+/// `Text`, so the ask face's measured lines still hold it; a preview
+/// that does not fit is cut, never the question.
+enum NotchAskCopy {
+    static func line(_ summary: String, preview: String?, destructive: Bool,
+                     style: NotchCardStyle = .island, size: CGFloat = 10.5) -> Text {
+        guard let preview else { return Text(summary) }
+        let dot = Text(verbatim: " · ").foregroundStyle(style.faintColor)
+        let run = Text(preview)
+            .font(.system(size: size, design: .monospaced))
+            .foregroundStyle(destructive ? AnyShapeStyle(Color.red.opacity(0.9)) : AnyShapeStyle(style.subColor))
+        return Text("\(Text(summary))\(dot)\(run)")
+    }
+}
+
+/// A held question's options on a notch verb row: a verb each for one
+/// tiny single-pick question — a click is the answer — else one menu
+/// that holds them all, with Send once every question has a pick. The
+/// answer goes through the shared desk and the agent's own hook.
+struct NotchAskChoices: View {
+    let ask: CoreAsk
+    let desk: AskAnswerDesk
+    let style: NotchCardStyle
+    var busy = false
+
+    private var choices: [CoreAskChoice] { ask.decision?.choices ?? [] }
+
+    var body: some View {
+        switch AskChoiceLayout.layout(choices, maxButtons: 2, maxCharacters: 18) {
+        case .buttons(let labels):
+            ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
+                NotchVerbButton(title: label, style: style, prominent: index == 0, busy: busy) {
+                    if let choice = choices.first { desk.pick(label, in: choice, of: ask) }
+                }
+                .help("Answer “\(label)”")
+            }
+        case .menu:
+            let picks = desk.picks(for: ask)
+            Menu {
+                AskChoiceMenuItems(choices: choices, picks: picks,
+                                   pick: { desk.pick($0, in: $1, of: ask) },
+                                   send: { Task { await desk.sendPicks(for: ask) } })
+            } label: {
+                Text(AskChoiceLayout.menuTitle(choices, picks: picks))
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .tint(style.titleColor)
+            .disabled(busy)
+            .help(choices.count == 1 ? choices[0].question : "\(choices.count) questions — pick an answer for each")
+            if picks.isComplete(choices), choices.count > 1 || choices.first?.multi == true {
+                NotchVerbButton(title: "Send", style: style, prominent: true, busy: busy) {
+                    Task { await desk.sendPicks(for: ask) }
+                }
+            }
+        }
     }
 }
 
