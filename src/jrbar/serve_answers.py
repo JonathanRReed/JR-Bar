@@ -173,7 +173,10 @@ def public_asks(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     ``request`` identity, one bounded line of what it wants, and the
     ``decisions`` an answer may carry: ``approve``/``deny`` only while it is
     ``answerable``, ``always`` only when the agent offered a rule to
-    remember, ``answer`` only for a held question with ``choices``.
+    remember, ``answer`` only for a held question with ``choices``. An ask
+    the decide lane has already ``decided`` (the seconds while the agent's
+    events catch up) is held no longer, so it offers neither -- the app's
+    own ``canAlwaysAllow`` and ``canChoose`` read it the same way.
     """
     sessions = {
         row.get("id"): row
@@ -194,15 +197,16 @@ def public_asks(state: Mapping[str, Any]) -> list[dict[str, Any]]:
         session = ask["session"]
         row = sessions.get(session, {})
         decision = ask.get("decision") if isinstance(ask.get("decision"), dict) else None
+        held = decision is not None and decision.get("decided") is not True
         choices = [
             choice
             for choice in (decision or {}).get("choices") or ()
-            if isinstance(choice, dict)
+            if held and isinstance(choice, dict)
         ]
         verbs: list[str] = []
         if ask.get("answerable") is True:
             verbs += ["approve", "deny"]
-        if decision is not None and decision.get("always") is True:
+        if held and decision.get("always") is True:
             verbs.append("always")
         if choices:
             verbs.append("answer")

@@ -134,6 +134,23 @@ def test_asks_say_which_answers_each_one_takes() -> None:
     assert public_asks({}) == []
 
 
+def test_an_ask_already_decided_offers_no_always_and_no_choice() -> None:
+    # The seconds after an answer, while the agent's events catch up: the
+    # hold is spent, so a key must not draw an Always allow or a choice the
+    # answer path would only refuse as stale.
+    decided = {
+        **STATE,
+        "asks": [
+            {**ask, "decision": {**ask["decision"], "decided": True}}
+            for ask in STATE["asks"]
+            if "decision" in ask
+        ],
+    }
+    first, second = public_asks(decided)
+    assert first["decisions"] == ["approve", "deny"]
+    assert second["decisions"] == [] and second["choices"] == []
+
+
 class _Controller:
     def __init__(self, *, enabled: bool, reply=None, error: CommandError | None = None) -> None:
         self.settings = type("S", (), {"serve_answer_enabled": enabled})()

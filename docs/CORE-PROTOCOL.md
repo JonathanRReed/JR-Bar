@@ -1105,7 +1105,9 @@ while the answer is still delivered.
   showing it, one bounded line of what it wants, and the `decisions` an
   answer may carry -- `approve`/`deny` only while the ask is `answerable`,
   `always` only when the agent offered a rule to remember, `answer` only
-  for a held question (`choices`).
+  for a held question (`choices`); once the decide lane has `decided`, the
+  hold is spent and neither `always` nor `answer` (nor its `choices`) is
+  offered.
 - `POST /answer` names one `session` (the daemon's id) or one `slot` and an
   explicit `decision`, in the query string (`/answer?slot=2&decision=deny`,
   for a key that can only send a URL) or a JSON object body (which wins

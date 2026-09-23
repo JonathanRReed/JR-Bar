@@ -12,7 +12,8 @@ lives in those timestamps).
     GET /asks.json     what is waiting and which answers each ask takes
     POST /answer       approve / deny / always / a choice, for a Stream Deck key
 
-Loopback only, no query parameters on the status route, nothing written.
+Loopback only, no query parameters on the status route, nothing written by
+serve itself -- an answer is the daemon's own command, journaled there.
 The public schema is rebuilt from an allowlist and never forwards persisted
 rows. The two answering routes (serve_answers.py) exist only when the host
 wires an answer source, are never anonymous, and act only while the
