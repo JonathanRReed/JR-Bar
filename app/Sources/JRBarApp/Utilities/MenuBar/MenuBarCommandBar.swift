@@ -402,8 +402,8 @@ extension MenuBarCommand {
     }
 }
 
-/// The ⌘⇧K entry point: the hotkey, the utility card's button and the
-/// icon's menu all toggle this, and it opens JR-Bar's one palette —
+/// The ⌘⇧K entry point: the hotkey and the utility card's button both
+/// toggle this, and it opens JR-Bar's one palette —
 /// the menu bar's own rows plus every source the app delegate
 /// registers (sessions, asks, quiet, lights, Control Center, the
 /// archive…). The inputs are closures the actions facade wires to the

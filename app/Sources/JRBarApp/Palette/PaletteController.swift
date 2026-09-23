@@ -151,8 +151,8 @@ extension NSScreen {
 /// The palette's coordinator: gathers rows from every source on open,
 /// routes keys through `PaletteKeys`, runs verbs, remembers what ran,
 /// and leaves a HUD line behind. One instance, held by the ⌘⇧K entry
-/// point (`MenuBarCommandBar`), so the hotkey, the utility card's
-/// button and the icon menu all open the same palette.
+/// point (`MenuBarCommandBar`), so the hotkey — registered or parked —
+/// and the utility card's button open the same palette.
 @MainActor
 final class PaletteController {
     nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "palette")
