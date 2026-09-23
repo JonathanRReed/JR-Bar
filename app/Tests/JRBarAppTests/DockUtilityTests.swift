@@ -31,6 +31,19 @@ struct DockUtilityTests {
         #expect(utility.enhance.switcher === utility.switcher)
     }
 
+    @Test("an awaited session raise with no running host answers notFound without reading a window")
+    func awaitedRaise() async {
+        // The overload `UtilitiesStore.raiseSessionWindow(_:) async`
+        // awaits: a terminal nobody runs leaves the worker nothing to list.
+        let utility = DockUtility()
+        utility.sessions = {
+            [CoreSession(id: "claude:session:a", provider: "claude", label: "Ship the dock", mode: "working",
+                         terminal: CoreTerminal(app: "Absent", bundleId: "com.example.jrbar.absent-terminal"))]
+        }
+        #expect(await utility.raiseSessionWindow("claude:session:a") == .notFound)
+        #expect(await utility.raiseSessionWindow("claude:session:zzz") == .notFound, "no mark, no search")
+    }
+
     @Test("a running rival names the chord it may share")
     func conflictNote() {
         #expect(DockUtility.conflictNote(running: [], windowChord: true, appChord: false) == nil)

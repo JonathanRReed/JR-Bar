@@ -143,6 +143,15 @@ final class UtilitiesStore {
         dock.raiseSessionWindow(sessionID) == .raised
     }
 
+    /// The same, for an async caller (`SessionOpener`): the window lists
+    /// and the walk for another Space's window run on `DockAXWorker`, so
+    /// a hung host app never holds the main thread; the activation and
+    /// the answer come back to it.
+    @discardableResult
+    func raiseSessionWindow(_ sessionID: String) async -> Bool {
+        await dock.raiseSessionWindow(sessionID) == .raised
+    }
+
     /// `applicationWillTerminate`'s stop: collapses the menu bar's
     /// spacers before they vanish with the process, and hands Apple's
     /// Dock its autohide value back if an old build's bar hid it.
