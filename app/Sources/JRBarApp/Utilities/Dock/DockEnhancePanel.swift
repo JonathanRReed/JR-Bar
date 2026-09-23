@@ -88,6 +88,9 @@ final class DockPreviewActions {
     var onAnswer: (@MainActor (CoreAsk, Bool) -> Void)?
     /// The context menu's Move To — the window to another display.
     var onMoveToDisplay: (@MainActor (DockPreviewWindow, CGDirectDisplayID) -> Void)?
+    /// The pointer landed on a card — the controller re-takes its still
+    /// when the cached one has aged past a glance.
+    var onHoverCard: (@MainActor (DockPreviewWindow) -> Void)?
 }
 
 /// The Macs' displays as the Move To menu names them.
@@ -783,7 +786,10 @@ struct DockPreviewCard: View {
             }
         }
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            if inside { actions.performWindowAction(window, actions.onHoverCard) }
+        }
         // Aero shake lives on continuous hover — a non-activating panel
         // still gets tracking-area events while the pointer rests.
         .onContinuousHover { phase in

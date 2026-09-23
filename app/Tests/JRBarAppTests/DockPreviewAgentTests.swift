@@ -153,4 +153,33 @@ struct DockPreviewAgentTests {
         #expect(await DockUtility.answer(remote, approve: true, send: send) == "Runs on studio — answer it there")
         #expect(calls == 0)
     }
+
+    @Test("a still taken before the agent asked or moved on is stale — the daemon sets the cadence")
+    func stillTagFollowsTheAgent() {
+        let working = DockAgentMark.marks(from: [session("a", label: "Build")])[0]
+        let waiting = DockAgentMark.marks(from: [session("a", label: "Build", waiting: true)])[0]
+        let again = DockAgentMark.marks(from: [session("a", label: "Build")])[0]
+        #expect(working.stillTag != waiting.stillTag, "an ask opening re-takes the still")
+        #expect(working.stillTag == again.stillTag, "the same state keeps the cache")
+        #expect(DockThumbnailer.cacheServes(age: 10, maxAge: DockThumbnailer.captureLifetime,
+                                            cachedTag: working.stillTag, tag: working.stillTag))
+        #expect(!DockThumbnailer.cacheServes(age: 10, maxAge: DockThumbnailer.captureLifetime,
+                                             cachedTag: working.stillTag, tag: waiting.stillTag))
+        #expect(!DockThumbnailer.cacheServes(age: 31, maxAge: DockThumbnailer.captureLifetime,
+                                             cachedTag: nil, tag: nil), "past the half minute, always")
+        #expect(DockThumbnailer.cacheServes(age: 3, maxAge: DockThumbnailer.captureLifetime,
+                                            cachedTag: nil, tag: nil))
+    }
+
+    @Test("a hovered card re-takes only an aged or out-of-date still, never a missing one")
+    func hoverRefresh() {
+        #expect(!DockThumbnailer.wantsHoverRefresh(hasStill: false, age: nil, cachedTag: nil, tag: nil),
+                "a card with no still is the first pass's job")
+        #expect(!DockThumbnailer.wantsHoverRefresh(hasStill: true, age: 2, cachedTag: nil, tag: nil),
+                "a fresh glance keeps its still — no extra recording-dot blink")
+        #expect(DockThumbnailer.wantsHoverRefresh(hasStill: true, age: 6, cachedTag: nil, tag: nil))
+        #expect(DockThumbnailer.wantsHoverRefresh(hasStill: true, age: nil, cachedTag: nil, tag: nil),
+                "a still whose cache entry lapsed is at least half a minute old")
+        #expect(DockThumbnailer.wantsHoverRefresh(hasStill: true, age: 1, cachedTag: "a|working", tag: "a|waiting"))
+    }
 }

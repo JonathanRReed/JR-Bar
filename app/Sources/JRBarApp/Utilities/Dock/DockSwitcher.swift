@@ -1517,7 +1517,8 @@ enum DockSwitcherThumbs {
             guard !isStale() else { return }
             guard let windowID = item.windowID, let scWindow = byID[windowID],
                   let image = await DockThumbnailer.capture(
-                    scWindow: scWindow, pid: item.pid, scale: scale) else { continue }
+                    scWindow: scWindow, pid: item.pid, scale: scale,
+                    tag: item.agent?.stillTag) else { continue }
             guard !isStale() else { return }
             onStill(item.id, image)
         }

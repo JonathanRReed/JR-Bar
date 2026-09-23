@@ -1253,6 +1253,8 @@ final class DockEnhanceController {
     @ObservationIgnored private var mirroredReach: CGRect?
     /// The preview action keys last mirrored into the tap.
     @ObservationIgnored private var mirroredChars: Set<String> = []
+    /// Windows whose hovered still is being re-taken — one capture each.
+    @ObservationIgnored private var freshening = Set<CGWindowID>()
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1754,6 +1756,32 @@ final class DockEnhanceController {
         }
     }
 
+    /// A hovered card whose still has aged past a glance, or predates
+    /// its agent's current state, re-takes that one window; the other
+    /// cards keep the cache. Minimized and other-Space windows only when
+    /// the card captures those at all.
+    private func freshenStill(_ window: DockPreviewWindow) {
+        guard preferences.showThumbnails, screenCaptureGranted, !preview.compact,
+              let pid = preview.processIdentifier, let windowID = window.windowID,
+              !window.minimized || preferences.includeOffscreenWindows,
+              !freshening.contains(windowID) else { return }
+        let tag = preview.agents[window.id]?.stillTag
+        let cached = DockThumbnailer.cached(pid: pid, windowID: windowID)
+        guard DockThumbnailer.wantsHoverRefresh(hasStill: window.thumbnail != nil, age: cached?.age,
+                                                cachedTag: cached?.tag, tag: tag) else { return }
+        freshening.insert(windowID)
+        let generationAtHover = generation
+        let cardID = window.id
+        Task { @MainActor [weak self] in
+            let image = await DockThumbnailer.fresh(windowID: windowID, pid: pid, tag: tag)
+            guard let self else { return }
+            self.freshening.remove(windowID)
+            guard let image, self.generation == generationAtHover, self.preview.processIdentifier == pid,
+                  let row = self.preview.windows.firstIndex(where: { $0.id == cardID }) else { return }
+            self.preview.windows[row].thumbnail = image
+        }
+    }
+
     /// Keep the visible panel on its tile: the tile's frame moves while
     /// an auto-hidden Dock slides in, and the content's fitting size
     /// settles a beat after it was first measured. Only a real change
@@ -1804,6 +1832,7 @@ final class DockEnhanceController {
         panel.actions.onMoveToDisplay = { [weak self] window, display in
             self?.move(window, toDisplay: display)
         }
+        panel.actions.onHoverCard = { [weak self] window in self?.freshenStill(window) }
         self.panel = panel
         return panel
     }

@@ -187,8 +187,40 @@ enum DockThumbnailer {
     /// Keyed by owner pid + window id: a bare CGWindowID can be
     /// recycled by the window server after a window dies, and a stale
     /// entry under a recycled id once served another app's pixels.
-    @MainActor private static var captureCache: [String: (image: NSImage, at: Date)] = [:]
+    /// Each entry also carries the tag of the agent state the window
+    /// showed when it was taken (`DockAgentMark.stillTag`): an agent
+    /// that asked or moved on since makes the still stale early.
+    @MainActor private static var captureCache: [String: (image: NSImage, at: Date, tag: String?)] = [:]
     nonisolated static let captureLifetime: TimeInterval = 30
+    /// The card under the pointer never shows a still older than this:
+    /// a hover on a card whose still has aged past it re-takes that one
+    /// window. The rest keep the half-minute cache, and the recording
+    /// dot still only blinks when a card is deliberately looked at.
+    nonisolated static let hoverFreshness: TimeInterval = 5
+
+    /// Whether a cached still may stand in for a fresh capture: young
+    /// enough for the caller's bound and taken under the agent state
+    /// the window is in now.
+    nonisolated static func cacheServes(age: TimeInterval, maxAge: TimeInterval,
+                                        cachedTag: String?, tag: String?) -> Bool {
+        age >= 0 && age < maxAge && cachedTag == tag
+    }
+
+    /// Whether a hover should re-take a card's still: only a card that
+    /// already shows one (a missing still is the first pass's job, and
+    /// may still be in flight), when the cached copy is past
+    /// `hoverFreshness`, gone, or taken under another agent state.
+    nonisolated static func wantsHoverRefresh(hasStill: Bool, age: TimeInterval?,
+                                              cachedTag: String?, tag: String?) -> Bool {
+        guard hasStill else { return false }
+        guard let age else { return true }
+        return !cacheServes(age: age, maxAge: hoverFreshness, cachedTag: cachedTag, tag: tag)
+    }
+
+    /// The cached still's age and tag for one window, if any.
+    static func cached(pid: pid_t, windowID: CGWindowID, now: Date = Date()) -> (age: TimeInterval, tag: String?)? {
+        captureCache["\(pid):\(windowID)"].map { (now.timeIntervalSince($0.at), $0.tag) }
+    }
 
     /// Downsamples the capture to 8×8 and sums the alpha channel —
     /// a purged backing store yields a `CGImage` of nothing.
@@ -270,7 +302,8 @@ enum DockThumbnailer {
             // The row's identity, not its index: a card closed while
             // this capture was in flight would shift the rows under it.
             let rowID = content.windows[index].id
-            guard let image = await capture(scWindow: scWindow, pid: pid, scale: scale) else { continue }
+            let tag = content.agents[rowID]?.stillTag
+            guard let image = await capture(scWindow: scWindow, pid: pid, scale: scale, tag: tag) else { continue }
             // Re-check the preview still belongs to this app — a
             // same-generation refill (New window) rewrites the rows
             // without tripping `isStale`.
@@ -285,12 +318,16 @@ enum DockThumbnailer {
     /// share, cached per window for `captureLifetime`. Purged backing
     /// stores come back as a fully transparent "success" and are
     /// refused: a dark window keeps alpha 255, so the probe reads the
-    /// channel, not colour.
-    static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat) async -> NSImage? {
+    /// channel, not colour. `tag` is the window's agent state now
+    /// (`DockAgentMark.stillTag`); `maxAge` tightens the cache for a
+    /// hovered card.
+    static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat,
+                        tag: String? = nil, maxAge: TimeInterval = captureLifetime) async -> NSImage? {
         let cacheKey = "\(pid):\(scWindow.windowID)"
         let now = Date()
         if let cached = captureCache[cacheKey],
-           now.timeIntervalSince(cached.at) < captureLifetime { return cached.image }
+           cacheServes(age: now.timeIntervalSince(cached.at), maxAge: min(maxAge, captureLifetime),
+                       cachedTag: cached.tag, tag: tag) { return cached.image }
         captureCache = captureCache.filter { now.timeIntervalSince($0.value.at) < captureLifetime }
         let configuration = SCStreamConfiguration()
         let bounds = scWindow.frame
@@ -308,7 +345,21 @@ enum DockThumbnailer {
             cgImage: trimmed,
             size: NSSize(width: CGFloat(trimmed.width) / scale,
                          height: CGFloat(trimmed.height) / scale))
-        captureCache[cacheKey] = (image, Date())
+        captureCache[cacheKey] = (image, Date(), tag)
         return image
+    }
+
+    /// One window's still re-taken for a hovered card — found by its
+    /// native id among every shareable window (a minimized or other-
+    /// Space window still holds its pixels), captured under the hover's
+    /// tighter bound. nil when the window is gone or the capture fails;
+    /// the card keeps the still it has.
+    static func fresh(windowID: CGWindowID, pid: pid_t, tag: String?) async -> NSImage? {
+        guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: false),
+              let scWindow = shareable.windows.first(where: { $0.windowID == windowID }),
+              scWindow.owningApplication?.processID == pid else { return nil }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        return await capture(scWindow: scWindow, pid: pid, scale: scale, tag: tag, maxAge: hoverFreshness)
     }
 }

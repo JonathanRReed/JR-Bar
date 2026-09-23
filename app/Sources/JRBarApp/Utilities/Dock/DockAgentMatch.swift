@@ -89,6 +89,15 @@ struct DockAgentMark: Equatable, Identifiable {
     /// already use for this agent.
     var accent: Color { ProviderStyle.style(for: provider).accent }
 
+    /// What a window's still was taken under: the session, its state,
+    /// the ask it holds and the tool it runs. A still whose tag differs
+    /// from the window's tag now shows the terminal from before the
+    /// agent asked (or moved on), so the next look captures again — the
+    /// daemon sets the refresh cadence, not a timer.
+    var stillTag: String {
+        "\(sessionID)|\(activity.rawValue)|\(ask?.id ?? "")|\(fact ?? "")"
+    }
+
     /// Lower first: the switcher's lane and the header count read it.
     var urgency: Int {
         switch activity {
