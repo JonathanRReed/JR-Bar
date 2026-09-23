@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var rail: DeckRailController?
     private var events: EventCoordinator?
     private var toysStore: ToysStore?
+    /// The mic/camera reading as the daemon's `presence`, and the call
+    /// fact back for the toys.
+    private var presence: PresenceReporter?
     private var utilitiesStore: UtilitiesStore?
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
@@ -350,6 +353,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // never the daemon doc — a dead core must not un-bare the
         // island over the bar's ears.
         toysStore.notch.screenBarShown = { [weak store] in store?.screenBarShown ?? false }
+        // One call fact: the notch's mic and camera reading goes to the
+        // daemon as `presence` and comes back for the toys. The monitor
+        // runs for that report while the daemon is there, and for the
+        // ears while they can draw the dots — with the island off too.
+        // What moves those answers re-syncs it: the daemon coming or
+        // going, the band shown or hidden, a capsule on its flanks, the
+        // wings setting.
+        // JR-Bar's own Mirror, on either card surface, is the camera in
+        // use but not a call.
+        let presence = PresenceReporter(core: core, cards: { [weak toysStore, weak glassCard = notchCard.model] in
+            [toysStore?.notch.cardModel, glassCard].compactMap { $0 }
+        })
+        self.presence = presence
+        toysStore.notch.onSensorsChanged = { [weak presence] in presence?.noteSensors($0) }
+        toysStore.notch.sensorsWantedForPresence = { [weak presence] in presence?.wantsSensors ?? false }
+        toysStore.notch.sensorsWantedElsewhere = { [weak self] in self?.screenBar?.drawsSensorDots ?? false }
+        presence.onDemandChanged = { [weak toysStore] in toysStore?.notch.syncSensorMonitor() }
+        // The toys hush for a call: Confetti holds its burst and its
+        // pop, the tank its cards, the buddy its hop.
+        presence.onCallChanged = { [weak toysStore] in toysStore?.noteCallPresence($0) }
+        presence.coreChanged()
         observeSensorDots()
         // Wing gestures: an outward flick dismisses a side, a horizontal
         // swipe on the band summons dismissed wings back. The pull wires
@@ -400,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         alcove.onChange = { [weak self, weak screenBar] capsule in
             screenBar?.capsule = capsule
             self?.toysStore?.noteAlcoveCapsule(capsule)
+            self?.toysStore?.notch.syncSensorMonitor()
             self?.lastLightsSource = nil
             self?.refreshLights()
         }
@@ -1131,6 +1156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store?.screenBarShown = shown
         if shown { screenBar?.show(); interaction?.start() } else { interaction?.stop(); screenBar?.hide() }
         refreshAlcoveFollowing()
+        toysStore?.notch.syncSensorMonitor()
         if syncDaemon { pushScreenBarSetting(shown) }
     }
 
@@ -1226,15 +1252,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Bar card's camera hold row reads.
     private func observeSensorDots() {
         guard let notch = toysStore?.notch else { return }
-        screenBar?.sensors = notch.sensorState
-        let readable = ScreenBarCameraHold.readable(islandVisible: notch.islandVisible,
-                                                    indicatorsOn: notch.sensorIndicatorsEnabled)
+        // The monitor may read for the presence report with the dots
+        // switched off; the ears draw — and the camera hold holds on —
+        // only what the switch allows.
+        let indicatorsOn = notch.sensorIndicatorsEnabled
+        screenBar?.sensors = indicatorsOn ? notch.sensorState : NotchSensorState()
+        // A reading exists while the monitor runs, for the island, the
+        // ears or the presence report alike — not only under the island.
+        let readable = ScreenBarCameraHold.readable(islandVisible: notch.sensorsReading,
+                                                    indicatorsOn: indicatorsOn)
         let status = ScreenBarLiveStatus.shared
         if status.cameraReadable != readable { status.cameraReadable = readable }
         withObservationTracking {
             _ = notch.sensorState
             _ = notch.islandVisible
             _ = notch.sensorIndicatorsEnabled
+            _ = notch.sensorsReading
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observeSensorDots() }
         }
@@ -1280,6 +1313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshScreenBarGlow()
         refreshScreenBarGeometry()
         reconcileScreenBarSetting()
+        // The ears' wings switch rides the settings document.
+        toysStore?.notch.syncSensorMonitor()
     }
 
     /// The left ear's ask-age ring steps with the clock, and the daemon
@@ -1602,6 +1637,9 @@ extension AppDelegate {
         SystemTogglesStore.shared.state.protectedVolumePaths = { [weak self] in
             self?.core?.devices.compactMap(\.path) ?? []
         }
+        // Awake is the daemon's one keep-awake lease: the chip, links and
+        // Shortcuts send it, `state.power.hold` is what the chip shows.
+        if let core { SystemTogglesStore.shared.state.attachLease(to: core) }
         wireCommandRouter()
         // Shortcuts' "Open Agent Session" picks from the live list.
         JRBarIntentBridge.sessions = { [weak self] in

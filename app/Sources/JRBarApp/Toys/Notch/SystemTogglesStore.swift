@@ -15,9 +15,24 @@ import os
 /// App-level: every instance is a view onto one `State`, so the notch
 /// card's chips (both card surfaces build their own store), a global
 /// shortcut, a `jrbar://toggle/…` link and a Shortcuts action all flip
-/// the same truth and hold the same keep-awake assertion — never two.
+/// the same truth and hold the same keep-awake — never two. Keep-awake is
+/// the daemon's `hold_awake` lease while it is connected (the one hold the
+/// agents, the CLI and a deck key share, in `state.power.hold`); the
+/// app's own power assertion is only the fallback while it is away (or
+/// too old for the lease), and hands itself over the moment one can take
+/// it.
 @MainActor
 final class SystemTogglesStore {
+    /// What the daemon said to a lease.
+    enum LeaseAnswer: Equatable, Sendable {
+        case taken
+        /// Refused, in the daemon's words ("No agent is working right now.").
+        case refused(String)
+        /// Not connected, no answer, or a daemon without the lease: the
+        /// app's own assertion stands in.
+        case unavailable
+    }
+
     /// The one strip. `SystemTogglesStore()` joins it too.
     static let shared = SystemTogglesStore()
 
@@ -55,10 +70,55 @@ final class SystemTogglesStore {
         /// which toggles show". Persisted app-locally.
         var strip: [SystemToggle]
 
-        /// The keep-awake assertion while held — our own state, so the
-        /// chip reads the truth directly. Boxed nonisolated so `deinit`
-        /// can release it: the assertion must not outlive the state.
+        /// The app's own keep-awake assertion — the fallback while the
+        /// daemon is away or cannot take the lease. Boxed nonisolated so
+        /// `deinit` can release it: the assertion must not outlive the
+        /// state.
         let awake = AwakeAssertion()
+
+        /// The daemon's hold (`state.power.hold`) as last published, and
+        /// whether the daemon is there at all; while it is, this is the
+        /// chip's truth.
+        private(set) var daemonHold: CoreAwakeHold?
+        private(set) var daemonLive = false
+        /// Sends the person's lease: a request is `hold_awake`, nil is
+        /// `release_awake`. Wired by `attachLease`; nil keeps every hold
+        /// on the app's own assertion.
+        @ObservationIgnored var sendLease: (@MainActor (CoreAwakeRequest?) async -> LeaseAnswer)?
+        /// The chip's clock, stepped while a countdown shows so the word
+        /// under the cup counts down without a daemon frame.
+        private(set) var awakeClock = Date()
+        @ObservationIgnored private var awakeTick: Task<Void, Never>?
+        /// A hand-over of the app's assertion to the daemon is in flight.
+        @ObservationIgnored private var handingOver = false
+        /// This connection's daemon answered a lease with "no such
+        /// command" (or never answered): it cannot take the hold, so the
+        /// app's own assertion does the job until the next connection
+        /// asks afresh — no lease re-sent on every state frame.
+        @ObservationIgnored private(set) var leaseUnsupported = false
+        /// Takes a power assertion of the given kind (nil when refused),
+        /// and lets one go. A test hands in its own pair, so no suite
+        /// holds the Mac awake.
+        @ObservationIgnored var takeAssertion: @MainActor (CFString) -> IOPMAssertionID? = { kind in
+            var assertion = IOPMAssertionID(0)
+            let status = IOPMAssertionCreateWithName(
+                kind,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "JR-Bar Keep Awake" as CFString,
+                &assertion)
+            return status == kIOReturnSuccess ? assertion : nil
+        }
+        @ObservationIgnored var releaseAssertion: @MainActor (IOPMAssertionID) -> Void = { _ = IOPMAssertionRelease($0) }
+
+        /// The one hold as the chip draws it: the daemon's while it is
+        /// connected, else the app's own — and the app's own whenever it
+        /// holds one, so an assertion the daemon could not take is never
+        /// held out of sight of the switch that lets it go.
+        var awakeReading: KeepAwakeReading {
+            daemonLive && !awake.held
+                ? KeepAwakeReading(hold: daemonHold)
+                : KeepAwakeReading(localHeld: awake.held, until: awakeUntil, display: awakeKeepsDisplay)
+        }
 
         /// A Dock choice made while the Dock utility's preview holds the
         /// Dock out: applied the moment the hold lets go, so the hold's
@@ -87,28 +147,23 @@ final class SystemTogglesStore {
             self.awakeKeepsDisplay = defaults.bool(forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
         }
 
-        /// Take or drop the keep-awake assertion. The kind follows
-        /// `awakeKeepsDisplay`: the Mac only (the display still sleeps
-        /// and locks), or the display too.
+        /// Take or drop the app's own keep-awake assertion — the fallback
+        /// while the daemon is away. The kind follows `awakeKeepsDisplay`:
+        /// the Mac only (the display still sleeps and locks), or the
+        /// display too.
         func setAwake(_ hold: Bool) {
             if hold && !awake.held {
                 let kind = awakeKeepsDisplay
                     ? kIOPMAssertionTypePreventUserIdleDisplaySleep
                     : kIOPMAssertionTypeNoIdleSleep
-                var assertion = IOPMAssertionID(0)
-                let status = IOPMAssertionCreateWithName(
-                    kind as CFString,
-                    IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                    "JR-Bar Keep Awake" as CFString,
-                    &assertion)
-                if status == kIOReturnSuccess {
+                if let assertion = takeAssertion(kind as CFString) {
                     awake.id = assertion
                     awake.held = true
                 } else {
                     lastError = "Awake: the power assertion was refused."
                 }
             } else if !hold && awake.held {
-                IOPMAssertionRelease(awake.id)
+                releaseAssertion(awake.id)
                 awake.id = 0
                 awake.held = false
             }
@@ -117,12 +172,54 @@ final class SystemTogglesStore {
                 awakeTimer = nil
                 awakeUntil = nil
             }
-            isOn[.keepAwake] = awake.held
+            syncAwakeChip()
         }
 
         /// Hold for `seconds`, indefinitely (nil), or let go (0) —
-        /// Amphetamine's session vocabulary on the one assertion.
+        /// Amphetamine's session vocabulary on the one hold: the daemon's
+        /// lease while it is connected and can take one, the app's
+        /// assertion otherwise — and the assertion's own switch while the
+        /// app holds it, so a tap always moves the hold the chip shows.
         func holdAwake(seconds: Int?) {
+            guard daemonLive, sendLease != nil, !leaseUnsupported, !awake.held else {
+                holdLocally(seconds: seconds)
+                return
+            }
+            let request: CoreAwakeRequest?
+            switch seconds {
+            case 0?: request = nil
+            case let seconds?: request = CoreAwakeRequest(.seconds(Double(seconds)), display: awakeKeepsDisplay)
+            case nil: request = CoreAwakeRequest(.indefinite, display: awakeKeepsDisplay)
+            }
+            lease(request) { [weak self] in self?.holdLocally(seconds: seconds) }
+        }
+
+        /// One lease out; the chip pulses until the daemon answers, and
+        /// its next `state.power.hold` is what settles the chip. With no
+        /// daemon to take it, `fallback` does the job locally.
+        private func lease(_ request: CoreAwakeRequest?, fallback: (@MainActor () -> Void)?) {
+            guard let sendLease else { return }
+            applying.insert(.keepAwake)
+            Task { [weak self] in
+                let answer = await sendLease(request)
+                guard let self else { return }
+                self.applying.remove(.keepAwake)
+                switch answer {
+                case .taken:
+                    if self.lastError?.hasPrefix("Awake:") == true { self.lastError = nil }
+                case .refused(let why):
+                    self.lastError = "Awake: \(why)"
+                case .unavailable:
+                    if self.daemonLive { self.leaseUnsupported = true }
+                    fallback?()
+                }
+                self.syncAwakeChip()
+            }
+        }
+
+        /// The app's own assertion for `seconds`, indefinitely (nil), or
+        /// let go (0).
+        private func holdLocally(seconds: Int?) {
             awakeTimer?.cancel()
             awakeTimer = nil
             awakeUntil = nil
@@ -138,16 +235,23 @@ final class SystemTogglesStore {
                 guard !Task.isCancelled else { return }
                 self?.setAwake(false)
             }
+            syncAwakeChip()
         }
 
         /// Switch the display option; a live hold is re-taken with the
-        /// new kind so the change applies at once, deadline kept.
+        /// new kind so the change applies at once, deadline kept — the
+        /// daemon's lease re-sent in the same shape, or the app's own
+        /// assertion re-made.
         func setAwakeKeepsDisplay(_ on: Bool) {
             guard on != awakeKeepsDisplay else { return }
             awakeKeepsDisplay = on
             defaults.set(on, forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
+            if daemonLive, sendLease != nil, !awake.held, let hold = daemonHold, hold.isManual, let current = hold.lease {
+                lease(CoreAwakeRequest(Self.sameShape(current), display: on), fallback: nil)
+                return
+            }
             guard awake.held else { return }
-            IOPMAssertionRelease(awake.id)
+            releaseAssertion(awake.id)
             awake.held = false
             let until = awakeUntil
             let timer = awakeTimer
@@ -158,6 +262,132 @@ final class SystemTogglesStore {
                 awakeTimer = timer
             } else {
                 timer?.cancel()
+            }
+            syncAwakeChip()
+        }
+
+        /// A lease the daemon holds, as the request that makes it again:
+        /// a countdown keeps its end, an agents lease its sessions.
+        static func sameShape(_ lease: CoreAwakeLease) -> CoreAwakeRequest.Shape {
+            switch lease.kind {
+            case "duration":
+                return lease.until.map { .until($0) } ?? .indefinite
+            case "agents":
+                let sessions = lease.sessions ?? []
+                return .untilAgentsFinish(sessions: sessions.isEmpty ? nil : sessions)
+            default:
+                return .indefinite
+            }
+        }
+
+        // MARK: The daemon's hold
+
+        /// Hand keep-awake to the daemon: the lease goes out as
+        /// `hold_awake`/`release_awake`, and `state.power.hold` comes back
+        /// as the chip's truth on every change.
+        func attachLease(to core: CoreModel) {
+            sendLease = { [weak core] request in
+                guard let core else { return .unavailable }
+                do {
+                    let reply: CoreReply
+                    if let request {
+                        reply = try await core.holdAwake(request)
+                    } else {
+                        reply = try await core.releaseAwake()
+                    }
+                    return Self.answer(reply)
+                } catch {
+                    return .unavailable
+                }
+            }
+            observeLease(core)
+        }
+
+        private func observeLease(_ core: CoreModel) {
+            let live = core.isLive
+            noteDaemonHold(live ? core.state?.power?.hold : nil, live: live)
+            withObservationTracking {
+                _ = core.isLive
+                _ = core.state?.power?.hold
+            } onChange: { [weak self, weak core] in
+                Task { @MainActor [weak self, weak core] in
+                    guard let self, let core else { return }
+                    self.observeLease(core)
+                }
+            }
+        }
+
+        /// A reply as the chip reads it. A daemon too old for the lease
+        /// answers `unknown_command` (or `unsupported`): the app's own
+        /// assertion stands in, as it did before the lease existed.
+        nonisolated static func answer(_ reply: CoreReply) -> LeaseAnswer {
+            if reply.ok { return .taken }
+            switch reply.error?.code {
+            case "unknown_command", "unsupported": return .unavailable
+            default: return .refused(reply.error?.message ?? "the monitor refused it.")
+            }
+        }
+
+        /// The daemon's latest word on the hold. The moment it is back, a
+        /// hold the app took while it was away becomes its lease — asked
+        /// afresh of each connection, since the daemon may have changed.
+        func noteDaemonHold(_ hold: CoreAwakeHold?, live: Bool) {
+            if daemonHold != hold { daemonHold = hold }
+            if daemonLive != live {
+                if live { leaseUnsupported = false }
+                daemonLive = live
+            }
+            if live, awake.held { handOver() }
+            syncAwakeChip()
+        }
+
+        /// One hold, never two: the app's assertion becomes the daemon's
+        /// lease (its deadline kept), then lets go. A lease the daemon
+        /// already has — it survives a restart — stands, and the
+        /// assertion simply lets go. A daemon that cannot take a lease
+        /// is not asked again on every frame; the assertion stays.
+        private func handOver() {
+            guard !handingOver, !leaseUnsupported, let sendLease else { return }
+            if daemonHold?.isManual == true {
+                setAwake(false)
+                return
+            }
+            let shape: CoreAwakeRequest.Shape = awakeUntil.map { .until($0.timeIntervalSince1970) } ?? .indefinite
+            let request = CoreAwakeRequest(shape, display: awakeKeepsDisplay)
+            handingOver = true
+            Task { [weak self] in
+                let answer = await sendLease(request)
+                guard let self else { return }
+                self.handingOver = false
+                switch answer {
+                case .taken: self.setAwake(false)
+                case .unavailable: if self.daemonLive { self.leaseUnsupported = true }
+                case .refused: break
+                }
+                self.syncAwakeChip()
+            }
+        }
+
+        /// The chip's lit state and its countdown clock, from the one
+        /// reading — every path that moves the hold ends here. Lit is the
+        /// person's lease, the thing a tap flips; the agents' own hold
+        /// and a pause for heat are the chip's word, not its light.
+        func syncAwakeChip() {
+            let reading = awakeReading
+            if isOn[.keepAwake] != reading.leaseInForce { isOn[.keepAwake] = reading.leaseInForce }
+            if reading.showsCountdown {
+                guard awakeTick == nil else { return }
+                awakeClock = Date()
+                awakeTick = Task { [weak self] in
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 20_000_000_000)
+                        guard !Task.isCancelled, let self else { return }
+                        self.awakeClock = Date()
+                    }
+                }
+            } else {
+                awakeTick?.cancel()
+                awakeTick = nil
             }
         }
 
@@ -188,19 +418,35 @@ final class SystemTogglesStore {
     /// The line under the strip: a refusal first, else the last verb's
     /// report.
     var caption: String? { state.lastError ?? state.lastNote }
-    var awakeUntil: Date? { state.awakeUntil }
+    /// When the keep-awake countdown ends — the daemon's lease or the
+    /// app's own; nil while it is not a countdown.
+    var awakeUntil: Date? {
+        if case .lease(.until(let end)) = state.awakeReading.state { return end }
+        return nil
+    }
     var awakeKeepsDisplay: Bool { state.awakeKeepsDisplay }
 
     /// The chip's word — the Lock chip says "Display" when display
-    /// sleep does not actually lock.
+    /// sleep does not actually lock; Awake names the hold's state (a
+    /// countdown, the agents holding it, paused by the heat).
     func title(for toggle: SystemToggle) -> String {
-        toggle == .lock ? SystemToggle.lockTitle(delay: state.lockDelay) : toggle.title
+        switch toggle {
+        case .lock: return SystemToggle.lockTitle(delay: state.lockDelay)
+        case .keepAwake: return state.awakeReading.chipTitle(now: state.awakeClock)
+        default: return toggle.title
+        }
     }
 
     /// The chip's tooltip, with the facts only the store knows.
     func help(for toggle: SystemToggle) -> String {
-        toggle.help(on: state.isOn[toggle] ?? false, lockDelay: state.lockDelay,
-                    awakeUntil: state.awakeUntil, awakeKeepsDisplay: state.awakeKeepsDisplay)
+        if toggle == .keepAwake {
+            var reading = state.awakeReading
+            // Off, the tooltip says what a click would hold.
+            if reading.state == .off { reading.display = state.awakeKeepsDisplay }
+            return reading.chipHelp(now: state.awakeClock)
+        }
+        return toggle.help(on: state.isOn[toggle] ?? false, lockDelay: state.lockDelay,
+                           awakeKeepsDisplay: state.awakeKeepsDisplay)
     }
 
     nonisolated static let awakeDisplayDefaultsKey = "keepAwakeDisplay"
@@ -208,6 +454,19 @@ final class SystemTogglesStore {
     /// Keep awake for `seconds`, indefinitely (nil), or let go (0).
     func holdAwake(seconds: Int?) { state.holdAwake(seconds: seconds) }
     func setAwakeKeepsDisplay(_ on: Bool) { state.setAwakeKeepsDisplay(on) }
+
+    /// A link's or a Shortcut's `on=` for Awake: the person's lease, on
+    /// or off, left alone when it is already there. The agents' own hold
+    /// is not a link's to end — the caption says whose it is instead of
+    /// pretending the switch moved.
+    private func setAwake(_ on: Bool) {
+        let reading = state.awakeReading
+        if on != reading.leaseInForce {
+            state.holdAwake(seconds: on ? nil : 0)
+        } else if !on, case .agents = reading.state {
+            state.lastNote = "Awake: the agents hold it until they stop — their switch is under Settings › Notifications › Power."
+        }
+    }
 
     private nonisolated static let log = Logger(
         subsystem: "devin.jrbar", category: "toggles")
@@ -275,7 +534,7 @@ final class SystemTogglesStore {
     private func readInline(_ toggle: SystemToggle) -> Bool? {
         switch toggle {
         case .keepAwake:
-            return state.awake.held
+            return state.awakeReading.leaseInForce
         case .darkMode:
             // The global domain's answer — "Dark" present means on;
             // absent means light. No process needed.
@@ -338,7 +597,10 @@ final class SystemTogglesStore {
         state.lastNote = nil
         switch toggle {
         case .keepAwake:
-            state.holdAwake(seconds: state.awake.held ? 0 : nil)
+            // The chip toggles the person's lease. With only the agents
+            // holding the Mac it takes one, so it stays awake after they
+            // finish; their own hold keeps its switch in Settings.
+            state.holdAwake(seconds: state.awakeReading.leaseInForce ? 0 : nil)
             return
         case .mute, .micMute:
             let scope: AudioMute.Scope = toggle == .mute ? .output : .input
@@ -397,6 +659,10 @@ final class SystemTogglesStore {
     func set(_ toggle: SystemToggle, on: Bool) {
         guard !toggle.isMomentary else {
             if on { apply(toggle) }
+            return
+        }
+        if toggle == .keepAwake {
+            setAwake(on)
             return
         }
         if let current = state.isOn[toggle] ?? readInline(toggle), current == on { return }
