@@ -2429,6 +2429,14 @@ def _cmd_release_awake(self, args):
     return core_power.release_awake(self, args)
 
 
+@command("session_energy", main_thread=False)
+def _cmd_session_energy(self, args):
+    """Which agent session is keeping the CPU busy (jrbar.session_energy)."""
+    from . import core_power
+
+    return core_power.session_energy(self, args)
+
+
 @command("presence")
 def _cmd_presence(self, args):
     """The app's report of what it senses: a live microphone, camera or

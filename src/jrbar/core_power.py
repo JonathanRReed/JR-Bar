@@ -13,6 +13,7 @@ error on the socket.
 from __future__ import annotations
 
 import math
+import threading
 import time
 from typing import Any
 
@@ -496,12 +497,49 @@ def merge_history(
     )
 
 
+# --- energy per session ----------------------------------------------------------
+
+_ENERGY_SAMPLER_LOCK = threading.Lock()
+
+
+def energy_sessions(snapshot: object) -> list[tuple[str, str, str]]:
+    """``(state id, provider, provider session id)`` for every live main
+    session. Sub-agents run inside their parent's process, so the parent's
+    tree already carries them."""
+    sessions: list[tuple[str, str, str]] = []
+    for status in tuple(getattr(snapshot, "statuses", ()) or ()):
+        if getattr(status, "is_subagent", False) or getattr(status, "stale", False):
+            continue
+        agent_id = str(getattr(status, "agent_id", "") or "")
+        provider = str(getattr(status, "provider", "") or "")
+        session_id = str(getattr(status, "session_id", "") or "")
+        if agent_id and provider and session_id:
+            sessions.append((agent_id, provider, session_id))
+    return sessions
+
+
+def session_energy(controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
+    """Which session is spending the battery (jrbar.session_energy). The
+    session list is read on the main thread; the process table off it."""
+    from .session_energy import SessionEnergySampler
+
+    on_main = getattr(controller, "_core_on_main", None) or (lambda fn: fn())
+    sessions = on_main(lambda: energy_sessions(getattr(controller, "last_snapshot", None)))
+    with _ENERGY_SAMPLER_LOCK:
+        sampler = getattr(controller, "_core_energy_sampler", None)
+        if sampler is None:
+            sampler = SessionEnergySampler()
+            controller._core_energy_sampler = sampler
+    return sampler.measure(sessions)
+
+
 __all__ = [
     "after_keep_awake_sync",
     "attach",
     "augment_power_document",
     "augment_presence_document",
     "before_keep_awake_sync",
+    "energy_sessions",
     "escalation_stage",
     "hold_awake",
     "merge_history",
@@ -511,6 +549,7 @@ __all__ = [
     "presence_facts",
     "presence_state_document",
     "release_awake",
+    "session_energy",
     "session_facts",
     "set_presence",
 ]
