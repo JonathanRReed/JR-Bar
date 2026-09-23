@@ -5752,6 +5752,14 @@ struct AquariumView: View {
                 }
                 .controlSize(.small)
             }
+        case .buddy:
+            // The Notch Buddy wears it — the same purse dresses both toys.
+            let worn = toy?.store?.state.notchBuddy.wearing == item.rawValue
+            Button(worn ? "Take off" : "Wear") {
+                toy?.store?.notchBuddy.wear(worn ? nil : item)
+            }
+            .controlSize(.small)
+            .help(worn ? "The buddy is wearing it." : "Put it on the Notch Buddy.")
         case .hats, .accessories:
             let worn = item.category == .hats ? game.hats : game.accessories
             Menu {

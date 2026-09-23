@@ -364,6 +364,10 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// Floating, it takes the odd calm walk along a window's top edge
     /// while the agents work, then comes home. On by default.
     public var walkabout: Bool = true
+    /// What it wears — a `ShopItem` raw value from the tank shop's buddy
+    /// shelf, bought with the tank's pearls. nil wears nothing; the app
+    /// checks the item is owned before drawing it.
+    public var wearing: String?
 
     /// The size slider's reach — 1× is the docked size, 3× is desk-pet.
     public static let scaleRange: ClosedRange<Double> = 1.0...3.0
@@ -411,7 +415,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
-        case wearsStripColor, walkabout
+        case wearsStripColor, walkabout, wearing
     }
 
     public init(from decoder: any Decoder) throws {
@@ -430,6 +434,8 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         scale = Self.clampedScale((try? c.decodeIfPresent(Double.self, forKey: .scale)) ?? 1.0)
         wearsStripColor = (try? c.decodeIfPresent(Bool.self, forKey: .wearsStripColor)) ?? true
         walkabout = (try? c.decodeIfPresent(Bool.self, forKey: .walkabout)) ?? true
+        let worn = (try? c.decodeIfPresent(String.self, forKey: .wearing)) ?? nil
+        wearing = worn?.isEmpty == false ? worn : nil
     }
 }
 

@@ -86,6 +86,7 @@ struct NotchBuddyView: View {
                 crumbAge: age(of: toy.crumbAt, at: context.date),
                 stride: toy.walkPhase(at: context.date),
                 stage: toy.stage,
+                wearing: toy.wearing,
                 heading: toy.strollHeading
             )
             .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
@@ -338,6 +339,9 @@ struct BuddyFigure: View {
     /// an elder stands a touch taller and wears a longer nightcap with a
     /// gold pom. The roster strip shows every body grown.
     var stage: BuddyStage = .grown
+    /// What it wears from the tank shop's buddy shelf. The nightcap
+    /// replaces it while it sleeps.
+    var wearing: ShopItem? = nil
     /// Strolling along an edge: the way it walks (+1 right, -1 left).
     /// The patrol and the hops in place give way to a straight walk.
     var heading: Double? = nil
@@ -768,7 +772,7 @@ struct BuddyFigure: View {
                 .offset(y: 7)
             ZStack {
                 characterBody
-                if mood == .asleep { cap }
+                if mood == .asleep { cap } else if let wearing { outfit(wearing) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -894,6 +898,70 @@ struct BuddyFigure: View {
         .scaleEffect(x: elder ? 1.25 : 1, y: 1, anchor: UnitPoint(x: 0.1, y: 0.85))
         .rotationEffect(.degrees(droop), anchor: UnitPoint(x: 0.15, y: 0.85))
         .offset(y: -6.7)
+    }
+
+    /// The buddy shelf's pieces, drawn where the nightcap sits — the
+    /// crown of every body — and small enough to read as a detail at
+    /// 18 pt.
+    @ViewBuilder private func outfit(_ item: ShopItem) -> some View {
+        switch item {
+        case .buddyBeanie:
+            let knit = Color(red: 0.80, green: 0.36, blue: 0.34)
+            ZStack {
+                UnevenRoundedRectangle(topLeadingRadius: 4.2, bottomLeadingRadius: 0.6,
+                                       bottomTrailingRadius: 0.6, topTrailingRadius: 4.2,
+                                       style: .continuous)
+                    .fill(knit)
+                    .frame(width: 8.4, height: 4.4)
+                    .offset(y: 0.2)
+                Capsule().fill(knit.opacity(0.75))
+                    .overlay(Capsule().fill(.white.opacity(0.18)))
+                    .frame(width: 9, height: 1.5)
+                    .offset(y: 1.9)
+                Circle().fill(.white.opacity(0.9))
+                    .frame(width: 1.8, height: 1.8)
+                    .offset(y: -1.9)
+            }
+            .frame(width: 10, height: 6)
+            .offset(y: -6.0)
+        case .buddyBow:
+            let ribbon = Color(red: 0.95, green: 0.50, blue: 0.66)
+            ZStack {
+                Path { p in
+                    p.move(to: CGPoint(x: 2.5, y: 2))
+                    p.addLine(to: CGPoint(x: 0, y: 0.4))
+                    p.addLine(to: CGPoint(x: 0, y: 3.6))
+                    p.closeSubpath()
+                    p.move(to: CGPoint(x: 2.5, y: 2))
+                    p.addLine(to: CGPoint(x: 5, y: 0.4))
+                    p.addLine(to: CGPoint(x: 5, y: 3.6))
+                    p.closeSubpath()
+                }
+                .fill(ribbon)
+                Circle().fill(ribbon.opacity(0.9))
+                    .overlay(Circle().fill(.white.opacity(0.25)))
+                    .frame(width: 1.6, height: 1.6)
+                    .offset(x: 0, y: 0)
+            }
+            .frame(width: 5, height: 4)
+            .rotationEffect(.degrees(-14))
+            .offset(x: 3.6, y: -5.0)
+        case .buddyFlower:
+            ZStack {
+                ForEach(0..<5, id: \.self) { i in
+                    let a = Double(i) / 5 * 2 * .pi
+                    Circle().fill(Color(red: 0.99, green: 0.96, blue: 0.92))
+                        .frame(width: 1.8, height: 1.8)
+                        .offset(x: cos(a) * 1.2, y: sin(a) * 1.2)
+                }
+                Circle().fill(Color(red: 0.98, green: 0.78, blue: 0.30))
+                    .frame(width: 1.4, height: 1.4)
+            }
+            .frame(width: 4.4, height: 4.4)
+            .offset(x: -3.8, y: -4.8)
+        default:
+            EmptyView()
+        }
     }
 
     /// The loose glyphs: "z"s overhead, the ask's "!", the hop's

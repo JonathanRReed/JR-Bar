@@ -96,6 +96,22 @@ final class NotchBuddyToy: Toy {
         return isTucked ? .paused("Tucked away") : .on
     }
 
+    /// What it wears: the setting's pick, only if it's from the tank
+    /// shop's buddy shelf and the tank owns it — one purse, one truth.
+    var wearing: ShopItem? {
+        guard let raw = store?.state.notchBuddy.wearing,
+              let item = ShopItem(rawValue: raw), item.category == .buddy,
+              store?.aquarium?.game.owns(item) == true else { return nil }
+        return item
+    }
+
+    /// Puts on an owned buddy item, or takes it off (`nil`).
+    func wear(_ item: ShopItem?) {
+        guard let item else { store?.state.notchBuddy.wearing = nil; return }
+        guard item.category == .buddy, store?.aquarium?.game.owns(item) == true else { return }
+        store?.state.notchBuddy.wearing = item.rawValue
+    }
+
     /// The floating buddy's walkabout (`BuddyStroll`) is allowed.
     var takesWalks: Bool { store?.state.notchBuddy.walkabout ?? true }
     /// Which way it faces while strolling along an edge (+1 right, -1
@@ -773,6 +789,27 @@ final class NotchBuddyToy: Toy {
         rosterItem.submenu = roster
         menu.addItem(rosterItem)
         menu.addItem(menuActions.item(title: "About \(buddyName)…", action: #selector(BuddyMenuActions.about)))
+        // Dress-up from the tank's purse: whatever the shop's buddy
+        // shelf has sold, and a way back to nothing.
+        let owned = ShopItem.allCases.filter {
+            $0.category == .buddy && store?.aquarium?.game.owns($0) == true
+        }
+        if !owned.isEmpty {
+            let wardrobe = NSMenu()
+            let none = menuActions.item(title: "Nothing", action: #selector(BuddyMenuActions.wear(_:)))
+            none.state = wearing == nil ? .on : .off
+            wardrobe.addItem(none)
+            for item in owned {
+                let row = menuActions.item(title: item.displayName.replacingOccurrences(of: "Buddy ", with: "").capitalized,
+                                           action: #selector(BuddyMenuActions.wear(_:)))
+                row.representedObject = item.rawValue
+                row.state = wearing == item ? .on : .off
+                wardrobe.addItem(row)
+            }
+            let wardrobeItem = NSMenuItem(title: "Wear", action: nil, keyEquivalent: "")
+            wardrobeItem.submenu = wardrobe
+            menu.addItem(wardrobeItem)
+        }
         // The tank's residents starve through a busy week with the
         // window shut — the buddy can drop a round in on its way past.
         if let aquarium = store?.aquarium, !aquarium.fish.isEmpty {
@@ -1142,6 +1179,9 @@ final class BuddyMenuActions: NSObject {
     }
 
     @objc func toggleCaption(_ sender: Any?) { toy?.toggleCaption() }
+    @objc func wear(_ sender: NSMenuItem) {
+        toy?.wear((sender.representedObject as? String).flatMap(ShopItem.init(rawValue:)))
+    }
     @objc func toggleWalkabout(_ sender: Any?) { toy?.store?.state.notchBuddy.walkabout.toggle() }
     @objc func tuck(_ sender: Any?) { toy?.tuckAway() }
 }

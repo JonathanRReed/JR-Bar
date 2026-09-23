@@ -120,6 +120,11 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case hatBeanie
     case hatParty
     case hatCrown
+    // For the buddy — the Notch Buddy wears these; one purse for both
+    // toys, so the tank's pearls dress the pet too.
+    case buddyBeanie
+    case buddyBow
+    case buddyFlower
     // Themes — water colour presets; midnight adds night lighting.
     case themeReef
     case themeLagoon
@@ -137,7 +142,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case rockyBackdrop
 
     public enum Category: String, Equatable, Sendable, CaseIterable {
-        case decor, pets, accessories, hats, themes, substrates
+        case decor, pets, accessories, hats, buddy, themes, substrates
 
         public var displayName: String {
             switch self {
@@ -145,6 +150,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
             case .pets: return "Pets"
             case .accessories: return "Accessories"
             case .hats: return "Hats"
+            case .buddy: return "For the buddy"
             case .themes: return "Themes"
             case .substrates: return "Substrate & backdrop"
             }
@@ -164,6 +170,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
              .topHat, .tinyLaptop:
             return .accessories
         case .hatBeanie, .hatParty, .hatCrown: return .hats
+        case .buddyBeanie, .buddyBow, .buddyFlower: return .buddy
         case .themeReef, .themeLagoon, .themeTwilight, .themeMidnight,
              .themeDawn, .themeSunset, .themeKelpForest, .themeBlackwater,
              .themeAbyss:
@@ -178,6 +185,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .rock: return 10
         case .plant: return 15
         case .hatBeanie: return 12
+        case .buddyBow: return 22
+        case .buddyBeanie: return 28
+        case .buddyFlower: return 34
         case .hatParty: return 18
         case .bowTie: return 20
         case .themeReef, .themeLagoon, .sunglasses: return 25
@@ -262,6 +272,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .hatBeanie: return "Beanie"
         case .hatParty: return "Party hat"
         case .hatCrown: return "Crown"
+        case .buddyBeanie: return "Buddy beanie"
+        case .buddyBow: return "Buddy bow"
+        case .buddyFlower: return "Buddy flower"
         case .themeReef: return "Reef"
         case .themeLagoon: return "Lagoon"
         case .themeTwilight: return "Twilight"
@@ -314,6 +327,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .hatBeanie: return "A warm hat for a hard-working fish."
         case .hatParty: return "For a fish that finishes things."
         case .hatCrown: return "Royalty. Obviously."
+        case .buddyBeanie: return "A knit beanie for the pet at the notch."
+        case .buddyBow: return "A bow, worn slightly askew."
+        case .buddyFlower: return "A flower tucked behind one ear."
         case .themeReef: return "Cool reef blues."
         case .themeLagoon: return "Bright shallow turquoise."
         case .themeTwilight: return "Deeper violet water."
