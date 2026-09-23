@@ -94,6 +94,21 @@ struct PowerCodecTests {
         #expect(state.power?.battery?.adapterWatts == 30)
     }
 
+    @Test("a milestone event carries the count the lights and the toys celebrate")
+    func milestone() throws {
+        let frame = try CoreCodec.decode(frame: Data("""
+        {"t":"event","v":1,"id":"ev-40","kind":"milestone","label":"Completion milestone",
+         "detail":"50 finished","count":50,"reached":[25,50],"next_count":100,"at":1000}
+        """.utf8))
+        guard case .event(let event) = frame else {
+            Issue.record("not an event")
+            return
+        }
+        #expect(event.kind == CoreEvent.milestoneKind)
+        #expect(event.count == 50)
+        #expect(event.detail == "50 finished")
+    }
+
     @Test("a call decodes, and the quiet it caused reads as sounds off")
     func presence() throws {
         let state = try Self.state("""

@@ -1285,6 +1285,47 @@ def _milestone_odometer(
     )
     setattr(controller, "_milestone_odometer_plan", plan)
     setattr(controller, "_milestone_odometer_state", plan.state)
+    if plan.reached_milestones:
+        _publish_milestone(controller, plan, occurred_at=event.occurred_at_epoch)
+
+
+#: A crossing older than this is history being re-read (a restart, a
+#: backfill), not a moment: the lights may replay it, the toys must not.
+MILESTONE_EVENT_FRESH_SECONDS = 120.0
+
+
+def _publish_milestone(
+    controller: object,
+    plan: MilestoneOdometerPlan,
+    *,
+    occurred_at: float,
+) -> None:
+    """One ``milestone`` event per fresh crossing, so Confetti at the notch
+    and the Aquarium's pearls celebrate the same count the lights do --
+    one completion counter behind every celebration, not one per toy."""
+    publish = getattr(controller, "_core_publish_event", None)
+    if not callable(publish):
+        return
+    try:
+        age = time.time() - float(occurred_at)
+    except (TypeError, ValueError):
+        return
+    # A few seconds ahead is clock skew between the hook and the daemon.
+    if not -5.0 <= age <= MILESTONE_EVENT_FRESH_SECONDS:
+        return
+    latest = plan.reached_milestones[-1]
+    try:
+        publish(
+            "milestone",
+            label="Completion milestone",
+            detail=f"{latest} finished",
+            count=latest,
+            reached=list(plan.reached_milestones),
+            next_count=plan.next_milestone,
+        )
+    except Exception:
+        # A dead socket must never cost the lights their cue.
+        return
 
 
 def _handoff_endpoint(

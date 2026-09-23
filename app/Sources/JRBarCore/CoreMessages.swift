@@ -2033,10 +2033,17 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// interruption episode, and a resolution only closes its own ask.
     public var request: String?
 
+    /// `milestone`: the completion count the odometer just crossed (the
+    /// latest, when one batch crossed several). The lights, Confetti and
+    /// the Aquarium celebrate the same number.
+    public var count: Int?
+    public static let milestoneKind = "milestone"
+
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
-                lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil) {
+                lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil,
+                count: Int? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -2055,9 +2062,13 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.duration = duration
         self.cursor = cursor
         self.request = request
+        self.count = count
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request }
+    enum CodingKeys: String, CodingKey {
+        case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request
+        case count
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -2085,6 +2096,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         duration = try? c.decodeIfPresent(Double.self, forKey: .duration)
         cursor = try? c.decodeIfPresent(String.self, forKey: .cursor)
         request = try? c.decodeIfPresent(String.self, forKey: .request)
+        count = try? c.decodeIfPresent(Int.self, forKey: .count)
     }
 
     /// `deck_receipt` as a receipt value.

@@ -641,3 +641,39 @@ def test_opted_in_cues_plan_presentations_while_defaults_stay_silent__and_2_more
     assert plan.disposition.value == "suppress"
     assert {reason.value for reason in plan.suppression_reasons} == {"dnd"}
 
+
+
+def test_a_fresh_milestone_crossing_is_one_event_for_the_toys(monkeypatch) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    state, work_key, _request_key, watermark = _canonical_state(
+        lifecycle=WorkLifecycle.COMPLETED,
+    )
+    event = _operator_event(work_key, TransitionKind.COMPLETED, watermark)
+
+    def observed(now: float, **settings) -> list[tuple[str, dict]]:
+        monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: now)
+        published: list[tuple[str, dict]] = []
+        controller = controller_type()
+        controller._core_publish_event = lambda kind, **fields: published.append((kind, fields))
+        controller.settings = _cue_settings(**settings)
+        controller.observe_operator_history_events((event,), state)
+        return [item for item in published if item[0] == "milestone"]
+
+    fresh = observed(1_800_000_010.0, milestone_odometer_enabled=True, milestone_odometer_steps=(1, 5))
+    assert fresh == [
+        (
+            "milestone",
+            {
+                "label": "Completion milestone",
+                "detail": "1 finished",
+                "count": 1,
+                "reached": [1],
+                "next_count": 5,
+            },
+        )
+    ]
+    # History re-read after a restart is not a moment: the toys stay still.
+    assert observed(1_800_000_000.0 + 3_600.0, milestone_odometer_enabled=True, milestone_odometer_steps=(1,)) == []
+    # Off means no counter at all, so nothing for the toys either.
+    assert observed(1_800_000_010.0, milestone_odometer_steps=(1,)) == []

@@ -677,6 +677,14 @@ entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
 go", "Put the Mac to sleep"), `duration` the held stretch where there
 is one and, on `lid_hold_ended`, `finished` the runs that finished during
 it -- the lid-open report's "3 finished".
+`milestone` goes out once when the opt-in milestone odometer
+(`milestone_odometer_enabled`) crosses a step on a completion that
+happened in the last two minutes -- history re-read after a restart
+never fires it: `count` is the step just reached (the latest, when one
+batch crossed several), `reached` every step this batch crossed,
+`next_count` the step above it (absent at the top of the ladder), `label`
+"Completion milestone" and `detail` "50 finished". The lights' own cue and
+the toys (Confetti, the Aquarium) celebrate the same number from it.
 
 ### settings
 Full settings document, sent on connect and after every change from any
