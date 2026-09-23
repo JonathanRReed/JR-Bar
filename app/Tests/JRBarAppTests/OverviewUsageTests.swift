@@ -118,6 +118,20 @@ import JRBarCore
         #expect(store.runMarkdown(for: other) == nil)
     }
 
+    @Test("a working run's timeline ends on what its hook says it is doing now")
+    func liveTail() {
+        func entry(mode: String, event: String?, tool: String?, id: String = "claude:session:t") -> CoreRosterEntry {
+            CoreRosterEntry(session: CoreSession(id: id, provider: "claude", mode: mode, lifecycle: "active",
+                                                 event: event, tool: tool), schema: 1, visibility: "live")
+        }
+        #expect(OverviewStore.liveTail(for: entry(mode: "working", event: "PreToolUse", tool: "Bash")) == "running Bash")
+        #expect(OverviewStore.liveTail(for: entry(mode: "working", event: "PostToolUse", tool: "Edit")) == "ran Edit")
+        #expect(OverviewStore.liveTail(for: entry(mode: "working", event: "PreCompact", tool: nil)) == "compacting")
+        #expect(OverviewStore.liveTail(for: entry(mode: "completed", event: "PreToolUse", tool: "Bash")) == nil)
+        #expect(OverviewStore.liveTail(for: entry(mode: "working", event: "PreToolUse", tool: "Bash",
+                                                  id: "remote:studio:claude:session:t")) == nil)
+    }
+
     @Test("a heatmap day lists the rows last active that day, from a provider's row only its own")
     func heatmapDay() throws {
         let store = OverviewStore(core: CoreModel())

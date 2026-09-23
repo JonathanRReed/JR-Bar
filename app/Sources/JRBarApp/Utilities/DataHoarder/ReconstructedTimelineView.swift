@@ -32,6 +32,10 @@ struct ReconstructedTimelineView: View {
     /// just above — for panes whose job is reconstructing what went wrong
     /// (the archive, a failed History row). Only inside its own scroll.
     var landOnFailure = false
+    /// What a working run is doing right now, from its hook ("running
+    /// Bash") — drawn as the last row, below everything the transcript
+    /// has written so far; nil for a run that is not working.
+    var liveTail: String? = nil
 
     enum KindFilter: String, CaseIterable {
         case all = "All"
@@ -260,8 +264,31 @@ struct ReconstructedTimelineView: View {
                 }
                 .id(entry.id)
             }
+            if let liveTail, kind == .all {
+                liveTailRow(liveTail)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The hook's word for what is happening now — the transcript only
+    /// writes a tool call once it is done, so the run's present moment
+    /// lives here until it does.
+    private func liveTailRow(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("now")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 40, alignment: .leading)
+            Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                .frame(width: 12)
+            Text(text)
+                .font(.system(size: 10))
+                .italic()
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Now: \(text)")
     }
 
     /// A proxied request between the turns: the request line, the model,

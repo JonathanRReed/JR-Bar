@@ -1038,7 +1038,8 @@ struct OverviewView: View {
                             sourceNote: "Archived copy · \(archived.record.name) — the live transcript is gone")
                     } else {
                         ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
-                                                  viewState: store.timelineViewState, embedded: true)
+                                                  viewState: store.timelineViewState, embedded: true,
+                                                  liveTail: OverviewStore.liveTail(for: entry))
                     }
                     if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
                         Button {

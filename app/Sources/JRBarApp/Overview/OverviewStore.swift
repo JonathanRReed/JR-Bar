@@ -428,6 +428,17 @@ final class OverviewStore {
         }
     }
 
+    // MARK: Live tail
+
+    /// A working run's present moment for the timeline's last row — the
+    /// panel's own hook fact ("running Bash", "compacting"); nil while it
+    /// is not working or the hook has said nothing honest.
+    nonisolated static func liveTail(for entry: CoreRosterEntry) -> String? {
+        let activity = SessionActivity.reduce(entry.session)
+        guard activity == .working, !entry.session.isRemote else { return nil }
+        return SessionRow.activityFact(session: entry.session, activity: activity)
+    }
+
     // MARK: Archive capture health
 
     /// The Data Hoarder's capture health for the connections strip — set
