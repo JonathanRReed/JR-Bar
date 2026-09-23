@@ -1615,8 +1615,22 @@ def _observe_dot_and_rainstick(
             thermal=thermal,
             reduce_motion=preferences.reduce_motion,
             surface_pixel_count=8,
+            watcher_deaf=_watcher_deaf(controller),
         ),
     )
+
+
+def _watcher_deaf(controller: object) -> bool:
+    """True when the last intake report proves JR-Bar cannot hear: no hook
+    is installed anywhere, or a hook is writing and nothing arrives. An
+    absent report is not evidence, and quiet is not deafness."""
+    report = getattr(controller, "current_intake_report", None)
+    if report is None:
+        return False
+    try:
+        return (not bool(report.any_installed)) or bool(report.stuck_providers)
+    except AttributeError:
+        return False
 
 
 def _observe_remote_fleet(controller: object, *, reduce_motion: bool) -> None:
