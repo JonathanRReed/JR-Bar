@@ -356,6 +356,33 @@ struct PaletteSourcesTests {
         #expect(!bare.contains { $0.id == "lights.brightness" })
     }
 
+    @Test("Why This Light says the panel's headline, raises the session it is about, and copies with its details")
+    func whyLightRow() {
+        let log = Log()
+        let verbs = WhyLightPaletteVerbs(openSession: { log.calls.append("open:\($0)") },
+                                         copy: { log.calls.append("copy:\($0)") })
+        let explanation = LightExplanation(
+            why: "waiting", kind: .waiting, motion: "Amber pulse",
+            reason: "Codex sidepulse-core is waiting on you (permission, 45 s)", session: "codex:core",
+            details: [.init(label: "Program", value: "ask_pulse"), .init(label: "Brightness", value: "60%")])
+        let items = WhyLightPaletteRows.items(explanation: explanation, verbs: verbs)
+        #expect(items.map(\.id) == ["lights.why"])
+        #expect(items[0].subtitle == "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)")
+        #expect(items[0].icon == .symbol("questionmark.bubble.fill", .orange))
+        #expect(items[0].primary?.title == "Open Session")
+        _ = items[0].primary?.run()
+        #expect(items[0].action(for: .commandShift("c"))?.run() == "Copied why this light")
+        #expect(log.calls == [
+            "open:codex:core",
+            "copy:Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)\nProgram: ask_pulse\nBrightness: 60%",
+        ])
+        let idle = LightExplanation(why: "idle", kind: .idle, motion: "Dim ember", reason: "Nothing running")
+        #expect(WhyLightPaletteRows.items(explanation: idle, verbs: verbs).first?.primary?.title
+                == "Copy Explanation", "no session, nothing to raise")
+        #expect(WhyLightPaletteRows.items(explanation: nil, verbs: verbs).isEmpty)
+        #expect(PaletteRanking.rank(items, query: "why", usage: PaletteUsage(), now: now).count == 1)
+    }
+
     // MARK: Control Center
 
     @Test("toggles show the read-back state; verbs say what they will do; restarts are named")

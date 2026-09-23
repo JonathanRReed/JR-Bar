@@ -115,13 +115,31 @@ enum PaletteWiring {
             setScreenBar: { shown in
                 if panel.screenBarShown != shown { panel.toggleScreenBar() }
             })
+        let why = WhyLightPaletteVerbs(
+            openSession: { id in
+                if let row = panel.rows.first(where: { $0.id == id }) {
+                    panel.open(row)
+                } else {
+                    panel.openExplainedSession()
+                }
+            },
+            copy: { text in
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            })
         return PaletteClosureSource(build: {
             guard panel.core.isLive else { return [] }
-            return LightsPaletteRows.items(
-                activeScene: effects.activeScene,
-                brightness: panel.hasHardware ? panel.brightness : nil,
-                screenBarShown: panel.screenBarShown,
-                verbs: verbs)
+            // The explainer on the real clock: the panel's own `now`
+            // only ticks while the panel is open.
+            let explanation = LightExplainer.explain(
+                lights: panel.core.lights, state: panel.core.state,
+                settings: panel.core.settings.map { SettingsDocument($0.document) }, now: Date())
+            return WhyLightPaletteRows.items(explanation: explanation, verbs: why)
+                + LightsPaletteRows.items(
+                    activeScene: effects.activeScene,
+                    brightness: panel.hasHardware ? panel.brightness : nil,
+                    screenBarShown: panel.screenBarShown,
+                    verbs: verbs)
         }, typed: { query in
             guard panel.core.isLive else { return [] }
             return LightsPaletteRows.typedItems(query: query,

@@ -491,6 +491,64 @@ enum LightsPaletteRows {
     }
 }
 
+// MARK: - Why this light
+
+struct WhyLightPaletteVerbs {
+    /// The session the light is about, through the session rows' own
+    /// open path.
+    var openSession: @MainActor (String) -> Void
+    var copy: @MainActor (String) -> Void
+}
+
+enum WhyLightPaletteRows {
+    /// The panel's "Why this light" as a row: the headline says what the
+    /// strip, the Dot and the Screen Bar are showing and for whom;
+    /// Return raises that session when there is one; the explanation
+    /// with its details copies as plain lines. Nothing to explain — no
+    /// light on any surface — no row.
+    @MainActor
+    static func items(explanation: LightExplanation?, verbs: WhyLightPaletteVerbs) -> [PaletteItem] {
+        guard let explanation else { return [] }
+        var actions: [PaletteAction] = []
+        if let session = explanation.session, !session.isEmpty {
+            actions.append(PaletteAction(id: "open", title: "Open Session", symbol: "macwindow") {
+                verbs.openSession(session)
+                return nil
+            })
+        }
+        actions.append(PaletteAction(id: "copy", title: "Copy Explanation", symbol: "doc.on.doc",
+                                     shortcut: .commandShift("c")) {
+            verbs.copy(text(of: explanation))
+            return "Copied why this light"
+        })
+        return [PaletteItem(
+            id: "lights.why", title: "Why This Light", subtitle: explanation.headline,
+            keywords: ["why", "explain", "led", "colour", "color", "strip", explanation.motion],
+            icon: .symbol("questionmark.bubble.fill", tint(for: explanation.kind)),
+            kind: "Lights", section: .lights, actions: actions)]
+    }
+
+    /// The headline, then a "label: value" line per detail.
+    static func text(of explanation: LightExplanation) -> String {
+        ([explanation.headline] + explanation.details.map { "\($0.label): \($0.value)" })
+            .joined(separator: "\n")
+    }
+
+    static func tint(for kind: LightWhy) -> PaletteTint {
+        switch kind {
+        case .waiting, .escalation: return .orange
+        case .failed: return .red
+        case .working: return .blue
+        case .completed: return .green
+        case .capacity, .battery: return .yellow
+        case .quiet, .sleepDim, .idleDim: return .indigo
+        case .calendar, .reminder: return .teal
+        case .preview, .studio: return .pink
+        case .idle, .unknown: return .gray
+        }
+    }
+}
+
 // MARK: - Control Center strip
 
 enum ControlCenterPaletteRows {
