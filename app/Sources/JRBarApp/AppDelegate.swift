@@ -473,6 +473,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         events.quietWhenPaneFrontmost = { [weak utilitiesStore] in
             utilitiesStore?.agents.settings().quietWhenPaneFrontmost ?? true
         }
+        // The Agent Overview card's per-provider alert rules: how loud
+        // each provider's asks, finishes, failures and escalation may be.
+        events.deliveryRules = { [weak utilitiesStore, weak core] delivery, event in
+            guard let rules = utilitiesStore?.agents.settings().alertRules, !rules.isEmpty else { return delivery }
+            return AgentAlertRules.apply(delivery, to: event, state: core?.state, rules: rules,
+                                         currentStage: core?.state?.escalation?.stageNumber)
+        }
         // The HUD panel is the Notch Buddy's home: it lives there between
         // toasts and steps aside while one is up.
         events.hud.buddy = toysStore.notchBuddy

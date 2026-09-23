@@ -617,6 +617,9 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
 
     public static let rowLimitRange: ClosedRange<Int> = 3...20
     public static let defaultRowLimit = 8
+    /// Provider id → how loud its agents may be (`AgentAlertRule`); a
+    /// provider with no entry follows the global notification settings.
+    public var alertRules: [String: AgentAlertRule] = [:]
 
     public init(enabled: Bool = true, grouping: AgentGrouping = .state,
                 showRemote: Bool = true, showEnded: Bool = true, showIdle: Bool = false,
@@ -638,6 +641,7 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, grouping, showRemote, showEnded, showIdle, showElapsed, quietWhenPaneFrontmost, rowLimit
+        case alertRules
     }
 
     public init(from decoder: any Decoder) throws {
@@ -651,6 +655,7 @@ public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
         quietWhenPaneFrontmost = (try? c.decodeIfPresent(Bool.self, forKey: .quietWhenPaneFrontmost)) ?? true
         rowLimit = Self.clampedRowLimit(
             (try? c.decodeIfPresent(Int.self, forKey: .rowLimit)) ?? Self.defaultRowLimit)
+        alertRules = (try? c.decodeIfPresent([String: AgentAlertRule].self, forKey: .alertRules)) ?? [:]
     }
 }
 

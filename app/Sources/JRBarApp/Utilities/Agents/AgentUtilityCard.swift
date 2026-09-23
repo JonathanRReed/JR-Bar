@@ -28,6 +28,11 @@ struct AgentUtilityControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            AgentAlertRulesTable(utility: utility)
+
+            Divider()
+                .padding(.vertical, 4)
+
             rosterSection
 
             Divider()

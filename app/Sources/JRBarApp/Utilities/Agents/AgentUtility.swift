@@ -83,6 +83,47 @@ final class AgentUtility: Toy {
     /// row reads it live; the seat matches the other utilities anyway.
     func applySettings() {}
 
+    // MARK: Alert rules — the card's own job
+
+    /// The providers the rules table offers: every one with hooks
+    /// installed or a session on record, plus any that already carry a
+    /// rule, in the settings' provider order.
+    var alertProviders: [String] {
+        var present = Set(settings().alertRules.keys)
+        present.formUnion(core.sessions.filter { !$0.isRemote }.map(\.provider))
+        if let hooks = core.state?.health?["hooks"]?.objectValue {
+            present.formUnion(hooks.compactMap { provider, state in state.stringValue == "missing" ? nil : provider })
+        }
+        let known = SettingsKey.providers.filter(present.contains)
+        return known + present.subtracting(known).sorted()
+    }
+
+    func alertRule(for provider: String) -> AgentAlertRule {
+        settings().alertRules[provider] ?? .followGlobal
+    }
+
+    /// Writes one provider's rule; a rule edited back to "follow the
+    /// global settings" is removed rather than stored as a no-op.
+    func setAlertRule(_ rule: AgentAlertRule, for provider: String) {
+        update { settings in
+            if rule.isDefault {
+                settings.alertRules.removeValue(forKey: provider)
+            } else {
+                settings.alertRules[provider] = rule
+            }
+        }
+    }
+
+    func bindRule<T>(_ provider: String, _ keyPath: WritableKeyPath<AgentAlertRule, T>) -> Binding<T> {
+        Binding(
+            get: { self.alertRule(for: provider)[keyPath: keyPath] },
+            set: { value in
+                var rule = self.alertRule(for: provider)
+                rule[keyPath: keyPath] = value
+                self.setAlertRule(rule, for: provider)
+            })
+    }
+
     // MARK: The list
 
     /// The daemon's settings document, for provider colour overrides —
