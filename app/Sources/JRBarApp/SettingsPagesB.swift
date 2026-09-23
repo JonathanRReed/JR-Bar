@@ -783,9 +783,11 @@ struct NotificationsPage: View {
             SettingToggle(store, "React to Focus modes", subtitle: "Reads the active Focus; needs Full Disk Access for this app.", path: "focus_sync_enabled")
             SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
                 .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
-            ForEach(Self.knownFocuses, id: \.id) { focus in
-                FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
-                    .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
+            FocusRoster(store: store) { focuses in
+                ForEach(focuses, id: \.id) { focus in
+                    FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
+                        .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
+                }
             }
         }
 
@@ -834,6 +836,47 @@ struct NotificationsPage: View {
         case false?: return "Needs the privileged sleep helper, which is not installed. The monitor will offer to install it."
         default: return "Needs the privileged sleep helper; the monitor reports whether it is installed."
         }
+    }
+}
+
+/// The Focuses a rule can name: the four every Mac has, then the ones
+/// this Mac has configured (`list_focuses`), so a custom "Deep Work"
+/// Focus can take a dim rule or a calibration profile too. A monitor
+/// without the command, or without the grant it needs to read the roster,
+/// leaves the four.
+struct FocusRoster<Content: View>: View {
+    @Bindable var store: SettingsStore
+    @ViewBuilder let content: ([(id: String, name: String)]) -> Content
+    @ViewState private var reported: [(id: String, name: String)] = []
+
+    struct Reply: Decodable {
+        struct Focus: Decodable { let id: String; let name: String? }
+        let available: Bool?
+        let focuses: [Focus]?
+    }
+
+    var body: some View {
+        content(Self.merge(known: NotificationsPage.knownFocuses, reported: reported))
+            .task(id: store.core.isLive) {
+                guard store.core.isLive,
+                      let reply = try? await store.core.request("list_focuses", as: Reply.self),
+                      reply.available != false else { reported = []; return }
+                reported = (reply.focuses ?? []).map { ($0.id, $0.name ?? $0.id) }
+            }
+    }
+
+    /// The built-in four first, in their order, then the rest by name; a
+    /// reported Focus the four already cover is not listed twice, and one
+    /// with an empty id is dropped.
+    static func merge(known: [(id: String, name: String)], reported: [(id: String, name: String)]) -> [(id: String, name: String)] {
+        let knownIDs = Set(known.map(\.id))
+        var seen = knownIDs
+        var extra: [(id: String, name: String)] = []
+        for focus in reported where !focus.id.isEmpty && !seen.contains(focus.id) {
+            seen.insert(focus.id)
+            extra.append(focus)
+        }
+        return known + extra.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }
 

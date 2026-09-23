@@ -24,8 +24,10 @@ struct CalibrationProfilesSection: View {
                 }
             }
             DisclosureRow("Apply with a Focus", subtitle: "When one of these Focus modes starts, its profile's brightness and gains are applied.") {
-                ForEach(NotificationsPage.knownFocuses, id: \.id) { focus in
-                    FocusProfileRow(store: store, focusID: focus.id, name: focus.name, saved: saved)
+                FocusRoster(store: store) { focuses in
+                    ForEach(focuses, id: \.id) { focus in
+                        FocusProfileRow(store: store, focusID: focus.id, name: focus.name, saved: saved)
+                    }
                 }
             }
         }

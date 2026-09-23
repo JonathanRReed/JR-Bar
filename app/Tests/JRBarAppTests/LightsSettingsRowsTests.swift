@@ -1,5 +1,6 @@
 import EventKit
 import Foundation
+import SwiftUI
 import Testing
 import JRBarLEDS
 @testable import JRBarApp
@@ -64,6 +65,19 @@ struct LightsSettingsRowsTests {
         #expect(waiting(4, "needs_range").contains("three times brighter or darker"))
         #expect(waiting(5, "already_fits") == "5 slider moves, and the curve set now already fits them.")
         #expect(waiting(1, "no_fit") == "1 slider move that no single curve fits yet.")
+    }
+
+    @Test func customFocusesFollowTheFourEveryMacHas() {
+        let known = NotificationsPage.knownFocuses
+        let merged = FocusRoster<EmptyView>.merge(known: known, reported: [
+            ("com.apple.focus.work", "Work"),
+            ("com.example.focus.writing", "writing"),
+            ("com.example.focus.deep", "Deep Work"),
+            ("", "Nameless"),
+        ])
+        #expect(merged.map(\.id) == known.map(\.id) + ["com.example.focus.deep", "com.example.focus.writing"],
+                "the four first, then the rest by name, no Focus twice")
+        #expect(FocusRoster<EmptyView>.merge(known: known, reported: []).map(\.id) == known.map(\.id))
     }
 
     @Test func refusedEventKitGrantsAreNamed() {
