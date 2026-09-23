@@ -283,6 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             toysStore?.state.notch.lyrics ?? true
         }
         notchCard.model.heldAwake = { [weak self] in self?.core?.state?.power?.keepAwake == true }
+        // A reminder left from the glass card's session row says where
+        // the run worked, as the island's does.
+        notchCard.model.sessionCwd = { [weak self] id in self?.core?.state?.session(withID: id)?.cwd }
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.
