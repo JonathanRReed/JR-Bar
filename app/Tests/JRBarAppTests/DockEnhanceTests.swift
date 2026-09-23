@@ -762,6 +762,64 @@ import Testing
         #expect(listing.entries.isEmpty)
         #expect(listing.denied, "EACCES is a consent problem, not an empty folder")
     }
+
+    @Test("a folder pop reads the tile's own Sort By from the Dock's list")
+    func folderSortReadsTheTile() {
+        let others: [Any] = [
+            ["tile-data": ["arrangement": 2,
+                           "file-data": ["_CFURLString": "file:///Users/me/Downloads/", "_CFURLStringType": 15]],
+             "tile-type": "directory-tile"],
+            ["tile-data": ["arrangement": 5,
+                           "file-data": ["_CFURLString": "file:///Users/me/Documents/", "_CFURLStringType": 15]]],
+            ["tile-data": ["arrangement": 42,
+                           "file-data": ["_CFURLString": "file:///Users/me/Odd/", "_CFURLStringType": 15]]],
+        ]
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/Users/me/Downloads"), persistentOthers: others)
+                == .dateAdded)
+        #expect(DockFolderSort.of(folder: URL(string: "file:///Users/me/Documents/")!, persistentOthers: others)
+                == .kind)
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/Users/me/Odd"), persistentOthers: others) == .name,
+                "an arrangement the Dock never wrote reads as Name")
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/Users/me/Elsewhere"), persistentOthers: others)
+                == .name)
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/x"), persistentOthers: nil) == .name)
+    }
+
+    @Test("date sorts run newest first; kind groups; undated entries sink")
+    func folderSortArranges() {
+        let base = URL(fileURLWithPath: "/tmp/pop")
+        func row(_ name: String, dir: Bool = false) -> DockFolderSort.Row {
+            .init(name: name, url: base.appendingPathComponent(name), isDir: dir)
+        }
+        let rows = [row("old.txt"), row("sub", dir: true), row("new.png"), row("mystery")]
+        let dates: [String: Date] = ["old.txt": Date(timeIntervalSince1970: 100),
+                                     "sub": Date(timeIntervalSince1970: 200),
+                                     "new.png": Date(timeIntervalSince1970: 300)]
+        let byDate = DockFolderSort.dateAdded.arrange(
+            rows, date: { dates[$0.lastPathComponent] }, kind: { _ in nil })
+        #expect(byDate.map(\.name) == ["new.png", "sub", "old.txt", "mystery"],
+                "today's download leads, folders take their date's place, the undated sink")
+        let byName = DockFolderSort.name.arrange(rows, date: { _ in nil }, kind: { _ in nil })
+        #expect(byName.map(\.name) == ["sub", "mystery", "new.png", "old.txt"])
+        let kinds = ["old.txt": "Plain Text", "new.png": "PNG image", "mystery": "Document", "sub": "Folder"]
+        let byKind = DockFolderSort.kind.arrange(rows, date: { _ in nil }, kind: { kinds[$0.lastPathComponent] })
+        #expect(byKind.map(\.name) == ["mystery", "sub", "old.txt", "new.png"])
+    }
+
+    @Test func aModifiedSortedPopListsTheLatestFileFirst() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for (name, age) in [("a.txt", 300.0), ("b.txt", 10.0), ("c.txt", 100.0)] {
+            let path = dir.appendingPathComponent(name).path
+            FileManager.default.createFile(atPath: path, contents: nil)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: path)
+        }
+        let listing = DockEnhanceController.folderListing(of: dir, sort: .dateModified)
+        #expect(listing.entries.map(\.name) == ["b.txt", "c.txt", "a.txt"])
+    }
 }
 
 

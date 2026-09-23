@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import Observation
 import QuartzCore
+import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -888,12 +889,16 @@ private struct DockFolderChip: View {
     let entry: DockFolderEntry
     let onOpen: (URL) -> Void
     @ViewState private var hovering = false
+    /// The file's Quick Look thumbnail once it lands — a screenshot or
+    /// a PDF reads at a glance instead of as one more document icon.
+    @ViewState private var thumbnail: NSImage?
 
     var body: some View {
         Button { onOpen(entry.url) } label: {
             VStack(spacing: 4) {
-                Image(nsImage: entry.icon)
+                Image(nsImage: thumbnail ?? entry.icon)
                     .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: 34, height: 34)
                 Text(entry.name)
                     .font(.caption2)
@@ -918,6 +923,47 @@ private struct DockFolderChip: View {
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(entry.url.path)
+        .task(id: entry.url) {
+            guard !entry.isDirectory else { return }
+            thumbnail = await DockFolderThumbs.thumbnail(for: entry.url)
+        }
+    }
+}
+
+/// Quick Look thumbnails for Folder Pop chips — the Shelf tray's
+/// generator path, asked off the main thread, one ask per file and
+/// remembered for a few minutes so a second hover never regenerates.
+/// A file Quick Look can't draw keeps its type icon.
+@MainActor
+enum DockFolderThumbs {
+    private static var cache: [String: (image: NSImage, at: Date)] = [:]
+    static let lifetime: TimeInterval = 300
+    static let cacheCap = 240
+
+    static func thumbnail(for url: URL) async -> NSImage? {
+        let now = Date()
+        if let hit = cache[url.path], now.timeIntervalSince(hit.at) < lifetime { return hit.image }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        guard let image = await generate(url, scale: scale) else { return nil }
+        if cache.count >= cacheCap {
+            cache = cache.filter { now.timeIntervalSince($0.value.at) < lifetime }
+            if cache.count >= cacheCap { cache.removeAll() }
+        }
+        cache[url.path] = (image, now)
+        return image
+    }
+
+    /// The generator's callback, read on its own queue — the
+    /// representation isn't Sendable, the image is.
+    nonisolated private static func generate(_ url: URL, scale: CGFloat) async -> NSImage? {
+        await withCheckedContinuation { continuation in
+            let request = QLThumbnailGenerator.Request(
+                fileAt: url, size: CGSize(width: 34, height: 34), scale: scale,
+                representationTypes: .thumbnail)
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+                continuation.resume(returning: rep?.nsImage)
+            }
+        }
     }
 }
 

@@ -1104,6 +1104,89 @@ struct DockFolderEntry: Identifiable {
     let isDirectory: Bool
 }
 
+/// How a Dock folder tile is arranged — the stack's own Sort By, stored
+/// as `arrangement` in the tile's `com.apple.dock` `persistent-others`
+/// entry (1 Name, 2 Date Added, 3 Date Modified, 4 Date Created,
+/// 5 Kind). The pop follows it, so Downloads leads with today's file.
+enum DockFolderSort: Int, Equatable, Sendable {
+    case name = 1, dateAdded = 2, dateModified = 3, dateCreated = 4, kind = 5
+
+    /// The resource key a sort reads per entry — nil for Name, which
+    /// needs nothing past `readdir`.
+    var resourceKey: URLResourceKey? {
+        switch self {
+        case .name: return nil
+        case .dateAdded: return .addedToDirectoryDateKey
+        case .dateModified: return .contentModificationDateKey
+        case .dateCreated: return .creationDateKey
+        case .kind: return .localizedTypeDescriptionKey
+        }
+    }
+
+    /// The tile's arrangement, read out of the Dock's `persistent-others`
+    /// (read-only — nothing here writes `com.apple.dock`). A folder the
+    /// list doesn't hold, or an arrangement it doesn't know, is Name.
+    static func of(folder: URL, persistentOthers: [Any]?) -> DockFolderSort {
+        let wanted = standardizedPath(folder)
+        for case let tile as [String: Any] in persistentOthers ?? [] {
+            guard let data = tile["tile-data"] as? [String: Any],
+                  let file = data["file-data"] as? [String: Any],
+                  let string = file["_CFURLString"] as? String else { continue }
+            let url = URL(string: string) ?? URL(fileURLWithPath: string)
+            guard standardizedPath(url) == wanted else { continue }
+            let raw = (data["arrangement"] as? NSNumber)?.intValue ?? 1
+            return DockFolderSort(rawValue: raw) ?? .name
+        }
+        return .name
+    }
+
+    private static func standardizedPath(_ url: URL) -> String {
+        let path = url.standardizedFileURL.path
+        return path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
+    /// One folder row as the sort sees it.
+    struct Row {
+        let name: String
+        let url: URL
+        let isDir: Bool
+    }
+
+    /// Order rows the way the stack does: Name keeps directories first
+    /// then Finder's name order; the date sorts run newest first; Kind
+    /// groups by the type's description, then name. An entry the read
+    /// couldn't date sinks to the end rather than guessing a place.
+    func arrange(_ rows: [Row], date: (URL) -> Date?, kind: (URL) -> String?) -> [Row] {
+        func byName(_ a: Row, _ b: Row) -> Bool {
+            a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+        switch self {
+        case .name:
+            return rows.sorted {
+                if $0.isDir != $1.isDir { return $0.isDir }
+                return byName($0, $1)
+            }
+        case .kind:
+            let kinds = Dictionary(rows.map { ($0.url, kind($0.url) ?? "") }, uniquingKeysWith: { a, _ in a })
+            return rows.sorted {
+                let a = kinds[$0.url] ?? "", b = kinds[$1.url] ?? ""
+                if a != b { return a.localizedStandardCompare(b) == .orderedAscending }
+                return byName($0, $1)
+            }
+        case .dateAdded, .dateModified, .dateCreated:
+            let dates = Dictionary(rows.map { ($0.url, date($0.url)) }, uniquingKeysWith: { a, _ in a })
+            return rows.sorted {
+                switch (dates[$0.url] ?? nil, dates[$1.url] ?? nil) {
+                case let (a?, b?): return a != b ? a > b : byName($0, $1)
+                case (.some, nil): return true
+                case (nil, .some): return false
+                case (nil, nil): return byName($0, $1)
+                }
+            }
+        }
+    }
+}
+
 /// Where a folder pop's listing stands. `denied` is the TCC case —
 /// the app lacks Files-and-Folders consent for Downloads/Desktop/
 /// Documents, so the panel can offer the Settings shortcut rather
@@ -1685,9 +1768,15 @@ final class DockEnhanceController {
         // than an eternal spinner; the abandoned read's write-back is
         // generation-guarded away.
         if let folderURL = preview.folderURL {
+            // The tile's own Sort By — a read of the Dock's preferences,
+            // never a write — so the pop leads where the stack does.
+            let sort = DockFolderSort.of(
+                folder: folderURL,
+                persistentOthers: UserDefaults(suiteName: AppleDockReader.dockBundleID)?
+                    .array(forKey: "persistent-others"))
             Task { @MainActor [weak self] in
                 let work = Task.detached(priority: .userInitiated) {
-                    Self.folderListing(of: folderURL)
+                    Self.folderListing(of: folderURL, sort: sort)
                 }
                 let listing = await withTaskGroup(
                     of: DockFolderListing?.self,
@@ -2472,10 +2561,12 @@ final class DockEnhanceController {
         }
     }
 
-    /// A folder pop's contents: top-level entries, directories first,
-    /// Finder's name order — the Dock tile's own sort lives in the
-    /// Dock's plist, so the pop keeps a stable, predictable order.
-    /// Hidden files are skipped, like Finder's default view.
+    /// A folder pop's contents: top-level entries in the tile's own
+    /// arrangement (`DockFolderSort` — Name is directories first, then
+    /// Finder's name order). Hidden files are skipped, like Finder's
+    /// default view. A date or kind sort reads one attribute per entry
+    /// (`getattrlist`, no file is opened) before the cap, so the newest
+    /// file is never the one cut.
     ///
     /// Runs OFF the main actor (the pop shows Loading… until it
     /// lands). The listing uses `atPath:` — a bare readdir — because
@@ -2489,7 +2580,7 @@ final class DockEnhanceController {
     /// must stay off the caller's thread.
     ///
     /// Capped at 60: the pop is a quick-open surface, not Finder.
-    nonisolated static func folderListing(of url: URL) -> DockFolderListing {
+    nonisolated static func folderListing(of url: URL, sort: DockFolderSort = .name) -> DockFolderListing {
         guard let dir = opendir(url.path) else {
             // Downloads/Desktop/Documents gate behind Files-and-Folders
             // consent — the denial surfaces as EACCES/EPERM, or EINTR
@@ -2498,7 +2589,7 @@ final class DockEnhanceController {
             return DockFolderListing(denied: e == EACCES || e == EPERM || e == EINTR)
         }
         defer { closedir(dir) }
-        var rows: [(name: String, url: URL, isDir: Bool)] = []
+        var rows: [DockFolderSort.Row] = []
         while let ent = readdir(dir) {
             let name = withUnsafePointer(to: &ent.pointee.d_name) {
                 $0.withMemoryRebound(to: CChar.self, capacity: 256) {
@@ -2506,13 +2597,26 @@ final class DockEnhanceController {
                 }
             }
             guard name != ".", name != "..", !name.hasPrefix(".") else { continue }
-            rows.append((name, url.appendingPathComponent(name),
-                         ent.pointee.d_type == DT_DIR))
+            rows.append(.init(name: name, url: url.appendingPathComponent(name),
+                              isDir: ent.pointee.d_type == DT_DIR))
         }
-        let capped = rows.sorted {
-            if $0.isDir != $1.isDir { return $0.isDir }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }.prefix(60)
+        let key = sort.resourceKey
+        func value(_ entry: URL) -> URLResourceValues? {
+            guard let key else { return nil }
+            return try? entry.resourceValues(forKeys: [key])
+        }
+        let capped = sort.arrange(
+            rows,
+            date: { entry in
+                let values = value(entry)
+                switch sort {
+                case .dateAdded: return values?.addedToDirectoryDate
+                case .dateModified: return values?.contentModificationDate
+                case .dateCreated: return values?.creationDate
+                default: return nil
+                }
+            },
+            kind: { value($0)?.localizedTypeDescription }).prefix(60)
         return DockFolderListing(
             entries: capped.enumerated().map { index, row in
                 DockFolderEntry(id: index, name: row.name, url: row.url,
