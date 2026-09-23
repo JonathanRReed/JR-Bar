@@ -64,7 +64,8 @@ struct MenuBarCommand: Equatable, Identifiable, Sendable {
     var symbol = "menubar.rectangle"
     var tint: PaletteTint = .gray
     var keywords: [String] = []
-    /// A tag beyond the section's — a rule's "Off".
+    /// A tag beyond the section's — a rule's "Off", the live profile's
+    /// "Current".
     var note: String?
     /// In order: the first runs on Return, the second on ⌘Return.
     var verbs: [MenuBarCommandVerb]
@@ -140,6 +141,7 @@ enum MenuBarCommands {
                                   sections: [String: MenuBarItemSection],
                                   concealing: Bool = false,
                                   profiles: [MenuBarSettings.Profile] = [],
+                                  activeProfileID: String? = nil,
                                   rules: [MenuBarTriggerRule] = [],
                                   ownBundleID: String? = Bundle.main.bundleIdentifier) -> [MenuBarCommand] {
         var groups: [(key: String, section: MenuBarItemSection, items: [MenuBarItem])] = []
@@ -160,7 +162,7 @@ enum MenuBarCommands {
                    split: splitKeys.contains(group.key))
         }
         out += commandRows(concealing: concealing)
-        out += profileRows(profiles)
+        out += profileRows(profiles, active: activeProfileID)
         out += rules.map(ruleRow)
         return out
     }
@@ -277,12 +279,15 @@ enum MenuBarCommands {
     }
 
     /// The built-in "None" first, then the saved profiles in the card's
-    /// order. The subtitle says what the profile hides.
-    nonisolated static func profileRows(_ profiles: [MenuBarSettings.Profile]) -> [MenuBarCommand] {
+    /// order. The subtitle says what the profile hides; the one the bar
+    /// is wearing now is tagged Current.
+    nonisolated static func profileRows(_ profiles: [MenuBarSettings.Profile],
+                                        active: String? = nil) -> [MenuBarCommand] {
         var rows = [MenuBarCommand(
             id: "menubar.profile.\(MenuBarProfiles.noneID)", kind: .profile,
             title: MenuBarProfiles.noneName, subtitle: "Built in — every app shown, the default look",
             symbol: "rectangle.dashed", tint: .gray, keywords: ["no profile", "reset layout"],
+            note: active == MenuBarProfiles.noneID ? "Current" : nil,
             verbs: [MenuBarCommandVerb(id: "apply", title: "Apply Profile", symbol: "checkmark.circle",
                                        action: .applyProfile(id: MenuBarProfiles.noneID),
                                        confirmation: "No profile — every app shown")])]
@@ -293,11 +298,35 @@ enum MenuBarCommands {
                 id: "menubar.profile.\(profile.id)", kind: .profile, title: profile.name,
                 subtitle: hidden == 0 ? "Hides nothing" : "Hides \(hidden) \(hidden == 1 ? "app" : "apps")",
                 symbol: "rectangle.3.group", tint: .purple, keywords: ["menu bar profile", "layout"],
+                note: active == profile.id ? "Current" : nil,
                 verbs: [MenuBarCommandVerb(id: "apply", title: "Apply Profile", symbol: "checkmark.circle",
                                            action: .applyProfile(id: profile.id),
                                            confirmation: "Profile “\(profile.name)” applied")]))
         }
         return rows
+    }
+
+    /// The profile the bar is wearing, read from what hides: the first
+    /// saved profile whose hidden entries — item covers and apps, a
+    /// `.shown` marker counting as nothing — equal the live maps; the
+    /// built-in None when nothing hides at all; nil once the bar has
+    /// been curated past every saved profile. The truth comes from the
+    /// maps themselves, so a profile applied by a rule, a hotkey or the
+    /// card reads the same.
+    nonisolated static func activeProfileID(profiles: [MenuBarSettings.Profile],
+                                            sections: [String: MenuBarItemSection],
+                                            concealedApps: [String: MenuBarItemSection]) -> String? {
+        func hiding(_ map: [String: MenuBarItemSection]) -> [String: MenuBarItemSection] {
+            map.filter { $0.value != .shown }
+        }
+        let liveSections = hiding(sections)
+        let liveApps = hiding(concealedApps)
+        if let match = profiles.first(where: {
+            hiding($0.sections) == liveSections && hiding($0.concealedApps) == liveApps
+        }) {
+            return match.id
+        }
+        return liveSections.isEmpty && liveApps.isEmpty ? MenuBarProfiles.noneID : nil
     }
 
     /// A rule reads as its own sentence. Return runs its action now;
@@ -348,7 +377,7 @@ extension MenuBarCommand {
         case .alwaysHidden: tags.append(PaletteTag(text: "Always Hidden"))
         case .shown, nil: break
         }
-        if let note { tags.append(PaletteTag(text: note)) }
+        if let note { tags.append(PaletteTag(text: note, tone: note == "Current" ? .accent : .neutral)) }
         let icon: PaletteIcon = kind == .app
             ? .app(pid: ownerPID ?? 0, bundleID: bundleID)
             : .symbol(symbol, tint)
@@ -389,6 +418,8 @@ final class MenuBarCommandBar {
     /// Whether the concealer runs — Arrange's row hides while it does.
     var concealing: @MainActor () -> Bool = { false }
     var profiles: @MainActor () -> [MenuBarSettings.Profile] = { [] }
+    /// The profile the bar wears now — its row is tagged Current.
+    var activeProfileID: @MainActor () -> String? = { nil }
     var rules: @MainActor () -> [MenuBarTriggerRule] = { [] }
     /// Every menu-bar verb lands here.
     var onAction: @MainActor (MenuBarCommandAction) -> Void = { _ in }
@@ -409,7 +440,7 @@ final class MenuBarCommandBar {
     /// The menu bar's rows at this moment.
     func menuBarItems() -> [PaletteItem] {
         MenuBarCommands.build(items: items(), sections: sections(), concealing: concealing(),
-                              profiles: profiles(), rules: rules())
+                              profiles: profiles(), activeProfileID: activeProfileID(), rules: rules())
             .map { command in
                 command.paletteItem { [weak self] action in self?.onAction(action) }
             }

@@ -391,6 +391,30 @@ struct MenuBarActionsTests {
         #expect(rows[0].verbs.first?.action == .applyProfile(id: MenuBarProfiles.noneID))
     }
 
+    @Test("the live profile is read from what hides, and its row says Current")
+    func commandActiveProfile() {
+        let work = MenuBarSettings.Profile(id: "w", name: "Work", sections: ["Mail": .hidden],
+                                           concealedApps: ["com.a": .hidden, "com.b": .shown])
+        let home = MenuBarSettings.Profile(id: "h", name: "Home", sections: [:],
+                                           concealedApps: ["com.c": .alwaysHidden])
+        // A `.shown` marker counts as nothing on either side.
+        #expect(MenuBarCommands.activeProfileID(
+            profiles: [work, home], sections: ["Mail": .hidden, "Cal": .shown],
+            concealedApps: ["com.a": .hidden]) == "w")
+        #expect(MenuBarCommands.activeProfileID(
+            profiles: [work, home], sections: [:], concealedApps: ["com.c": .alwaysHidden]) == "h")
+        #expect(MenuBarCommands.activeProfileID(
+            profiles: [work, home], sections: [:], concealedApps: ["com.z": .shown]) == MenuBarProfiles.noneID,
+                "nothing hides: the built-in None")
+        #expect(MenuBarCommands.activeProfileID(
+            profiles: [work, home], sections: [:], concealedApps: ["com.new": .hidden]) == nil,
+                "curated past every profile")
+        let rows = MenuBarCommands.build(items: [], sections: [:], profiles: [work, home],
+                                         activeProfileID: "h")
+            .filter { $0.kind == .profile }
+        #expect(rows.map(\.note) == [nil, nil, "Current"])
+    }
+
     @Test("a rule reads as its sentence: Return runs it, ⌘Return switches it")
     func commandBuildRules() {
         let on = MenuBarTriggerRule(id: "r1", enabled: true, trigger: .screenLocked, action: .hideAll)
@@ -883,6 +907,7 @@ struct MenuBarActionsTests {
         #expect(box.settings.concealedApps == ["com.example.a": .hidden])
         #expect(!utility.actions.commandBar.concealing(), "a parked utility runs no concealer")
         #expect(utility.actions.commandBar.profiles().map(\.id) == ["p"])
+        #expect(utility.actions.commandBar.activeProfileID() == "p", "the applied profile reads Current")
     }
 
     @MainActor

@@ -74,6 +74,9 @@ protocol MenuBarActionsDelegate: AnyObject {
     func menuBarConcealing(for actions: MenuBarActions) -> Bool
     /// The saved profiles, in the card's order.
     func menuBarProfiles(for actions: MenuBarActions) -> [MenuBarSettings.Profile]
+    /// The profile the bar wears now (`MenuBarProfiles.noneID` for the
+    /// built-in), or nil when none matches.
+    func menuBarActiveProfileID(for actions: MenuBarActions) -> String?
     /// Apply a profile by id — names can repeat, ids cannot.
     /// `MenuBarProfiles.noneID` is the built-in "None".
     func menuBarActions(_ actions: MenuBarActions, applyProfileID id: String)
@@ -84,6 +87,7 @@ protocol MenuBarActionsDelegate: AnyObject {
 extension MenuBarActionsDelegate {
     func menuBarConcealing(for _: MenuBarActions) -> Bool { false }
     func menuBarProfiles(for _: MenuBarActions) -> [MenuBarSettings.Profile] { [] }
+    func menuBarActiveProfileID(for _: MenuBarActions) -> String? { nil }
     func menuBarActions(_: MenuBarActions, applyProfileID _: String) {}
     func menuBarActions(_: MenuBarActions, setRule _: String, enabled _: Bool) {}
 }
@@ -247,6 +251,10 @@ final class MenuBarActions {
             guard let self, let delegate = self.delegate else { return [] }
             return delegate.menuBarProfiles(for: self)
         }
+        commandBar.activeProfileID = { [weak self] in
+            guard let self, let delegate = self.delegate else { return nil }
+            return delegate.menuBarActiveProfileID(for: self)
+        }
         commandBar.rules = { [weak self] in self?.rules() ?? [] }
         commandBar.onAction = { [weak self] action in self?.perform(action) }
         hotkeys.onAction = { [weak self] action in self?.perform(action) }
@@ -394,6 +402,12 @@ extension MenuBarUtility {
 
     func menuBarProfiles(for _: MenuBarActions) -> [MenuBarSettings.Profile] {
         settings().profiles
+    }
+
+    func menuBarActiveProfileID(for _: MenuBarActions) -> String? {
+        let s = settings()
+        return MenuBarCommands.activeProfileID(profiles: s.profiles, sections: s.sections,
+                                               concealedApps: s.concealedApps)
     }
 
     func menuBarActions(_: MenuBarActions, applyProfileID id: String) {
