@@ -6,21 +6,35 @@ import SwiftUI
 /// `SettingsStore` and writes through `set_setting`.
 struct SettingsRootView: View {
     @Bindable var store: SettingsStore
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationSplitView {
             List(selection: $store.page) {
-                ForEach(SettingsStore.Page.allCases) { page in
-                    Label {
-                        Text(page.title)
-                    } icon: {
-                        SidebarIcon(symbol: page.symbol, tint: page.tint)
+                if store.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                    ForEach(SettingsStore.Page.allCases) { page in
+                        Label {
+                            Text(page.title)
+                        } icon: {
+                            SidebarIcon(symbol: page.symbol, tint: page.tint)
+                        }
+                        .tag(page)
                     }
-                    .tag(page)
+                } else {
+                    SettingsSearchResults(store: store)
                 }
             }
             .listStyle(.sidebar)
+            .searchable(text: $store.searchQuery, placement: .sidebar, prompt: "Search settings")
+            .searchFocused($searchFocused)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
+            // ⌘F lands in the search field from anywhere in the window.
+            .background {
+                Button("Search Settings") { searchFocused = true }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
         } detail: {
             NavigationStack {
                 SettingsPageContainer(store: store, page: store.page)
@@ -46,6 +60,43 @@ struct SettingsRootView: View {
             Button("Cancel", role: .cancel) { store.resetTarget = nil }
         } message: {
             Text("Every setting on that page goes back to the monitor's default. This cannot be undone.")
+        }
+    }
+}
+
+/// The sidebar while searching: the best-matching rows, each naming the
+/// page and group it lives in. A click opens that page and names the
+/// row at its top.
+struct SettingsSearchResults: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        let results = store.searchResults
+        if results.isEmpty {
+            Text("No settings match.")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(results) { entry in
+                Button {
+                    store.reveal(entry)
+                } label: {
+                    HStack(spacing: 8) {
+                        SidebarIcon(symbol: entry.page.symbol, tint: entry.page.tint)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(entry.title)
+                                .lineLimit(1)
+                            Text(entry.group.isEmpty || entry.group == entry.title
+                                 ? entry.page.title : "\(entry.page.title) › \(entry.group)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens \(entry.page.title)")
+            }
         }
     }
 }
@@ -109,6 +160,26 @@ struct SettingsPageContainer: View {
                         .lineLimit(2)
                 }
             }
+            if store.lastError == nil, let status = store.status {
+                Section {
+                    Label(status, systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            if let hit = store.searchHit, hit.page == page, hit.title != page.title {
+                Section {
+                    Label {
+                        Text(hit.group.isEmpty || hit.group == hit.title
+                             ? "“\(hit.title)” is on this page."
+                             : "“\(hit.title)” is under \(hit.group).")
+                    } icon: {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
             switch page {
             case .general: GeneralPage(store: store)
             case .agents: AgentsPage(store: store)
@@ -118,12 +189,18 @@ struct SettingsPageContainer: View {
             case .lighting: LightingPage(store: store)
             case .toys: ToysPage(store: store)
             case .notifications: NotificationsPage(store: store)
+            case .sounds: SoundsPage(store: store)
+            case .shortcuts: ShortcutsPage(store: store)
             case .remote: RemotePage(store: store)
-            case .advanced: AdvancedPage(store: store)
+            case .advanced:
+                AdvancedPage(store: store)
+                DiagnosticsCopyGroup(store: store)
+                SettingsTransferGroup(store: store)
             }
         }
         .formStyle(.grouped)
         .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
+        .animation(.easeInOut(duration: 0.15), value: store.status == nil)
         .id(page)
     }
 }

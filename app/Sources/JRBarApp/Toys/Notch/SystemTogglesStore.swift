@@ -1,41 +1,237 @@
+import AppKit
+import AudioToolbox
 import CoreAudio
 import Foundation
 import IOKit.pwr_mgt
 import JRBarCore
 import os
 
-/// The card's toggle strip — One Switch's grammar with JR-Bar's
+/// The Control Center strip — One Switch's grammar with JR-Bar's
 /// honesty rules. State is read back from the system, never asserted:
 /// a Finder write that failed shows off, not the intent. Applies run
 /// detached so a pend (TCC, a stuck `osascript`) can never reach the
 /// render path; the read-back lands a beat later and settles the chip.
+///
+/// App-level: every instance is a view onto one `State`, so the notch
+/// card's chips (both card surfaces build their own store), a global
+/// shortcut, a `jrbar://toggle/…` link and a Shortcuts action all flip
+/// the same truth and hold the same keep-awake assertion — never two.
 @MainActor
-@Observable
 final class SystemTogglesStore {
-    /// The live on-state per stateful toggle — refreshed on show and
-    /// after each apply. Momentary verbs never appear here.
-    private(set) var isOn: [SystemToggle: Bool] = [:]
-    /// A toggle mid-apply — the chip pulses rather than lie.
-    private(set) var applying: Set<SystemToggle> = []
-    /// The last apply's honest outcome — a denied `defaults` write or
-    /// an AppleScript refusal lands here so the chip can say so.
-    private(set) var lastError: String?
+    /// The one strip. `SystemTogglesStore()` joins it too.
+    static let shared = SystemTogglesStore()
+
+    /// The truth every instance reads and writes.
+    @MainActor
+    @Observable
+    final class State {
+        static let shared = State()
+
+        /// The live on-state per stateful toggle — refreshed on show,
+        /// after each apply, and whenever the system says it changed.
+        /// Momentary verbs never appear here.
+        var isOn: [SystemToggle: Bool] = [:]
+        /// A toggle mid-apply — the chip pulses rather than lie.
+        var applying: Set<SystemToggle> = []
+        /// The last apply's honest outcome — a denied `defaults` write or
+        /// an AppleScript refusal lands here so the chip can say so.
+        var lastError: String?
+        /// The last verb's report when nothing failed — what Eject took
+        /// and what it left.
+        var lastNote: String?
+        /// How soon a password follows display sleep — whether the Lock
+        /// chip locks, read on each refresh.
+        var lockDelay: SystemToggle.ScreenLockDelay?
+        /// When a timed keep-awake lets go; nil while indefinite or off.
+        var awakeUntil: Date?
+        /// "Awake" holds the display on too (no screen saver, no lock)
+        /// rather than only the Mac. App-local, remembered.
+        var awakeKeepsDisplay: Bool
+        @ObservationIgnored var awakeTimer: Task<Void, Never>?
+        /// Mount paths the daemon lists as connected LED strips — Eject
+        /// leaves them. Wired by the delegate to the core's devices.
+        @ObservationIgnored var protectedVolumePaths: @MainActor () -> [String] = { [] }
+        /// Which chips the strip shows, in order — One Switch's "choose
+        /// which toggles show". Persisted app-locally.
+        var strip: [SystemToggle]
+
+        /// The keep-awake assertion while held — our own state, so the
+        /// chip reads the truth directly. Boxed nonisolated so `deinit`
+        /// can release it: the assertion must not outlive the state.
+        let awake = AwakeAssertion()
+
+        /// A Dock choice made while the Dock utility's preview holds the
+        /// Dock out: applied the moment the hold lets go, so the hold's
+        /// restore can never undo it.
+        @ObservationIgnored var pendingDockAutohide: Bool?
+        @ObservationIgnored var listening = false
+
+        /// The Dock's live `autohide` pair (`CoreDock`, the one the Dock
+        /// utility's preview hold uses) — nil on a build where it does
+        /// not resolve, and then System Events, and only last `defaults`
+        /// plus a Dock restart.
+        @ObservationIgnored let dockDriver: (any DockAutohideDriver)?
+        /// Is the Dock utility holding the Dock out for a preview right
+        /// now? Wired by the delegate; a chip flip during a hold waits.
+        @ObservationIgnored var dockHoldActive: @MainActor () -> Bool = { false }
+
+        /// Where the strip's chip choice persists — app-local defaults;
+        /// a test hands in its own suite.
+        @ObservationIgnored let defaults: UserDefaults
+
+        init(dockDriver: (any DockAutohideDriver)? = CoreDockAutohideDriver(),
+             defaults: UserDefaults = .standard) {
+            self.dockDriver = dockDriver
+            self.defaults = defaults
+            self.strip = SystemTogglesStore.loadStrip(defaults: defaults)
+            self.awakeKeepsDisplay = defaults.bool(forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
+        }
+
+        /// Take or drop the keep-awake assertion. The kind follows
+        /// `awakeKeepsDisplay`: the Mac only (the display still sleeps
+        /// and locks), or the display too.
+        func setAwake(_ hold: Bool) {
+            if hold && !awake.held {
+                let kind = awakeKeepsDisplay
+                    ? kIOPMAssertionTypePreventUserIdleDisplaySleep
+                    : kIOPMAssertionTypeNoIdleSleep
+                var assertion = IOPMAssertionID(0)
+                let status = IOPMAssertionCreateWithName(
+                    kind as CFString,
+                    IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                    "JR-Bar Keep Awake" as CFString,
+                    &assertion)
+                if status == kIOReturnSuccess {
+                    awake.id = assertion
+                    awake.held = true
+                } else {
+                    lastError = "Awake: the power assertion was refused."
+                }
+            } else if !hold && awake.held {
+                IOPMAssertionRelease(awake.id)
+                awake.id = 0
+                awake.held = false
+            }
+            if !awake.held {
+                awakeTimer?.cancel()
+                awakeTimer = nil
+                awakeUntil = nil
+            }
+            isOn[.keepAwake] = awake.held
+        }
+
+        /// Hold for `seconds`, indefinitely (nil), or let go (0) —
+        /// Amphetamine's session vocabulary on the one assertion.
+        func holdAwake(seconds: Int?) {
+            awakeTimer?.cancel()
+            awakeTimer = nil
+            awakeUntil = nil
+            guard seconds != 0 else {
+                setAwake(false)
+                return
+            }
+            setAwake(true)
+            guard let seconds, awake.held else { return }
+            awakeUntil = Date().addingTimeInterval(TimeInterval(seconds))
+            awakeTimer = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.setAwake(false)
+            }
+        }
+
+        /// Switch the display option; a live hold is re-taken with the
+        /// new kind so the change applies at once, deadline kept.
+        func setAwakeKeepsDisplay(_ on: Bool) {
+            guard on != awakeKeepsDisplay else { return }
+            awakeKeepsDisplay = on
+            defaults.set(on, forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
+            guard awake.held else { return }
+            IOPMAssertionRelease(awake.id)
+            awake.held = false
+            let until = awakeUntil
+            let timer = awakeTimer
+            awakeTimer = nil
+            setAwake(true)
+            if awake.held {
+                awakeUntil = until
+                awakeTimer = timer
+            } else {
+                timer?.cancel()
+            }
+        }
+
+        deinit {
+            if awake.held { IOPMAssertionRelease(awake.id) }
+        }
+    }
+
+    /// The box `deinit` reads — mutated only on the actor, so the
+    /// unchecked-Sendable is disciplined by construction.
+    final class AwakeAssertion: @unchecked Sendable {
+        var id: IOPMAssertionID = 0
+        var held = false
+    }
+
+    let state: State
+    private var dockDriver: (any DockAutohideDriver)? { state.dockDriver }
+    private func dockHoldActive() -> Bool { state.dockHoldActive() }
+
+    init(state: State = .shared) {
+        self.state = state
+    }
+
+    var isOn: [SystemToggle: Bool] { state.isOn }
+    var applying: Set<SystemToggle> { state.applying }
+    var lastError: String? { state.lastError }
+    var strip: [SystemToggle] { state.strip }
+    /// The line under the strip: a refusal first, else the last verb's
+    /// report.
+    var caption: String? { state.lastError ?? state.lastNote }
+    var awakeUntil: Date? { state.awakeUntil }
+    var awakeKeepsDisplay: Bool { state.awakeKeepsDisplay }
+
+    /// The chip's word — the Lock chip says "Display" when display
+    /// sleep does not actually lock.
+    func title(for toggle: SystemToggle) -> String {
+        toggle == .lock ? SystemToggle.lockTitle(delay: state.lockDelay) : toggle.title
+    }
+
+    /// The chip's tooltip, with the facts only the store knows.
+    func help(for toggle: SystemToggle) -> String {
+        toggle.help(on: state.isOn[toggle] ?? false, lockDelay: state.lockDelay,
+                    awakeUntil: state.awakeUntil, awakeKeepsDisplay: state.awakeKeepsDisplay)
+    }
+
+    nonisolated static let awakeDisplayDefaultsKey = "keepAwakeDisplay"
+
+    /// Keep awake for `seconds`, indefinitely (nil), or let go (0).
+    func holdAwake(seconds: Int?) { state.holdAwake(seconds: seconds) }
+    func setAwakeKeepsDisplay(_ on: Bool) { state.setAwakeKeepsDisplay(on) }
 
     private nonisolated static let log = Logger(
         subsystem: "devin.jrbar", category: "toggles")
 
-    /// The keep-awake assertion while held — our own state, so the
-    /// chip reads the truth directly. Boxed nonisolated so `deinit`
-    /// can release it: a `@MainActor` property can't be read at
-    /// teardown, but the assertion must not outlive the store.
-    private let awake = AwakeAssertion()
-    private var awakeHeld: Bool { awake.held }
+    // MARK: - The strip
 
-    /// The box `deinit` reads — mutated only on the actor, so the
-    /// unchecked-Sendable is disciplined by construction.
-    private final class AwakeAssertion: @unchecked Sendable {
-        var id: IOPMAssertionID = 0
-        var held = false
+    nonisolated static let stripDefaultsKey = "systemToggleStrip"
+
+    nonisolated static func loadStrip(defaults: UserDefaults = .standard) -> [SystemToggle] {
+        guard let raw = defaults.array(forKey: stripDefaultsKey) as? [String] else {
+            return SystemToggle.defaultStrip
+        }
+        return SystemToggle.strip(fromStored: raw)
+    }
+
+    /// Show or hide one chip on the strip; a chip joining lands at its
+    /// canonical place, so the strip keeps One Switch's stable order.
+    func setInStrip(_ toggle: SystemToggle, _ shown: Bool) {
+        var set = Set(state.strip)
+        if shown { set.insert(toggle) } else { set.remove(toggle) }
+        let next = SystemToggle.allCases.filter(set.contains)
+        guard next != state.strip else { return }
+        state.strip = next
+        state.defaults.set(next.map(\.rawValue), forKey: Self.stripDefaultsKey)
     }
 
     // MARK: - Reads
@@ -43,33 +239,54 @@ final class SystemTogglesStore {
     /// Re-read every stateful toggle's truth — on card show, and
     /// after an apply settles. In-process reads answer inline; the
     /// `defaults` probes run detached — a card show must not pay for
-    /// process lifetimes on the render path.
+    /// process lifetimes on the render path. The first call also starts
+    /// the system listeners, so a chip follows F10 or Control Center
+    /// while the card is open instead of going stale.
     func refresh() {
+        startListening()
         for toggle in SystemToggle.allCases where !toggle.isMomentary {
-            if let inline = readInline(toggle) {
-                isOn[toggle] = inline
-            } else {
-                Task {
-                    let value = await Task.detached { Self.probe(toggle) }.value
-                    isOn[toggle] = value
-                }
+            refresh(toggle)
+        }
+        // The Lock chip's word: `sysadminctl` reads the password delay
+        // unprivileged; a changed Lock Screen setting shows on the next
+        // card open.
+        Task {
+            let output = await Task.detached {
+                Self.shellWithError("/usr/sbin/sysadminctl -screenLock status 2>&1").output
+            }.value
+            state.lockDelay = output.flatMap(SystemToggle.screenLockDelay(fromSysadminctl:))
+        }
+    }
+
+    private func refresh(_ toggle: SystemToggle) {
+        if let inline = readInline(toggle) {
+            state.isOn[toggle] = inline
+        } else {
+            Task {
+                let value = await Task.detached { Self.probe(toggle) }.value
+                state.isOn[toggle] = value
             }
         }
     }
 
     /// The reads that cost no process: our own bookkeeping, a domain
-    /// lookup, a CoreAudio property. `nil` means "probe it off-actor".
+    /// lookup, a CoreAudio property, the Dock's own live flag. `nil`
+    /// means "probe it off-actor".
     private func readInline(_ toggle: SystemToggle) -> Bool? {
         switch toggle {
         case .keepAwake:
-            return awakeHeld
+            return state.awake.held
         case .darkMode:
             // The global domain's answer — "Dark" present means on;
             // absent means light. No process needed.
             return (UserDefaults.standard.persistentDomain(
                 forName: UserDefaults.globalDomain)?["AppleInterfaceStyle"] as? String) == "Dark"
         case .mute:
-            return Self.readMute()
+            return AudioMute.isMuted(.output, defaults: state.defaults)
+        case .micMute:
+            return AudioMute.isMuted(.input, defaults: state.defaults)
+        case .dockAutoHide:
+            return dockDriver?.isAutohideEnabled
         default:
             return nil
         }
@@ -83,140 +300,255 @@ final class SystemTogglesStore {
         return SystemToggle.readMaps(out, onWhenAbsent: probe.onWhenAbsent)
     }
 
+    // MARK: - Listening (the system tells us, nothing polls)
+
+    /// Appearance and output mute can change under the strip — F10, the
+    /// Control Center module, System Settings. The distributed
+    /// appearance notification and a CoreAudio listener on the default
+    /// output (re-armed when the default device changes) keep those
+    /// chips true without a poll.
+    private func startListening() {
+        guard !state.listening else { return }
+        state.listening = true
+        let state = self.state
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    state.isOn[.darkMode] = (UserDefaults.standard.persistentDomain(
+                        forName: UserDefaults.globalDomain)?["AppleInterfaceStyle"] as? String) == "Dark"
+                }
+            }
+        AudioListener.shared.onChange = {
+            Task { @MainActor in
+                state.isOn[.mute] = AudioMute.isMuted(.output, defaults: state.defaults)
+                state.isOn[.micMute] = AudioMute.isMuted(.input, defaults: state.defaults)
+            }
+        }
+        AudioListener.shared.start()
+    }
+
     // MARK: - Applies
 
     /// A chip tap: momentary verbs fire, stateful toggles flip and
     /// read back. One apply per toggle at a time — a double-tap waits
     /// for the read-back rather than racing the system.
     func apply(_ toggle: SystemToggle) {
-        guard !applying.contains(toggle) else { return }
+        guard !state.applying.contains(toggle) else { return }
+        state.lastNote = nil
         switch toggle {
         case .keepAwake:
-            setAwake(!awakeHeld)
-            isOn[.keepAwake] = awakeHeld
+            state.holdAwake(seconds: state.awake.held ? 0 : nil)
             return
-        case .mute:
-            let next = !Self.readMute()
-            if Self.writeMute(next) {
-                isOn[.mute] = next
+        case .mute, .micMute:
+            let scope: AudioMute.Scope = toggle == .mute ? .output : .input
+            let next = !AudioMute.isMuted(scope, defaults: state.defaults)
+            if AudioMute.setMuted(next, scope, defaults: state.defaults) {
+                state.lastError = nil
+                state.isOn[toggle] = AudioMute.isMuted(scope, defaults: state.defaults)
             } else {
-                lastError = "No output device to mute."
+                state.lastError = scope == .output
+                    ? "This output has no mute or volume to set."
+                    : "This microphone has no mute or input level to set."
             }
             return
-        case .lock, .screenSaver:
+        case .lock, .screenSaver, .sleep:
             fire(toggle, on: true)
             return
+        case .eject:
+            ejectAll()
+            return
+        case .darkMode:
+            // A refused Automation grant is said up front instead of
+            // failing inside `osascript` (or raising a surprise prompt
+            // the chip never mentioned).
+            state.applying.insert(.darkMode)
+            Task {
+                let permission = await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
+                state.applying.remove(.darkMode)
+                if permission == .denied {
+                    state.lastError = AutomationPermission.deniedSentence
+                    return
+                }
+                let current = readInline(.darkMode) ?? false
+                fire(.darkMode, on: !current)
+            }
+            return
+        case .dockAutoHide:
+            setDockAutohide(!(readInline(.dockAutoHide) ?? state.isOn[.dockAutoHide] ?? false))
+            return
         default:
-            if let current = isOn[toggle] ?? readInline(toggle) {
+            if let current = state.isOn[toggle] ?? readInline(toggle) {
                 fire(toggle, on: !current)
             } else {
                 // No read yet — probe off-actor before deciding the flip.
                 Task {
                     let current = await Task.detached { Self.probe(toggle) }.value
-                    isOn[toggle] = current
+                    state.isOn[toggle] = current
                     fire(toggle, on: !current)
                 }
             }
         }
     }
 
+    /// Set a stateful toggle to `on` — a link's `?on=1`, a Shortcuts
+    /// action — or fire a verb. A toggle already there is left alone
+    /// (no Finder restart for nothing).
+    func set(_ toggle: SystemToggle, on: Bool) {
+        guard !toggle.isMomentary else {
+            if on { apply(toggle) }
+            return
+        }
+        if let current = state.isOn[toggle] ?? readInline(toggle), current == on { return }
+        if state.isOn[toggle] == nil, readInline(toggle) == nil {
+            Task {
+                let current = await Task.detached { Self.probe(toggle) }.value
+                state.isOn[toggle] = current
+                if current != on { apply(toggle) }
+            }
+            return
+        }
+        apply(toggle)
+    }
+
     /// A shell-backed flip: run detached, read the truth back after
-    /// the settle beat (Finder/Dock relaunches take a moment), and
-    /// keep any stderr honest — a refused write lands in `lastError`.
-    private func fire(_ toggle: SystemToggle, on: Bool) {
-        guard let command = toggle.applyCommand(on: on) else { return }
-        applying.insert(toggle)
-        lastError = nil
+    /// the settle beat (Finder relaunches take a moment), and keep any
+    /// stderr honest — a refused write lands in `lastError`.
+    private func fire(_ toggle: SystemToggle, on: Bool, command override: String? = nil,
+                      fallback: String? = nil) {
+        guard let command = override ?? toggle.applyCommand(on: on) else { return }
+        state.applying.insert(toggle)
+        state.lastError = nil
         Task {
-            let result = await Task.detached {
+            var result = await Task.detached {
                 Self.shellWithError(command)
             }.value
-            applying.remove(toggle)
+            if result.error != nil, let fallback {
+                // The public path was refused (no Automation grant, most
+                // likely): the last resort still gets the choice through.
+                result = await Task.detached { Self.shellWithError(fallback) }.value
+            }
+            state.applying.remove(toggle)
             if let error = result.error, !error.isEmpty {
-                lastError = "\(toggle.title): \(error)"
+                state.lastError = "\(toggle.title): \(error)"
                 Self.log.notice("toggle \(toggle.rawValue, privacy: .public) failed: \(error, privacy: .public)")
             }
             // The read-back is the truth — the chip settles to what
             // the system reports, not what we asked for.
             if !toggle.isMomentary {
                 try? await Task.sleep(nanoseconds: 600_000_000)
-                isOn[toggle] = await Task.detached { Self.probe(toggle) }.value
+                if let inline = readInline(toggle) {
+                    state.isOn[toggle] = inline
+                } else {
+                    state.isOn[toggle] = await Task.detached { Self.probe(toggle) }.value
+                }
             }
         }
     }
 
-    // MARK: - Keep awake (IOPMAssertion — the public, reversible path)
+    // MARK: - Dock autohide (live, never a Dock restart when avoidable)
 
-    /// `caffeinate` without the process: an IOKit power assertion.
-    /// Off releases it — the Mac's own bookkeeping, nothing persists.
-    private func setAwake(_ hold: Bool) {
-        if hold && !awake.held {
-            var assertion = IOPMAssertionID(0)
-            let status = IOPMAssertionCreateWithName(
-                kIOPMAssertionTypeNoIdleSleep as CFString,
-                IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                "JR-Bar Keep Awake" as CFString,
-                &assertion)
-            if status == kIOReturnSuccess {
-                awake.id = assertion
-                awake.held = true
-            } else {
-                lastError = "Awake: the power assertion was refused."
+    /// The Dock chip rides the Dock utility's own live driver — the
+    /// `CoreDock` pair its preview hold uses — so the Dock hides or
+    /// shows in place, with no relaunch, no Mission Control reset and
+    /// no break in the utility's AX observation. System Events is the
+    /// public fallback; `defaults` plus `killall Dock` only the last.
+    ///
+    /// While the preview holds the Dock out, the choice waits: flipping
+    /// under a hold would be undone by the hold's restore, so it lands
+    /// the moment the hold lets go.
+    private func setDockAutohide(_ on: Bool) {
+        state.lastError = nil
+        if dockHoldActive() {
+            state.pendingDockAutohide = on
+            state.lastError = "Dock: applies when the preview closes."
+            waitForDockHold()
+            return
+        }
+        if let dockDriver {
+            dockDriver.setAutohideEnabled(on)
+            state.isOn[.dockAutoHide] = dockDriver.isAutohideEnabled
+            if dockDriver.isAutohideEnabled != on {
+                state.lastError = "Dock: the Dock kept its setting."
             }
-        } else if !hold && awake.held {
-            IOPMAssertionRelease(awake.id)
-            awake.id = 0
-            awake.held = false
+            return
+        }
+        fire(.dockAutoHide, on: on, command: SystemToggle.dockAutoHide.liveApplyCommand(on: on),
+             fallback: SystemToggle.dockAutoHide.applyCommand(on: on))
+    }
+
+    private func waitForDockHold(attempt: Int = 0) {
+        Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let pending = state.pendingDockAutohide else { return }
+            if dockHoldActive(), attempt < 480 {
+                waitForDockHold(attempt: attempt + 1)
+                return
+            }
+            state.pendingDockAutohide = nil
+            setDockAutohide(pending)
         }
     }
 
-    /// The store dies before the app does — release the assertion so
-    /// a left-on state can't outlive the toggle that owns it. A
-    /// recreated store reads `awakeHeld == false`; only a released
-    /// assertion keeps that chip honest.
-    deinit {
-        if awake.held { IOPMAssertionRelease(awake.id) }
+    // MARK: - Eject (NSWorkspace — public, SidePulse-aware)
+
+    /// Alfred's Eject All without its wildcard list: every local,
+    /// removable or ejectable volume goes, except a SidePulse strip —
+    /// by its volume name, or because the daemon lists the mount as a
+    /// connected device. The strip is the light; ejecting it would
+    /// dark the desk mid-run. Unmounts run detached (a busy disk can
+    /// take seconds to refuse) and the caption says what went.
+    private func ejectAll() {
+        state.applying.insert(.eject)
+        state.lastError = nil
+        let protected = Set(state.protectedVolumePaths())
+        Task {
+            let outcome = await Task.detached { Self.ejectRemovableVolumes(protectedPaths: protected) }.value
+            state.applying.remove(.eject)
+            state.lastNote = SystemToggle.ejectSummary(ejected: outcome.ejected, refused: outcome.refused,
+                                                       keptLED: outcome.keptLED)
+            if !outcome.refused.isEmpty, outcome.ejected.isEmpty {
+                state.lastError = state.lastNote
+                state.lastNote = nil
+            }
+        }
     }
 
-    // MARK: - Mute (CoreAudio — public, no process)
-
-    private nonisolated static func defaultOutput() -> AudioDeviceID? {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
-            &size, &device) == noErr, device != kAudioObjectUnknown else { return nil }
-        return device
-    }
-
-    private nonisolated static func readMute() -> Bool {
-        guard let device = defaultOutput() else { return false }
-        var muted: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        return AudioObjectGetPropertyData(device, &address, 0, nil, &size, &muted) == noErr
-            && muted != 0
-    }
-
-    /// The reversible flip: write `kAudioDevicePropertyMute` on the
-    /// default output. Devices without a mute property answer false —
-    /// the chip reports the error rather than claiming the silence.
-    private nonisolated static func writeMute(_ muted: Bool) -> Bool {
-        guard let device = defaultOutput() else { return false }
-        var value: UInt32 = muted ? 1 : 0
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        return AudioObjectSetPropertyData(device, &address, 0, nil,
-                                          UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+    private nonisolated static func ejectRemovableVolumes(protectedPaths: Set<String>)
+        -> (ejected: [String], refused: [(name: String, reason: String)], keptLED: [String]) {
+        let keys: [URLResourceKey] = [.volumeNameKey, .volumeIsEjectableKey, .volumeIsRemovableKey,
+                                      .volumeIsInternalKey, .volumeIsLocalKey, .volumeIsRootFileSystemKey]
+        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys,
+                                                         options: [.skipHiddenVolumes]) ?? []
+        var ejected: [String] = []
+        var refused: [(name: String, reason: String)] = []
+        var kept: [String] = []
+        for url in urls {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            let facts = SystemToggle.VolumeFacts(
+                name: values.volumeName ?? url.lastPathComponent,
+                path: url.path,
+                ejectable: values.volumeIsEjectable ?? false,
+                removable: values.volumeIsRemovable ?? false,
+                isInternal: values.volumeIsInternal ?? false,
+                local: values.volumeIsLocal ?? false,
+                root: values.volumeIsRootFileSystem ?? false)
+            guard SystemToggle.shouldEject(facts, protectedPaths: protectedPaths) else {
+                if facts.ejectable || facts.removable,
+                   SystemToggle.isLEDVolume(name: facts.name) || protectedPaths.contains(facts.path) {
+                    kept.append(facts.name)
+                }
+                continue
+            }
+            do {
+                try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+                ejected.append(facts.name)
+            } catch {
+                refused.append((facts.name, (error as NSError).localizedFailureReason
+                                    ?? "it is in use"))
+            }
+        }
+        return (ejected, refused, kept)
     }
 
     // MARK: - Processes
@@ -278,5 +610,258 @@ final class SystemTogglesStore {
     private final class PipeDrain: @unchecked Sendable {
         var out = Data()
         var err = Data()
+    }
+}
+
+/// CoreAudio's change callbacks for the chips that mirror audio state:
+/// the default output (and input) device, and the mute property on
+/// whichever device is default now. One listener set per app; the
+/// device listeners move when the default device does.
+final class AudioListener: @unchecked Sendable {
+    static let shared = AudioListener()
+
+    /// Any watched property changed. Called on the listener queue.
+    var onChange: (@Sendable () -> Void)?
+
+    private let queue = DispatchQueue(label: "devin.jrbar.toggles.audio")
+    private var started = false
+    private var watchedDevices: [(device: AudioObjectID, address: AudioObjectPropertyAddress)] = []
+    private lazy var deviceBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        self?.onChange?()
+    }
+    private lazy var systemBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        self?.rewatchDevices()
+        self?.onChange?()
+    }
+
+    private static let systemSelectors: [AudioObjectPropertySelector] = [
+        kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioHardwarePropertyDefaultInputDevice,
+    ]
+
+    func start() {
+        queue.async { [self] in
+            guard !started else { return }
+            started = true
+            for selector in Self.systemSelectors {
+                var address = AudioObjectPropertyAddress(
+                    mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain)
+                AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
+                                                    &address, queue, systemBlock)
+            }
+            rewatchDevices()
+        }
+    }
+
+    /// Runs on `queue`: drop the old device listeners, add them on the
+    /// current default output and input.
+    private func rewatchDevices() {
+        for var watched in watchedDevices {
+            AudioObjectRemovePropertyListenerBlock(watched.device, &watched.address, queue, deviceBlock)
+        }
+        watchedDevices = []
+        let targets: [(AudioObjectPropertySelector, AudioObjectPropertyScope)] = [
+            (kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal),
+            (kAudioHardwarePropertyDefaultInputDevice, kAudioDevicePropertyScopeInput),
+        ]
+        for (selector, scope) in targets {
+            guard let device = Self.defaultDevice(selector) else { continue }
+            for property in [kAudioDevicePropertyMute, kAudioDevicePropertyVolumeScalar] {
+                var address = AudioObjectPropertyAddress(
+                    mSelector: property, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+                guard AudioObjectHasProperty(device, &address) else { continue }
+                if AudioObjectAddPropertyListenerBlock(device, &address, queue, deviceBlock) == noErr {
+                    watchedDevices.append((device, address))
+                }
+            }
+        }
+    }
+
+    static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioObjectID? {
+        var device = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                         0, nil, &size, &device) == noErr,
+              device != kAudioObjectUnknown else { return nil }
+        return device
+    }
+}
+
+/// Mute for the default output or microphone, with the fallback One
+/// Switch and Raycast lack: a device with no settable mute property
+/// (many displays, AirPlay, some USB microphones) is muted by taking its
+/// level to zero and remembering the old level, per device, to put
+/// back — instead of the chip answering "no device to mute".
+enum AudioMute {
+    enum Scope: String, Sendable {
+        case output, input
+
+        var defaultDeviceSelector: AudioObjectPropertySelector {
+            self == .output ? kAudioHardwarePropertyDefaultOutputDevice
+                : kAudioHardwarePropertyDefaultInputDevice
+        }
+
+        /// Where the device's mute and level live: output devices
+        /// mostly answer on the global scope, inputs on the input scope.
+        var propertyScopes: [AudioObjectPropertyScope] {
+            self == .output
+                ? [kAudioObjectPropertyScopeGlobal, kAudioDevicePropertyScopeOutput]
+                : [kAudioDevicePropertyScopeInput, kAudioObjectPropertyScopeGlobal]
+        }
+
+        var levelScope: AudioObjectPropertyScope {
+            self == .output ? kAudioDevicePropertyScopeOutput : kAudioDevicePropertyScopeInput
+        }
+    }
+
+    /// The saved level's defaults key — per scope and device, so an
+    /// unmute on AirPods never restores the display's old level.
+    nonisolated static func savedLevelKey(uid: String, scope: Scope) -> String {
+        "audioMute.savedLevel.\(scope.rawValue).\(uid)"
+    }
+
+    /// Muted now: the device's own mute flag where it has one; else
+    /// its level at zero with a saved level to return to (a level the
+    /// person turned to zero by hand is not "our" mute).
+    nonisolated static func isMuted(_ scope: Scope, defaults: UserDefaults) -> Bool {
+        guard let device = AudioListener.defaultDevice(scope.defaultDeviceSelector) else { return false }
+        if let muted = readMuteFlag(device, scope) { return muted }
+        guard let uid = uid(of: device), defaults.object(forKey: savedLevelKey(uid: uid, scope: scope)) != nil,
+              let level = readLevel(device, scope) else { return false }
+        return level <= 0.001
+    }
+
+    /// Set mute. False when the device offers neither a settable mute
+    /// nor a settable level — the chip then says so.
+    nonisolated static func setMuted(_ muted: Bool, _ scope: Scope, defaults: UserDefaults) -> Bool {
+        guard let device = AudioListener.defaultDevice(scope.defaultDeviceSelector) else { return false }
+        if writeMuteFlag(device, scope, muted) { return true }
+        guard let uid = uid(of: device), let level = readLevel(device, scope),
+              levelIsSettable(device, scope) else { return false }
+        let key = savedLevelKey(uid: uid, scope: scope)
+        if muted {
+            if level > 0.001 {
+                defaults.set(Double(level), forKey: key)
+            } else if defaults.object(forKey: key) == nil {
+                defaults.set(0.5, forKey: key)
+            }
+            return writeLevel(device, scope, 0)
+        }
+        let restore = defaults.object(forKey: key) as? Double ?? 0.5
+        defaults.removeObject(forKey: key)
+        return writeLevel(device, scope, Float32(min(1, max(0.05, restore))))
+    }
+
+    // MARK: CoreAudio
+
+    private nonisolated static func muteAddress(_ scope: AudioObjectPropertyScope) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: scope,
+                                   mElement: kAudioObjectPropertyElementMain)
+    }
+
+    private nonisolated static func readMuteFlag(_ device: AudioObjectID, _ scope: Scope) -> Bool? {
+        for propertyScope in scope.propertyScopes {
+            var address = muteAddress(propertyScope)
+            guard AudioObjectHasProperty(device, &address) else { continue }
+            var value: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr {
+                return value != 0
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func writeMuteFlag(_ device: AudioObjectID, _ scope: Scope, _ muted: Bool) -> Bool {
+        for propertyScope in scope.propertyScopes {
+            var address = muteAddress(propertyScope)
+            guard AudioObjectHasProperty(device, &address) else { continue }
+            var settable = DarwinBoolean(false)
+            guard AudioObjectIsPropertySettable(device, &address, &settable) == noErr, settable.boolValue else { continue }
+            var value: UInt32 = muted ? 1 : 0
+            if AudioObjectSetPropertyData(device, &address, 0, nil,
+                                          UInt32(MemoryLayout<UInt32>.size), &value) == noErr {
+                return true
+            }
+        }
+        return false
+    }
+
+    private nonisolated static func levelAddress(_ scope: Scope) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                                   mScope: scope.levelScope, mElement: kAudioObjectPropertyElementMain)
+    }
+
+    private nonisolated static func readLevel(_ device: AudioObjectID, _ scope: Scope) -> Float32? {
+        var address = levelAddress(scope)
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var level: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &level) == noErr else { return nil }
+        return level
+    }
+
+    private nonisolated static func levelIsSettable(_ device: AudioObjectID, _ scope: Scope) -> Bool {
+        var address = levelAddress(scope)
+        var settable = DarwinBoolean(false)
+        return AudioObjectIsPropertySettable(device, &address, &settable) == noErr && settable.boolValue
+    }
+
+    private nonisolated static func writeLevel(_ device: AudioObjectID, _ scope: Scope, _ level: Float32) -> Bool {
+        var address = levelAddress(scope)
+        var value = level
+        return AudioObjectSetPropertyData(device, &address, 0, nil,
+                                          UInt32(MemoryLayout<Float32>.size), &value) == noErr
+    }
+
+    private nonisolated static func uid(of device: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &uid) == noErr,
+              let uid else { return nil }
+        return uid.takeRetainedValue() as String
+    }
+}
+
+/// Whether JR-Bar may send System Events Apple Events — the grant the
+/// Dark chip (and the Dock chip's fallback) run on. Read without asking
+/// before a flip, so a refusal is said on the chip instead of failing
+/// inside `osascript`; asked for explicitly only from Setup.
+enum AutomationPermission: Equatable, Sendable {
+    case granted
+    /// Never asked: the first use will raise macOS's prompt.
+    case needsConsent
+    case denied
+    /// System Events is not running, so macOS cannot say yet.
+    case unavailable
+
+    nonisolated static let systemEventsBundleID = "com.apple.systemevents"
+    nonisolated static let settingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!
+    nonisolated static let deniedSentence =
+        "JR-Bar may not control System Events — allow it in Privacy & Security › Automation."
+
+    /// `ask: true` blocks until the person answers the prompt — call it
+    /// off the main thread.
+    nonisolated static func systemEvents(ask: Bool) -> AutomationPermission {
+        let target = NSAppleEventDescriptor(bundleIdentifier: systemEventsBundleID)
+        guard let desc = target.aeDesc else { return .unavailable }
+        return classify(AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, ask))
+    }
+
+    nonisolated static func classify(_ status: OSStatus) -> AutomationPermission {
+        switch status {
+        case noErr: return .granted
+        case OSStatus(errAEEventWouldRequireUserConsent): return .needsConsent
+        case OSStatus(errAEEventNotPermitted): return .denied
+        default: return .unavailable
+        }
     }
 }

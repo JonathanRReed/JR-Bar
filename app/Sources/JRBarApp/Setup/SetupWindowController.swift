@@ -39,6 +39,29 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         window.makeKey()
     }
 
+    /// Presents and lands on `step` — a lost grant opens on Permissions.
+    func show(step: SetupStore.Step) {
+        show()
+        store.jump(to: step)
+    }
+
+    /// The launch-time look for lost grants: named once on the panel and
+    /// in Notification Center, with Open Setup landing on Permissions.
+    func reviewPermissionHealth(notices: LaunchNotices = .shared, log: @escaping (String) -> Void) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let lost = await self.store.reviewPermissionHealth()
+            guard let text = PermissionHealth.notice(for: lost) else { return }
+            log("permissions lost: " + lost.map(\.rawValue).joined(separator: ", "))
+            notices.say(.init(key: "permission-health", text: text, actionTitle: "Open Setup") { [weak self] in
+                self?.show(step: .permissions)
+            })
+            notices.deliverBanner("permission-health",
+                                  lost.count == 1 ? "JR-Bar lost a permission" : "JR-Bar lost \(lost.count) permissions",
+                                  text + " Setup (Settings › General) grants \(lost.count == 1 ? "it" : "them") back.")
+        }
+    }
+
     func close() {
         window?.close()
     }

@@ -199,7 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // Status item ↔ panel.
         panel.setAnchorProvider { [weak statusItem] in statusItem?.anchorRect }
-        panel.onOpenStateChange = { [weak statusItem] open in statusItem?.setPanelOpen(open) }
+        panel.onOpenStateChange = { [weak statusItem] open in
+            statusItem?.setPanelOpen(open)
+            if open { LaunchNotices.shared.panelOpened() }
+        }
         statusItem.onTogglePanel = { [weak panel] in panel?.toggle() }
         statusItem.onUnsnoozeAll = { [weak core] in core?.snooze(session: nil, seconds: 0) }
         // Menu open is the reader's moment: force a usage refresh so the
@@ -699,6 +702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Turn on whatever the Utilities page has on — a parked utility
         // owns nothing until this lands.
         utilitiesStore.applySettings()
+        wireShell()
 
         // The first-run walkthrough: agents, permissions, menu bar.
         // `shouldPresentOnLaunch` gates the auto-show; Settings ›
@@ -1572,5 +1576,174 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.core?.retryNow()
         }
         socketWatcher?.start()
+    }
+}
+
+// MARK: - Shell wiring: the toggle strip, links, shortcuts
+
+extension AppDelegate {
+    /// The app-level pieces the system lane adds, wired once after the
+    /// stores exist: the toggle strip's view of the Dock utility's
+    /// preview hold.
+    fileprivate func wireShell() {
+        // A Dock chip flip while a preview holds the Dock out waits for
+        // the hold to let go — the hold's restore would undo it.
+        SystemTogglesStore.shared.state.dockHoldActive = { [weak self] in
+            self?.utilitiesStore?.dock.enhance.autohideHold.holding ?? false
+        }
+        // Eject leaves every strip the daemon lists as mounted, beyond
+        // the volume-name rule it applies itself.
+        SystemTogglesStore.shared.state.protectedVolumePaths = { [weak self] in
+            self?.core?.devices.compactMap(\.path) ?? []
+        }
+        wireCommandRouter()
+        // Shortcuts' "Open Agent Session" picks from the live list.
+        JRBarIntentBridge.sessions = { [weak self] in
+            (self?.core?.sessions ?? []).map { session in
+                (session.id,
+                 SessionLabel.display(label: session.label, shortId: session.shortId,
+                                      id: session.id, provider: session.provider),
+                 SessionLabel.providerName(session.provider))
+            }
+        }
+        // App actions bound on Settings › Shortcuts, and the one key the
+        // daemon's retired registry held, adopted when its settings land.
+        AppHotkeys.shared.start()
+        settingsStore?.onSetActionShortcut = { chord, id in AppHotkeys.shared.setChord(chord, for: id) }
+        adoptLegacyShortcuts()
+        // Notices outside a click wait for the panel; the ones worth
+        // keeping also land once in Notification Center.
+        let notices = LaunchNotices.shared
+        notices.panelIsOpen = { [weak self] in self?.panel?.isOpen == true }
+        notices.showToast = { [weak self] in self?.store?.show(toast: $0.text, actionTitle: $0.actionTitle, action: $0.action) }
+        notices.deliverBanner = { [weak self] id, title, body in
+            self?.events?.notifications.deliver(.init(identifier: id, title: title, body: body, category: .plain))
+        }
+        notices.withdrawBanner = { [weak self] id in self?.events?.notifications.withdraw(identifier: id) }
+        // A scheduled update Sparkle leaves to us, never a window over
+        // the work; once Sparkle's own window is seen, the notice goes.
+        updater?.onUpdateReady = { [weak self] version in
+            notices.say(.init(key: "update-ready", text: "JR-Bar \(version) is ready", actionTitle: "Update…") {
+                self?.checkForUpdates(nil)
+            })
+            notices.deliverBanner("update-ready", "JR-Bar \(version) is ready", "Choose Check for Updates… when it suits you.")
+        }
+        updater?.onUpdateAttended = { notices.withdraw(key: "update-ready") }
+        // A sound held for a live microphone says so in the log.
+        events?.sounds.onHeldForCall = { [weak self] name in
+            self?.core?.appendLocalLog(level: "sound", "\(name) held: the microphone is live")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            MainActor.assumeIsolated {
+                InstalledCopies.mentionOnce()
+                SetupWindowController.shared.reviewPermissionHealth { self?.core?.appendLocalLog(level: "setup", $0) }
+            }
+        }
+    }
+
+    /// `jrbar://` links: every URL the scheme brings runs through the
+    /// router, refused out loud when it names nothing JR-Bar does.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == AppCommand.scheme {
+            AppCommandRouter.shared.open(url)
+        }
+    }
+
+    /// The router's hands: the same paths the panel, the status menu and
+    /// the summon keys already take, so a link or a shortcut does
+    /// exactly what the click would.
+    private func wireCommandRouter() {
+        let router = AppCommandRouter.shared
+        router.onRefused = { [weak self] text in self?.store?.show(toast: text) }
+        router.showPanel = { [weak self] toggle in
+            if toggle { self?.panel?.toggle() } else { self?.panel?.open() }
+        }
+        router.openSettings = { [weak self] page in
+            self?.settingsWindow?.show(page: page.flatMap(SettingsStore.Page.init(rawValue:)))
+        }
+        router.openWindow = { [weak self] window in
+            switch window {
+            case .overview: self?.overviewWindow?.show()
+            case .history: self?.historyWindow?.show()
+            case .usage: self?.usageWindow?.show()
+            case .effects: self?.effectsWindow?.show()
+            case .controlCenter: self?.controlCenterWindow?.show()
+            case .setup: SetupWindowController.show()
+            }
+        }
+        router.quiet = { [weak self] mode, seconds in
+            guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
+            guard core.isLive else { return "The monitor is not connected — quiet needs it." }
+            let mode = mode ?? store.quietMode
+            core.quiet(mode: mode, seconds: seconds)
+            let until = Date().addingTimeInterval(TimeInterval(seconds))
+            store.show(toast: "\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))")
+            return nil
+        }
+        // Deep work reads the live sessions at its start and its end.
+        router.sessionsNow = { [weak self] in self?.core?.sessions ?? [] }
+        router.endQuiet = { [weak self] in
+            guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
+            guard core.isLive else { return "The monitor is not connected." }
+            core.quiet(mode: store.quietMode, seconds: 0)
+            store.show(toast: "Quiet ended")
+            return nil
+        }
+        router.setScreenBar = { [weak self] on in
+            guard let self else { return }
+            self.setScreenBar(shown: on ?? !self.appState.showScreenBar)
+        }
+        router.fireConfetti = { [weak self] in
+            // An explicit ask, like the card's Test burst: it fires even
+            // while the toy is off, in the focused session's colour.
+            let provider = self?.store?.screenBarFocus.focusSession
+                .flatMap { self?.core?.state?.session(withID: $0) }?.provider
+            let document = self?.core?.settings.map { SettingsDocument($0.document) }
+            self?.toysStore?.confetti.testBurst(
+                providerColor: ProviderStyle.style(for: provider ?? "", document: document).accent)
+        }
+        router.menuBar = { [weak self] verb in
+            guard let menuBar = self?.utilitiesStore?.menuBar, menuBar.isOn else {
+                return "The Menu Bar utility is off — turn it on in Utilities."
+            }
+            switch verb {
+            case .reveal: menuBar.menuBarActionsRevealHidden(menuBar.actions)
+            case .toggle: menuBar.menuBarActionsToggleReveal(menuBar.actions)
+            case .alwaysHidden: menuBar.menuBarActionsRevealAlwaysHidden(menuBar.actions)
+            case .commandBar: menuBar.openCommandBar()
+            }
+            return nil
+        }
+        router.openSession = { [weak self] id in
+            guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
+            guard core.state?.session(withID: id) != nil else { return "No session \(id.prefix(40)) is being watched." }
+            core.openSession(id)
+            return nil
+        }
+        router.revealAsk = { [weak self] in
+            guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
+            guard !core.asks.isEmpty else { return "No agent is waiting on you." }
+            // The panel lists asks first, with Approve and Deny.
+            self?.panel?.open()
+            return nil
+        }
+        router.toggleShelf = { [weak self] in
+            guard let notch = self?.toysStore?.notch else { return "JR-Bar is still starting." }
+            if notch.islandExpanded { notch.collapseFromBand() } else { notch.expandFromBand() }
+            return nil
+        }
+    }
+
+    /// Re-armed on every settings document until the daemon's retired
+    /// reveal key has been read once.
+    private func adoptLegacyShortcuts() {
+        guard let core, !AppHotkeys.shared.legacySettled else { return }
+        withObservationTracking {
+            _ = core.settings?.generation
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.adoptLegacyShortcuts() }
+        }
+        guard let document = core.settings?.document else { return }
+        AppHotkeys.shared.adoptLegacy(shortcuts: document["global_action_shortcuts"])
     }
 }

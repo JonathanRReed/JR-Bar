@@ -183,6 +183,40 @@ import JRBarUI
         #expect(SetupPermissionStatus.unknown.word == "Unknown")
     }
 
+    @Test func theConsolidatedRowsSayWhatTheyAre() {
+        // Automation and Location prompt; the closed-lid helper is no TCC
+        // grant — its only action is copying the Terminal command.
+        #expect(SetupPermission.automation.action(for: .unknown)?.title == "Grant…")
+        #expect(SetupPermission.location.action(for: .needed)?.title == "Grant…")
+        #expect(SetupPermission.location.action(for: .denied)?.opensSettings == true)
+        #expect(SetupPermission.lidHelper.action(for: .needed)?.title == "Copy Command")
+        #expect(SetupPermission.lidHelper.action(for: .unknown) == nil)
+        #expect(SetupPermission.lidHelper.action(for: .granted) == nil)
+    }
+
+    @Test func theNewRowsReadTheirFactsHonestly() {
+        #expect(SetupModel.automationStatus(.granted) == .granted)
+        #expect(SetupModel.automationStatus(.needsConsent) == .needed)
+        #expect(SetupModel.automationStatus(.denied) == .denied)
+        // System Events not running: macOS cannot say yet.
+        #expect(SetupModel.automationStatus(.unavailable) == .unknown)
+        #expect(SetupModel.locationStatus(.authorizedAlways, servicesEnabled: true) == .granted)
+        #expect(SetupModel.locationStatus(.notDetermined, servicesEnabled: true) == .needed)
+        // Location Services off for the whole Mac: only the pane helps.
+        #expect(SetupModel.locationStatus(.notDetermined, servicesEnabled: false) == .denied)
+        #expect(SetupModel.lidHelperStatus(helperInstalled: true) == .granted)
+        #expect(SetupModel.lidHelperStatus(helperInstalled: false) == .needed)
+        #expect(SetupModel.lidHelperStatus(helperInstalled: nil) == .unknown)
+    }
+
+    @Test func theLidHelperCommandQuotesTheBundledCore() {
+        #expect(SetupModel.lidHelperCommand(coreExecutable: nil) == "sudo jrbar status-bar install-sleep-helper")
+        #expect(SetupModel.lidHelperCommand(
+            coreExecutable: "/Users/j/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
+                == "sudo '/Users/j/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core' status-bar install-sleep-helper")
+        #expect(SetupModel.lidHelperCommand(coreExecutable: "/tmp/it's") == "sudo '/tmp/it'\\''s' status-bar install-sleep-helper")
+    }
+
     @Test func permissionStatusesRefreshFromTheModel() async {
         let (store, recorder) = make()
         recorder.statuses = [.screenRecording: .granted, .notifications: .denied]

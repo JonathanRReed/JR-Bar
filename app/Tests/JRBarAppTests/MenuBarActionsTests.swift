@@ -591,17 +591,33 @@ struct MenuBarActionsTests {
 
     @MainActor
     @Test("a hotkey press claims only its own (signature, id) — the other chord's press passes through")
-    func hotkeyRouting() {
-        // The dispatcher fans a press out to every installed handler:
-        // 'jrbr' must not claim 'jrbs''s event or one key would toggle
-        // both surfaces — the cross-fire the claim check exists to stop.
-        let panel = PanelHotkey()
-        let shelf = PanelHotkey(signature: OSType(0x6A726273),
-                                keyCode: UInt32(kVK_ANSI_D))
-        let panelID = EventHotKeyID(signature: OSType(0x6A726272), id: 1)
-        let shelfID = EventHotKeyID(signature: OSType(0x6A726273), id: 1)
-        #expect(panel.owns(panelID) && !panel.owns(shelfID))
-        #expect(shelf.owns(shelfID) && !shelf.owns(panelID))
+    func hotkeyRouting() async throws {
+        // The dispatcher fans a press out to every installed handler: the
+        // registrar must not claim a foreign signature's event, and inside
+        // the registry the panel's id must not fire the shelf — either way
+        // one key would toggle two surfaces.
+        let registrar = CarbonHotkeyRegistrar()
+        let ours = EventHotKeyID(signature: CarbonHotkeyRegistrar.appSignature, id: 1)
+        let foreign = EventHotKeyID(signature: OSType(0x6A726273), id: 1)
+        #expect(registrar.claims(ours) && !registrar.claims(foreign))
+
+        let fake = FakeRegistrar()
+        let center = HotkeyCenter(registrar: fake)
+        let panel = PanelHotkey(id: PanelHotkey.panelID, title: "Show the panel",
+                                defaultChord: PanelHotkey.panelDefault, center: center)
+        let shelf = PanelHotkey(id: PanelHotkey.shelfID, title: "Open the shelf",
+                                defaultChord: PanelHotkey.shelfDefault, center: center)
+        panel.chordSource = { PanelHotkey.panelDefault }
+        shelf.chordSource = { PanelHotkey.shelfDefault }
+        var pressed: [String] = []
+        panel.onPress = { pressed.append("panel") }
+        shelf.onPress = { pressed.append("shelf") }
+        panel.setEnabled(true)
+        shelf.setEnabled(true)
+        let shelfHotKeyID = try #require(fake.registered.first { $0.key == UInt32(kVK_ANSI_D) }?.id)
+        fake.onHotKey?(shelfHotKeyID)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(pressed == ["shelf"])
 
         // A fabricated Carbon event reads back the pair it was stamped
         // with — the handler's routing depends on this extraction.
@@ -611,13 +627,13 @@ struct MenuBarActionsTests {
                             EventAttributes(kEventAttributeNone), &event) == noErr)
         guard let event else { return }
         defer { ReleaseEvent(event) }
-        var stamped = shelfID
+        var stamped = foreign
         SetEventParameter(event, EventParamName(kEventParamDirectObject),
                           EventParamType(typeEventHotKeyID),
                           MemoryLayout<EventHotKeyID>.size, &stamped)
-        let read = PanelHotkey.hotKeyID(from: event)
-        #expect(read.map(shelf.owns) == true)
-        #expect(read.map(panel.owns) == false)
+        let read = CarbonHotkeyRegistrar.hotKeyID(from: event)
+        #expect(read?.signature == foreign.signature)
+        #expect(read.map(registrar.claims) == false)
     }
 
     // MARK: Triggers — the pure engine over faked events

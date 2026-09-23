@@ -57,6 +57,7 @@ MINIMUM_SUPPORTED_MACOS="26.0"
 APPLE_EVENTS_USAGE_DESCRIPTION="JR-Bar uses Automation only to open a reviewed resume command in Terminal or iTerm2 when you choose Open."
 FOCUS_STATUS_USAGE_DESCRIPTION="JR-Bar uses Focus Status only when you choose Allow Focus Status, so Do Not Disturb can follow whether a macOS Focus is active."
 AUDIO_CAPTURE_USAGE_DESCRIPTION="JR-Bar reads the playing app's audio levels only while the notch's Audio visualizer setting is on, to draw its six-band animation. Audio is never recorded or stored."
+LOCATION_USAGE_DESCRIPTION="JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent."
 SPARKLE_FEED_URL="https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
 SPARKLE_PUBLIC_KEY_FILE="$ROOT_DIR/packaging/sparkle_public_ed_key.txt"
 
@@ -245,8 +246,28 @@ COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null || true)" ]; then
     COMMIT="$COMMIT-dirty"
 fi
+# Sparkle orders updates by CFBundleVersion, never by the marketing
+# version: two rebuilds stamped "0.9.9" could never replace each other.
+# The build number is the commit count of this history -- monotonic along
+# main -- and JRBAR_BUILD_NUMBER overrides it (a re-cut, a CI counter). A
+# shallow clone counts only what it fetched, and no history counts
+# nothing, so both refuse rather than stamp a number that sorts backwards.
+BUILD_NUMBER="${JRBAR_BUILD_NUMBER:-}"
+if [ -z "$BUILD_NUMBER" ]; then
+    if [ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository 2>/dev/null || true)" = "true" ]; then
+        echo "A shallow clone cannot count its builds; fetch the full history or set JRBAR_BUILD_NUMBER." >&2
+        exit 2
+    fi
+    BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || true)"
+fi
+case "$BUILD_NUMBER" in
+    ""|*[!0-9]*|0*)
+        echo "JR-Bar needs a positive whole build number for CFBundleVersion (got '${BUILD_NUMBER}'); set JRBAR_BUILD_NUMBER." >&2
+        exit 2
+        ;;
+esac
 
-echo "Building JR-Bar $VERSION for $ARCH with $($BUILD_PYTHON -V 2>&1) (commit $COMMIT)"
+echo "Building JR-Bar $VERSION (build $BUILD_NUMBER) for $ARCH with $($BUILD_PYTHON -V 2>&1) (commit $COMMIT)"
 echo "signing: $SIGN_KIND ($SIGN_IDENTITY)"
 if [ "$SIGN_KIND" = "ad-hoc" ]; then
     echo "WARNING: ad-hoc signature. macOS treats an ad-hoc bundle as a DIFFERENT" >&2
@@ -374,8 +395,8 @@ CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MINIMUM_SUPPORTED_MACOS" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CORE_PLIST"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$CORE_PLIST" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$CORE_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$CORE_PLIST" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST"
 
@@ -397,8 +418,9 @@ fi
 
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_PATH/Contents/Info.plist"
+# The build number, not the marketing version: see BUILD_NUMBER above.
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
@@ -411,6 +433,10 @@ fi
     /usr/libexec/PlistBuddy -c "Set :NSFocusStatusUsageDescription $FOCUS_STATUS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSAudioCaptureUsageDescription string $AUDIO_CAPTURE_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :NSAudioCaptureUsageDescription $AUDIO_CAPTURE_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NSLocationUsageDescription string $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :NSLocationUsageDescription $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $SPARKLE_FEED_URL" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
@@ -424,6 +450,17 @@ fi
 # in-app SingleInstanceLock is the guard for every non-bundle path.
 /usr/libexec/PlistBuddy -c "Add :LSMultipleInstancesProhibited bool true" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :LSMultipleInstancesProhibited true" "$APP_PATH/Contents/Info.plist"
+# jrbar:// links (Raycast Quicklinks, Alfred, Shortcuts' Open URL, a deck
+# key): the one scheme, written whole so a rebuilt bundle never carries a
+# stale or doubled entry.
+/usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy \
+    -c "Add :CFBundleURLTypes array" \
+    -c "Add :CFBundleURLTypes:0 dict" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLName string $APP_ID" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" \
+    -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string jrbar" \
+    "$APP_PATH/Contents/Info.plist"
 # The app hands this to the daemon as JRBAR_COMMIT (the doctor reply's commit).
 /usr/libexec/PlistBuddy -c "Add :JRBarCommit string $COMMIT" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :JRBarCommit $COMMIT" "$APP_PATH/Contents/Info.plist"
@@ -583,7 +620,7 @@ else
 fi
 
 echo
-echo "JR-Bar $VERSION ($COMMIT)"
+echo "JR-Bar $VERSION (build $BUILD_NUMBER, $COMMIT)"
 echo "  app:        $APP_PATH"
 for artifact in "$OUTPUT_PKG" "$OUTPUT_ZIP" "$OUTPUT_APPCAST" "$OUTPUT_CHANNEL_METADATA"; do
     if [ -f "$artifact" ]; then

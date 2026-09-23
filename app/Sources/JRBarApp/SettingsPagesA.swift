@@ -25,15 +25,15 @@ struct GeneralPage: View {
             Toggle(isOn: $store.panelHotkeyEnabled) {
                 SettingLabel(title: "Panel hotkey",
                              subtitle: store.panelHotkeyRegistrationFailed
-                                ? "⌃⌥J is taken by another app."
-                                : "Press ⌃⌥J in any app to show or hide the panel.")
+                                ? "\(store.panelHotkeyLabel) is taken — rebind it on Shortcuts."
+                                : "Press \(store.panelHotkeyLabel) in any app to show or hide the panel.")
             }
             .settingRowStyle()
             Toggle(isOn: $store.shelfHotkeyEnabled) {
                 SettingLabel(title: "Shelf hotkey",
                              subtitle: store.shelfHotkeyRegistrationFailed
-                                ? "⌃⌥D is taken by another app."
-                                : "Press ⌃⌥D in any app to open or fold the notch's shelf.")
+                                ? "\(store.shelfHotkeyLabel) is taken — rebind it on Shortcuts."
+                                : "Press \(store.shelfHotkeyLabel) in any app to open or fold the notch's shelf.")
             }
             .settingRowStyle()
         }
@@ -70,7 +70,7 @@ struct GeneralPage: View {
     }
 
     private var softwareUpdateSubtitle: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        let version = AppVersion.describe()
         guard store.updaterAvailable else { return "JR-Bar \(version)" }
         guard let checked = store.lastUpdateCheck else { return "JR-Bar \(version) · never checked" }
         return "JR-Bar \(version) · last checked \(checked.formatted(.relative(presentation: .named)))"

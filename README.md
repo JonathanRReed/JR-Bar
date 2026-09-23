@@ -149,7 +149,17 @@ line lives inside the bundle:
 alias jrbar='~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core'
 jrbar hooks doctor    # what each provider's config runs today, and the sockets
 jrbar doctor          # daemon commit, memory, checks
+jrbar status          # sessions and asks right now (--json for scripts)
+jrbar quiet 1h --mode dim   # quiet JR-Bar; `jrbar quiet off` ends it
+jrbar set global_brightness_scale 0.6   # any setting by dot-path (`jrbar get` reads one)
+jrbar toggle dark     # a quick toggle in the app; `jrbar awake 2h` keeps the Mac up
 ```
+
+The app also answers `jrbar://` links (Raycast Quicklinks, Alfred,
+Shortcuts' Open URLs): `jrbar://panel/toggle`, `jrbar://toggle/mic?on=1`,
+`jrbar://awake?for=2h`, `jrbar://quiet?mode=dim&for=1h`. Settings ›
+Shortcuts lists them and binds a global key to any action or toggle. No
+link answers an ask.
 
 To remove it: quit the app, delete `JR-Bar.app`, and run
 `jrbar agent-monitor uninstall all` first if you want the hooks gone.

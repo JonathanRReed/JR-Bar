@@ -11,6 +11,10 @@ from pathlib import Path
 
 REQUIRED_ENTITLEMENTS = {
     "com.apple.security.automation.apple-events": True,
+    # The Menu Bar utility's Wi-Fi rules read the network name, which
+    # macOS gates behind Location; the hardened runtime refuses the grant
+    # without this. Nothing reads coordinates.
+    "com.apple.security.personal-information.location": True,
 }
 FORBIDDEN_ENTITLEMENTS = frozenset(
     {

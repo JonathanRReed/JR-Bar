@@ -4,6 +4,7 @@ import JRBarCore
 import Observation
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 /// The Settings window's state. The daemon's document is the only source of
@@ -14,7 +15,7 @@ import UserNotifications
 @Observable
 final class SettingsStore {
     enum Page: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, usage, devices, utilities, lighting, toys, notifications, remote, advanced
+        case general, agents, usage, devices, utilities, lighting, toys, notifications, sounds, shortcuts, remote, advanced
 
         var id: String { rawValue }
 
@@ -28,6 +29,8 @@ final class SettingsStore {
             case .lighting: return "Lighting"
             case .toys: return "Toys"
             case .notifications: return "Notifications & Focus"
+            case .sounds: return "Sounds"
+            case .shortcuts: return "Shortcuts"
             case .remote: return "Remote"
             case .advanced: return "Advanced"
             }
@@ -43,6 +46,8 @@ final class SettingsStore {
             case .lighting: return "paintpalette.fill"
             case .toys: return "party.popper.fill"
             case .notifications: return "bell.badge.fill"
+            case .sounds: return "speaker.wave.2.fill"
+            case .shortcuts: return "command"
             case .remote: return "antenna.radiowaves.left.and.right"
             case .advanced: return "wrench.and.screwdriver.fill"
             }
@@ -61,6 +66,8 @@ final class SettingsStore {
             // palette's pink — Lighting already owns that one.
             case .toys: return Color(red: 0.93, green: 0.30, blue: 0.62)
             case .notifications: return Color(nsColor: .systemRed)
+            case .sounds: return Color(nsColor: .systemPurple)
+            case .shortcuts: return Color(nsColor: .systemBlue)
             case .remote: return Color(nsColor: .systemTeal)
             case .advanced: return Color(nsColor: .systemGray)
             }
@@ -72,7 +79,11 @@ final class SettingsStore {
     }
 
     let core: CoreModel
-    var page: Page = .general
+    var page: Page = .general {
+        // A search hit names its row only on its own page; choosing any
+        // other page retires it.
+        didSet { if searchHit?.page != page { searchHit = nil } }
+    }
     /// The Toys page's store, created beside this one in the delegate.
     /// Weak: the delegate owns it.
     weak var toys: ToysStore?
@@ -163,6 +174,124 @@ final class SettingsStore {
     }
     var onShelfHotkeyChange: (@MainActor (Bool) -> Void)?
     var shelfHotkeyRegistrationFailed = false
+
+    /// Bumped on every chord write so views re-read the defaults-backed
+    /// chords below.
+    private var hotkeyChordVersion = 0
+
+    /// The panel's and the shelf's chords — the persisted rebind, the
+    /// shipped ⌃⌥J / ⌃⌥D, or nil once cleared on Settings › Shortcuts.
+    var panelHotkeyChord: HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: PanelHotkey.panelID, fallback: PanelHotkey.panelDefault)
+    }
+
+    var shelfHotkeyChord: HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: PanelHotkey.shelfID, fallback: PanelHotkey.shelfDefault)
+    }
+
+    /// The keys as General's rows name them: "⌃⌥J", or a plain phrase
+    /// once no key is bound.
+    var panelHotkeyLabel: String { panelHotkeyChord?.displayString ?? "the panel shortcut" }
+    var shelfHotkeyLabel: String { shelfHotkeyChord?.displayString ?? "the shelf shortcut" }
+
+    /// The recorder's write for any shortcut Settings lists, by its
+    /// registry id. Recording a key switches its shortcut on — the
+    /// person just asked for it — and re-registers through the hook the
+    /// delegate already wired; nil unbinds.
+    func setShortcut(_ chord: HotkeyChord?, for id: String) {
+        switch id {
+        case PanelHotkey.panelID:
+            HotkeyChordDefaults.set(chord, for: id)
+            hotkeyChordVersion += 1
+            if chord != nil, !panelHotkeyEnabled {
+                panelHotkeyEnabled = true
+            } else {
+                onPanelHotkeyChange?(panelHotkeyEnabled)
+            }
+        case PanelHotkey.shelfID:
+            HotkeyChordDefaults.set(chord, for: id)
+            hotkeyChordVersion += 1
+            if chord != nil, !shelfHotkeyEnabled {
+                shelfHotkeyEnabled = true
+            } else {
+                onShelfHotkeyChange?(shelfHotkeyEnabled)
+            }
+        default:
+            if let action = MenuBarHotkeyAction.allCases.first(where: { MenuBarHotkeys.registryID(for: $0) == id }) {
+                utilities?.menuBar.setHotkeyChord(chord, for: action)
+            } else {
+                onSetActionShortcut?(chord, id)
+                hotkeyChordVersion += 1
+            }
+        }
+    }
+
+    /// An app action's chord (Settings › Shortcuts › Actions and Quick
+    /// toggles) — nil until one is recorded.
+    func actionShortcut(_ id: String) -> HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: id, fallback: nil)
+    }
+
+    /// Where an app-action shortcut's write goes — the delegate's
+    /// `AppHotkeys`, which persists it and re-registers.
+    var onSetActionShortcut: (@MainActor (HotkeyChord?, String) -> Void)?
+
+    // MARK: Sounds
+
+    /// Settings › Sounds — app-local, since the app plays the sounds.
+    /// Every write persists at once; the event player reads them at each
+    /// sound, so a change lands on the next one.
+    var soundPreferences: SoundPreferences = SoundPreferences.load() {
+        didSet { if soundPreferences != oldValue { soundPreferences.save() } }
+    }
+
+    /// The page's preview voice — the same player, the same choices.
+    @ObservationIgnored private lazy var soundPreview = SoundPlayer()
+
+    func previewSound(_ name: String) {
+        soundPreview.preview(name)
+    }
+
+    // MARK: Search
+
+    /// The sidebar's search text; non-empty swaps the page list for hits.
+    var searchQuery = ""
+    /// The row a search result was picked for — the page names it at the
+    /// top until another page is chosen.
+    var searchHit: SettingsSearchEntry?
+
+    /// Every searchable row: the daemon pages' titled rows, each page,
+    /// the shortcut catalogue, and the toys and utilities as they are.
+    var searchEntries: [SettingsSearchEntry] {
+        var entries = SettingsSearch.rows + SettingsSearch.pages + SettingsSearch.shortcutRows
+        entries += MenuBarHotkeyAction.allCases.map {
+            SettingsSearchEntry(.shortcuts, "Menu bar", MenuBarHotkeys.title(for: $0))
+        }
+        if let utilities {
+            let cards: [any Toy] = [utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder]
+            entries += cards.map { SettingsSearchEntry(.utilities, $0.name, $0.name, subtitle: $0.blurb) }
+        }
+        if let toys {
+            entries += toys.toys.map {
+                // The notch reads as a utility and sits on that page.
+                SettingsSearchEntry($0.id == "notch" ? .utilities : .toys, $0.name, $0.name, subtitle: $0.blurb)
+            }
+        }
+        return entries
+    }
+
+    var searchResults: [SettingsSearchEntry] {
+        SettingsSearch.search(searchQuery, in: searchEntries)
+    }
+
+    /// A result picked: its page, named at the top.
+    func reveal(_ entry: SettingsSearchEntry) {
+        searchHit = entry
+        page = entry.page
+    }
 
     /// macOS's answer to the notification permission, asked by the
     /// Notifications page on appear: the banner toggle can read on while
@@ -636,6 +765,243 @@ final class SettingsStore {
                 self.doctorReport = .object(["error": .string("\(error)")])
             }
         }
+    }
+
+    /// "Copy diagnostics" is gathering (the doctor round-trip).
+    var diagnosticsCopying = false
+
+    /// Settings › Advanced › Copy diagnostics: the Doctor's reply (when
+    /// the monitor is up), every Setup permission read without prompting,
+    /// both builds and the log tail, redacted, onto the pasteboard.
+    func copyDiagnostics() {
+        guard !diagnosticsCopying else { return }
+        diagnosticsCopying = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.diagnosticsCopying = false }
+            var doctor: JSONValue?
+            if self.core.isLive {
+                do {
+                    let reply = try await self.core.doctor()
+                    doctor = reply.ok ? (reply.result ?? .object([:]))
+                        : .object(["error": .string(reply.error?.message ?? "doctor failed")])
+                } catch {
+                    doctor = .object(["error": .string("\(error)")])
+                }
+            }
+            var statuses = await SetupModel.probePermissions()
+            statuses[.lidHelper] = SetupModel.lidHelperStatus(
+                helperInstalled: self.core.isLive ? self.core.state?.power?.closedLid?.helperInstalled : nil)
+            let bundle = Bundle.main
+            let facts = DiagnosticsReport.Facts(
+                appVersion: AppVersion.describe(bundle: bundle),
+                appCommit: bundle.object(forInfoDictionaryKey: "JRBarCommit") as? String,
+                system: Self.systemDescription(),
+                bundlePath: bundle.bundlePath,
+                connection: self.connectionDescription,
+                coreVersion: self.core.hello?.coreVersion,
+                doctor: doctor,
+                permissions: SetupPermission.allCases.map { ($0.title, (statuses[$0] ?? .unknown).word) },
+                log: self.core.logTail,
+                home: FileManager.default.homeDirectoryForCurrentUser.path,
+                generated: Date())
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(DiagnosticsReport.text(facts), forType: .string)
+            self.show(status: "Diagnostics copied — paste them into a report or a session")
+        }
+    }
+
+    // MARK: Transfer
+
+    /// An opened export waiting on its checklist.
+    var pendingImport: SettingsBundle?
+    /// An import is writing (the monitor's keys go one `set_setting` each).
+    var importing = false
+
+    /// Advanced › Transfer › Export: every category into one file the
+    /// person names. The monitor's part is whatever document is live; a
+    /// monitor that is down exports the app's part alone.
+    func exportSettings() {
+        let bundle = SettingsBundle.make(
+            document: core.settings?.document, schema: core.settings?.schema,
+            utilities: utilities?.state, toys: toys?.state,
+            defaults: UserDefaults.standard.dictionaryRepresentation(),
+            appVersion: AppVersion.describe(), now: Date())
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "JR-Bar Settings.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.message = "The file holds your webhook URL and the menu bar's curated apps; keep it where only you can read it."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try bundle.encoded().write(to: url, options: .atomic)
+            let parts = bundle.categories.map { $0.title.lowercased() }
+            show(status: "Exported \(parts.joined(separator: ", ")) to \(url.lastPathComponent)")
+        } catch {
+            report(error: "Export: \(error.localizedDescription)")
+        }
+    }
+
+    /// Advanced › Transfer › Import: read a file, then show its checklist.
+    func chooseImport() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            pendingImport = try SettingsBundle.read(Data(contentsOf: url))
+        } catch {
+            report(error: "Import: \(error.localizedDescription)")
+        }
+    }
+
+    /// Applies the ticked categories. The monitor's keys go through
+    /// `set_setting` one at a time — the daemon validates each, and a
+    /// refusal names its key instead of failing the rest; only keys this
+    /// monitor knows and values that differ are written. The Utilities
+    /// and Toys pages take their state whole, through their own stores,
+    /// so every utility re-applies at once.
+    func applyImport(_ bundle: SettingsBundle, categories: Set<SettingsBundle.Category>) {
+        pendingImport = nil
+        guard !categories.isEmpty, !importing else { return }
+        importing = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.importing = false }
+            var done: [String] = []
+            var problems: [String] = []
+            let wantsMonitor = categories.contains(.monitor) || categories.contains(.devices)
+            if wantsMonitor, !self.core.isLive {
+                problems.append("monitor settings need the monitor running")
+            }
+            if categories.contains(.monitor), self.core.isLive {
+                let plan = bundle.monitorWrites(against: self.core.settings?.document)
+                var refused: [String] = []
+                for write in plan.writes {
+                    if await !self.write(write.key, write.value) { refused.append(write.key) }
+                }
+                done.append("\(plan.writes.count - refused.count) monitor settings")
+                if !refused.isEmpty { problems.append("refused " + refused.joined(separator: ", ")) }
+                if !plan.unknown.isEmpty { problems.append("\(plan.unknown.count) this monitor does not know were skipped") }
+            }
+            if categories.contains(.devices), self.core.isLive, let devices = bundle.devices {
+                var landed = self.core.settings?.document["devices"] == devices
+                if !landed { landed = await self.write("devices", devices) }
+                if landed { done.append("devices") } else { problems.append("the devices were refused") }
+            }
+            if categories.contains(.utilities) {
+                if let state = SettingsBundle.decode(UtilitiesState.self, from: bundle.utilities), let utilities = self.utilities {
+                    utilities.state = state
+                    done.append("utilities")
+                } else {
+                    problems.append("the utilities could not be read")
+                }
+            }
+            if categories.contains(.toys) {
+                if let state = SettingsBundle.decode(ToysState.self, from: bundle.toys), let toys = self.toys {
+                    toys.state = state
+                    done.append("toys")
+                } else {
+                    problems.append("the toys could not be read")
+                }
+            }
+            if categories.contains(.preferences) {
+                let preferences = self.applyPreferences(bundle.preferences)
+                done.append("\(preferences.applied) preferences")
+                if !preferences.refused.isEmpty {
+                    problems.append("skipped shortcuts the recorder would refuse: " + preferences.refused.joined(separator: ", "))
+                }
+            }
+            let summary = "Imported " + (done.isEmpty ? "nothing" : done.joined(separator: ", "))
+            if problems.isEmpty {
+                self.show(status: summary)
+            } else {
+                self.report(error: summary + " — " + problems.joined(separator: "; "))
+            }
+        }
+    }
+
+    /// One awaited `set_setting`; true when the monitor took it.
+    private func write(_ key: String, _ value: JSONValue) async -> Bool {
+        do {
+            return try await core.setSetting(SettingsPath(key), value: value).ok
+        } catch {
+            return false
+        }
+    }
+
+    /// The app's preferences, each through the path its own control
+    /// takes so it lands live: chords re-register (first, so the file's
+    /// own on/off switches win after a recorded key turns one on), the
+    /// switches flip their registrations, the channel and automatic
+    /// checks reach Sparkle, and sounds and the strip re-read. A chord
+    /// the recorder would refuse is not bound; its id comes back in
+    /// `refused` for the summary to name.
+    private func applyPreferences(_ preferences: [String: JSONValue]) -> (applied: Int, refused: [String]) {
+        let chordPrefix = "hotkeyChord."
+        var applied = 0
+        var refused: [String] = []
+        for key in preferences.keys.sorted() where key.hasPrefix(chordPrefix) {
+            let id = String(key.dropFirst(chordPrefix.count))
+            switch SettingsBundle.importedChord(preferences[key]) {
+            case .unbound: setShortcut(nil, for: id)
+            case .chord(let chord): setShortcut(chord, for: id)
+            case .refused:
+                refused.append(id)
+                continue
+            }
+            applied += 1
+        }
+        let defaults = UserDefaults.standard
+        for key in preferences.keys.sorted() where !key.hasPrefix(chordPrefix) {
+            guard let value = preferences[key], let object = SettingsBundle.defaultsValue(value) else { continue }
+            switch key {
+            case PanelHotkey.defaultsKey:
+                guard let on = value.boolValue else { continue }
+                panelHotkeyEnabled = on
+            case Self.shelfHotkeyDefaultsKey:
+                guard let on = value.boolValue else { continue }
+                shelfHotkeyEnabled = on
+            case SparkleUpdater.channelDefaultsKey:
+                guard let channel = value.stringValue else { continue }
+                updateChannel = channel
+            case SparkleUpdater.automaticChecksDefaultsKey:
+                guard let on = value.boolValue else { continue }
+                setAutomaticUpdateChecks(on)
+            case SystemTogglesStore.awakeDisplayDefaultsKey:
+                guard let on = value.boolValue else { continue }
+                SystemTogglesStore.shared.setAwakeKeepsDisplay(on)
+            default:
+                defaults.set(object, forKey: key)
+            }
+            applied += 1
+        }
+        soundPreferences = SoundPreferences.load()
+        SystemTogglesStore.shared.state.strip = SystemTogglesStore.loadStrip()
+        return (applied, refused)
+    }
+
+    /// The monitor's connection in words, as the Advanced page says it.
+    var connectionDescription: String {
+        switch core.connection {
+        case .connected where core.state != nil: return "Connected"
+        case .connected: return "Connected, waiting for state"
+        case .connecting(let attempt): return attempt <= 1 ? "Connecting" : "Reconnecting (try \(attempt))"
+        case .disconnected(let reason): return "Disconnected · \(reason)"
+        case .idle: return "Idle"
+        }
+    }
+
+    /// "macOS 27.2 (Build …) · Mac16,1" — the OS and the hardware model.
+    static func systemDescription() -> String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        var model = [CChar](repeating: 0, count: max(size, 1))
+        sysctlbyname("hw.model", &model, &size, nil, 0)
+        let name = String(decoding: model.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        let os = "macOS " + ProcessInfo.processInfo.operatingSystemVersionString
+        return name.isEmpty ? os : "\(os) · \(name)"
     }
 
     func resetPage(_ page: Page) {
