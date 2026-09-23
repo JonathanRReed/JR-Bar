@@ -159,4 +159,34 @@ struct MenuBarNativeTriggerTests {
         #expect(utility.lastCoreFacts?.agent == .working)
         #expect(utility.actions.triggerEngine.lastAgent == .working)
     }
+
+    @MainActor
+    @Test("a stopped utility moves the baselines and acts on nothing — no rule writes, no scene")
+    func stoppedUtilityActsOnNothing() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.triggerRules = [rule(.agentsStartedWorking)]
+        state.curation.stateRules = [MenuBarStateRule(condition: .agentsWorking,
+                                                      effects: [.ledScene(scene: "focus")])]
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+        utility.hider.listItems = { [] }
+        utility.hider.onPlan = nil
+        var scenes: [String] = []
+        var quiet: [Int] = []
+        utility.stateRules.currentScene = { "calm" }
+        utility.stateRules.setScene = { scenes.append($0) }
+        utility.stateRules.quietAgents = { quiet.append($0) }
+        var facts = MenuBarCoreFacts(live: true, agent: .idle, askPending: true)
+        utility.coreFacts = { facts }
+        utility.coreFactsChanged()
+        facts.agent = .working
+        utility.coreFactsChanged()
+        #expect(state.curation.overlay == nil, "the one-shot hide-all never fired")
+        #expect(scenes.isEmpty, "the while rule's scene never took the strip")
+        #expect(quiet.isEmpty)
+        #expect(utility.stateRules.outcome == MenuBarStateOutcome())
+        #expect(utility.stateRules.levels == MenuBarLevels(), "no level is heard while stopped")
+        #expect(utility.actions.triggerEngine.lastAgent == .working, "the baseline still moved")
+    }
 }

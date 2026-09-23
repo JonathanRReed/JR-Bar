@@ -456,13 +456,23 @@ final class MenuBarUtility: Toy {
         actions.delegate = self
         actions.rules = { [weak self] in self?.settings().triggerRules ?? [] }
         actions.triggerSource = systemTriggerSource
-        systemTriggerSource.onSample = { [weak self] event in self?.stateRules.absorb(event) }
+        // The "while" rules hear the feed only while their levels are
+        // seeded — which is only ever while the utility runs.
+        systemTriggerSource.onSample = { [weak self] event in
+            guard let self, self.stateRulesSeeded else { return }
+            self.stateRules.absorb(event)
+        }
         stateRules.rules = { [weak self] in self?.settings().curation.stateRules ?? [] }
         stateRules.sceneBeforeRule = { [weak self] in self?.settings().curation.sceneBeforeRule }
         stateRules.setSceneBeforeRule = { [weak self] scene in
             self?.update { $0.curation.sceneBeforeRule = scene }
         }
-        stateRules.onLayersChange = { [weak self] in self?.hider.reconcile() }
+        // A stopped hider is never re-planned: its reconcile would put
+        // covers back over a bar the utility just gave up.
+        stateRules.onLayersChange = { [weak self] in
+            guard let self, self.running else { return }
+            self.hider.reconcile()
+        }
         stateRules.onOutcomeChange = { [weak self] in self?.stateOutcomeVersion += 1 }
         chevronActions.utility = self
         spacerActions.onClick = { [weak self] in self?.chevronClicked() }
@@ -793,12 +803,13 @@ final class MenuBarUtility: Toy {
 
     /// Clear a timed overlay whose clock has run out — the curated bar
     /// comes back. An overlay still standing, or one without a clock, is
-    /// left alone.
+    /// left alone. A lapse while the utility is stopped still clears the
+    /// file; only a running hider re-plans.
     func expireOverlayIfDue(now: Date = Date()) {
         guard let overlay = settings().curation.overlay, overlay.untilEpoch != nil,
               !overlay.isLive(at: now) else { return }
         update { $0.curation.overlay = nil }
-        hider.reconcile()
+        if running { hider.reconcile() }
     }
 
     // MARK: Appearance bindings (hex-string settings ↔ Color)
@@ -1086,20 +1097,32 @@ final class MenuBarUtility: Toy {
 
     /// The daemon's feed changed: whatever moved among the agents, the
     /// asks, the headroom and SidePulse reaches the rule engine as a
-    /// sample. Always delivered — parked rules included — so the
-    /// engine's baselines stay current and enabling a rule later never
-    /// fires on a transition that happened while it was off.
+    /// sample. The baselines always move — a stopped utility's included —
+    /// so a start or a rule enabled later never fires on a transition
+    /// that happened while it was off; only a running utility acts.
     func coreFactsChanged() {
         let facts = coreFacts()
         let samples = MenuBarCoreFacts.samples(from: lastCoreFacts, to: facts)
         lastCoreFacts = facts
+        guard running else {
+            // A stopped utility — disabled, or handed over to another
+            // manager — holds nothing and writes nothing: the one-shot
+            // engine hears the samples against no rules, and the "while"
+            // levels are seeded afresh on the next start.
+            let day = MenuBarSystemTriggerSource.dayStamp()
+            for sample in samples {
+                _ = actions.triggerEngine.actions(for: sample, rules: [], dayStamp: day)
+            }
+            return
+        }
         for sample in samples { systemTriggerSource.emit(sample) }
         // The agent glance follows the feed, not the scan cadence.
         if samples.contains(where: { if case .agentState = $0 { return true } else { return false } }) {
             refreshExtrasFaces(force: true)
         }
-        // An open ask rides no trigger sample; the "while" rules read it.
-        if facts.live, stateRules.levels.askPending != facts.askPending {
+        // An open ask rides no trigger sample; the "while" rules read it
+        // — once their levels are seeded, like every other sample.
+        if stateRulesSeeded, facts.live, stateRules.levels.askPending != facts.askPending {
             stateRules.update { $0.askPending = facts.askPending }
         }
     }
@@ -1266,14 +1289,15 @@ final class MenuBarUtility: Toy {
         overlayExpiry?.cancel()
         overlayExpiry = nil
         stopDeskWatch()
+        failedHotkeyActions = []
+        running = false
         // A stopped utility holds nothing: the scene and the quiet go
-        // back, the layers drop.
+        // back, the layers drop — after `running` falls, so the layers'
+        // re-plan never reaches the hider that just stood down.
         if stateRulesSeeded {
             stateRulesSeeded = false
             stateRules.stop()
         }
-        failedHotkeyActions = []
-        running = false
     }
 
     // MARK: Extras — spacers, underlay, agent item, combined item
