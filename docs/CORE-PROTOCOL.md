@@ -773,7 +773,10 @@ line the controller writes, mirrored. Bounded to 2000 characters a line.
 Commands are parsed on the socket thread and run on the AppKit main thread
 (`performSelectorOnMainThread`), one at a time, in order per client;
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
-Codex trust handshake can take seconds. Unknown args are ignored.
+Codex trust handshake can take seconds, and so do `open_session` and
+`resume_session`, whose osascript and tmux calls can wait on a first
+Automation consent prompt (the controller state they read still hops to
+the main thread). Unknown args are ignored.
 
 | name | args | effect / result |
 | --- | --- | --- |

@@ -576,9 +576,19 @@ def _diff_ask_episodes(previous: dict, current: dict) -> list[tuple[str, str, ob
     return events
 
 
-@command("open_session")
+@command("open_session", main_thread=False)
 def _cmd_open_session(self, args):
-    status = _find_status(self, args.get("session"))
+    """Open a session: raise a live one's own window, resume an ended one.
+
+    Runs on the socket thread, not the main run loop: finding and raising a
+    session's window is a process-table walk, osascript and tmux calls --
+    seconds on the first open, while macOS asks for Automation consent --
+    and on the main thread that stalls every refresh and timer behind it.
+    The row, its extras, Settings and the controller's own open ladder are
+    main-thread state and hop over through ``_core_on_main``.
+    """
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    status = on_main(lambda: _find_status(self, args.get("session")))
     # A live CLI session already has a window: raise that tab, pane or
     # Ghostty terminal instead of starting a second ``--resume`` process;
     # an ended one resumes in the terminal it ran in (answer_surfaces.py).
@@ -586,16 +596,22 @@ def _cmd_open_session(self, args):
     # choice, or no record of its terminal: the ladder below.
     from .answer_surfaces import open_session_surface
 
-    raised = open_session_surface(self, status, args)
+    raised = open_session_surface(self, status, args, on_main=on_main)
     if raised is not None:
         return raised
-    self.open_session(status, args.get("action") if isinstance(args.get("action"), str) else None, remember=False)
-    extras = self._core_extras_for(status)
-    return {
-        "session": status.agent_id,
-        "activated": (extras.terminal or {}).get("app") if extras is not None else None,
-        "origin": extras.origin if extras is not None else None,
-    }
+
+    def ladder():
+        self.open_session(
+            status, args.get("action") if isinstance(args.get("action"), str) else None, remember=False
+        )
+        extras = self._core_extras_for(status)
+        return {
+            "session": status.agent_id,
+            "activated": (extras.terminal or {}).get("app") if extras is not None else None,
+            "origin": extras.origin if extras is not None else None,
+        }
+
+    return on_main(ladder)
 
 
 @command("answer_ask", main_thread=False)
@@ -2934,7 +2950,8 @@ def _cmd_resume_session(self, args):
             return None
 
     if on_main(listed) is not None:
-        return on_main(lambda: _cmd_open_session(self, {"session": session}))
+        # open_session hops only its main-thread pieces; its raise stays here.
+        return _cmd_open_session(self, {"session": session})
     return resume_ended_session(session, terminal=args.get("terminal"))
 
 

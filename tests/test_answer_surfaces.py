@@ -1029,3 +1029,77 @@ def test_resume_session_opens_a_listed_row_and_resumes_a_gone_one__and_1_more(mo
     assert reply == {"via": "registry"}
     assert resumed == [("claude:session:gone", "com.apple.Terminal")]
     assert core_runtime._MAIN_THREAD_COMMANDS["resume_session"].main_thread is False
+
+
+def test_open_session_raises_on_the_socket_thread__and_3_more(monkeypatch, tmp_path: Path) -> None:
+    from jrbar import answer_surfaces as surfaces_module
+    from jrbar import core_runtime
+
+    # A controller whose main thread is a depth counter: every read of its
+    # state must happen inside ``_core_on_main``, every Apple event outside it.
+    depth = [0]
+    seen: list = []
+
+    def on_main(function):
+        depth[0] += 1
+        try:
+            return function()
+        finally:
+            depth[0] -= 1
+
+    live = SimpleNamespace(
+        pid=500,
+        terminal={"app": "Ghostty", "bundle_id": "com.mitchellh.ghostty", "tty": "/dev/ttys004"},
+        cwd="/Users/me/repo",
+        name=None,
+        origin={"kind": "codex_cli", "label": "Codex CLI", "bundle_id": None},
+    )
+    extras = [live]
+
+    class _Watched(_Settings):
+        def session_open_action(self, provider, origin=None):
+            seen.append(("settings", depth[0] > 0))
+            return None
+
+    class _Runner(FakeRunner):
+        def osascript(self, script, *arguments):
+            seen.append(("osascript", depth[0] > 0))
+            return super().osascript(script, *arguments)
+
+    row = SimpleNamespace(
+        agent_id="codex:session:s-1", provider="codex", session_id="s-1", origin="Codex CLI", cwd="/Users/me/repo"
+    )
+    controller = SimpleNamespace(
+        last_snapshot=SimpleNamespace(statuses=[row], stale_statuses=[]),
+        settings=_Watched(),
+        _core_on_main=on_main,
+        _core_extras_for=lambda status: seen.append(("extras", depth[0] > 0)) or extras[0],
+        open_session=lambda status, action, remember: seen.append(("ladder", depth[0] > 0)),
+    )
+    monkeypatch.setattr(surfaces_module, "SurfaceRunner", lambda: _Runner(ghostty_terminals="T1\t/Users/me/repo\tcodex\n"))
+    monkeypatch.setattr(surfaces_module, "process_table_holding", lambda pid, loader=None: GHOSTTY_CODEX)
+    recorder = SurfaceRecorder(path=tmp_path / "s.json", runner=FakeRunner(), synchronous=True)
+    monkeypatch.setattr(surfaces_module, "default_surface_recorder", lambda: recorder)
+
+    # --- scenario: registered off the main thread, like resume_session
+    assert core_runtime._MAIN_THREAD_COMMANDS["open_session"].main_thread is False
+    assert core_runtime._MAIN_THREAD_COMMANDS["resume_session"].main_thread is False
+
+    # --- scenario: a live session's raise runs here; the controller's state is read on main
+    reply = core_runtime._cmd_open_session(controller, {"session": row.agent_id})
+    assert (reply["raised"], reply["detail"]) == ("terminal", "T1")
+    assert ("osascript", False) in seen and ("osascript", True) not in seen
+    assert {entry for entry in seen if entry[0] in ("settings", "extras")} == {("settings", True), ("extras", True)}
+
+    # --- scenario: History's Resume of a listed row takes the same off-main path
+    seen.clear()
+    reply = core_runtime._cmd_resume_session(controller, {"session": row.agent_id})
+    assert reply["raised"] == "terminal"
+    assert ("osascript", False) in seen and ("osascript", True) not in seen
+
+    # --- scenario: an ended session with no record of its terminal falls to the ladder, on main
+    seen.clear()
+    extras[0] = SimpleNamespace(pid=None, terminal=None, origin=None)
+    reply = core_runtime._cmd_open_session(controller, {"session": row.agent_id})
+    assert reply == {"session": row.agent_id, "activated": None, "origin": None}
+    assert ("ladder", True) in seen and all(on for _name, on in seen if _name != "osascript")

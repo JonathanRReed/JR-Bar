@@ -1153,26 +1153,49 @@ def session_in_front(
     return {**reply, "in_front": False, "evidence": "other_tab"}
 
 
-def _resolved_open_action(controller: object, status: object, args: Mapping[str, Any]) -> str | None:
+def _configured_open_action(
+    controller: object,
+    status: object,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
+) -> str | None:
+    """A provider profile's open action, else Settings' Clicks-open, else
+    ``None``. Both are main-thread state, read through ``on_main``."""
+
+    def read() -> str | None:
+        try:
+            from .provider_usage_controller_actions import profile_session_action
+
+            configured = profile_session_action(controller, status, None)
+        except Exception:
+            configured = None
+        if configured is None:
+            try:
+                configured = controller.settings.session_open_action(  # type: ignore[attr-defined]
+                    str(getattr(status, "provider", "")).lower(), getattr(status, "origin", None)
+                )
+            except Exception:
+                configured = None
+        return configured
+
+    try:
+        return on_main(read) if on_main is not None else read()
+    except Exception:
+        return None
+
+
+def _resolved_open_action(
+    controller: object,
+    status: object,
+    args: Mapping[str, Any],
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
+) -> str | None:
     """The open action the controller's own ladder would take: the command's
     ``action``, a provider profile's, Settings' Clicks-open, else the row's
     default (a CLI session's is the terminal)."""
     action = args.get("action") if isinstance(args.get("action"), str) else None
     if action is not None:
         return action
-    try:
-        from .provider_usage_controller_actions import profile_session_action
-
-        configured = profile_session_action(controller, status, None)
-    except Exception:
-        configured = None
-    if configured is None:
-        try:
-            configured = controller.settings.session_open_action(  # type: ignore[attr-defined]
-                str(getattr(status, "provider", "")).lower(), getattr(status, "origin", None)
-            )
-        except Exception:
-            configured = None
+    configured = _configured_open_action(controller, status, on_main)
     if configured is not None:
         return configured
     try:
@@ -1204,6 +1227,7 @@ def resume_in_own_terminal(
     *,
     runner: SurfaceRunner | None = None,
     recorder: SurfaceRecorder | None = None,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> dict[str, Any] | None:
     """``open_session`` for an ENDED CLI session whose open is a terminal
     resume: resume it in the terminal it ran in -- a new Ghostty tab in the
@@ -1220,7 +1244,7 @@ def resume_in_own_terminal(
         return None
     if type(provider) is not str or type(session_id) is not str or not session_id:
         return None
-    if _resolved_open_action(controller, status, args) not in (SESSION_OPEN_TERMINAL, "raise"):
+    if _resolved_open_action(controller, status, args, on_main) not in (SESSION_OPEN_TERMINAL, "raise"):
         return None
     host = (recorder or default_surface_recorder()).recorded_host(provider, session_id)
     if host not in (GHOSTTY_BUNDLE_ID, TERMINAL_BUNDLE_ID, ITERM_BUNDLE_ID):
@@ -1402,18 +1426,23 @@ def open_session_surface(
     runner: SurfaceRunner | None = None,
     recorder: SurfaceRecorder | None = None,
     process_table: Callable[[], Mapping[int, Any]] | None = None,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> dict[str, Any] | None:
     """``open_session`` through the session's own terminal: raise it while
     it runs, resume it there once it has ended. ``None`` is the controller's
-    ladder (provider links, VS Code, the frontmost terminal)."""
+    ladder (provider links, VS Code, the frontmost terminal).
+
+    Meant for the socket thread: ``on_main`` carries the controller reads
+    (the row's extras, Settings, a provider profile) to the main thread,
+    while the process table, osascript and tmux work stays off it."""
     raised = open_live_session(
-        controller, status, args, runner=runner, recorder=recorder, process_table=process_table
+        controller, status, args, runner=runner, recorder=recorder, process_table=process_table, on_main=on_main
     )
     if raised is not None:
         return raised
-    if _live_host(controller, status, process_table=process_table) is not None:
+    if _live_host(controller, status, process_table=process_table, on_main=on_main) is not None:
         return None
-    return resume_in_own_terminal(controller, status, args, runner=runner, recorder=recorder)
+    return resume_in_own_terminal(controller, status, args, runner=runner, recorder=recorder, on_main=on_main)
 
 
 def open_live_session(
@@ -1424,6 +1453,7 @@ def open_live_session(
     runner: SurfaceRunner | None = None,
     recorder: SurfaceRecorder | None = None,
     process_table: Callable[[], Mapping[int, Any]] | None = None,
+    on_main: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> dict[str, Any] | None:
     """``open_session`` for a session that is still running in a terminal:
     raise that terminal, or ``None`` to let the provider-link / ``--resume``
@@ -1450,23 +1480,10 @@ def open_live_session(
         # An explicit choice elsewhere wins: a provider profile's open action,
         # then Settings > Agents > Clicks open. "Automatic" and "Terminal"
         # both mean the session's own window when it has one.
-        configured = None
-        try:
-            from .provider_usage_controller_actions import profile_session_action
-
-            configured = profile_session_action(controller, status, None)
-        except Exception:
-            configured = None
-        if configured is None:
-            try:
-                configured = controller.settings.session_open_action(  # type: ignore[attr-defined]
-                    provider.lower(), getattr(status, "origin", None)
-                )
-            except Exception:
-                configured = None
+        configured = _configured_open_action(controller, status, on_main)
         if configured is not None and configured not in RAISE_ACTIONS:
             return None
-    live = _live_host(controller, status, process_table=process_table)
+    live = _live_host(controller, status, process_table=process_table, on_main=on_main)
     if live is None:
         return None  # ended or app-hosted: the ladder's open is the right one
     host, extras, _table = live
