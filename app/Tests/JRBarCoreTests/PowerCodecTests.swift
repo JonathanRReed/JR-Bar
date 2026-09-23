@@ -144,5 +144,13 @@ struct PowerCodecTests {
             "locked": .bool(false), "idle_seconds": .number(0), "meeting_until": .number(9000),
         ])
         #expect(!CorePresenceReport().sensingCall)
+
+        // The app's own Calendar and Reminders readings ride along; "nothing
+        // coming" is sent as an explicit null, and silence sends no key.
+        let readings = CorePresenceReport(nextEventStart: .some(nil), remindersDue: ["A"]).arguments
+        #expect(readings["next_event_start"] == .null)
+        #expect(readings["reminders_due"] == .array([.string("A")]))
+        #expect(CorePresenceReport(nextEventStart: 4200).arguments["next_event_start"] == .number(4200))
+        #expect(CorePresenceReport().arguments["next_event_start"] == nil)
     }
 }

@@ -424,10 +424,26 @@ def _apply_presence(controller: Any, facts: PresenceFacts | None) -> None:
 
 def set_presence(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     """The ``presence`` command: the app's report of what it senses."""
+    from . import calendar_watch, reminders_watch
+
     now = time.time()
     try:
         facts = parse_presence(args, now=now, previous=presence_facts(controller))
     except ValueError as error:
+        raise _command_error("invalid_args", str(error)) from error
+    # The app's own Calendar and Reminders readings, when it sends them: the
+    # glows use them and the helper never needs its own EventKit grant. All
+    # or nothing -- a malformed half never lands beside a good one.
+    previous_calendar = calendar_watch._app_facts
+    previous_reminders = reminders_watch._app_due
+    try:
+        if "next_event_start" in args:
+            calendar_watch.adopt_app_calendar_facts(args.get("next_event_start"), now=now)
+        if "reminders_due" in args:
+            reminders_watch.adopt_app_reminders(args.get("reminders_due"), now=now)
+    except ValueError as error:
+        calendar_watch._app_facts = previous_calendar
+        reminders_watch._app_due = previous_reminders
         raise _command_error("invalid_args", str(error)) from error
     _apply_presence(controller, facts)
     return {"presence": presence_state_document(controller, now=now)}

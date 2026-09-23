@@ -1445,9 +1445,16 @@ public struct CorePresenceReport: Hashable, Sendable {
     public var focus: Bool?
     /// When a calendar meeting in progress ends.
     public var meetingUntil: Double?
+    /// The app's own Calendar reading for the "glow before events" signal:
+    /// `.some(nil)` says "nothing coming", `nil` sends nothing and leaves
+    /// the daemon on its own EventKit read.
+    public var nextEventStart: Double??
+    /// Identifiers of the reminders due now, from the app's own read.
+    public var remindersDue: [String]?
 
     public init(mic: Bool = false, camera: Bool = false, screenShared: Bool = false,
-                locked: Bool? = nil, idleSeconds: Double? = nil, focus: Bool? = nil, meetingUntil: Double? = nil) {
+                locked: Bool? = nil, idleSeconds: Double? = nil, focus: Bool? = nil, meetingUntil: Double? = nil,
+                nextEventStart: Double?? = nil, remindersDue: [String]? = nil) {
         self.mic = mic
         self.camera = camera
         self.screenShared = screenShared
@@ -1455,6 +1462,8 @@ public struct CorePresenceReport: Hashable, Sendable {
         self.idleSeconds = idleSeconds
         self.focus = focus
         self.meetingUntil = meetingUntil
+        self.nextEventStart = nextEventStart
+        self.remindersDue = remindersDue
     }
 
     public var sensingCall: Bool { mic || camera || screenShared }
@@ -1467,6 +1476,8 @@ public struct CorePresenceReport: Hashable, Sendable {
         if let idleSeconds { args["idle_seconds"] = .number(max(0, idleSeconds)) }
         if let focus { args["focus"] = .bool(focus) }
         if let meetingUntil { args["meeting_until"] = .number(meetingUntil) }
+        if let nextEventStart { args["next_event_start"] = nextEventStart.map(JSONValue.number) ?? .null }
+        if let remindersDue { args["reminders_due"] = .array(remindersDue.prefix(32).map(JSONValue.string)) }
         return args
     }
 }
