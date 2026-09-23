@@ -1949,6 +1949,8 @@ final class NotchToy: Toy {
         guard state != sensorState else { return }
         sensorState = state
         onSensorsChanged?(state)
+        // An open card names who is listening; an edge re-reads it.
+        if cardModel.pinned { cardModel.refreshPrivacy() }
         if currentFace == .idle {
             reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }

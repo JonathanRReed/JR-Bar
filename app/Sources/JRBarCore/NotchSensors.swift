@@ -40,3 +40,33 @@ extension NotchIsland {
         return dots > 0 ? CGFloat(dots) * 5 + CGFloat(dots - 1) * 4 : 0
     }
 }
+
+extension NotchSensorState {
+    /// The card's privacy line — who has the mic, whether a camera is
+    /// rolling — or nil while neither is live. macOS names the camera's
+    /// user nowhere public, so the camera is a fact; the microphone
+    /// names up to two apps and counts the rest. Words live in the card,
+    /// never on the ears.
+    public func privacyLine(microphoneApps: [String]) -> String? {
+        let apps = Self.namesList(microphoneApps)
+        switch (cameraInUse, microphoneInUse) {
+        case (true, true):
+            return apps.map { "Camera and microphone in use · \($0)" } ?? "Camera and microphone in use"
+        case (false, true):
+            return apps.map { "Microphone · \($0)" } ?? "Microphone in use"
+        case (true, false):
+            return "Camera in use"
+        case (false, false):
+            return nil
+        }
+    }
+
+    /// "Zoom", "Zoom, Chrome", "Zoom, Chrome +2" — nil for none.
+    static func namesList(_ names: [String]) -> String? {
+        var seen = Set<String>()
+        let unique = names.filter { !$0.isEmpty && seen.insert($0).inserted }
+        guard !unique.isEmpty else { return nil }
+        let shown = unique.prefix(2).joined(separator: ", ")
+        return unique.count > 2 ? "\(shown) +\(unique.count - 2)" : shown
+    }
+}

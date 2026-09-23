@@ -17,6 +17,7 @@ final class NotchCardModel {
             // The lens is a peek, not a standing row: folding the card
             // puts it away, and the next open starts without it.
             if !pinned { mirrorSummoned = false }
+            refreshPrivacy()
             guard runtimeEnabled else { return }
             if pinned {
                 utility.start()
@@ -117,6 +118,21 @@ final class NotchCardModel {
     /// Where a session works — a reminder about it says so.
     var sessionCwd: (String) -> String? = { _ in nil }
 
+    /// Who has the microphone, whether a camera is rolling — read as the
+    /// card opens and on every sensor edge while it is open; nil while
+    /// neither is live. The ears only ever draw the dots; the names are
+    /// the card's.
+    var privacyLine: String?
+    /// The reader: CoreAudio and CoreMediaIO on a live card, nothing
+    /// on a headless one — the tests stand in a fixed answer.
+    var readPrivacy: (() -> String?)?
+
+    func refreshPrivacy() {
+        guard let readPrivacy else { return }
+        let line = pinned ? readPrivacy() : nil
+        if line != privacyLine { privacyLine = line }
+    }
+
     /// On a day with nothing on the calendar the weather takes the
     /// calendar's place — Alcove's empty-day conditions — instead of a
     /// "Nothing in the next 24 hours" line under a separate weather row.
@@ -183,6 +199,7 @@ final class NotchCardModel {
         self.timers = timers
         self.tray = tray
         self.runtimeEnabled = runtimeEnabled
+        if runtimeEnabled { readPrivacy = { NotchSensorMonitor.privacyLineNow() } }
     }
 }
 
@@ -282,6 +299,9 @@ struct NotchCardView: View {
                         .foregroundStyle(style.faintColor)
                         .padding(.leading, 24))
                 }
+            }
+            if let privacy = model.privacyLine {
+                revealRow(9, privacyRow(privacy))
             }
             revealRow(9, ShelfMediaRow(utility: model.utility, style: style))
             revealRow(10, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
@@ -461,6 +481,30 @@ struct NotchCardView: View {
                 .buttonStyle(.borderless)
             }
         }
+    }
+
+    /// Who is listening: the dots' colours (green camera, orange mic)
+    /// and the apps behind them — the question the dots raise, answered
+    /// in words where words belong.
+    private func privacyRow(_ line: String) -> some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 3) {
+                if line.hasPrefix("Camera") {
+                    Circle().fill(Color.green).frame(width: 5, height: 5)
+                }
+                if line.contains("icrophone") {
+                    Circle().fill(Color.orange).frame(width: 5, height: 5)
+                }
+            }
+            .frame(width: 13, alignment: .leading)
+            Text(line)
+                .font(.system(size: 10))
+                .foregroundStyle(style.subColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line)
     }
 
     /// One live session under the header: the provider's dot, its label,

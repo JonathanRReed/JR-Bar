@@ -232,6 +232,69 @@ final class NotchSensorMonitor {
         return false
     }
 
+    // MARK: Who is listening
+
+    /// The processes holding audio input right now — CoreAudio's process
+    /// objects (`kAudioHardwarePropertyProcessObjectList`) that report
+    /// `IsRunningInput`. Observation only, like the dot: no device is
+    /// opened. Empty when the system refuses the read.
+    static func microphoneClientPIDs() -> [pid_t] {
+        var listAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &listAddress, 0, nil, &size) == noErr,
+              size >= UInt32(MemoryLayout<AudioObjectID>.size) else { return [] }
+        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &listAddress, 0, nil, &size, &objects) == noErr else { return [] }
+        return objects.compactMap { object in
+            var inputAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyIsRunningInput,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var running: UInt32 = 0
+            var runningSize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(object, &inputAddress, 0, nil, &runningSize, &running) == noErr,
+                  running != 0 else { return nil }
+            var pidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var pid: pid_t = -1
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            guard AudioObjectGetPropertyData(object, &pidAddress, 0, nil, &pidSize, &pid) == noErr,
+                  pid > 0 else { return nil }
+            return pid
+        }
+    }
+
+    /// The names of what holds the mic: the app's own name, a helper
+    /// process's owning app where macOS says (a browser's audio helper
+    /// reads as the browser), else the executable's name. JR-Bar itself
+    /// is never listed.
+    static func microphoneClientNames() -> [String] {
+        let me = ProcessInfo.processInfo.processIdentifier
+        return microphoneClientPIDs().filter { $0 != me }.compactMap { pid in
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                return app.localizedName ?? app.bundleURL?.deletingPathExtension().lastPathComponent
+            }
+            var buffer = [UInt8](repeating: 0, count: 256)
+            let length = proc_name(pid, &buffer, UInt32(buffer.count))
+            guard length > 0 else { return nil }
+            let name = String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
+            return name.isEmpty ? nil : name
+        }
+    }
+
+    /// The card's privacy line as of now — nil while nothing is live.
+    static func privacyLineNow() -> String? {
+        let state = read()
+        guard state.anyInUse else { return nil }
+        return state.privacyLine(microphoneApps: state.microphoneInUse ? microphoneClientNames() : [])
+    }
+
     /// Every camera CoreMediaIO lists — empty on a machine with none, or
     /// a read the system refuses.
     static func cameraDevices() -> [CMIOObjectID] {

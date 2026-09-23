@@ -39,6 +39,19 @@ struct ShelfGlanceTests {
                 "the calendar switched off leaves the weather where it was")
     }
 
+    @Test("the card reads who is listening as it opens and forgets it as it folds")
+    func privacyOnPin() {
+        let card = makeTestCardModel()
+        #expect(card.privacyLine == nil)
+        card.refreshPrivacy()
+        #expect(card.privacyLine == nil, "a headless card reads nothing")
+        card.readPrivacy = { "Microphone · Zoom" }
+        card.pinned = true
+        #expect(card.privacyLine == "Microphone · Zoom")
+        card.pinned = false
+        #expect(card.privacyLine == nil)
+    }
+
     @Test("a switched-off glance hides without ever asking")
     func switchedOff() {
         let calendar = ShelfCalendarModel()
