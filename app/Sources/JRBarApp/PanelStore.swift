@@ -646,15 +646,9 @@ final class PanelStore {
     /// side with nothing to say is nil and collapses rather than holding
     /// space open beside the notch.
     var screenBarWings: ScreenBarWings {
-        var left: ScreenBarWingSlot?
-        if let pick = focusPick {
-            var text = pick.ask != nil ? "Needs you" : pick.activity.word
-            if pick.ask != nil, askRows.count > 1 { text += " ·\(askRows.count)" }
-            left = ScreenBarWingSlot(
-                text: text, provider: pick.style.id,
-                tone: pick.activity == .failed ? .alert
-                    : pick.ask != nil || pick.activity == .waiting ? .attention
-                    : .neutral)
+        var left: ScreenBarWingSlot? = focusPick.map {
+            Self.activitySlot(for: $0, askCount: askRows.count, now: Date().timeIntervalSince1970,
+                              finalSeconds: escalationFinalSeconds)
         }
         // The media wing — Alcove's grammar: album art on the left
         // ear, the live equalizer on the right. The activity slot owns
@@ -685,6 +679,51 @@ final class PanelStore {
                                          tone: meter.incident ? .attention : .neutral)
             } ?? (mediaTookLeft && mediaArt == nil ? nil : mediaViz)
         return ScreenBarWings(left: left, right: right)
+    }
+
+    /// The left ear's activity slot for the focus pick: its provider's
+    /// mark and state word, the open-ask count when there is more than
+    /// one. An ask's mark rings with its age — the ring fills toward the
+    /// escalation's final stage, so how long an agent has waited reads
+    /// without a word; the peek's text says minutes only, so a ticking
+    /// clock never re-lays the ears.
+    static func activitySlot(for pick: SessionRow, askCount: Int, now: Double,
+                             finalSeconds: Double) -> ScreenBarWingSlot {
+        var text = pick.ask != nil ? "Needs you" : pick.activity.word
+        if pick.ask != nil, askCount > 1 { text += " ·\(askCount)" }
+        let opened = pick.ask.flatMap { $0.openedAt ?? pick.since?.timeIntervalSince1970 }
+        if let opened, let waited = askWaitWords(opened: opened, now: now) { text += " · \(waited)" }
+        return ScreenBarWingSlot(
+            text: text, provider: pick.style.id,
+            meter: opened.map { askAgeFraction(opened: $0, now: now, finalSeconds: finalSeconds) },
+            tone: pick.activity == .failed ? .alert
+                : pick.ask != nil || pick.activity == .waiting ? .attention
+                : .neutral)
+    }
+
+    /// When an unanswered ask reaches the escalation's last stage
+    /// (Settings › Notifications, 300 s by default) — where the ask-age
+    /// ring closes.
+    var escalationFinalSeconds: Double {
+        let configured = settingsDocument?.double("escalation_final_seconds") ?? 300
+        return configured > 0 ? configured : 300
+    }
+
+    /// The ask-age ring's fill: the share of the way to the final stage,
+    /// in twelfths — a step every 25 s at the default, so the ear moves
+    /// visibly without re-laying on every lighting frame. Full from the
+    /// final stage on.
+    nonisolated static func askAgeFraction(opened: Double, now: Double, finalSeconds: Double) -> Double {
+        guard finalSeconds > 0 else { return 1 }
+        let share = max(0, now - opened) / finalSeconds
+        return min(1, (share * 12).rounded(.down) / 12)
+    }
+
+    /// "4 min" once an ask has waited a minute; nil before.
+    nonisolated static func askWaitWords(opened: Double, now: Double) -> String? {
+        let minutes = Int(max(0, now - opened) / 60)
+        guard minutes >= 1 else { return nil }
+        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
     }
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
