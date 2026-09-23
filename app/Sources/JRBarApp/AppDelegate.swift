@@ -1085,6 +1085,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar?.updateAccessibility()
         screenBar?.wings = store?.screenBarWings ?? .empty
         screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
+        screenBar?.hardware = core?.isLive == true ? core?.devices : nil
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:

@@ -152,6 +152,24 @@ final class ScreenBarController {
     /// Same-subject notices already shown (audio route names); the
     /// cooldown lives in `ScreenBarNotices.audio`.
     private var recentAudioNotices: [String: Date] = [:]
+    /// Devices that already spoke inside the cooldown
+    /// (`ScreenBarNotices.hardware`).
+    private var recentDeviceNotices: [String: Date] = [:]
+    /// The monitor's device rows while it is live, nil while it is not.
+    /// A monitor going away is not every strip unplugging, so the next
+    /// live list is a fresh baseline rather than a burst of arrivals.
+    /// A strip or Dot coming or going holds the right ear for a beat —
+    /// only while the ears and their notices are up; otherwise the list
+    /// just moves the baseline.
+    var hardware: [CoreDevice]? {
+        didSet {
+            guard let hardware, hardware != oldValue else { return }
+            let result = ScreenBarNotices.hardware(from: oldValue, to: hardware,
+                                                   recent: recentDeviceNotices, now: Date())
+            recentDeviceNotices = result.recent
+            if noticeMonitorsRunning, let slot = result.slot { presentWingNotice(.right, slot: slot) }
+        }
+    }
     private let powerMonitor = AlcovePowerMonitor()
     private let audioMonitor = ScreenBarAudioMonitor()
     private var noticeMonitorsRunning = false
