@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import Observation
 import QuartzCore
+import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -44,6 +45,15 @@ final class DockPreviewActions {
 
     /// A window card's click — the controller raises it.
     var onPick: (@MainActor (DockPreviewWindow) -> Void)?
+    /// A window card's ⌥-click — raise it and keep the panel up, so a
+    /// set of windows can be compared or raised in one hover.
+    var onPickKeepOpen: (@MainActor (DockPreviewWindow) -> Void)?
+
+    /// A card's click, read with the modifiers held at the time: ⌥ keeps
+    /// the panel (DockDoor's keep-open-after-activating), plain closes it.
+    func pick(_ snapshot: DockPreviewWindow, flags: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        performWindowAction(snapshot, DockEnhanceMath.keepsPanelOpen(flags) ? onPickKeepOpen : onPick)
+    }
     /// The card's × — close that window.
     var onClose: (@MainActor (DockPreviewWindow) -> Void)?
     /// The card's – — minimize, or bring a minimized window back.
@@ -54,7 +64,7 @@ final class DockPreviewActions {
     /// The context menu's tile — snap the window into a half or
     /// quarter of the screen, DockDoor's snap verbs.
     var onTile: (@MainActor (DockPreviewWindow, DockTile) -> Void)?
-    /// The header's "New" — the app's ⌘N.
+    /// The header's "New" — the app's own New Window menu item.
     var onNewWindow: (@MainActor () -> Void)?
     /// The header's "Quit".
     var onQuitApp: (@MainActor () -> Void)?
@@ -73,6 +83,11 @@ final class DockPreviewActions {
     var onSwipeMinimize: (@MainActor (DockPreviewWindow, Bool) -> Void)?
     /// The player row's transport — previous, play/pause, next.
     var onMediaCommand: (@MainActor (MediaRemoteBridge.Command) -> Void)?
+    /// The player row's scrubber — seek to a playhead in seconds.
+    var onMediaSeek: (@MainActor (Double) -> Void)?
+    /// The synced lyrics the notch Shelf already holds for the playing
+    /// track — read, never fetched: nil unless the Shelf has them.
+    @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil }
     /// The calendar row's "Show events" — asks for the grant.
     var onCalendarAuth: (@MainActor () -> Void)?
     /// The calendar row's "Join" — opens the meeting link.
@@ -82,6 +97,53 @@ final class DockPreviewActions {
     /// drag-between-previews handoff. False means the drop fell
     /// through (a non-document, or an app that can't take it).
     var onDocumentDrop: (@MainActor (URL) -> Bool)?
+    /// An ask row's Approve (true) / Deny (false).
+    var onAnswer: (@MainActor (CoreAsk, Bool) -> Void)?
+    /// The context menu's Move To — the window to another display.
+    var onMoveToDisplay: (@MainActor (DockPreviewWindow, CGDirectDisplayID) -> Void)?
+    /// The pointer landed on a card — the controller re-takes its still
+    /// when the cached one has aged past a glance, or plays it live.
+    var onHoverCard: (@MainActor (DockPreviewWindow) -> Void)?
+    /// The pointer left a card — a live card stops streaming.
+    var onHoverCardEnd: (@MainActor (DockPreviewWindow) -> Void)?
+    /// The header's "Never Preview <App>" — the app joins the card's
+    /// exclusion list from where it bothered you.
+    var onExcludeApp: (@MainActor () -> Void)?
+    /// "Send to Shelf" — the file joins the notch Shelf's tray. nil (no
+    /// Shelf wired) hides the verb.
+    var onSendToShelf: (@MainActor (URL) -> Void)?
+    /// "Show in Finder" — the file's folder opens with it selected.
+    var onReveal: (@MainActor (URL) -> Void)?
+    /// A folder chip's click — browse into it in place.
+    var onDrillFolder: (@MainActor (URL) -> Void)?
+    /// The drilled pop's chevron — one folder back up.
+    var onFolderBack: (@MainActor () -> Void)?
+}
+
+/// The Macs' displays as the Move To menu names them.
+@MainActor
+enum DockDisplays {
+    struct Display { let id: CGDirectDisplayID; let name: String; let screen: NSScreen }
+
+    static func all() -> [Display] {
+        NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            else { return nil }
+            return Display(id: CGDirectDisplayID(number.uint32Value), name: screen.localizedName, screen: screen)
+        }
+    }
+
+    /// Every display but the one holding `frame`'s centre (Quartz) —
+    /// empty on a one-screen desk, so the menu never offers a no-op.
+    static func others(than frame: CGRect?) -> [Display] {
+        let displays = all()
+        guard displays.count > 1 else { return [] }
+        guard let frame else { return displays }
+        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
+                             ?? NSScreen.screens.first)?.frame.height ?? 0
+        let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
+        return displays.filter { !$0.screen.frame.contains(centre) }
+    }
 }
 
 /// The Enhance preview's window: a borderless, nonactivating glass
@@ -198,6 +260,88 @@ final class DockPreviewPanel: NSPanel {
     }
 }
 
+/// A one-line glass toast just above a Dock tile — what an invisible
+/// gesture did ("Quit Safari", "Force quit Xcode") or why it waited
+/// ("Claude is working here — ⌘-right-click again to quit"). It never
+/// takes a click or focus, and fades on its own.
+@MainActor
+final class DockToastPanel: NSPanel {
+    @MainActor @Observable final class Model { var text = "" }
+    private let model = Model()
+    private let hosting: NSHostingView<DockToastView>
+    private var fadeWork: DispatchWorkItem?
+
+    init() {
+        hosting = NSHostingView(rootView: DockToastView(model: model))
+        hosting.sizingOptions = [.intrinsicContentSize]
+        let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 160, height: 30))
+        glass.cornerRadius = 12
+        glass.style = .regular
+        hosting.frame = glass.bounds
+        hosting.autoresizingMask = [.width, .height]
+        glass.contentView = hosting
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 160, height: 30),
+                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: 12)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        ignoresMouseEvents = true
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        isExcludedFromWindowsMenu = true
+        animationBehavior = .none
+        sharingType = .none
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .fullScreenAuxiliary, .ignoresCycle]
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+        title = "JR-Bar Dock Toast"
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    /// Show `text` over `tile` (AppKit space) off the Dock's `edge`,
+    /// for `duration`, then fade.
+    func show(_ text: String, over tile: CGRect, edge: DockEdge, screen: CGRect,
+              duration: TimeInterval = 1.4) {
+        model.text = text
+        hosting.invalidateIntrinsicContentSize()
+        hosting.layoutSubtreeIfNeeded()
+        let fit = hosting.intrinsicContentSize
+        let size = CGSize(width: min(max(fit.width, 80), 420), height: max(fit.height, 28))
+        setFrame(DockEnhanceMath.panelFrame(anchor: tile, edge: edge, size: size,
+                                            screen: screen, gap: 10), display: true)
+        fadeWork?.cancel()
+        alphaValue = 1
+        orderFrontRegardless()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
+                    self.animator().alphaValue = 0
+                }, completionHandler: { [weak self] in
+                    MainActor.assumeIsolated { self?.orderOut(nil) }
+                })
+            }
+        }
+        fadeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+    }
+}
+
+struct DockToastView: View {
+    let model: DockToastPanel.Model
+
+    var body: some View {
+        Text(model.text)
+            .font(.callout.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+    }
+}
+
 /// The panel's body: app header with its verbs, then the window cards
 /// — thumbnail when Screen Recording granted one, the app icon
 /// otherwise — each with hover-revealed close and minimize buttons.
@@ -211,6 +355,18 @@ struct DockPreviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                if !content.folderTrail.isEmpty {
+                    Button { actions.onFolderBack?() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Back to \(content.folderTrail.dropLast().last?.lastPathComponent ?? content.appName)")
+                    .accessibilityLabel("Back")
+                }
                 if let icon = content.icon {
                     Image(nsImage: icon)
                         .resizable()
@@ -227,6 +383,14 @@ struct DockPreviewView: View {
                                     .padding(.vertical, 1)
                                     .background(.red, in: Capsule())
                                     .offset(x: 7, y: -5)
+                            }
+                        }
+                        // Beside the Dock's badge, the agent's: the most
+                        // urgent session this app hosts, as a mark.
+                        .overlay(alignment: .bottomTrailing) {
+                            if let agent = content.appAgents.first {
+                                DockAgentDot(mark: agent, size: 8)
+                                    .offset(x: 3, y: 3)
                             }
                         }
                 }
@@ -251,18 +415,27 @@ struct DockPreviewView: View {
                         .lineLimit(1)
                 }
                 .frame(maxWidth: 240, alignment: .leading)
+                // Exclude an app from where it bothers you — the card's
+                // list, one right-click nearer.
+                .contextMenu {
+                    if content.bundleID != nil, content.folderURL == nil {
+                        Button("Never Preview \(content.appName)") { actions.onExcludeApp?() }
+                    }
+                }
                 Spacer(minLength: 8)
                 // DockDoor's compact header: traffic-light circles, not
                 // spelled-out buttons — the row reclaims ~110pt of width.
-                if let folderURL = content.folderURL {
+                if let shown = content.folderShown {
                     headerVerb("folder", tint: .accentColor,
-                               label: "Open \(content.appName) in Finder") {
-                        actions.onOpen?(folderURL)
+                               label: "Open \(shown.lastPathComponent) in Finder") {
+                        actions.onOpen?(shown)
                     }
                 } else if content.isRunning {
                     HStack(spacing: 4) {
-                        headerVerb("power", tint: Color(red: 0.93, green: 0.34, blue: 0.32),
-                                   label: "Quit \(content.appName)") {
+                        headerVerb(content.stillRunning ? "bolt.horizontal.fill" : "power",
+                                   tint: Color(red: 0.93, green: 0.34, blue: 0.32),
+                                   label: content.stillRunning ? "Force quit \(content.appName)"
+                                                               : "Quit \(content.appName)") {
                             actions.onQuitApp?()
                         }
                         if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {
@@ -282,20 +455,34 @@ struct DockPreviewView: View {
                             actions.onHideApp?()
                         }
                         headerVerb("plus", tint: Color(red: 0.36, green: 0.78, blue: 0.36),
-                                   label: "New window in \(content.appName) (⌘N)") {
+                                   label: "New window in \(content.appName)") {
                             actions.onNewWindow?()
                         }
                     }
+                }
+            }
+            if let note = content.headerNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if !content.askRows.isEmpty {
+                Divider()
+                ForEach(content.askRows) { mark in
+                    DockAskRow(mark: mark, note: content.askNotes[mark.sessionID],
+                               answering: content.answering.contains(mark.sessionID),
+                               actions: actions)
                 }
             }
             if let media = content.media {
                 Divider()
                 DockMediaRow(media: media, actions: actions)
             }
-            if content.bundleID == DockEnhanceMath.calendarBundleID,
-               content.calendarEvent != nil || content.calendarNeedsAuth {
+            if !content.calendarEvents.isEmpty || content.calendarNeedsAuth {
                 Divider()
-                DockCalendarRow(event: content.calendarEvent,
+                DockCalendarRow(events: content.calendarEvents,
+                                freeUntil: content.calendarFreeUntil,
                                 needsAuth: content.calendarNeedsAuth,
                                 actions: actions)
             }
@@ -339,20 +526,29 @@ struct DockPreviewView: View {
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
+                        // Apple's Grid stack: five across, four rows
+                        // before it scrolls; a folder chip browses in.
+                        let grid = DockEnhanceMath.folderGrid(count: content.folderEntries.count)
+                        ScrollView(.vertical, showsIndicators: true) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width), spacing: 8),
+                                                     count: grid.columns),
+                                      spacing: 8) {
                                 ForEach(content.folderEntries) { entry in
-                                    DockFolderChip(entry: entry) { actions.onOpen?($0) }
+                                    DockFolderChip(entry: entry, actions: actions)
                                 }
                             }
                             .padding(2)
                         }
+                        .frame(width: CGFloat(grid.columns) * (DockFolderChip.width + 8) + 4,
+                               height: CGFloat(grid.rows) * (DockFolderChip.height + 8) + 4)
                     }
                 }
             } else if !content.windows.isEmpty {
                 Divider()
                 if content.compact {
-                    DockPreviewCompactList(windows: content.windows, actions: actions)
+                    DockPreviewCompactList(windows: content.windows, agents: content.agents,
+                                           armedWindowID: content.armedWindowID,
+                                           armedNote: content.armedNote, actions: actions)
                 } else {
                     // A strip that fits centres in the panel — one card
                     // left-anchored with dead glass beside it reads as a
@@ -413,6 +609,9 @@ struct DockPreviewView: View {
                             // caption. The Dock's own bubble makes three.
                             showsTitle: window.title != content.appName
                                 && window.title != appTitle.base,
+                            agent: content.agents[window.id],
+                            armedNote: content.armedWindowID == window.id ? content.armedNote : nil,
+                            pulsed: content.pulsedWindowIDs.contains(window.id),
                             actions: actions)
         }
     }
@@ -451,7 +650,11 @@ struct DockPreviewView: View {
     /// split into its own chip, so "T3 Code (Nightly)" lays out as slim
     /// as "T3 Code" — the tag still shows, just not on the title line.
     private var appTitle: (base: String, channel: String?) {
-        AppNameChannel.split(content.appName)
+        // A drilled pop names the folder it shows.
+        if !content.folderTrail.isEmpty, let shown = content.folderShown {
+            return (shown.lastPathComponent, nil)
+        }
+        return AppNameChannel.split(content.appName)
     }
 
     private var subtitle: String {
@@ -470,14 +673,19 @@ struct DockPreviewView: View {
             return content.windows.isEmpty ? "Not running" : "Minimized window"
         }
         let minimized = content.windows.filter(\.minimized).count
+        let windows: String
         switch content.windows.count {
-        case 0: return "No open windows"
-        case 1: return minimized == 1 ? "1 window, minimized" : "1 window"
+        case 0: windows = "No open windows"
+        case 1: windows = minimized == 1 ? "1 window, minimized" : "1 window"
         default:
-            return minimized > 0
+            windows = minimized > 0
                 ? "\(content.windows.count) windows, \(minimized) minimized"
                 : "\(content.windows.count) windows"
         }
+        // "3 windows · 1 agent waiting" — the header answers which
+        // terminal wants you before any card is read.
+        guard let agents = DockAgentMatch.headerSummary(content.appAgents) else { return windows }
+        return "\(windows) · \(agents)"
     }
 }
 
@@ -492,6 +700,14 @@ struct DockPreviewCard: View {
     /// nil-equivalent title rows are suppressed — the header already
     /// names the app, and the Dock's own bubble does too.
     var showsTitle = true
+    /// The agent session this window hosts — its mark, its ring when it
+    /// waits on you, and what it is doing under the title.
+    var agent: DockAgentMark? = nil
+    /// A guarded close's first press: the card rings in the agent's
+    /// colour and this line replaces the title until it lapses.
+    var armedNote: String? = nil
+    /// A shake or flick just moved this window — the card dips a beat.
+    var pulsed = false
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
@@ -499,7 +715,7 @@ struct DockPreviewCard: View {
     var body: some View {
         VStack(spacing: 4) {
             ZStack(alignment: .topLeading) {
-                Button { actions.performWindowAction(window, actions.onPick) } label: {
+                Button { actions.pick(window) } label: {
                     face
                 }
                 .buttonStyle(.plain)
@@ -520,6 +736,7 @@ struct DockPreviewCard: View {
                 // hover pills offer plus the tile grid.
                 .contextMenu {
                     Button("Raise") { actions.performWindowAction(window, actions.onPick) }
+                    Button("Raise, Keep Preview") { actions.performWindowAction(window, actions.onPickKeepOpen) }
                     Divider()
                     Button(window.minimized ? "Bring Back" : "Minimize") {
                         actions.performWindowAction(window, actions.onMinimize)
@@ -531,9 +748,28 @@ struct DockPreviewCard: View {
                     }
                     Divider()
                     Menu("Tile To") {
-                        ForEach(DockTile.allCases, id: \.rawValue) { tile in
+                        ForEach(DockTile.allCases.filter { $0 != .center && $0 != .fill }, id: \.rawValue) { tile in
                             Button(tile.title) { actions.performWindowAction(window, value: tile, actions.onTile) }
                         }
+                        Divider()
+                        Button(DockTile.center.title) { actions.performWindowAction(window, value: DockTile.center, actions.onTile) }
+                        Button(DockTile.fill.title) { actions.performWindowAction(window, value: DockTile.fill, actions.onTile) }
+                    }
+                    // The other monitors, by name — the display half of
+                    // DockDoor's move-between-Spaces, no private Space API.
+                    let others = DockDisplays.others(than: window.frame)
+                    if !others.isEmpty {
+                        Menu("Move To") {
+                            ForEach(others, id: \.id) { display in
+                                Button(display.name) {
+                                    actions.performWindowAction(window, value: display.id, actions.onMoveToDisplay)
+                                }
+                            }
+                        }
+                    }
+                    if let document = window.documentURL, let send = actions.onSendToShelf {
+                        Divider()
+                        Button("Send Document to Shelf") { send(document) }
                     }
                     Divider()
                     Button("Close Window") { actions.performWindowAction(window, actions.onClose) }
@@ -557,7 +793,20 @@ struct DockPreviewCard: View {
                     .transition(.opacity)
                 }
             }
-            if showsTitle || window.minimized {
+            .overlay(alignment: .topTrailing) {
+                if let agent {
+                    DockAgentDot(mark: agent)
+                        .padding(6)
+                        .allowsHitTesting(false)
+                }
+            }
+            if let armedNote {
+                Text(armedNote)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: size.width)
+            } else if showsTitle || window.minimized {
                 HStack(spacing: 3) {
                     if window.minimized {
                         Image(systemName: "arrow.down.right.and.arrow.up.left")
@@ -573,6 +822,16 @@ struct DockPreviewCard: View {
                 }
                 .frame(maxWidth: size.width)
             }
+            if armedNote == nil, let agent {
+                // What the agent in this window is doing — the fact the
+                // panel's row would show, one quiet line.
+                Text(agent.statusLine)
+                    .font(.system(size: 9, weight: agent.isWaiting ? .semibold : .regular))
+                    .foregroundStyle(agent.isWaiting ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: size.width)
+            }
         }
         .padding(5)
         .background(
@@ -581,8 +840,21 @@ struct DockPreviewCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.accentColor, lineWidth: selected ? 2 : 0))
+        // A waiting agent's card is outlined in its provider's colour; a
+        // guarded close's first press thickens it.
+        .overlay {
+            if let agent, agent.isWaiting || armedNote != nil {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(agent.accent.opacity(0.9), lineWidth: armedNote != nil ? 3 : 1.5)
+                    .padding(selected ? 3 : 0)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            actions.performWindowAction(window, inside ? actions.onHoverCard : actions.onHoverCardEnd)
+        }
         // Aero shake lives on continuous hover — a non-activating panel
         // still gets tracking-area events while the pointer rests.
         .onContinuousHover { phase in
@@ -596,6 +868,8 @@ struct DockPreviewCard: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .opacity(pulsed ? 0.45 : 1)
+        .animation(.easeOut(duration: 0.18), value: pulsed)
         .help(window.title)
     }
 
@@ -653,13 +927,18 @@ struct DockPreviewCard: View {
 /// means no captures: nothing here ever flashes the recording dot.
 struct DockPreviewCompactList: View {
     let windows: [DockPreviewWindow]
+    var agents: [Int: DockAgentMark] = [:]
+    var armedWindowID: Int? = nil
+    var armedNote: String? = nil
     let actions: DockPreviewActions
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
             LazyVStack(spacing: 2) {
                 ForEach(windows) { window in
-                    DockPreviewCompactRow(window: window, actions: actions)
+                    DockPreviewCompactRow(window: window, agent: agents[window.id],
+                                          armedNote: armedWindowID == window.id ? armedNote : nil,
+                                          actions: actions)
                 }
             }
             .padding(2)
@@ -674,21 +953,35 @@ struct DockPreviewCompactList: View {
 /// pop's nesting is visible at a glance.
 private struct DockFolderChip: View {
     let entry: DockFolderEntry
-    let onOpen: (URL) -> Void
+    let actions: DockPreviewActions
+    /// The chip's box — the grid lays out on it.
+    static let width: CGFloat = 96
+    static let height: CGFloat = 64
     @ViewState private var hovering = false
+    /// The file's Quick Look thumbnail once it lands — a screenshot or
+    /// a PDF reads at a glance instead of as one more document icon.
+    @ViewState private var thumbnail: NSImage?
 
     var body: some View {
-        Button { onOpen(entry.url) } label: {
+        Button {
+            // A folder browses in place; ⌘-click (or a file) opens it.
+            if entry.isDirectory, !NSEvent.modifierFlags.contains(.command) {
+                actions.onDrillFolder?(entry.url)
+            } else {
+                actions.onOpen?(entry.url)
+            }
+        } label: {
             VStack(spacing: 4) {
-                Image(nsImage: entry.icon)
+                Image(nsImage: thumbnail ?? entry.icon)
                     .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: 34, height: 34)
                 Text(entry.name)
                     .font(.caption2)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .frame(width: 92)
+            .frame(width: Self.width - 4, height: Self.height - 12)
             .padding(.vertical, 6)
             .padding(.horizontal, 2)
             .background(
@@ -703,9 +996,60 @@ private struct DockFolderChip: View {
         // drag preview. The click still opens; a drag only arms once
         // the press moves.
         .draggable(entry.url)
+        // The chip's verbs past the click: reveal it, or stage it on the
+        // notch Shelf for the next drag — one app owns both surfaces.
+        .contextMenu {
+            Button("Open") { actions.onOpen?(entry.url) }
+            Button("Show in Finder") { actions.onReveal?(entry.url) }
+            if let send = actions.onSendToShelf {
+                Divider()
+                Button("Send to Shelf") { send(entry.url) }
+            }
+        }
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(entry.url.path)
+        .task(id: entry.url) {
+            guard !entry.isDirectory else { return }
+            thumbnail = await DockFolderThumbs.thumbnail(for: entry.url)
+        }
+    }
+}
+
+/// Quick Look thumbnails for Folder Pop chips — the Shelf tray's
+/// generator path, asked off the main thread, one ask per file and
+/// remembered for a few minutes so a second hover never regenerates.
+/// A file Quick Look can't draw keeps its type icon.
+@MainActor
+enum DockFolderThumbs {
+    private static var cache: [String: (image: NSImage, at: Date)] = [:]
+    static let lifetime: TimeInterval = 300
+    static let cacheCap = 240
+
+    static func thumbnail(for url: URL) async -> NSImage? {
+        let now = Date()
+        if let hit = cache[url.path], now.timeIntervalSince(hit.at) < lifetime { return hit.image }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        guard let image = await generate(url, scale: scale) else { return nil }
+        if cache.count >= cacheCap {
+            cache = cache.filter { now.timeIntervalSince($0.value.at) < lifetime }
+            if cache.count >= cacheCap { cache.removeAll() }
+        }
+        cache[url.path] = (image, now)
+        return image
+    }
+
+    /// The generator's callback, read on its own queue — the
+    /// representation isn't Sendable, the image is.
+    nonisolated private static func generate(_ url: URL, scale: CGFloat) async -> NSImage? {
+        await withCheckedContinuation { continuation in
+            let request = QLThumbnailGenerator.Request(
+                fileAt: url, size: CGSize(width: 34, height: 34), scale: scale,
+                representationTypes: .thumbnail)
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+                continuation.resume(returning: rep?.nsImage)
+            }
+        }
     }
 }
 
@@ -802,12 +1146,17 @@ final class SwipeCatcherView: NSView {
 /// One row of the compact list — click raises, hover shows the verbs.
 private struct DockPreviewCompactRow: View {
     let window: DockPreviewWindow
+    var agent: DockAgentMark? = nil
+    var armedNote: String? = nil
     let actions: DockPreviewActions
     @ViewState private var hovering = false
 
     var body: some View {
-        Button { actions.performWindowAction(window, actions.onPick) } label: {
+        Button { actions.pick(window) } label: {
             HStack(spacing: 6) {
+                if let agent {
+                    DockAgentDot(mark: agent, size: 7)
+                }
                 if window.minimized {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
                         .font(.system(size: 8))
@@ -818,8 +1167,8 @@ private struct DockPreviewCompactRow: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.secondary)
                 }
-                Text(window.title)
-                    .font(.callout)
+                Text(armedNote ?? window.title)
+                    .font(armedNote == nil ? .callout : .callout.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -868,6 +1217,56 @@ private struct DockPreviewCompactRow: View {
     }
 }
 
+/// A waiting agent this app hosts, answerable from the Dock: the mark,
+/// the session and what it asks, then Deny / Approve through the same
+/// `answer_ask` the panel sends (the daemon raises the terminal first).
+/// Where the daemon says the ask can't be answered from outside, the
+/// buttons disable and say where it can be; once answered, the row
+/// shows the daemon's verdict instead of guessing success.
+private struct DockAskRow: View {
+    let mark: DockAgentMark
+    let note: String?
+    let answering: Bool
+    let actions: DockPreviewActions
+
+    var body: some View {
+        HStack(spacing: 8) {
+            DockAgentDot(mark: mark)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(mark.label)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text(mark.statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: 260, alignment: .leading)
+            Spacer(minLength: 8)
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if let ask = mark.ask {
+                let answerable = ask.canAnswer && !ask.wantsTextReply
+                Button("Deny") { actions.onAnswer?(ask, false) }
+                    .controlSize(.small)
+                    .disabled(!answerable || answering)
+                Button("Approve") { actions.onAnswer?(ask, true) }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(mark.accent)
+                    .disabled(!answerable || answering)
+                    .help(answerable ? "Approve — \(mark.providerName) carries on"
+                                     : "Answer this one in the session's window")
+            }
+        }
+        .padding(.vertical, 2)
+        .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
+    }
+}
+
 /// The player tile's Now Playing row — DockDoor's media widget: the
 /// artwork, "Title — Artist", and the transport the shared MediaRemote
 /// feed sends for real. Paused state dims the play glyph.
@@ -876,6 +1275,33 @@ private struct DockMediaRow: View {
     let actions: DockPreviewActions
 
     var body: some View {
+        VStack(spacing: 3) {
+            transport
+            // Seek without opening the player: a continuous hairline of
+            // the playhead, the times either side. Only when the source
+            // named both a playhead and a length — never a bar at 0:00.
+            if let duration = media.duration, duration > 0, media.elapsed != nil {
+                DockMediaScrubber(media: media, duration: duration) { actions.onMediaSeek?($0) }
+            }
+            // The line the notch Shelf is singing — its own LRCLIB cache,
+            // stepped to this row's playhead; no lookup of the Dock's own.
+            // Silent between stamps and whenever the Shelf has no lyrics.
+            if let synced = actions.lyrics() {
+                TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
+                    if let line = synced.line(at: media.liveElapsed(at: context.date) ?? 0) {
+                        Text(line)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    private var transport: some View {
         HStack(spacing: 8) {
             Group {
                 if let data = media.artworkData, let image = NSImage(data: data) {
@@ -921,12 +1347,60 @@ private struct DockMediaRow: View {
     }
 }
 
-/// The Calendar tile's next event — DockDoor's calendar widget. The
-/// row only exists when the grant already covers it or is still
-/// unasked ("Show events" is the explicit opt-in, never a prompt from
-/// a bare hover).
+/// The player row's playhead: elapsed, a thin continuous track, the
+/// length. A click or drag on the track seeks there. The playhead
+/// advances between feed pushes from the sampled elapsed + timestamp.
+private struct DockMediaScrubber: View {
+    let media: AlcoveMedia
+    let duration: Double
+    let onSeek: (Double) -> Void
+    @ViewState private var dragFraction: Double?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let elapsed = media.liveElapsed(at: context.date) ?? 0
+            let fraction = dragFraction ?? min(1, max(0, elapsed / duration))
+            HStack(spacing: 6) {
+                Text(DockEnhanceMath.clock(dragFraction.map { $0 * duration } ?? elapsed))
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.quaternary)
+                        Capsule().fill(.secondary)
+                            .frame(width: max(2, geo.size.width * fraction))
+                    }
+                    .frame(height: 3)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            dragFraction = min(1, max(0, value.location.x / max(1, geo.size.width)))
+                        }
+                        .onEnded { value in
+                            let f = min(1, max(0, value.location.x / max(1, geo.size.width)))
+                            dragFraction = nil
+                            onSeek(f * duration)
+                        })
+                }
+                .frame(height: 12)
+                Text(DockEnhanceMath.clock(duration))
+            }
+            .font(.system(size: 9, weight: .medium).monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        .help("Drag to seek")
+    }
+}
+
+/// The calendar row — DockDoor's calendar widget, HyperDock's list.
+/// On the Calendar tile: the rest of today (up to three, each with its
+/// own Join) and a quiet "Free until 3:30" when nothing is on now; on a
+/// meeting app's tile, the one event whose link opens there. The row
+/// only exists when the grant already covers it or is still unasked
+/// ("Show events" is the explicit opt-in, never a prompt from a bare
+/// hover).
 private struct DockCalendarRow: View {
-    let event: ShelfCalendarModel.Event?
+    let events: [ShelfCalendarModel.Event]
+    let freeUntil: Date?
     let needsAuth: Bool
     let actions: DockPreviewActions
 
@@ -940,26 +1414,50 @@ private struct DockCalendarRow: View {
                     .help("Allow calendar access to preview upcoming events")
             }
             .padding(.vertical, 2)
-        } else if let event {
-            HStack(spacing: 8) {
-                Image(systemName: "calendar")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(event.title)
-                        .font(.callout)
-                        .lineLimit(1)
-                    Text(event.start, style: .time)
-                        .font(.caption2)
+        } else if !events.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                if let freeUntil {
+                    Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 8)
-                if let url = event.url {
-                    Button("Join") { actions.onCalendarJoin?(url) }
-                        .controlSize(.small)
-                        .help("Join the meeting link")
+                ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                    eventRow(event)
                 }
             }
             .padding(.vertical, 2)
         }
+    }
+
+    private func eventRow(_ event: ShelfCalendarModel.Event) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.title)
+                    .font(.callout)
+                    .lineLimit(1)
+                Text(timeLine(event))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if let url = event.url {
+                Button("Join") { actions.onCalendarJoin?(url) }
+                    .controlSize(.small)
+                    .help("Join the meeting link")
+            }
+        }
+    }
+
+    /// "Now – 3:30 PM" for what's on, "2:00 – 2:30 PM" otherwise; a
+    /// tomorrow event says so.
+    private func timeLine(_ event: ShelfCalendarModel.Event) -> String {
+        let now = Date()
+        let end = event.end.formatted(date: .omitted, time: .shortened)
+        if event.start <= now { return "Now – \(end)" }
+        let start = event.start.formatted(date: .omitted, time: .shortened)
+        let prefix = Calendar.current.isDateInToday(event.start) ? "" : "Tomorrow "
+        return "\(prefix)\(start) – \(end)"
     }
 }

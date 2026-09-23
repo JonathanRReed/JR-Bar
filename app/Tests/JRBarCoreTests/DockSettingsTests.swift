@@ -58,4 +58,92 @@ struct DockSettingsTests {
         #expect(DockEnhanceSettings(previewDelay: -1).previewDelay == DockEnhanceSettings.delayRange.lowerBound)
         #expect(DockEnhanceSettings(previewDelay: .nan).previewDelay == DockEnhanceSettings.defaultDelay)
     }
+
+    @Test("the preview trigger and scroll gestures decode tolerantly: hover, off")
+    func triggerKeys() throws {
+        #expect(DockSettings().enhance.previewTrigger == .hover)
+        #expect(DockSettings().enhance.scrollGestures == false)
+        let s = try decode(DockSettings.self, #"{"enhance": {"previewTrigger": "middleClick", "scrollGestures": true}}"#)
+        #expect(s.enhance.previewTrigger == .middleClick)
+        #expect(s.enhance.scrollGestures == true)
+        let junk = try decode(DockSettings.self, #"{"enhance": {"previewTrigger": "telepathy", "scrollGestures": "yes"}}"#)
+        #expect(junk.enhance.previewTrigger == .hover)
+        #expect(junk.enhance.scrollGestures == false)
+        var round = DockSettings()
+        round.enhance.previewTrigger = .optionHover
+        round.enhance.scrollGestures = true
+        round.enhance.clickToMinimize = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(DockSettings().enhance.clickToMinimize == false)
+        round.enhance.learnedPicks = [DockLearnedPick(query: "g", pick: "Ghostty\u{1F}zsh")]
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"learnedPicks": "g"}}"#).enhance.learnedPicks.isEmpty)
+        #expect(DockSettings().enhance.liveCard == false, "the recording dot stays off unless asked for")
+        round.enhance.liveCard = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"liveCard": "on"}}"#).enhance.liveCard == false)
+        #expect(DockSettings().enhance.frontAppChord == false, "⌥` stays the accent key unless asked for")
+        round.enhance.frontAppChord = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"clickToMinimize": 1}}"#).enhance.clickToMinimize == false)
+    }
+
+    @Test("the switcher pick and hover previews decode tolerantly and default to JR-Bar, on")
+    func switcherKeys() throws {
+        let s = try decode(DockSettings.self, #"{"switcherProvider": "altTab", "enhance": {"hoverPreviews": false}}"#)
+        #expect(s.switcherProvider == .altTab)
+        #expect(s.enhance.hoverPreviews == false)
+        let junk = try decode(DockSettings.self, #"{"switcherProvider": "nope", "enhance": {"hoverPreviews": "x"}}"#)
+        #expect(junk.switcherProvider == .jrbar)
+        #expect(junk.enhance.hoverPreviews == true)
+        var round = DockSettings()
+        round.switcherProvider = .contexts
+        round.enhance.hoverPreviews = false
+        round.enhance.switcherThisDisplay = true
+        round.enhance.previewThisDisplay = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        let display = try decode(DockSettings.self, #"{"enhance": {"switcherThisDisplay": 1, "previewThisDisplay": true}}"#)
+        #expect(display.enhance.switcherThisDisplay == false, "a number is not a switch")
+        #expect(display.enhance.previewThisDisplay == true)
+        #expect(DockSettings().enhance.switcherThisDisplay == false && DockSettings().enhance.previewThisDisplay == false)
+    }
+
+    @Test("a blob from before the switcher pick keeps its chords where they were")
+    func legacySwitcherPick() throws {
+        let dockDoor = try decode(DockSettings.self, #"{"enabled": true, "provider": "dockDoor"}"#)
+        #expect(dockDoor.switcherProvider == .dockDoor)
+        #expect(!dockDoor.switcherWanted, "DockDoor answered ⌥⇥ before the upgrade and still does")
+        let activeDock = try decode(DockSettings.self, #"{"enabled": true, "provider": "activeDock"}"#)
+        #expect(activeDock.switcherProvider == .off)
+        #expect(!activeDock.switcherWanted)
+        let ours = try decode(DockSettings.self, #"{"enabled": true}"#)
+        #expect(ours.switcherProvider == .jrbar)
+        #expect(ours.switcherWanted)
+        let picked = try decode(DockSettings.self,
+                                #"{"enabled": true, "provider": "dockDoor", "switcherProvider": "jrbar"}"#)
+        #expect(picked.switcherWanted, "a pick made on the card wins over the renderer")
+        var round = DockSettings(enabled: true)
+        round.switcherProvider = .off
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+        #expect(!round.switcherWanted)
+    }
+
+    @Test("handing the previews to DockDoor keeps JR-Bar's switcher; the card off stops both")
+    func halvesAreIndependent() {
+        var s = DockSettings(enabled: true, provider: .dockDoor)
+        #expect(!s.previewsWanted)
+        #expect(s.switcherWanted, "⌥⇥ no longer parks with the previews")
+        s.provider = .jrbar
+        s.enhance.hoverPreviews = false
+        #expect(!s.previewsWanted && s.switcherWanted)
+        s.switcherProvider = .altTab
+        #expect(!s.switcherWanted, "a switcher counterpart parks our chords")
+        s.switcherProvider = .jrbar
+        s.enhance.windowSwitcher = false
+        #expect(!s.switcherWanted, "both chords off is no switcher")
+        s.enhance.appSwitcher = true
+        #expect(s.switcherWanted)
+        s.enabled = false
+        #expect(!s.previewsWanted && !s.switcherWanted)
+    }
 }

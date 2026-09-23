@@ -239,6 +239,62 @@ struct DockSwitcherTests {
         #expect(model.items.count == 2)
     }
 
+    @Test("a short query learns its pick: next time it leads and is selected")
+    func learnedTypeAhead() {
+        let items = [named("Safari", "Docs"), named("Ghostty", "zsh"), named("Ghostty", "JR-Bar — claude")]
+        let taught = SwitcherModel.remembering("g", pick: items[2], in: [])
+        #expect(taught == [DockLearnedPick(query: "g", pick: "Ghostty\u{1F}JR-Bar — claude")])
+        var model = SwitcherModel()
+        model.learned = taught ?? []
+        model.open(with: items)
+        model.type("G")
+        #expect(model.selected?.title == "JR-Bar — claude", "the query is matched lowercased and the pick is selected")
+        #expect(model.items.first?.title == "JR-Bar — claude")
+        model.type("x")
+        #expect(model.query == "Gx")
+        // A retitled window: the same app still answers the query.
+        var retitled = SwitcherModel()
+        retitled.learned = taught ?? []
+        retitled.open(with: [named("Safari", "Docs"), named("Ghostty", "vim"), named("Ghostty", "zsh")])
+        retitled.type("g")
+        #expect(retitled.selected?.appName == "Ghostty")
+    }
+
+    @Test("learning is short queries only, most recent first, capped, and never adds a non-match")
+    func learningRules() {
+        let a = named("Safari", "Docs"), b = named("Mail", "Inbox")
+        #expect(SwitcherModel.remembering("", pick: a, in: []) == nil)
+        #expect(SwitcherModel.remembering("!", pick: a, in: []) == nil, "the waiting filter isn't a query to learn")
+        #expect(SwitcherModel.remembering("safari docs", pick: a, in: []) == nil, "a spelled-out title needs no memory")
+        let first = SwitcherModel.remembering("s", pick: a, in: []) ?? []
+        #expect(SwitcherModel.remembering("s", pick: a, in: first) == nil, "the same lesson twice writes nothing")
+        let second = SwitcherModel.remembering("m", pick: b, in: first) ?? []
+        #expect(second.map(\.query) == ["m", "s"])
+        let relearned = SwitcherModel.remembering("s", pick: b, in: second) ?? []
+        #expect(relearned.map(\.query) == ["s", "m"] && relearned[0].pick.hasPrefix("Mail"))
+        var many: [DockLearnedPick] = []
+        for i in 0..<60 { many = SwitcherModel.remembering(String(i), pick: a, in: many) ?? many }
+        #expect(many.count == SwitcherModel.learnCap)
+        // Learning reorders the matches; it never smuggles in a window
+        // the query didn't match.
+        let ranked = SwitcherModel.learnedFirst([a], query: "s",
+                                                learned: [DockLearnedPick(query: "s", pick: "Mail\u{1F}Inbox")])
+        #expect(ranked.map(\.title) == ["Docs"])
+    }
+
+    @Test("a hung app is skipped for a while, then asked again; an answer clears it")
+    func axBackoff() {
+        var backoff = DockAXBackoff()
+        #expect(!backoff.skips(7, now: 0))
+        backoff.note(7, unresponsive: true, now: 100)
+        #expect(backoff.skips(7, now: 105), "no second half-second wait on the next ⌥⇥")
+        #expect(!backoff.skips(8, now: 105), "only the app that hung")
+        #expect(!backoff.skips(7, now: 100 + DockAXBackoff.backoff + 0.1), "a busy moment isn't exile")
+        backoff.note(7, unresponsive: true, now: 200)
+        backoff.note(7, unresponsive: false, now: 201)
+        #expect(!backoff.skips(7, now: 202))
+    }
+
     // MARK: Minimized-window tiles
 
     @Test("a minimized tile's owner needs a sole claimant — no guessing")
@@ -257,6 +313,29 @@ struct DockSwitcherTests {
         let sameApp = [row(pid: 4, wid: 40, title: "Doc"),
                        row(pid: 4, wid: 41, title: "Doc")]
         #expect(DockSwitcherList.minimizedOwnerPID(title: "Doc", rows: sameApp) == 4)
+    }
+
+    @Test("a shared title narrows to the app whose own list holds that window minimized")
+    func minimizedOwnerTieBreak() {
+        let rows = [row(pid: 1, wid: 10, title: "Untitled"),
+                    row(pid: 2, wid: 20, title: "Untitled")]
+        func card(_ wid: CGWindowID, minimized: Bool) -> DockPreviewWindow {
+            DockPreviewWindow(id: Int(wid), title: "Untitled", minimized: minimized, fullScreen: nil,
+                              frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                              thumbnail: nil, element: nil, windowID: wid)
+        }
+        // App 2's "Untitled" sits on another Space: off-screen, but not
+        // in the Dock — only app 1 holds a minimized one.
+        let owner = DockSwitcherList.minimizedOwnerPID(title: "Untitled", rows: rows) { pid in
+            pid == 1 ? [card(10, minimized: true)] : [card(20, minimized: false)]
+        }
+        #expect(owner == 1)
+        let both = DockSwitcherList.minimizedOwnerPID(title: "Untitled", rows: rows) { pid in
+            [card(pid == 1 ? 10 : 20, minimized: true)]
+        }
+        #expect(both == nil, "two minimized claimants stay ambiguous — the card stays tile-backed")
+        let neither = DockSwitcherList.minimizedOwnerPID(title: "Untitled", rows: rows) { _ in [] }
+        #expect(neither == nil)
     }
 
     // MARK: The preview key surface
@@ -283,6 +362,63 @@ struct DockSwitcherTests {
         #expect(passes(tap, a))
         tap.setPreviewOpen(false)
         #expect(passes(tap, arrow), "closing the panel hands the keys back")
+    }
+
+    @Test("only this display keeps the windows centred on it — minimized and frameless rows stay")
+    func displayFilter() {
+        func item(_ id: String, x: CGFloat?, minimized: Bool = false) -> SwitcherItem {
+            SwitcherItem(id: id, pid: 1, appName: "A", icon: nil, title: id,
+                         minimized: minimized, onScreen: !minimized, element: nil, windowID: nil,
+                         frame: x.map { CGRect(x: $0, y: 100, width: 400, height: 300) })
+        }
+        let left = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let kept = DockSwitcherList.onDisplay([
+            item("here", x: 100), item("there", x: 2000), item("parked", x: 2000, minimized: true),
+            item("unknown", x: nil), item("straddle", x: 1300),
+        ], display: left)
+        #expect(kept.map(\.id) == ["here", "parked", "unknown"],
+                "a window mostly on the next screen belongs to that screen")
+        let windows = [
+            DockPreviewWindow(id: 1, title: "a", minimized: false, fullScreen: nil,
+                              frame: CGRect(x: 10, y: 10, width: 100, height: 100), thumbnail: nil, element: nil),
+            DockPreviewWindow(id: 2, title: "b", minimized: false, fullScreen: nil,
+                              frame: CGRect(x: 2000, y: 10, width: 100, height: 100), thumbnail: nil, element: nil),
+            DockPreviewWindow(id: 3, title: "c", minimized: true, fullScreen: nil,
+                              frame: CGRect(x: 2000, y: 10, width: 100, height: 100), thumbnail: nil, element: nil),
+        ]
+        #expect(DockEnhanceMath.onDisplay(windows, display: left).map(\.id) == [1, 3])
+    }
+
+    @Test("the live strip rebuilds on window and agent changes, not retitles")
+    func liveSignature() {
+        let rows = [row(pid: 1, wid: 10, title: "⠂ Claude"), row(pid: 2, wid: 20)]
+        let before = DockSwitcherList.signature(rows: rows, offRows: [], marks: [])
+        let retitled = DockSwitcherList.signature(
+            rows: [row(pid: 1, wid: 10, title: "⠐ Claude"), row(pid: 2, wid: 20)], offRows: [], marks: [])
+        #expect(before == retitled, "a terminal's spinner must not rebuild the strip every frame")
+        let opened = DockSwitcherList.signature(rows: rows + [row(pid: 1, wid: 11)], offRows: [], marks: [])
+        #expect(before != opened, "a new window re-lists")
+        let minimized = DockSwitcherList.signature(rows: [row(pid: 2, wid: 20)],
+                                                   offRows: [row(pid: 1, wid: 10)], marks: [])
+        #expect(before == minimized, "a window moving off-screen is the same window")
+    }
+
+    @Test("` under the open strip is the scope toggle, not a typed character")
+    func scopeKey() throws {
+        let tap = SwitcherKeyTap()
+        let grave = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 50, keyDown: true))
+        #expect(passes(tap, grave), "closed: ` types as usual")
+        tap.setOpen(true)
+        #expect(!passes(tap, grave))
+        tap.setOpen(false)
+    }
+
+    @Test("stills capture the selected card first, then the strip in order")
+    func captureOrder() {
+        let items = ["a", "b", "c", "d"].map { named("App", $0) }
+        #expect(DockSwitcherThumbs.captureOrder(items, selectedID: "App-c").map(\.title) == ["c", "a", "b", "d"])
+        #expect(DockSwitcherThumbs.captureOrder(items, selectedID: nil).map(\.title) == ["a", "b", "c", "d"])
+        #expect(DockSwitcherThumbs.captureOrder(items, selectedID: "gone").map(\.title) == ["a", "b", "c", "d"])
     }
 
     @MainActor

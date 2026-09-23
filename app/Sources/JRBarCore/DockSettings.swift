@@ -27,16 +27,22 @@ public struct DockSettings: Codable, Equatable, Sendable {
     public var provider: DockProvider
     /// The hover-preview knobs.
     public var enhance: DockEnhanceSettings
+    /// Who owns the ⌥⇥ / ⌘⇥ chords — its own pick, so handing the
+    /// previews to DockDoor no longer takes JR-Bar's switcher with them.
+    public var switcherProvider: DockSwitcherProvider
 
     public init(enabled: Bool = false, provider: DockProvider = .jrbar,
-                enhance: DockEnhanceSettings = DockEnhanceSettings()) {
+                enhance: DockEnhanceSettings = DockEnhanceSettings(),
+                switcherProvider: DockSwitcherProvider = .jrbar) {
         self.enabled = enabled
         self.provider = provider
         self.enhance = enhance
+        self.switcherProvider = switcherProvider
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, enhance
+        case switcherProvider
     }
 
     public init(from decoder: any Decoder) throws {
@@ -44,7 +50,74 @@ public struct DockSettings: Codable, Equatable, Sendable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         provider = (try? c.decodeIfPresent(DockProvider.self, forKey: .provider)) ?? .jrbar
         enhance = (try? c.decodeIfPresent(DockEnhanceSettings.self, forKey: .enhance)) ?? DockEnhanceSettings()
+        // A blob from before the split has no switcher pick: back then
+        // an external renderer parked the whole card, ⌥⇥ included, so
+        // DockDoor's own switcher answered it. That stays true until the
+        // pick is made — an upgrade never starts a tap nobody chose.
+        if let picked = try? c.decodeIfPresent(DockSwitcherProvider.self, forKey: .switcherProvider) {
+            switcherProvider = picked
+        } else {
+            switcherProvider = DockSwitcherProvider.legacy(for: provider)
+        }
     }
+
+    /// Whether JR-Bar's own hover watcher should run: the card on,
+    /// JR-Bar picked to render, and hover previews wanted.
+    public var previewsWanted: Bool {
+        enabled && provider == .jrbar && enhance.hoverPreviews
+    }
+
+    /// Whether JR-Bar's switcher chords should be live — independent of
+    /// who renders the previews.
+    public var switcherWanted: Bool {
+        enabled && switcherProvider == .jrbar && (enhance.windowSwitcher || enhance.appSwitcher)
+    }
+}
+
+/// Who answers ⌥⇥ and ⌘⇥: JR-Bar's own switcher, an installed
+/// counterpart the card hands the chords to (AltTab, DockDoor, Witch,
+/// Contexts), or nobody of ours — `off` leaves both chords to macOS and
+/// whatever else binds them. Any pick but `jrbar` parks our chords; the
+/// tap still runs for the preview's keys when the watcher is up.
+public enum DockSwitcherProvider: String, Codable, CaseIterable, Sendable {
+    case jrbar, altTab, dockDoor, witch, contexts, off
+
+    /// The pick a pre-split blob implies from its renderer: JR-Bar kept
+    /// its chords, DockDoor answered ⌥⇥ with its own switcher, and
+    /// ActiveDock's pick left the chords to nobody of ours.
+    public static func legacy(for renderer: DockProvider) -> DockSwitcherProvider {
+        switch renderer {
+        case .jrbar: return .jrbar
+        case .dockDoor: return .dockDoor
+        case .activeDock: return .off
+        }
+    }
+}
+
+/// One remembered switcher pick — Contexts' Fast Search: a short query
+/// and the window (app name + title stem) it last landed on, so the same
+/// query ranks that window first next time. Local, in `app-state.json`
+/// only; the card's Forget clears the list.
+public struct DockLearnedPick: Codable, Equatable, Sendable {
+    public var query: String
+    public var pick: String
+
+    public init(query: String, pick: String) {
+        self.query = query
+        self.pick = pick
+    }
+}
+
+/// What opens a Dock preview — DockDoor 1.39.5's trigger modes. Hover
+/// is the rest-on-an-icon default; the other two make it deliberate for
+/// anyone who finds hover panels noisy while aiming at the Dock.
+public enum DockPreviewTrigger: String, Codable, CaseIterable, Sendable {
+    /// Rest on an icon for the delay.
+    case hover
+    /// Rest on an icon while ⌥ is held.
+    case optionHover
+    /// Middle-click an icon — Apple's Dock ignores that button.
+    case middleClick
 }
 
 /// The hover-preview knobs (docs/TOY-PARITY.md, "Dock — Enhance"):
@@ -89,6 +162,33 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Bundle ids that never earn a preview — DockDoor's app filters.
     /// A tile whose app is listed here rests and opens nothing.
     public var excludedBundleIDs: [String]
+    /// Resting on a Dock icon opens its preview. Off keeps the card on
+    /// for the switcher alone — ⌥⇥ without hover panels.
+    public var hoverPreviews: Bool
+    /// The ⌥⇥ strip lists only the windows on the pointer's display.
+    public var switcherThisDisplay: Bool
+    /// A preview lists only the windows on the display its Dock is on.
+    public var previewThisDisplay: Bool
+    /// What opens a preview: a rest (the default), a rest with ⌥ held,
+    /// or a middle click on the icon.
+    public var previewTrigger: DockPreviewTrigger
+    /// Scrolling on a Dock icon: up opens its preview at once, down
+    /// hides the app — HyperDock's classic. Off by default.
+    public var scrollGestures: Bool
+    /// Clicking the front app's own Dock icon minimizes its windows —
+    /// the Windows-taskbar habit DockDoor offers. Off by default.
+    public var clickToMinimize: Bool
+    /// The switcher's learned type-ahead, most recent first.
+    public var learnedPicks: [DockLearnedPick]
+    /// The card under the pointer plays live (one stream on that one
+    /// window) instead of showing a still — AltTab's and DockDoor's
+    /// live previews, at the cost of macOS's recording dot staying on
+    /// while it plays. Off by default.
+    public var liveCard: Bool
+    /// ⌥` opens the front app's preview on its Dock tile with the first
+    /// card walked — the keyboard walk with no pointer at all. Off by
+    /// default: it takes the accent key ⌥` types on US layouts.
+    public var frontAppChord: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -103,7 +203,16 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 compactListLimit: Int = DockEnhanceSettings.defaultCompactLimit,
                 windowSwitcher: Bool = true,
                 appSwitcher: Bool = false,
-                excludedBundleIDs: [String] = []) {
+                excludedBundleIDs: [String] = [],
+                hoverPreviews: Bool = true,
+                switcherThisDisplay: Bool = false,
+                previewThisDisplay: Bool = false,
+                previewTrigger: DockPreviewTrigger = .hover,
+                scrollGestures: Bool = false,
+                clickToMinimize: Bool = false,
+                learnedPicks: [DockLearnedPick] = [],
+                liveCard: Bool = false,
+                frontAppChord: Bool = false) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -113,6 +222,15 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.windowSwitcher = windowSwitcher
         self.appSwitcher = appSwitcher
         self.excludedBundleIDs = excludedBundleIDs
+        self.hoverPreviews = hoverPreviews
+        self.switcherThisDisplay = switcherThisDisplay
+        self.previewThisDisplay = previewThisDisplay
+        self.previewTrigger = previewTrigger
+        self.scrollGestures = scrollGestures
+        self.clickToMinimize = clickToMinimize
+        self.learnedPicks = learnedPicks
+        self.liveCard = liveCard
+        self.frontAppChord = frontAppChord
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -127,6 +245,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
+        case hoverPreviews, switcherThisDisplay, previewThisDisplay
+        case previewTrigger, scrollGestures, clickToMinimize, learnedPicks, liveCard
+        case frontAppChord
     }
 
     public init(from decoder: any Decoder) throws {
@@ -142,6 +263,15 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         windowSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .windowSwitcher)) ?? true
         appSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .appSwitcher)) ?? false
         excludedBundleIDs = (try? c.decodeIfPresent([String].self, forKey: .excludedBundleIDs)) ?? []
+        hoverPreviews = (try? c.decodeIfPresent(Bool.self, forKey: .hoverPreviews)) ?? true
+        switcherThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .switcherThisDisplay)) ?? false
+        previewThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .previewThisDisplay)) ?? false
+        previewTrigger = (try? c.decodeIfPresent(DockPreviewTrigger.self, forKey: .previewTrigger)) ?? .hover
+        scrollGestures = (try? c.decodeIfPresent(Bool.self, forKey: .scrollGestures)) ?? false
+        clickToMinimize = (try? c.decodeIfPresent(Bool.self, forKey: .clickToMinimize)) ?? false
+        learnedPicks = (try? c.decodeIfPresent([DockLearnedPick].self, forKey: .learnedPicks)) ?? []
+        liveCard = (try? c.decodeIfPresent(Bool.self, forKey: .liveCard)) ?? false
+        frontAppChord = (try? c.decodeIfPresent(Bool.self, forKey: .frontAppChord)) ?? false
     }
 }
 

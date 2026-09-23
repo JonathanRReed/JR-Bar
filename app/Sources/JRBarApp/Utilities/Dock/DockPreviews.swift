@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreImage
 import JRBarCore
 import ScreenCaptureKit
 
@@ -70,6 +71,113 @@ final class DockPanelWatchers {
     isolated deinit { stop() }
 }
 
+/// Keeps an open preview's card list live: an `AXObserver` on the
+/// previewed app for new windows, and on each listed window for its
+/// close, retitle, minimize and restore. Bursts coalesce into one
+/// `onChange` a beat later (a new window posts created, titled and
+/// focused in a row). DockDoor 1.40's live list — the cards follow the
+/// app instead of only our own verbs.
+///
+/// A burst never outlasts `maxWait`: a terminal whose agent spins its
+/// title ("⠂ Claude" → "⠐ Claude") retitles faster than the debounce,
+/// and a trailing-only settle would never fire while the agent works —
+/// the one window the preview most needs to follow.
+@MainActor
+final class DockWindowObserver {
+    var onChange: (@MainActor () -> Void)?
+    /// A burst's settle time before one refresh runs.
+    nonisolated static let debounce: TimeInterval = 0.15
+    /// The longest a burst can hold its refresh back.
+    nonisolated static let maxWait: TimeInterval = 0.5
+
+    private var observer: AXObserver?
+    private(set) var pid: pid_t?
+    private var watched = Set<AXUIElement>()
+    private var pending: DispatchWorkItem?
+    /// When the pending burst's first notification landed.
+    private var burstStart: TimeInterval?
+
+    static let appNotifications = [kAXWindowCreatedNotification]
+    static let windowNotifications = [
+        kAXUIElementDestroyedNotification, kAXTitleChangedNotification,
+        kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification,
+    ]
+
+    /// Watch `pid`'s window list and each of `windows`. Replaces any
+    /// earlier watch; fails soft (no watch) without Accessibility.
+    func observe(pid: pid_t, windows: [AXUIElement]) {
+        stop()
+        var created: AXObserver?
+        let callback: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            let me = Unmanaged<DockWindowObserver>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { me.fire() }
+        }
+        guard AXObserverCreate(pid, callback, &created) == .success, let created else { return }
+        observer = created
+        self.pid = pid
+        let app = AXUIElementCreateApplication(pid)
+        for name in Self.appNotifications {
+            AXObserverAddNotification(created, app, name as CFString, refcon)
+        }
+        watch(windows)
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .commonModes)
+    }
+
+    /// Start watching windows that arrived since `observe` — a window
+    /// that just opened must report its own close too.
+    func watch(_ windows: [AXUIElement]) {
+        guard let observer else { return }
+        for window in windows where watched.insert(window).inserted {
+            for name in Self.windowNotifications {
+                AXObserverAddNotification(observer, window, name as CFString, refcon)
+            }
+        }
+    }
+
+    func stop() {
+        pending?.cancel()
+        pending = nil
+        burstStart = nil
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+        }
+        observer = nil
+        pid = nil
+        watched = []
+    }
+
+    private var refcon: UnsafeMutableRawPointer { Unmanaged.passUnretained(self).toOpaque() }
+
+    /// One notification: re-arm the settle, but never past the burst's
+    /// `maxWait`. Internal for the tests, which fire bursts directly.
+    func fire() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let start = burstStart ?? now
+        burstStart = start
+        pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pending = nil
+                self.burstStart = nil
+                self.onChange?()
+            }
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.delay(now: now, burstStart: start), execute: work)
+    }
+
+    /// Seconds from `now` until the refresh runs: the settle, cut short
+    /// so the burst that began at `burstStart` refreshes by `maxWait`.
+    nonisolated static func delay(now: TimeInterval, burstStart: TimeInterval) -> TimeInterval {
+        max(0, min(debounce, burstStart + maxWait - now))
+    }
+
+    isolated deinit { stop() }
+}
+
 /// One-shot `SCScreenshotManager` captures matched to preview cards by
 /// frame (title as the fallback). No stream, so no purple indicator;
 /// every step fails soft to the icon + title card.
@@ -107,8 +215,40 @@ enum DockThumbnailer {
     /// Keyed by owner pid + window id: a bare CGWindowID can be
     /// recycled by the window server after a window dies, and a stale
     /// entry under a recycled id once served another app's pixels.
-    @MainActor private static var captureCache: [String: (image: NSImage, at: Date)] = [:]
+    /// Each entry also carries the tag of the agent state the window
+    /// showed when it was taken (`DockAgentMark.stillTag`): an agent
+    /// that asked or moved on since makes the still stale early.
+    @MainActor private static var captureCache: [String: (image: NSImage, at: Date, tag: String?)] = [:]
     nonisolated static let captureLifetime: TimeInterval = 30
+    /// The card under the pointer never shows a still older than this:
+    /// a hover on a card whose still has aged past it re-takes that one
+    /// window. The rest keep the half-minute cache, and the recording
+    /// dot still only blinks when a card is deliberately looked at.
+    nonisolated static let hoverFreshness: TimeInterval = 5
+
+    /// Whether a cached still may stand in for a fresh capture: young
+    /// enough for the caller's bound and taken under the agent state
+    /// the window is in now.
+    nonisolated static func cacheServes(age: TimeInterval, maxAge: TimeInterval,
+                                        cachedTag: String?, tag: String?) -> Bool {
+        age >= 0 && age < maxAge && cachedTag == tag
+    }
+
+    /// Whether a hover should re-take a card's still: only a card that
+    /// already shows one (a missing still is the first pass's job, and
+    /// may still be in flight), when the cached copy is past
+    /// `hoverFreshness`, gone, or taken under another agent state.
+    nonisolated static func wantsHoverRefresh(hasStill: Bool, age: TimeInterval?,
+                                              cachedTag: String?, tag: String?) -> Bool {
+        guard hasStill else { return false }
+        guard let age else { return true }
+        return !cacheServes(age: age, maxAge: hoverFreshness, cachedTag: cachedTag, tag: tag)
+    }
+
+    /// The cached still's age and tag for one window, if any.
+    static func cached(pid: pid_t, windowID: CGWindowID, now: Date = Date()) -> (age: TimeInterval, tag: String?)? {
+        captureCache["\(pid):\(windowID)"].map { (now.timeIntervalSince($0.at), $0.tag) }
+    }
 
     /// Downsamples the capture to 8×8 and sums the alpha channel —
     /// a purged backing store yields a `CGImage` of nothing.
@@ -190,7 +330,8 @@ enum DockThumbnailer {
             // The row's identity, not its index: a card closed while
             // this capture was in flight would shift the rows under it.
             let rowID = content.windows[index].id
-            guard let image = await capture(scWindow: scWindow, pid: pid, scale: scale) else { continue }
+            let tag = content.agents[rowID]?.stillTag
+            guard let image = await capture(scWindow: scWindow, pid: pid, scale: scale, tag: tag) else { continue }
             // Re-check the preview still belongs to this app — a
             // same-generation refill (New window) rewrites the rows
             // without tripping `isStale`.
@@ -205,12 +346,16 @@ enum DockThumbnailer {
     /// share, cached per window for `captureLifetime`. Purged backing
     /// stores come back as a fully transparent "success" and are
     /// refused: a dark window keeps alpha 255, so the probe reads the
-    /// channel, not colour.
-    static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat) async -> NSImage? {
+    /// channel, not colour. `tag` is the window's agent state now
+    /// (`DockAgentMark.stillTag`); `maxAge` tightens the cache for a
+    /// hovered card.
+    static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat,
+                        tag: String? = nil, maxAge: TimeInterval = captureLifetime) async -> NSImage? {
         let cacheKey = "\(pid):\(scWindow.windowID)"
         let now = Date()
         if let cached = captureCache[cacheKey],
-           now.timeIntervalSince(cached.at) < captureLifetime { return cached.image }
+           cacheServes(age: now.timeIntervalSince(cached.at), maxAge: min(maxAge, captureLifetime),
+                       cachedTag: cached.tag, tag: tag) { return cached.image }
         captureCache = captureCache.filter { now.timeIntervalSince($0.value.at) < captureLifetime }
         let configuration = SCStreamConfiguration()
         let bounds = scWindow.frame
@@ -228,7 +373,166 @@ enum DockThumbnailer {
             cgImage: trimmed,
             size: NSSize(width: CGFloat(trimmed.width) / scale,
                          height: CGFloat(trimmed.height) / scale))
-        captureCache[cacheKey] = (image, Date())
+        captureCache[cacheKey] = (image, Date(), tag)
         return image
+    }
+
+    /// One window's still re-taken for a hovered card — found by its
+    /// native id among every shareable window (a minimized or other-
+    /// Space window still holds its pixels), captured under the hover's
+    /// tighter bound. nil when the window is gone or the capture fails;
+    /// the card keeps the still it has.
+    static func fresh(windowID: CGWindowID, pid: pid_t, tag: String?) async -> NSImage? {
+        guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: false),
+              let scWindow = shareable.windows.first(where: { $0.windowID == windowID }),
+              scWindow.owningApplication?.processID == pid else { return nil }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        return await capture(scWindow: scWindow, pid: pid, scale: scale, tag: tag, maxAge: hoverFreshness)
+    }
+}
+
+/// The opt-in live card: one `SCStream` on the one window the pointer
+/// rests on, at a thumbnail's size and `framesPerSecond`, torn down the
+/// moment the pointer leaves the card or the panel goes. Unlike the
+/// one-shot stills it keeps macOS's recording dot lit while it plays —
+/// the card's copy says so, and the setting is off by default. Every
+/// step fails soft: a window that won't stream keeps its still.
+@MainActor
+final class DockLiveStill {
+    static let framesPerSecond: Int32 = 8
+
+    /// A frame for `windowID`, already sized for the card.
+    var onFrame: (@MainActor (CGWindowID, NSImage) -> Void)?
+    /// The window streaming now (or starting to).
+    private(set) var windowID: CGWindowID?
+    private var stream: SCStream?
+    private var sink: DockLiveSink?
+    /// Bumped on every start and stop — a start still resolving when
+    /// the pointer moved on closes what it opened instead of keeping it.
+    private var token = 0
+    /// The window server's handle for `windowID` owned by `pid`, or nil.
+    /// Internal so the tests can stand in for ScreenCaptureKit.
+    var lookup: @MainActor (CGWindowID, pid_t) async -> SCWindow? = { windowID, pid in
+        guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: false) else { return nil }
+        return shareable.windows.first { $0.windowID == windowID && $0.owningApplication?.processID == pid }
+    }
+
+    func start(windowID: CGWindowID, pid: pid_t) {
+        guard self.windowID != windowID else { return }
+        stop()
+        token &+= 1
+        let started = token
+        self.windowID = windowID
+        Task { @MainActor [weak self] in
+            guard let lookup = self?.lookup else { return }
+            let found = await lookup(windowID, pid)
+            guard let self, self.token == started else { return }
+            guard let scWindow = found else {
+                self.forget(started)
+                return
+            }
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            let bounds = scWindow.frame
+            let factor = min(1, DockThumbnailer.pointLimit / max(bounds.width, bounds.height, 1)) * scale
+            let configuration = SCStreamConfiguration()
+            configuration.width = max(2, Int(bounds.width * factor))
+            configuration.height = max(2, Int(bounds.height * factor))
+            configuration.scalesToFit = true
+            configuration.showsCursor = false
+            configuration.capturesAudio = false
+            configuration.queueDepth = 3
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: Self.framesPerSecond)
+            configuration.pixelFormat = kCVPixelFormatType_32BGRA
+            configuration.colorSpaceName = CGColorSpace.sRGB
+            let sink = DockLiveSink()
+            sink.onImage = { [weak self] frame in
+                Task { @MainActor [weak self] in
+                    guard let self, self.token == started else { return }
+                    self.onFrame?(windowID, NSImage(
+                        cgImage: frame.image,
+                        size: NSSize(width: CGFloat(frame.image.width) / scale,
+                                     height: CGFloat(frame.image.height) / scale)))
+                }
+            }
+            sink.onStop = { [weak self] in
+                Task { @MainActor [weak self] in self?.forget(started) }
+            }
+            let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: scWindow),
+                                  configuration: configuration, delegate: sink)
+            do {
+                try stream.addStreamOutput(sink, type: .screen,
+                                           sampleHandlerQueue: DispatchQueue(label: "jrbar.dock.live"))
+                try await stream.startCapture()
+            } catch {
+                self.forget(started)
+                return
+            }
+            guard self.token == started else {
+                try? await stream.stopCapture()
+                return
+            }
+            self.stream = stream
+            self.sink = sink
+        }
+    }
+
+    func stop() {
+        token &+= 1
+        windowID = nil
+        sink = nil
+        guard let stream else { return }
+        self.stream = nil
+        Task { try? await stream.stopCapture() }
+    }
+
+    /// A start that came to nothing — no such window, no grant, a stream
+    /// that wouldn't open or that the system stopped — forgets its
+    /// window, so the next hover on that card tries again instead of
+    /// finding it "already streaming". A later start owns the state.
+    private func forget(_ started: Int) {
+        guard token == started else { return }
+        windowID = nil
+        sink = nil
+        stream = nil
+    }
+
+    isolated deinit { stop() }
+}
+
+/// A finished frame crossing from the stream's queue to the main actor.
+struct DockLiveFrame: @unchecked Sendable {
+    let image: CGImage
+}
+
+/// Receives the live card's frames on the stream's queue, keeps only
+/// complete ones and turns each into a `CGImage` there, off the main
+/// thread. Also the stream's delegate — SCK only reports a dead stream
+/// through `didStopWithError`.
+final class DockLiveSink: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    var onImage: (@Sendable (DockLiveFrame) -> Void)?
+    private let context = CIContext(options: [.cacheIntermediates: false])
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+                of type: SCStreamOutputType) {
+        guard type == .screen, sampleBuffer.isValid,
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                  sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let status = attachments.first?[.status] as? Int,
+              status == SCFrameStatus.complete.rawValue,
+              let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let image = CIImage(cvPixelBuffer: buffer)
+        guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
+        onImage?(DockLiveFrame(image: cgImage))
+    }
+
+    /// The system ended the stream (the window closed, the grant was
+    /// pulled) — the owner forgets it.
+    var onStop: (@Sendable () -> Void)?
+
+    func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        onImage = nil
+        onStop?()
     }
 }

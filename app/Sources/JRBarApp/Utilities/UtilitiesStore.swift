@@ -102,6 +102,15 @@ final class UtilitiesStore {
         dock.onSettingsChange = { [weak self] updated in
             self?.state.dock = updated
         }
+        // The Dock and the switcher mark the windows agents run in from
+        // the same live `state.sessions` the panel reads.
+        dock.sessions = { [weak self] in self?.core.state?.sessions ?? [] }
+        dock.asks = { [weak self] in self?.core.state?.asks ?? [] }
+        dock.sendAnswer = { [weak self] session, approve, request in
+            guard let self else { throw CoreClientError.notConnected }
+            return try await self.core.answerAskNow(session: session, approve: approve,
+                                                    request: request)
+        }
         agents.settings = { [weak self] in self?.state.agents ?? AgentOrganizerSettings() }
         agents.onSettingsChange = { [weak self] updated in
             self?.state.agents = updated
@@ -123,6 +132,15 @@ final class UtilitiesStore {
     private func applyDock() {
         if state.dock.enabled { dock.start() } else { dock.stop() }
         dock.applySettings()
+    }
+
+    /// Raise the exact window a live agent session runs in, if one
+    /// window exclusively hosts it (`SessionWindowLocator`). True when
+    /// that window is now in front; false leaves the caller's fallback
+    /// (`open_session`) to act — it resumes, it doesn't raise.
+    @discardableResult
+    func raiseSessionWindow(_ sessionID: String) -> Bool {
+        dock.raiseSessionWindow(sessionID) == .raised
     }
 
     /// `applicationWillTerminate`'s stop: collapses the menu bar's

@@ -68,6 +68,60 @@ import Testing
                 "the rested new icon takes the panel over — no flicker")
     }
 
+    @Test("a middle click or an upward scroll opens the panel at once; the rest's grace still closes it")
+    func summonSkipsTheRest() {
+        var tracker = DockHoverTracker()
+        #expect(tracker.summon("Safari", now: 0) == .show("Safari"), "no delay for a deliberate summon")
+        #expect(tracker.summon("Safari", now: 0.1) == .none, "the same tile again is no second show")
+        #expect(tracker.note(hovered: "Safari", pointerInPanel: false, now: 0.2, delay: 0.25) == .none)
+        _ = tracker.note(hovered: nil, pointerInPanel: false, now: 0.3, delay: 0.25)
+        #expect(tracker.note(hovered: nil, pointerInPanel: false,
+                             now: 0.3 + DockHoverTracker.grace + 0.01, delay: 0.25) == .hide)
+    }
+
+    @Test("trigger modes: ⌥ gates a rest, Middle Click never rests one open, the shown tile always holds")
+    func triggerModesGateTheRest() {
+        typealias T = DockHoverTracker
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .hover, optionHeld: false) == "Safari")
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .optionHover, optionHeld: false) == nil)
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .optionHover, optionHeld: true) == "Safari")
+        #expect(T.trackedItem("Safari", shown: nil, trigger: .middleClick, optionHeld: true) == nil)
+        #expect(T.trackedItem("Safari", shown: "Safari", trigger: .middleClick, optionHeld: false) == "Safari",
+                "the summoned tile under the pointer keeps its panel")
+        #expect(T.trackedItem("Safari", shown: "Safari", trigger: .optionHover, optionHeld: false) == "Safari",
+                "letting go of ⌥ doesn't close the panel under the pointer")
+        #expect(T.trackedItem("Mail", shown: "Safari", trigger: .optionHover, optionHeld: false) == nil,
+                "a retarget needs ⌥ too")
+        #expect(T.trackedItem(nil, shown: "Safari", trigger: .hover, optionHeld: true) == nil)
+    }
+
+    @Test("only a click on the app already in front minimizes it")
+    func clickToMinimizeNeedsTheFrontApp() {
+        #expect(DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7,
+                                               lastActivation: (7, 10), clickAt: 20))
+        #expect(!DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7,
+                                                lastActivation: (7, 20.05), clickAt: 20),
+                "an activation stamped after the click is the click's own — the Dock just brought it forward")
+        #expect(!DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 3,
+                                                lastActivation: (3, 10), clickAt: 20))
+        #expect(DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7,
+                                               lastActivation: (3, 10), clickAt: 20),
+                "front since before we watched — judged by the front app alone")
+        #expect(DockEnhanceMath.clickMinimizes(appPID: 7, frontmostPID: 7, lastActivation: nil, clickAt: 20))
+    }
+
+    @Test("a wheel's notches and a trackpad's points meet one flick threshold")
+    func scrollUnits() {
+        #expect(DockEnhanceMath.scrollAmount(12, precise: true) == 12)
+        #expect(DockEnhanceMath.scrollAmount(1, precise: false) == 20)
+        var flick = DockEnhanceMath.SwipeAccumulator()
+        let notch = DockEnhanceMath.scrollAmount(1, precise: false)
+        #expect(flick.note(deltaY: notch, inverted: false, now: 0) == nil)
+        #expect(flick.note(deltaY: notch, inverted: false, now: 0.05) == nil)
+        #expect(flick.note(deltaY: notch, inverted: false, now: 0.1) == .up,
+                "three wheel-up notches are a deliberate scroll up")
+    }
+
     // MARK: Geometry
 
     @Test func axAndAppKitCoordinatesFlip() {
@@ -697,6 +751,27 @@ import Testing
                 "a stranded hold is worth one defaults write + Dock bounce")
     }
 
+    @Test func aRecoveredHoldSaysSoOnTheCardAndAMissingDriverIsNamed() {
+        let suite = freshPersistence("recoveredNote")
+        let driver = FakeAutohideDriver()
+        DockAutohideHold(driver: driver, persistence: suite).hold()
+        // …the next life boots with the marker still set.
+        let hold = DockAutohideHold(driver: driver, persistence: suite)
+        let utility = DockUtility(autohideHold: hold)
+        var stored = DockSettings()
+        utility.settings = { stored }
+        utility.onSettingsChange = { stored = $0 }
+        utility.applySettings()
+        #expect(utility.recoveredHoldNote == DockUtility.recoveredHoldLine)
+        utility.applySettings()
+        #expect(utility.recoveredHoldNote == DockUtility.recoveredHoldLine, "the note waits to be read")
+        utility.dismissRecoveredHoldNote()
+        #expect(utility.recoveredHoldNote == nil)
+        #expect(!hold.recoverIfNeeded(), "nothing stranded — nothing to report")
+        #expect(hold.available)
+        #expect(!DockAutohideHold(driver: nil, persistence: freshPersistence("noDriverCard")).available)
+    }
+
     // MARK: Compact list
 
     @Test func theCompactListTurnsOnPastTheLimit() {
@@ -762,12 +837,102 @@ import Testing
         #expect(listing.entries.isEmpty)
         #expect(listing.denied, "EACCES is a consent problem, not an empty folder")
     }
+
+    @Test("a folder pop reads the tile's own Sort By from the Dock's list")
+    func folderSortReadsTheTile() {
+        let others: [Any] = [
+            ["tile-data": ["arrangement": 2,
+                           "file-data": ["_CFURLString": "file:///Users/me/Downloads/", "_CFURLStringType": 15]],
+             "tile-type": "directory-tile"],
+            ["tile-data": ["arrangement": 5,
+                           "file-data": ["_CFURLString": "file:///Users/me/Documents/", "_CFURLStringType": 15]]],
+            ["tile-data": ["arrangement": 42,
+                           "file-data": ["_CFURLString": "file:///Users/me/Odd/", "_CFURLStringType": 15]]],
+        ]
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/Users/me/Downloads"), persistentOthers: others)
+                == .dateAdded)
+        #expect(DockFolderSort.of(folder: URL(string: "file:///Users/me/Documents/")!, persistentOthers: others)
+                == .kind)
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/Users/me/Odd"), persistentOthers: others) == .name,
+                "an arrangement the Dock never wrote reads as Name")
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/Users/me/Elsewhere"), persistentOthers: others)
+                == .name)
+        #expect(DockFolderSort.of(folder: URL(fileURLWithPath: "/x"), persistentOthers: nil) == .name)
+    }
+
+    @Test("date sorts run newest first; kind groups; undated entries sink")
+    func folderSortArranges() {
+        let base = URL(fileURLWithPath: "/tmp/pop")
+        func row(_ name: String, dir: Bool = false) -> DockFolderSort.Row {
+            .init(name: name, url: base.appendingPathComponent(name), isDir: dir)
+        }
+        let rows = [row("old.txt"), row("sub", dir: true), row("new.png"), row("mystery")]
+        let dates: [String: Date] = ["old.txt": Date(timeIntervalSince1970: 100),
+                                     "sub": Date(timeIntervalSince1970: 200),
+                                     "new.png": Date(timeIntervalSince1970: 300)]
+        let byDate = DockFolderSort.dateAdded.arrange(
+            rows, date: { dates[$0.lastPathComponent] }, kind: { _ in nil })
+        #expect(byDate.map(\.name) == ["new.png", "sub", "old.txt", "mystery"],
+                "today's download leads, folders take their date's place, the undated sink")
+        let byName = DockFolderSort.name.arrange(rows, date: { _ in nil }, kind: { _ in nil })
+        #expect(byName.map(\.name) == ["sub", "mystery", "new.png", "old.txt"])
+        let kinds = ["old.txt": "Plain Text", "new.png": "PNG image", "mystery": "Document", "sub": "Folder"]
+        let byKind = DockFolderSort.kind.arrange(rows, date: { _ in nil }, kind: { kinds[$0.lastPathComponent] })
+        #expect(byKind.map(\.name) == ["mystery", "sub", "old.txt", "new.png"])
+    }
+
+    @Test("the pop drills only into a subfolder of the folder showing, and grids five across")
+    func folderDrillAndGrid() {
+        let root = URL(fileURLWithPath: "/Users/me/Downloads/")
+        let sub = root.appendingPathComponent("Invoices")
+        let deeper = sub.appendingPathComponent("2026")
+        let trail = DockEnhanceMath.drilledTrail([], root: root, into: sub)
+        #expect(trail == [sub])
+        #expect(DockEnhanceMath.drilledTrail(trail ?? [], root: root, into: deeper) == [sub, deeper])
+        #expect(DockEnhanceMath.drilledTrail([], root: root, into: deeper) == nil,
+                "a chip from a listing the pop has left can't jump the trail")
+        #expect(DockEnhanceMath.drilledTrail([], root: root, into: URL(fileURLWithPath: "/tmp/x")) == nil)
+        #expect(DockEnhanceMath.folderGrid(count: 0) == (0, 0))
+        #expect(DockEnhanceMath.folderGrid(count: 3) == (3, 1), "a few entries stay one row, no dead columns")
+        #expect(DockEnhanceMath.folderGrid(count: 12) == (5, 3))
+        #expect(DockEnhanceMath.folderGrid(count: 60) == (5, 4), "past four rows the grid scrolls")
+    }
+
+    @Test func aModifiedSortedPopListsTheLatestFileFirst() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for (name, age) in [("a.txt", 300.0), ("b.txt", 10.0), ("c.txt", 100.0)] {
+            let path = dir.appendingPathComponent(name).path
+            FileManager.default.createFile(atPath: path, contents: nil)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: path)
+        }
+        let listing = DockEnhanceController.folderListing(of: dir, sort: .dateModified)
+        #expect(listing.entries.map(\.name) == ["b.txt", "c.txt", "a.txt"])
+    }
 }
 
 
 // MARK: - Card gestures
 
 extension DockEnhanceTests {
+    @Test("a shake minimises the siblings still up, or brings them all back once they're all down")
+    func shakePlans() {
+        func card(_ id: Int, _ minimized: Bool) -> DockPreviewWindow {
+            DockPreviewWindow(id: id, title: "w\(id)", minimized: minimized, fullScreen: nil,
+                              frame: nil, thumbnail: nil, element: nil)
+        }
+        let mixed = DockEnhanceMath.shakePlan([card(1, false), card(2, false), card(3, true)], shaken: 1)
+        #expect(mixed?.minimize == true)
+        #expect(mixed?.targets.map(\.id) == [2], "an already-minimised sibling isn't touched — and doesn't pulse")
+        let down = DockEnhanceMath.shakePlan([card(1, false), card(2, true), card(3, true)], shaken: 1)
+        #expect(down?.minimize == false)
+        #expect(down?.targets.map(\.id) == [2, 3])
+        #expect(DockEnhanceMath.shakePlan([card(1, false)], shaken: 1) == nil)
+    }
+
     @Test("a fast left-right-left wiggle is one shake; a slow drift is not")
     func shakeDetects() {
         var shake = DockEnhanceMath.ShakeDetector()
@@ -805,7 +970,7 @@ extension DockEnhanceTests {
     func swipeAccumulates() {
         var acc = DockEnhanceMath.SwipeAccumulator()
         // Natural scrolling: fingers down → +deltaY is a down-flick.
-        var flicks = [acc.note(deltaY: 20, inverted: true, now: 0),
+        let flicks = [acc.note(deltaY: 20, inverted: true, now: 0),
                       acc.note(deltaY: 20, inverted: true, now: 0.1),
                       acc.note(deltaY: 20, inverted: true, now: 0.2)]
         #expect(flicks == [nil, nil, .down])
