@@ -479,6 +479,17 @@ class PowerEvent:
             "duration": self.duration,
         }
 
+    @property
+    def worth_a_line(self) -> bool:
+        """Whether History (and the ``power`` event) says anything about
+        it. A lease the person cancelled or replaced is their own doing."""
+        if self.kind not in _POWER_HISTORY_LABELS:
+            return False
+        return not (
+            self.kind == POWER_LEASE_ENDED
+            and self.reason in (LEASE_END_CANCELLED, LEASE_END_REPLACED)
+        )
+
 
 class PowerLog:
     """The newest ``limit`` power events, optionally persisted."""
@@ -573,12 +584,7 @@ class PowerLog:
         rows: list[dict[str, object]] = []
         for event in reversed(self.events):
             label = _POWER_HISTORY_LABELS.get(event.kind)
-            if label is None or (since is not None and event.at < since):
-                continue
-            if event.kind == POWER_LEASE_ENDED and event.reason in (
-                LEASE_END_CANCELLED,
-                LEASE_END_REPLACED,
-            ):
+            if label is None or not event.worth_a_line or (since is not None and event.at < since):
                 continue
             rows.append(
                 {

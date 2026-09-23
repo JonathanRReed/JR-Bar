@@ -100,6 +100,21 @@ def test_hold_awake_starts_a_lease_the_state_reports(powered, tmp_path: Path) ->
     assert controller._core_build_state()["power"]["last_release"] is None
 
 
+def test_replacing_or_cancelling_a_lease_sends_no_power_event(powered) -> None:
+    controller = powered
+    server = controller._core
+    core_runtime._cmd_hold_awake(controller, {"seconds": 3600})
+    server.published.clear()
+    # The chip's second tap replaces the lease; the third lets it go. Both
+    # are the person's own doing, which History leaves out -- and so does
+    # the event the app would otherwise hear about.
+    core_runtime._cmd_hold_awake(controller, {"seconds": 7200})
+    core_runtime._cmd_release_awake(controller, {})
+    reasons = [event.reason for event in controller._core_power_log.events if event.kind == "lease_ended"]
+    assert reasons[-2:] == ["replaced", "cancelled"]
+    assert [document for kind, document in server.published if kind == "event"] == []
+
+
 def test_until_these_agents_finish_waits_on_the_live_main_sessions(powered) -> None:
     controller = powered
     reply = core_runtime._cmd_hold_awake(controller, {"until_agents_idle": True})

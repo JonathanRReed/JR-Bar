@@ -225,7 +225,9 @@ def after_keep_awake_sync(controller: Any) -> None:
         controller._core_power_published = fresh[-1]
     for event in fresh:
         label = _EVENT_LABELS.get(event.kind)
-        if label is None:
+        # The same entries History keeps: a cancelled or replaced lease was
+        # the person's own doing, and nobody needs telling about it.
+        if label is None or not event.worth_a_line:
             continue
         publish(
             "power",
