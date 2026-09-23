@@ -199,6 +199,8 @@ final class NotchToy: Toy {
             self.answerer.open(session: session)
         }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
+        cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
+        cardModel.onDropLanded = { [weak self] in self?.shelfDragLanded() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
             self.collapseIsland()
@@ -753,6 +755,10 @@ final class NotchToy: Toy {
         // A drag grows the card on Now: the session rows are drop
         // targets there (let go on an agent to hand it the file), and a
         // drop anywhere else lands in the tray and turns to the shelf.
+        // The rows and the card are AppKit destinations of their own
+        // (SwiftUI's `onDrop` views), so a drop on one never reaches
+        // the hosting view; `shelfDragLeftIsland` keeps the card up
+        // while the drag crosses onto them.
         guard !islandExpanded else { return }
         shelfSummoned = true
         let pendingWasClaimed = bandExpandPending
@@ -768,6 +774,9 @@ final class NotchToy: Toy {
     func shelfDragAbandoned() {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = false
         guard shelfSummoned else { return }
         shelfSummoned = false
         if shelfExpandPending {
@@ -783,8 +792,57 @@ final class NotchToy: Toy {
     func shelfDragLanded() {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = false
         shelfSummoned = false
         shelfExpandPending = false
+    }
+
+    /// The drag is over the hosting view itself — the notch strip, or
+    /// any part of the island the card's own targets do not cover.
+    @ObservationIgnored private var shelfDragOverIsland = false
+    /// The beat before a drag that left every target folds the card.
+    @ObservationIgnored private var shelfDragLeaveWork: DispatchWorkItem?
+    /// Long enough for the target the drag crossed onto to say so —
+    /// the hosting view hears the exit first — and short enough that a
+    /// drag carried away still folds the card at once.
+    static let shelfDragLeaveGrace: TimeInterval = 0.3
+
+    /// The hosting view heard the drag leave. AppKit says that too when
+    /// the drag only crossed onto one of the card's own drop targets (a
+    /// session row, the tray catch-all), which are destinations of their
+    /// own; folding then pulled the card out from under a drag heading
+    /// for an agent. The fold waits a beat and lands only if nothing in
+    /// the island has the drag by then.
+    func shelfDragLeftIsland() {
+        shelfDragOverIsland = false
+        shelfDragMoved()
+    }
+
+    /// The drag moved between the island and the card's targets
+    /// (`NotchCardModel.dropHover`).
+    func shelfDragMoved() {
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        if !cardModel.dropHover.isEmpty {
+            // A real drag over the card backs a shake summon now; its
+            // fold timer stands down, the same as at the notch.
+            shelfSummonExpiry?.cancel()
+            shelfSummonExpiry = nil
+            return
+        }
+        guard shelfSummoned, !shelfDragOverIsland else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.shelfDragLeaveWork = nil
+                guard !self.shelfDragOverIsland, self.cardModel.dropHover.isEmpty else { return }
+                self.shelfDragAbandoned()
+            }
+        }
+        shelfDragLeaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shelfDragLeaveGrace, execute: work)
     }
 
     /// The drop after the summon — file URLs straight in, web links
@@ -874,6 +932,9 @@ final class NotchToy: Toy {
     func shelfDragAtIsland() {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = true
         shelfSummon()
     }
 
@@ -1211,6 +1272,9 @@ final class NotchToy: Toy {
         shelfExpandPending = false
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        shelfDragLeaveWork?.cancel()
+        shelfDragLeaveWork = nil
+        shelfDragOverIsland = false
         activeCapsule = nil
         shelvedCapsule = nil
         capsuleWork?.cancel()

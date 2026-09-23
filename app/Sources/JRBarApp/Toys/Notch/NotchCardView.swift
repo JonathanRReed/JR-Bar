@@ -18,6 +18,9 @@ final class NotchCardModel {
             // puts it away, and the next open starts without it.
             if !pinned {
                 mirrorSummoned = false
+                // The rows that had a drag over them are gone with the
+                // card; a stale entry would read as a drag still here.
+                dropHover.removeAll()
                 // Only a real fold starts the next open on Now — a
                 // repeat "not pinned" while the card is already away
                 // must not undo a shelf summon waiting to grow.
@@ -226,6 +229,31 @@ final class NotchCardModel {
         onOpenRow?(session)
     }
 
+    /// A drop anywhere on the card but a session row: into the tray,
+    /// and the card turns to the shelf page to show where it landed.
+    func shelve(_ urls: [URL]) {
+        tray.add(urls)
+        show(.shelf)
+    }
+
+    /// The card's own drop targets a drag is over right now — the
+    /// catch-all ("card"), each session row ("row:<id>") and each
+    /// shelf tile ("tile:<id>"). AppKit
+    /// hands a drag to these as their own destinations, so the island's
+    /// hosting view hears it leave the moment it crosses onto one; the
+    /// toy reads this set to tell a drag that moved onto a row from one
+    /// that left the island.
+    @ObservationIgnored private(set) var dropHover: Set<String> = []
+    /// Any change to `dropHover`.
+    @ObservationIgnored var onDropHover: (() -> Void)?
+    /// A drop landed on one of the card's targets.
+    @ObservationIgnored var onDropLanded: (() -> Void)?
+
+    func setDropHover(_ target: String, _ over: Bool) {
+        let changed = over ? dropHover.insert(target).inserted : dropHover.remove(target) != nil
+        if changed { onDropHover?() }
+    }
+
     init(timers: ShelfTimerModel, tray: ShelfTrayModel,
          runtimeEnabled: Bool = true) {
         self.timers = timers
@@ -331,12 +359,20 @@ struct NotchCardView: View {
         .padding(.bottom, style == .island
             ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
-        .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText], isTargeted: nil) { providers in
+        .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
+                isTargeted: dropHover("card")) { providers in
             ShelfTrayDrop.urls(from: providers) { urls in
-                model.tray.add(urls)
+                model.shelve(urls)
             }
+            model.onDropLanded?()
             return true
         }
+    }
+
+    /// A drop target's hover, reported to the model (`dropHover`).
+    private func dropHover(_ target: String) -> Binding<Bool> {
+        Binding(get: { model.dropHover.contains(target) },
+                set: { model.setDropHover(target, $0) })
     }
 
     /// The ear-gesture vocabulary in one line — the marks-only ears
@@ -516,7 +552,9 @@ struct NotchCardView: View {
                                   handTargets: model.handTargets,
                                   onHand: { entry, session in
                                       model.handToAgent(entry, session: session)
-                                  }))
+                                  },
+                                  dropHover: { dropHover($0) },
+                                  onDropLanded: { model.onDropLanded?() }))
         if !model.timers.entries.isEmpty {
             revealRow(3, ShelfTimersRow(timers: model.timers, style: style))
         }
@@ -652,11 +690,17 @@ struct NotchCardView: View {
         }
         // Drag a screenshot to the notch and let go on the agent: the
         // file's `@path` is on the pasteboard and its session comes up.
-        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
-            guard opens else { return false }
+        // A row that cannot be opened here (a peer's) is the card like
+        // anywhere else: the file lands in the tray instead of bouncing.
+        .onDrop(of: [UTType.fileURL], isTargeted: dropHover("row:\(row.id)")) { providers in
             ShelfTrayDrop.urls(from: providers) { urls in
-                model.handFiles(urls, session: row.id)
+                if opens {
+                    model.handFiles(urls, session: row.id)
+                } else {
+                    model.shelve(urls)
+                }
             }
+            model.onDropLanded?()
             return true
         }
         .contextMenu {
@@ -1144,6 +1188,10 @@ private struct ShelfTrayRow: View {
     let style: NotchCardStyle
     var handTargets: [(id: String, label: String)] = []
     var onHand: (ShelfTrayModel.ShelfEntry, String) -> Void = { _, _ in }
+    /// Each tile is a drop target of its own; the card counts it among
+    /// the targets a drag can be over (`NotchCardModel.dropHover`).
+    var dropHover: ((String) -> Binding<Bool>)?
+    var onDropLanded: () -> Void = {}
 
     /// The shelf's tiles: a thumbnail over the name, Yoink's grammar —
     /// the shelf has its own page now, so a file shows its face rather
@@ -1258,12 +1306,13 @@ private struct ShelfTrayRow: View {
         .onDrag {
             tray.provider(for: entry) ?? NSItemProvider()
         }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+        .onDrop(of: [.fileURL], isTargeted: dropHover?("tile:\(entry.id)")) { providers in
             // No provider carrying a file means nothing to land —
             // an unconditional yes would animate acceptance anyway.
             guard providers.contains(where: {
                 $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
             }) else { return false }
+            onDropLanded()
             // A tray drag carries the entry's own file URLs: landing on
             // another chip reorders; a foreign file lands where it
             // dropped — onto a stack it joins the stack, anywhere else

@@ -62,10 +62,15 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     /// summon: the card grows under the pointer so the tray strip is
     /// there to take the drop.
     var onShelfDragEntered: () -> Void = {}
-    /// The drag left without dropping — the summoned card lets go
-    /// again instead of sitting pinned forever.
+    /// The drag left this view — out of the island, or onto one of the
+    /// card's own drop targets (a session row, the tray catch-all),
+    /// which AppKit hands the drag to as destinations of their own. The
+    /// toy tells the two apart before it lets a summoned card go.
     var onShelfDragExited: () -> Void = {}
     /// The drop itself — pasteboard URLs, files and web links alike.
+    /// Only a drop on the island proper lands here; one on a session
+    /// row or the grown card is that target's own (SwiftUI's `onDrop`
+    /// views, never routed through this view's methods).
     var onShelfDrop: ([URL]) -> Void = { _ in }
     /// The drag ended (drop performed) — the summon flag clears.
     var onShelfDragEnded: () -> Void = {}
@@ -353,7 +358,7 @@ final class NotchIslandWindow: NSPanel {
         // materializes as a .txt the way a web link becomes a .webloc.
         hosting.registerForDraggedTypes([.fileURL, .URL, .string])
         hosting.onShelfDragEntered = { [weak toy] in toy?.shelfDragAtIsland() }
-        hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragAbandoned() }
+        hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragLeftIsland() }
         hosting.onShelfDragEnded = { [weak toy] in toy?.shelfDragLanded() }
         hosting.onShelfDrop = { [weak toy] urls in toy?.shelfDrop(urls) }
         // The grown card's content follows its frame: each spring tick
