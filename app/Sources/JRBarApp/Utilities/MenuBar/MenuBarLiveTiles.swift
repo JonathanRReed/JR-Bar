@@ -7,9 +7,10 @@ import ScreenCaptureKit
 /// items can be captured at all, the exact Quartz rect a capture asks
 /// for, its output pixel size, and the per-item refresh throttle.
 enum MenuBarTileMath {
-    /// The tile refresh cadence — ~2 Hz while the bar is up, and zero
-    /// work while it is not (the loop only runs between `open` and
-    /// `close`).
+    /// The per-item throttle: a capture fresher than this is still
+    /// current. There is no refresh loop any more — the bar takes one
+    /// pass when it opens, because every capture lights the
+    /// screen-recording indicator and that shifts the whole bar.
     nonisolated static let refreshInterval: TimeInterval = 0.5
     /// Output captures land at this scale — menu bar tiles are small
     /// enough that 2× is indistinguishable from the native factor.
@@ -49,22 +50,27 @@ enum MenuBarTileMath {
     }
 }
 
-/// Live thumbnails for the Item Bar's tiles. While the bar is up each
-/// tile shows a `SCScreenshotManager` one-shot of the item's on-screen
-/// rect — the covered item is still rendered under our shutter, and
-/// the capture filter excludes this app's windows, so what lands is
-/// the item itself, not the cover. One-shots, not a stream: no
-/// persistent capture, and the loop only exists between `open` and
-/// `close`, so a hidden menu bar costs zero captures.
+/// Live thumbnails for the Item Bar's tiles. When the bar opens each
+/// tile standing on the row gets one `SCScreenshotManager` one-shot of
+/// the item's on-screen rect — the covered item is still rendered
+/// under our shutter, and the capture filter excludes this app's
+/// windows, so what lands is the item itself, not the cover. One pass,
+/// not a loop: a 2 Hz loop lit the screen-recording indicator the whole
+/// time the bar was up, and the indicator shifts the whole bar.
+/// Everything a pass cannot see — a concealed app has no pixels at all —
+/// comes from `MenuBarGlyphCache`, photographed while it was drawn.
 ///
 /// Without Screen Recording (or when a capture simply fails) the tile
-/// keeps the owner app's icon — the fallback the bar has always had.
-/// Nothing is faked: `images` only ever holds real captures.
+/// keeps the photographed glyph or the owner app's icon. Nothing is
+/// faked: `images` only ever holds real captures.
 @MainActor
 @Observable
 final class MenuBarLiveTiles {
     /// Item id → latest capture. The bar's SwiftUI half reads it.
     private(set) var images: [String: NSImage] = [:]
+
+    /// Each capture's point width — the tile takes it.
+    var imageWidths: [String: CGFloat] { images.mapValues(\.size.width) }
 
     /// The items to keep fresh — the bar supplies its tile list.
     var itemsProvider: @MainActor () -> [MenuBarItem] = { [] }
@@ -81,7 +87,7 @@ final class MenuBarLiveTiles {
     /// or nil when capture is impossible. Tests stub it.
     var capture: @MainActor (CGRect) async -> CGImage?
 
-    private var loopTask: Task<Void, Never>?
+    private var passTask: Task<Void, Never>?
     /// When each item last captured — the throttle's memory.
     private var capturedAt: [String: Date] = [:]
 
@@ -90,35 +96,32 @@ final class MenuBarLiveTiles {
         capture = { rect in await source.capture(rect) }
     }
 
-    /// The bar opened: start the ~2 Hz loop. Safe to call twice.
+    /// The bar opened: one capture pass. Safe to call twice — a second
+    /// call replaces the pass in flight.
     func start() {
-        guard loopTask == nil else { return }
-        loopTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.refreshOnce()
-                try? await Task.sleep(nanoseconds: UInt64(MenuBarTileMath.refreshInterval * 1e9))
-            }
+        passTask?.cancel()
+        passTask = Task { [weak self] in
+            await self?.refreshOnce()
         }
     }
 
-    /// The bar closed: cancel the loop and drop the captures — nothing
-    /// keeps paying for a surface that is not on screen.
+    /// The bar closed: cancel a pass in flight and drop the captures —
+    /// nothing keeps paying for a surface that is not on screen.
     func stop() {
-        loopTask?.cancel()
-        loopTask = nil
+        passTask?.cancel()
+        passTask = nil
         images = [:]
         capturedAt = [:]
     }
 
     isolated deinit {
-        loopTask?.cancel()
+        passTask?.cancel()
     }
 
     /// One capture pass: prune ids that left the bar, then capture each
     /// due, capturable item in turn. Sequential on purpose — a burst of
-    /// parallel one-shots is a burst of WindowServer work, and 2 Hz is
-    /// the cadence, not the goal.
+    /// parallel one-shots is a burst of WindowServer work. A pass that
+    /// was replaced or stopped takes no further captures.
     func refreshOnce() async {
         let rows = rowRects()
         let items = itemsProvider()
@@ -126,6 +129,7 @@ final class MenuBarLiveTiles {
         images = images.filter { ids.contains($0.key) }
         capturedAt = capturedAt.filter { ids.contains($0.key) }
         for item in items {
+            if Task.isCancelled { return }
             // The item's own bar — a tile on a secondary display's strip
             // captures the rect there, never the main row's math.
             let row = rows.first { $0.intersects(item.bounds) }
@@ -154,8 +158,8 @@ final class MenuBarLiveTiles {
 @MainActor
 final class DisplayFilterSource {
     /// How long a shareable-content fetch — or a failed one — stays
-    /// valid. Display changes land within seconds, and the tiles are a
-    /// 2 Hz preview.
+    /// valid. Display changes land within seconds, and a pass or a
+    /// photograph pair lands well inside it.
     nonisolated static let ttl: TimeInterval = 5
 
     /// The raw content listing — one fetch feeds every display's

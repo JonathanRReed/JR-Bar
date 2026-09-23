@@ -68,8 +68,8 @@ struct MenuBarUtilityControls: View {
 
             SettingLabel(title: "How it works",
                          subtitle: utility.concealing
-                            ? "Pick Hidden or Always for an app under Overrides and macOS hides it. The JR-Bar icon stands at the right end of the gap it leaves, with a ‹ that brings hidden items back. Hidden apps keep running and remain accessible in the Item Bar."
-                            : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it.")
+                            ? "Drag an app to Hidden or Always below and macOS hides it. The JR-Bar icon stands at the right end of the gap it leaves, with a ‹ that brings hidden items back. Hidden apps keep running and remain accessible in the Item Bar."
+                            : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon, or drag its tile below, to hide or show it.")
             if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
                     SettingLabel(title: "Hide the way macOS hides",
@@ -77,33 +77,68 @@ struct MenuBarUtilityControls: View {
                 }
             }
 
+            if !utility.runningRivals.isEmpty {
+                rivalsGuard
+            }
+
             LabeledContent {
                 Text(countsText)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } label: {
-                SettingLabel(title: "Right now")
+                SettingLabel(title: "Right now", subtitle: utility.engineLine)
+            }
+            if utility.engineHealth.isAlert {
+                Label("Hiding stopped — the Item Bar still reaches every app, and JR-Bar retries on the next change.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
-                Button("Hide all") { utility.hideAllListed() }
-                    .controlSize(.small)
-                    .help("Hide every listed menu bar item at once — same as setting each one's override to Hidden or Cover")
-                    .accessibilityLabel("Hide all menu bar items")
-                Button("Show all") { utility.showAllListed() }
-                    .controlSize(.small)
-                    .help("Bring every hidden item back")
-                    .accessibilityLabel("Show all menu bar items")
+                Menu("Hide all") {
+                    Button("For 5 minutes") { utility.hideAllListed(for: 5 * 60) }
+                    Button("For an hour") { utility.hideAllListed(for: 60 * 60) }
+                } primaryAction: {
+                    utility.hideAllListed()
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .help("Tuck every item away for now — your picks below stay as they are, and Restore brings them back")
+                .accessibilityLabel("Hide all menu bar items")
+                Menu("Show all") {
+                    Button("For 5 minutes") { utility.showAllListed(for: 5 * 60) }
+                    Button("For an hour") { utility.showAllListed(for: 60 * 60) }
+                } primaryAction: {
+                    utility.showAllListed()
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .help("Bring every hidden item back for now — nothing forgets what you hid")
+                .accessibilityLabel("Show all menu bar items")
+                if utility.activeOverlay != nil {
+                    Button("Restore") { utility.restoreCuratedBar() }
+                        .controlSize(.small)
+                        .help("Back to your own picks")
+                    Button("Keep") { utility.keepOverlay() }
+                        .controlSize(.small)
+                        .help(utility.activeOverlay == .hideEverything
+                              ? "Make it stick: every listed app becomes Hidden"
+                              : "Make it stick: every app becomes Shown and your hidden picks are cleared")
+                }
             }
             .padding(.top, 2)
+            if let note = utility.overlayNote {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            if !hideable.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(hideable, id: \.id) { item in
-                        itemRow(item)
-                    }
-                }
-                .padding(.top, 2)
+            if !utility.profileSubjects.isEmpty {
+                MenuBarLayoutEditorView(utility: utility, placement: placement(of:))
+                    .padding(.top, 2)
             }
 
             Divider()
@@ -157,7 +192,7 @@ struct MenuBarUtilityControls: View {
             }
             Toggle(isOn: utility.bind(\.showForUpdates)) {
                 SettingLabel(title: "Show for updates",
-                             subtitle: "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen.")
+                             subtitle: showForUpdatesNote)
             }
             LabeledContent {
                 Button("Show Item Bar") { utility.bar.toggle() }
@@ -220,23 +255,28 @@ struct MenuBarUtilityControls: View {
                     }
                     Toggle(isOn: utility.bind(\.agentStatusItem)) {
                         SettingLabel(title: "Agent status item",
-                                     subtitle: "A dot in the bar showing what your agents are doing; click opens the Overview.")
+                                     subtitle: utility.concealing
+                                        ? "A dot and what your agents are doing, drawn beside the JR-Bar icon as part of its face; click opens the Overview. The icon's Agents and Orbit styles carry the same state."
+                                        : "A dot in the bar showing what your agents are doing; click opens the Overview.")
                     }
                     Toggle(isOn: utility.bind(\.combinedSystemItem)) {
                         SettingLabel(title: "One system item",
-                                     subtitle: "Battery, Wi-Fi, sound and Focus in a single item with a popover — the matching Control Center items hide while it runs.")
+                                     subtitle: utility.concealing
+                                        ? "Battery, Wi-Fi and Focus drawn beside the JR-Bar icon as part of its face. Its popover adds your agents, connected Bluetooth devices, what's playing and the volume. Control Center's own items hide only once that face is on screen, and come back the moment it isn't."
+                                        : "Battery, Wi-Fi, sound and Focus in a single item. Its popover adds your agents, connected Bluetooth devices and what's playing — the matching Control Center items hide only while it is on screen.")
                     }
                     Divider()
                         .padding(.vertical, 4)
                     spacerEditor
                     Divider()
                         .padding(.vertical, 4)
+                    deskProfileEditor
                     displayProfileEditor
                 }
                 .padding(.top, 4)
             } label: {
                 SettingLabel(title: "Extras",
-                             subtitle: "Spacer items, the bar underlay, the agent item, per-display profiles, and what the notch and menus cover.")
+                             subtitle: "Spacer items, the bar underlay, the agent item, profiles per desk and per display, and what the notch and menus cover.")
             }
 
             DisclosureGroup(isExpanded: $showOverrides) {
@@ -283,6 +323,7 @@ struct MenuBarUtilityControls: View {
                         SettingLabel(title: "Custom spacing",
                                      subtitle: "An exact gap in points — the presets above all live on this dial.")
                     }
+                    engineControls
                     Divider()
                         .padding(.vertical, 4)
                     MenuBarProfilesControls(utility: utility)
@@ -297,6 +338,43 @@ struct MenuBarUtilityControls: View {
             }
         }
         .onAppear { utility.refreshListing() }
+    }
+
+    /// Another manager running beside ours: say what it costs and offer
+    /// the two ways out — never automatic.
+    @ViewBuilder
+    private var rivalsGuard: some View {
+        ForEach(utility.runningRivals, id: \.name) { rival in
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text("\(rival.name) is also managing the menu bar. Two managers fight — its hiding can undo what JR-Bar hides.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if rival.handoff != nil {
+                    Button("Hand over") { utility.handOver(to: rival) }
+                        .controlSize(.small)
+                        .help("Let \(rival.name) render the bar; JR-Bar's engine parks")
+                }
+                Button("Quit \(rival.name)") { utility.quitRival(rival) }
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    /// What "show for updates" can honestly promise on this engine, and
+    /// which items it listens to.
+    private var showForUpdatesNote: String {
+        let watched = utility.settings().curation.updateWatch.count
+        let scope = watched == 0
+            ? "Every hidden item counts; mark the ones that matter with Show When It Changes in a tile's menu and only those interrupt."
+            : "Only the \(watched == 1 ? "item" : "\(watched) items") marked Show When It Changes interrupt."
+        if utility.concealing {
+            return "A hidden item whose text changes stands alone on the bar for a moment. macOS hides a concealed app's text too, so this mostly hears Apple's own extras; a changed glyph gets a dot in the Item Bar instead. " + scope
+        }
+        return "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen. " + scope
     }
 
     /// Every listed item the utility could hide, in bar order.
@@ -314,22 +392,6 @@ struct MenuBarUtilityControls: View {
         parts.append("\(max(0, shown)) shown")
         if utility.listedItems.isEmpty { return "Nothing listed yet" }
         return parts.joined(separator: " · ")
-    }
-
-    /// One item: the owner's icon and name, then where it is.
-    private func itemRow(_ item: MenuBarItem) -> some View {
-        HStack(spacing: 8) {
-            Image(nsImage: item.owner?.icon ?? NSImage())
-                .resizable()
-                .frame(width: 16, height: 16)
-            Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 8)
-            Text(placement(of: item))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     /// The override picker for one item.
@@ -360,11 +422,55 @@ struct MenuBarUtilityControls: View {
         }
     }
 
+    /// The engine diagnostics: force the spacer engine (so the fallback
+    /// can be proven on a Mac that never needs it) and, while it runs,
+    /// the learned fit edge with a nudge and a reset.
+    @ViewBuilder
+    private var engineControls: some View {
+        if utility.concealerAvailable {
+            Toggle(isOn: Binding(
+                get: { utility.settings().curation.forceSpacerEngine },
+                set: { on in utility.setForceSpacerEngine(on) })) {
+                SettingLabel(title: "Force the spacer engine",
+                             subtitle: "A diagnostic: hide with JR-Bar's own spacer instead of macOS's concealer, the way it falls back when the concealer is missing.")
+            }
+        }
+        if utility.running, !utility.concealing, let edge = utility.hider.fitEdge {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    ValueText(text: "\(Int(edge.rounded())) pt")
+                    Button { utility.nudgeFitEdge(by: -4) } label: { Image(systemName: "minus") }
+                        .controlSize(.small)
+                        .help("Four points left")
+                    Button { utility.nudgeFitEdge(by: 4) } label: { Image(systemName: "plus") }
+                        .controlSize(.small)
+                        .help("Four points right")
+                    Button("Reset") { utility.resetFitEdge() }
+                        .controlSize(.small)
+                        .disabled(!utility.hider.fitEdgeLearned)
+                }
+            } label: {
+                SettingLabel(title: "Fit edge on this screen",
+                             subtitle: utility.hider.fitEdgeLearned
+                                ? "Learned from macOS's overflow — nudge it if an icon keeps slipping behind the «."
+                                : "Guessed from the notch — it learns from the overflow as items move.")
+            }
+        }
+        Divider()
+            .padding(.vertical, 4)
+    }
+
     /// The spacer/label item rows plus the add button.
     @ViewBuilder
     private var spacerEditor: some View {
         SettingLabel(title: "Spacer items",
                      subtitle: "Fixed-width or labelled items of ours that sit anywhere in the bar — ⌘-drag them like any other. Clicking one reveals the hidden run.")
+        if utility.concealing {
+            Text("Parked while macOS hides items for JR-Bar: it draws none of JR-Bar's extra items and orders the bar itself, so a spacer could neither show nor sit between apps. Your rows are kept for when the spacer engine stands in.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         ForEach(Array(utility.settings().spacers.enumerated()), id: \.element.id) { index, spacer in
             HStack(spacing: 8) {
                 TextField("Label", text: Binding(
@@ -399,6 +505,55 @@ struct MenuBarUtilityControls: View {
         }
     }
 
+    /// The desk the Mac sits at — its set of displays — and the profile
+    /// the bar takes each time that set arrives, plus the other desks it
+    /// remembers.
+    @ViewBuilder
+    private var deskProfileEditor: some View {
+        let profiles = utility.settings().profiles
+        let desks = utility.settings().curation.deskProfiles
+        if let desk = utility.currentDesk, !profiles.isEmpty || !desks.isEmpty {
+            LabeledContent {
+                Picker(selection: Binding(
+                    get: { desks.first { $0.key == desk.key }?.profileID ?? "" },
+                    set: { utility.setProfileForCurrentDesk($0) })) {
+                    Text("No change").tag("")
+                    Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneID)
+                    ForEach(profiles) { profile in
+                        Text(profile.name).tag(profile.id)
+                    }
+                } label: { EmptyView() }
+                .labelsHidden()
+                .fixedSize()
+            } label: {
+                SettingLabel(title: "Profile at this desk",
+                             subtitle: "\(desk.name). Taken once each time these displays arrive — docking, undocking, the lid shutting — so a profile you pick by hand holds until the desk changes.")
+            }
+            ForEach(desks.filter { $0.key != desk.key }, id: \.key) { other in
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        Text(profileName(other.profileID))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button { utility.forgetDesk(key: other.key) } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .help("Forget this desk")
+                    }
+                } label: {
+                    SettingLabel(title: other.name)
+                }
+            }
+        }
+    }
+
+    private func profileName(_ id: String) -> String {
+        if id == MenuBarProfiles.noneID { return MenuBarProfiles.noneName }
+        return utility.settings().profiles.first { $0.id == id }?.name ?? "—"
+    }
+
     /// One row per attached display: which profile the bar takes while
     /// the pointer is on it.
     @ViewBuilder
@@ -406,7 +561,7 @@ struct MenuBarUtilityControls: View {
         let screens = NSScreen.screens
         if screens.count > 1 {
             SettingLabel(title: "Profile per display",
-                         subtitle: "The bar takes this profile while the pointer rests on that display — the mapping survives a logout, unlike a hotkey cycle.")
+                         subtitle: "The bar takes this profile while the pointer rests on that display — it follows the pointer; a desk's profile follows the displays.")
             ForEach(screens, id: \.self) { screen in
                 if let key = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue {
                     LabeledContent {
@@ -499,23 +654,26 @@ struct MenuBarUtilityControls: View {
     }
 }
 
-/// The Profiles rows: a picker that applies a saved arrangement (or the
-/// built-in "None"), and a name field that saves the current one. A
-/// profile is sections plus appearance — applying it is a settings
-/// write like any other, so the reconcile path does the rest.
+/// The Profiles rows: which profile is laid over your bar, a name field
+/// that saves the current look, and — for the active profile — the
+/// editor for what it changes. A profile is a delta over your bar plus
+/// a look: switching swaps the layer, so nothing you picked for your
+/// bar is ever rewritten.
 private struct MenuBarProfilesControls: View {
     let utility: MenuBarUtility
-    /// The picker selection — a profile id, or "none".
-    @ViewState private var selection = MenuBarProfiles.noneID
     /// The save/rename field.
     @ViewState private var nameDraft = ""
+    /// The active profile's editor.
+    @ViewState private var showEditor = false
 
     var body: some View {
         SettingLabel(title: "Profiles",
-                     subtitle: "Saved arrangements — the section map plus the cover look — applied in one move.")
+                     subtitle: "A look plus what it changes about your bar. Apps you hide on your bar stay hidden in every profile that doesn't say otherwise.")
 
         LabeledContent {
-            Picker(selection: $selection) {
+            Picker(selection: Binding(
+                get: { utility.activeProfileID },
+                set: { utility.applyProfile(id: $0) })) {
                 Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneID)
                 ForEach(utility.settings().profiles) { profile in
                     Text(profile.name).tag(profile.id)
@@ -524,12 +682,9 @@ private struct MenuBarProfilesControls: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
-            .onChange(of: selection) { _, id in
-                utility.applyProfile(id: id)
-            }
         } label: {
-            SettingLabel(title: "Apply",
-                         subtitle: "Switching writes the whole arrangement at once.")
+            SettingLabel(title: "Active",
+                         subtitle: "Switching swaps the layer and the look — also from the icon's right-click menu.")
         }
 
         LabeledContent {
@@ -539,33 +694,293 @@ private struct MenuBarProfilesControls: View {
                     .frame(width: 120)
                 Button("Save") {
                     if let id = utility.saveProfileAs(nameDraft) {
-                        selection = id
+                        utility.applyProfile(id: id)
                         nameDraft = ""
+                        showEditor = true
                     }
                 }
                 .controlSize(.small)
                 .disabled(MenuBarProfiles.validName(nameDraft) == nil)
             }
         } label: {
-            SettingLabel(title: "Save current as",
-                         subtitle: "Sections, cover look and control layout, captured together.")
+            SettingLabel(title: "Save current look as",
+                         subtitle: "The cover look, the reveal and the spacing — then pick below what the profile changes.")
         }
 
-        if selection != MenuBarProfiles.noneID,
-           utility.settings().profiles.contains(where: { $0.id == selection }) {
+        if let profile = MenuBarProfiles.activeProfile(in: utility.settings()) {
             HStack(spacing: 8) {
                 Button("Rename to field") {
-                    utility.renameProfile(id: selection, to: nameDraft)
+                    utility.renameProfile(id: profile.id, to: nameDraft)
                 }
                 .controlSize(.small)
                 .disabled(MenuBarProfiles.validName(nameDraft) == nil)
                 Button("Delete") {
-                    utility.deleteProfile(id: selection)
-                    selection = MenuBarProfiles.noneID
+                    utility.deleteProfile(id: profile.id)
                 }
                 .controlSize(.small)
                 Spacer(minLength: 0)
             }
+            DisclosureGroup(isExpanded: $showEditor) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if utility.profileSubjects.isEmpty {
+                        Text("Nothing listed yet — the menu bar's items appear here once Accessibility can read them.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(utility.profileSubjects) { subject in
+                        profileRow(subject, profile: profile)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "What “\(profile.name)” changes",
+                             subtitle: "“Your bar” follows your own picks; anything else holds only while this profile is active.")
+            }
+        }
+    }
+
+    private func profileRow(_ subject: MenuBarProfileSubject,
+                            profile: MenuBarSettings.Profile) -> some View {
+        LabeledContent {
+            Picker(selection: Binding<MenuBarItemSection?>(
+                get: { subject.isApp ? profile.concealedApps[subject.key] : profile.sections[subject.key] },
+                set: { section in
+                    if subject.isApp {
+                        utility.setProfileDelta(section, forApp: subject.key, profileID: profile.id)
+                    } else {
+                        utility.setProfileDelta(section, forItem: subject.key, profileID: profile.id)
+                    }
+                })) {
+                Text("Your bar").tag(MenuBarItemSection?.none)
+                Text(subject.isApp ? "Shown" : "Auto").tag(MenuBarItemSection?.some(.shown))
+                Text(subject.isApp ? "Hidden" : "Cover").tag(MenuBarItemSection?.some(.hidden))
+                Text("Always").tag(MenuBarItemSection?.some(.alwaysHidden))
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        } label: {
+            HStack(spacing: 8) {
+                Image(nsImage: subject.item.owner?.icon ?? NSImage())
+                    .resizable()
+                    .frame(width: 14, height: 14)
+                Text(subject.title)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+}
+
+/// The "while" rules: a level that holds a layer, a scene or the agents'
+/// quiet for exactly as long as it lasts — one rule instead of a fragile
+/// pair, and nothing it did outlives it.
+private struct MenuBarWhileRulesControls: View {
+    let utility: MenuBarUtility
+
+    @ViewState private var conditionKind = "mic"
+    @ViewState private var negated = false
+    @ViewState private var bundleID = ""
+    @ViewState private var ssid = ""
+    @ViewState private var percent = 20
+    @ViewState private var startHour = 9
+    @ViewState private var endHour = 17
+    @ViewState private var barEffect = "quiet"
+    @ViewState private var profileName = ""
+    @ViewState private var scene = ""
+    @ViewState private var quietAgents = false
+
+    var body: some View {
+        let rules = utility.settings().curation.stateRules
+        SettingLabel(title: "While…",
+                     subtitle: "A level that holds a layout, a light scene or quiet agents for as long as it lasts — and puts everything back when it ends. Your own picks are never rewritten.")
+        ForEach(rules) { rule in
+            HStack(spacing: 8) {
+                Toggle(isOn: Binding(
+                    get: { rule.enabled },
+                    set: { utility.setStateRule(id: rule.id, enabled: $0) }
+                )) {
+                    Text(rule.summary)
+                        .font(.callout)
+                        .lineLimit(2)
+                }
+                Button { utility.deleteStateRule(id: rule.id) } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
+        let holding = utility.holdingStateRules
+        if !holding.isEmpty {
+            Text("Holding now: " + holding.map(\.condition.label).joined(separator: "; "))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        HStack(spacing: 6) {
+            Toggle("Not", isOn: $negated)
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .help("Hold while the level is not true — e.g. while not on the office Wi-Fi")
+            Picker(selection: $conditionKind) {
+                Text("Microphone is live").tag("mic")
+                Text("A Focus is on").tag("focus")
+                Text("Screen is locked").tag("locked")
+                Text("On battery").tag("battery")
+                Text("Battery at or below…").tag("battLow")
+                Text("On Wi-Fi…").tag("wifi")
+                Text("App is in front…").tag("front")
+                Text("App is running…").tag("running")
+                Text("Between hours…").tag("time")
+                Text("Lid is closed").tag("lid")
+                Text("External display attached").tag("display")
+                Divider()
+                Text("Agents are working").tag("working")
+                Text("An agent needs you").tag("asking")
+                Text("Agents are idle").tag("idle")
+                Text("Usage headroom at or below…").tag("quota")
+                Text("SidePulse is connected").tag("sidePulse")
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            if conditionKind == "front" || conditionKind == "running" {
+                Picker(selection: $bundleID) {
+                    Text("Choose an app").tag("")
+                    ForEach(Self.runningApps(), id: \.id) { app in
+                        Text(app.name).tag(app.id)
+                    }
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            if conditionKind == "wifi" {
+                TextField("network name", text: $ssid)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                if let current = MenuBarSystemTriggerSource.currentSSID() {
+                    Button("Use “\(current)”") { ssid = current }
+                        .controlSize(.small)
+                }
+            }
+            if conditionKind == "battLow" || conditionKind == "quota" {
+                TextField("%", value: $percent, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 40)
+            }
+            if conditionKind == "time" {
+                TextField("from", value: $startHour, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 34)
+                Text("to").font(.callout)
+                TextField("to", value: $endHour, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 34)
+            }
+        }
+
+        HStack(spacing: 6) {
+            Picker(selection: $barEffect) {
+                Text("Tuck everything away").tag("quiet")
+                Text("Show everything").tag("show")
+                Text("Leave the bar").tag("none")
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            Picker(selection: $profileName) {
+                Text("No profile").tag("")
+                Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneName)
+                ForEach(utility.settings().profiles) { profile in
+                    Text(profile.name).tag(profile.name)
+                }
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .help("A profile laid over your bar while the rule holds")
+        }
+        HStack(spacing: 6) {
+            Picker(selection: $scene) {
+                Text("Lights as they are").tag("")
+                ForEach(EffectScene.allCases) { scene in
+                    Text("\(scene.label) scene").tag(scene.rawValue)
+                }
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .help("The LED scene while the rule holds — yours comes back after")
+            Toggle("Quiet agents", isOn: $quietAgents)
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .help("The daemon's quiet hours while the rule holds, ended after")
+            Button("Add") { addRule() }
+                .controlSize(.small)
+                .disabled(!draftValid)
+        }
+    }
+
+    /// Running regular apps, by name — the picker instead of a bundle id.
+    private static func runningApps() -> [(id: String, name: String)] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy != .prohibited }
+            .compactMap { app in
+                app.bundleIdentifier.map { ($0, app.localizedName ?? $0) }
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var effects: [MenuBarRuleEffect] {
+        var out: [MenuBarRuleEffect] = []
+        switch barEffect {
+        case "quiet": out.append(.quietBar)
+        case "show": out.append(.showEverything)
+        default: break
+        }
+        if !profileName.isEmpty { out.append(.useProfile(name: profileName)) }
+        if !scene.isEmpty { out.append(.ledScene(scene: scene)) }
+        if quietAgents { out.append(.quietAgents) }
+        return out
+    }
+
+    private var draftValid: Bool {
+        if (conditionKind == "front" || conditionKind == "running") && bundleID.isEmpty { return false }
+        if conditionKind == "wifi" && ssid.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        return !effects.isEmpty
+    }
+
+    private func addRule() {
+        let condition: MenuBarCondition
+        switch conditionKind {
+        case "focus": condition = .focusOn
+        case "locked": condition = .screenLocked
+        case "battery": condition = .onBattery
+        case "battLow": condition = .batteryAtOrBelow(percent: min(100, max(1, percent)))
+        case "wifi": condition = .wifiIs(ssid: ssid.trimmingCharacters(in: .whitespaces))
+        case "front": condition = .appFrontmost(bundleID: bundleID)
+        case "running": condition = .appRunning(bundleID: bundleID)
+        case "time": condition = .timeBetween(startMinute: min(23, max(0, startHour)) * 60,
+                                              endMinute: min(24, max(0, endHour)) * 60 % 1440)
+        case "lid": condition = .lidClosed
+        case "display": condition = .externalDisplay
+        case "working": condition = .agentsWorking
+        case "asking": condition = .agentNeedsYou
+        case "idle": condition = .agentsIdle
+        case "quota": condition = .quotaAtOrBelow(percent: min(100, max(1, percent)))
+        case "sidePulse": condition = .sidePulseConnected
+        default: condition = .microphoneLive
+        }
+        utility.addStateRule(MenuBarStateRule(condition: condition, negated: negated,
+                                              effects: effects))
+        // Focus reads through INFocusStatusCenter — the add is the
+        // explicit user action the consent prompt is allowed to ride.
+        if condition == .focusOn {
+            MenuBarSystemTriggerSource.requestFocusAuthorization { _ in }
         }
     }
 }
@@ -627,6 +1042,7 @@ private struct MenuBarAutomationControls: View {
         }
 
         rulesSection
+        MenuBarWhileRulesControls(utility: utility)
         arrangeSection
     }
 
@@ -648,7 +1064,7 @@ private struct MenuBarAutomationControls: View {
     private var rulesSection: some View {
         let rules = utility.settings().triggerRules
         SettingLabel(title: "Rules",
-                     subtitle: "When something happens, the bar reacts — lock, unlock, an app activating, a time, the charger.")
+                     subtitle: "When something happens, the bar reacts — lock, unlock, an app, a time, the charger, a display, the lid, and what your agents are doing.")
         ForEach(rules) { rule in
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
@@ -684,11 +1100,25 @@ private struct MenuBarAutomationControls: View {
                 Text("Mic goes quiet").tag("micOff")
                 Text("Focus turns on").tag("focusOn")
                 Text("Focus turns off").tag("focusOff")
+                Divider()
+                Text("App launches").tag("appLaunch")
+                Text("App quits").tag("appQuit")
+                Text("Display connects").tag("displayOn")
+                Text("Display disconnects").tag("displayOff")
+                Text("Lid closes").tag("lidClosed")
+                Text("Lid opens").tag("lidOpened")
+                Divider()
+                Text("Agents start working").tag("agentsWork")
+                Text("An agent needs you").tag("agentAsk")
+                Text("Agents finish").tag("agentsDone")
+                Text("Usage headroom falls to…").tag("quotaLow")
+                Text("SidePulse connects").tag("sidePulseOn")
+                Text("SidePulse disconnects").tag("sidePulseOff")
             } label: { EmptyView() }
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
-            if triggerKind == "app" {
+            if Self.appTriggerKinds.contains(triggerKind) {
                 TextField("bundle id", text: $triggerBundleID)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
@@ -706,7 +1136,7 @@ private struct MenuBarAutomationControls: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 34)
             }
-            if triggerKind == "battLow" || triggerKind == "battHigh" {
+            if triggerKind == "battLow" || triggerKind == "battHigh" || triggerKind == "quotaLow" {
                 TextField("%", value: $triggerPercent, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 40)
@@ -751,8 +1181,12 @@ private struct MenuBarAutomationControls: View {
         }
     }
 
+    /// The trigger kinds that name an app by bundle id.
+    private static let appTriggerKinds: Set<String> = ["app", "appLaunch", "appQuit"]
+
     private var ruleDraftValid: Bool {
-        if triggerKind == "app" && triggerBundleID.trimmingCharacters(in: .whitespaces).isEmpty {
+        if Self.appTriggerKinds.contains(triggerKind)
+            && triggerBundleID.trimmingCharacters(in: .whitespaces).isEmpty {
             return false
         }
         if triggerKind == "wifiJoin" && triggerSSID.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -786,6 +1220,20 @@ private struct MenuBarAutomationControls: View {
         case "micOff": trigger = .microphoneIdle
         case "focusOn": trigger = .focusEnabled
         case "focusOff": trigger = .focusDisabled
+        case "appLaunch": trigger = .appLaunched(
+            bundleID: triggerBundleID.trimmingCharacters(in: .whitespaces))
+        case "appQuit": trigger = .appQuit(
+            bundleID: triggerBundleID.trimmingCharacters(in: .whitespaces))
+        case "displayOn": trigger = .displayConnected
+        case "displayOff": trigger = .displayDisconnected
+        case "lidClosed": trigger = .lidClosed
+        case "lidOpened": trigger = .lidOpened
+        case "agentsWork": trigger = .agentsStartedWorking
+        case "agentAsk": trigger = .agentNeedsYou
+        case "agentsDone": trigger = .agentsFinished
+        case "quotaLow": trigger = .quotaBelow(percent: min(100, max(1, triggerPercent)))
+        case "sidePulseOn": trigger = .sidePulseConnected
+        case "sidePulseOff": trigger = .sidePulseDisconnected
         default: trigger = .screenUnlocked
         }
         let action: MenuBarTriggerAction
@@ -809,6 +1257,16 @@ private struct MenuBarAutomationControls: View {
 
     @ViewBuilder
     private var arrangeSection: some View {
+        if utility.arrangeAvailable {
+            arrangeEditor
+        } else {
+            SettingLabel(title: "Arrange",
+                         subtitle: "macOS orders the menu bar itself while it hides items for JR-Bar, so there is nothing to arrange — and nothing moves your cursor. Arrange comes back if the spacer engine stands in.")
+        }
+    }
+
+    @ViewBuilder
+    private var arrangeEditor: some View {
         SettingLabel(title: "Arrange",
                      subtitle: "Physically reorder the bar — ⌘-drags move the real cursor. Keep hands off while it runs; Esc or any input cancels.")
         ForEach(utility.arrangeItems, id: \.id) { item in

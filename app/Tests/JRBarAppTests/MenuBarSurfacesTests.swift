@@ -166,7 +166,7 @@ struct MenuBarSurfacesTests {
 
     // MARK: Profiles — capture / apply / save / rename / delete
 
-    @Test("capture snapshots sections plus the appearance, reveal style, spacing and spacers")
+    @Test("capture keeps the look, reveal, spacing and spacers — and only a profile's own deltas")
     func profileCapture() {
         var settings = MenuBarSettings(enabled: true,
                                        rehideSeconds: 9, rehideMode: .untilClick,
@@ -179,7 +179,9 @@ struct MenuBarSurfacesTests {
         settings.sections = ["A": .hidden]
         let profile = MenuBarProfiles.capture(name: "Work", from: settings, id: "p1")
         #expect(profile.name == "Work")
-        #expect(profile.sections == ["A": .hidden])
+        // The base map is yours, not the profile's: nothing to carry.
+        #expect(profile.sections.isEmpty)
+        #expect(profile.concealedApps.isEmpty)
         #expect(profile.coverMaterial == .hud)
         #expect(profile.coverTint == "#112233")
         #expect(profile.coverTintOpacity == 0.5)
@@ -190,9 +192,15 @@ struct MenuBarSurfacesTests {
         #expect(profile.rehideSeconds == 9)
         #expect(profile.itemSpacing == 8)
         #expect(profile.spacers == [MenuBarSettings.Spacer(id: "s1", label: "•", width: 40)])
+        // Over an active profile, save-as duplicates what it changes.
+        settings.profiles = [profile]
+        settings.profiles[0].concealedApps = ["slack": .hidden]
+        settings.curation.activeProfileID = "p1"
+        let copy = MenuBarProfiles.capture(name: "Work 2", from: settings, id: "p2")
+        #expect(copy.concealedApps == ["slack": .hidden])
     }
 
-    @Test("applying a profile replaces sections and appearance; None resets to defaults")
+    @Test("applying a profile lays its deltas over the base and takes its look; None is the base alone")
     func profileApply() {
         var settings = MenuBarSettings(enabled: true, revealOnHover: false,
                                        coverMaterial: .hud)
@@ -204,8 +212,12 @@ struct MenuBarSurfacesTests {
             revealStyle: .inline, rehideMode: .untilClick, rehideSeconds: 12,
             itemSpacing: 4,
             spacers: [MenuBarSettings.Spacer(id: "s1", label: "|")])
+        settings.profiles = [profile]
         MenuBarProfiles.apply(profile, to: &settings)
-        #expect(settings.sections == ["B": .hidden])
+        // The base is never written; the profile is the active layer.
+        #expect(settings.sections == ["A": .alwaysHidden])
+        #expect(settings.curation.activeProfileID == "p1")
+        #expect(MenuBarProfiles.curatedMaps(settings).sections == ["A": .alwaysHidden, "B": .hidden])
         #expect(settings.coverMaterial == .popover)
         #expect(settings.coverTint == "#FF0000")
         #expect(settings.coverRoundness == 10)
@@ -220,8 +232,12 @@ struct MenuBarSurfacesTests {
         #expect(settings.enabled)
 
         MenuBarProfiles.apply(nil, to: &settings)
-        #expect(settings.sections.isEmpty)
-        #expect(settings.coverMaterial == .menu)
+        #expect(settings.curation.activeProfileID == nil)
+        #expect(settings.sections == ["A": .alwaysHidden], "None is your bar, not an empty one")
+        #expect(MenuBarProfiles.curatedMaps(settings).sections == ["A": .alwaysHidden])
+        // The look a fresh install has — Blend In, not the old Menu.
+        #expect(settings.coverMaterial == MenuBarSettings().coverMaterial)
+        #expect(settings.coverMaterial == .blend)
         #expect(settings.coverTint.isEmpty)
         #expect(!settings.showCoverSeparator)
         #expect(settings.revealStyle == .bar)
@@ -231,20 +247,22 @@ struct MenuBarSurfacesTests {
         #expect(settings.spacers.isEmpty)
     }
 
-    @Test("save-as overwrites a same-named profile, appends a new one")
+    @Test("save-as overwrites a same-named profile's look and keeps its deltas, appends a new one")
     func profileSave() {
         var settings = MenuBarSettings(enabled: true)
         settings.sections = ["A": .hidden]
         let first = MenuBarProfiles.saveCurrent(as: "Work", in: &settings)
         #expect(first != nil)
         #expect(settings.profiles.count == 1)
+        settings.profiles[0].concealedApps = ["slack": .alwaysHidden]
 
-        // Same name, new contents → same id, replaced.
-        settings.sections = ["A": .hidden, "B": .alwaysHidden]
+        // Same name, new look → same id, its own deltas kept.
+        settings.coverMaterial = .sheet
         let second = MenuBarProfiles.saveCurrent(as: "work", in: &settings)
         #expect(second == first)
         #expect(settings.profiles.count == 1)
-        #expect(settings.profiles[0].sections == ["A": .hidden, "B": .alwaysHidden])
+        #expect(settings.profiles[0].coverMaterial == .sheet)
+        #expect(settings.profiles[0].concealedApps == ["slack": .alwaysHidden])
 
         // Unusable names save nothing.
         #expect(MenuBarProfiles.saveCurrent(as: "   ", in: &settings) == nil)
@@ -300,8 +318,47 @@ struct MenuBarSurfacesTests {
                                             hiddenRevealed: false).count == 2)
     }
 
+    @Test("the menu that acts: one hide row per app, alphabetical, bundle-less items apart")
+    func hideRows() {
+        func app(_ id: String, _ owner: String, _ bundle: String?, title: String? = nil) -> MenuBarItem {
+            MenuBarItem(id: id, ownerPID: 500, ownerName: owner,
+                        bounds: CGRect(x: 0, y: 0, width: 24, height: 24),
+                        title: title, windowID: 0, bundleID: bundle)
+        }
+        let shown = [
+            app("Zoom", "zoom.us", "us.zoom.xos"),
+            app("1P·a", "1Password", "com.1password.1password", title: "a"),
+            app("1P·b", "1Password", "com.1password.1password", title: "b"),
+            app("helper·x", "helper", nil, title: "x"),
+            app("helper·y", "helper", nil, title: "y"),
+        ]
+        let rows = MenuBarCombinedMenu.hideRows(shown: shown)
+        #expect(rows.map(\.title) == ["1Password", "helper · x", "helper · y", "zoom.us"])
+        #expect(rows.first?.itemID == "1P·a", "an app's first item stands for it")
+        #expect(MenuBarCombinedMenu.hideRows(shown: []).isEmpty)
+        let crowd = (0..<40).map { app("a\($0)", "App \($0)", "com.example.\($0)") }
+        #expect(MenuBarCombinedMenu.hideRows(shown: crowd).count == MenuBarCombinedMenu.maxListedItems)
+    }
+
+    @Test("the icon's menu offers the shown apps as hide rows — inline while nothing hides")
+    func hideRowsInTheMenu() {
+        #expect(MenuBarUtility.hideMenu(shown: [], hiddenCount: 0) == nil)
+        let shown = [MenuBarItem(id: "Zoom", ownerPID: 500, ownerName: "zoom.us",
+                                 bounds: CGRect(x: 0, y: 0, width: 24, height: 24),
+                                 title: nil, windowID: 0, bundleID: "us.zoom.xos"),
+                     MenuBarItem(id: "Clock", ownerPID: 501, ownerName: "Control Center",
+                                 bounds: CGRect(x: 40, y: 0, width: 24, height: 24),
+                                 title: "Clock", windowID: 0, bundleID: "com.apple.controlcenter")]
+        let teaching = MenuBarUtility.hideMenu(shown: shown, hiddenCount: 0)
+        #expect(teaching?.inline == true)
+        #expect(teaching?.rows.map(\.title) == ["zoom.us"], "the clock is never offered")
+        let more = MenuBarUtility.hideMenu(shown: shown, hiddenCount: 2)
+        #expect(more?.inline == false)
+        #expect(more?.rows.map(\.itemID) == ["Zoom"])
+    }
+
     @MainActor
-    @Test("applying a profile writes sections and appearance through the store path")
+    @Test("applying a profile writes the active layer and the look through the store path")
     func utilityApplyProfile() {
         let utility = MenuBarUtility()
         var state = MenuBarSettings(enabled: true, profiles: [
@@ -313,13 +370,16 @@ struct MenuBarSurfacesTests {
         utility.settings = { state }
         utility.onSettingsChange = { draft in state = draft }
         utility.applyProfile(id: "p1")
-        #expect(state.sections == ["X": .alwaysHidden])
+        #expect(state.curation.activeProfileID == "p1")
+        #expect(state.sections.isEmpty, "the base map is never written by a switch")
+        #expect(utility.liveSettings().sections == ["X": .alwaysHidden])
         #expect(state.coverMaterial == .hud)
         #expect(state.revealStyle == .inline)
         #expect(state.itemSpacing == 4)
-        // "None" is a real apply — everything back to the open state.
+        // "None" is a real apply — the base alone, the default look.
         utility.applyProfile(id: MenuBarProfiles.noneID)
-        #expect(state.sections.isEmpty)
+        #expect(state.curation.activeProfileID == nil)
+        #expect(utility.liveSettings().sections.isEmpty)
         #expect(state.revealStyle == .bar)
         #expect(state.itemSpacing == 0)
     }

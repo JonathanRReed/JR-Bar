@@ -29,6 +29,16 @@ struct MenuBarIconFace {
     /// The hidden run, for the ‹ beside the face.
     var hiddenCount = 0
     var hiddenRevealed = false
+    /// What the ‹ says under the pointer — the utility names the
+    /// keyboard's way in when the hotkey is on.
+    var chevronToolTip: String?
+    /// The extras that ride the face as segments of its one compound
+    /// face — the agent dot, the combined system readout. Under our own
+    /// assertion macOS draws none of JR-Bar's status items, so an extra
+    /// item of ours is invisible there; drawn here it shows, and JR-Bar
+    /// keeps its one status item. The utility adds them; the host never
+    /// sets them.
+    var accessories: [MenuBarFaceAccessory] = []
 
     static let pulseKey = "jrbar.escalationPulse"
 
@@ -44,6 +54,23 @@ struct MenuBarIconFace {
         pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         return pulse
     }
+}
+
+/// One segment of the compound face, right of the icon: an image, an
+/// optional label, and what a click on it means (the id routes it).
+struct MenuBarFaceAccessory {
+    var id: String
+    var image: NSImage?
+    var title: String?
+    var toolTip: String?
+    var accessibilityLabel: String
+    /// Changes whenever what the segment shows does — the mirror
+    /// rebuilds a segment only then.
+    var signature: String
+
+    /// A segment's breathing room each side, as a variable-length item
+    /// pads its content.
+    static let inset: CGFloat = 4
 }
 
 /// The visible face of our status item while the concealer runs.
@@ -69,6 +96,8 @@ final class MenuBarIconMirror: NSPanel {
     var onSecondaryClick: ((NSView) -> Void)?
     /// The ‹ — the hidden run's toggle.
     var onChevronClick: (() -> Void)?
+    /// A segment's click, with the view to anchor anything it opens on.
+    var onAccessoryClick: ((String, NSView) -> Void)?
     /// The face's frame in AppKit screen coordinates after every move;
     /// nil once the mirror is down. The host anchors the panel on it.
     var onPlace: ((NSRect?) -> Void)?
@@ -116,7 +145,8 @@ final class MenuBarIconMirror: NSPanel {
     /// The panel's width for the current face: the face at its natural
     /// width plus the ‹ zone while anything is hidden.
     var panelWidth: CGFloat {
-        Self.panelWidth(faceWidth: content.faceWidth(for: face), hiddenCount: face.hiddenCount)
+        Self.panelWidth(faceWidth: content.faceWidth(for: face), hiddenCount: face.hiddenCount,
+                        accessoryWidths: content.accessoryWidths)
     }
 
     /// Stand at `seat(width)` on the menu-bar `row` (Quartz), converted
@@ -133,7 +163,13 @@ final class MenuBarIconMirror: NSPanel {
         }
         if !isVisible { orderFrontRegardless() }
         let chevron = face.hiddenCount > 0 ? Self.chevronZone : 0
-        publish(Self.faceFrame(in: frame, chevronWidth: chevron))
+        publish(Self.faceFrame(in: frame, chevronWidth: chevron,
+                               accessoryWidth: content.accessoryWidths.reduce(0, +)))
+    }
+
+    /// A segment's view, in the panel — what a popover anchors on.
+    func accessoryView(id: String) -> NSView? {
+        content.accessoryView(id: id)
     }
 
     func hide() {
@@ -154,12 +190,29 @@ final class MenuBarIconMirror: NSPanel {
         case .face: onPrimaryClick?()
         case .menu: onSecondaryClick?(view)
         case .chevron: onChevronClick?()
+        case .accessory(let id): onAccessoryClick?(id, content.accessoryView(id: id) ?? view)
         }
     }
 
     // MARK: Pure geometry
 
-    enum Click: Equatable { case face, menu, chevron }
+    enum Click: Equatable { case face, menu, chevron, accessory(String) }
+
+    /// A click's meaning on a compound face: past the face's slice, the
+    /// segment under the pointer; otherwise as `click(atX:chevronWidth:
+    /// secondary:)` says.
+    nonisolated static func click(atX x: CGFloat, chevronWidth: CGFloat, faceWidth: CGFloat,
+                                  accessories: [(id: String, width: CGFloat)],
+                                  secondary: Bool) -> Click {
+        if secondary { return .menu }
+        var edge = chevronWidth + faceWidth
+        guard x >= edge else { return click(atX: x, chevronWidth: chevronWidth, secondary: false) }
+        for accessory in accessories {
+            edge += accessory.width
+            if x < edge { return .accessory(accessory.id) }
+        }
+        return accessories.last.map { .accessory($0.id) } ?? .face
+    }
 
     /// A click's meaning: any secondary click (right button, Option,
     /// Control — the real item's rule) is the menu; otherwise the ‹
@@ -254,8 +307,9 @@ final class MenuBarIconMirror: NSPanel {
 
     /// The panel's width: the face plus the ‹ zone while anything is
     /// hidden.
-    nonisolated static func panelWidth(faceWidth: CGFloat, hiddenCount: Int) -> CGFloat {
-        faceWidth + (hiddenCount > 0 ? chevronZone : 0)
+    nonisolated static func panelWidth(faceWidth: CGFloat, hiddenCount: Int,
+                                       accessoryWidths: [CGFloat] = []) -> CGFloat {
+        faceWidth + (hiddenCount > 0 ? chevronZone : 0) + accessoryWidths.reduce(0, +)
     }
 
     /// The panel's frame for a seat, in AppKit screen coordinates: one
@@ -267,10 +321,19 @@ final class MenuBarIconMirror: NSPanel {
         return NSRect(x: seatMinX, y: primaryMaxY - quartzY - height, width: width, height: height)
     }
 
-    /// The face's slice of the panel — everything right of the ‹ zone.
-    nonisolated static func faceFrame(in panel: NSRect, chevronWidth: CGFloat) -> NSRect {
+    /// The ‹'s zone at the panel's left edge while anything is hidden —
+    /// where the Item Bar hangs from — else the bare left edge.
+    nonisolated static func chevronFrame(in panel: NSRect, hiddenCount: Int) -> NSRect {
+        NSRect(x: panel.minX, y: panel.minY,
+               width: hiddenCount > 0 ? chevronZone : 0, height: panel.height)
+    }
+
+    /// The face's slice of the panel — right of the ‹ zone, left of the
+    /// compound face's segments.
+    nonisolated static func faceFrame(in panel: NSRect, chevronWidth: CGFloat,
+                                      accessoryWidth: CGFloat = 0) -> NSRect {
         NSRect(x: panel.minX + chevronWidth, y: panel.minY,
-               width: max(0, panel.width - chevronWidth), height: panel.height)
+               width: max(0, panel.width - chevronWidth - accessoryWidth), height: panel.height)
     }
 }
 
@@ -283,6 +346,8 @@ private final class MirrorContentView: NSView {
     let chevron = NSImageView()
     let faceButton = NSButton()
     var onClick: ((MenuBarIconMirror.Click, NSView) -> Void)?
+    /// The compound face's segments, in order, and what each last showed.
+    private var accessoryButtons: [(id: String, signature: String, button: NSButton)] = []
 
     private var showsChevron = false
     private var chevronRevealed: Bool?
@@ -341,12 +406,18 @@ private final class MirrorContentView: NSView {
             }
             faceButton.layer?.opacity = 1
         }
+        if chevron.toolTip != face.chevronToolTip { chevron.toolTip = face.chevronToolTip }
         let shows = face.hiddenCount > 0
         if shows != showsChevron {
             showsChevron = shows
             chevron.isHidden = !shows
             layoutZones()
         }
+        applyAccessories(face.accessories)
+        if !face.accessories.isEmpty {
+            axLabel += ", " + face.accessories.map(\.accessibilityLabel).joined(separator: ", ")
+        }
+        layoutZones()
         if chevronRevealed != face.hiddenRevealed {
             chevronRevealed = face.hiddenRevealed
             chevron.image = NSImage(systemSymbolName: face.hiddenRevealed ? "chevron.right" : "chevron.left",
@@ -365,11 +436,58 @@ private final class MirrorContentView: NSView {
         return max(face.length, ceil(face.image?.size.width ?? 0))
     }
 
+    /// Each segment's width: its content at natural size plus its inset.
+    var accessoryWidths: [CGFloat] {
+        accessoryButtons.map { ceil($0.button.cell?.cellSize.width ?? 0) + 2 * MenuBarFaceAccessory.inset }
+    }
+
+    func accessoryView(id: String) -> NSView? {
+        accessoryButtons.first { $0.id == id }?.button
+    }
+
+    /// Rebuild the segments whose content changed; drop the gone ones.
+    private func applyAccessories(_ accessories: [MenuBarFaceAccessory]) {
+        let wanted = accessories.map(\.id)
+        if accessoryButtons.map(\.id) != wanted {
+            for entry in accessoryButtons { entry.button.removeFromSuperview() }
+            accessoryButtons = accessories.map { accessory in
+                let button = NSButton()
+                button.isBordered = false
+                button.focusRingType = .none
+                button.setAccessibilityElement(false)
+                addSubview(button)
+                return (accessory.id, "", button)
+            }
+        }
+        for (index, accessory) in accessories.enumerated()
+        where accessoryButtons[index].signature != accessory.signature {
+            let button = accessoryButtons[index].button
+            button.image = accessory.image
+            button.imageScaling = .scaleProportionallyDown
+            if let title = accessory.title {
+                button.attributedTitle = StatusItemController.labelTitle(title)
+                button.imagePosition = accessory.image == nil ? .noImage : .imageLeading
+                button.imageHugsTitle = true
+            } else {
+                button.title = ""
+                button.imagePosition = .imageOnly
+            }
+            button.toolTip = accessory.toolTip
+            accessoryButtons[index].signature = accessory.signature
+        }
+    }
+
     func layoutZones() {
         let chevronWidth = showsChevron ? MenuBarIconMirror.chevronZone : 0
         chevron.frame = NSRect(x: 0, y: 0, width: chevronWidth, height: bounds.height)
-        faceButton.frame = NSRect(x: chevronWidth, y: 0,
-                                  width: max(0, bounds.width - chevronWidth), height: bounds.height)
+        let segments = accessoryWidths
+        let faceWidth = max(0, bounds.width - chevronWidth - segments.reduce(0, +))
+        faceButton.frame = NSRect(x: chevronWidth, y: 0, width: faceWidth, height: bounds.height)
+        var x = chevronWidth + faceWidth
+        for (entry, width) in zip(accessoryButtons, segments) {
+            entry.button.frame = NSRect(x: x, y: 0, width: width, height: bounds.height)
+            x += width
+        }
     }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
@@ -408,9 +526,14 @@ private final class MirrorContentView: NSView {
 
     private func click(for event: NSEvent, secondary: Bool) -> MenuBarIconMirror.Click {
         let x = convert(event.locationInWindow, from: nil).x
-        return MenuBarIconMirror.click(atX: x,
-                                       chevronWidth: showsChevron ? MenuBarIconMirror.chevronZone : 0,
-                                       secondary: secondary)
+        let chevronWidth = showsChevron ? MenuBarIconMirror.chevronZone : 0
+        guard !accessoryButtons.isEmpty else {
+            return MenuBarIconMirror.click(atX: x, chevronWidth: chevronWidth, secondary: secondary)
+        }
+        return MenuBarIconMirror.click(
+            atX: x, chevronWidth: chevronWidth, faceWidth: faceButton.frame.width,
+            accessories: Array(zip(accessoryButtons.map(\.id), accessoryWidths)).map { ($0.0, $0.1) },
+            secondary: secondary)
     }
 
     // MARK: Accessibility — one button, the item's own label

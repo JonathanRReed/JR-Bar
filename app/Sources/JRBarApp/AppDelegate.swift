@@ -177,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The app's own status item is the Menu Bar utility's boundary:
         // everything left of it is the hidden run.
         utilitiesStore.menuBar.host = statusItem
+        // The Item Bar's photographed glyphs — the app's own; tests never
+        // get a camera, so no test captures the screen or writes the cache.
+        utilitiesStore.menuBar.glyphCamera = MenuBarGlyphCamera()
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
@@ -416,6 +419,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         utilitiesStore.menuBar.onOpenOverview = { [weak overviewWindow] in
             overviewWindow?.show()
         }
+        utilitiesStore.menuBar.coreFacts = { [weak core, weak store] in
+            guard let core, let store else { return MenuBarCoreFacts() }
+            return MenuBarCoreFacts.read(core: core, aggregate: store.aggregate)
+        }
 
         // Event Replay: the read-only journaled-events surface (S7.4).
         let replayStore = ReplayStore(core: core)
@@ -442,6 +449,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+        // The menu bar's "while" rules reach the strip and the daemon: a
+        // scene held while the rule lasts, the agents' quiet leased.
+        let menuBarRules = utilitiesStore.menuBar.stateRules
+        menuBarRules.currentScene = { [weak effectsStore, weak core] in
+            core?.isLive == true ? effectsStore?.activeScene : nil
+        }
+        menuBarRules.setScene = { [weak effectsStore] scene in effectsStore?.setActiveScene(scene) }
+        menuBarRules.quietAgents = { [weak core] seconds in core?.quiet(mode: "dnd", seconds: seconds) }
+        // The lease shares the daemon's one override slot with a quiet
+        // set by hand: the rule reads it to leave yours standing.
+        menuBarRules.currentQuiet = { [weak core] in
+            guard let focus = core?.state?.focus, focus.source == "override",
+                  let mode = focus.mode, mode != "off", let until = focus.until else { return nil }
+            return MenuBarQuiet(mode: mode, until: until)
+        }
+        menuBarRules.quietKnown = { [weak core] in core?.isLive == true }
+        menuBarRules.restoreQuiet = { [weak core] mode, seconds in core?.quiet(mode: mode, seconds: seconds) }
 
         let deckStore = DeckStore(core: core)
         let controlCenterWindow = ControlCenterWindowController(store: deckStore)
@@ -1092,6 +1116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if wasLive, !live { events?.reset() }
         wasLive = live
         refreshAggregate()
+        // The menu bar's rules hear the agents, the asks, the headroom
+        // and SidePulse from the same change.
+        utilitiesStore?.menuBar.coreFactsChanged()
         refreshIconStyle()
         refreshLights()
         refreshAlcoveFollowing()

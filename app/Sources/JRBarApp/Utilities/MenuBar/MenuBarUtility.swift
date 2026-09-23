@@ -51,6 +51,15 @@ final class MenuBarUtility: Toy {
     /// The real trigger feed, created once; `syncActions` runs it only
     /// while at least one rule is enabled.
     @ObservationIgnored private let systemTriggerSource = MenuBarSystemTriggerSource()
+    /// The "while" rules' runtime — levels, the outcome, and its effects
+    /// on the bar, the LED scene and the agents' quiet. The app delegate
+    /// wires the scene and quiet closures.
+    @ObservationIgnored let stateRules = MenuBarStateRunner()
+    /// Whether the levels were seeded for the rules now enabled.
+    @ObservationIgnored private var stateRulesSeeded = false
+    /// Bumped whenever the rules' outcome moves, so the card's "holding
+    /// now" line observes it.
+    private(set) var stateOutcomeVersion = 0
     /// Hotkey registrations the system refused — a key another app
     /// already owns. Mirrored out of `actions.hotkeys` after each
     /// registration pass so the card's note observes it.
@@ -64,9 +73,6 @@ final class MenuBarUtility: Toy {
     private(set) var lastArrangeOutcome: MenuBarArrangeOutcome?
     /// True while an arrange is dragging — the card disables its button.
     private(set) var arranging = false
-    /// Where the profile-cycling cursor sits: 0 is the built-in "None",
-    /// i > 0 is `profiles[i - 1]`. `applyProfile` keeps it honest.
-    @ObservationIgnored private var profileCursor = 0
 
     /// The latest layout — the card's count row and item list read it.
     /// While the utility runs the hider keeps it fresh; while it is
@@ -115,8 +121,9 @@ final class MenuBarUtility: Toy {
     /// The combined system item — battery/Wi-Fi/sound/Focus in one.
     @ObservationIgnored private let combinedItem = MenuBarCombinedItem()
     /// Whether the CC extras are hidden through our item right now —
-    /// the defaults write and the `killall` only run on the flip.
-    @ObservationIgnored private var coveredExtrasHidden = false
+    /// the defaults write and the `killall` only run on the flip. Seeded
+    /// from the saved originals: a crash can leave them hidden.
+    @ObservationIgnored private var coveredExtrasHidden = MenuBarCombinedItem.coveredExtrasSaved()
     /// The full-bar tint underlay.
     @ObservationIgnored private let underlay = MenuBarUnderlay()
     /// The agent feed's read — wired by the app delegate; the item
@@ -124,10 +131,21 @@ final class MenuBarUtility: Toy {
     var agentState: @MainActor () -> (state: AgentAggregateState, detail: String) = { (.idle, "") }
     /// The agent item's click — opens the Overview.
     var onOpenOverview: () -> Void = {}
+    /// The daemon's facts for the rules — the agents, the asks, the
+    /// usage headroom, SidePulse. Wired by the app delegate, read on
+    /// every `coreFactsChanged()`.
+    var coreFacts: @MainActor () -> MenuBarCoreFacts = { MenuBarCoreFacts() }
+    /// The facts the rules last heard — samples go out only when a
+    /// value moved, so a 20 Hz state stream costs a compare.
+    @ObservationIgnored private(set) var lastCoreFacts: MenuBarCoreFacts?
     /// The display whose mapped profile was last applied, and the
     /// pointer-screen sightings a pending switch has collected.
     @ObservationIgnored private var activeDisplayKey: String?
     @ObservationIgnored private var pendingDisplayKey: (key: String, count: Int)?
+    /// The desk the Mac sits at now — the card names it and maps it.
+    private(set) var currentDesk: (key: String, name: String)?
+    @ObservationIgnored private var deskObserver: Any?
+    @ObservationIgnored private var deskRead: Task<Void, Never>?
     /// The macOS 27 engine: `MenuBarAgent` conceals the hidden apps
     /// itself (`MenuBarConcealer`). nil where the private framework
     /// does not resolve — the spacer engine stands in then.
@@ -251,7 +269,9 @@ final class MenuBarUtility: Toy {
             read: runningBundleIDRead ?? MenuBarUtility.readRunningBundleIDs,
             monotonic: monotonic
         )
-        hider.settings = { [weak self] in self?.settings() ?? MenuBarSettings() }
+        // The hider plans against the live map — the curated one with
+        // Hide all / Show all laid over it — never the stored copy.
+        hider.settings = { [weak self] in self?.liveSettings() ?? MenuBarSettings() }
         hider.onPlan = { [weak self] plan in
             guard let self else { return }
             if self.concealer != nil, !self.seedConcealedAppsIfNeeded(from: plan) {
@@ -274,6 +294,8 @@ final class MenuBarUtility: Toy {
             self.syncConcealer()
             self.pollDisplayProfile()
             self.bar.syncItems()
+            self.refreshExtrasFaces()
+            self.photographReveal()
             // The writing passes land off the plan's stack — a settings
             // write inside `onPlan` would nest a whole reconcile inside
             // one, and the updates pass can itself reveal. Deferred like
@@ -383,6 +405,14 @@ final class MenuBarUtility: Toy {
             self?.hider.hide()
         }
         bar.items = { [weak self] in self?.barItems() ?? [] }
+        bar.glyphFace = { [weak self] item in self?.glyphFace(for: item) }
+        // The bar hangs under the icon's ‹ while the mirror carries it —
+        // the ‹'s own zone, not the compound face the extras widen.
+        bar.anchorFrame = { [weak self] in
+            guard let self, self.iconMirrored, let mirror = self.iconMirror,
+                  let frame = self.standingMirrorFrame else { return nil }
+            return MenuBarIconMirror.chevronFrame(in: frame, hiddenCount: mirror.face.hiddenCount)
+        }
         // A concealed item's ghost reports a frozen on-row frame but
         // draws nothing — capturing that rect would tile empty bar.
         // Ghosts take the owner's app icon like parked items do.
@@ -399,6 +429,16 @@ final class MenuBarUtility: Toy {
         bar.onMoveItem = { [weak self] item, section in
             self?.setSection(section, for: item.id)
         }
+        // "Show when it changes" — offered only while show for updates is
+        // on, so the menu never promises what the feature won't do.
+        bar.updateWatch = { [weak self] item in
+            guard let self, self.settings().showForUpdates else { return nil }
+            return self.watchesUpdates(of: item)
+        }
+        bar.onUpdateWatch = { [weak self] item, on in self?.setWatchesUpdates(on, for: item) }
+        // The combined readout's popover carries the agents' line too —
+        // the promised Agent variant, one click from the face.
+        combinedItem.agentLine = { [weak self] in self?.combinedAgentLine() }
         bar.onOpenChange = { [weak self] open in
             guard let self else { return }
             self.reveal.holdOpen = open
@@ -409,11 +449,34 @@ final class MenuBarUtility: Toy {
             if !open {
                 self.barClosedAtUptime = ProcessInfo.processInfo.systemUptime
                 self.reveal.noteBarClosed()
+            } else if self.concealer == nil {
+                // Under the spacer engine a covered item still renders
+                // under our shutter: photograph the stale ones for the
+                // day the concealer takes over.
+                self.photograph(self.onRowItems(in: self.barItems()))
             }
         }
         actions.delegate = self
         actions.rules = { [weak self] in self?.settings().triggerRules ?? [] }
         actions.triggerSource = systemTriggerSource
+        // The "while" rules hear the feed only while their levels are
+        // seeded — which is only ever while the utility runs.
+        systemTriggerSource.onSample = { [weak self] event in
+            guard let self, self.stateRulesSeeded else { return }
+            self.stateRules.absorb(event)
+        }
+        stateRules.rules = { [weak self] in self?.settings().curation.stateRules ?? [] }
+        stateRules.sceneBeforeRule = { [weak self] in self?.settings().curation.sceneBeforeRule }
+        stateRules.setSceneBeforeRule = { [weak self] scene in
+            self?.update { $0.curation.sceneBeforeRule = scene }
+        }
+        // A stopped hider is never re-planned: its reconcile would put
+        // covers back over a bar the utility just gave up.
+        stateRules.onLayersChange = { [weak self] in
+            guard let self, self.running else { return }
+            self.hider.reconcile()
+        }
+        stateRules.onOutcomeChange = { [weak self] in self?.stateOutcomeVersion += 1 }
         chevronActions.utility = self
         spacerActions.onClick = { [weak self] in self?.chevronClicked() }
         agentActions.onClick = { [weak self] in self?.onOpenOverview() }
@@ -507,38 +570,59 @@ final class MenuBarUtility: Toy {
                   !Self.isOwnFamily(item.bundleID) else { return }
             if let bundleID = item.bundleID, MenuBarConcealPlan.canConcealApp(bundleID) {
                 update { draft in
-                    // `.shown` is written, not deleted: the explicit
-                    // marker records a deliberate pick, and absent keys
-                    // read as shown the same way.
-                    draft.concealedApps[bundleID] = section
+                    // A profile that already speaks for the app takes
+                    // the pick; otherwise it lands on the base, so it
+                    // holds in every profile. `.shown` is written, not
+                    // deleted: the explicit marker records a deliberate
+                    // pick, and absent keys read as shown the same way.
+                    if MenuBarProfiles.pickTargetsProfile(appID: bundleID, in: draft),
+                       let profileID = draft.curation.activeProfileID {
+                        MenuBarProfiles.setDelta(appID: bundleID, to: section,
+                                                 profileID: profileID, in: &draft)
+                    } else {
+                        draft.concealedApps[bundleID] = section
+                    }
                 }
             } else {
                 // Apple's own extras and bare helpers have no concealment
                 // path through the agent — cover them where they sit
                 // instead, Ice-style, via the positional map the
                 // cover-fallback in `concealedPlan` reads.
-                update { draft in
-                    draft.sections = MenuBarItemHider.updatedSections(
-                        items: listedItems, sections: draft.sections,
-                        changedID: itemID, target: section)
-                }
+                writeCoverPick(section, for: itemID)
             }
             hider.reconcile()
             return
         }
+        writeCoverPick(section, for: itemID)
+    }
+
+    /// A positional pick: into the active profile's delta when it speaks
+    /// for the item (kept explicit — a delta's Shown must outrank the
+    /// base), else onto the base map.
+    private func writeCoverPick(_ section: MenuBarItemSection, for itemID: String) {
         update { draft in
-            draft.sections = MenuBarItemHider.updatedSections(
-                items: listedItems, sections: draft.sections,
-                changedID: itemID, target: section)
+            if MenuBarProfiles.pickTargetsProfile(itemID: itemID, in: draft),
+               let profileID = draft.curation.activeProfileID {
+                MenuBarProfiles.setDelta(itemID: itemID, to: section,
+                                         profileID: profileID, in: &draft)
+            } else {
+                draft.sections = MenuBarItemHider.updatedSections(
+                    items: listedItems, sections: draft.sections,
+                    changedID: itemID, target: section)
+            }
         }
     }
 
     /// The section an item's app is in under the concealer; the item
     /// map's answer otherwise.
     func effectiveSection(for item: MenuBarItem) -> MenuBarItemSection {
-        Self.effectiveSection(itemID: item.id, bundleID: item.bundleID,
-                              sections: settings().sections,
-                              concealedApps: settings().concealedApps,
+        // The curated truth — the base with the active profile laid over
+        // it. A standing Hide all / Show all is not a pick and never
+        // shows in the pickers.
+        let curated = curatedSettings()
+        return Self.effectiveSection(itemID: item.id, bundleID: item.bundleID,
+                              sections: curated.sections,
+                              concealedApps: curated.concealedApps,
                               concealing: concealer != nil,
                               ownBundleID: Bundle.main.bundleIdentifier)
     }
@@ -561,51 +645,195 @@ final class MenuBarUtility: Toy {
         return sections[itemID] ?? .shown
     }
 
-    /// One-click relief for a crowded bar: hide every listed foreign
-    /// item at once — the write each item's picker would make.
-    /// Protected items (clock, Control Center) and our own family are
-    /// never touched.
-    func hideAllListed() {
-        let targets = listedItems.filter {
-            !MenuBarItemLister.isProtected($0) && !$0.ownerName.isEmpty
-                && !Self.isOwnFamily($0.bundleID)
+    // MARK: Hide all / Show all — the overlay over your curation
+
+    /// The overlay standing right now, if any.
+    var activeOverlay: MenuBarOverlay.Kind? {
+        if ruleOverlayWins, let rule = stateRules.outcome.overlay { return rule }
+        return settings().curation.overlay.flatMap { $0.isLive() ? $0.kind : nil }
+    }
+
+    /// When the overlay was last put back by hand — Restore, or Keep. A
+    /// "while" rule's overlay that took hold before it stands down until
+    /// the rule next takes hold, the way a later Show all beats it.
+    /// Runtime only, like the profile's; observed, so the card's Restore
+    /// row answers at once.
+    private(set) var overlayRestoredAt: Date?
+
+    /// Whether a holding rule's overlay is the one in force: of it and
+    /// your own last word on the overlay — a Hide all, a Show all, a
+    /// Restore — whichever came last.
+    private var ruleOverlayWins: Bool {
+        _ = stateOutcomeVersion
+        guard stateRules.outcome.overlay != nil else { return false }
+        let manual = settings().curation.overlay.flatMap { $0.isLive() ? $0 : nil }
+            .map { Date(timeIntervalSince1970: $0.sinceEpoch) }
+        let manualSince = [manual, overlayRestoredAt].compactMap { $0 }.max()
+        return MenuBarStateRuleEngine.ruleWins(ruleSince: stateRules.overlaySince,
+                                               manualSince: manualSince)
+    }
+
+    /// The card's line while an overlay stands.
+    var overlayNote: String? {
+        if ruleOverlayWins, let kind = stateRules.outcome.overlay {
+            return MenuBarLayers.ruleOverlayNote(kind)
         }
-        guard !targets.isEmpty else { return }
-        if concealer != nil {
-            update { draft in
-                for item in targets {
-                    if let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id) {
-                        draft.concealedApps[id] = .hidden
-                    } else {
-                        // The picker's routing: Apple extras and bare
-                        // helpers hide via the cover, not the agent.
-                        draft.sections[item.id] = .hidden
-                    }
-                }
-            }
+        return MenuBarLayers.overlayNote(settings().curation.overlay)
+    }
+
+    /// The curated maps: the base with the active profile's deltas laid
+    /// over it — what the pickers show.
+    func curatedSettings() -> MenuBarSettings {
+        MenuBarProfiles.curated(settings())
+    }
+
+    /// The settings the engines converge to: the curated maps with the
+    /// standing overlay laid over them. Writes always go to `settings()`.
+    func liveSettings() -> MenuBarSettings {
+        let base = settings()
+        var curated: MenuBarSettings
+        if let profile = ruleProfile(in: base) {
+            // A holding rule's profile stands in for the active one —
+            // its deltas and its cover look, never your saved choice.
+            curated = MenuBarProfiles.curated(base, profile: profile)
+            MenuBarProfiles.applyCoverLook(profile, to: &curated)
         } else {
-            update { draft in
-                for item in targets { draft.sections[item.id] = .hidden }
-            }
+            curated = MenuBarProfiles.curated(base)
+        }
+        guard let overlay = activeOverlay else { return curated }
+        return MenuBarLayers.live(curated, overlay: overlay,
+                                  apps: overlay == .hideEverything ? overlayApps() : [],
+                                  itemIDs: overlay == .hideEverything ? overlayItemIDs() : [])
+    }
+
+    /// Every app with an item the agent can take — what the quiet bar
+    /// tucks away: the apps this run has seen on the bar, less ours, the
+    /// system's and Apple's extras (those cover in place instead).
+    private func overlayApps() -> Set<String> {
+        var ids = Set(knownItems.keys)
+        ids.formUnion(listedItems.compactMap(\.bundleID))
+        return ids.filter {
+            MenuBarConcealPlan.canConcealApp($0) && !Self.isOwnFamily($0)
+                && !MenuBarConcealPlan.systemItemOwners.contains($0)
+        }
+    }
+
+    /// Every item the quiet bar covers in place: under the concealer only
+    /// what the agent cannot take (Apple extras, bare helpers); under the
+    /// spacer engine every listed foreign item. Protected items — the
+    /// clock, Control Center — never.
+    private func overlayItemIDs() -> Set<String> {
+        Set(Self.hideAllTargets(listedItems).filter { item in
+            concealer == nil || !(item.bundleID.map(MenuBarConcealPlan.canConcealApp) ?? false)
+        }.map(\.id))
+    }
+
+    /// The listed items "hide all" reaches: foreign, named, unprotected,
+    /// never the native overflow control and never our own family.
+    nonisolated private static func hideAllTargets(_ items: [MenuBarItem]) -> [MenuBarItem] {
+        items.filter {
+            !MenuBarItemLister.isProtected($0) && !$0.ownerName.isEmpty
+                && !$0.isNativeOverflowControl && !isOwnFamily($0.bundleID)
+        }
+    }
+
+    /// One-click relief for a crowded bar — the quiet bar laid over your
+    /// curation, or, over a standing "show everything", your curated bar
+    /// back. The map itself is never touched: restoring is dropping the
+    /// overlay. `duration` lets it lapse on its own.
+    func hideAllListed(for duration: TimeInterval? = nil) {
+        update { draft in
+            draft.curation.overlay = MenuBarOverlay.afterHideAll(
+                draft.curation.overlay, until: duration.map { Date().addingTimeInterval($0) })
         }
         hider.reconcile()
     }
 
-    /// Bring every hidden item back and retain that choice across launches:
-    /// every app the map holds, and every listed app, reads an explicit
-    /// Shown. Per-item covers return to Auto.
-    func showAllListed() {
-        let listedApps = listedItems.compactMap { item -> String? in
-            guard let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id),
-                  !MenuBarItemLister.isProtected(item), !Self.isOwnFamily(id) else { return nil }
-            return id
-        }
+    /// Bring every hidden item back without forgetting what was hidden:
+    /// "show everything" over your curation, or, over a standing quiet
+    /// bar, your curated bar back. It survives a restart like any
+    /// setting and ends with the next Hide all, Restore, or its clock.
+    func showAllListed(for duration: TimeInterval? = nil) {
         update { draft in
-            draft.concealedApps = draft.concealedApps.mapValues { _ in .shown }
-            for id in listedApps { draft.concealedApps[id] = .shown }
-            draft.sections = [:]
+            draft.curation.overlay = MenuBarOverlay.afterShowAll(
+                draft.curation.overlay, until: duration.map { Date().addingTimeInterval($0) })
         }
         hider.reconcile()
+    }
+
+    /// Drop the overlay — the curated bar, exactly as you left it. A
+    /// rule's overlay stands down too, until the rule next takes hold.
+    func restoreCuratedBar() {
+        let manual = settings().curation.overlay != nil
+        guard manual || ruleOverlayWins else { return }
+        overlayRestoredAt = Date()
+        if manual { update { $0.curation.overlay = nil } }
+        hider.reconcile()
+    }
+
+    /// "Keep" — the standing overlay becomes your curation: every listed
+    /// app written Hidden (or every app written Shown and the covers
+    /// cleared), then the overlay drops. The old one-click rewrite, now
+    /// only ever on this explicit ask.
+    func keepOverlay() {
+        guard let kind = activeOverlay else { return }
+        let targets = Self.hideAllTargets(listedItems)
+        let concealing = concealer != nil
+        update { draft in
+            switch kind {
+            case .hideEverything:
+                for item in targets {
+                    if concealing, let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id) {
+                        if draft.concealedApps[id] != .alwaysHidden { draft.concealedApps[id] = .hidden }
+                    } else if draft.sections[item.id] != .alwaysHidden {
+                        // The picker's routing: Apple extras, bare helpers
+                        // and the spacer engine hide by covers.
+                        draft.sections[item.id] = .hidden
+                    }
+                }
+            case .showEverything:
+                // `.shown` is written, not deleted: the explicit marker
+                // records a deliberate pick.
+                draft.concealedApps = draft.concealedApps.mapValues { _ in .shown }
+                for id in targets.compactMap(\.bundleID) where MenuBarConcealPlan.canConcealApp(id) {
+                    draft.concealedApps[id] = .shown
+                }
+                draft.sections = [:]
+            }
+            draft.curation.overlay = nil
+        }
+        // Kept is yours now: a rule's overlay it came from stands down.
+        overlayRestoredAt = Date()
+        hider.reconcile()
+    }
+
+    /// A timed overlay's lapse — rearmed on every settings apply.
+    @ObservationIgnored private var overlayExpiry: Task<Void, Never>?
+
+    /// Arm (or drop) the clock that ends a timed overlay. An overlay
+    /// already past its time is cleared on the next turn — never inside
+    /// the apply that noticed it.
+    private func scheduleOverlayExpiry() {
+        overlayExpiry?.cancel()
+        overlayExpiry = nil
+        guard let overlay = settings().curation.overlay, let until = overlay.untilEpoch else { return }
+        let delay = max(0, until - Date().timeIntervalSince1970)
+        overlayExpiry = Task { @MainActor [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1e9)) }
+            guard !Task.isCancelled else { return }
+            self?.expireOverlayIfDue()
+        }
+    }
+
+    /// Clear a timed overlay whose clock has run out — the curated bar
+    /// comes back. An overlay still standing, or one without a clock, is
+    /// left alone. A lapse while the utility is stopped still clears the
+    /// file; only a running hider re-plans.
+    func expireOverlayIfDue(now: Date = Date()) {
+        guard let overlay = settings().curation.overlay, overlay.untilEpoch != nil,
+              !overlay.isLive(at: now) else { return }
+        update { $0.curation.overlay = nil }
+        if running { hider.reconcile() }
     }
 
     // MARK: Appearance bindings (hex-string settings ↔ Color)
@@ -637,12 +865,66 @@ final class MenuBarUtility: Toy {
     /// settings write, so the reconcile path restyles and re-covers.
     func applyProfile(id: String) {
         let profile = settings().profiles.first { $0.id == id }
-        // Keep the hotkey cycle cursor honest: None is index 0, the
-        // profiles follow in list order.
-        profileCursor = profile.map { p in
-            (settings().profiles.firstIndex(where: { $0.id == p.id }) ?? 0) + 1
-        } ?? 0
+        // A switch made after a rule took hold wins over the rule's.
+        manualProfileAt = Date()
         update { MenuBarProfiles.apply(profile, to: &$0) }
+    }
+
+    /// When a profile was last switched by hand (the card, the menu, a
+    /// hotkey, a one-shot rule, a display) — against a "while" rule's
+    /// profile, the later one wins. Runtime only: after a relaunch a
+    /// holding rule wins.
+    @ObservationIgnored private var manualProfileAt: Date?
+
+    /// The profile a holding "while" rule lays over the bar, while it
+    /// wins — resolved by name like the triggers; "None" is your bar with
+    /// the default look.
+    private func ruleProfile(in settings: MenuBarSettings) -> MenuBarSettings.Profile? {
+        guard let name = stateRules.outcome.profileName,
+              MenuBarStateRuleEngine.ruleWins(ruleSince: stateRules.profileSince,
+                                              manualSince: manualProfileAt) else { return nil }
+        if name.caseInsensitiveCompare(MenuBarProfiles.noneName) == .orderedSame {
+            return MenuBarSettings.Profile(id: MenuBarProfiles.noneID, name: MenuBarProfiles.noneName)
+        }
+        return settings.profiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The active profile's id, or the built-in None's.
+    var activeProfileID: String {
+        MenuBarProfiles.activeProfile(in: settings())?.id ?? MenuBarProfiles.noneID
+    }
+
+    /// The profile editor's rows: every app the agent can take (one row
+    /// per bundle, not per item — the concealer hides whole apps) and
+    /// every item it cannot, which covers in place. Under the spacer
+    /// engine every listed item is its own row. Protected items and our
+    /// own family never.
+    var profileSubjects: [MenuBarProfileSubject] {
+        var seenApps: Set<String> = []
+        var rows: [MenuBarProfileSubject] = []
+        for item in Self.hideAllTargets(listedItems) {
+            if concealer != nil, let app = item.bundleID, MenuBarConcealPlan.canConcealApp(app) {
+                guard seenApps.insert(app).inserted else { continue }
+                rows.append(MenuBarProfileSubject(key: app, isApp: true, title: item.ownerName, item: item))
+            } else {
+                rows.append(MenuBarProfileSubject(
+                    key: item.id, isApp: false,
+                    title: item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName, item: item))
+            }
+        }
+        return rows
+    }
+
+    /// The profile editor's write — nil makes the app follow the base.
+    func setProfileDelta(_ section: MenuBarItemSection?, forApp appID: String, profileID: String) {
+        update { MenuBarProfiles.setDelta(appID: appID, to: section, profileID: profileID, in: &$0) }
+        hider.reconcile()
+    }
+
+    /// The same for a covered item.
+    func setProfileDelta(_ section: MenuBarItemSection?, forItem itemID: String, profileID: String) {
+        update { MenuBarProfiles.setDelta(itemID: itemID, to: section, profileID: profileID, in: &$0) }
+        hider.reconcile()
     }
 
     /// Save the current arrangement under `name`; returns the saved
@@ -718,6 +1000,8 @@ final class MenuBarUtility: Toy {
         guard let index = list.firstIndex(where: { $0.action == action }) else { return }
         list[index].enabled = enabled
         update { $0.hotkeyBindings = list }
+        // The ‹'s tooltip names the toggle hotkey while it is on.
+        faceChanged()
     }
 
     /// The ⌘⇧K palette — also the card's "Command bar" button.
@@ -748,11 +1032,21 @@ final class MenuBarUtility: Toy {
         update { $0.arrangeOrder = order }
     }
 
+    /// Whether Arrange can do anything at all: only under the spacer
+    /// engine. Under the macOS 27 concealer MenuBarAgent orders the bar
+    /// itself and a concealed item cannot be ⌘-dragged, so a run would
+    /// move the real cursor and deliver nothing — the card hides the
+    /// section and the palette's row finds no order to drive. Pure so a
+    /// test pins the gate.
+    var arrangeAvailable: Bool { Self.arrangeAvailable(concealing: concealer != nil) }
+
+    nonisolated static func arrangeAvailable(concealing: Bool) -> Bool { !concealing }
+
     /// The explicit arrange action — the only caller of the synthetic
     /// ⌘-drag machinery. The banner, cursor restore and abort watcher
     /// are the coordinator's; this just runs it and reports.
     func arrangeNow() {
-        guard !arranging else { return }
+        guard !arranging, arrangeAvailable else { return }
         // An empty order is a no-op — materialize the editor's list so
         // the button always does what the list shows.
         if settings().arrangeOrder.isEmpty {
@@ -801,6 +1095,62 @@ final class MenuBarUtility: Toy {
         update { $0.triggerRules.removeAll { $0.id == id } }
     }
 
+    // MARK: "While" rules
+
+    func addStateRule(_ rule: MenuBarStateRule) {
+        update { $0.curation.stateRules.append(rule) }
+    }
+
+    func setStateRule(id: String, enabled: Bool) {
+        update { draft in
+            guard let i = draft.curation.stateRules.firstIndex(where: { $0.id == id }) else { return }
+            draft.curation.stateRules[i].enabled = enabled
+        }
+    }
+
+    func deleteStateRule(id: String) {
+        update { $0.curation.stateRules.removeAll { $0.id == id } }
+    }
+
+    /// The rules holding right now, as the card lists them.
+    var holdingStateRules: [MenuBarStateRule] {
+        _ = stateOutcomeVersion
+        let holding = Set(stateRules.outcome.holding)
+        return settings().curation.stateRules.filter { holding.contains($0.id) }
+    }
+
+    /// The daemon's feed changed: whatever moved among the agents, the
+    /// asks, the headroom and SidePulse reaches the rule engine as a
+    /// sample. The baselines always move — a stopped utility's included —
+    /// so a start or a rule enabled later never fires on a transition
+    /// that happened while it was off; only a running utility acts.
+    func coreFactsChanged() {
+        let facts = coreFacts()
+        let samples = MenuBarCoreFacts.samples(from: lastCoreFacts, to: facts)
+        lastCoreFacts = facts
+        guard running else {
+            // A stopped utility — disabled, or handed over to another
+            // manager — holds nothing and writes nothing: the one-shot
+            // engine hears the samples against no rules, and the "while"
+            // levels are seeded afresh on the next start.
+            let day = MenuBarSystemTriggerSource.dayStamp()
+            for sample in samples {
+                _ = actions.triggerEngine.actions(for: sample, rules: [], dayStamp: day)
+            }
+            return
+        }
+        for sample in samples { systemTriggerSource.emit(sample) }
+        // The agent glance follows the feed, not the scan cadence.
+        if samples.contains(where: { if case .agentState = $0 { return true } else { return false } }) {
+            refreshExtrasFaces(force: true)
+        }
+        // An open ask rides no trigger sample; the "while" rules read it
+        // — once their levels are seeded, like every other sample.
+        if stateRulesSeeded, facts.live, stateRules.levels.askPending != facts.askPending {
+            stateRules.update { $0.askPending = facts.askPending }
+        }
+    }
+
     // MARK: Lifecycle
 
     /// The card toggle and the store's `state` write land here: start
@@ -809,6 +1159,7 @@ final class MenuBarUtility: Toy {
         runningApps.invalidate()
         migrateSectionsIfNeeded()
         syncSpacing()
+        scheduleOverlayExpiry()
         let enabled = settings().enabled && settings().provider == .jrbar
         if enabled, !running {
             start()
@@ -855,7 +1206,8 @@ final class MenuBarUtility: Toy {
     /// match, on an unnotarized build.
     private func syncConcealerChoice() {
         guard MenuBarAssessmentBackend.isAvailable, host != nil, let notarized else { return }
-        let wanted = notarized || settings().concealUnnotarized
+        let wanted = (notarized || settings().concealUnnotarized)
+            && !settings().curation.forceSpacerEngine
         if wanted, concealer == nil {
             startConcealer()
         } else if !wanted, concealer != nil {
@@ -873,14 +1225,18 @@ final class MenuBarUtility: Toy {
         let current = settings()
         let legacy = current.layoutModel < MenuBarSettings.currentLayoutModel
         let supported = current.concealedApps.filter { MenuBarConcealPlan.canConcealApp($0.key) }
-        guard legacy || supported != current.concealedApps else { return }
+        let snapshots = current.curation.profileModel < MenuBarCuration.currentProfileModel
+        guard legacy || snapshots || supported != current.concealedApps else { return }
         update { draft in
+            // Profiles move to deltas against today's base first, so
+            // each keeps exactly the layout it had.
+            MenuBarProfiles.migrateToDeltas(&draft)
             if legacy {
                 draft.sections = [:]
                 draft.concealedApps = [:]
                 draft.concealSeeded = true
                 draft.layoutModel = MenuBarSettings.currentLayoutModel
-            } else {
+            } else if supported != current.concealedApps {
                 // Old positional learning put Apple extras in a second
                 // map their picker never reads or clears. Keep the actual
                 // per-item choices and remove only those invalid entries.
@@ -913,7 +1269,9 @@ final class MenuBarUtility: Toy {
                 let notarized = await MenuBarAssessmentBackend.bundleIsNotarized()
                 guard let self, self.running, self.startGeneration == generation else { return }
                 self.notarized = notarized
-                if notarized || self.settings().concealUnnotarized {
+                if self.settings().curation.forceSpacerEngine {
+                    MenuBarAssessmentBackend.log.notice("conceal: the spacer engine is forced in Advanced")
+                } else if notarized || self.settings().concealUnnotarized {
                     self.startConcealer()
                     self.hider.reconcile()
                 } else {
@@ -929,6 +1287,7 @@ final class MenuBarUtility: Toy {
         actions.start()
         failedHotkeyActions = actions.hotkeys.failedActions
         syncExtras()
+        startDeskWatch()
         // First AX fill — a no-op without the grant — then reconcile
         // against real frames.
         Task { [weak self] in
@@ -951,8 +1310,18 @@ final class MenuBarUtility: Toy {
         // An update reveal's pending re-hide belongs to this run.
         updateHideTask?.cancel()
         updateHideTask = nil
+        overlayExpiry?.cancel()
+        overlayExpiry = nil
+        stopDeskWatch()
         failedHotkeyActions = []
         running = false
+        // A stopped utility holds nothing: the scene and the quiet go
+        // back, the layers drop — after `running` falls, so the layers'
+        // re-plan never reaches the hider that just stood down.
+        if stateRulesSeeded {
+            stateRulesSeeded = false
+            stateRules.stop()
+        }
     }
 
     // MARK: Extras — spacers, underlay, agent item, combined item
@@ -963,7 +1332,11 @@ final class MenuBarUtility: Toy {
     private func syncExtras() {
         let s = settings()
         MenuBarCombinedItem.log.notice("syncExtras: spacers=\(s.spacers.count) underlay=\(s.barUnderlay) agentItem=\(s.agentStatusItem) combined=\(s.combinedSystemItem)")
-        syncSpacerItems(s.spacers)
+        // Under the concealer macOS draws none of our status items, and it
+        // orders the bar itself, so a spacer could neither show nor sit
+        // between chosen apps: the rows keep their settings and the items
+        // stand down until the spacer engine is back (the card says so).
+        syncSpacerItems(Self.spacersDrawable(concealing: concealer != nil) ? s.spacers : [])
         if s.barUnderlay {
             underlay.show(appearance: MenuBarCoverAppearance(settings: s))
         } else {
@@ -972,19 +1345,154 @@ final class MenuBarUtility: Toy {
         if s.combinedSystemItem {
             Self.seedPreferredPosition(475,
                                        autosaveName: "com.jonathanreed.jrbar.menubar-combined")
-            if !coveredExtrasHidden {
-                coveredExtrasHidden = true
-                MenuBarCombinedItem.setCoveredExtrasHidden(true)
-            }
-            combinedItem.sync()
+            combinedItem.sync(blank: extrasMirrored)
         } else {
             combinedItem.remove()
-            if coveredExtrasHidden {
-                coveredExtrasHidden = false
-                MenuBarCombinedItem.setCoveredExtrasHidden(false)
-            }
         }
         syncAgentItem()
+        pushAccessories()
+        stepCombinedGate()
+    }
+
+    /// Whether spacer items can do their job: only under the spacer
+    /// engine. Pure so a test pins the gate.
+    nonisolated static func spacersDrawable(concealing: Bool) -> Bool { !concealing }
+
+    /// Whether the mirror carries the extras right now — the real items
+    /// then stand blank, so a lift can never flash a second copy.
+    private var extrasMirrored: Bool { concealer != nil && iconMirrored }
+
+    /// The ids of the compound face's segments.
+    nonisolated static let agentAccessoryID = "agents"
+    nonisolated static let combinedAccessoryID = "combined"
+
+    /// The extras the mirror wears as segments of its one compound face
+    /// while the concealer runs: the agent glance and the combined
+    /// readout. Empty under the spacer engine, where the real items draw.
+    private func extrasAccessories() -> [MenuBarFaceAccessory] {
+        guard concealer != nil, running else { return [] }
+        let s = settings()
+        var out: [MenuBarFaceAccessory] = []
+        if s.agentStatusItem {
+            let read = agentState()
+            out.append(MenuBarFaceAccessory(
+                id: Self.agentAccessoryID,
+                image: Self.agentDotImage(tintHex: read.state.tintHex),
+                title: read.state.label,
+                toolTip: "Agents — \(read.state.label)" + (read.detail.isEmpty ? "" : ": \(read.detail)"),
+                accessibilityLabel: "Agents: \(read.state.label)",
+                signature: "\(read.state.rawValue)|\(read.detail)"))
+        }
+        if s.combinedSystemItem {
+            let read = combinedItem.readout()
+            out.append(MenuBarFaceAccessory(
+                id: Self.combinedAccessoryID, image: read.image, title: nil,
+                toolTip: "Battery, Wi-Fi, sound and Focus — one item. Click for the panel.",
+                accessibilityLabel: read.label, signature: read.signature))
+        }
+        return out
+    }
+
+    /// The mirror's face: the host's, with the extras as segments. A
+    /// style that draws no icon lends the mirror no face — only the
+    /// segments stand.
+    private func mirrorFace() -> MenuBarIconFace? {
+        guard let host else { return nil }
+        var face = host.face
+        if !host.anchorWantsVisibleSeat {
+            face.image = nil
+            face.title = nil
+            face.length = 0
+        }
+        face.accessories = extrasAccessories()
+        face.chevronToolTip = Self.chevronToolTip(
+            hiddenCount: face.hiddenCount,
+            toggleHotkey: resolvedHotkeyBindings().first { $0.action == .toggleReveal && $0.enabled },
+            style: settings().revealStyle)
+        return face
+    }
+
+    /// A binding's key as a menu key equivalent — a letter or a digit;
+    /// nil for a key a menu cannot draw as one.
+    nonisolated static func menuKeyEquivalent(for binding: MenuBarHotkeyBinding) -> String? {
+        let name = MenuBarHotkeys.keyName(for: binding.keyCode)
+        guard name.count == 1, let scalar = name.unicodeScalars.first,
+              CharacterSet.alphanumerics.contains(scalar) else { return nil }
+        return name.lowercased()
+    }
+
+    /// The ‹'s tooltip: what a click does, and — when the toggle hotkey
+    /// is on — that the same keys open the Item Bar for the keyboard.
+    /// Pure so a test pins the copy.
+    nonisolated static func chevronToolTip(hiddenCount: Int, toggleHotkey: MenuBarHotkeyBinding?,
+                                           style: MenuBarSettings.RevealStyle) -> String? {
+        guard hiddenCount > 0 else { return nil }
+        let items = "\(hiddenCount) hidden item\(hiddenCount == 1 ? "" : "s")"
+        let click = style == .bar ? "click for the Item Bar" : "click to bring them back"
+        guard let hotkey = toggleHotkey else { return "\(items) — \(click)" }
+        let keys = style == .bar
+            ? "\(hotkey.displayString) opens it for the keyboard: arrows, type to filter, Return"
+            : "\(hotkey.displayString) does the same"
+        return "\(items) — \(click). \(keys)."
+    }
+
+    /// Push the current segments to the mirror when they changed.
+    private func pushAccessories() {
+        guard let mirror = iconMirror, let face = mirrorFace() else { return }
+        let wanted = face.accessories.map(\.signature)
+        guard wanted != mirror.face.accessories.map(\.signature) else { return }
+        mirror.update(face: face)
+        updateIconMirror()
+    }
+
+    /// A segment's click: the agents open the Overview, the readout its
+    /// popover — anchored on the segment.
+    private func accessoryClicked(_ id: String, view: NSView) {
+        switch id {
+        case Self.agentAccessoryID: onOpenOverview()
+        case Self.combinedAccessoryID: combinedItem.toggle(relativeTo: view)
+        default: break
+        }
+    }
+
+    /// Refresh the extras' faces — the agent glance and the combined
+    /// readout change with the world, not with settings. Throttled: the
+    /// plan pass calls it every scan.
+    @ObservationIgnored private var extrasRefreshedAt = Date.distantPast
+    private func refreshExtrasFaces(force: Bool = false) {
+        guard running else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(extrasRefreshedAt) >= 2 else { return }
+        extrasRefreshedAt = now
+        let s = settings()
+        if s.combinedSystemItem { combinedItem.sync(blank: extrasMirrored) }
+        syncAgentItem()
+        pushAccessories()
+        stepCombinedGate(now: now)
+    }
+
+    /// The gate on Control Center's items — see `MenuBarDrawnGate`.
+    @ObservationIgnored private var combinedGate =
+        MenuBarDrawnGate(hidden: MenuBarCombinedItem.coveredExtrasSaved())
+
+    private func stepCombinedGate(now: Date = Date()) {
+        let wanted = running && settings().combinedSystemItem
+        guard let hide = combinedGate.step(wanted: wanted, drawn: combinedFaceDrawn, now: now) else { return }
+        MenuBarCombinedItem.log.notice("combined item: \(hide ? "face drawn — hiding" : "face not drawn — restoring", privacy: .public) Control Center's items")
+        coveredExtrasHidden = hide
+        MenuBarCombinedItem.setCoveredExtrasHidden(hide)
+    }
+
+    /// Whether the combined face is on screen: under a live assertion
+    /// only the mirror's segment can be (macOS draws no item of ours);
+    /// with none, the real item once it has a window.
+    private var combinedFaceDrawn: Bool {
+        guard settings().combinedSystemItem, combinedItem.item != nil else { return false }
+        if let concealer, concealer.isConcealing || concealer.isSuspended {
+            guard iconMirrored, let mirror = iconMirror, mirror.isVisible else { return false }
+            return mirror.face.accessories.contains { $0.id == Self.combinedAccessoryID }
+        }
+        return combinedItem.item?.button?.window != nil
     }
 
     /// Everything extras-related off the bar — the disable path and
@@ -998,6 +1506,7 @@ final class MenuBarUtility: Toy {
         }
         underlay.hide()
         combinedItem.remove()
+        _ = combinedGate.release()
         if coveredExtrasHidden {
             coveredExtrasHidden = false
             MenuBarCombinedItem.setCoveredExtrasHidden(false)
@@ -1074,11 +1583,15 @@ final class MenuBarUtility: Toy {
             agentItem = item
         }
         let read = agentState()
-        let signature = "\(read.state.rawValue)|\(read.detail)"
+        let blank = extrasMirrored
+        let signature = "\(read.state.rawValue)|\(read.detail)" + (blank ? "|blank" : "")
         guard signature != lastAgentSignature else { return }
         lastAgentSignature = signature
-        agentItem?.button?.image = Self.agentDotImage(tintHex: read.state.tintHex)
-        agentItem?.button?.title = read.state.label
+        // While the mirror carries the glance the item stands blank —
+        // macOS draws nothing of ours under the assertion anyway, and a
+        // lift must not flash a second copy.
+        agentItem?.button?.image = blank ? nil : Self.agentDotImage(tintHex: read.state.tintHex)
+        agentItem?.button?.title = blank ? "" : read.state.label
         agentItem?.button?.toolTip = "Agents — \(read.state.label)"
             + (read.detail.isEmpty ? "" : ": \(read.detail)")
     }
@@ -1127,6 +1640,84 @@ final class MenuBarUtility: Toy {
         Task { @MainActor [weak self] in self?.applyProfile(id: profileID) }
     }
 
+    // MARK: Desks
+
+    /// How long the screens must hold still before a desk is read — a
+    /// dock or a lid shutting reconfigures them in a burst.
+    nonisolated static let deskSettle: TimeInterval = 1.5
+
+    /// Read the desk now and again whenever the screens change.
+    private func startDeskWatch() {
+        guard deskObserver == nil else { return }
+        deskObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleDeskRead(after: Self.deskSettle) }
+        }
+        // Off start's stack: an arrival writes settings.
+        scheduleDeskRead(after: 0)
+    }
+
+    private func stopDeskWatch() {
+        if let deskObserver { NotificationCenter.default.removeObserver(deskObserver) }
+        deskObserver = nil
+        deskRead?.cancel()
+        deskRead = nil
+    }
+
+    private func scheduleDeskRead(after delay: TimeInterval) {
+        deskRead?.cancel()
+        deskRead = Task { @MainActor [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1e9)) }
+            guard !Task.isCancelled, let self, self.running else { return }
+            self.noteDesk(MenuBarDesk.current(),
+                          lidClosed: MenuBarSystemTriggerSource.clamshellClosed() ?? false)
+        }
+    }
+
+    /// A desk read: name it for the card and, when it is a different desk
+    /// from the last one seen, take the profile it maps to — once, so a
+    /// profile picked by hand afterwards holds until the desk changes.
+    func noteDesk(_ displays: [MenuBarDesk.Display], lidClosed: Bool) {
+        guard let key = MenuBarDesk.key(displays) else { return }
+        let name = MenuBarDesk.name(displays, lidClosed: lidClosed)
+        currentDesk = (key, name)
+        let curation = settings().curation
+        let arriving = MenuBarDesk.profileToApply(previousKey: curation.lastDeskKey,
+                                                  currentKey: key, desks: curation.deskProfiles)
+        let renamed = curation.deskProfiles.contains { $0.key == key && $0.name != name }
+        guard curation.lastDeskKey != key || renamed else { return }
+        update { draft in
+            draft.curation.lastDeskKey = key
+            if let index = draft.curation.deskProfiles.firstIndex(where: { $0.key == key }) {
+                draft.curation.deskProfiles[index].name = name
+            }
+        }
+        if let arriving, deskProfileExists(arriving) { applyProfile(id: arriving) }
+    }
+
+    /// Map the current desk to a profile (empty clears it). Picking one
+    /// takes it now — the desk you are at is the one you are choosing for.
+    func setProfileForCurrentDesk(_ profileID: String) {
+        guard let desk = currentDesk else { return }
+        update { draft in
+            draft.curation.deskProfiles = MenuBarDesk.setting(profileID, forKey: desk.key, name: desk.name,
+                                                              in: draft.curation.deskProfiles)
+            draft.curation.lastDeskKey = desk.key
+        }
+        if !profileID.isEmpty, deskProfileExists(profileID) { applyProfile(id: profileID) }
+    }
+
+    /// Forget a desk that is not attached.
+    func forgetDesk(key: String) {
+        update { draft in draft.curation.deskProfiles.removeAll { $0.key == key } }
+    }
+
+    private func deskProfileExists(_ id: String) -> Bool {
+        id == MenuBarProfiles.noneID || settings().profiles.contains { $0.id == id }
+    }
+
     // MARK: The concealer (macOS 27)
 
     /// Bring the agent-side engine up: the hider keeps listing and
@@ -1144,6 +1735,7 @@ final class MenuBarUtility: Toy {
         concealer.onChange = { [weak self] in self?.concealerChanged() }
         self.concealer = concealer
         concealerStartedAt = Date()
+        prePhotographPending = true
         hider.shuttersSuppressed = true
         // No affordance under the agent: nothing of ours grows while the
         // agent hides — the icon is the mirror's.
@@ -1169,6 +1761,8 @@ final class MenuBarUtility: Toy {
         iconMirror = makeIconMirror()
         updateIconMirror()
         menuHandleChanged()
+        // The spacers stand down and the extras move onto the mirror.
+        if running { syncExtras() }
     }
 
     /// The icon while the concealer runs — see `MenuBarIconMirror`.
@@ -1234,7 +1828,8 @@ final class MenuBarUtility: Toy {
         mirror.onSecondaryClick = { [weak self] view in self?.host?.popUpMenu(in: view) }
         mirror.onChevronClick = { [weak self] in self?.host?.onBoundaryClick?() }
         mirror.onPlace = { [weak self] frame in self?.host?.mirroredFaceFrame = frame }
-        if let face = host?.face { mirror.update(face: face) }
+        mirror.onAccessoryClick = { [weak self] id, view in self?.accessoryClicked(id, view: view) }
+        if let face = mirrorFace() { mirror.update(face: face) }
         return mirror
     }
 
@@ -1259,8 +1854,64 @@ final class MenuBarUtility: Toy {
     /// live reveal — our own family never, whatever a stale map says
     /// (the daemon's meter hid itself once).
     private func concealTarget() -> Set<String> {
-        MenuBarConcealPlan.concealed(apps: settings().concealedApps, revealed: hider.revealed)
-            .filter { !Self.isOwnFamily($0) }
+        let now = Date()
+        lifts = lifts.filter { $0.value > now }
+        return Self.liveTarget(
+            MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed),
+            lifts: lifts, now: now)
+    }
+
+    /// Apps lifted out of the assertion for a moment, and until when: a
+    /// tile's press stands its app alone while its menu is read, a
+    /// watched item that changed stands alone for the rehide clock.
+    /// Every plan pass re-applies the target, so a lift lives here, not
+    /// in a one-off apply the next pass would undo within the second.
+    @ObservationIgnored private var lifts: [String: Date] = [:]
+
+    /// The target with the live lifts left out — never our own family.
+    /// Pure so a test pins it.
+    nonisolated static func liveTarget(_ concealed: Set<String>, lifts: [String: Date],
+                                       now: Date) -> Set<String> {
+        concealed.filter { !isOwnFamily($0) && !(lifts[$0].map { $0 > now } ?? false) }
+    }
+
+    /// How long a lift holds for its photograph — the camera's two
+    /// frames and their listings, with room to spare; the pass ends it
+    /// sooner.
+    nonisolated static let liftPhotographHold: TimeInterval = 3
+
+    /// Stand `app` alone on the row until `until` (a later lift wins),
+    /// and converge now.
+    private func lift(_ app: String, until: Date) {
+        lifts[app] = max(until, lifts[app] ?? until)
+        syncConcealer()
+    }
+
+    /// End a lift once nothing of the app's is open — a menu the person
+    /// is reading keeps it standing, polled each second for up to five
+    /// minutes — then put the full target back.
+    private func releaseLift(_ app: String, item: MenuBarItem) async {
+        for _ in 0..<300 {
+            guard MenuBarItemLister.menuOpen(ownerPIDs: [item.ownerPID],
+                                             infos: MenuBarItemLister.windowInfos()) else { break }
+            lifts[app] = Date().addingTimeInterval(2)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        // The press is answered and its menu closed, and the lift still
+        // stands the item on the row: the moment to photograph a stale
+        // glyph. Never before the press — each frame lights the
+        // recording indicator and shifts the bar, which must not land
+        // between a click and the menu it opens. A fresh glyph costs no
+        // capture at all. Only a lift still standing is held — one that
+        // already lapsed is not raised again for a picture.
+        if let camera = glyphCamera, let until = lifts[app], until > Date() {
+            lifts[app] = max(until, Date().addingTimeInterval(Self.liftPhotographHold))
+            let stored = await camera.photograph([item], rows: MenuBarItemLister.menuBarRows())
+            if !stored.isEmpty { bar.glyphsChanged() }
+        }
+        lifts[app] = nil
+        runningApps.invalidate()
+        syncConcealer()
     }
 
     /// Settle who draws the icon and, while the mirror does, where it
@@ -1272,14 +1923,25 @@ final class MenuBarUtility: Toy {
         let before = standingMirrorFrame
         // A target of apps that are not running conceals nothing — the
         // engine drops the assertion and macOS draws the real item.
+        // A style that draws no icon still stands a mirror while the
+        // extras ride it — they have nowhere else to show.
+        let drawsSomething = (host?.anchorWantsVisibleSeat ?? false)
+            || !(iconMirror?.face.accessories.isEmpty ?? true)
         let mirrored = Self.mirrorsIcon(engineUp: true,
-                                        styleDrawsIcon: host?.anchorWantsVisibleSeat ?? false,
+                                        styleDrawsIcon: drawsSomething,
                                         concealing: concealer.isConcealing,
                                         suspended: concealer.isSuspended,
                                         targetEmpty: concealTarget().isDisjoint(with: runningApps.snapshot()),
                                         activationFailing: concealer.activationFailing)
+        let extrasFlipped = iconMirrored != mirrored
         iconMirrored = mirrored
         host?.setFaceMirrored(mirrored)
+        if extrasFlipped {
+            // The extras' real items blank or wear their faces again.
+            if settings().combinedSystemItem { combinedItem.sync(blank: extrasMirrored) }
+            syncAgentItem()
+        }
+        stepCombinedGate()
         if mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first {
             mirror.show(row: Self.primaryRow(), primaryMaxY: primary.frame.maxY) { width in
                 mirrorSeat(width: width)
@@ -1304,8 +1966,8 @@ final class MenuBarUtility: Toy {
     /// (a label or the ‹ changes its width); a flip to or from the
     /// `.hidden` style settles whether it stands at all.
     private func faceChanged() {
-        guard concealer != nil, let host else { return }
-        iconMirror?.update(face: host.face)
+        guard concealer != nil, let face = mirrorFace() else { return }
+        iconMirror?.update(face: face)
         updateIconMirror()
     }
 
@@ -1412,6 +2074,8 @@ final class MenuBarUtility: Toy {
         hider.externalPlan = nil
         self.concealer = nil
         menuHandleChanged()
+        // The real extras are the faces again; the spacers come back.
+        if running { syncExtras() }
     }
 
     /// The bundle identifiers of every running app — the allowlist's
@@ -1752,7 +2416,7 @@ final class MenuBarUtility: Toy {
     /// drags or earn covers.
     private func isConcealedGhost(_ item: MenuBarItem) -> Bool {
         guard let id = item.bundleID,
-              let section = settings().concealedApps[id], section != .shown
+              let section = liveSettings().concealedApps[id], section != .shown
         else { return false }
         return liveConcealedItems[item.id] == nil
     }
@@ -1772,10 +2436,12 @@ final class MenuBarUtility: Toy {
         for id in knownItems.keys where seen[id] == nil && !running.contains(id) {
             knownItems[id] = nil
         }
-        let apps = settings().concealedApps
+        // The live maps — the curated ones with any overlay laid over.
+        let live = liveSettings()
+        let apps = live.concealedApps
         // The positional map, read only for items the agent cannot
         // target (no bundle identifier) — see the cover-fallback below.
-        let sections = settings().sections
+        let sections = live.sections
         var plan = MenuBarHidePlan()
         // Standing means on ANY display's bar — a secondary-screen item
         // is visible exactly like a main-row one.
@@ -1930,8 +2596,22 @@ final class MenuBarUtility: Toy {
         // assertion is still draining for a beat after the engine comes
         // up. Nothing else gates it — macOS never draws our own item
         // under our assertion, so there is no adoption to wait for.
-        guard concealer.isConcealing
-                || Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionGrace else { return }
+        let inGrace = Date().timeIntervalSince(concealerStartedAt) < Self.adoptionGrace
+        if prePhotographPending, !concealer.isConcealing {
+            // The one moment every app about to be hidden is still drawn:
+            // photograph them (and the shown ones) before the first
+            // assertion takes their pixels.
+            if !inGrace {
+                prePhotographPending = false
+            } else {
+                let standing = onRowItems(in: listedItems)
+                if !standing.isEmpty {
+                    prePhotographPending = false
+                    photograph(standing)
+                }
+            }
+        }
+        guard concealer.isConcealing || !inGrace else { return }
         let concealed = concealTarget()
         concealer.apply(concealed: concealed, running: runningApps.snapshot())
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
@@ -1941,7 +2621,220 @@ final class MenuBarUtility: Toy {
         clickBridge?.update(items: lastPlan.shown, concealing: concealer?.isConcealing ?? false)
         refreshChevron()
         updateIconMirror()
+        engineVersion += 1
     }
+
+    // MARK: The glyph camera
+
+    /// Photographs items while they are legitimately drawn and files
+    /// their glyphs for the Item Bar. Set by the app delegate — a test
+    /// utility has none, so no test ever captures the screen or writes
+    /// the cache.
+    @ObservationIgnored var glyphCamera: MenuBarGlyphCamera? {
+        didSet {
+            glyphCamera?.dark = { [weak self] in self?.barIsDark() ?? false }
+            glyphCamera?.onChange = { [weak self] item in
+                // A picture that changed while tucked away — the next
+                // Item Bar marks it.
+                self?.bar.updatedIDs.insert(item.id)
+            }
+            // Each frame is bracketed by a fresh listing: the item must
+            // still be drawn, unmoved, and alone in its rect, or the
+            // photograph is someone else's. Fresh means begun after the
+            // frame — the hider's scan in flight would hand back a list
+            // older than it, and the check would compare it to itself.
+            glyphCamera?.locate = { [weak self] item in
+                guard let listed = await MenuBarItemLister.freshAXItems(),
+                      let self, let fresh = listed.first(where: { $0.id == item.id }) else { return nil }
+                return Self.photographable(fresh, among: listed,
+                                           rows: MenuBarItemLister.menuBarRows(),
+                                           concealed: self.concealer?.concealedApps ?? [])
+                    ? fresh : nil
+            }
+            pruneGlyphs()
+        }
+    }
+    /// The engine just came up: photograph before the first assertion.
+    @ObservationIgnored private var prePhotographPending = false
+    /// This reveal's photographs are taken (or under way).
+    @ObservationIgnored private var revealPhotographed = false
+    /// Waits out the moment this reveal may be photographed.
+    @ObservationIgnored private var revealPhotoWatch: Task<Void, Never>?
+
+    /// The menu bar's appearance — the icon's, which follows the
+    /// wallpaper under the bar, not the app's.
+    private func barIsDark() -> Bool {
+        let appearance = host?.face.appearance ?? NSApp.effectiveAppearance
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    /// The items among `items` that stand on a bar and are someone
+    /// else's to photograph — never ours, never the protected system
+    /// items, and never an app the live assertion conceals right now
+    /// (its frame is a ghost that draws nothing). Before the first
+    /// assertion, and for the apps a reveal or a lift narrowed out of
+    /// it, the items are drawn.
+    private func onRowItems(in items: [MenuBarItem]) -> [MenuBarItem] {
+        let rows = MenuBarItemLister.menuBarRows()
+        let concealedNow = concealer?.concealedApps ?? []
+        return items.filter {
+            Self.photographable($0, among: items, rows: rows, concealed: concealedNow)
+        }
+    }
+
+    /// Whether `item` can be photographed as itself: someone else's
+    /// (never ours, never a protected system item, never the «), on a
+    /// row, not concealed by the live assertion, and alone in its rect.
+    /// A concealed app's ghost keeps reporting its old frame after the
+    /// row repacks, so two listed items sharing a stretch of bar means
+    /// one of them is a ghost over the other — and a photograph of that
+    /// rect could file one app's glyph under the other's name. Pure so a
+    /// test pins it.
+    nonisolated static func photographable(_ item: MenuBarItem, among items: [MenuBarItem],
+                                           rows: [CGRect], concealed: Set<String>) -> Bool {
+        guard !hideAllTargets([item]).isEmpty,
+              rows.contains(where: { $0.intersects(item.bounds) }),
+              !(item.bundleID.map(concealed.contains) ?? false) else { return false }
+        return !items.contains { other in
+            other.id != item.id && other.bounds.intersection(item.bounds).width >= 4
+        }
+    }
+
+    /// Drop the photographs of apps long gone: an owner that neither
+    /// runs nor resolves on disk, photographed more than a month ago. A
+    /// helper bundled inside another app resolves neither lookup, so the
+    /// age is what keeps its glyph through a quiet spell. Launch-time
+    /// housekeeping, a beat after the camera is set.
+    private func pruneGlyphs() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let camera = self?.glyphCamera else { return }
+            let now = Date()
+            camera.cache.prune { owner, capturedAt in
+                now.timeIntervalSince(capturedAt) < MenuBarGlyphCache.pruneAge
+                    || !owner.contains(".")
+                    || !NSRunningApplication.runningApplications(withBundleIdentifier: owner).isEmpty
+                    || NSWorkspace.shared.urlForApplication(withBundleIdentifier: owner) != nil
+            }
+        }
+    }
+
+    /// The photographed glyph for an item in the bar's appearance — the
+    /// card's layout editor wears the Item Bar's faces.
+    func glyphFace(for item: MenuBarItem) -> MenuBarGlyphCache.Face? {
+        glyphCamera?.cache.face(for: item, dark: barIsDark())
+    }
+
+    /// One photograph pass, off the caller's stack.
+    private func photograph(_ items: [MenuBarItem]) {
+        guard let camera = glyphCamera, !items.isEmpty else { return }
+        Task { [weak self] in
+            let stored = await camera.photograph(items, rows: MenuBarItemLister.menuBarRows())
+            if !stored.isEmpty { self?.bar.glyphsChanged() }
+        }
+    }
+
+    /// While a reveal holds the concealed apps on the row, photograph
+    /// the stale ones once — after the fade-in, and only while nobody is
+    /// using the row: the pointer off every surface the reveal serves
+    /// and no listed item's menu open. Each frame lights the recording
+    /// indicator and shifts the bar, which must never land under a
+    /// pointer aiming at the items the reveal just brought back. The
+    /// watch is a pointer read and a window list twice a second, for
+    /// the life of one reveal, and stops once the pass is taken.
+    private func photographReveal() {
+        guard concealer != nil, glyphCamera != nil, !hider.revealed.isEmpty else {
+            revealPhotographed = false
+            revealPhotoWatch?.cancel()
+            revealPhotoWatch = nil
+            return
+        }
+        guard !revealPhotographed, revealPhotoWatch == nil else { return }
+        revealPhotoWatch = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard self.concealer != nil, !self.hider.revealed.isEmpty else {
+                    // The reveal (or the engine) went first: the next
+                    // one starts a watch of its own.
+                    self.revealPhotoWatch = nil
+                    return
+                }
+                if !self.reveal.pointerOnRevealSurface(), !self.listedItemMenuOpen() {
+                    self.revealPhotographed = true
+                    self.revealPhotoWatch = nil
+                    let tucked = MenuBarConcealPlan.concealed(apps: self.curatedSettings().concealedApps,
+                                                              revealed: [])
+                    let standing = self.onRowItems(in: self.listedItems).filter {
+                        $0.bundleID.map(tucked.contains) ?? false
+                    }
+                    self.photograph(standing)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+    }
+
+    // MARK: Engine health and rivals
+
+    /// Bumped whenever the engine's state moves, so the card's line
+    /// observes it — the concealer itself is not observable.
+    private(set) var engineVersion = 0
+
+    /// Which engine hides the bar, and whether it is healthy.
+    var engineHealth: MenuBarEngineHealth {
+        _ = engineVersion
+        return .assess(.init(
+            running: running,
+            frameworkAvailable: concealerAvailable,
+            forced: settings().curation.forceSpacerEngine,
+            notarized: notarized,
+            concealUnnotarized: settings().concealUnnotarized,
+            engineUp: concealer != nil,
+            assertionLive: concealer?.isConcealing ?? false,
+            activationFailing: concealer?.activationFailing ?? false,
+            inStartGrace: Date().timeIntervalSince(concealerStartedAt) < Self.adoptionGrace,
+            concealedCount: concealer?.concealedApps.count ?? 0))
+    }
+
+    /// The card's "Right now" line.
+    var engineLine: String {
+        let health = engineHealth
+        if case .spacer = health { return health.line(fitEdge: hider.fitEdge) }
+        return health.line()
+    }
+
+    /// Other menu-bar managers running while ours renders — their
+    /// assertions un-hide what ours conceals. Empty while a counterpart
+    /// is the pick (then running it is the point) or ours is parked.
+    var runningRivals: [MenuBarRivals.Rival] {
+        _ = workspaceVersion
+        guard settings().provider == .jrbar, settings().enabled else { return [] }
+        return MenuBarRivals.runningNow()
+    }
+
+    /// The guard's "Hand over": the rival renders, ours parks.
+    func handOver(to rival: MenuBarRivals.Rival) {
+        guard let provider = rival.handoff else { return }
+        update { $0.provider = provider }
+    }
+
+    /// The guard's "Quit": ask the rival to quit — the person's click.
+    func quitRival(_ rival: MenuBarRivals.Rival) {
+        MenuBarRivals.quit(rival)
+    }
+
+    /// The diagnostic toggle: keep the spacer engine even where the
+    /// concealer resolves. The apply brings the engine up or down.
+    func setForceSpacerEngine(_ on: Bool) {
+        update { $0.curation.forceSpacerEngine = on }
+        engineVersion += 1
+    }
+
+    /// The fit-edge dial for the spacer engine — a nudge, a reset.
+    func nudgeFitEdge(by delta: CGFloat) { hider.nudgeFitEdge(by: delta) }
+    func resetFitEdge() { hider.forgetFitEdge() }
 
     /// A held-back click on the clock, battery or Wi-Fi: lift, replay,
     /// let concealment return.
@@ -1964,11 +2857,32 @@ final class MenuBarUtility: Toy {
             actions.hotkeys.bindings = resolved
             actions.hotkeys.apply()
         }
-        if settings().triggerRules.contains(where: \.enabled) {
+        let whileRulesOn = settings().curation.stateRules.contains(where: \.enabled)
+        if whileRulesOn, !stateRulesSeeded {
+            // The levels no sample carries yet: the running apps, the
+            // front one, the lock, the displays, the lid — and the
+            // daemon's facts as last heard.
+            stateRulesSeeded = true
+            var seed = MenuBarStateRunner.seedLevels()
+            if let facts = lastCoreFacts, facts.live {
+                seed.agent = facts.agent
+                seed.askPending = facts.askPending
+                seed.quotaRemaining = facts.quotaRemaining
+                seed.sidePulse = facts.sidePulsePresent
+            }
+            stateRules.update { $0 = seed }
+            systemTriggerSource.pollNow()
+        } else if !whileRulesOn, stateRulesSeeded {
+            stateRulesSeeded = false
+            stateRules.stop()
+        }
+        if settings().triggerRules.contains(where: \.enabled) || whileRulesOn {
             systemTriggerSource.start()
         } else {
             systemTriggerSource.stop()
         }
+        // A rule edited, added or toggled re-resolves against the levels.
+        if whileRulesOn { stateRules.evaluate() }
         // `apply()` re-registers — the refusal set is refreshed either
         // way, and a fresh start clears a stale failure list.
         failedHotkeyActions = actions.hotkeys.failedActions
@@ -2141,18 +3055,17 @@ final class MenuBarUtility: Toy {
             item.owner?.activate()
             return
         }
-        if let concealer, let id = item.bundleID,
-           MenuBarConcealPlan.concealed(apps: settings().concealedApps, revealed: hider.revealed).contains(id) {
+        if concealer != nil, let id = item.bundleID,
+           MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed).contains(id) {
             // Concealed: only this app stands. The assertion's target
             // narrows by exactly this bundle — every other hidden app
             // stays concealed, so the bar never lifts — then the item
             // gets a beat to draw, the press lands on its fresh frame,
             // and the full target goes back up after the rehide window.
-            let target = MenuBarConcealPlan.concealed(apps: settings().concealedApps,
-                                                    revealed: hider.revealed)
-            concealer.apply(concealed: target.subtracting([id]),
-                            running: runningApps.snapshot())
             let rehide = settings().rehideSeconds
+            // Held past the press and the rehide window; `releaseLift`
+            // ends it once the app's menu is closed.
+            lift(id, until: Date().addingTimeInterval(3 + rehide))
             Task { [weak self] in
                 guard let self else { return }
                 var fresh = item
@@ -2171,8 +3084,7 @@ final class MenuBarUtility: Toy {
                     await MainActor.run { self.clickFallback(fresh) }
                 }
                 try? await Task.sleep(nanoseconds: UInt64(rehide * 1e9))
-                self.runningApps.invalidate()
-                self.syncConcealer()
+                await self.releaseLift(id, item: fresh)
             }
             return
         }
@@ -2328,6 +3240,14 @@ final class MenuBarUtility: Toy {
                     action: #selector(MenuBarChevronActions.menuOpenBar(_:)),
                     keyEquivalent: "")
                 menuItem.target = chevronActions
+                // The row names the toggle hotkey when it is on — the
+                // keyboard's own way to the same bar.
+                if settings().revealStyle == .bar,
+                   let hotkey = resolvedHotkeyBindings().first(where: { $0.action == .toggleReveal && $0.enabled }),
+                   let key = Self.menuKeyEquivalent(for: hotkey) {
+                    menuItem.keyEquivalent = key
+                    menuItem.keyEquivalentModifierMask = MenuBarHotkeyBinding.eventModifiers(hotkey.modifiers)
+                }
                 menu.addItem(menuItem)
             case .item(let id, _):
                 let menuItem = NSMenuItem(
@@ -2349,7 +3269,81 @@ final class MenuBarUtility: Toy {
                 menu.addItem(menuItem)
             }
         }
+        // The menu that acts: the apps standing on the bar, each a click
+        // from hidden. While nothing hides yet they lead as the teaching
+        // list; once something does they wait in a submenu.
+        if let (inline, hideRows) = Self.hideMenu(
+            shown: lastPlan.shown, hiddenCount: lastPlan.hidden.count + lastPlan.alwaysHidden.count) {
+            let target: NSMenu
+            menu.addItem(.separator())
+            if inline {
+                let header = NSMenuItem(title: "Hide in the Menu Bar", action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+                target = menu
+            } else {
+                let parent = NSMenuItem(title: "Hide Another App", action: nil, keyEquivalent: "")
+                target = NSMenu()
+                parent.submenu = target
+                menu.addItem(parent)
+            }
+            for row in hideRows {
+                let menuItem = NSMenuItem(title: row.title,
+                                          action: #selector(MenuBarChevronActions.menuHideApp(_:)),
+                                          keyEquivalent: "")
+                menuItem.target = chevronActions
+                menuItem.representedObject = row.itemID
+                if let listed = lastPlan.shown.first(where: { $0.id == row.itemID }) {
+                    let icon = listed.owner?.icon.flatMap { $0.copy() as? NSImage }
+                    icon?.size = NSSize(width: 16, height: 16)
+                    menuItem.image = icon
+                }
+                target.addItem(menuItem)
+            }
+        }
+        // Which profile is laid over the bar, and a click away from the
+        // others — no trip to Settings to see or switch.
+        let rows = MenuBarCombinedMenu.profileRows(profiles: settings().profiles,
+                                                   activeID: settings().curation.activeProfileID)
+        if !rows.isEmpty {
+            menu.addItem(.separator())
+            let header = NSMenuItem(title: "Profile", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for row in rows {
+                let menuItem = NSMenuItem(title: row.title,
+                                          action: #selector(MenuBarChevronActions.menuApplyProfile(_:)),
+                                          keyEquivalent: "")
+                menuItem.target = chevronActions
+                menuItem.representedObject = row.id
+                menuItem.state = row.active ? .on : .off
+                menu.addItem(menuItem)
+            }
+        }
         return menu
+    }
+
+    /// The menu's profile rows land here.
+    fileprivate func menuProfileActivated(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        applyProfile(id: id)
+    }
+
+    /// The icon menu's hide list for a bar: the rows a click could hide
+    /// (someone else's, never a protected system item), inline while
+    /// nothing hides yet, else behind a submenu — nil when there is
+    /// nothing to offer. Pure so a test pins it.
+    nonisolated static func hideMenu(shown: [MenuBarItem],
+                                     hiddenCount: Int) -> (inline: Bool, rows: [MenuBarCombinedMenu.HideRow])? {
+        let rows = MenuBarCombinedMenu.hideRows(shown: hideAllTargets(shown))
+        return rows.isEmpty ? nil : (hiddenCount == 0, rows)
+    }
+
+    /// The menu's hide rows land here: the same pick the card's picker
+    /// makes, so a profile that speaks for the app takes it.
+    fileprivate func menuHideActivated(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        setSection(.hidden, for: id)
     }
 
     /// The menu's hidden-item rows land here: activate the item the
@@ -2375,7 +3369,7 @@ final class MenuBarUtility: Toy {
     /// reveal are mutually exclusive — a manual hide cancels the rehide
     /// clock outright rather than leaving it armed to fire a second
     /// `onHide` after the spacer already stands.
-    private func toggleHiddenSection() {
+    private func toggleHiddenSection(fromKeyboard: Bool = false) {
         let now = Date()
         guard now.timeIntervalSince(lastChevronToggleAt) > 0.3 else { return }
         lastChevronToggleAt = now
@@ -2406,7 +3400,7 @@ final class MenuBarUtility: Toy {
             case .inline:
                 hider.reveal([.hidden])
             case .bar:
-                bar.open()
+                bar.open(keyboard: fromKeyboard)
             }
             reveal.rearm()
         }
@@ -2425,16 +3419,21 @@ final class MenuBarUtility: Toy {
             $0.action == #selector(MenuBarChevronActions.menuToggleHidden(_:)) }) {
             menu.removeItem(toggle)
         }
-        // Under the concealer position teaches nothing — the picker is
-        // the way in; under the spacer the mark is the separator.
-        let hint = NSMenuItem(
-            title: concealer != nil
-                ? "Pick apps to hide in Settings › Utilities › Menu Bar"
-                : "⌘-drag an item left of the ‹ mark to hide it",
-            action: nil, keyEquivalent: "")
-        hint.isEnabled = false
-        menu.insertItem(hint, at: 0)
-        menu.insertItem(.separator(), at: 1)
+        // The hide rows teach by acting; the hint speaks only when there
+        // is nothing on the bar a click could hide. Under the concealer
+        // position teaches nothing — the picker is the way in; under the
+        // spacer the mark is the separator.
+        if !menu.items.contains(where: { $0.action == #selector(MenuBarChevronActions.menuHideApp(_:))
+                                          || $0.submenu != nil }) {
+            let hint = NSMenuItem(
+                title: concealer != nil
+                    ? "Pick apps to hide in Settings › Utilities › Menu Bar"
+                    : "⌘-drag an item left of the ‹ mark to hide it",
+                action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            menu.insertItem(hint, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
         // Anchor at the click itself — the ‹ lives in the host's spacer
         // and the › in the island; the ear's clicks arrive off the
         // monitor where no currentEvent exists, so screen coords it is.
@@ -2540,7 +3539,7 @@ final class MenuBarUtility: Toy {
             ScreenBarGeometry.earItemLimitRight = nil
             return
         }
-        let s = settings()
+        let s = liveSettings()
         let (left, right) = Self.earLimits(
             items: plan.shown + plan.hidden + plan.alwaysHidden,
             island: island, row: MenuBarItemLister.menuBarRow(),
@@ -2692,15 +3691,83 @@ final class MenuBarUtility: Toy {
             hidden: plan.hidden,
             alwaysHidden: plan.alwaysHidden)
         let seeded = !updateSignatures.isEmpty
+        let previous = updateSignatures
         updateSignatures = result.signatures
         guard seeded, !result.sections.isEmpty, hider.revealed.isEmpty else { return }
-        hider.reveal(result.sections)
-        updateHideTask?.cancel()
+        let changed = plan.hidden.map { ($0, MenuBarItemSection.hidden) }
+            + plan.alwaysHidden.map { ($0, MenuBarItemSection.alwaysHidden) }
+        let reveal = Self.updateReveal(
+            changed: changed.filter { item, _ in
+                previous[item.id].map { $0 != result.signatures[item.id] } ?? false
+            },
+            watch: Set(settings().curation.updateWatch),
+            concealing: concealer != nil)
         let seconds = settings().rehideSeconds
+        // Under the concealer the changed app stands alone for the clock
+        // — one item joins the row, not the whole run.
+        for app in reveal.lifts {
+            lift(app, until: Date().addingTimeInterval(seconds))
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+                self?.syncConcealer()
+            }
+        }
+        guard !reveal.sections.isEmpty else { return }
+        hider.reveal(reveal.sections)
+        updateHideTask?.cancel()
         updateHideTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
             guard !Task.isCancelled else { return }
             self?.hider.hide()
+        }
+    }
+
+    /// The combined popover's agents line: the feed's combined state,
+    /// its detail, its tint.
+    func combinedAgentLine() -> MenuBarSystemModel.AgentLine {
+        let read = agentState()
+        return MenuBarSystemModel.AgentLine(label: "Agents — \(read.state.label)",
+                                            detail: read.detail, tintHex: read.state.tintHex)
+    }
+
+    /// The owner key "show for updates" watches an item by: its bundle,
+    /// or its own id for a helper without one.
+    nonisolated static func updateWatchKey(_ item: MenuBarItem) -> String {
+        item.bundleID ?? item.id
+    }
+
+    /// What one show-for-updates pass acts on: the changed hidden items
+    /// the watch list lets through (all of them while it is empty). An
+    /// app the concealer takes is lifted alone; anything else — a covered
+    /// extra, any item under the spacer engine — reveals its section.
+    /// Pure so a test pins it.
+    nonisolated static func updateReveal(changed: [(MenuBarItem, MenuBarItemSection)],
+                                         watch: Set<String>,
+                                         concealing: Bool) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
+        var lifts = Set<String>()
+        var sections = Set<MenuBarItemSection>()
+        for (item, section) in changed where watch.isEmpty || watch.contains(updateWatchKey(item)) {
+            if concealing, let app = item.bundleID, MenuBarConcealPlan.canConcealApp(app) {
+                lifts.insert(app)
+            } else {
+                sections.insert(section)
+            }
+        }
+        return (lifts, sections)
+    }
+
+    /// Whether "show for updates" watches `item` by name — false while
+    /// the watch list is empty (then it watches everything).
+    func watchesUpdates(of item: MenuBarItem) -> Bool {
+        settings().curation.updateWatch.contains(Self.updateWatchKey(item))
+    }
+
+    /// Mark or unmark an item's owner for "show for updates".
+    func setWatchesUpdates(_ on: Bool, for item: MenuBarItem) {
+        let key = Self.updateWatchKey(item)
+        update { draft in
+            draft.curation.updateWatch.removeAll { $0 == key }
+            if on { draft.curation.updateWatch.append(key) }
         }
     }
 
@@ -2772,8 +3839,11 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         return map
     }
 
+    /// Empty under the concealer — the palette's "Arrange…" row then has
+    /// no order to drive and never moves the cursor (see
+    /// `arrangeAvailable`).
     func menuBarArrangeOrder(for _: MenuBarActions) -> [String] {
-        settings().arrangeOrder
+        arrangeAvailable ? settings().arrangeOrder : []
     }
 
     func menuBarArrangeBoundary(for _: MenuBarActions) -> CGFloat {
@@ -2802,7 +3872,10 @@ extension MenuBarUtility: MenuBarActionsDelegate {
     /// transition is — reveal when the run is parked, re-hide when a
     /// reveal is out — it happens.
     func menuBarActionsToggleReveal(_: MenuBarActions) {
-        toggleHiddenSection()
+        // The hotkey's bar is the keyboard's: it takes key, and the
+        // arrows, a typed filter and Return reach every hidden item
+        // without the pointer.
+        toggleHiddenSection(fromKeyboard: true)
     }
 
     /// The dedicated always-hidden gesture: drop that run's covers on
@@ -2837,17 +3910,26 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         // to `apply(nil)` on a mistyped trigger.
     }
 
-    /// The profile cursor for cycling — which id is live, tracked at
-    /// runtime (the card's picker owns its own selection). Index 0 is
-    /// the built-in "None".
+    /// The hotkeys' step through the profiles — from the active one,
+    /// persisted, so the cycle picks up where the card or a rule left it.
+    /// The built-in "None" sits first.
     func menuBarActions(_: MenuBarActions, cycleProfile direction: Int) {
         let profiles = settings().profiles
-        let count = profiles.count + 1
-        guard count > 1 else { return }
-        profileCursor = ((profileCursor + direction) % count + count) % count
-        applyProfile(id: profileCursor == 0 ? MenuBarProfiles.noneID
-                                            : profiles[profileCursor - 1].id)
+        guard !profiles.isEmpty else { return }
+        applyProfile(id: MenuBarProfiles.cycled(from: settings().curation.activeProfileID,
+                                                profiles: profiles, direction: direction))
     }
+}
+
+/// One row of a profile's editor: an app (keyed by bundle id) under the
+/// concealer, or an item (keyed by its identity) that covers in place.
+struct MenuBarProfileSubject: Identifiable, Equatable {
+    var key: String
+    var isApp: Bool
+    var title: String
+    /// A listed item of the subject's, for the row's icon.
+    var item: MenuBarItem
+    var id: String { (isApp ? "app:" : "item:") + key }
 }
 
 /// The boundary's host: what the Menu Bar utility needs from the app's
@@ -2911,5 +3993,13 @@ private final class MenuBarChevronActions: NSObject {
 
     @objc func menuItemClicked(_ sender: NSMenuItem) {
         utility?.menuItemActivated(sender)
+    }
+
+    @objc func menuApplyProfile(_ sender: NSMenuItem) {
+        utility?.menuProfileActivated(sender)
+    }
+
+    @objc func menuHideApp(_ sender: NSMenuItem) {
+        utility?.menuHideActivated(sender)
     }
 }

@@ -221,6 +221,10 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// VPN's "Connected", a download's percent — the hidden run
     /// reveals for a beat so the update is seen, then re-hides.
     public var showForUpdates: Bool
+    /// The layers over the curated maps — the runtime overlay, the
+    /// active profile, the "while" rules — in one value
+    /// (`MenuBarActionsModel.swift`).
+    public var curation: MenuBarCuration = MenuBarCuration()
 
     /// The cover's visual-effect material, persisted as its raw name so
     /// a newer build's materials keep their data.
@@ -491,6 +495,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
         case hideUnderNotch, hideOnMenuOverlap, spacers, barUnderlay
         case agentStatusItem, combinedSystemItem, displayProfiles, showForUpdates
+        case curation
         // Retired keys — e.g. `combinedStatusItem`, replaced by
         // `combinedSystemItem` — are simply unlisted: decode ignores
         // them, encode never writes them.
@@ -550,6 +555,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         displayProfiles = (try? c.decodeIfPresent([String: String].self,
                                                  forKey: .displayProfiles)) ?? [:]
         showForUpdates = (try? c.decodeIfPresent(Bool.self, forKey: .showForUpdates)) ?? false
+        // A file from before the layers: its profiles are snapshots.
+        curation = (try? c.decodeIfPresent(MenuBarCuration.self, forKey: .curation))
+            ?? MenuBarCuration(profileModel: profiles.isEmpty ? MenuBarCuration.currentProfileModel : 0)
     }
 }
 

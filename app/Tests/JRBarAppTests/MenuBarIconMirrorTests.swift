@@ -159,6 +159,16 @@ struct MenuBarIconMirrorTests {
         #expect(MenuBarIconMirror.faceFrame(in: panel, chevronWidth: 0) == panel)
     }
 
+    @Test("the Item Bar hangs from the ‹ itself, not the compound face the extras widen")
+    func chevronAnchor() {
+        // The ‹, the icon, and a readout segment riding the face.
+        let panel = NSRect(x: 1000, y: 951.5, width: 14 + 44 + 60, height: 24)
+        let anchor = MenuBarIconMirror.chevronFrame(in: panel, hiddenCount: 2)
+        #expect(anchor.maxX == 1000 + MenuBarIconMirror.chevronZone)
+        #expect(anchor.midY == panel.midY)
+        #expect(MenuBarIconMirror.chevronFrame(in: panel, hiddenCount: 0).maxX == panel.minX)
+    }
+
     @MainActor
     @Test("the mirror wears the face at its natural width, plus the ‹ while anything hides")
     func mirrorWidthFollowsTheFace() {

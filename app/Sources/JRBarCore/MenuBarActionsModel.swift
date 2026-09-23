@@ -53,15 +53,45 @@ public enum MenuBarTrigger: Equatable, Codable, Sendable {
     case focusEnabled
     /// The last Focus mode switched off.
     case focusDisabled
+    /// The agents went to work — the combined state became working
+    /// from anything else. JR-Bar's own feed; no standalone menu-bar
+    /// manager can see it.
+    case agentsStartedWorking
+    /// An agent is waiting on you — the combined state became "needs
+    /// you".
+    case agentNeedsYou
+    /// The work stopped — working became done or idle.
+    case agentsFinished
+    /// The tightest measured usage window's remaining share fell to
+    /// `percent` or under — the same crossing rule as `batteryBelow`.
+    case quotaBelow(percent: Int)
+    /// A SidePulse strip or Dot came up on the daemon's device list.
+    case sidePulseConnected
+    case sidePulseDisconnected
+    /// The lid shut with the Mac still awake — clamshell on an external
+    /// display.
+    case lidClosed
+    case lidOpened
+    /// An app with this bundle id launched (case-insensitive).
+    case appLaunched(bundleID: String)
+    /// An app with this bundle id quit.
+    case appQuit(bundleID: String)
+    /// A display joined the desk.
+    case displayConnected
+    /// A display left it.
+    case displayDisconnected
 }
 
 public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
     /// Apply a `MenuBarSettings.Profile` by name — resolved against
     /// `MenuBarSettings.profiles` (or the built-in "None").
     case applyProfile(name: String)
-    /// Every listed unprotected item → hidden.
+    /// The quiet bar laid over your curation — or, over a standing
+    /// "show everything", your curated bar back (`MenuBarOverlay`). The
+    /// map itself is never written.
     case hideAll
-    /// Clear every assignment.
+    /// Show everything over your curation — or, over a standing quiet
+    /// bar, your curated bar back.
     case showAll
     /// Drop the covers for `seconds` — the reveal gesture with an
     /// explicit clock.
@@ -107,6 +137,18 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .microphoneIdle: t = "when the microphone goes quiet"
         case .focusEnabled: t = "when a Focus turns on"
         case .focusDisabled: t = "when the Focus turns off"
+        case .agentsStartedWorking: t = "when agents start working"
+        case .agentNeedsYou: t = "when an agent needs you"
+        case .agentsFinished: t = "when the agents finish"
+        case .quotaBelow(let p): t = "when usage headroom falls to \(p)%"
+        case .sidePulseConnected: t = "when a SidePulse device connects"
+        case .sidePulseDisconnected: t = "when the SidePulse device disconnects"
+        case .lidClosed: t = "when the lid closes"
+        case .lidOpened: t = "when the lid opens"
+        case .appLaunched(let bundleID): t = "when \(bundleID) launches"
+        case .appQuit(let bundleID): t = "when \(bundleID) quits"
+        case .displayConnected: t = "when a display connects"
+        case .displayDisconnected: t = "when a display disconnects"
         }
         let a: String
         switch action {
@@ -129,9 +171,10 @@ public enum MenuBarHotkeyAction: String, Codable, CaseIterable, Sendable {
     /// The deeper run's own gesture: a temporary reveal of the
     /// always-hidden section — the Item Bar is its only other way out.
     case revealAlwaysHidden
-    /// Every listed unprotected item behind the covers.
+    /// The quiet bar over your curation (`MenuBarOverlay.afterHideAll`).
     case hideAll
-    /// Clear every assignment.
+    /// Show everything over your curation, or restore it over the quiet
+    /// bar (`MenuBarOverlay.afterShowAll`).
     case showAll
     /// The ⌘⇧K palette.
     case commandBar
@@ -161,5 +204,322 @@ public struct MenuBarHotkeyBinding: Equatable, Codable, Sendable {
         self.keyCode = keyCode
         self.modifiers = modifiers
         self.enabled = enabled
+    }
+}
+
+// MARK: - The layers over the curated map
+
+/// A bar-wide override laid over the curated map without rewriting it —
+/// Bartender 7's transient Focus Mode. "Hide all" and "Show all" used to
+/// write every app into `concealedApps`, so one Show all (a button, a
+/// hotkey, a rule pair) erased which apps you had chosen to hide. The
+/// overlay is the whole answer instead: the map stays yours, and
+/// restoring is dropping the overlay.
+public struct MenuBarOverlay: Equatable, Codable, Sendable {
+    public enum Kind: String, Codable, CaseIterable, Sendable {
+        /// Every app with an item tucked away — the quiet bar. Apps the
+        /// map already keeps always hidden stay in that deeper run.
+        case hideEverything
+        /// Nothing hidden — the bar as macOS would draw it.
+        case showEverything
+    }
+
+    public var kind: Kind
+    /// When the overlay went up, seconds since 1970 — whichever of a
+    /// manual overlay and a rule's came last wins.
+    public var sinceEpoch: Double
+    /// When it lapses on its own; nil holds until the next toggle.
+    public var untilEpoch: Double?
+
+    public init(kind: Kind, sinceEpoch: Double = Date().timeIntervalSince1970,
+                untilEpoch: Double? = nil) {
+        self.kind = kind
+        self.sinceEpoch = sinceEpoch
+        self.untilEpoch = untilEpoch
+    }
+
+    /// Whether the overlay still stands at `now`.
+    public func isLive(at now: Date = Date()) -> Bool {
+        untilEpoch.map { now.timeIntervalSince1970 < $0 } ?? true
+    }
+
+    private enum CodingKeys: String, CodingKey { case kind, sinceEpoch, untilEpoch }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        sinceEpoch = (try? c.decodeIfPresent(Double.self, forKey: .sinceEpoch)) ?? 0
+        untilEpoch = (try? c.decodeIfPresent(Double.self, forKey: .untilEpoch)) ?? nil
+    }
+
+    /// "Hide all" from wherever it came — the card, a hotkey, the
+    /// palette, a rule: set the quiet bar, or, over a "show everything",
+    /// drop it and give the curated bar back. Never a toggle, so a rule
+    /// that fires twice cannot undo itself.
+    public static func afterHideAll(_ current: MenuBarOverlay?, now: Date = Date(),
+                                    until: Date? = nil) -> MenuBarOverlay? {
+        if current?.kind == .showEverything, current?.isLive(at: now) == true { return nil }
+        return MenuBarOverlay(kind: .hideEverything, sinceEpoch: now.timeIntervalSince1970,
+                              untilEpoch: until?.timeIntervalSince1970)
+    }
+
+    /// "Show all": the mirror — over a quiet bar it restores the curated
+    /// bar, so the classic lock → hide / unlock → show pair ends where it
+    /// started instead of showing every app you tucked away.
+    public static func afterShowAll(_ current: MenuBarOverlay?, now: Date = Date(),
+                                    until: Date? = nil) -> MenuBarOverlay? {
+        if current?.kind == .hideEverything, current?.isLive(at: now) == true { return nil }
+        return MenuBarOverlay(kind: .showEverything, sinceEpoch: now.timeIntervalSince1970,
+                              untilEpoch: until?.timeIntervalSince1970)
+    }
+}
+
+/// Everything layered over the curated maps — the runtime overlay and
+/// the additions that ride with it — kept in one Codable value on
+/// `MenuBarSettings` so the file's shape changes in one place. Decoded
+/// tolerantly like the settings around it: a missing key reads as its
+/// default, an unknown one is ignored.
+public struct MenuBarCuration: Equatable, Codable, Sendable {
+    /// "Hide all" / "Show all" as they stand right now; nil is the
+    /// curated bar.
+    public var overlay: MenuBarOverlay?
+    /// The profile laid over the base map right now — nil is the base
+    /// map alone (the built-in "None").
+    public var activeProfileID: String?
+    /// How a profile's maps are read. 0: a snapshot that replaced the
+    /// live maps wholesale on apply — an app hidden after the profile
+    /// was saved came back on every switch. 1: a delta over the base
+    /// map — only what the profile says differently. Snapshots are
+    /// migrated once, to the deltas that reproduce them exactly.
+    public var profileModel: Int
+    /// The "while" rules — levels that hold a layer, a scene or the
+    /// agents' quiet for exactly as long as they last.
+    public var stateRules: [MenuBarStateRule]
+    /// The LED scene a rule's scene replaced, kept on disk until the rule
+    /// ends — so a relaunch mid-rule still restores what you had, and
+    /// never mistakes the rule's own scene for yours.
+    public var sceneBeforeRule: String?
+    /// Keep the spacer engine even where macOS's concealer resolves — a
+    /// diagnostic, so the fallback can be proven on a Mac that never
+    /// needs it.
+    public var forceSpacerEngine: Bool
+    /// The desks the Mac has sat at — each set of displays attached at
+    /// once — and the profile the bar takes when that set arrives.
+    public var deskProfiles: [MenuBarDeskProfile]
+    /// The desk the bar last saw, so a set of displays that changed while
+    /// JR-Bar was not running still counts as an arrival.
+    public var lastDeskKey: String?
+    /// The items "show for updates" watches, by owner (the bundle id, or
+    /// the item's id for a helper without one). Empty watches every
+    /// hidden item; once one is marked, only the marked ones interrupt —
+    /// a VPN can, a clock can't.
+    public var updateWatch: [String]
+
+    /// The profile model this build writes.
+    public static let currentProfileModel = 1
+
+    public init(overlay: MenuBarOverlay? = nil, activeProfileID: String? = nil,
+                profileModel: Int = MenuBarCuration.currentProfileModel,
+                stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil,
+                forceSpacerEngine: Bool = false, deskProfiles: [MenuBarDeskProfile] = [],
+                lastDeskKey: String? = nil, updateWatch: [String] = []) {
+        self.overlay = overlay
+        self.activeProfileID = activeProfileID
+        self.profileModel = profileModel
+        self.stateRules = stateRules
+        self.sceneBeforeRule = sceneBeforeRule
+        self.forceSpacerEngine = forceSpacerEngine
+        self.deskProfiles = deskProfiles
+        self.lastDeskKey = lastDeskKey
+        self.updateWatch = updateWatch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule, forceSpacerEngine
+        case deskProfiles, lastDeskKey, updateWatch
+    }
+
+    /// One element that swallows its own decode failure — a rule written
+    /// by a newer build drops itself, not the list.
+    private struct Lossy<Element: Decodable>: Decodable {
+        let value: Element?
+        init(from decoder: any Decoder) throws { value = try? Element(from: decoder) }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        overlay = (try? c.decodeIfPresent(MenuBarOverlay.self, forKey: .overlay)) ?? nil
+        activeProfileID = (try? c.decodeIfPresent(String.self, forKey: .activeProfileID)) ?? nil
+        // Absent means a build that stored snapshots — migrate.
+        profileModel = (try? c.decodeIfPresent(Int.self, forKey: .profileModel)) ?? 0
+        stateRules = ((try? c.decodeIfPresent([Lossy<MenuBarStateRule>].self,
+                                              forKey: .stateRules)) ?? []).compactMap(\.value)
+        sceneBeforeRule = (try? c.decodeIfPresent(String.self, forKey: .sceneBeforeRule)) ?? nil
+        forceSpacerEngine = (try? c.decodeIfPresent(Bool.self, forKey: .forceSpacerEngine)) ?? false
+        deskProfiles = ((try? c.decodeIfPresent([Lossy<MenuBarDeskProfile>].self,
+                                                forKey: .deskProfiles)) ?? []).compactMap(\.value)
+        lastDeskKey = (try? c.decodeIfPresent(String.self, forKey: .lastDeskKey)) ?? nil
+        updateWatch = (try? c.decodeIfPresent([String].self, forKey: .updateWatch)) ?? []
+    }
+}
+
+/// A desk: one set of displays attached at once — the laptop alone, the
+/// laptop on the studio display, the lid shut on two externals — and the
+/// profile the bar takes each time that set arrives. Keyed by the
+/// displays' own identities, not the pointer or a display number, so
+/// docking picks the layout once and nothing is rewritten as the pointer
+/// crosses a seam.
+public struct MenuBarDeskProfile: Equatable, Codable, Sendable {
+    /// The display set's identity (`MenuBarDesk.key`).
+    public var key: String
+    /// What the card calls the desk while it is not attached.
+    public var name: String
+    /// The profile to take on arrival — a saved profile's id, or the
+    /// built-in None's.
+    public var profileID: String
+
+    public init(key: String, name: String, profileID: String) {
+        self.key = key
+        self.name = name
+        self.profileID = profileID
+    }
+}
+
+// MARK: - "While" rules
+
+/// A level the Mac is in — what a "while" rule holds for. Where the
+/// one-shot triggers fire on an edge, these are read as a state: the
+/// rule's effects stand while the level holds and revert on their own
+/// when it stops, so one rule replaces a fragile pair.
+public enum MenuBarCondition: Equatable, Codable, Sendable {
+    case microphoneLive
+    case focusOn
+    case screenLocked
+    /// Off the charger.
+    case onBattery
+    case batteryAtOrBelow(percent: Int)
+    /// On this Wi-Fi network (needs the Location read the join trigger
+    /// does).
+    case wifiIs(ssid: String)
+    case appFrontmost(bundleID: String)
+    case appRunning(bundleID: String)
+    /// JR-Bar's own feed: an agent is working.
+    case agentsWorking
+    /// An agent is waiting on you.
+    case agentNeedsYou
+    /// Nothing is working and nothing is asking.
+    case agentsIdle
+    /// The tightest measured usage window has this share or less left.
+    case quotaAtOrBelow(percent: Int)
+    /// A SidePulse strip or Dot is attached.
+    case sidePulseConnected
+    /// The lid is shut with the Mac awake on an external display.
+    case lidClosed
+    /// More than one display is attached.
+    case externalDisplay
+    /// Between two wall-clock minutes of the day (0…1439); a start after
+    /// the end spans midnight.
+    case timeBetween(startMinute: Int, endMinute: Int)
+
+    /// The condition as a rule line reads it.
+    public var label: String {
+        switch self {
+        case .microphoneLive: return "the microphone is live"
+        case .focusOn: return "a Focus is on"
+        case .screenLocked: return "the screen is locked"
+        case .onBattery: return "on battery"
+        case .batteryAtOrBelow(let p): return "the battery is at \(p)% or less"
+        case .wifiIs(let ssid): return "on Wi-Fi “\(ssid)”"
+        case .appFrontmost(let id): return "\(id) is in front"
+        case .appRunning(let id): return "\(id) is running"
+        case .agentsWorking: return "agents are working"
+        case .agentNeedsYou: return "an agent needs you"
+        case .agentsIdle: return "the agents are idle"
+        case .quotaAtOrBelow(let p): return "usage headroom is \(p)% or less"
+        case .sidePulseConnected: return "SidePulse is connected"
+        case .lidClosed: return "the lid is closed"
+        case .externalDisplay: return "an external display is attached"
+        case .timeBetween(let start, let end):
+            return String(format: "between %02d:%02d and %02d:%02d",
+                          start / 60, start % 60, end / 60, end % 60)
+        }
+    }
+}
+
+/// What a "while" rule holds — reaching past the menu bar to the strip,
+/// the Dot and the daemon, because one rule should set up the whole
+/// room: "while the mic is live, the Meeting profile, the on-air scene,
+/// and quiet agents".
+public enum MenuBarRuleEffect: Equatable, Codable, Sendable {
+    /// Every app tucked away — the quiet bar, as an overlay.
+    case quietBar
+    /// Nothing hidden, as an overlay.
+    case showEverything
+    /// A saved profile laid over your bar (by name, like the triggers).
+    case useProfile(name: String)
+    /// The LED scene (an `EffectScene` raw value), your own restored
+    /// after.
+    case ledScene(scene: String)
+    /// The daemon's quiet hours — the agents' sounds and lights hold
+    /// their breath, renewed while the rule lasts, ended after.
+    case quietAgents
+
+    public var label: String {
+        switch self {
+        case .quietBar: return "tuck everything away"
+        case .showEverything: return "show everything"
+        case .useProfile(let name): return "use “\(name)”"
+        case .ledScene(let scene): return "the \(scene) scene"
+        case .quietAgents: return "quiet the agents"
+        }
+    }
+}
+
+/// One "while" rule. `id` is stable (UUIDs are fine) so the card and
+/// the engine can tell rules apart across edits.
+public struct MenuBarStateRule: Equatable, Codable, Sendable, Identifiable {
+    public var id: String
+    public var enabled: Bool
+    public var condition: MenuBarCondition
+    /// "While not" — the rule holds while the condition does not, e.g.
+    /// "while not on the office Wi-Fi".
+    public var negated: Bool
+    public var effects: [MenuBarRuleEffect]
+
+    public init(id: String = UUID().uuidString, enabled: Bool = true,
+                condition: MenuBarCondition, negated: Bool = false,
+                effects: [MenuBarRuleEffect]) {
+        self.id = id
+        self.enabled = enabled
+        self.condition = condition
+        self.negated = negated
+        self.effects = effects
+    }
+
+    /// The rule as the card reads it — one line.
+    public var summary: String {
+        let when = (negated ? "while not: " : "while ") + condition.label
+        let what = effects.isEmpty ? "nothing" : effects.map(\.label).joined(separator: " + ")
+        return "\(when) → \(what)"
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, enabled, condition, negated, effects }
+
+    private struct LossyEffect: Decodable {
+        let value: MenuBarRuleEffect?
+        init(from decoder: any Decoder) throws { value = try? MenuBarRuleEffect(from: decoder) }
+    }
+
+    /// The condition must decode — a rule with no condition this build
+    /// knows is dropped by the list; an effect it does not know is
+    /// dropped alone.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
+        condition = try c.decode(MenuBarCondition.self, forKey: .condition)
+        negated = (try? c.decodeIfPresent(Bool.self, forKey: .negated)) ?? false
+        effects = ((try? c.decodeIfPresent([LossyEffect].self, forKey: .effects)) ?? [])
+            .compactMap(\.value)
     }
 }
