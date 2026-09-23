@@ -247,6 +247,47 @@ def test_a_device_blend_mode_writes_through_set_setting(daemon) -> None:
     assert daemon.settings.device_blend_mode("pro") is None
 
 
+def test_the_light_log_lists_what_the_lights_tried_to_show(daemon) -> None:
+    from jrbar.effect_history import (
+        EffectEvent,
+        EffectHistory,
+        EffectOutcome,
+        EffectSemanticCategory,
+        EffectSuppressionReason,
+        EffectSurface,
+    )
+
+    daemon._effect_history = EffectHistory(
+        (
+            EffectEvent("ev-1", 100.0, "ask-pulse", EffectSemanticCategory.ATTENTION, EffectSurface.SCREEN_BAR, EffectOutcome.SHOWN),
+            EffectEvent(
+                "ev-2",
+                200.0,
+                "done-sweep",
+                EffectSemanticCategory.COMPLETION,
+                EffectSurface.DOT,
+                EffectOutcome.SUPPRESSED,
+                suppression_reason=EffectSuppressionReason.DO_NOT_DISTURB,
+            ),
+        ),
+        last_seen_epoch=150.0,
+    )
+    reply = core_runtime._cmd_list_light_log(daemon, {"limit": 5})
+    assert reply["total"] == 2 and reply["last_seen"] == 150.0
+    newest, oldest = reply["rows"]
+    assert (newest["effect"], newest["outcome"], newest["surface"], newest["unseen"]) == (
+        "done-sweep",
+        "suppressed",
+        "dot",
+        True,
+    )
+    assert newest["explanation"].startswith("Suppressed on")
+    assert oldest["category"] == "attention" and oldest["unseen"] is False
+    assert len(core_runtime._cmd_list_light_log(daemon, {"limit": 1})["rows"]) == 1
+    with pytest.raises(CommandError):
+        core_runtime._cmd_list_light_log(daemon, {"limit": 0})
+
+
 def test_list_focuses_names_the_configured_focuses_or_says_why_not(
     daemon, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -232,6 +232,40 @@ def calibration_profile(controller: Any, args: dict[str, Any]) -> dict[str, Any]
     return reply
 
 
+# --- the light log -------------------------------------------------------------------------
+
+
+def list_light_log(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """What JR-Bar tried to show, where, and what became of it -- the
+    content-free effect history (200 events) nothing displayed: "14:02 shown
+    on the Screen Bar for attention", "suppressed on the Dot by Do Not
+    Disturb". Newest first, answering "what did I miss" for the lights."""
+    from .ambient_effect_runtime import _history
+    from .effect_history import project_effect_history
+
+    limit = args.get("limit", 20)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise _command_error("invalid_args", "limit must be a positive integer")
+    history = _history(controller)
+    rows = sorted(project_effect_history(history), key=lambda row: -row.occurred_at_epoch)
+    return {
+        "rows": [
+            {
+                "at": row.occurred_at_epoch,
+                "effect": row.effect_id,
+                "category": row.semantic_category.value,
+                "surface": row.surface.value,
+                "outcome": row.outcome.value,
+                "explanation": row.explanation,
+                "unseen": row.unseen,
+            }
+            for row in rows[: min(limit, 200)]
+        ],
+        "total": len(rows),
+        "last_seen": history.last_seen_epoch,
+    }
+
+
 # --- Focus -------------------------------------------------------------------------------
 
 
@@ -264,5 +298,6 @@ __all__ = [
     "calibration_profile",
     "list_cues",
     "list_focuses",
+    "list_light_log",
     "set_cue",
 ]

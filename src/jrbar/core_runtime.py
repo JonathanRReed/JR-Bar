@@ -2477,6 +2477,13 @@ def _cmd_list_focuses(self, args):
     return core_lights.list_focuses(self, args)
 
 
+@command("list_light_log")
+def _cmd_list_light_log(self, args):
+    from . import core_lights
+
+    return core_lights.list_light_log(self, args)
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
