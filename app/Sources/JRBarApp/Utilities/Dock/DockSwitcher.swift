@@ -588,6 +588,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// ⌘-right-click inside the Dock's reach (Quartz point, force with
     /// ⌥): eaten here so Apple's Dock menu never pops over the quit.
     var onQuickQuit: (_ point: CGPoint, _ force: Bool) -> Void = { _, _ in }
+    /// ⌥` with no strip up and the card's opt-in on: preview the front
+    /// app's windows on its Dock tile.
+    var onFrontPreview: () -> Void = {}
     /// A preview action key — a letter the floating preview asked for
     /// right now (W/M/F once a card is walked, Space over a player), or
     /// ⌥← / ⌥→ as "tile left" / "tile right".
@@ -609,6 +612,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// The ⌘⇥ switch, mirrored the same way; off means command-Tab
     /// reaches the system untouched.
     nonisolated(unsafe) private var cmdEnabled = false
+    /// The front-app preview chord's opt-in, mirrored; off, ⌥` stays
+    /// the dead key it types everywhere.
+    nonisolated(unsafe) private var frontEnabled = false
     /// The dock preview's flag — while its panel is up the tap eats
     /// the keys the panel reads.
     nonisolated(unsafe) private var previewOpen = false
@@ -659,6 +665,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
 
     func setCmdEnabled(_ value: Bool) {
         lock.lock(); cmdEnabled = value; lock.unlock()
+    }
+
+    func setFrontEnabled(_ value: Bool) {
+        lock.lock(); frontEnabled = value; lock.unlock()
     }
 
     private var tap: CFMachPort?
@@ -727,7 +737,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock()
         let isOpen = open, isCmdOpen = cmdOpen
         let isEnabled = enabled, isCmdEnabled = cmdEnabled
-        let isPreviewOpen = previewOpen
+        let isPreviewOpen = previewOpen, isFrontEnabled = frontEnabled
         lock.unlock()
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
@@ -750,6 +760,13 @@ final class SwitcherKeyTap: @unchecked Sendable {
                 let shifted = flags.contains(.maskShift)
                 DispatchQueue.main.async { [weak self] in self?.onCmdTab(shifted) }
                 return nil
+            }
+            // ⌥` — the front app's preview, walked from the keyboard.
+            // Opt-in: off, it stays the accent key. Never under a strip,
+            // where ` is the one-app scope.
+            if code == 50, !isOpen, isFrontEnabled, flags.contains(.maskAlternate),
+               flags.intersection([.maskCommand, .maskControl, .maskShift]).isEmpty {
+                return swallow { self.onFrontPreview() }
             }
             if isOpen, !isCmdOpen, flags.contains(.maskCommand), (123...126).contains(code) {
                 // ⌥⌘ + arrow: put the pick in that half of its screen —
@@ -981,6 +998,10 @@ final class DockSwitcherController {
     /// The preview watcher's quick quit — the tap eats a ⌘-right-click
     /// inside `setDockReach`'s rect and hands it here.
     var onQuickQuit: ((CGPoint, Bool) -> Void)?
+    /// ⌥` — the watcher previews the front app from its Dock tile.
+    var onFrontPreview: (() -> Void)?
+    /// The front-app chord's opt-in, read on every settings apply.
+    var isFrontAllowed: () -> Bool = { false }
     /// The Dock's reach (Quartz), mirrored into the tap by the watcher.
     func setDockReach(_ reach: CGRect?) { tap.setDockReach(reach) }
     /// The preview's action keys (W/M/F/Space/⌥-arrow tiling) — what
@@ -999,6 +1020,7 @@ final class DockSwitcherController {
     func syncSettings() {
         tap.setEnabled(isAllowed())
         tap.setCmdEnabled(isCmdAllowed())
+        tap.setFrontEnabled(isFrontAllowed())
     }
 
     func start() {
@@ -1027,6 +1049,7 @@ final class DockSwitcherController {
         tap.onTile = { [weak self] code in self?.tile(code) }
         tap.onCommandHeld = { [weak self] held in self?.commandHeld(held) }
         tap.onQuickQuit = { [weak self] point, force in self?.onQuickQuit?(point, force) }
+        tap.onFrontPreview = { [weak self] in self?.onFrontPreview?() }
         tap.onPreviewAction = { [weak self] action in self?.onPreviewAction?(action) }
         // The layout the type-ahead spells through — read now on the
         // main thread and again on every input-source switch.

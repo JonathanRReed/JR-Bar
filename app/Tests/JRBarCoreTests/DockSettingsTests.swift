@@ -82,6 +82,9 @@ struct DockSettingsTests {
         round.enhance.liveCard = true
         #expect(try decode(DockSettings.self, encode(round)) == round)
         #expect(try decode(DockSettings.self, #"{"enhance": {"liveCard": "on"}}"#).enhance.liveCard == false)
+        #expect(DockSettings().enhance.frontAppChord == false, "⌥` stays the accent key unless asked for")
+        round.enhance.frontAppChord = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
         #expect(try decode(DockSettings.self, #"{"enhance": {"clickToMinimize": 1}}"#).enhance.clickToMinimize == false)
     }
 

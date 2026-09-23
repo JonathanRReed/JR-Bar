@@ -143,6 +143,10 @@ struct DockUtilityControls: View {
                     .help("Dismiss")
                 }
             }
+            Toggle(isOn: frontAppChord) {
+                SettingLabel(title: "⌥` previews the front app",
+                             subtitle: "Option-backtick opens the front app's windows on its Dock tile with the next one picked — arrows walk, Return raises, W, M and F act. Takes the accent key ⌥` types on US layouts.")
+            }
             Toggle(isOn: previewThisDisplay) {
                 SettingLabel(title: "Only windows on this display",
                              subtitle: "A preview lists the windows on the Dock's own screen; minimized ones always list.")
@@ -315,6 +319,10 @@ struct DockUtilityControls: View {
     private var scrollGestures: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.scrollGestures },
                 set: { utility.enhance.preferences.scrollGestures = $0 })
+    }
+    private var frontAppChord: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.frontAppChord },
+                set: { utility.enhance.preferences.frontAppChord = $0 })
     }
     private var liveCard: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.liveCard },

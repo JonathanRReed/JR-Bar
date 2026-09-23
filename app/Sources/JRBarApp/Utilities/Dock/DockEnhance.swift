@@ -98,6 +98,11 @@ final class DockEnhancePreferences {
         get { read().scrollGestures }
         set { write?({ var s = read(); s.scrollGestures = newValue; return s }()) }
     }
+    /// ⌥` previews the front app from its Dock tile.
+    var frontAppChord: Bool {
+        get { read().frontAppChord }
+        set { write?({ var s = read(); s.frontAppChord = newValue; return s }()) }
+    }
     /// The card under the pointer plays live — the recording dot stays
     /// on while it does.
     var liveCard: Bool {
@@ -475,6 +480,32 @@ enum DockEnhanceMath {
     /// Preview" on a stale panel doesn't list the app twice.
     static func excluding(_ bundleID: String, from list: [String]) -> [String] {
         list.contains(bundleID) ? list : list + [bundleID]
+    }
+
+    /// The front app's Dock tile: its bundle URL first, else its name —
+    /// app tiles only.
+    static func frontTileIndex(bundleURL: URL?, name: String?,
+                               tiles: [(url: URL?, title: String?, isApp: Bool)]) -> Int? {
+        func path(_ url: URL?) -> String? {
+            guard let url else { return nil }
+            let p = url.standardizedFileURL.path
+            return p.count > 1 && p.hasSuffix("/") ? String(p.dropLast()) : p
+        }
+        if let wanted = path(bundleURL),
+           let hit = tiles.indices.first(where: { tiles[$0].isApp && path(tiles[$0].url) == wanted }) {
+            return hit
+        }
+        guard let name, !name.isEmpty else { return nil }
+        return tiles.indices.first { tiles[$0].isApp && tiles[$0].title == name }
+    }
+
+    /// Where ⌥`'s walk starts: the app's next window — ⌥⇥'s "back to
+    /// the other one" — else its only one. Minimized windows wait at
+    /// the end of the walk.
+    static func frontWalkStart(_ windows: [DockPreviewWindow]) -> Int? {
+        let up = windows.filter { !$0.minimized }
+        if up.count > 1 { return up[1].id }
+        return up.first?.id ?? windows.first?.id
     }
 
     /// Whether the hovered card plays live: the opt-in is on, the card
@@ -1562,6 +1593,10 @@ final class DockEnhanceController {
     @ObservationIgnored private var freshening = Set<CGWindowID>()
     /// The opt-in live card's stream — at most one window at a time.
     @ObservationIgnored private let liveStill = DockLiveStill()
+    /// A preview ⌥` opened from the keyboard: the pointer never rested
+    /// on its tile, so the rest-and-grace rules don't close it — Esc,
+    /// Return, a click away or resting on another tile do.
+    @ObservationIgnored private var keyboardPinned = false
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1600,6 +1635,7 @@ final class DockEnhanceController {
         self.switcher.onPreviewAction = { [weak self] action in
             self?.previewAction(action)
         }
+        self.switcher.onFrontPreview = { [weak self] in self?.previewFrontApp() }
         windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
         liveStill.onFrame = { [weak self] windowID, image in
             guard let self, let row = self.preview.windows.firstIndex(where: { $0.windowID == windowID })
@@ -1782,7 +1818,9 @@ final class DockEnhanceController {
     /// bottom Dock, y for a side one.
     private func anchorFrame(for item: DockAXItem, edge: DockEdge, pointer: NSPoint) -> CGRect {
         let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: Self.mainScreenHeight())
-        guard magnificationOn else { return tile }
+        // A keyboard-opened preview: the pointer isn't on the Dock, so
+        // nothing is magnified and the tile's own frame is the icon.
+        guard magnificationOn, !keyboardPinned else { return tile }
         return DockEnhanceMath.magnifiedAnchor(tile: tile, edge: edge, pointer: pointer)
     }
 
@@ -1845,11 +1883,13 @@ final class DockEnhanceController {
         let tracked = DockHoverTracker.trackedItem(
             hovered?.hoverID, shown: tracker.shown, trigger: preferences.previewTrigger,
             optionHeld: NSEvent.modifierFlags.contains(.option))
-        let action = tracker.note(hovered: tracked, pointerInPanel: inPanel,
+        // A keyboard-opened preview holds like one with the pointer on it.
+        let action = tracker.note(hovered: tracked, pointerInPanel: inPanel || keyboardPinned,
                                   now: CACurrentMediaTime(), delay: preferences.previewDelay)
         switch action {
         case .show:
             if let hovered {
+                keyboardPinned = false
                 showPreview(for: hovered)
             }
         case .hide:
@@ -1969,7 +2009,15 @@ final class DockEnhanceController {
         // below the screen, where no screen contains them.
         let pointer = NSEvent.mouseLocation
         let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: mainHeight)
-        let screen = NSScreen.screens.first { $0.frame.contains(pointer) }
+        // A keyboard-opened preview belongs to the tile's screen, not the
+        // pointer's — an auto-hidden Dock's tile sits below it, so its
+        // run along the screen's width decides.
+        let tileScreen = keyboardPinned
+            ? NSScreen.screens.first { $0.frame.contains(CGPoint(x: tile.midX, y: tile.midY)) }
+                ?? NSScreen.screens.first { $0.frame.minX <= tile.midX && tile.midX < $0.frame.maxX }
+            : nil
+        let screen = tileScreen
+            ?? NSScreen.screens.first { $0.frame.contains(pointer) }
             ?? NSScreen.screens.first { $0.frame.contains(tile.origin) }
             ?? NSScreen.main ?? NSScreen.screens.first
         let screenFrame = screen?.frame ?? .zero
@@ -2074,6 +2122,7 @@ final class DockEnhanceController {
 
     private func hidePreview() {
         generation += 1
+        keyboardPinned = false
         liveStill.stop()
         anchor = nil
         windowObserver.stop()
@@ -2501,6 +2550,35 @@ final class DockEnhanceController {
         if let index = preview.windows.firstIndex(where: { $0.id == window.id }) {
             preview.windows[index].minimized = false
         }
+    }
+
+    /// ⌥`: the front app's windows on its own Dock tile, the next window
+    /// already walked — a visual ⌘` that needs no pointer. Return raises
+    /// the walked card, the arrows walk, W/M/F act; ⌥` again closes it.
+    func previewFrontApp() {
+        guard running, accessibilityTrusted,
+              let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let dock = AppleDockReader.dockPID(), let list = AppleDockReader.dockList(pid: dock),
+              let frame = AppleDockReader.frame(of: list) else { return }
+        let now = CACurrentMediaTime()
+        cachedList = (list, frame, now)
+        let items = AppleDockReader.items(list: list)
+        guard let index = DockEnhanceMath.frontTileIndex(
+            bundleURL: front.bundleURL, name: front.localizedName,
+            tiles: items.map { ($0.url, $0.title, $0.kind == .app) }) else { return }
+        let item = items[index]
+        if keyboardPinned, tracker.shown == item.hoverID {
+            tracker.reset()
+            hidePreview()
+            return
+        }
+        tracker.reset()
+        tracker.summon(item.hoverID, now: now)
+        keyboardPinned = true
+        showPreview(for: item)
+        guard keyboardPinned else { return }  // nothing to preview
+        preview.selectedWindowID = DockEnhanceMath.frontWalkStart(preview.windows)
     }
 
     /// A key the switcher's tap ate for the floating preview — Esc

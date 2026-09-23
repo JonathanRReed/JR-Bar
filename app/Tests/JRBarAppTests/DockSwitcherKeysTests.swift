@@ -150,4 +150,46 @@ struct DockSwitcherKeysTests {
         let reopened = gate.allows(CGPoint(x: 1, y: 1))
         #expect(!reopened, "a new open re-arms the gate")
     }
+
+    @Test("⌥` previews the front app only when opted in, never under a strip or with ⌘")
+    func frontAppChord() async throws {
+        let tap = SwitcherKeyTap()
+        tap.keyboard = DockKeyboardLayout()
+        var fired = 0
+        tap.onFrontPreview = { fired += 1 }
+        #expect(try !eaten(tap, 50, flags: .maskAlternate), "off: ⌥` stays the accent key")
+        tap.setFrontEnabled(true)
+        #expect(try eaten(tap, 50, flags: .maskAlternate))
+        #expect(try !eaten(tap, 50, flags: [.maskAlternate, .maskCommand]), "⌥⌘` is someone else's")
+        #expect(try !eaten(tap, 50, flags: [.maskAlternate, .maskShift]))
+        #expect(try !eaten(tap, 50), "a bare ` types")
+        // The eaten chord hops to the main queue; wait for the hop (as
+        // long as a loaded machine needs), not a fixed beat.
+        for _ in 0..<500 where fired == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(fired == 1, "the one eaten chord reached the watcher")
+    }
+
+    @Test("⌥` finds the front app's tile by bundle, else by name, and walks to its next window")
+    func frontAppTile() {
+        let tiles: [(url: URL?, title: String?, isApp: Bool)] = [
+            (URL(fileURLWithPath: "/Users/me/Downloads/"), "Downloads", false),
+            (URL(string: "file:///Applications/Ghostty.app/"), "Ghostty", true),
+            (nil, "Safari", true),
+        ]
+        #expect(DockEnhanceMath.frontTileIndex(bundleURL: URL(fileURLWithPath: "/Applications/Ghostty.app"),
+                                               name: "Ghostty", tiles: tiles) == 1)
+        #expect(DockEnhanceMath.frontTileIndex(bundleURL: URL(fileURLWithPath: "/Applications/Safari.app"),
+                                               name: "Safari", tiles: tiles) == 2, "a tile without a URL matches by name")
+        #expect(DockEnhanceMath.frontTileIndex(bundleURL: nil, name: "Downloads", tiles: tiles) == nil,
+                "a folder tile is never the front app")
+        func card(_ id: Int, _ minimized: Bool = false) -> DockPreviewWindow {
+            DockPreviewWindow(id: id, title: "w", minimized: minimized, fullScreen: nil, frame: nil,
+                              thumbnail: nil, element: nil)
+        }
+        #expect(DockEnhanceMath.frontWalkStart([card(1), card(2), card(3)]) == 2, "the next window, like ⌥⇥")
+        #expect(DockEnhanceMath.frontWalkStart([card(1), card(2, true)]) == 1)
+        #expect(DockEnhanceMath.frontWalkStart([card(4, true)]) == 4)
+        #expect(DockEnhanceMath.frontWalkStart([]) == nil)
+    }
 }
+

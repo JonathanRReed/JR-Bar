@@ -269,6 +269,11 @@ final class DockUtility {
             self?.settings().enhance.switcherThisDisplay ?? false
         }
         switcher.learnedPicks = { [weak self] in self?.settings().enhance.learnedPicks ?? [] }
+        // ⌥` needs the watcher — it's the watcher's panel that opens.
+        switcher.isFrontAllowed = { [weak self] in
+            guard let settings = self?.settings() else { return false }
+            return settings.previewsWanted && settings.enhance.frontAppChord
+        }
         switcher.onLearn = { [weak self] picks in self?.update { $0.enhance.learnedPicks = picks } }
         enhance.agentMarks = { [weak self] in self?.agentMarks() ?? [] }
         enhance.answerAsk = { [weak self] ask, approve in
