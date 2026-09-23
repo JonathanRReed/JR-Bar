@@ -715,11 +715,14 @@ private struct ShelfMediaRow: View {
                             .lineLimit(1)
                     }
                     if media.playing {
+                        // The bars wear the artwork's colour when it
+                        // has one.
+                        let bars = utility.artworkTint.map { Color(nsColor: $0).opacity(0.85) }
+                            ?? style.faintColor
                         if utility.audioTapLive {
-                            LiveEqualizer(levels: utility.audioLevels,
-                                          color: style.faintColor)
+                            LiveEqualizer(levels: utility.audioLevels, color: bars)
                         } else {
-                            ShelfEqualizer(color: style.faintColor)
+                            ShelfEqualizer(color: bars)
                         }
                     }
                     Spacer(minLength: 4)
@@ -748,6 +751,7 @@ private struct ShelfMediaRow: View {
                                 }
                             }
                             .controlSize(.mini)
+                            .tint(utility.artworkTint.map { Color(nsColor: $0) })
                             Text("−" + Self.clock(duration - utility.elapsedShown(at: context.date)))
                                 .font(.system(size: 9))
                                 .monospacedDigit()

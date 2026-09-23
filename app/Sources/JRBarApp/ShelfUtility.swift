@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import JRBarCore
 
 /// W11's shelf utility facts: now-playing media plus the internal
@@ -68,6 +69,7 @@ final class ShelfUtilityModel {
         feedToken = feed.subscribe { [weak self] media in
             self?.media = media
             self?.lyrics.note(media: media)
+            self?.noteArtwork(media?.artworkData)
         }
         powerMonitor.start()
         // The shared feed kept polling for the island and the ear while
@@ -152,6 +154,72 @@ final class ShelfUtilityModel {
         guard let data = media?.artworkData,
               data.count <= Self.maxArtworkBytes else { return nil }
         return NSImage(data: data)
+    }
+
+    // MARK: Artwork tint
+
+    /// The artwork's own colour, made readable on black — the bars and
+    /// the scrubber wear it, OneNotch's artwork-coloured media. nil for
+    /// no art, or art too grey to have a colour (the row stays white).
+    private(set) var artworkTint: NSColor?
+    /// The artwork the tint was read from — a new track with the same
+    /// cover costs nothing.
+    private var tintSource: Int?
+
+    private func noteArtwork(_ data: Data?) {
+        let key = data?.hashValue
+        guard key != tintSource else { return }
+        tintSource = key
+        guard let data, data.count <= Self.maxArtworkBytes,
+              let average = Self.averageColor(of: data),
+              let readable = Self.readableTint(red: average.red, green: average.green, blue: average.blue)
+        else {
+            artworkTint = nil
+            return
+        }
+        artworkTint = NSColor(hue: readable.hue, saturation: readable.saturation,
+                              brightness: readable.brightness, alpha: 1)
+    }
+
+    private static let tintContext = CIContext(options: [.workingColorSpace: NSNull()])
+
+    /// The artwork's mean colour — one CIAreaAverage pass rendered to a
+    /// single pixel.
+    static func averageColor(of data: Data) -> (red: Double, green: Double, blue: Double)? {
+        guard let image = CIImage(data: data), !image.extent.isEmpty,
+              let filter = CIFilter(name: "CIAreaAverage",
+                                    parameters: [kCIInputImageKey: image,
+                                                 kCIInputExtentKey: CIVector(cgRect: image.extent)]),
+              let output = filter.outputImage else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        tintContext.render(output, toBitmap: &pixel, rowBytes: 4,
+                           bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: nil)
+        return (Double(pixel[0]) / 255, Double(pixel[1]) / 255, Double(pixel[2]) / 255)
+    }
+
+    /// A mean colour as a tint that reads on the card: art too grey to
+    /// have a colour gives none, the rest keep their hue with the
+    /// brightness lifted and the saturation capped, so a dark cover
+    /// never draws bars that vanish into the black.
+    nonisolated static func readableTint(red: Double, green: Double,
+                                         blue: Double) -> (hue: Double, saturation: Double, brightness: Double)? {
+        let high = max(red, green, blue)
+        let low = min(red, green, blue)
+        let chroma = high - low
+        let saturation = high > 0 ? chroma / high : 0
+        guard saturation >= 0.18, chroma >= 0.06 else { return nil }
+        var hue: Double
+        if high == red {
+            hue = (green - blue) / chroma
+        } else if high == green {
+            hue = (blue - red) / chroma + 2
+        } else {
+            hue = (red - green) / chroma + 4
+        }
+        hue /= 6
+        if hue < 0 { hue += 1 }
+        return (hue, min(saturation, 0.75), max(high, 0.78))
     }
 
     /// A click on the artwork: the player comes forward — the app the
