@@ -718,11 +718,12 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// HUD.
     public var soundEffects: Bool
     /// The card's weather row — a keyless Open-Meteo read of the
-    /// place `weatherCity` names, or the IP's coarse fix when empty.
-    /// Off by default: it phones a third-party API, so the person
-    /// turns it on.
+    /// place `weatherCity` names (the IP's coarse fix only with
+    /// `weatherUseIPLocation`). Off by default: it phones a third-party
+    /// API, so the person turns it on.
     public var weather: Bool
-    /// A city name to geocode ("London"); empty uses the IP's place.
+    /// A city name to geocode ("London"); empty means no row unless
+    /// `weatherUseIPLocation` allows the IP lookup.
     public var weatherCity: String
     /// On a screen with no hardware notch, draw a synthetic housing —
     /// the island reads as a notch rather than a floating pill, like
@@ -757,6 +758,10 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     public var calendar: Bool = true
     /// The card's reminders glance — the same rule as `calendar`.
     public var reminders: Bool = true
+    /// With no `weatherCity`, place the weather by a coarse IP lookup
+    /// (ipapi.co). Off by default: it sends the IP to a second third
+    /// party, so an empty city otherwise just means no weather row.
+    public var weatherUseIPLocation: Bool = false
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -799,6 +804,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case shelfShakeToSummon
         case hudDuration
         case calendar, reminders
+        case weatherUseIPLocation
     }
 
     public init(from decoder: any Decoder) throws {
@@ -827,6 +833,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         hudDuration = min(Self.hudDurationRange.upperBound, max(Self.hudDurationRange.lowerBound, hud))
         calendar = (try? c.decodeIfPresent(Bool.self, forKey: .calendar)) ?? true
         reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
+        weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
     }
 }
 

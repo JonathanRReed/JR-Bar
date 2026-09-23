@@ -276,6 +276,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // settings' switches, the same as the grown island's.
         notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
         notchCard.model.remindersEnabled = { [weak toysStore] in toysStore?.state.notch.reminders ?? true }
+        // The IP lookup for weather is the person's opt-in on both cards.
+        notchCard.model.utility.weather.allowIPLocation = { [weak toysStore] in
+            toysStore?.state.notch.weatherUseIPLocation ?? false
+        }
 
         // Screen Bar hover and click: hit-tested against the band and the
         // drawn wing chips, never focus-stealing.

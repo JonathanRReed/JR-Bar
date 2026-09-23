@@ -200,6 +200,9 @@ final class NotchToy: Toy {
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
         cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
+        cardModel.utility.weather.allowIPLocation = { [weak self] in
+            self?.settings.weatherUseIPLocation ?? false
+        }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
         audioTap.onLevels = { [weak self] bands in
@@ -2073,13 +2076,18 @@ private struct NotchControlsView: View {
             }
             Toggle(isOn: toy.bind(\.weather)) {
                 SettingLabel(title: "Weather",
-                             subtitle: "A conditions row in the card — keyless Open-Meteo; your city below, or the IP's place when empty.")
+                             subtitle: "Conditions, today's high and low and rain in the next two hours — keyless Open-Meteo for the city below.")
             }
             if toy.settings.weather {
-                TextField("City (empty = where the IP lands)", text: toy.bind(\.weatherCity))
+                TextField("City, e.g. London", text: toy.bind(\.weatherCity))
                     .textFieldStyle(.roundedBorder)
                     .font(.callout)
                     .padding(.leading, 28)
+                Toggle(isOn: toy.bind(\.weatherUseIPLocation)) {
+                    SettingLabel(title: "Locate by IP when no city is set",
+                                 subtitle: "Sends your IP address to ipapi.co for a city-level guess. Off, an empty city just means no weather row.")
+                }
+                .padding(.leading, 28)
             }
             Toggle(isOn: toy.calendarBinding) {
                 SettingLabel(title: "Calendar",

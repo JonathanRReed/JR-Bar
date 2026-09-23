@@ -817,8 +817,10 @@ private struct ShelfBatteryRow: View {
 }
 
 /// The card's weather row: the Open-Meteo reading beside the battery —
-/// symbol, temperature, the place the reading is for. Absent while the
-/// setting is off or no fetch has landed; the row never invents a sky.
+/// symbol, temperature, the place the reading is for — over a faint
+/// outlook line (today's high and low, rain in the next two hours in a
+/// cool tint). Absent while the setting is off or no fetch has landed;
+/// the row never invents a sky.
 private struct ShelfWeatherRow: View {
     let weather: NotchWeather
     let style: NotchCardStyle
@@ -826,17 +828,27 @@ private struct ShelfWeatherRow: View {
     var body: some View {
         if let reading = weather.reading {
             let (symbol, label) = NotchWeather.symbol(for: reading.code)
-            HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
                 Image(systemName: symbol)
                     .font(.system(size: 10))
                     .foregroundStyle(style.subColor)
                     .frame(width: 18)
-                Text([label, reading.temperatureText, reading.place]
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " · "))
-                    .font(.system(size: 11))
-                    .foregroundStyle(style.subColor)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text([label, reading.temperatureText, reading.place]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " · "))
+                        .font(.system(size: 11))
+                        .foregroundStyle(style.subColor)
+                        .lineLimit(1)
+                    if let outlook = reading.outlookText {
+                        Text(outlook)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(reading.rainInMinutes != nil
+                                             ? AnyShapeStyle(Color.cyan.opacity(0.85))
+                                             : AnyShapeStyle(style.faintColor))
+                            .lineLimit(1)
+                    }
+                }
             }
         }
     }
