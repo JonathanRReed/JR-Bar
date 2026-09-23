@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import JRBarLEDS
 import Observation
+import os
 import SwiftUI
 
 /// Notch Buddy (docs/TOYS.md): a tiny creature in the `NotchHUD` panel
@@ -95,6 +96,44 @@ final class NotchBuddyToy: Toy {
         return isTucked ? .paused("Tucked away") : .on
     }
 
+    /// What it wears: the setting's pick, only if it's from the tank
+    /// shop's buddy shelf and the tank owns it — one purse, one truth.
+    var wearing: ShopItem? {
+        guard let raw = store?.state.notchBuddy.wearing,
+              let item = ShopItem(rawValue: raw), item.category == .buddy,
+              store?.aquarium?.game.owns(item) == true else { return nil }
+        return item
+    }
+
+    /// Puts on an owned buddy item, or takes it off (`nil`).
+    func wear(_ item: ShopItem?) {
+        guard let item else { store?.state.notchBuddy.wearing = nil; return }
+        guard item.category == .buddy, store?.aquarium?.game.owns(item) == true else { return }
+        store?.state.notchBuddy.wearing = item.rawValue
+    }
+
+    /// The floating buddy's walkabout (`BuddyStroll`) is allowed.
+    var takesWalks: Bool { store?.state.notchBuddy.walkabout ?? true }
+    /// Which way it faces while strolling along an edge (+1 right, -1
+    /// left); nil the rest of the time. The free panel sets it at each
+    /// leg, never per frame.
+    var strollHeading: Double?
+
+    /// Where the buddy is in life, from the crumbs it has eaten.
+    var stage: BuddyStage {
+        BuddyStage.of(crumbs: store?.state.notchBuddy.care.crumbsEaten ?? 0)
+    }
+
+    /// Frames the notch (or floating) buddy actually drew — its view's
+    /// timeline ticks it; the card's roster strip doesn't.
+    @ObservationIgnored let meter = ToyMeter()
+
+    func cost(at now: TimeInterval) -> String? {
+        guard store?.state.notchBuddy.enabled == true else { return nil }
+        let drawing = meter.drawing(at: now) ?? "Not drawing right now"
+        return "\(drawing) · 30 while agents work, \(Int(Self.restingFPS)) at rest, none when covered"
+    }
+
     var controls: AnyView {
         AnyView(BuddyControlsView(toy: self))
     }
@@ -121,12 +160,39 @@ final class NotchBuddyToy: Toy {
     }
 
     /// Whether the slot's face is the bare status dot rather than the
-    /// character. Mini always is. Docked, a published `screen_bar`
-    /// program also claims the slot — the dot is the strip's extra LED
-    /// at the centre seam, so the pet steps aside for the light show and
-    /// comes back when it ends. A floating character never swaps.
-    func showsDot(docked: Bool, stripLinked: Bool) -> Bool {
-        miniMode || (docked && stripLinked)
+    /// character: only the card's Mini presentation. A published
+    /// `screen_bar` program used to claim the docked slot too, lighting
+    /// the dot as an extra LED at the band's centre seam — a second
+    /// light beside the one unsegmented Screen Bar. The docked character
+    /// now stays and wears the band's colour instead (`seamTint`).
+    var showsDot: Bool { miniMode }
+
+    /// Whether the docked buddy wears the Screen Bar's colour while a
+    /// program is published. On by default; the card can turn it off.
+    var wearsStripColor: Bool { store?.state.notchBuddy.wearsStripColor ?? true }
+    var wearsStripColorBinding: Binding<Bool> {
+        Binding(get: { self.wearsStripColor },
+                set: { self.store?.state.notchBuddy.wearsStripColor = $0 })
+    }
+
+    /// The colour the docked buddy wears: the band's centre seam at its
+    /// brightest instant, normalized to full strength — a steady hue
+    /// that follows the published program, never its pulse. Worn, not
+    /// lit: the buddy is a creature dressed in the band's colour, not a
+    /// lamp keeping time with it. nil while nothing is published, the
+    /// program is dark at the seam, or the card turned it off.
+    func seamTint(at epoch: TimeInterval = Date().timeIntervalSince1970) -> RGB? {
+        guard wearsStripColor, let peak = stripDot(at: epoch, still: true) else { return nil }
+        return Self.wornHue(peak)
+    }
+
+    /// A sampled seam colour as a hue to wear: scaled so its brightest
+    /// channel is full, or nil when the seam is too dark to name a
+    /// colour at all.
+    static func wornHue(_ sample: RGB) -> RGB? {
+        let level = sample.maxChannel
+        guard level > 0.05 else { return nil }
+        return RGB(r: sample.r / level, g: sample.g / level, b: sample.b / level)
     }
 
     /// The card's name field writes straight into the settings blob;
@@ -241,6 +307,7 @@ final class NotchBuddyToy: Toy {
         isDragged = false
         dragTilt = 0
         landedAt = now
+        stayLively(from: now)
     }
 
     /// The carry was cut short (a toast took the panel): back to rest,
@@ -289,6 +356,7 @@ final class NotchBuddyToy: Toy {
             trickKind = BuddyTrick.Kind.allCases[trickOrdinal % BuddyTrick.Kind.allCases.count]
             trickOrdinal += 1
             trickStartedAt = now
+            stayLively(from: now)
         }
         if let point, askingSession != nil,
            Self.askBadgeZone(scale: scale).contains(point) {
@@ -301,6 +369,7 @@ final class NotchBuddyToy: Toy {
     func giveTreat(at now: Date = Date()) {
         store?.state.notchBuddy.care.feed(at: now)
         treatBurstAt = now
+        stayLively(from: now)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             hopUntil = now.addingTimeInterval(1.1)
         }
@@ -333,9 +402,9 @@ final class NotchBuddyToy: Toy {
     }
 
     /// Everything the HUD reads off the session list in one tick — the
-    /// pose, the badge counts, the tints and the hover line — so a tick
-    /// pays for a single pass over `core.sessions` and the pieces can
-    /// never disagree with each other.
+    /// pose, the badge counts, the tints and the hover line — built from
+    /// one cached `SessionDigest`, so the pieces can never disagree with
+    /// each other and a tick never walks the session list.
     struct BuddySummary {
         /// The pose: a live ask outranks a failure, a failure outranks
         /// work, work outranks sleep; three or more working is a
@@ -371,45 +440,204 @@ final class NotchBuddyToy: Toy {
         var statusLine = ""
     }
 
-    /// One pass over `core.sessions`: the mood, the counts, the tints
-    /// and the hover line all fall out of the same
-    /// `SessionActivity.reduce` calls. Also maintains the wave & slump
-    /// clocks the one-off effects play from — the view's tick is the
-    /// only clock that drives them.
-    func summary(at now: Date = Date()) -> BuddySummary {
-        var s = BuddySummary()
+    /// What the session list says, reduced once per change rather than
+    /// once per frame: the counts, the tints and the focus pick. The
+    /// view ticks up to 30 times a second and the list moves a few times
+    /// a minute, so the frame only pays for the parts that age with the
+    /// clock — the hop, the care mood, the wave and slump clocks.
+    struct SessionDigest: Equatable {
+        var working = 0
+        var waiting = 0
+        var failed = 0
+        var dominantProvider: String?
+        var workingProvider: String?
+        var providers: [String] = []
+        var focus: BuddyFocus?
+
+        /// Anything on the clock — work, an ask, a failure to own up to.
+        /// Nothing is asleep, and asleep only breathes.
+        var isAwake: Bool { working + waiting + failed > 0 }
+    }
+
+    /// One pass over the sessions: the counts, the tints and the focus
+    /// all fall out of the same `SessionActivity.reduce` calls. Pure, so
+    /// the tests can pin it without a document.
+    static func digest(of sessions: [CoreSession]) -> SessionDigest {
+        var d = SessionDigest()
         var tally: [String: Int] = [:]
         var soleProvider: String?
         var splitWork = false
-        for session in core.sessions {
+        for session in sessions {
             let activity = SessionActivity.reduce(session)
             switch activity {
             case .working:
-                s.working += 1
+                d.working += 1
                 tally[session.provider, default: 0] += 1
                 if let soleProvider, soleProvider != session.provider {
                     splitWork = true
                 } else if soleProvider == nil {
                     soleProvider = session.provider
                 }
-            case .waiting: s.waiting += 1
-            case .failed: s.failed += 1
+            case .waiting: d.waiting += 1
+            case .failed: d.failed += 1
             case .done, .ended, .idle: break
             }
             switch activity {
             case .working, .waiting, .failed:
                 let name = ProviderStyle.style(for: session.provider).name
-                if !s.providers.contains(name) { s.providers.append(name) }
+                if !d.providers.contains(name) { d.providers.append(name) }
             case .done, .ended, .idle: break
             }
         }
-        s.dominantProvider = tally.max { ($0.value, $0.key) < ($1.value, $1.key) }?.key
-        s.workingProvider = splitWork ? nil : soleProvider
+        d.dominantProvider = tally.max { ($0.value, $0.key) < ($1.value, $1.key) }?.key
+        d.workingProvider = splitWork ? nil : soleProvider
+        d.focus = BuddyFocus.pick(from: sessions)
+        return d
+    }
+
+    /// The last digest and whether a newer document has landed since.
+    /// The flag is set from the observation's `onChange`, which fires
+    /// inside `core.state`'s willSet — synchronously, so a summary read
+    /// right after a document (the tests do exactly that) can never see
+    /// the old list. A lock because `onChange` is `@Sendable`.
+    @ObservationIgnored private var cachedDigest = SessionDigest()
+    @ObservationIgnored private let digestStale = OSAllocatedUnfairLock(initialState: true)
+    /// Bumped after every document the digest has followed, outside any
+    /// render — the observable edge a view that only read the cache
+    /// re-renders on. The floating caption rides a 15 s timeline and
+    /// would otherwise sit on a stale name until its next tick.
+    private(set) var digestVersion = 0
+
+    /// The digest for this frame: the cache, or a fresh pass when a new
+    /// document landed. The pass re-arms the one-shot observation.
+    func sessionDigest() -> SessionDigest {
+        _ = digestVersion
+        if digestStale.withLock({ $0 }) { refreshDigest() }
+        return cachedDigest
+    }
+
+    private func refreshDigest() {
+        digestStale.withLock { $0 = false }
+        let stale = digestStale
+        cachedDigest = withObservationTracking {
+            let sessions = core.sessions
+            tempo.note(sessions: sessions, now: Date())
+            return Self.digest(of: sessions)
+        } onChange: { [weak self] in
+            stale.withLock { $0 = true }
+            // The re-read waits for the hop: onChange runs in the
+            // property's willSet, before the new document is stored.
+            Task { @MainActor [weak self] in self?.followDocument() }
+        }
+    }
+
+    /// A new document landed: re-read it and tell the views. A render
+    /// may already have re-read it lazily — then this only bumps.
+    private func followDocument() {
+        _ = sessionDigest()
+        digestVersion &+= 1
+    }
+
+    // MARK: Tempo
+
+    /// How hard the agents are working the tools right now — RunCat's
+    /// living meter, from real data: each hook event bumps a working
+    /// session's `updated_at`, and the rate of those bumps sets the walk.
+    @ObservationIgnored private(set) var tempo = BuddyTempo()
+    /// The walk's own clock: seconds of stride, advanced at the tempo's
+    /// cadence so a change of pace speeds the legs up without jumping
+    /// the pose. Maintained by `walkPhase(at:)`, like `wavingSince`.
+    @ObservationIgnored private var walkClock: (phase: TimeInterval, at: Date, cadence: Double)?
+
+    /// The pacing and gathering poses' clock at `now`: a sprint while
+    /// the tools are hammered, a stroll while the agents think. The
+    /// cadence eases toward its target over about a second.
+    func walkPhase(at now: Date) -> TimeInterval {
+        let target = BuddyTempo.cadence(rate: tempo.rate(at: now))
+        guard let clock = walkClock else {
+            walkClock = (now.timeIntervalSince1970, now, target)
+            return now.timeIntervalSince1970
+        }
+        let dt = min(0.25, max(0, now.timeIntervalSince(clock.at)))
+        let cadence = clock.cadence + (target - clock.cadence) * min(1, dt / 0.9)
+        let phase = clock.phase + dt * cadence
+        walkClock = (phase, now, cadence)
+        return phase
+    }
+
+    // MARK: Frame pacing
+
+    /// A one-shot beat — a hop, a trick, the treat's hearts, a crumb, a
+    /// landing — holds the timeline at the full rate until this passes.
+    /// Every one of them is over inside 1.1 s; the window pads it so the
+    /// last frame of the beat is never the slow one.
+    private(set) var livelyUntil: Date?
+    @ObservationIgnored private var livelyWork: DispatchWorkItem?
+    static let livelyWindow: TimeInterval = 1.4
+
+    private func stayLively(from now: Date = Date()) {
+        let end = now.addingTimeInterval(Self.livelyWindow)
+        if let current = livelyUntil, current >= end { return }
+        livelyUntil = end
+        livelyWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.livelyWork = nil
+                self.livelyUntil = nil
+            }
+        }
+        livelyWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.05, end.timeIntervalSinceNow),
+                                      execute: work)
+    }
+
+    /// The frame budget: 30 a second while anything moves, a slow
+    /// breath's worth while nothing does. Asleep, the buddy only
+    /// breathes and drifts its "z"s — 2 pt in a second at the notch's
+    /// 18 pt — so about four frames a second draws the same picture a
+    /// display-rate timeline did. A bigger floating buddy travels more
+    /// points per frame, so its resting rate grows with its size.
+    static let activeInterval: TimeInterval = 1.0 / 30.0
+    static let restingFPS: Double = 4
+
+    static func frameInterval(awake: Bool, lively: Bool, dragged: Bool, scale: Double) -> TimeInterval {
+        if awake || lively || dragged { return activeInterval }
+        let fps = restingFPS * max(1, min(3, scale.isFinite ? scale : 1))
+        return 1.0 / fps
+    }
+
+    /// The live interval the view's timeline asks for. Observable reads
+    /// only, so the schedule changes the moment the fleet wakes, a beat
+    /// starts or ends, or a carry begins.
+    func frameInterval(scale: Double) -> TimeInterval {
+        Self.frameInterval(awake: sessionDigest().isAwake, lively: livelyUntil != nil,
+                           dragged: isDragged, scale: scale)
+    }
+
+    /// The summary for one frame: the cached digest plus everything that
+    /// ages with the clock. Also maintains the wave & slump clocks the
+    /// one-off effects play from — the view's tick is the only clock
+    /// that drives them.
+    func summary(at now: Date = Date()) -> BuddySummary {
+        let d = sessionDigest()
+        var s = BuddySummary()
+        s.working = d.working
+        s.waiting = d.waiting
+        s.failed = d.failed
+        s.dominantProvider = d.dominantProvider
+        s.workingProvider = d.workingProvider
+        s.providers = d.providers
         if s.waiting > 0 { s.mood = .waving }
         else if s.failed > 0 { s.mood = .slumped }
         // Three or more working at once: busy is exciting, not calm.
         else if s.working >= 3 { s.mood = .gathering }
         else if s.working > 0 { s.mood = .pacing }
+        // Goodnight: the lid on its way down puts the nightcap on,
+        // whatever the fleet is up to — unless something asks or failed.
+        if s.mood == .pacing || s.mood == .gathering, store?.lidClosing(at: now) == true {
+            s.mood = .asleep
+        }
         if let hopUntil, now < hopUntil { s.mood = .celebrating }
         if s.mood == .waving {
             if wavingSince == nil { wavingSince = now; waveOrdinal += 1 }
@@ -423,7 +651,7 @@ final class NotchBuddyToy: Toy {
         }
         s.care = store?.state.notchBuddy.care.mood(at: now) ?? .content
         s.name = buddyName
-        s.focus = BuddyFocus.pick(from: core.sessions)
+        s.focus = d.focus
         var parts: [String] = []
         if s.working > 0 { parts.append("\(s.working) working") }
         if s.waiting > 0 { parts.append("\(s.waiting) waiting") }
@@ -449,23 +677,22 @@ final class NotchBuddyToy: Toy {
 
     // MARK: Strip link
 
-    /// The docked dot's link to the pulse strip. While the daemon
-    /// publishes a `screen_bar` program the dot is the strip's extra
-    /// LED at the notch seam — the same program text the band compiles
-    /// and the hardware plays, sampled on the daemon's anchor. There is
-    /// no second clock to drift: the anchor is the event's own tick, so
-    /// the dot swells exactly when the pulse crosses the middle, and a
-    /// phase that cannot run ahead can never read inverted either.
-    /// nil means nothing is published to extend and the dot keeps its
-    /// resting look. The cache is keyed on the program text, so a
-    /// republished program pays for one parse, not one per frame.
+    /// The band's centre seam, sampled from the published `screen_bar`
+    /// program — the same program text the band compiles and the
+    /// hardware plays, on the daemon's anchor, so a sample can never run
+    /// ahead of the band or read inverted. The docked buddy wears its
+    /// still frame (`seamTint`); the live sample stays for anything
+    /// that needs the seam's phase. nil means nothing is published. The
+    /// cache is keyed on the program text, so a republished program pays
+    /// for one parse, not one per frame.
     @ObservationIgnored private var stripCache:
         (key: String, sampler: LEDSSampler, firstSeen: TimeInterval, peak: RGB)?
 
     /// The seam colour at `epoch` — wall-clock seconds, the anchor's own
     /// domain, so no media-time conversion sits between the two. `still`
-    /// freezes the link at the program's brightest seam instant: Reduce
-    /// Motion's version of the pulse, the same still frame the band holds.
+    /// returns the program's brightest seam instant instead — the same
+    /// still frame the band holds under Reduce Motion, and the colour
+    /// the docked buddy wears.
     func stripDot(at epoch: TimeInterval, still: Bool = false) -> RGB? {
         guard let surface = core.lights?.screenBar else { return nil }
         let text = surface.program
@@ -500,9 +727,9 @@ final class NotchBuddyToy: Toy {
     }
 
     /// The brighter of the LEDs straddling the strip's middle — the seam
-    /// the docked dot hangs under. Brightest, not averaged: the Dot
-    /// role's own band rule, so a pulse reaches the dot at full strength
-    /// and a chase blips it as the wave crosses the notch.
+    /// the docked buddy sits under. Brightest, not averaged: the Dot
+    /// role's own band rule, so a pulse's colour is read at full
+    /// strength and a chase is caught as the wave crosses the notch.
     static func centreColor(sampler: LEDSSampler, at seconds: Double, ledCount: Int) -> RGB {
         let colors = sampler.colors(at: seconds)
         let mid = ledCount / 2
@@ -537,6 +764,7 @@ final class NotchBuddyToy: Toy {
     /// every build — the menu itself only exists for the pop.
     @ObservationIgnored private let menuActions = BuddyMenuActions()
     @ObservationIgnored private var renamePanel: BuddyRenamePanel?
+    @ObservationIgnored private var cardPanel: BuddyCardPanel?
 
     /// The pet menu: pet it, feed it, rename it, swap characters, open
     /// the asking session while one is up, dock or float it, toggle the
@@ -560,6 +788,33 @@ final class NotchBuddyToy: Toy {
         let rosterItem = NSMenuItem(title: "Change character", action: nil, keyEquivalent: "")
         rosterItem.submenu = roster
         menu.addItem(rosterItem)
+        menu.addItem(menuActions.item(title: "About \(buddyName)…", action: #selector(BuddyMenuActions.about)))
+        // Dress-up from the tank's purse: whatever the shop's buddy
+        // shelf has sold, and a way back to nothing.
+        let owned = ShopItem.allCases.filter {
+            $0.category == .buddy && store?.aquarium?.game.owns($0) == true
+        }
+        if !owned.isEmpty {
+            let wardrobe = NSMenu()
+            let none = menuActions.item(title: "Nothing", action: #selector(BuddyMenuActions.wear(_:)))
+            none.state = wearing == nil ? .on : .off
+            wardrobe.addItem(none)
+            for item in owned {
+                let row = menuActions.item(title: item.displayName.replacingOccurrences(of: "Buddy ", with: "").capitalized,
+                                           action: #selector(BuddyMenuActions.wear(_:)))
+                row.representedObject = item.rawValue
+                row.state = wearing == item ? .on : .off
+                wardrobe.addItem(row)
+            }
+            let wardrobeItem = NSMenuItem(title: "Wear", action: nil, keyEquivalent: "")
+            wardrobeItem.submenu = wardrobe
+            menu.addItem(wardrobeItem)
+        }
+        // The tank's residents starve through a busy week with the
+        // window shut — the buddy can drop a round in on its way past.
+        if let aquarium = store?.aquarium, !aquarium.fish.isEmpty {
+            menu.addItem(menuActions.item(title: "Feed the tank", action: #selector(BuddyMenuActions.feedTank)))
+        }
         menu.addItem(.separator())
         if let asking = askingSession {
             let label = SessionLabel.display(label: asking.label, shortId: asking.shortId,
@@ -573,6 +828,12 @@ final class NotchBuddyToy: Toy {
                                            action: #selector(BuddyMenuActions.toggleCaption))
         captionItem.state = showsCaption ? .on : .off
         menu.addItem(captionItem)
+        if isFree {
+            let walkItem = menuActions.item(title: "Take walks",
+                                            action: #selector(BuddyMenuActions.toggleWalkabout))
+            walkItem.state = takesWalks ? .on : .off
+            menu.addItem(walkItem)
+        }
         menu.addItem(.separator())
         menu.addItem(menuActions.item(title: "Tuck away", action: #selector(BuddyMenuActions.tuck)))
         return menu
@@ -588,6 +849,38 @@ final class NotchBuddyToy: Toy {
         }
     }
 
+    /// "About Morel…": the pal card under the pill — the care log in a
+    /// few lines, every one of them something that happened.
+    func presentCard(near frame: NSRect?) {
+        if cardPanel == nil { cardPanel = BuddyCardPanel() }
+        let care = store?.state.notchBuddy.care ?? BuddyCare()
+        cardPanel?.present(near: frame, character: buddyCharacter, name: buddyName,
+                           card: BuddyPalCard.make(care: care))
+    }
+
+    /// Asks the buddy has watched open, by session: when each opened. A
+    /// session that stops waiting closes its ask, and the longest one
+    /// lands in the care log for the pal card.
+    @ObservationIgnored private var openAsks: [String: Double] = [:]
+
+    /// Follows the asks across documents. Only while enabled — a buddy
+    /// that's off keeps no log.
+    func noteAsks(_ sessions: [CoreSession], at now: Date = Date()) {
+        guard store?.state.notchBuddy.enabled == true else {
+            openAsks = [:]
+            return
+        }
+        var still: [String: Double] = [:]
+        for session in sessions where SessionActivity.reduce(session) == .waiting {
+            still[session.id] = openAsks[session.id]
+                ?? session.ask?.openedAt ?? now.timeIntervalSince1970
+        }
+        for (id, opened) in openAsks where still[id] == nil {
+            store?.state.notchBuddy.care.noteAsk(lasted: now.timeIntervalSince1970 - opened)
+        }
+        openAsks = still
+    }
+
     private static func sessionSnapshot(_ sessions: [CoreSession]) -> [String: SessionActivity] {
         Dictionary(sessions.map { ($0.id, SessionActivity.reduce($0)) },
                    uniquingKeysWith: { _, latest in latest })
@@ -597,6 +890,7 @@ final class NotchBuddyToy: Toy {
     /// it while tucked, to distinguish real activity changes from heartbeats.
     /// Historical state documents never earn completion crumbs.
     func noteState(_ state: CoreState) {
+        noteAsks(state.sessions)
         guard store?.state.notchBuddy.enabled == true,
               store?.state.notchBuddy.tucked == true else {
             wakeSnapshot = nil
@@ -616,9 +910,19 @@ final class NotchBuddyToy: Toy {
         guard event.kind == "completed" || event.session != nil else { return }
         wakeForActivity()
         guard event.kind == "completed" else { return }
-        hopUntil = now.addingTimeInterval(1.1)
+        // Hushed — JR-Bar quiet or a Focus (the Toys page's switch) —
+        // the crumb still counts, but the hop stays put.
+        if store?.hushReason(now: now) == nil {
+            hopUntil = now.addingTimeInterval(1.1)
+        }
         crumbAt = now
-        store?.state.notchBuddy.care.eat(at: now, count: 1)
+        stayLively(from: now)
+        let provider = event.provider
+            ?? event.session.flatMap { core.state?.session(withID: $0) }?.provider
+        let before = stage
+        store?.state.notchBuddy.care.eat(at: now, count: 1, provider: provider)
+        // A crumb that grows it up: the hearts, once — unless hushed.
+        if stage > before, store?.hushReason(now: now) == nil { treatBurstAt = now }
     }
 
     private func wakeForActivity() {
@@ -628,6 +932,59 @@ final class NotchBuddyToy: Toy {
         onVisibilityChange?()
     }
 
+}
+
+/// RunCat's tempo, from the hook stream rather than the CPU: every tool
+/// event bumps its session's `updated_at`, so counting the bumps on
+/// working sessions over a short window is the rate the agents are
+/// working their tools. A sprint means the tools are being hammered; a
+/// stroll means the agents are thinking.
+struct BuddyTempo: Equatable {
+    /// The window the rate is counted over.
+    static let window: TimeInterval = 20
+    /// Events a second that reads as a full sprint.
+    static let sprintRate: Double = 0.8
+    /// The walk's speed range, as a multiple of the old fixed cadence.
+    static let strollCadence: Double = 0.75
+    static let sprintCadence: Double = 1.7
+
+    /// When each counted event was seen, oldest first.
+    private(set) var stamps: [Date] = []
+    /// Each session's `updated_at` last time we looked.
+    private var lastSeen: [String: Double] = [:]
+
+    /// One document's worth: a working session whose stamp moved since
+    /// the last look is one event. A session's first sighting sets its
+    /// baseline and counts nothing — a relaunch is not a burst.
+    mutating func note(sessions: [CoreSession], now: Date) {
+        var seen: [String: Double] = [:]
+        for session in sessions {
+            guard let updated = session.updatedAt else { continue }
+            seen[session.id] = updated
+            guard SessionActivity.reduce(session) == .working,
+                  let previous = lastSeen[session.id], updated > previous else { continue }
+            stamps.append(now)
+        }
+        lastSeen = seen
+        prune(now)
+    }
+
+    private mutating func prune(_ now: Date) {
+        stamps.removeAll { now.timeIntervalSince($0) > Self.window }
+        if stamps.count > 200 { stamps.removeFirst(stamps.count - 200) }
+    }
+
+    /// Events a second over the window.
+    func rate(at now: Date) -> Double {
+        Double(stamps.filter { now.timeIntervalSince($0) <= Self.window }.count) / Self.window
+    }
+
+    /// The walk's speed for a rate: a stroll at rest, a sprint at
+    /// `sprintRate` and beyond.
+    static func cadence(rate: Double) -> Double {
+        let k = min(1, max(0, rate.isFinite ? rate / sprintRate : 0))
+        return strollCadence + (sprintCadence - strollCadence) * k
+    }
 }
 
 /// The card's disclosure body: the roster picker (a menu, like the Fold
@@ -654,6 +1011,12 @@ private struct BuddyControlsView: View {
 
             Toggle(isOn: toy.presentationBinding) {
                 SettingLabel(title: "Mini", subtitle: "Just the status dot — docked or floating, no body.")
+            }
+            .toggleStyle(.checkbox)
+
+            Toggle(isOn: toy.wearsStripColorBinding) {
+                SettingLabel(title: "Wear the Screen Bar's colour",
+                             subtitle: "Docked under a lit band, it takes the band's colour instead of its own.")
             }
             .toggleStyle(.checkbox)
 
@@ -686,6 +1049,17 @@ private struct BuddyControlsView: View {
                 Text(toy.careLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            // The pal card's history, the part the caption can't hold —
+            // the same lines "About…" in its menu shows.
+            let card = BuddyPalCard.make(care: toy.store?.state.notchBuddy.care ?? BuddyCare())
+            let history = [card.since, card.favourite, card.longestAsk].compactMap { $0 }
+            if !history.isEmpty {
+                Text(history.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // Roaming state at a glance: a wake-up call while tucked, a
@@ -783,6 +1157,8 @@ final class BuddyMenuActions: NSObject {
     @objc func pet(_ sender: Any?) { toy?.tapped() }
     @objc func treat(_ sender: Any?) { toy?.giveTreat() }
     @objc func rename(_ sender: Any?) { toy?.promptRename(near: panelFrame) }
+    @objc func about(_ sender: Any?) { toy?.presentCard(near: panelFrame) }
+    @objc func feedTank(_ sender: Any?) { toy?.store?.aquarium?.feedAll() }
 
     @objc func pickCharacter(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
@@ -803,5 +1179,9 @@ final class BuddyMenuActions: NSObject {
     }
 
     @objc func toggleCaption(_ sender: Any?) { toy?.toggleCaption() }
+    @objc func wear(_ sender: NSMenuItem) {
+        toy?.wear((sender.representedObject as? String).flatMap(ShopItem.init(rawValue:)))
+    }
+    @objc func toggleWalkabout(_ sender: Any?) { toy?.store?.state.notchBuddy.walkabout.toggle() }
     @objc func tuck(_ sender: Any?) { toy?.tuckAway() }
 }

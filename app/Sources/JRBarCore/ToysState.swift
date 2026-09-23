@@ -13,6 +13,12 @@ public struct ToysState: Codable, Equatable, Sendable {
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
     public var notch: NotchSettings
+    /// "Quiet the toys during Focus and quiet hours": while JR-Bar is
+    /// quiet or a Focus is on, confetti holds its burst (and skips
+    /// screens a fullscreen app owns), the buddy keeps its completion
+    /// hop to itself, the tank holds its reward cards and the hinge
+    /// stays silent. On by default — calm first.
+    public var hushDuringQuiet: Bool = true
 
     public init(fold: FoldSettings = FoldSettings(), aquarium: AquariumSettings = AquariumSettings(),
                 notchBuddy: NotchBuddySettings = NotchBuddySettings(), confetti: ConfettiSettings = ConfettiSettings(),
@@ -29,6 +35,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         /// The island toy shipped as `alcove`; the key is read but never
         /// written — a saved file always lands under `notch`.
         case legacyAlcove = "alcove"
+        case hushDuringQuiet
     }
 
     public init(from decoder: any Decoder) throws {
@@ -40,6 +47,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         notch = (try? c.decodeIfPresent(NotchSettings.self, forKey: .notch))
             ?? (try? c.decodeIfPresent(NotchSettings.self, forKey: .legacyAlcove))
             ?? NotchSettings()
+        hushDuringQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .hushDuringQuiet)) ?? true
         // `externalApps` was the Toys page's app list — the feature is
         // gone; an old file's key is now just an ignored unknown key.
     }
@@ -51,6 +59,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         try c.encode(notchBuddy, forKey: .notchBuddy)
         try c.encode(confetti, forKey: .confetti)
         try c.encode(notch, forKey: .notch)
+        try c.encode(hushDuringQuiet, forKey: .hushDuringQuiet)
     }
 }
 
@@ -89,6 +98,13 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     public var dwellTimeout: Double
     /// Bendy's return click — a Tink when the fold fully unwinds.
     public var restoreSound: Bool
+    /// Without Screen Recording, fold the wallpaper alone (no window
+    /// cards) instead of nothing. On by default: a first try should do
+    /// something.
+    public var wallpaperFallback: Bool = true
+    /// The hinge voice: the lid's speed plays a creak or a softer paper
+    /// rustle. Off by default.
+    public var hingeVoice: HingeVoice = .off
 
     public init(enabled: Bool = false, anchor: FoldAnchor = .angle,
                 activationAngle: Double = 65,
@@ -116,6 +132,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // reads it now and a stale value like "fog" decodes fine.
         case enabled, anchor, activationAngle, style, perspective, blur, shade, jitterTolerance
         case provider, frost, holdPicture, dwellTimeout, restoreSound
+        case wallpaperFallback, hingeVoice
     }
 
     public init(from decoder: any Decoder) throws {
@@ -143,6 +160,9 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         holdPicture = (try? c.decodeIfPresent(Bool.self, forKey: .holdPicture)) ?? true
         dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
         restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
+        wallpaperFallback = (try? c.decodeIfPresent(Bool.self, forKey: .wallpaperFallback)) ?? true
+        let voiceRaw = (try? c.decodeIfPresent(String.self, forKey: .hingeVoice)) ?? nil
+        hingeVoice = voiceRaw.flatMap(HingeVoice.init(rawValue:)) ?? .off
         // Each past default set is treated as untouched and moved to the
         // current one; any deliberate change means the file survives.
         // A file old enough to migrate never wrote `frost`, so the knob
@@ -179,7 +199,14 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(holdPicture, forKey: .holdPicture)
         try c.encode(dwellTimeout, forKey: .dwellTimeout)
         try c.encode(restoreSound, forKey: .restoreSound)
+        try c.encode(wallpaperFallback, forKey: .wallpaperFallback)
+        try c.encode(hingeVoice, forKey: .hingeVoice)
     }
+}
+
+/// Fold's hinge voice: what the lid's movement sounds like, if anything.
+public enum HingeVoice: String, Codable, CaseIterable, Sendable {
+    case off, creak, rustle
 }
 
 /// Who renders the fold.
@@ -202,6 +229,9 @@ public enum DayNightMode: String, Codable, CaseIterable, Sendable {
     case realTime
     /// The classic behaviour: a slow four-minute breathe.
     case cycle
+    /// Sunrise and sunset for the time zone's city, worked out locally;
+    /// a zone without a city keeps `realTime`'s hours.
+    case sun
 }
 
 /// Aquarium: every live session is a fish.
@@ -216,6 +246,17 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public var speciesOverrides: [String: String]
     /// Where the day/night wash takes its clock from.
     public var dayNight: DayNightMode
+    /// The idle screensaver: after this many minutes without input the
+    /// tank fills every free screen until the next touch. 0 is off.
+    public var idleFillMinutes: Int = 0
+    /// The live wallpaper: the display (by its name) the tank lives on
+    /// behind every window, click-through. nil is off.
+    public var ambientDisplay: String? = nil
+    /// The screensaver wears a quiet clock in its corner. On by default.
+    public var saverClock: Bool = true
+
+    /// The screensaver's choices, in minutes; 0 is off.
+    public static let idleFillChoices = [0, 5, 10, 15, 30]
 
     public init(enabled: Bool = false, showLabels: Bool = true, density: Double = 1.0,
                 speciesOverrides: [String: String] = [:],
@@ -229,6 +270,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, showLabels, density, speciesOverrides, dayNight
+        case idleFillMinutes, ambientDisplay, saverClock
     }
 
     public init(from decoder: any Decoder) throws {
@@ -240,6 +282,11 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         speciesOverrides = raw.filter { FishSpecies(rawValue: $0.value) != nil }
         let dayNightRaw = (try? c.decodeIfPresent(String.self, forKey: .dayNight)) ?? nil
         dayNight = dayNightRaw.flatMap(DayNightMode.init(rawValue:)) ?? .realTime
+        let idle = (try? c.decodeIfPresent(Int.self, forKey: .idleFillMinutes)) ?? 0
+        idleFillMinutes = Self.idleFillChoices.contains(idle) ? idle : 0
+        let display = (try? c.decodeIfPresent(String.self, forKey: .ambientDisplay)) ?? nil
+        ambientDisplay = display?.isEmpty == false ? display : nil
+        saverClock = (try? c.decodeIfPresent(Bool.self, forKey: .saverClock)) ?? true
     }
 
     /// What `provider` swims as: the user's pick when one is stored,
@@ -315,6 +362,16 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// `scaleRange` so a hand edit can't grow a screen-filling (or
     /// invisible) buddy.
     public var scale: Double
+    /// Docked, the buddy wears the Screen Bar's colour while a program
+    /// is published, instead of its own resting tint. On by default.
+    public var wearsStripColor: Bool = true
+    /// Floating, it takes the odd calm walk along a window's top edge
+    /// while the agents work, then comes home. On by default.
+    public var walkabout: Bool = true
+    /// What it wears — a `ShopItem` raw value from the tank shop's buddy
+    /// shelf, bought with the tank's pearls. nil wears nothing; the app
+    /// checks the item is owned before drawing it.
+    public var wearing: String?
 
     /// The size slider's reach — 1× is the docked size, 3× is desk-pet.
     public static let scaleRange: ClosedRange<Double> = 1.0...3.0
@@ -362,6 +419,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
+        case wearsStripColor, walkabout, wearing
     }
 
     public init(from decoder: any Decoder) throws {
@@ -378,6 +436,10 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         showCaption = (try? c.decodeIfPresent(Bool.self, forKey: .showCaption)) ?? true
         // Missing or mistyped is 1×; a number outside the dial clamps.
         scale = Self.clampedScale((try? c.decodeIfPresent(Double.self, forKey: .scale)) ?? 1.0)
+        wearsStripColor = (try? c.decodeIfPresent(Bool.self, forKey: .wearsStripColor)) ?? true
+        walkabout = (try? c.decodeIfPresent(Bool.self, forKey: .walkabout)) ?? true
+        let worn = (try? c.decodeIfPresent(String.self, forKey: .wearing)) ?? nil
+        wearing = worn?.isEmpty == false ? worn : nil
     }
 }
 
@@ -400,6 +462,16 @@ public struct BuddyCare: Codable, Equatable, Sendable {
     public var treatsGiven: Int
     /// Completed sessions it has "eaten".
     public var crumbsEaten: Int
+    /// Epoch seconds of the first pet, treat or crumb; 0 = not met yet.
+    /// A log from before this field is seeded with its earliest stamp and
+    /// `firstMetIsFloor` — the pal card then says "at least since".
+    public var firstMetAt: Double = 0
+    public var firstMetIsFloor: Bool = false
+    /// Crumbs by the provider whose session finished — the pal card's
+    /// favourite agent.
+    public var crumbsByProvider: [String: Int] = [:]
+    /// The longest ask it waited through with you, in seconds.
+    public var longestAskSeconds: Double = 0
 
     public init(lastInteractionAt: Double = 0, lastTreatAt: Double = 0, lastCrumbAt: Double = 0,
                 petCount: Int = 0, treatsGiven: Int = 0, crumbsEaten: Int = 0) {
@@ -409,6 +481,17 @@ public struct BuddyCare: Codable, Equatable, Sendable {
         self.petCount = petCount
         self.treatsGiven = treatsGiven
         self.crumbsEaten = crumbsEaten
+        seedFirstMet()
+    }
+
+    /// A log with history but no meeting day met at least by its
+    /// earliest stamp — the floor the pal card words as "at least since".
+    private mutating func seedFirstMet() {
+        guard firstMetAt <= 0 else { return }
+        let stamps = [lastInteractionAt, lastTreatAt, lastCrumbAt].filter { $0 > 0 }
+        guard let earliest = stamps.min() else { return }
+        firstMetAt = earliest
+        firstMetIsFloor = true
     }
 
     /// How long a treat keeps it blissed out.
@@ -437,8 +520,30 @@ public struct BuddyCare: Codable, Equatable, Sendable {
 
     /// A tap on the buddy or a scratch behind the ear.
     public mutating func pet(at now: Date = Date()) {
+        meet(at: now)
         petCount += 1
         lastInteractionAt = now.timeIntervalSince1970
+    }
+
+    /// The first time anything happens between you is the day you met.
+    mutating func meet(at now: Date) {
+        guard firstMetAt <= 0 else { return }
+        firstMetAt = now.timeIntervalSince1970
+        firstMetIsFloor = false
+    }
+
+    /// An ask resolved after `seconds` open — kept if it's the longest.
+    public mutating func noteAsk(lasted seconds: Double) {
+        guard seconds.isFinite, seconds > longestAskSeconds else { return }
+        longestAskSeconds = seconds
+    }
+
+    /// The provider it has eaten the most crumbs from; ties break on the
+    /// id so the pick can't flicker. nil before any crumb had a provider.
+    public var favouriteProvider: (id: String, crumbs: Int)? {
+        crumbsByProvider.filter { $0.value > 0 }
+            .max { ($0.value, $1.key) < ($1.value, $0.key) }
+            .map { ($0.key, $0.value) }
     }
 
     /// A treat counts as a pet and starts the `fed` window.
@@ -451,13 +556,18 @@ public struct BuddyCare: Codable, Equatable, Sendable {
     /// A completed session is a crumb. Eating is ambient, not affection
     /// — it deliberately does not touch `lastInteractionAt`, so a buddy
     /// whose human never says hi still misses them.
-    public mutating func eat(at now: Date = Date(), count: Int = 1) {
+    public mutating func eat(at now: Date = Date(), count: Int = 1, provider: String? = nil) {
+        meet(at: now)
         crumbsEaten += count
         lastCrumbAt = now.timeIntervalSince1970
+        if let provider = provider?.lowercased(), !provider.isEmpty {
+            crumbsByProvider[provider, default: 0] += count
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case lastInteractionAt, lastTreatAt, lastCrumbAt, petCount, treatsGiven, crumbsEaten
+        case firstMetAt, firstMetIsFloor, crumbsByProvider, longestAskSeconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -468,6 +578,19 @@ public struct BuddyCare: Codable, Equatable, Sendable {
         petCount = (try? c.decodeIfPresent(Int.self, forKey: .petCount)) ?? 0
         treatsGiven = (try? c.decodeIfPresent(Int.self, forKey: .treatsGiven)) ?? 0
         crumbsEaten = (try? c.decodeIfPresent(Int.self, forKey: .crumbsEaten)) ?? 0
+        let crumbs = (try? c.decodeIfPresent([String: Int].self, forKey: .crumbsByProvider)) ?? [:]
+        crumbsByProvider = crumbs.filter { $0.value > 0 }
+        let longest = (try? c.decodeIfPresent(Double.self, forKey: .longestAskSeconds)) ?? 0
+        longestAskSeconds = longest.isFinite ? max(0, longest) : 0
+        if let met = (try? c.decodeIfPresent(Double.self, forKey: .firstMetAt)) ?? nil,
+           met.isFinite, met > 0 {
+            firstMetAt = met
+            firstMetIsFloor = (try? c.decodeIfPresent(Bool.self, forKey: .firstMetIsFloor)) ?? false
+        } else {
+            // A log from before the field: the earliest stamp it kept is
+            // the latest the two of you can have met.
+            seedFirstMet()
+        }
     }
 }
 
@@ -569,6 +692,12 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     /// re-folded state can never burst twice. Bookkeeping the toy
     /// maintains, not a control.
     public var firedKeys: [String]
+    /// A burst the room held (see `ToysState.hushDuringQuiet`): played
+    /// smaller once the room clears, or let go.
+    public var whenHeld: ConfettiHeldBurst = .later
+    /// A soft synthesized pop and rustle with the burst. Off by default,
+    /// and silent while JR-Bar is quiet.
+    public var sound: Bool = false
 
     /// The ring's depth: an old key falls off long after the fact it
     /// guarded is history.
@@ -599,6 +728,7 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, landing, density, duration, palette, shapes, triggers, firedKeys
+        case whenHeld, sound
     }
 
     public init(from decoder: any Decoder) throws {
@@ -612,6 +742,8 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
         triggers = (try? c.decodeIfPresent(ConfettiTriggers.self, forKey: .triggers)) ?? ConfettiTriggers()
         let keys = (try? c.decodeIfPresent([String].self, forKey: .firedKeys)) ?? []
         firedKeys = Array(keys.filter { !$0.isEmpty }.suffix(Self.firedKeyLimit))
+        whenHeld = (try? c.decodeIfPresent(ConfettiHeldBurst.self, forKey: .whenHeld)) ?? .later
+        sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? false
     }
 }
 
@@ -632,6 +764,9 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
     public var codexBankedReset: Bool
     /// The last open ask resolved — nothing left waiting on you.
     public var allClear: Bool
+    /// A rare moment JR-Bar itself noticed: an Aquarium achievement or a
+    /// new tank level. Opt-in like every trigger after the first.
+    public var milestones: Bool = false
 
     public init(sessionCompleted: Bool = false, weeklyReset: Bool = true,
                 perProviderReset: Set<String> = [], codexBankedReset: Bool = false,
@@ -645,6 +780,7 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case sessionCompleted, weeklyReset, perProviderReset, codexBankedReset, allClear
+        case milestones
     }
 
     public init(from decoder: any Decoder) throws {
@@ -655,6 +791,7 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
             .map { $0.lowercased() })
         codexBankedReset = (try? c.decodeIfPresent(Bool.self, forKey: .codexBankedReset)) ?? false
         allClear = (try? c.decodeIfPresent(Bool.self, forKey: .allClear)) ?? false
+        milestones = (try? c.decodeIfPresent(Bool.self, forKey: .milestones)) ?? false
     }
 }
 

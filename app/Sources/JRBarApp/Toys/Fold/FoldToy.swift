@@ -65,6 +65,10 @@ final class FoldToy: Toy {
     /// Notification-fed state, kept as observed vars so one observation
     /// pass sees every change.
     private(set) var screenAsleep = false
+    /// The login window is up over this session (`com.apple.screenIsLocked`).
+    private(set) var screenLocked = FoldSessionState.current().locked
+    /// Another user switched in over this session (fast user switching).
+    private(set) var sessionInactive = !FoldSessionState.current().onConsole
     private(set) var displayVersion = 0
     private(set) var motionVersion = 0
     private(set) var workspaceVersion = 0
@@ -106,8 +110,12 @@ final class FoldToy: Toy {
     /// True while the fold plane is on screen — overlay guests like the
     /// island use it to let clicks fall through glass they can't see.
     var overlayOnScreen: Bool { overlay?.isVisible == true }
-    @ObservationIgnored private var capture: FoldCapture?
+    /// The frames: the ScreenCaptureKit streams, or — without Screen
+    /// Recording — the wallpaper alone (`FoldWallpaperSource`).
+    @ObservationIgnored private var capture: (any FoldFrameSource)?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// The lock and unlock broadcasts arrive on the distributed centre.
+    @ObservationIgnored private var distributedObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
     /// Safety facts, cached instead of queried per frame: the clamshell
     /// truth rides in on the sensor's 1 Hz beat, and display topology
@@ -186,6 +194,31 @@ final class FoldToy: Toy {
                 MainActor.assumeIsolated { self?.workspaceVersion += 1 }
             })
         }
+        // The lock and a fast-user switch both hand the screen to
+        // someone who is not looking at this desktop: the fold stands
+        // down and its capture streams stop, so the Screen Recording
+        // indicator never sits behind a lock screen.
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessionInactive = true }
+        })
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessionInactive = false }
+        })
+        let distributed = DistributedNotificationCenter.default()
+        distributedObservers.append(distributed.addObserver(
+            forName: FoldSessionState.lockedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screenLocked = true }
+        })
+        distributedObservers.append(distributed.addObserver(
+            forName: FoldSessionState.unlockedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screenLocked = false }
+        })
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -257,16 +290,58 @@ final class FoldToy: Toy {
         if !sensor.available && simulatedAngle == nil {
             return .unavailable("No lid-angle sensor on this Mac")
         }
-        if !FoldCapturePermission.granted { return .needsPermission("Needs Screen Recording") }
+        if !FoldCapturePermission.granted && !settings.wallpaperFallback {
+            return .needsPermission("Needs Screen Recording")
+        }
         if let reason = pauseReason { return .paused(reason) }
+        if !FoldCapturePermission.granted { return .limited("Wallpaper only") }
         return .on
+    }
+
+    /// Every sensor sample that reached the toy — the card's measured
+    /// read rate.
+    @ObservationIgnored let meter = ToyMeter()
+
+    /// The optional creak (`FoldHingeVoice`): it only listens to the
+    /// readings the fold already takes.
+    @ObservationIgnored private let hingeVoice = FoldHingeVoice()
+
+    /// One reading to the voice. It plays only while the fold is on,
+    /// JR-Bar renders it, and the room isn't hushed; otherwise any
+    /// running engine stands down.
+    private func voice(_ angle: Double, at t: TimeInterval) {
+        let settings = settings
+        let allowed = settings.enabled && settings.provider == .jrbar
+            && settings.hingeVoice != .off && store?.hushReason() == nil
+        guard allowed || hingeVoice.isRunning else { return }
+        if !allowed { hingeVoice.stop(); return }
+        hingeVoice.feed(angle: angle, at: t, voice: settings.hingeVoice, allowed: true)
+    }
+
+    /// The sensor's measured pace and whether capture is live. Bendy or
+    /// Lid Plane rendering it costs them, not us — no line.
+    func cost(at now: TimeInterval) -> String? {
+        guard settings.provider == .jrbar else { return nil }
+        let reads = meter.rate(at: now)
+        return [
+            reads < 0.5 ? "Lid sensor idle" : "Lid sensor \(Int(reads.rounded())) reads/s",
+            "10 at rest, 120 near the fold",
+            capture != nil ? "capturing now" : "capture only while folding",
+        ].joined(separator: " · ")
+    }
+
+    /// Frames can come from somewhere: the capture with Screen Recording,
+    /// or the wallpaper without it when the card allows.
+    private var canFold: Bool {
+        FoldCapturePermission.granted || settings.wallpaperFallback
     }
 
     /// Why the fold is parked right now, per the safety contract: closed
     /// lid (sensor ≤ 5° or real clamshell state), no built-in display,
-    /// a mirrored one, or a sleeping screen. Every input is a cached
-    /// fact — IOKit and CoreGraphics queries on the per-frame path were
-    /// the jitter the old engine could never ease away.
+    /// a mirrored one, a sleeping screen, a locked one, or another user
+    /// switched in. Every input is a cached fact — IOKit and CoreGraphics
+    /// queries on the per-frame path were the jitter the old engine
+    /// could never ease away.
     private var pauseReason: String? {
         refreshDisplayFactsIfStale()
         return FoldPause.reason(
@@ -274,7 +349,9 @@ final class FoldToy: Toy {
             closedLid: cachedClamshell == true,
             builtInPresent: cachedBuiltinPresent,
             mirrored: cachedMirrored,
-            screenAsleep: screenAsleep)
+            screenAsleep: screenAsleep,
+            screenLocked: screenLocked,
+            sessionInactive: sessionInactive)
     }
 
     /// Re-reads the display-topology facts when the screen-parameters
@@ -366,7 +443,7 @@ final class FoldToy: Toy {
             FoldLog.log.notice("renderer: retrying after cooldown")
             rendererFailed = false
         }
-        guard !rendererFailed, FoldCapturePermission.granted else {
+        guard !rendererFailed, canFold else {
             arming.reset()
             scheduleCooldown(nil)
             standDown()
@@ -563,7 +640,7 @@ final class FoldToy: Toy {
     /// sample is never a frame late.
     private func refreshTick() {
         let armed = settings.enabled && settings.provider == .jrbar && !paused
-            && !rendererFailed && FoldCapturePermission.granted && pauseReason == nil
+            && !rendererFailed && canFold && pauseReason == nil
         // The link exists only to move pixels: a parked fold — gate
         // shut, tracker settled — runs no timer at all. Without this
         // check the link was born and killed on every parked sensor
@@ -685,8 +762,15 @@ final class FoldToy: Toy {
     /// the band or its cooldown — so the purple indicator never outlives
     /// a fold that could be on screen.
     private func ensureCaptureRunning() {
+        // A wallpaper stand-in yields to the real capture the moment the
+        // permission lands — the next arm films the windows too.
+        if let current = capture, current is FoldWallpaperSource, FoldCapturePermission.granted {
+            self.capture = nil
+            Task { await current.stop() }
+        }
         guard capture == nil else { return }
-        let capture = FoldCapture()
+        let capture: any FoldFrameSource = FoldCapturePermission.granted
+            ? FoldCapture() : FoldWallpaperSource()
         self.capture = capture
         captureBeganAt = CACurrentMediaTime()
         capture.onFullFrame = { [weak self] buffer in
@@ -771,7 +855,11 @@ final class FoldToy: Toy {
     /// same glide the simulate slider gets — then the filter and tracker
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
+        meter.tick()
         rawAngle = sample.angle
+        // The shared hinge signal: published, never read back here.
+        store?.noteHinge(sample.angle)
+        if let angle = sample.angle, simulatedAngle == nil { voice(angle, at: sample.at) }
         // The clamshell flag is the one pause input that changes on
         // this path with no trigger of its own — the angle reconciles
         // on accepted samples, the display facts through observed
@@ -826,6 +914,8 @@ final class FoldToy: Toy {
             // rawAngle for the live reading.
             _ = simulatedAngle
             _ = screenAsleep
+            _ = screenLocked
+            _ = sessionInactive
             _ = displayVersion
             _ = motionVersion
             _ = workspaceVersion
@@ -849,6 +939,8 @@ final class FoldToy: Toy {
             get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
             set: {
                 self.simulatedAngle = $0
+                // The card's demo and the slider preview the voice too.
+                self.voice($0, at: CACurrentMediaTime())
                 // The tracker turns the slider's jumps into the same
                 // capped glide the hinge gets.
                 self.tracker.feed($0)
@@ -860,7 +952,58 @@ final class FoldToy: Toy {
             })
     }
 
+    // MARK: Try it
+
+    /// True while the card's "Try it" demo plays.
+    private(set) var tryingIt = false
+    @ObservationIgnored private var tryTimer: Timer?
+
+    /// Foldy's one-click demo: a scripted close and reopen fed through
+    /// the simulate path at 60 Hz — the same tracker and chase the hinge
+    /// drives — then the fold goes back to the sensor. A drag on the
+    /// Simulate slider takes over from it.
+    func tryIt() {
+        guard !tryingIt else { return }
+        let activation = settings.activationAngle
+        let start = FoldTryIt.startAngle(current: measuredAngle, activation: activation)
+        let began = CACurrentMediaTime()
+        tryingIt = true
+        simulateBinding.wrappedValue = start
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let elapsed = CACurrentMediaTime() - began
+                if let angle = FoldTryIt.angle(at: elapsed, start: start, activation: activation) {
+                    self.simulateBinding.wrappedValue = angle
+                } else {
+                    self.stopTrying()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        tryTimer = timer
+    }
+
+    private func stopTrying() {
+        tryTimer?.invalidate()
+        tryTimer = nil
+        guard tryingIt else { return }
+        tryingIt = false
+        endSimulate()
+    }
+
+    /// The angle the card's lid glyph draws — the simulation while one
+    /// plays, else the sensor.
+    var glyphAngle: Double? { measuredAngle }
+
     func endSimulate() {
+        if tryingIt {
+            // A hand on the slider ends the demo; the slider's own
+            // release lands here again and hands the lid back.
+            tryTimer?.invalidate()
+            tryTimer = nil
+            tryingIt = false
+        }
         simulatedAngle = nil
         // The tracker's glide belongs to the real lid — a drag that
         // just jumped the angle 40° must not carry over.
@@ -889,7 +1032,7 @@ final class FoldToy: Toy {
         _ = permissionVersion
         guard settings.provider == .jrbar else { return "Handed off" }
         if let reason = pauseReason { return "Paused — \(reason)" }
-        guard FoldCapturePermission.granted else { return "Waiting for Screen Recording" }
+        guard canFold else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
         let tilted = displayedDelta * 180 / .pi
@@ -982,6 +1125,74 @@ final class FoldToy: Toy {
 
     var controls: AnyView {
         AnyView(FoldControlsView(toy: self))
+    }
+}
+
+/// The lid seen from the side: the deck, the hinge, the lid at the
+/// measured angle, and a tick where the fold starts (in "Set angle"
+/// mode) — so where the fold begins reads at a glance, and the glyph
+/// tilts along while the sensor or a demo moves it.
+struct FoldLidGlyph: View {
+    let angle: Double?
+    let activation: Double?
+
+    /// The lid's far end for an opening `degrees` (0 shut on the deck,
+    /// 90 upright, past that leaning back), from a hinge at `hinge`.
+    nonisolated static func lidEnd(hinge: CGPoint, length: Double, degrees: Double) -> CGPoint {
+        let radians = min(180, max(0, degrees)) * .pi / 180
+        return CGPoint(x: hinge.x + length * cos(radians), y: hinge.y - length * sin(radians))
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let hinge = CGPoint(x: size.width * 0.38, y: size.height - 3)
+            let lidLength = Double(size.height) - 6
+            var deck = Path()
+            deck.move(to: hinge)
+            deck.addLine(to: CGPoint(x: size.width - 2, y: hinge.y))
+            context.stroke(deck, with: .color(.secondary), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            if let activation {
+                let tick = Self.lidEnd(hinge: hinge, length: lidLength + 3, degrees: activation)
+                context.fill(Path(ellipseIn: CGRect(x: tick.x - 1.5, y: tick.y - 1.5, width: 3, height: 3)),
+                             with: .color(.accentColor))
+            }
+            if let angle {
+                var lid = Path()
+                lid.move(to: hinge)
+                lid.addLine(to: Self.lidEnd(hinge: hinge, length: lidLength, degrees: angle))
+                context.stroke(lid, with: .color(.primary.opacity(0.8)),
+                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            }
+        }
+        .frame(width: 44, height: 26)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The login session's two facts the fold pauses on, read once at
+/// launch from the window server's session dictionary (no permission
+/// needed); after that the lock broadcasts and the workspace's session
+/// notifications keep them current.
+enum FoldSessionState {
+    static let lockedNotification = Notification.Name("com.apple.screenIsLocked")
+    static let unlockedNotification = Notification.Name("com.apple.screenIsUnlocked")
+
+    static func current() -> (locked: Bool, onConsole: Bool) {
+        guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+            return (false, true)
+        }
+        return parse(info)
+    }
+
+    /// Pure, for the tests: a missing key reads as the unlocked,
+    /// on-console session — a guess that pauses would bench the fold for
+    /// the life of the app.
+    static func parse(_ info: [String: Any]) -> (locked: Bool, onConsole: Bool) {
+        let locked = (info["CGSSessionScreenIsLocked"] as? Bool)
+            ?? ((info["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false)
+        let onConsole = (info[kCGSessionOnConsoleKey as String] as? Bool)
+            ?? ((info[kCGSessionOnConsoleKey as String] as? NSNumber)?.boolValue ?? true)
+        return (locked, onConsole)
     }
 }
 
@@ -1089,6 +1300,18 @@ private struct FoldControlsView: View {
             }
 
             LabeledContent {
+                Picker("", selection: toy.bind(\.hingeVoice)) {
+                    Text("Off").tag(HingeVoice.off)
+                    Text("Creak").tag(HingeVoice.creak)
+                    Text("Paper rustle").tag(HingeVoice.rustle)
+                }
+                .labelsHidden()
+                .frame(width: 150)
+            } label: {
+                SettingLabel(title: "Hinge voice", subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
+            }
+
+            LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: toy.simulateBinding, in: 0...160) { editing in
                         if !editing { toy.endSimulate() }
@@ -1101,9 +1324,25 @@ private struct FoldControlsView: View {
             }
 
             LabeledContent {
-                Text(toy.angleText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button(toy.tryingIt ? "Folding…" : "Try it") { toy.tryIt() }
+                        .controlSize(.small)
+                        .disabled(toy.tryingIt || !toy.isOn || toy.settings.provider != .jrbar)
+                        .help("Plays one close and reopen through the fold, no lid needed.")
+                }
+            } label: {
+                SettingLabel(title: "Try it", subtitle: "One scripted close and reopen, the fold's own motion.")
+            }
+
+            LabeledContent {
+                HStack(spacing: 8) {
+                    FoldLidGlyph(angle: toy.glyphAngle,
+                                 activation: toy.settings.anchor == .angle
+                                     ? toy.settings.activationAngle : nil)
+                    Text(toy.angleText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             } label: {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
             }
@@ -1127,6 +1366,12 @@ private struct FoldControlsView: View {
             .fixedSize()
 
             providerNote
+
+            Toggle(isOn: toy.bind(\.wallpaperFallback)) {
+                SettingLabel(title: "Wallpaper without Screen Recording",
+                             subtitle: "With no permission, the wallpaper alone folds — same motion, no windows in the room.")
+            }
+            .toggleStyle(.checkbox)
 
             if toy.isOn && !FoldCapturePermission.granted {
                 HStack(spacing: 8) {

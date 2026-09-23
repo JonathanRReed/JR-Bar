@@ -24,26 +24,34 @@ struct AquariumRenderProofTests {
                                 visitor: AquariumVisitor? = .submarine,
                                 visitorProgress: Double? = 0.5) -> AquariumView.Fixture {
         let now = Date()
-        let working = Fish(id: "f-working", label: "review-patch",
+        // The working fish forage, lap and hold at their stations, so
+        // a proof shot shows the tool-level tells (and the parallel
+        // motes of a main with three workers).
+        var working = Fish(id: "f-working", label: "review-patch",
                            providerID: "claude", state: .swimming,
                            lane: 0.35, speed: 0.10, direction: 1,
                            stateSince: now, enteredAt: .distantPast,
                            species: .betta)
+        working.plan = FishPlan(state: .swimming, action: .forage, overlay: nil,
+                                parallelMarkers: 3, evidence: "forage ← tool=Read")
+        working.cue = FishCue(station: .kelp)
         let dressed = Fish(id: "f-dressed", label: "ship-it",
                            providerID: "codex", state: .idling,
                            lane: 0.45, speed: 0.06, direction: -1,
                            stateSince: now, enteredAt: .distantPast,
                            species: .angelfish)
-        let deep = Fish(id: "f-deep", label: "long-think",
+        var deep = Fish(id: "f-deep", label: "long-think",
                         providerID: "gemini", state: .swimming,
                         lane: 0.9, speed: 0.08, direction: -1,
                         stateSince: now, enteredAt: .distantPast,
                         species: .tang)
-        let fourth = Fish(id: "f-fourth", label: "tidy-up",
+        deep.cue = FishCue(station: .current)
+        var fourth = Fish(id: "f-fourth", label: "tidy-up",
                           providerID: "jrbar", state: .swimming,
                           lane: 0.6, speed: 0.12, direction: 1,
                           stateSince: now, enteredAt: .distantPast,
                           species: .clownfish)
+        fourth.cue = FishCue(station: .wreck, tone: .pass)
         var resident = Fish(id: "r-nemo", label: "Nemo",
                             providerID: "claude", state: .idling,
                             lane: 0.72, speed: 0.04, direction: 1,
@@ -86,6 +94,67 @@ struct AquariumRenderProofTests {
             fish: [working, dressed, deep, fourth, resident, resident2],
             game: game, night: night,
             visitorProgress: visitor == nil ? nil : visitorProgress)
+    }
+
+    /// Always on: the station tells, the parallel motes and the result
+    /// bubble all draw through one tank without tripping — the proof
+    /// shots below only run on request.
+    @Test("a tank with working stations renders")
+    func stationsRender() {
+        let view = AquariumView(fixture: Self.fixture(
+            themeID: "classic", substrateID: "classic", backdropID: "classic",
+            night: 0, visitor: nil))
+            .frame(width: 900, height: 520)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        #expect(renderer.cgImage != nil)
+    }
+
+    /// The earned marks draw through the tank without tripping.
+    @Test("fish wearing earned marks render")
+    func variantsRender() {
+        var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        fixture.game?.pets["f-working"]?.variant = AquariumVariant.tide.rawValue
+        fixture.game?.pets["f-dressed"]?.variant = AquariumVariant.starry.rawValue
+        let renderer = ImageRenderer(content: AquariumView(fixture: fixture)
+            .frame(width: 900, height: 520))
+        renderer.scale = 1
+        #expect(renderer.cgImage != nil)
+    }
+
+    /// Mean brightness of a render, 0…1.
+    private static func brightness(_ image: CGImage) -> Double {
+        let w = 90, h = 52
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8,
+                                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            sum += (Double(pixels[i]) + Double(pixels[i + 1]) + Double(pixels[i + 2])) / 765
+        }
+        return sum / Double(w * h)
+    }
+
+    /// The fleet's mood reaches the water: a low quota darkens the
+    /// column and a reset's shaft brightens it, against the same tank.
+    @Test("the water reads the fleet: low quota dims, a reset's shaft brightens")
+    func fleetMoodRenders() throws {
+        func render(_ mood: AquariumWaterMood?) throws -> Double {
+            var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                       backdropID: "classic", night: 0, visitor: nil)
+            fixture.fish = []
+            fixture.mood = mood
+            let renderer = ImageRenderer(content: AquariumView(fixture: fixture)
+                .frame(width: 450, height: 260))
+            renderer.scale = 1
+            return Self.brightness(try #require(renderer.cgImage))
+        }
+        let calm = try render(nil)
+        #expect(try render(AquariumWaterMood(low: 1)) < calm - 0.01)
+        #expect(try render(AquariumWaterMood(shaft: 1)) > calm + 0.005)
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",

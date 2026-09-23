@@ -74,6 +74,10 @@ public enum AquariumRules {
     public static let marathonSeconds: TimeInterval = 4 * 60 * 60
     /// The diver visits on today's nth completion.
     public static let diverCompletions = 10
+    /// "A school": this many live sub-agents with one session at once.
+    public static let schoolSize = 6
+    /// "Clean week": completion days with no failed run between them.
+    public static let cleanWeekDays = 7
 }
 
 /// The tank's shop: every spendable thing is one case. `rawValue` is
@@ -116,6 +120,11 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case hatBeanie
     case hatParty
     case hatCrown
+    // For the buddy — the Notch Buddy wears these; one purse for both
+    // toys, so the tank's pearls dress the pet too.
+    case buddyBeanie
+    case buddyBow
+    case buddyFlower
     // Themes — water colour presets; midnight adds night lighting.
     case themeReef
     case themeLagoon
@@ -133,7 +142,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case rockyBackdrop
 
     public enum Category: String, Equatable, Sendable, CaseIterable {
-        case decor, pets, accessories, hats, themes, substrates
+        case decor, pets, accessories, hats, buddy, themes, substrates
 
         public var displayName: String {
             switch self {
@@ -141,6 +150,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
             case .pets: return "Pets"
             case .accessories: return "Accessories"
             case .hats: return "Hats"
+            case .buddy: return "For the buddy"
             case .themes: return "Themes"
             case .substrates: return "Substrate & backdrop"
             }
@@ -160,6 +170,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
              .topHat, .tinyLaptop:
             return .accessories
         case .hatBeanie, .hatParty, .hatCrown: return .hats
+        case .buddyBeanie, .buddyBow, .buddyFlower: return .buddy
         case .themeReef, .themeLagoon, .themeTwilight, .themeMidnight,
              .themeDawn, .themeSunset, .themeKelpForest, .themeBlackwater,
              .themeAbyss:
@@ -174,6 +185,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .rock: return 10
         case .plant: return 15
         case .hatBeanie: return 12
+        case .buddyBow: return 22
+        case .buddyBeanie: return 28
+        case .buddyFlower: return 34
         case .hatParty: return 18
         case .bowTie: return 20
         case .themeReef, .themeLagoon, .sunglasses: return 25
@@ -258,6 +272,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .hatBeanie: return "Beanie"
         case .hatParty: return "Party hat"
         case .hatCrown: return "Crown"
+        case .buddyBeanie: return "Buddy beanie"
+        case .buddyBow: return "Buddy bow"
+        case .buddyFlower: return "Buddy flower"
         case .themeReef: return "Reef"
         case .themeLagoon: return "Lagoon"
         case .themeTwilight: return "Twilight"
@@ -310,6 +327,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .hatBeanie: return "A warm hat for a hard-working fish."
         case .hatParty: return "For a fish that finishes things."
         case .hatCrown: return "Royalty. Obviously."
+        case .buddyBeanie: return "A knit beanie for the pet at the notch."
+        case .buddyBow: return "A bow, worn slightly askew."
+        case .buddyFlower: return "A flower tucked behind one ear."
         case .themeReef: return "Cool reef blues."
         case .themeLagoon: return "Bright shallow turquoise."
         case .themeTwilight: return "Deeper violet water."
@@ -405,6 +425,12 @@ public struct FishCare: Codable, Equatable, Sendable {
     public var fedDay: Double
     /// Pellets counted today toward growth, pearls and the day's chore.
     public var feedingsToday: Int
+    /// Every second its session worked, lifetime — `workSeconds` is spent
+    /// on growth, this one never is. The tide stripe reads it.
+    public var workedTotal: Double = 0
+    /// The mark it earned (`AquariumVariant` raw value), kept for life —
+    /// a resident wears it after its session is gone.
+    public var variant: String?
 
     public init(stage: Int = 0, feedings: Int = 0, workSeconds: Double = 0,
                 lastNourishedAt: Double = 0, starvingAt: Double = 0,
@@ -428,7 +454,7 @@ public struct FishCare: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case stage, feedings, workSeconds, lastNourishedAt, starvingAt
         case lastDropAt, completionGranted, createdAt, label, provider
-        case fedDay, feedingsToday
+        case fedDay, feedingsToday, workedTotal, variant
     }
 
     /// Field-by-field tolerant decode: a record missing a newer key —
@@ -448,7 +474,13 @@ public struct FishCare: Codable, Equatable, Sendable {
         provider = (try? c.decodeIfPresent(String.self, forKey: .provider)) ?? nil
         fedDay = max(0, (try? c.decodeIfPresent(Double.self, forKey: .fedDay)) ?? 0)
         feedingsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .feedingsToday)) ?? 0)
+        workedTotal = max(0, (try? c.decodeIfPresent(Double.self, forKey: .workedTotal)) ?? 0)
+        let variantRaw = (try? c.decodeIfPresent(String.self, forKey: .variant)) ?? nil
+        variant = variantRaw.flatMap(AquariumVariant.init(rawValue:))?.rawValue
     }
+
+    /// The mark it earned, if any.
+    public var earnedVariant: AquariumVariant? { variant.flatMap(AquariumVariant.init(rawValue:)) }
 
     /// No feeding and no work for `starveAfter`: the hungry mouth.
     public func hungry(at now: Date) -> Bool {
@@ -548,6 +580,10 @@ public enum AquariumEvent: Equatable, Sendable {
     case identify(id: String, label: String, provider: String)
     /// The tank window opened or closed; opening drains `away`.
     case setWindowOpen(Bool)
+    /// One daemon document's fleet facts — schools, failures, weekly
+    /// windows, banked credits — for the milestones only the daemon
+    /// could know about.
+    case fleet(AquariumFleetFacts)
 }
 
 /// A raised fish still in the tank after its session left — the
@@ -592,6 +628,30 @@ public enum AquariumGameEffect: Equatable, Sendable {
     case fishShrank(String)
     /// The streak moved to this many days.
     case streakDay(Int)
+    /// A fish earned its mark from what its session did.
+    case variantEarned(String, AquariumVariant)
+}
+
+/// A mark a fish earns from its session's real work (docs/TOYS.md) —
+/// rarity that means something, instead of the golden fish's seeded
+/// dice. One per fish, first earned wins, kept for life. The raw value
+/// is the save's key: never rename a shipped case.
+public enum AquariumVariant: String, Codable, CaseIterable, Sendable {
+    /// A pale stripe down the flank: its session worked two hours.
+    case tide
+    /// Six star specks: its session led six sub-agents at once.
+    case starry
+
+    /// The inspector's word for it.
+    public var word: String {
+        switch self {
+        case .tide: return "tide-striped"
+        case .starry: return "starry"
+        }
+    }
+
+    /// Two hours of a session's work earn the tide stripe.
+    public static let tideSeconds: Double = 2 * 60 * 60
 }
 
 /// The aquarium's idle game (docs/TOYS.md): a pure reducer over a
@@ -658,6 +718,9 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     public var lastWorkAt: Double
     /// Completions on the current streak day; feeds the diver.
     public var completionsToday: Int
+    /// The fleet the tank has watched, for the milestones about the
+    /// work itself (`AquariumFleetLog`).
+    public var fleet: AquariumFleetLog = AquariumFleetLog()
 
     public struct Totals: Codable, Equatable, Sendable {
         public var feedings: Int
@@ -802,6 +865,11 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             for id in working {
                 var care = pet(id, now: now)
                 care.workSeconds += seconds
+                care.workedTotal += seconds
+                if care.variant == nil, care.workedTotal >= AquariumVariant.tideSeconds {
+                    care.variant = AquariumVariant.tide.rawValue
+                    effects.append(.variantEarned(id, .tide))
+                }
                 nourish(&care, now: now)
                 grow(&care, effects: &effects, id: id)
                 pets[id] = care
@@ -820,6 +888,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             // The daily streak: one counted completion per calendar
             // day, consecutive days extend it, a gap restarts it.
             let today = calendar.startOfDay(for: now).timeIntervalSince1970
+            fleet.noteCompletion(day: today)
             completionsToday = lastStreakDay == today ? completionsToday + 1 : 1
             if completionsToday >= AquariumRules.diverCompletions {
                 queueVisitor(.diver, now: now, effects: &effects)
@@ -1069,6 +1138,19 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 windowOpen = false
                 away = AquariumAwaySummary(since: now.timeIntervalSince1970)
             }
+
+        case .fleet(let facts):
+            // The log moves for the milestone sweep below; a session
+            // leading a school of six earns its fish the star specks.
+            fleet.note(facts, now: now)
+            for (parent, size) in facts.schools.sorted(by: { $0.key < $1.key })
+            where size >= AquariumRules.schoolSize {
+                var care = pet(parent, now: now)
+                guard care.variant == nil else { continue }
+                care.variant = AquariumVariant.starry.rawValue
+                pets[parent] = care
+                effects.append(.variantEarned(parent, .starry))
+            }
         }
         checkAchievements(now: now, event: event,
                           calendar: calendar, effects: &effects)
@@ -1206,6 +1288,11 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         unlock(.treasureHunter, totals.treasuresFound >= 1)
         unlock(.marathon,
                continuousWorkSeconds >= AquariumRules.marathonSeconds)
+        // The work's own milestones, from the fleet the tank watched.
+        unlock(.school, fleet.largestSchool >= AquariumRules.schoolSize)
+        unlock(.cleanWeek, fleet.cleanDays >= AquariumRules.cleanWeekDays)
+        unlock(.underBudget, fleet.underBudgetResets >= 1)
+        unlock(.bankedCredits, fleet.creditGains >= 1)
     }
 
     /// The raised fish that keep swimming while their sessions are
@@ -1261,7 +1348,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
              dropSeq, createdAt, accessories, substrateID, backdropID,
              unlocked, dailyGoal, goalCarrySeconds, treasure, lastTreasureAt,
              pendingVisitors, lastVisitorAt, continuousWorkSeconds,
-             lastWorkAt, completionsToday
+             lastWorkAt, completionsToday, fleet
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1298,6 +1385,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         continuousWorkSeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .continuousWorkSeconds)) ?? 0)
         lastWorkAt = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastWorkAt)) ?? 0)
         completionsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .completionsToday)) ?? 0)
+        fleet = (try? c.decodeIfPresent(AquariumFleetLog.self, forKey: .fleet)) ?? AquariumFleetLog()
         // A corrupt care record can't sink the file — clamp the stage.
         for (id, var care) in pets where care.stage < 0 || care.stage > AquariumRules.maxStage {
             care.stage = min(AquariumRules.maxStage, max(0, care.stage))

@@ -402,7 +402,8 @@ enum CartoonFish {
     static func draw(into f: inout GraphicsContext, species: FishSpecies,
                      palette: Palette, wag: Double, flap: Double,
                      mouth: MouthKind, blink: Double, dead: Bool,
-                     patternSeed: UInt64, aspectComp: Double = 1) {
+                     patternSeed: UInt64, aspectComp: Double = 1,
+                     variant: AquariumVariant? = nil) {
         let art = art(for: species)
 
         // Fins & extras behind the body silhouette — translucent, so
@@ -440,6 +441,7 @@ enum CartoonFish {
         }
         drawPattern(species.pattern, over: art.body,
                     palette: palette, into: &f, seed: patternSeed)
+        if let variant { drawVariant(variant, over: art.body, palette: palette, into: &f) }
         // A soft top sheen keeps the flat fill from reading pasted.
         f.fill(art.body, with: .linearGradient(
             Gradient(colors: [.white.opacity(0.22), .clear]),
@@ -456,6 +458,38 @@ enum CartoonFish {
         drawEye(into: &f, art: art, palette: palette,
                 blink: blink, dead: dead, comp: aspectComp)
         drawMouth(into: &f, at: art.mouth, kind: mouth, palette: palette)
+    }
+
+    /// An earned mark (`AquariumVariant`), clipped to the body like a
+    /// pattern and drawn over it — small and pale, so it reads as a
+    /// distinction rather than a costume.
+    private static func drawVariant(_ variant: AquariumVariant, over body: Path,
+                                    palette: Palette, into f: inout GraphicsContext) {
+        var b = f
+        b.clip(to: body)
+        switch variant {
+        case .tide:
+            // One pale wave from gill to tail root along the flank.
+            var stripe = Path()
+            stripe.move(to: CGPoint(x: 0.34, y: -0.02))
+            stripe.addCurve(to: CGPoint(x: -0.46, y: 0.02),
+                            control1: CGPoint(x: 0.10, y: -0.16),
+                            control2: CGPoint(x: -0.18, y: 0.14))
+            b.stroke(stripe, with: .color(palette.light.opacity(0.8)),
+                     style: StrokeStyle(lineWidth: 0.07, lineCap: .round))
+            b.stroke(stripe, with: .color(.white.opacity(0.35)),
+                     style: StrokeStyle(lineWidth: 0.025, lineCap: .round))
+        case .starry:
+            // Six specks across the back: a school's worth of stars.
+            let specks: [(Double, Double, Double)] = [
+                (0.22, -0.26, 0.030), (0.06, -0.33, 0.024), (-0.08, -0.24, 0.028),
+                (-0.20, -0.30, 0.022), (0.14, -0.14, 0.020), (-0.30, -0.16, 0.024),
+            ]
+            for (x, y, r) in specks {
+                b.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                       with: .color(.white.opacity(0.9)))
+            }
+        }
     }
 
     /// The species' marking, clipped to the body silhouette.

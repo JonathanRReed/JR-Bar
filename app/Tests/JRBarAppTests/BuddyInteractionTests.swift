@@ -94,18 +94,58 @@ struct BuddyInteractionTests {
 
     // MARK: Docked presentation
 
-    @Test("docked wears the character; Mini or a live program keeps the dot")
+    @Test("the character stays in the slot; only Mini wears the dot")
     func dockedPresentation() {
         let (toy, store) = makeToy()
-        #expect(toy.showsDot(docked: true, stripLinked: false) == false,
-                "the docked slot is the character now")
-        #expect(toy.showsDot(docked: true, stripLinked: true) == true,
-                "a published program reclaims the slot as the strip's seam LED")
-        #expect(toy.showsDot(docked: false, stripLinked: true) == false,
-                "the floating pet never swaps for the strip")
+        #expect(toy.showsDot == false, "the docked slot is the character")
+        // A published program no longer swaps the character for a seam
+        // LED — one unsegmented Screen Bar, no second light beside it.
+        applyProgram("#FF9F0A 1.6s pulse\nrepeat", anchor: t0.timeIntervalSince1970, to: toy.core)
+        #expect(toy.showsDot == false, "a published program leaves the character in place")
         store.state.notchBuddy.presentation = "mini"
-        #expect(toy.showsDot(docked: true, stripLinked: false) == true)
-        #expect(toy.showsDot(docked: false, stripLinked: false) == true)
+        #expect(toy.showsDot == true)
+    }
+
+    @Test("docked under a published program the buddy wears the band's hue, steady")
+    func seamTintWearsTheBand() {
+        let (toy, store) = makeToy()
+        let epoch = t0.timeIntervalSince1970
+        #expect(toy.seamTint(at: epoch) == nil, "nothing published, nothing worn")
+        applyProgram("off 160ms cosine\n#FF9F0A 1.6s pulse\nrepeat", anchor: epoch, to: toy.core)
+        // Mid-trough and mid-peak read the same colour: a hue to wear,
+        // never a level that pulses with the band.
+        let trough = toy.seamTint(at: epoch + 0.17)
+        let peak = toy.seamTint(at: epoch + 0.96)
+        #expect(trough != nil)
+        #expect(trough == peak)
+        #expect(abs((trough?.maxChannel ?? 0) - 1) < 1e-9, "worn at full strength")
+        #expect((trough?.r ?? 0) > (trough?.b ?? 1), "amber stays amber")
+        store.state.notchBuddy.wearsStripColor = false
+        #expect(toy.seamTint(at: epoch) == nil, "the card can turn it off")
+    }
+
+    @Test("a seam too dark to name a colour is not worn")
+    func darkSeamIsNotWorn() {
+        #expect(NotchBuddyToy.wornHue(RGB(r: 0.01, g: 0.02, b: 0.0)) == nil)
+        let hue = NotchBuddyToy.wornHue(RGB(r: 0.2, g: 0.1, b: 0.0))
+        #expect(hue == RGB(r: 1, g: 0.5, b: 0))
+    }
+
+    @Test("the strip-colour switch decodes tolerantly and defaults on")
+    func wearsStripColorDecodes() throws {
+        let empty = try JSONDecoder().decode(NotchBuddySettings.self, from: Data("{}".utf8))
+        #expect(empty.wearsStripColor == true)
+        let off = try JSONDecoder().decode(NotchBuddySettings.self,
+                                           from: Data(#"{"wearsStripColor": false}"#.utf8))
+        #expect(off.wearsStripColor == false)
+        let junk = try JSONDecoder().decode(NotchBuddySettings.self,
+                                            from: Data(#"{"wearsStripColor": "yes"}"#.utf8))
+        #expect(junk.wearsStripColor == true)
+        var settings = NotchBuddySettings()
+        settings.wearsStripColor = false
+        let round = try JSONDecoder().decode(NotchBuddySettings.self,
+                                             from: JSONEncoder().encode(settings))
+        #expect(round.wearsStripColor == false)
     }
 
     // MARK: Strip link

@@ -168,6 +168,10 @@ public struct Fish: Equatable, Sendable, Identifiable {
     /// facts drove. Recomputed every reduce (it reads `now` and the
     /// session), so it rides `previous` as the freshest word.
     public var plan: FishPlan?
+    /// Where the plan's tool-level action takes the fish, and a finished
+    /// test's result colour (`AquariumStations.cue`). Recomputed with the
+    /// plan; nil for residents and for plans that are just swims.
+    public var cue: FishCue? = nil
 
     public init(id: String, label: String, providerID: String, state: FishState,
                 lane: Double, speed: Double, direction: Double, stateSince: Date,
@@ -359,6 +363,7 @@ public enum AquariumModel {
             fish.anchorID = nil
             fish.isResident = true
             fish.plan = nil
+            fish.cue = nil
             if fish.state != .idling {
                 fish.state = .idling
                 fish.stateSince = now
@@ -407,6 +412,7 @@ public enum AquariumModel {
             // A resident whose session came back is the session's again.
             fish.isResident = false
             fish.plan = plan
+            fish.cue = AquariumStations.cue(for: session, plan: plan, now: now)
             if let updated = session.updatedAt {
                 fish.lastUpdate = Date(timeIntervalSince1970: updated)
             }
@@ -416,7 +422,7 @@ public enum AquariumModel {
             }
             return fish
         }
-        return Fish(
+        var fish = Fish(
             id: session.id,
             label: session.displayLabel,
             providerID: session.provider,
@@ -430,6 +436,8 @@ public enum AquariumModel {
             species: resolve(session.provider),
             seed: stableHash(session.id),
             plan: plan)
+        fish.cue = AquariumStations.cue(for: session, plan: plan, now: now)
+        return fish
     }
 
     /// The tank's reading of a session, in `SessionActivity`'s words.

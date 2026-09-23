@@ -28,7 +28,11 @@ final class AquariumToy: Toy {
     /// written back after every batch. The game reads the session
     /// list and answers taps — it never touches the agent.
     private(set) var game: AquariumGame
-    @ObservationIgnored private let saveFile = AquariumSaveFile()
+    /// Where the game lives on disk — the real state directory only when
+    /// the app asks for it, a scratch file otherwise.
+    @ObservationIgnored private let saveFile: AquariumSaveFile
+    /// Where this tank saves — the tests check a headless store's.
+    var saveLocation: URL { saveFile.url }
     /// The "while you were away" summary the tank shows once, when the
     /// window reopens after earning with it closed.
     private(set) var awayNotice: AquariumAwaySummary?
@@ -45,13 +49,52 @@ final class AquariumToy: Toy {
     /// The window is covered or hidden; the view pauses its timeline.
     var windowOccluded = false
 
+    /// The water's slow mood (docs/TOYS.md): the tightest quota window
+    /// and any unreviewed failure, read once per document; the view adds
+    /// the reset's shaft at draw time. Written only when it moves, so a
+    /// steady fleet redraws nothing.
+    private(set) var waterBase = AquariumWaterMood.calm
+    /// When the last quota reset landed — the shaft's clock.
+    private(set) var lastResetAt: Date?
+
+    func waterMood(at now: Date) -> AquariumWaterMood {
+        waterBase.with(resetAt: lastResetAt, now: now)
+    }
+
+    /// The Toys page's room rule (`ToysStore.hushReason`): while JR-Bar
+    /// is quiet or a Focus is on, the tank keeps its game moments to
+    /// itself — no toast, no reward card sliding in, no
+    /// visitor parade. The game still counts every one of them: a
+    /// visitor waits in its queue, a reward card waits in `heldNotice`,
+    /// and both come out once the room clears.
+    var hushed: Bool { store?.hushReason() != nil }
+    /// The reward card the room held back, shown on the first tick
+    /// after it clears. The newest wins, like the live card.
+    @ObservationIgnored private var heldNotice: (title: String, reward: String?, symbol: String)?
+
     @ObservationIgnored private var windowController: AquariumWindowController?
     @ObservationIgnored private var gameTimer: Timer?
+    /// The tank outside its window: the live wallpaper and the idle
+    /// screensaver, both opt-in from the card.
+    @ObservationIgnored private var ambient: AquariumAmbientController?
+    /// The two ambient settings the controller last synced to — the
+    /// observation fires on any toys-state write, most of them not ours.
+    @ObservationIgnored private var ambientSynced: (idle: Int, display: String?)?
 
-    init(core: CoreModel, store: ToysStore) {
+    /// A save of its own in the temporary directory — the default for
+    /// every tank the app didn't explicitly point at the real one.
+    static func scratchSave() -> AquariumSaveFile {
+        AquariumSaveFile(url: FileManager.default.temporaryDirectory
+            .appending(path: "jrbar-scratch-\(UUID().uuidString)")
+            .appending(path: "aquarium-save.json"))
+    }
+
+    init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumToy.scratchSave()) {
         self.core = core
         self.store = store
+        self.saveFile = saveFile
         game = saveFile.load().game
+        knownLevel = game.tankLevel
         // A relaunched app starts with the tank closed: if the save
         // still believed the window open, earnings would never count
         // as "away". Reopening reports the summary either way.
@@ -70,6 +113,31 @@ final class AquariumToy: Toy {
         // Left on at quit: the tank comes back at launch, without
         // stealing focus for it.
         if isOn { present(activate: false) }
+        observeAmbientSettings()
+    }
+
+    /// The wallpaper and the screensaver follow their two settings; the
+    /// controller only exists once either is on.
+    private func observeAmbientSettings() {
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        withObservationTracking {
+            _ = store?.state.aquarium.idleFillMinutes
+            _ = store?.state.aquarium.ambientDisplay
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observeAmbientSettings() }
+        }
+        let wanted = (idle: settings.idleFillMinutes, display: settings.ambientDisplay)
+        if let synced = ambientSynced, synced.idle == wanted.idle, synced.display == wanted.display {
+            return
+        }
+        ambientSynced = wanted
+        if settings.idleFillMinutes > 0 || settings.ambientDisplay != nil {
+            if ambient == nil { ambient = AquariumAmbientController(toy: self) }
+            ambient?.sync()
+        } else if let ambient {
+            ambient.tearDown()
+            self.ambient = nil
+        }
     }
 
     /// The tick runs exactly while the toy is on.
@@ -109,10 +177,42 @@ final class AquariumToy: Toy {
         }
     }
 
+    /// Frames the tank actually drew, window and scenery panels alike —
+    /// the fish timeline ticks it.
+    @ObservationIgnored let meter = ToyMeter()
+
+    func cost(at now: TimeInterval) -> String? {
+        let drawing = meter.drawing(at: now) ?? "Not drawing right now"
+        var parts = [drawing, "30 fps while the tank shows, none when covered"]
+        if isOn { parts.append("the game's beat every \(Int(AquariumRules.tickInterval)) s") }
+        if (store?.state.aquarium.idleFillMinutes ?? 0) > 0 { parts.append("an idle check every 5 s") }
+        return parts.joined(separator: " · ")
+    }
+
     /// Off still watches: `observeSessions` and `noteEvent` keep the
     /// game's accrual alive while the tank is closed (the away summary
-    /// needs it), so the chip never claims a fully-off state.
-    var status: ToyStatus { isOn ? .on : .paused("Watching quietly") }
+    /// needs it), so the chip never claims a fully-off state. The card's
+    /// switch is the tank window; the live wallpaper and the screensaver
+    /// have their own, and the chip says when one of them still draws.
+    var status: ToyStatus {
+        guard !isOn else { return .on }
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        return Self.closedStatus(wallpaper: settings.ambientDisplay,
+                                 connected: NSScreen.screens.map(\.localizedName),
+                                 saverMinutes: settings.idleFillMinutes)
+    }
+
+    /// The chip with the tank window closed: a wallpaper on a connected
+    /// display is drawing right now, so it comes first; an armed
+    /// screensaver next; otherwise the game just keeps count.
+    static func closedStatus(wallpaper: String?, connected: [String],
+                             saverMinutes: Int) -> ToyStatus {
+        if let wallpaper, connected.contains(wallpaper) {
+            return .paused("Live wallpaper on \(wallpaper)")
+        }
+        if saverMinutes > 0 { return .paused("Screensaver after \(saverMinutes) min") }
+        return .paused("Watching quietly")
+    }
 
     var controls: AnyView {
         AnyView(
@@ -132,17 +232,50 @@ final class AquariumToy: Toy {
                 LabeledContent {
                     Picker("", selection: dayNight) {
                         Text("Follow the clock").tag(DayNightMode.realTime)
+                        Text("Follow the sun").tag(DayNightMode.sun)
                         Text("4-minute cycle").tag(DayNightMode.cycle)
                     }
                     .labelsHidden()
                     .frame(width: 170)
                 } label: {
-                    SettingLabel(title: "Day & night", subtitle: "The tank's night wash — the real clock or a quick loop.")
+                    SettingLabel(title: "Day & night", subtitle: dayNightSubtitle)
                 }
                 LabeledContent {
                     Button("Fill screen") { self.fillScreen() }
                 } label: {
                     SettingLabel(title: "Fill screen", subtitle: "The tank covers the whole screen. Esc leaves.")
+                }
+                LabeledContent {
+                    Picker("", selection: ambientDisplay) {
+                        Text("Off").tag(String?.none)
+                        let connected = NSScreen.screens.map(\.localizedName)
+                        ForEach(AquariumWallpaper.displayChoices(
+                            connected: connected,
+                            saved: store?.state.aquarium.ambientDisplay), id: \.self) { name in
+                            Text(connected.contains(name) ? name : "\(name) (not connected)")
+                                .tag(String?.some(name))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                } label: {
+                    SettingLabel(title: "Live wallpaper", subtitle: "The tank behind every window on a display, click-through. Draws while you can see it.")
+                }
+                LabeledContent {
+                    Picker("", selection: idleFillMinutes) {
+                        ForEach(AquariumSettings.idleFillChoices, id: \.self) { minutes in
+                            Text(minutes == 0 ? "Off" : "After \(minutes) min").tag(minutes)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                } label: {
+                    SettingLabel(title: "Screensaver", subtitle: "Idle that long, the tank fills your screens until you're back — never over a video, a call or a fullscreen app.")
+                }
+                if (store?.state.aquarium.idleFillMinutes ?? 0) > 0 {
+                    Toggle(isOn: saverClock) {
+                        SettingLabel(title: "Clock on the screensaver", subtitle: "The time and date, quietly, in a corner.")
+                    }
                 }
                 LabeledContent {
                     Text(fact)
@@ -191,6 +324,35 @@ final class AquariumToy: Toy {
     private var density: Binding<Double> {
         Binding(get: { self.store?.state.aquarium.density ?? 1 },
                 set: { self.store?.state.aquarium.density = $0 })
+    }
+
+    private var ambientDisplay: Binding<String?> {
+        Binding(get: { self.store?.state.aquarium.ambientDisplay },
+                set: { self.store?.state.aquarium.ambientDisplay = $0 })
+    }
+
+    private var saverClock: Binding<Bool> {
+        Binding(get: { self.store?.state.aquarium.saverClock ?? true },
+                set: { self.store?.state.aquarium.saverClock = $0 })
+    }
+
+    private var idleFillMinutes: Binding<Int> {
+        Binding(get: { self.store?.state.aquarium.idleFillMinutes ?? 0 },
+                set: { self.store?.state.aquarium.idleFillMinutes = $0 })
+    }
+
+    /// The picker's caption names the sun's source, so "Follow the
+    /// sun" never pretends to know more than the time zone.
+    private var dayNightSubtitle: String {
+        guard store?.state.aquarium.dayNight == .sun else {
+            return "The tank's night wash — the real clock, the sun, or a quick loop."
+        }
+        guard AquariumSun.coordinate(for: .current) != nil else {
+            return "Your time zone names no city, so the tank keeps the clock's hours."
+        }
+        let city = TimeZone.current.identifier.split(separator: "/").last
+            .map { $0.replacingOccurrences(of: "_", with: " ") } ?? ""
+        return "Sunrise & sunset for \(city), worked out on this Mac from your time zone."
     }
 
     private var dayNight: Binding<DayNightMode> {
@@ -257,6 +419,7 @@ final class AquariumToy: Toy {
         if let notice, now.timeIntervalSince(notice.at) > 6 {
             self.notice = nil
         }
+        roomChanged(at: now)
         // A live tick almost always moves the document (every working
         // fish's nourish stamp), so the heartbeat alone would write the
         // save every twenty seconds forever. Writes batch instead: at
@@ -286,6 +449,34 @@ final class AquariumToy: Toy {
         let now = Date()
         note(game.apply(.pelletEaten(fishID: fishID), now: now), now: now)
         persist()
+    }
+
+    /// "Feed the tank" from outside the window — the buddy's menu today,
+    /// the notch card or the command bar tomorrow: one pellet round to
+    /// every fish in the tank, residents included, exactly as if each
+    /// were tapped. The game's per-fish daily cap still counts, so a
+    /// round from afar can't out-earn a day's work; it just keeps the
+    /// residents from starving through a week with the window shut.
+    /// Returns how many fish ate.
+    @discardableResult
+    func feedAll(at now: Date = Date()) -> Int {
+        let eaters = fish.filter { !$0.isFry && !$0.isRetired(at: now) && $0.state != .sinking }
+        guard !eaters.isEmpty else { return 0 }
+        for fish in eaters {
+            note(game.apply(.pelletEaten(fishID: fish.id), now: now), now: now)
+        }
+        persist()
+        return eaters.count
+    }
+
+    /// A resident's logbook (`AquariumResidentLog`): the daemon's history
+    /// rows for its session, from a little before the tank first raised
+    /// it. A daemon that can't answer leaves only what the tank knows.
+    func residentLog(for id: String) async -> AquariumResidentLog {
+        let care = game.pets[id]
+        let since = care.map { max(0, $0.createdAt - 86_400) }
+        let rows = (try? await core.listHistory(since: since, limit: 500)) ?? []
+        return AquariumResidentLog.make(sessionID: id, care: game.pets[id], rows: rows)
     }
 
     /// A clicked pearl drop on the sand.
@@ -365,8 +556,19 @@ final class AquariumToy: Toy {
     func noteEvent(_ event: CoreEvent) {
         guard event.kind == "quota_reset" else { return }
         let now = Date()
+        lastResetAt = now
         note(game.apply(.quotaReset, now: now), now: now)
         persist()
+    }
+
+    /// The room may have cleared: a held reward card comes out. Quiet
+    /// and Focus changes arrive with the daemon's document and the tick
+    /// looks; the store also calls this on the call-presence edge, once
+    /// something feeds it.
+    func roomChanged(at now: Date = Date()) {
+        guard let held = heldNotice, !hushed else { return }
+        heldNotice = nil
+        notice = (UUID(), held.title, held.reward, held.symbol, now)
     }
 
     func dismissAwayNotice() { awayNotice = nil }
@@ -377,10 +579,19 @@ final class AquariumToy: Toy {
         if notice?.id == id { notice = nil }
     }
 
+    /// The tank level the last `note` saw — a rise is a milestone.
+    @ObservationIgnored private var knownLevel = 0
+
     /// Effects worth surfacing: the away summary becomes the panel,
-    /// the rest fold into the toast line.
+    /// the rest fold into the toast line. An achievement or a new tank
+    /// level is a milestone, and asks Confetti for a burst — the toy
+    /// decides whether its Milestones trigger is on.
     private func note(_ effects: [AquariumGameEffect], now: Date) {
+        let toastBefore = toast?.at
+        let noticeBefore = notice?.id
         var earned = 0
+        var milestone = game.tankLevel > knownLevel
+        knownLevel = max(knownLevel, game.tankLevel)
         for effect in effects {
             switch effect {
             case .pearlsEarned(let n): earned += n
@@ -394,6 +605,7 @@ final class AquariumToy: Toy {
             case .achievementUnlocked(let a):
                 notice = (UUID(), a.title, "+\(a.reward) pearls",
                           "checkmark.seal.fill", now)
+                milestone = true
             case .dailyGoalMet:
                 notice = (UUID(), "Daily goal met",
                           "+\(AquariumRules.dailyGoalReward) pearls",
@@ -407,12 +619,27 @@ final class AquariumToy: Toy {
                 toast = ("A \(v.displayName) drifts by", now)
             case .visitorDeparted(let v):
                 toast = ("The \(v.displayName) drifts on", now)
+            case .variantEarned(let id, let variant):
+                switch variant {
+                case .tide: toast = ("\(label(for: id)) earned its tide stripe", now)
+                case .starry: toast = ("\(label(for: id)) is starry now", now)
+                }
             case .pearlsSpent, .purchaseDenied: break
             }
         }
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
         }
+        // A hushed room: this batch's toast is dropped (a toast is a
+        // passing remark) and its reward card is held for later.
+        if hushed {
+            if toast?.at != toastBefore { toast = nil }
+            if let card = notice, card.id != noticeBefore {
+                heldNotice = (card.title, card.reward, card.symbol)
+                notice = nil
+            }
+        }
+        if milestone { store?.confetti.fire(reason: .milestone, at: now) }
     }
 
     private func label(for sessionID: String) -> String {
@@ -456,6 +683,26 @@ final class AquariumToy: Toy {
             settings.species(for: $0)
         }
         noteCompletions(now: now)
+        noteFleet(now: now)
+        let base = AquariumWaterMood.base(core.state)
+        if base != waterBase { waterBase = base }
+    }
+
+    /// The work's own milestones (a school of six, a clean week, a week
+    /// under budget, banked credits): the document's fleet facts, folded
+    /// into the game on every change — the session list and the usage
+    /// ride the same document. Read-only; the tank only notices. A
+    /// milestone saves at once; the log's quiet moves ride the next save.
+    private func noteFleet(now: Date) {
+        guard let state = core.state else { return }
+        // Applied to a copy and written back only when it moved: the
+        // game is observed, and a document that changed nothing must
+        // not redraw every view that reads it.
+        var next = game
+        let effects = next.apply(.fleet(AquariumFleetFacts.read(state, now: now)), now: now)
+        if next != game { game = next }
+        note(effects, now: now)
+        if !effects.isEmpty { persist() }
     }
 
     /// The inspector's species picker writes here — a per-provider

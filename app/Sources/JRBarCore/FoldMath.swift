@@ -131,13 +131,68 @@ public enum FoldPause {
 
     /// Checks the safety inputs in contract order: a closed lid (sensor
     /// or daemon), a missing built-in display, a mirrored one, a sleeping
-    /// screen. The first that holds names the pause.
+    /// screen, a locked one, and a session another user switched in
+    /// over. The first that holds names the pause.
+    ///
+    /// The lock matters because the display stays lit through agent runs
+    /// (keep-display-awake is on by default): a locked Mac with the lid
+    /// at an angle is a real state, and the fold's capture streams — and
+    /// the Screen Recording indicator with them — must never sit behind
+    /// a lock screen. Mac Duo stops its capture on lock for the same
+    /// reason.
     public static func reason(angle: Double?, closedLid: Bool, builtInPresent: Bool,
-                              mirrored: Bool, screenAsleep: Bool) -> String? {
+                              mirrored: Bool, screenAsleep: Bool,
+                              screenLocked: Bool = false,
+                              sessionInactive: Bool = false) -> String? {
         if closedLid || (angle.map { $0 <= closedAngle } ?? false) { return "lid closed" }
         if !builtInPresent { return "no built-in display" }
         if mirrored { return "display is mirrored" }
         if screenAsleep { return "screen asleep" }
+        if screenLocked { return "screen locked" }
+        if sessionInactive { return "another user is signed in" }
         return nil
+    }
+}
+
+/// The card's "Try it" (Foldy's one-click demo): a scripted close and
+/// reopen played through the simulate path — the same tracker, chase
+/// and renderer a real lid drives, so the demo is the fold's own
+/// motion, not an animation of it. Pure, so the script can be pinned.
+public enum FoldTryIt {
+    /// Seconds to swing the lid down, hold it there, and bring it back.
+    public static let closeDuration: TimeInterval = 1.3
+    public static let holdDuration: TimeInterval = 0.6
+    public static let openDuration: TimeInterval = 1.3
+    public static var totalDuration: TimeInterval { closeDuration + holdDuration + openDuration }
+    /// How far past the activation angle the demo folds.
+    public static let depth: Double = 38
+
+    /// Where the demo starts: the lid's own angle when there is one and
+    /// it sits above the fold, else a comfortable open lid — never so
+    /// close to the activation angle that the fold starts on frame one.
+    public static func startAngle(current: Double?, activation: Double) -> Double {
+        let floor = activation + 8
+        guard let current, current.isFinite else { return max(110, floor) }
+        return max(current, floor)
+    }
+
+    /// The deepest the demo goes: `depth` past activation, never into
+    /// the closed-lid pause.
+    public static func bottomAngle(activation: Double) -> Double {
+        max(FoldPause.closedAngle + 5, activation - depth)
+    }
+
+    /// The simulated angle `elapsed` seconds in, or nil once it's over.
+    /// Eased in and out on both legs, the way a hand moves a lid.
+    public static func angle(at elapsed: TimeInterval, start: Double, activation: Double) -> Double? {
+        guard elapsed >= 0, elapsed <= totalDuration else { return nil }
+        let bottom = bottomAngle(activation: activation)
+        func ease(_ u: Double) -> Double { u * u * (3 - 2 * u) }
+        if elapsed < closeDuration {
+            return start + (bottom - start) * ease(elapsed / closeDuration)
+        }
+        if elapsed < closeDuration + holdDuration { return bottom }
+        let u = (elapsed - closeDuration - holdDuration) / openDuration
+        return bottom + (start - bottom) * ease(min(1, u))
     }
 }
