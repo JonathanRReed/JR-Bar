@@ -12,6 +12,12 @@ final class PalettePanel: NSPanel {
     static let width: CGFloat = 660
     static let height: CGFloat = 452
     static let cornerRadius: CGFloat = 18
+    /// Every Space, full-screen ones too. `.canJoinAllSpaces` already
+    /// puts the panel on whichever Space is active; adding
+    /// `.moveToActiveSpace` beside it makes AppKit throw from
+    /// `setCollectionBehavior:`, which kept the palette from ever
+    /// opening.
+    static let behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
     init<Content: View>(content: Content) {
         let frame = NSRect(x: 0, y: 0, width: Self.width, height: Self.height)
@@ -38,7 +44,7 @@ final class PalettePanel: NSPanel {
         isExcludedFromWindowsMenu = true
         animationBehavior = .none
         isMovableByWindowBackground = false
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .moveToActiveSpace]
+        collectionBehavior = Self.behavior
         level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         setAccessibilityLabel("JR-Bar command palette")
         if ProcessInfo.processInfo.environment["JRBAR_CAPTURE_CARD"] == nil {
@@ -228,18 +234,22 @@ final class PaletteController {
     }
 
     /// Gathers the rows and presents the palette on the screen under
-    /// the pointer.
+    /// the pointer. It counts as open only once the panel is up: a
+    /// panel that fails to build leaves ⌘⇧K free to try again, not a
+    /// toggle stuck on a palette nobody can see.
     func open() {
         if isOpen { close() }
         hud.hide()
         activeSources = sources()
         for source in activeSources { source.prepare() }
-        isOpen = true
         model.typedRows = { [weak self] query in
             self?.activeSources.flatMap { $0.typedItems(for: query) } ?? []
         }
         model.load(items: gather(), usage: usage())
-        guard presentsWindow else { return }
+        guard presentsWindow else {
+            isOpen = true
+            return
+        }
         let view = PaletteView(
             model: model, prompt: prompt,
             onQueryChange: { [weak self] in self?.queryChanged() },
@@ -255,6 +265,7 @@ final class PaletteController {
         panel.setFrameOrigin(PalettePanel.origin(on: visible))
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
+        isOpen = true
         openedAtUptime = ProcessInfo.processInfo.systemUptime
         installMonitors()
     }

@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Foundation
+import SwiftUI
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
@@ -537,5 +538,31 @@ struct PaletteTests {
         controller.handle(.cancel)
         #expect(controller.model.query.isEmpty)
         #expect(controller.handle(.cancel), "the second ⎋ is still the palette's")
+    }
+
+    // MARK: The panel
+
+    @Test("the panel joins every Space without also asking to move to the active one")
+    func panelBehavior() {
+        let behavior = PalettePanel.behavior
+        #expect(!(behavior.contains(.canJoinAllSpaces) && behavior.contains(.moveToActiveSpace)),
+                "AppKit throws on the pair, and the palette never opens")
+        #expect(behavior.contains(.fullScreenAuxiliary), "it opens over a full-screen app too")
+        let panel = PalettePanel(content: EmptyView())
+        #expect(panel.collectionBehavior == behavior)
+        #expect(!panel.isVisible, "building the panel puts nothing on screen")
+        panel.close()
+    }
+
+    @Test("headless, the session counts as open once its rows are in")
+    func headlessOpen() {
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.sources = { [PaletteClosureSource(build: { [self.row("a", "Alpha")] })] }
+        controller.open()
+        #expect(controller.isOpen)
+        #expect(controller.model.rows.map(\.id) == ["a"])
+        controller.close()
+        #expect(!controller.isOpen)
     }
 }
