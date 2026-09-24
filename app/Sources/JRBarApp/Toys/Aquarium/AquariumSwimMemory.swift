@@ -59,10 +59,19 @@ final class TankSwimMemory {
         var eatenAt: [Double?]
     }
 
+    /// A barrel roll as it began: when, and whether the fish was clear to
+    /// roll then. Decided once, so a started roll finishes and a roll
+    /// that was waited out never reappears half done.
+    struct Roll {
+        var start: Double
+        var go: Bool
+    }
+
     var drawn: [String: Drawn] = [:]
     var handoffs: [String: Handoff] = [:]
     /// Keyed by the leaver's id.
     var meals: [String: Meal] = [:]
+    var rolls: [String: Roll] = [:]
     /// The swim settings as this frame read them.
     var settings: AquariumSettings?
 
@@ -78,5 +87,6 @@ final class TankSwimMemory {
         if drawn.count > live.count { drawn = drawn.filter { live.contains($0.key) } }
         if handoffs.count > live.count { handoffs = handoffs.filter { live.contains($0.key) } }
         if meals.count > live.count { meals = meals.filter { live.contains($0.key) } }
+        if rolls.count > live.count { rolls = rolls.filter { live.contains($0.key) } }
     }
 }

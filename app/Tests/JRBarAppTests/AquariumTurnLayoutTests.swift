@@ -418,4 +418,52 @@ struct AquariumTurnLayoutTests {
             #expect(top >= -0.5, "\(species): the fins reached \(top) pt")
         }
     }
+
+    @Test("a barrel roll is decided at its start: waited out through a turn, or finished through one")
+    func rollIsCommitted() throws {
+        // A fish that rolls, and the moment its next roll begins.
+        var found: (fish: Fish, start: Double)?
+        for n in 0..<200 where found == nil {
+            let fish = makeFish("roller-\(n)", since: t0 - 100)
+            var probe = t0
+            for _ in 0..<(30 * 120) {
+                probe += dt
+                if let p = AquariumBehavior.flourishProgress(seed: fish.seed, at: probe), p < 0.03 {
+                    found = (fish, probe - p * AquariumBehavior.flourishDuration)
+                    break
+                }
+            }
+        }
+        let roller = try #require(found)
+        for turnAt in [-0.15, 0.3] {
+            let tank = makeTank([roller.fish])
+            var t = roller.start - 1
+            _ = frame(tank, [roller.fish], roller.fish, t: t)
+            var body = tank.motion.bodies[roller.fish.id]!
+            body.x = 0.5
+            body.y = 0.5
+            tank.motion.bodies[roller.fish.id] = body
+            var rolls: [Double] = []
+            var turned = false
+            while t < roller.start + 2.5 {
+                t += dt
+                if !turned, t >= roller.start + turnAt {
+                    turned = true
+                    var b = tank.motion.bodies[roller.fish.id]!
+                    b.turn = SwimTurn(kind: .cruise, start: t, duration: 0.9, from: b.dir, arc: 1,
+                                      progress: turnAt < 0 ? 0.5 : 0)
+                    tank.motion.bodies[roller.fish.id] = b
+                }
+                rolls.append(frame(tank, [roller.fish], roller.fish, t: t).roll)
+            }
+            for (a, b) in zip(rolls, rolls.dropFirst()) {
+                #expect(abs(b - a) <= 0.2, "the roll jumped \(a) → \(b)")
+            }
+            if turnAt < 0 {
+                #expect(rolls.allSatisfy { $0 == 1 }, "a roll due mid-turn is waited out, not shown half done")
+            } else {
+                #expect((rolls.min() ?? 1) < -0.9, "a started roll goes belly-up and on round")
+            }
+        }
+    }
 }

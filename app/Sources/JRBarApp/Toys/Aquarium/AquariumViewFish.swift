@@ -218,9 +218,13 @@ extension AquariumView {
                     // throws a barrel roll mid-stroke — a hop and a full
                     // roll about its own length, belly-up and back,
                     // seeded so it never lands on a clock you can catch.
-                    // Never near the ceiling, mid-startle or mid-turn.
-                    if !reduceMotion, b.y > 0.15, b.turn == nil, motion.startles[fish.id] == nil,
-                       let roll = AquariumBehavior.flourishProgress(seed: h, at: t) {
+                    // Never started near the ceiling, mid-startle or
+                    // mid-turn — and once started, it finishes.
+                    if !reduceMotion, let roll = AquariumBehavior.flourishProgress(seed: h, at: t),
+                       rollGoes(fish, roll: roll, t: t, clear: {
+                           py - 15 > max(0.15 * size.height, surfaceClearance(of: fish))
+                               && b.turn == nil && motion.startles[fish.id] == nil
+                       }) {
                         l.roll = cos(roll * .pi * 2)
                         l.y -= sin(roll * .pi) * 15
                         l.pitch -= sin(roll * .pi) * 0.12
@@ -438,6 +442,21 @@ extension AquariumView {
         var swollen = l
         swollen.scale *= 1.18
         return max(24, drawnSize(of: fish, layout: swollen).above + 6)
+    }
+
+    /// Whether a barrel roll `roll` of the way through gets drawn. Decided
+    /// on the roll's first frame — clear of the surface, not mid-turn,
+    /// not startled — and held: a started roll finishes whatever comes up,
+    /// and one that was waited out, or first seen part way through, never
+    /// shows up half done.
+    private func rollGoes(_ fish: Fish, roll: Double, t: Double, clear: () -> Bool) -> Bool {
+        let start = t - roll * AquariumBehavior.flourishDuration
+        if let known = motion.swim.rolls[fish.id], abs(known.start - start) < 0.5 {
+            return known.go
+        }
+        let go = roll < 0.1 && clear()
+        motion.swim.rolls[fish.id] = TankSwimMemory.Roll(start: start, go: go)
+        return go
     }
 
     /// A fry's place in its school (docs/TOYS.md): a loose orbit
