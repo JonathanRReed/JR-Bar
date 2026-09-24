@@ -69,6 +69,13 @@ extension MenuBarUtility {
     /// settled. Only while the concealer runs and `dragToHide` is on.
     func commandPressed(at point: CGPoint) {
         guard concealer != nil, settings().curation.dragToHide else { return }
+        // A new press means the last one's release never came: that drag
+        // is over, and whatever it froze lets go now — its start must
+        // never pair with this press's release.
+        if let lost = dragInFlight {
+            dragInFlight = nil
+            endDrag(lost, after: 0)
+        }
         let rows = dragBarRows()
         guard let main = rows.first,
               let row = rows.first(where: { $0.insetBy(dx: 0, dy: -MenuBarDragLearn.slack).contains(point) })
@@ -93,12 +100,12 @@ extension MenuBarUtility {
         let concealed = concealer?.concealedApps ?? []
         let grabbed = MenuBarDragLearn.grabbed(at: point, items: listing, concealed: concealed,
                                                ourPID: ProcessInfo.processInfo.processIdentifier, row: row)
+        // A press that took hold of nothing — the blank stretch, the
+        // icon itself, an app's menus — is no drag: nothing is held, so
+        // nothing waits on its release and a pending thaw still lands.
+        guard grabbed != nil else { return }
         var drag = MenuBarDragInFlight(start: point, pressedAt: Date(), grabbed: grabbed, icon: icon,
                                        row: row, listing: listing, concealed: concealed)
-        guard grabbed != nil else {
-            dragInFlight = drag
-            return
-        }
         freezeForDrag(maxX: standingMirrorFrame?.maxX ?? icon.upperBound)
         if settings().curation.revealWhileDragging, hider.revealed.isEmpty {
             // Ice's "show hidden items while ⌘-dragging": the run comes
@@ -115,8 +122,8 @@ extension MenuBarUtility {
     /// must not leave the icon and the hover reveal frozen: past
     /// `staleDrag` the press is forgotten and everything thaws.
     private func watchForLostRelease(pressedAt: Date) {
-        dragUnfreezeTask?.cancel()
-        dragUnfreezeTask = Task { @MainActor [weak self] in
+        dragStaleTask?.cancel()
+        dragStaleTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(MenuBarDragLearn.staleDrag * 1e9))
             guard !Task.isCancelled, let self, let drag = self.dragInFlight,
                   drag.pressedAt == pressedAt else { return }
@@ -135,6 +142,8 @@ extension MenuBarUtility {
     func commandReleased(at point: CGPoint, option: Bool) {
         guard let drag = dragInFlight else { return }
         dragInFlight = nil
+        dragStaleTask?.cancel()
+        dragStaleTask = nil
         guard Date().timeIntervalSince(drag.pressedAt) < MenuBarDragLearn.staleDrag else {
             endDrag(drag, after: 0)
             return
@@ -249,7 +258,8 @@ extension MenuBarUtility {
     }
 
     /// Let the icon re-seat and the hover reveal answer again — not while
-    /// another drag is already in flight; its own release thaws.
+    /// another drag that took hold of an item is in flight; its own
+    /// release thaws. A press on another display's bar holds nothing.
     func thawDrag(after delay: TimeInterval) {
         dragUnfreezeTask?.cancel()
         guard delay > 0 else {
@@ -265,7 +275,7 @@ extension MenuBarUtility {
     }
 
     private func unfreezeDrag() {
-        guard dragInFlight == nil, dragFrozenMaxX != nil else { return }
+        guard dragInFlight?.grabbed == nil, dragFrozenMaxX != nil else { return }
         dragFrozenMaxX = nil
         updateIconMirror()
     }

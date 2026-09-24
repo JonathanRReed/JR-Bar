@@ -1862,6 +1862,9 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored var dragConfirmTask: Task<Void, Never>?
     /// The thaw after a drop.
     @ObservationIgnored var dragUnfreezeTask: Task<Void, Never>?
+    /// The watch for a release that never comes — its own task, so a
+    /// thaw from the drop before never cancels it.
+    @ObservationIgnored var dragStaleTask: Task<Void, Never>?
     /// The press snapshot: the latest listing, ghosts included, taken
     /// before the drag moved anything. A test hands its own.
     @ObservationIgnored var dragListing: @MainActor () -> [MenuBarItem] = {

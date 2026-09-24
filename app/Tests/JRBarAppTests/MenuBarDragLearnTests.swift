@@ -432,6 +432,56 @@ struct MenuBarDragLearnTests {
         #expect(!h.utility.dragFrozen)
     }
 
+    @MainActor
+    @Test("a press that grabs nothing, or lands on another display, never holds the freeze past its thaw")
+    func emptyPressNeverSticks() async {
+        let h = Harness()
+        h.utility.dragUnfreezeDelay = 60
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.utility.dragFrozen, "the drop's thaw is still waiting")
+        // Inside that window: a ⌘-press on the icon itself, which takes
+        // hold of nothing. It holds nothing, so the waiting thaw lands.
+        h.utility.commandPressed(at: CGPoint(x: 1090, y: 18))
+        #expect(h.utility.dragInFlight == nil)
+        h.utility.thawDrag(after: 0)
+        #expect(!h.utility.dragFrozen)
+        h.utility.commandReleased(at: CGPoint(x: 1000, y: 18), option: false)
+        #expect(!h.utility.dragFrozen)
+        // Frozen again by a second drop; then a press on another
+        // display's bar: it waits for its release to say its note, but
+        // the thaw does not wait for it.
+        h.state.concealedApps = [:]
+        h.utility.concealer = MenuBarConcealer(backend: FakeBackend())
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.utility.dragFrozen)
+        h.rows = [Self.row, CGRect(x: 1512, y: 0, width: 1920, height: 24)]
+        h.utility.commandPressed(at: CGPoint(x: 1600, y: 10))
+        h.utility.thawDrag(after: 0)
+        #expect(!h.utility.dragFrozen)
+        h.utility.commandReleased(at: CGPoint(x: 1560, y: 10), option: false)
+        #expect(h.notes.last == MenuBarDropNote.otherDisplay.text)
+        #expect(h.writes == 2)
+    }
+
+    @MainActor
+    @Test("a press whose release was lost never pairs with the next press's release")
+    func lostReleaseNeverPairs() async {
+        let h = Harness()
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        // Tailscale pressed; its release never arrives.
+        h.utility.commandPressed(at: CGPoint(x: 1131, y: 18))
+        #expect(h.utility.dragFrozen)
+        // The next ⌘-press lands on the blank stretch, and its release
+        // left of the icon: Tailscale's press must not speak for it.
+        h.utility.commandPressed(at: CGPoint(x: 1032, y: 18))
+        #expect(!h.utility.dragFrozen, "the lost drag let go")
+        h.utility.commandReleased(at: CGPoint(x: 1000, y: 18), option: false)
+        await h.utility.dragConfirmTask?.value
+        #expect(h.writes == 0)
+        #expect(h.state.concealedApps.isEmpty)
+    }
+
     // MARK: Settings
 
     @Test("the drag's settings default right, round-trip, and read tolerantly")
