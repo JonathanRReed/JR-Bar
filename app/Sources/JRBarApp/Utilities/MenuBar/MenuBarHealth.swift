@@ -116,6 +116,20 @@ enum MenuBarRivals {
         Rival(name: "SaneBar", bundleIDs: [], handoff: nil),
     ]
 
+    /// The named rival's bundle ids, newest release first: numbered ids
+    /// descending, a bare id (which several releases shared) last.
+    /// Hand over's install probe reads its list from here, so the two
+    /// never drift. Empty for a name the table does not know.
+    nonisolated static func bundleIDs(of name: String) -> [String] {
+        guard let rival = known.first(where: { $0.name == name }) else { return [] }
+        func release(_ id: String) -> Int {
+            id.split(separator: "-").last.flatMap { Int($0) } ?? 0
+        }
+        return rival.bundleIDs.sorted { a, b in
+            release(a) != release(b) ? release(a) > release(b) : a < b
+        }
+    }
+
     /// The known managers among running apps — matched by bundle id, or
     /// by name for the ones whose id is not pinned. Each rival once.
     nonisolated static func running(in apps: [(bundleID: String?, name: String?)]) -> [Rival] {

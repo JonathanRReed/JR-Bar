@@ -56,20 +56,22 @@ struct ExternalAppProbe {
 
 /// The counterparts each utility's provider picker offers. Display
 /// names live on the pickers; these are only where to find the apps.
+/// The menu bar's take their bundle ids from `MenuBarRivals.known`,
+/// the table the rival check reads, so Hand over finds every release
+/// the rival check knows.
 enum ExternalProviders {
-    /// Paid: Bartender 4/5 (com.surteesstudios.Bartender across both).
+    /// Paid: Bartender, every release from 4 to 7.
     static let bartender = ExternalAppProbe(
-        bundleIDs: ["com.surteesstudios.Bartender",
-                    "com.surteesstudios.Bartender-5",
-                    "com.surteesstudios.Bartender-4"],
-        appNames: ["Bartender 5.app", "Bartender 4.app", "Bartender.app"])
+        bundleIDs: MenuBarRivals.bundleIDs(of: "Bartender"),
+        appNames: ["Bartender 7.app", "Bartender 6.app", "Bartender 5.app", "Bartender 4.app",
+                   "Bartender.app"])
     /// Free: Jordan Baird's Ice.
     static let ice = ExternalAppProbe(
-        bundleIDs: ["com.jordanbaird.Ice"],
+        bundleIDs: MenuBarRivals.bundleIDs(of: "Ice"),
         appNames: ["Ice.app"])
     /// Free: Dwarves' Hidden Bar — hide-only, still a counterpart.
     static let hiddenBar = ExternalAppProbe(
-        bundleIDs: ["com.dwarvesf.hidden"],
+        bundleIDs: MenuBarRivals.bundleIDs(of: "Hidden Bar"),
         appNames: ["Hidden Bar.app"])
     /// Free: DockDoor.
     static let dockDoor = ExternalAppProbe(
