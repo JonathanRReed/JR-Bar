@@ -153,13 +153,7 @@ extension AquariumView {
                     + (reduceMotion ? 0 : sin(age * 2.4 + pellet.wobble) * 3)
                 let y = pellet.origin.y + (pellet.rest.y - pellet.origin.y) * sink
                 let r = pellet.r * (0.5 + 0.5 * appear)
-                canvas.fill(
-                    Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                    with: .color(Color(red: 0.55, green: 0.38, blue: 0.20).opacity(a)))
-                canvas.fill(
-                    Path(ellipseIn: CGRect(x: x - r * 0.4, y: y - r * 0.55,
-                                           width: r * 0.8, height: r * 0.5)),
-                    with: .color(Color(red: 0.85, green: 0.68, blue: 0.42).opacity(a * 0.5)))
+                CreaturePaint.pellet(&canvas, at: CGPoint(x: x, y: y), r: r, alpha: a)
             }
         }
     }
@@ -192,27 +186,33 @@ extension AquariumView {
         }
     }
 
-    /// The hover/tap tag: a bright capsule with the fish's label,
-    /// parked just above the body. Fry get it too — this is where a
-    /// worker's name shows when labels are off.
+    /// The hover/tap tag: a glassy capsule with the fish's label led
+    /// by a dot in its provider's colour, parked just above the body.
+    /// Fry get it too — this is where a worker's name shows when
+    /// labels are off.
     func drawNameplate(canvas: inout GraphicsContext, size: CGSize,
                                fish: Fish, layout l: Layout) {
-        let length = Self.fishBaseLength * l.scale * fish.species.sizeScale
-            * (fish.isFry ? AquariumModel.fryScale : 1)
-        let height = length * fish.species.aspect
+        let above = drawnSize(of: fish, layout: l).above
         let tag = canvas
         let resolved: GraphicsContext.ResolvedText
         let textSize: CGSize
         (resolved, textSize) = textCache.tag(for: fish.label, canvas: canvas)
-        let cx = min(max(l.x, textSize.width / 2 + 14),
-                     size.width - textSize.width / 2 - 14)
-        let cy = max(l.y - height * 0.5 - 18, 16)
-        let rect = CGRect(x: cx - textSize.width / 2 - 9,
-                          y: cy - textSize.height / 2 - 4,
-                          width: textSize.width + 18, height: textSize.height + 8)
+        let dot = 6.0
+        let width = textSize.width + dot + 22
+        let cx = min(max(l.x, width / 2 + 14), size.width - width / 2 - 14)
+        let cy = max(l.y - above - 14, 16)
+        let rect = CGRect(x: cx - width / 2, y: cy - textSize.height / 2 - 4,
+                          width: width, height: textSize.height + 8)
         let pill = Path(roundedRect: rect, cornerRadius: rect.height / 2)
-        tag.fill(pill, with: .color(Color(red: 0.02, green: 0.08, blue: 0.16).opacity(0.78)))
-        tag.stroke(pill, with: .color(.white.opacity(0.28)), lineWidth: 0.75)
-        tag.draw(resolved, at: CGPoint(x: cx, y: cy), anchor: .center)
+        tag.fill(pill, with: .color(Color(red: 0.02, green: 0.08, blue: 0.16).opacity(0.80)))
+        tag.stroke(pill, with: .linearGradient(
+            Gradient(colors: [.white.opacity(0.38), .white.opacity(0.10)]),
+            startPoint: CGPoint(x: 0, y: rect.minY), endPoint: CGPoint(x: 0, y: rect.maxY)),
+            lineWidth: 0.75)
+        let accent = Color(nsColor: ProviderStyle.style(for: fish.providerID).nsAccent)
+        let dotRect = CGRect(x: rect.minX + 9, y: cy - dot / 2, width: dot, height: dot)
+        tag.fill(Path(ellipseIn: dotRect.insetBy(dx: -1.5, dy: -1.5)), with: .color(accent.opacity(0.3)))
+        tag.fill(Path(ellipseIn: dotRect), with: .color(accent))
+        tag.draw(resolved, at: CGPoint(x: dotRect.maxX + 5 + textSize.width / 2, y: cy), anchor: .center)
     }
 }

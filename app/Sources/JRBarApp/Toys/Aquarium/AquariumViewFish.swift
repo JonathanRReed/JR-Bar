@@ -345,69 +345,41 @@ extension AquariumView {
 
     // MARK: Fish shape
 
+    /// A failed fish's colour: slate, drained of its provider's.
+    static let sinkingNS = NSColor(srgbRed: 0.58, green: 0.62, blue: 0.68, alpha: 1)
+
     /// The water colour fish & kelp wash toward with depth.
     static let waterNS = NSColor(srgbRed: 0.05, green: 0.18, blue: 0.33, alpha: 1)
 
     /// W13's overlay markers — a small glyph floating just above the
-    /// fish, one per plan. Each is a distinct shape so a fixture that
-    /// asserts `overlay == .warningBuoy` sees the same marker the live
-    /// tank draws; nothing here routes a command or answers anything.
+    /// fish, one per plan (`FishOverlayArt` draws each distinct shape).
     private func drawOverlayMarker(_ overlay: FishOverlay, l: Layout,
                                    canvas: inout GraphicsContext,
                                    length: Double, height: Double, t: Double) {
-        let r = max(3.2, length * 0.10)
+        let r = max(3.4, length * 0.10)
         let x = l.x + l.facing * length * 0.18
         let y = l.y - height * 0.5 - r - 6
         var m = canvas
-        m.opacity = l.opacity * 0.9
-        switch overlay {
-        case .warningBuoy:
-            // A warning buoy: a solid triangle riding the water line.
-            var tri = Path()
-            tri.move(to: CGPoint(x: x, y: y - r))
-            tri.addLine(to: CGPoint(x: x + r, y: y + r * 0.7))
-            tri.addLine(to: CGPoint(x: x - r, y: y + r * 0.7))
-            tri.closeSubpath()
-            m.fill(tri, with: .color(.orange))
-        case .attentionBuoy:
-            // A permission ask: a ringed dot — the lock cue reads as
-            // "decide this" rather than "answer me".
-            m.stroke(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                     with: .color(.white), lineWidth: 1.1)
-            m.fill(Path(ellipseIn: CGRect(x: x - r * 0.4, y: y - r * 0.4,
-                                          width: r * 0.8, height: r * 0.8)),
-                   with: .color(.white))
-        case .questionBubble:
-            // The plain ask: the bubble is already the surfacing cue —
-            // the overlay adds a steady dot inside it so a question
-            // isn't mistaken for an idle sip.
-            m.fill(Path(ellipseIn: CGRect(x: x - r * 0.5, y: y - r * 0.5,
-                                          width: r, height: r)),
-                   with: .color(.white.opacity(0.85)))
-        case .pearl:
-            // An unreviewed completion: a bright pearl the fish set
-            /// down — a dot with a soft gleam, cleared on review.
-            m.fill(Path(ellipseIn: CGRect(x: x - r * 0.6, y: y - r * 0.6,
-                                          width: r * 1.2, height: r * 1.2)),
-                   with: .color(.white))
-            var gleam = canvas
-            gleam.blendMode = .plusLighter
-            gleam.opacity = l.opacity * (0.25 + 0.15 * sin(t * 1.4))
-            gleam.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r,
-                                              width: r * 2, height: r * 2)),
-                       with: .color(.cyan.opacity(0.5)))
-        case .staleMarker:
-            // AQ23's neutral marker: a hollow dashed ring — the fish
-            // drifts, nothing precise is claimed.
-            m.stroke(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                     with: .color(.white.opacity(0.4)),
-                     style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
-        }
+        m.opacity = l.opacity * 0.95
+        FishOverlayArt.draw(overlay, into: &m, at: CGPoint(x: x, y: y), r: r, t: t)
     }
 
     /// A grown, mid-lane fish's drawn length in points before its
     /// species and depth scale it.
-    static let fishBaseLength = 54.0
+    static let fishBaseLength = 60.0
+
+    /// How big `fish` draws under layout `l`: its length in points, and
+    /// how far its art — fins and all — reaches above and below its
+    /// centre. The idle game's growth stages (docs/TOYS.md) scale it:
+    /// small, grown, full — a fish with no care record swims at stage 0.
+    func drawnSize(of fish: Fish, layout l: Layout) -> (length: Double, above: Double, below: Double) {
+        let stage = game?.pets[fish.id]?.stage ?? 0
+        let stageScale = [0.74, 0.92, 1.12][min(2, max(0, stage))]
+        let length = Self.fishBaseLength * l.scale * fish.species.sizeScale
+            * (fish.isFry ? AquariumModel.fryScale : 1) * stageScale
+        let extent = CartoonFish.art(for: fish.species).extent
+        return (length, -extent.minY * length, extent.maxY * length)
+    }
 
     func drawFish(canvas: inout GraphicsContext, size: CGSize, t: Double, now: Date,
                           fish: Fish, layout l: Layout,
@@ -416,49 +388,38 @@ extension AquariumView {
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
         // Fry ride at their school's depth, a little shallower.
         let lane = fish.isFry ? (parent?.fish.lane ?? fish.lane) * 0.85 : fish.lane
-        // The idle game's growth stages (docs/TOYS.md): small, grown,
-        // full — a fish with no care record yet swims at stage 0.
         let care = game?.pets[fish.id]
-        let stageScale = [0.74, 0.92, 1.12][min(2, max(0, care?.stage ?? 0))]
-        // The cartoon kit carries each species' proportions itself, so
-        // the species aspect is softened — a shark stays long, a puffer
-        // stays round, and nobody pancakes.
-        let cartoonAspect = sqrt(fish.species.aspect)
-        let length = Self.fishBaseLength * l.scale * fish.species.sizeScale
-            * (fish.isFry ? AquariumModel.fryScale : 1) * stageScale
-        let height = length * cartoonAspect
+        let art = CartoonFish.art(for: fish.species)
+        let drawn = drawnSize(of: fish, layout: l)
+        let length = drawn.length
+        // The overlays measure from the art's real reach, fins and all.
+        let height = max(drawn.above, drawn.below) * 2
 
         // The golden ticket: ~1 fish in 24 swims in gold instead of its
         // provider colour — a seeded lottery, the same fish every
         // launch. A sinking fish is beyond vanity: it stays grey.
         let golden = !fish.isFry && fish.state != .sinking
             && AquariumBehavior.isGolden(seed: h)
-        // Depth: deeper lanes dim & wash toward the water colour, with
-        // a slight extra blue cast on top of the desaturation.
         let base: NSColor = fish.state == .sinking
-            ? .secondaryLabelColor
+            ? Self.sinkingNS
             : (golden ? NSColor(srgbRed: 0.98, green: 0.76, blue: 0.22, alpha: 1)
                       : ProviderStyle.style(for: fish.providerID).nsAccent)
-        // Depth attenuates toward the column's floor colour — hue as
-        // well as brightness — with a touch of desaturation on top, so
-        // a deep fish reads watery, not just dim.
-        let washed = (base.blended(withFraction: lane * 0.30, of: .gray) ?? base)
-            .blended(withFraction: lane * 0.45, of: floorNS) ?? base
-        let bodyColor = Color(nsColor: washed)
-        let lightColor = Color(nsColor: washed.blended(withFraction: 0.55, of: .white) ?? washed)
-        let darkColor = Color(nsColor: washed.blended(withFraction: 0.38, of: .black) ?? washed)
-        // The cartoon look lives on its bold outline — darker than the
-        // markings, darker still on a washed-out deep-lane fish.
-        let outlineColor = Color(nsColor: washed.blended(withFraction: 0.78, of: .black) ?? .black)
+        // Depth: deeper lanes wash toward the column's floor colour.
+        let palette = CartoonFish.Palette(accent: base, depth: lane, floor: floorNS)
 
-        // Recent session activity quickens the tail; a lagging beat in
-        // the pitch gives the head the classic follow-the-tail sway.
-        // Reduce Motion stills both — the fish glides, poses stay.
+        // The tail beats on the fish's own clock: faster the faster it
+        // really swims, quicker still while its session is busy. A
+        // lagging beat in the pitch gives the head the classic
+        // follow-the-tail sway. Reduce Motion stills both — the fish
+        // glides, poses stay.
         let recency = fish.lastUpdate.map { now.timeIntervalSince($0) } ?? .infinity
-        let vigor = 1 + 1.15 * exp(-max(0, recency) / 9)
-        let beat = t * (3.0 + fish.speed * 24) * vigor + phase
-        let wag = reduceMotion ? 0 : sin(beat - 0.45) * 0.26 * l.wag * (1 + l.turn * 0.3)
-        let sway = reduceMotion ? 0 : sin(beat - 0.8) * 0.045 * l.wag
+        let vigor = 1 + 0.5 * exp(-max(0, recency) / 9)
+        let clock = FishSwimClock.shared.advance(fish.id, seed: phase, t: t, x: l.x, y: l.y,
+                                                  length: length, vigor: vigor)
+        let stroke = 0.2 * l.wag * (0.8 + 0.3 * min(1.3, clock.speed)) * (1 + l.turn * 0.3)
+        let swim = CartoonFish.Swim(phase: clock.phase, amplitude: reduceMotion ? 0 : stroke,
+                                    thin: l.thin)
+        let sway = reduceMotion ? 0 : sin(clock.phase - 0.8) * 0.04 * l.wag
 
         // Squash-and-stretch: a fish that just ate or just grew a stage
         // pops wide and settles back over most of a second.
@@ -508,7 +469,7 @@ extension AquariumView {
         // and `pitch * facing` keeps "nose down" the same for both
         // facings.
         if l.pitch + sway != 0 { f.rotate(by: .radians((l.pitch + sway) * l.facing)) }
-        f.scaleBy(x: l.facing * l.thin * length * squashX, y: height * squashY * rollY)
+        f.scaleBy(x: l.facing * l.thin * length * squashX, y: length * squashY * rollY)
 
         // The mouth says the game: a smile just after a meal, a small
         // "o" while the fish is starving, a soft curve cruising. A
@@ -523,14 +484,10 @@ extension AquariumView {
         let blink = dead || reduceMotion ? 0.0
             : smooth(clamp01((blinkPhase - 0.94) / 0.025))
               * smooth(clamp01((1.0 - blinkPhase) / 0.025))
-        CartoonFish.draw(into: &f, species: fish.species,
-                         palette: CartoonFish.Palette(
-                            body: bodyColor, light: lightColor,
-                            dark: darkColor, outline: outlineColor),
-                         wag: wag, flap: wag * 0.45,
+        let lw = CartoonFish.outlineWidth(length)
+        CartoonFish.draw(into: &f, species: fish.species, palette: palette, swim: swim,
                          mouth: mouth, blink: blink, dead: dead,
-                         patternSeed: h,
-                         aspectComp: length / height,
+                         patternSeed: h, pointSize: length,
                          variant: fish.isFry || dead ? nil : care?.earnedVariant)
         // A purchased hat rides the head — same unit space, so the
         // pitch, flip and squash all apply to it. Failing a bought
@@ -540,15 +497,15 @@ extension AquariumView {
         // headwear (top hat, headphones) it wins the head and the hat
         // stays in the pocket.
         if !fish.isFry {
-            let art = CartoonFish.art(for: fish.species)
             let accessory = game?.accessory(for: fish.id)
             let headAccessory = accessory == .topHat || accessory == .headphones
             if !headAccessory {
-                if let hat = game?.hat(for: fish.id) {
-                    CartoonFish.drawHat(hat, into: &f, at: art.hatAnchor)
-                } else if AquariumBehavior.wearsCrown(streakDays: game?.streakDays ?? 0,
-                                                      stage: care?.stage ?? 0) {
-                    CartoonFish.drawHat(.hatCrown, into: &f, at: art.hatAnchor)
+                let hat = game?.hat(for: fish.id)
+                    ?? (AquariumBehavior.wearsCrown(streakDays: game?.streakDays ?? 0,
+                                                    stage: care?.stage ?? 0) ? .hatCrown : nil)
+                if let hat {
+                    CartoonFish.drawHat(hat, into: &f, at: art.hatAnchor, scale: art.hatScale,
+                                        tilt: art.hatTilt, lineWidth: lw)
                 }
             }
             if let accessory {
@@ -557,7 +514,8 @@ extension AquariumView {
                 if accessory != .tinyLaptop
                     || (fish.state == .swimming && !fish.isResident) {
                     CartoonFish.drawAccessory(accessory, into: &f, art: art,
-                                              trail: reduceMotion ? 0 : sin(t * 2.1 + phase))
+                                              trail: reduceMotion ? 0 : sin(clock.phase * 0.5),
+                                              lineWidth: lw)
                 }
             }
         }
@@ -730,8 +688,12 @@ extension AquariumView {
                 lc.stroke(tether, with: .color(.white.opacity(0.16)), lineWidth: 0.7)
             }
             let pill = Path(roundedRect: chip, cornerRadius: chip.height / 2)
-            lc.fill(pill, with: .color(Color(red: 0.02, green: 0.07, blue: 0.13).opacity(0.34)))
-            lc.stroke(pill, with: .color(.white.opacity(0.10)), lineWidth: 0.5)
+            lc.fill(pill, with: .color(Color(red: 0.02, green: 0.07, blue: 0.13).opacity(0.38)))
+            // A glassy edge: brighter where the surface light catches it.
+            lc.stroke(pill, with: .linearGradient(
+                Gradient(colors: [.white.opacity(0.22), .white.opacity(0.05)]),
+                startPoint: CGPoint(x: 0, y: chip.minY), endPoint: CGPoint(x: 0, y: chip.maxY)),
+                lineWidth: 0.6)
             lc.draw(resolved, at: CGPoint(x: chipX, y: chipY), anchor: .center)
         }
     }
