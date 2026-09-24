@@ -828,7 +828,9 @@ final class NotchBuddyToy: Toy {
         // date can be seconds behind. Every reader is answered at the
         // latest time any of them has seen, so a stale one can neither
         // start an ask's entrance in the past and skip it, nor call a
-        // hop that already landed back for a frame.
+        // hop that already landed back for a frame. The one thing that
+        // outruns that rule is the wall clock itself being set back.
+        followClockStep()
         let stamp = max(now, latestSummaryAt ?? now)
         latestSummaryAt = stamp
         let d = sessionDigest()
@@ -903,11 +905,40 @@ final class NotchBuddyToy: Toy {
     @ObservationIgnored private(set) var moodChange: (from: Mood, blend: [Mood: Double], at: Date)?
     /// The latest time any summary was taken at.
     @ObservationIgnored private var latestSummaryAt: Date?
+    /// The wall clock the mood's clocks are checked against; tests set it
+    /// to step the clock back.
+    @ObservationIgnored var wallClock: @MainActor () -> Date = { Date() }
+    /// How far ahead of the wall clock the latest reading may run before
+    /// it counts as the clock having been set back. A reader runs ahead
+    /// of the real time by a frame at most, and a stale one only trails
+    /// it, so a lead past this is the clock, not a reader.
+    static let clockStepSlack: TimeInterval = 20
+
+    /// The wall clock was set back (by hand, or a time sync after a long
+    /// sleep): the latest reading and the mood's clocks move back with it.
+    /// Otherwise every reader would be answered at a time still in the
+    /// future, an ask's entrance would hold at its first frame and a mood
+    /// change would show the old pose until real time caught up.
+    private func followClockStep() {
+        guard let latest = latestSummaryAt else { return }
+        let step = wallClock().timeIntervalSince(latest)
+        guard step < -Self.clockStepSlack else { return }
+        latestSummaryAt = latest.addingTimeInterval(step)
+        wavingSince = wavingSince?.addingTimeInterval(step)
+        slumpedSince = slumpedSince?.addingTimeInterval(step)
+        if let change = moodChange {
+            moodChange = (change.from, change.blend, change.at.addingTimeInterval(step))
+        }
+    }
 
     /// The mood change as drawn at `now`, or nil once it has handed off.
+    /// Like the summary it is answered at the latest time any reader has
+    /// seen, so its age is never negative: a reader a frame behind can't
+    /// hold the old pose.
     func handoff(at now: Date) -> BuddyHandoff? {
         guard let change = moodChange else { return nil }
-        let drawn = BuddyHandoff(from: change.from, age: now.timeIntervalSince(change.at),
+        let at = max(now, latestSummaryAt ?? now)
+        let drawn = BuddyHandoff(from: change.from, age: at.timeIntervalSince(change.at),
                                  blend: change.blend)
         return drawn.isOver ? nil : drawn
     }

@@ -304,6 +304,44 @@ struct BuddyTurnTests {
         #expect(toy.handoff(at: later)?.leaving == [.pacing: 1])
     }
 
+    @Test("a wall clock set back moves the mood's clocks with it")
+    func clockSetBack() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        let t0 = Date(timeIntervalSince1970: 100_000)
+        var wall = t0
+        toy.wallClock = { wall }
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "ask", provider: "claude", mode: "waiting_for_input", lifecycle: "active"),
+        ])))
+        #expect(toy.summary(at: t0).mood == .waving)
+        wall = t0.addingTimeInterval(2)
+        _ = toy.summary(at: wall)
+
+        // Two seconds into the ask the clock is set back an hour.
+        wall = t0.addingTimeInterval(2 + Self.frame - 3600)
+        _ = toy.summary(at: wall)
+        let since = toy.wavingSince ?? .distantFuture
+        #expect(abs(wall.timeIntervalSince(since) - 2) < 0.1, "the ask keeps its age, its entrance long played")
+
+        // The ask is answered; the handoff plays on the new clock at once.
+        core.apply(.state(CoreState(sessions: [])))
+        let answered = wall.addingTimeInterval(1)
+        #expect(toy.summary(at: answered).mood == .asleep)
+        let handoff = toy.handoff(at: answered.addingTimeInterval(0.1))
+        #expect(abs((handoff?.age ?? -1) - 0.1) < 1e-5, "not held at the old pose until real time catches up")
+
+        // A reader seconds stale is not a clock step: nothing moves.
+        wall = answered.addingTimeInterval(0.05)
+        _ = toy.summary(at: answered.addingTimeInterval(-10))
+        let still = toy.handoff(at: answered.addingTimeInterval(0.1))
+        #expect(abs((still?.age ?? -1) - 0.1) < 1e-5)
+    }
+
     @Test("the dangle's lag is finite-safe")
     func followIsSafe() {
         #expect(BuddyTurn.follow(3, toward: 10, dt: 0) == 3)
