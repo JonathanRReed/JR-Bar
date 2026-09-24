@@ -48,6 +48,42 @@ struct ConfettiEmitterTests {
         #expect(Double(hidden) <= Double(launched) * 0.2, "\(hidden) of \(launched) hidden in the notch")
     }
 
+    /// A quarter second in, every origin in every landing has pieces on
+    /// the screen that can be seen — Fade from the corners used to hold
+    /// its pieces invisible until they rose past halfway up.
+    @Test("every origin and landing shows its burst at 0.25 s", arguments: ConfettiOrigin.allCases)
+    func seenAtAQuarterSecond(_ origin: ConfettiOrigin) {
+        let stage = Self.laptop(icon: CGRect(x: 1270, y: 4, width: 26, height: 24))
+        for landing in ConfettiLanding.allCases {
+            let burst = ConfettiBurst(stage: stage, recipe: .init(origin: origin, landing: landing), seed: 3)
+            let seen = burst.pieces.indices.filter { index in
+                guard let frame = burst.frame(of: index, at: 0.25) else { return false }
+                return frame.opacity > 0.5 && frame.x >= 0 && frame.x <= stage.width
+                    && frame.y >= 0 && frame.y <= stage.height
+            }
+            // Rain, the calmest, is only just coming in over the top edge.
+            #expect(seen.count >= (origin == .rain ? 5 : 20),
+                    "\(origin)/\(landing): \(seen.count) pieces seen at 0.25 s")
+        }
+    }
+
+    /// Fade dissolves pieces only on their way down: one still rising is
+    /// fully there.
+    @Test("Fade never dissolves a piece on its way up")
+    func fadeOnTheWayDown() {
+        let stage = Self.laptop()
+        let burst = ConfettiBurst(stage: stage, recipe: .init(origin: .corners, landing: .fade), seed: 5)
+        var rising = 0
+        for (index, piece) in burst.pieces.enumerated() {
+            for t in stride(from: 0.02, to: piece.apex, by: 0.05) {
+                guard let frame = burst.frame(of: index, at: piece.launch.delay + t) else { continue }
+                rising += 1
+                #expect(frame.opacity == 1, "rising at \(t) s with opacity \(frame.opacity)")
+            }
+        }
+        #expect(rising > 0)
+    }
+
     // MARK: Wide
 
     /// A celebration, not a puff: at 1 s the middle 90 % of the pieces

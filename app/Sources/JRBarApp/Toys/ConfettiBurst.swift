@@ -69,6 +69,14 @@ struct ConfettiBurst {
         /// Seconds after its own launch at which it starts to fade, and is gone.
         var fadeFrom: Double
         var end: Double
+        /// Fall and Fade: seconds after its launch that it stops rising
+        /// (0 for a piece thrown level or down). Until then it shows in
+        /// full, so a piece thrown up from the corners is seen from its
+        /// first frame.
+        var apex: Double = 0
+        /// Fade: how far down the screen (y) it starts to dissolve — the
+        /// band's top, or where it peaks when that is lower.
+        var dissolveFrom: Double = 0
     }
 
     /// Where a Rest piece comes to lie.
@@ -151,7 +159,9 @@ struct ConfettiBurst {
     static let fadeOut = 0.45
     /// Fall: pieces fade over the last 12 % of the screen.
     static let fallBand = 0.12
-    /// Fade: pieces dissolve between 35 % and 55 % of the screen.
+    /// Fade: pieces dissolve between 35 % and 55 % of the screen, on the
+    /// way down (one that peaks lower dissolves over the same depth from
+    /// its peak).
     static let fadeBand = (from: 0.35, to: 0.55)
 
     // MARK: Firing
@@ -355,9 +365,17 @@ struct ConfettiBurst {
         let by = deadline(recipe.landing) * hang - launch.delay
         switch recipe.landing {
         case .fall, .fade:
-            let target = recipe.landing == .fall ? stage.height + piece.size * 0.5 : stage.height * fadeBand.to
+            // Fade dissolves on the way down only: from the band's top, or
+            // from where a piece thrown up from below peaks, if lower.
+            let rise = ConfettiPhysics.apexTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf)
+            let peak = launch.y + ConfettiPhysics.drop(vy: launch.vy, tau: launch.tau, vt: piece.vt,
+                                                       tf: piece.tf, t: rise)
+            piece.dissolveFrom = max(stage.height * fadeBand.from, peak)
+            let depth = stage.height * (fadeBand.to - fadeBand.from)
+            let target = recipe.landing == .fall ? stage.height + piece.size * 0.5 : piece.dissolveFrom + depth
             let reach = timing(of: piece, to: target, by: by, cap: nudgeCap)
             piece.vt = reach.vt
+            piece.apex = ConfettiPhysics.apexTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf)
             piece.end = min(reach.t, max(airFade, by))
             piece.fadeFrom = reach.t > piece.end ? piece.end - airFade : piece.end
         case .rest:
@@ -508,12 +526,15 @@ struct ConfettiBurst {
         }
         switch recipe.landing {
         case .fall:
+            // Rising in from below, a piece shows in full; it fades only as
+            // it leaves over the bottom edge.
             let band = stage.height * Self.fallBand
-            opacity = min(1, max(0, (stage.height - y) / max(1, band))) * airOpacity(piece, at: t)
+            let leaving = t < piece.apex ? 1 : min(1, max(0, (stage.height - y) / max(1, band)))
+            opacity = leaving * airOpacity(piece, at: t)
         case .fade:
-            let from = stage.height * Self.fadeBand.from
-            let to = stage.height * Self.fadeBand.to
-            opacity = (1 - ConfettiPhysics.smooth((y - from) / max(1, to - from))) * airOpacity(piece, at: t)
+            let depth = stage.height * (Self.fadeBand.to - Self.fadeBand.from)
+            let dissolve = t < piece.apex ? 0 : ConfettiPhysics.smooth((y - piece.dissolveFrom) / max(1, depth))
+            opacity = (1 - dissolve) * airOpacity(piece, at: t)
             transform = transform.scaledBy(x: 1 - 0.35 * (1 - opacity), y: 1 - 0.35 * (1 - opacity))
         case .rest:
             if t > piece.fadeFrom { opacity = max(0, 1 - (t - piece.fadeFrom) / Self.fadeOut) }
