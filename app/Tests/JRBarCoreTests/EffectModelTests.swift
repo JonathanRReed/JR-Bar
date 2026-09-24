@@ -108,6 +108,12 @@ struct EffectModelTests {
 
         let seed = try #require(catalog.effect("flicker")?.parameter(named: "seed"))
         #expect(seed.control == .stepper(range: 0...2_147_483_647))
+        #expect(catalog.effect("flicker")?.parameter(named: "variation")?.title == "Brightness swing",
+                "Flicker's brightness spread is not a second Variation")
+        for effect in catalog.effects {
+            let titles = effect.parameters.map(\.title)
+            #expect(Set(titles).count == titles.count, "\(effect.id) repeats a parameter title: \(titles)")
+        }
         #expect(seed.title == "Variation")
         #expect(catalog.effect("aurora")?.parameter(named: "wave_count")?.title == "Waves")
         #expect(catalog.effect("aurora")?.parameter(named: "palette")?.title == "Colours")

@@ -604,7 +604,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         _duration(minimum=0.5),
         _integer("seed", 271, "Picks one of many repeatable flicker patterns.", 0, 2_147_483_647),
         _number("luminance_floor", 0.35, "Lowest relative luminance.", 0.1, 0.8),
-        _number("variation", 0.25, "Maximum deterministic luminance variation.", 0.0, 0.5),
+        _number("variation", 0.25, "How far the brightness wanders as it flickers.", 0.0, 0.5),
     ),
     colors_module.MOTION_STACK: (
         _duration(minimum=0.5),

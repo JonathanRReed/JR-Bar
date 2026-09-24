@@ -115,11 +115,14 @@ public struct EffectParameter: Codable, Hashable, Sendable, Identifiable {
     }
 
     /// The parameters whose ids read as engineering: how long one cycle
-    /// takes, which of the repeatable patterns plays, how many waves, and
-    /// which colours.
+    /// takes, which of the repeatable patterns plays, how far Flicker's
+    /// brightness wanders, how many waves, and which colours. Flicker has
+    /// both a seed and a `variation`, so the seed's "Variation" leaves the
+    /// other a name of its own.
     static let plainTitles: [String: String] = [
         "duration_seconds": "Cycle length",
         "seed": "Variation",
+        "variation": "Brightness swing",
         "wave_count": "Waves",
         "palette": "Colours",
     ]
