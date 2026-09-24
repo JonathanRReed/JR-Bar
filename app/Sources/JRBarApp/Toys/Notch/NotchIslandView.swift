@@ -350,15 +350,14 @@ struct NotchIslandView: View {
         .padding(.trailing, 6)
     }
 
-    /// Three bars bouncing on their own phases while the track plays —
-    /// set dressing, not a spectrum; paused or Reduce Motion draws them
-    /// still, and an ordered-out island's timeline never runs. A live
-    /// audio tap swaps them for the real band levels — the tap's gate
-    /// only ever runs it with the card grown, so the strip falls back
-    /// to the decorative dance whenever the pipeline is down.
+    /// The shared decorative bars while the track plays — set dressing,
+    /// not a spectrum; paused, Reduce Motion or an ordered-out island
+    /// draws them still. A live audio tap swaps them for the real band
+    /// levels — the tap's gate only ever runs it with the card grown, so
+    /// the strip falls back to the decorative dance whenever the
+    /// pipeline is down.
     private func visualizer(playing: Bool) -> some View {
         let utility = toy.cardModel.utility
-        let live = playing && toy.islandVisible && !reduceMotion
         return Group {
             if utility.audioTapLive {
                 HStack(alignment: .bottom, spacing: 1.5) {
@@ -371,20 +370,7 @@ struct NotchIslandView: View {
                 }
                 .frame(height: 10, alignment: .bottom)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !live)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    HStack(alignment: .bottom, spacing: 1.5) {
-                        ForEach(0..<3, id: \.self) { index in
-                            let height: CGFloat = live
-                                ? 3 + 6 * abs(sin(t * 3.2 + Double(index) * 1.9))
-                                : 3 + CGFloat(index) * 1.5
-                            RoundedRectangle(cornerRadius: 1, style: .continuous)
-                                .fill(.white.opacity(0.75))
-                                .frame(width: 2.5, height: height)
-                        }
-                    }
-                    .frame(height: 10, alignment: .bottom)
-                }
+                DecorativeBars(live: playing && toy.islandVisible, color: .white.opacity(0.75), barWidth: 2.5)
             }
         }
     }

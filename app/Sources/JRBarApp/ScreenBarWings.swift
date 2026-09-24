@@ -544,25 +544,13 @@ struct ScreenBarWingsView: View {
                     .foregroundStyle(slot.textColor)
                     .frame(maxWidth: ScreenBarWingGlyph.maxWidth, maxHeight: ScreenBarWingGlyph.maxHeight)
             } else if slot.visualizer {
-                // The media ear: three bars bouncing on their own
-                // phases — the island strip's grammar, not a spectrum.
-                // The slot only exists while the track plays; Reduce
-                // Motion pins them still, and so does a band nobody can
-                // see. 12 fps is plenty at 13 pt.
-                TimelineView(.animation(minimumInterval: 1.0 / 12.0,
-                                        paused: !model.live
-                                            || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    HStack(alignment: .bottom, spacing: 1.5) {
-                        ForEach(0..<3, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: 1, style: .continuous)
-                                .fill(slot.textColor)
-                                .frame(width: 2.5,
-                                       height: 3 + 7 * abs(sin(t * 3.2 + Double(index) * 1.9)))
-                        }
-                    }
-                    .frame(height: 13, alignment: .bottom)
-                }
+                // The media ear: the island strip's shared bars, not a
+                // spectrum. The slot only exists while the track plays;
+                // Reduce Motion pins them still, and so does a band
+                // nobody can see. Narrow bars keep six inside the
+                // artwork tile's width.
+                DecorativeBars(live: model.live, color: slot.textColor,
+                               barWidth: 2, spacing: 1.2, height: 13)
             } else if let symbol = slot.symbol {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .semibold))

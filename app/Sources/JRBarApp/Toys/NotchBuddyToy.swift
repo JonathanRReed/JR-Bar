@@ -998,6 +998,33 @@ struct BuddyTempo: Equatable {
     }
 }
 
+/// The treat burst's frames on the settings card: 60 a second from the
+/// press until the hearts have flown, then none — the card can stay open
+/// all afternoon without a display-rate clock under a finished burst.
+/// No burst (or Reduce Motion) is a single still frame.
+struct BuddyBurstSchedule: TimelineSchedule {
+    /// How long the hearts fly.
+    static let span: TimeInterval = 0.9
+    static let frameInterval: TimeInterval = 1.0 / 60.0
+    /// The roster strip's cap — its idle patrol needs no more.
+    static let rosterInterval: TimeInterval = 1.0 / 30.0
+
+    /// When the burst ends; nil draws once and rests.
+    let end: Date?
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        let end = self.end ?? .distantPast
+        let step = mode == .lowFrequency ? Self.span : Self.frameInterval
+        var next: Date? = startDate
+        return AnyIterator {
+            guard let current = next else { return nil }
+            // One last frame lands on the end itself, where nothing draws.
+            next = current < end ? min(current.addingTimeInterval(step), end) : nil
+            return current
+        }
+    }
+}
+
 /// The card's disclosure body: the roster picker (a menu, like the Fold
 /// card's "Render with"), a live strip — every buddy pacing in place,
 /// the picked one lit, tap to choose — then the pet half: a name field
@@ -1095,14 +1122,16 @@ private struct BuddyControlsView: View {
 
     /// The treat's hearts, replayed over the button — the buddy in the
     /// notch gets its own burst from the same clock. Reads
-    /// `toy.treatBurstAt` in the body so the press itself re-renders.
+    /// `toy.treatBurstAt` in the body so the press itself re-renders, and
+    /// the schedule runs only through the burst: the rest of the time
+    /// the card is open, and under Reduce Motion, it does not tick.
     private var treatHearts: some View {
         let burstAt = toy.treatBurstAt
-        return TimelineView(.animation(paused: reduceMotion
-                                       || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
+        let still = reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        return TimelineView(BuddyBurstSchedule(end: still ? nil : burstAt?.addingTimeInterval(BuddyBurstSchedule.span))) { context in
             let age = burstAt.map { context.date.timeIntervalSince($0) } ?? .infinity
             ZStack {
-                if age < 0.9 {
+                if age < BuddyBurstSchedule.span {
                     ForEach(0..<3, id: \.self) { i in
                         let p = min(1, max(0, (age - Double(i) * 0.09) / 0.65))
                         Image(systemName: "heart.fill")
@@ -1117,11 +1146,13 @@ private struct BuddyControlsView: View {
     }
 
     /// One cell per character, all on the same clock, all in the idle
-    /// patrol pose. Reduce Motion stills the strip — pose stays — and
-    /// the paused schedule keeps a stilled strip from ticking at all.
+    /// patrol pose, at 30 fps rather than the display's 120. Reduce
+    /// Motion stills the strip — pose stays — and the paused schedule
+    /// keeps a stilled strip from ticking at all.
     private var roster: some View {
-        TimelineView(.animation(paused: reduceMotion
-                                || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: BuddyBurstSchedule.rosterInterval,
+                                paused: reduceMotion
+                                    || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
             HStack(spacing: 5) {
                 ForEach(BuddyCharacter.allCases, id: \.self) { c in
                     cell(c, at: context.date)

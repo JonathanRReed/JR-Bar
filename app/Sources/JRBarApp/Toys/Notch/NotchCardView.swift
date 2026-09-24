@@ -902,7 +902,7 @@ private struct ShelfMediaRow: View {
                         if utility.audioTapLive {
                             LiveEqualizer(levels: utility.audioLevels, color: bars)
                         } else {
-                            ShelfEqualizer(color: bars)
+                            DecorativeBars(live: media.playing, color: bars)
                         }
                     }
                     Spacer(minLength: 4)
@@ -1152,31 +1152,6 @@ private struct ShelfTogglesRow: View {
         .help(toggles.help(for: toggle))
         .accessibilityLabel("\(title) toggle")
         .accessibilityValue(toggle.isMomentary ? "action" : (on ? "on" : "off"))
-    }
-}
-
-/// The playing tell: five bars breathing on staggered phases — the
-/// honest version of the notch apps' visualizer when no audio tap is
-/// running (the setting off, consent not granted, the pipeline down):
-/// it marks "something is playing", not a real spectrum.
-private struct ShelfEqualizer: View {
-    let color: Color
-    private let phases: [Double] = [0.0, 0.35, 0.7, 0.25, 0.55]
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.22)) { context in
-            HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(phases.indices, id: \.self) { i in
-                    let t = context.date.timeIntervalSinceReferenceDate * 3 + phases[i] * .pi * 2
-                    let h = 4 + 6 * abs(sin(t))
-                    RoundedRectangle(cornerRadius: 0.8, style: .continuous)
-                        .fill(color)
-                        .frame(width: 2.2, height: h)
-                }
-            }
-            .frame(height: 10, alignment: .bottom)
-        }
-        .accessibilityHidden(true)
     }
 }
 
