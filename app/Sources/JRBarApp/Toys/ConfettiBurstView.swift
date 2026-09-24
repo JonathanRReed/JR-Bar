@@ -185,7 +185,7 @@ struct ConfettiView: View {
         if let frozen {
             Canvas { canvas, size in draw(&canvas, size: size, elapsed: frozen) }
         } else {
-            TimelineView(.animation) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
                 Canvas { canvas, size in
                     draw(&canvas, size: size, elapsed: context.date.timeIntervalSince(origin))
                 }
