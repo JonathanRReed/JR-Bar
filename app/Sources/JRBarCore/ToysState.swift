@@ -263,6 +263,15 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     }
 }
 
+/// Fold's two looks (docs/TOYS.md §Fold): `.duo` holds one picture
+/// still in space while the glass swings through it, blurring and
+/// darkening away from the hinge into black, the way the iPhone Duo
+/// folds; `.room` is the earlier portal room of window cards and a
+/// far wall, with Frost and the seam light.
+public enum FoldLook: String, Codable, CaseIterable, Sendable {
+    case duo, room
+}
+
 /// Fold's hinge voice: what the lid's movement sounds like, if anything.
 public enum HingeVoice: String, Codable, CaseIterable, Sendable {
     case off, creak, rustle
@@ -278,15 +287,6 @@ public enum FoldProvider: String, Codable, CaseIterable, Sendable {
 /// wherever the lid has been resting is where the fold starts from.
 public enum FoldAnchor: String, Codable, CaseIterable, Sendable {
     case angle, movement
-}
-
-/// Fold's two looks (docs/TOYS.md §Fold): `.duo` holds one picture
-/// still in space while the glass swings through it, blurring and
-/// darkening away from the hinge into black, the way the iPhone Duo
-/// folds; `.room` is the earlier portal room of window cards and a
-/// far wall, with Frost and the seam light.
-public enum FoldLook: String, Codable, CaseIterable, Sendable {
-    case duo, room
 }
 
 /// How the tank's day/night wash picks its clock (docs/TOYS.md):
