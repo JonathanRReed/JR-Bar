@@ -661,7 +661,8 @@ struct NotchCardView: View {
             }
         }
         revealRow(13, ShelfMediaRow(utility: model.utility, style: style))
-        revealRow(14, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
+        revealRow(14, ShelfBatteryRow(power: model.utility.power, adapterWatts: model.utility.adapterWatts,
+                                      working: model.workingCount,
                                       heldAwake: model.heldAwake(), style: style))
     }
 
@@ -1050,10 +1051,19 @@ private struct ShelfMediaRow: View {
                                       label: "Volume",
                                       valueText: "\(Int((volume * 100).rounded())) percent",
                                       onScrub: { utility.setVolume($0) }, onEditing: { _ in })
-                        Image(systemName: "speaker.wave.3.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(style.faintColor)
+                        NotchOutputPicker(utility: utility, style: style)
                             .frame(width: 34, alignment: .trailing)
+                    }
+                } else if utility.outputs.count > 1 {
+                    // An output with no volume of its own (HDMI) still
+                    // names itself and can hand the sound elsewhere.
+                    HStack(spacing: 8) {
+                        Text(utility.currentOutput?.name ?? "Sound output")
+                            .font(.system(size: 10))
+                            .foregroundStyle(style.faintColor)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        NotchOutputPicker(utility: utility, style: style)
                     }
                 }
             }
@@ -1414,6 +1424,37 @@ private struct AwakeChipMenu: ViewModifier {
     }
 }
 
+/// The card's sound-output picker — boring.notch 2.8's route button:
+/// the device playing now as a glyph, and a menu of every output with
+/// the current one checked. A pick moves the Mac's default output.
+struct NotchOutputPicker: View {
+    let utility: ShelfUtilityModel
+    let style: NotchCardStyle
+
+    var body: some View {
+        let current = utility.currentOutput
+        Menu {
+            ForEach(utility.outputs) { device in
+                Toggle(isOn: Binding(get: { device.id == utility.defaultOutput },
+                                     set: { _ in utility.pickOutput(device) })) {
+                    Label(device.name, systemImage: device.symbol)
+                }
+            }
+        } label: {
+            Image(systemName: current?.symbol ?? "hifispeaker")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(style.subColor)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(current.map { "Playing through \($0.name) — choose another output" } ?? "Choose the sound output")
+        .accessibilityLabel("Sound output")
+        .accessibilityValue(current?.name ?? "")
+    }
+}
+
 /// The real visualizer: six bars driven by the tap's band levels,
 /// breathing out from their middle like the decorative set. It reads the
 /// levels itself, so the tap's ~30 Hz publish redraws the bars and
@@ -1461,6 +1502,7 @@ struct LiveEqualizer: View {
 /// card can answer.
 private struct ShelfBatteryRow: View {
     let power: AlcovePowerState
+    var adapterWatts: Int?
     let working: Int
     let heldAwake: Bool
     let style: NotchCardStyle
@@ -1472,7 +1514,8 @@ private struct ShelfBatteryRow: View {
                 NotchBatteryGlyph(fraction: Double(power.percent ?? 0) / 100,
                                   tone: power.charging ? .green : (low ? .orange : nil),
                                   plugged: power.onAC, style: style)
-                Text(AlcovePower.batteryLine(power, working: working, heldAwake: heldAwake))
+                Text(AlcovePower.batteryLine(power, adapterWatts: adapterWatts, working: working,
+                                             heldAwake: heldAwake))
                     .font(.system(size: 11.5))
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)

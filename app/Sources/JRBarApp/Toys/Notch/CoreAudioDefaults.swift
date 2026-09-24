@@ -93,3 +93,77 @@ nonisolated enum CoreAudioDefaults {
                                    mElement: kAudioObjectPropertyElementMain)
     }
 }
+
+/// The output devices the card's route picker offers, and the one write
+/// it makes: the system default output — boring.notch 2.8's route picker,
+/// through the public HAL (`kAudioHardwarePropertyDefaultOutputDevice`).
+/// Reads fail soft to an empty list; the write says whether it took.
+nonisolated enum CoreAudioOutputs {
+    struct Device: Equatable, Identifiable, Sendable {
+        let id: AudioDeviceID
+        let name: String
+        let transport: UInt32?
+
+        /// The device's glyph: AirPods-shaped for Bluetooth, a display
+        /// for HDMI and DisplayPort, the Mac's speakers otherwise.
+        var symbol: String { CoreAudioOutputs.symbol(name: name, transport: transport) }
+    }
+
+    /// The glyph for a device, from its transport and a name hint.
+    static func symbol(name: String, transport: UInt32?) -> String {
+        let lower = name.lowercased()
+        switch transport {
+        case kAudioDeviceTransportTypeBluetooth?, kAudioDeviceTransportTypeBluetoothLE?:
+            if lower.contains("airpods max") { return "airpodsmax" }
+            if lower.contains("airpods pro") { return "airpodspro" }
+            if lower.contains("airpods") { return "airpods" }
+            return "headphones"
+        case kAudioDeviceTransportTypeHDMI?, kAudioDeviceTransportTypeDisplayPort?:
+            return "tv"
+        case kAudioDeviceTransportTypeAirPlay?:
+            return "airplayaudio"
+        case kAudioDeviceTransportTypeUSB?:
+            return lower.contains("headphone") || lower.contains("headset") ? "headphones" : "hifispeaker"
+        default:
+            return lower.contains("headphone") ? "headphones" : "hifispeaker"
+        }
+    }
+
+    /// Every device with an output stream, by name.
+    static func all() -> [Device] {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(0)
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address,
+                                             0, nil, &size) == noErr, size > 0 else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                         0, nil, &size, &ids) == noErr else { return [] }
+        return ids.filter(hasOutput).compactMap { id in
+            guard let name = CoreAudioDefaults.name(of: id) else { return nil }
+            return Device(id: id, name: name, transport: CoreAudioDefaults.transport(of: id))
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Whether the device plays sound: it has at least one output stream.
+    static func hasOutput(_ device: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
+                                                 mScope: kAudioObjectPropertyScopeOutput,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(0)
+        return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
+    }
+
+    /// Make `device` the system's default output. True when the HAL took it.
+    @discardableResult
+    static func setDefault(_ device: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var id = device
+        return AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
+                                          UInt32(MemoryLayout<AudioDeviceID>.size), &id) == noErr
+    }
+}

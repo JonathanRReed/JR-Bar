@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import CoreImage
 import JRBarCore
 
@@ -60,7 +61,11 @@ final class ShelfUtilityModel {
     /// a unit test never spawns the helper.
     init(feed: MediaFeed? = nil) {
         self.feed = feed ?? MediaFeed.shared
-        powerMonitor.onTransition = { [weak self] _, new in self?.power = new }
+        powerMonitor.onTransition = { [weak self] _, new in
+            self?.power = new
+            // A charger plugged in or pulled: its watts follow.
+            self?.adapterWatts = new.onAC ? self?.readAdapterWatts() : nil
+        }
     }
 
     func start() {
@@ -77,6 +82,8 @@ final class ShelfUtilityModel {
         // wait for the next transition showing the charge it left with.
         power = powerMonitor.current
         outputVolume = SystemLevelReader.outputVolume().map(Double.init)
+        refreshOutputs()
+        adapterWatts = power.onAC ? readAdapterWatts() : nil
         weather.start()
         toggles.refresh()
     }
@@ -98,6 +105,46 @@ final class ShelfUtilityModel {
         guard SystemLevelReader.setOutputVolume(Float(value)) else { return }
         outputVolume = SystemLevelReader.outputVolume().map(Double.init) ?? value
     }
+
+    // MARK: Output route
+
+    /// The output devices and the default among them, read as the card
+    /// opens and after a pick — the route picker's list. A test hands in
+    /// its own reader and writer so no suite moves the Mac's sound.
+    private(set) var outputs: [CoreAudioOutputs.Device] = []
+    private(set) var defaultOutput: AudioDeviceID?
+    @ObservationIgnored var readOutputs: () -> (devices: [CoreAudioOutputs.Device], current: AudioDeviceID?) = {
+        (CoreAudioOutputs.all(), CoreAudioDefaults.defaultOutput)
+    }
+    @ObservationIgnored var writeOutput: (AudioDeviceID) -> Bool = { CoreAudioOutputs.setDefault($0) }
+
+    func refreshOutputs() {
+        let read = readOutputs()
+        if outputs != read.devices { outputs = read.devices }
+        if defaultOutput != read.current { defaultOutput = read.current }
+    }
+
+    /// The picker's write: the sound moves to `device`, then the list and
+    /// the volume are read back — a device that refused stays unchecked.
+    func pickOutput(_ device: CoreAudioOutputs.Device) {
+        _ = writeOutput(device.id)
+        refreshOutputs()
+        outputVolume = SystemLevelReader.outputVolume().map(Double.init)
+    }
+
+    /// The device playing now, for the picker's glyph and help.
+    var currentOutput: CoreAudioOutputs.Device? {
+        outputs.first { $0.id == defaultOutput }
+    }
+
+    // MARK: Power adapter
+
+    /// The charger's rating in watts while one is connected — boring.notch
+    /// 2.8's adapter line, from public IOKit
+    /// (`IOPSCopyExternalPowerAdapterDetails`). nil on battery or when
+    /// macOS does not say.
+    private(set) var adapterWatts: Int?
+    @ObservationIgnored var readAdapterWatts: () -> Int? = { AlcovePowerMonitor.adapterWatts() }
 
     func stop() {
         guard running else { return }
