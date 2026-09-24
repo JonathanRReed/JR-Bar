@@ -362,6 +362,9 @@ extension AquariumView {
             } else if let substrate = item.substrateID {
                 shape.fill(LinearGradient(colors: Self.sandSwatch(forSubstrate: substrate),
                                           startPoint: .top, endPoint: .bottom))
+            } else if let backdrop = item.backdropID {
+                BackdropSwatch(backdropID: backdrop)
+                    .clipShape(shape)
             } else {
                 shape.fill(Self.shopTint(item.category).gradient)
                     .overlay {
@@ -650,5 +653,47 @@ struct PearlGlyph: View {
             .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
             .frame(width: size, height: size)
             .accessibilityHidden(true)
+    }
+}
+
+/// A back wall's tile: open water with the wall's silhouette across the
+/// bottom — the reef's rounded heads or the rocky spires.
+private struct BackdropSwatch: View {
+    let backdropID: String
+
+    var body: some View {
+        Canvas { canvas, size in
+            canvas.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
+                Gradient(stops: AquariumView.waterStops(forTheme: "classic")),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            var wall = Path()
+            wall.move(to: CGPoint(x: 0, y: size.height))
+            if backdropID == "rocky" {
+                let peaks: [(Double, Double)] = [(0, 0.55), (0.18, 0.30), (0.34, 0.62), (0.52, 0.40),
+                                                 (0.70, 0.66), (0.86, 0.26), (1, 0.50)]
+                for (x, y) in peaks {
+                    wall.addLine(to: CGPoint(x: size.width * x, y: size.height * y))
+                }
+            } else {
+                wall.addLine(to: CGPoint(x: 0, y: size.height * 0.36))
+                var x = 0.0
+                while x < 1 {
+                    let next = min(1, x + 0.2)
+                    wall.addQuadCurve(to: CGPoint(x: size.width * next, y: size.height * (0.44 + 0.1 * sin(next * 9))),
+                                      control: CGPoint(x: size.width * (x + next) / 2, y: size.height * 0.24))
+                    x = next
+                }
+            }
+            wall.addLine(to: CGPoint(x: size.width, y: size.height))
+            wall.closeSubpath()
+            canvas.fill(wall, with: .linearGradient(
+                Gradient(colors: [Color(red: 0.12, green: 0.30, blue: 0.46), Color(red: 0.03, green: 0.10, blue: 0.24)]),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            var sand = Path()
+            sand.addRect(CGRect(x: 0, y: size.height * 0.82, width: size.width, height: size.height * 0.18))
+            canvas.fill(sand, with: .linearGradient(
+                Gradient(colors: AquariumView.sandSwatch(forSubstrate: "classic")),
+                startPoint: CGPoint(x: 0, y: size.height * 0.82), endPoint: CGPoint(x: 0, y: size.height)))
+        }
     }
 }
