@@ -21,7 +21,6 @@ from jrbar.cliproxy_hub import (
     LocalIdentities,
     collect_hub,
     instance_for,
-    reset_credits,
     validated_hub_url,
 )
 from jrbar.provider_usage_platform import ProviderSourceState
@@ -157,7 +156,6 @@ def test_accounts_are_listed_and_read_without_ever_touching_a_reset(hub: FakeHub
     codex = by_instance[instance_for("a3")]
     assert codex.provider_id == "codex" and codex.account_plan == "pro"
     assert [(lane.lane_id, lane.bindable) for lane in codex.lanes] == [("weekly", True)]
-    assert reset_credits(instance_for("a3")) == 1
     assert codex.reset_credits == 1
     # The proxy fills in its own token; the key is only ever the management one.
     assert set(hub.keys) == {f"Bearer {KEY}"}
@@ -319,3 +317,70 @@ def test_the_usage_runtime_adds_hub_accounts_after_the_configured_ones(hub: Fake
     scoped = service.refresh_now(providers=("grok",), force=True)
     assert len(calls) == 1
     assert [s for s in scoped.snapshots if s.source_instance_id.startswith("cliproxy:")] == hub_rows
+
+
+class _SlowTransport:
+    """A management API where every call takes ten seconds on a fake clock."""
+
+    def __init__(self) -> None:
+        self.clock = 0.0
+        self.timeouts: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.clock
+
+    def __call__(self, method, url, *, headers, body, timeout):
+        self.timeouts.append(timeout)
+        self.clock += 10.0
+        if url.endswith("/auth-files"):
+            return AUTH_FILES
+        target = body["url"]
+        if "rate-limit-reset-credits" in target:
+            return {"status_code": 200, "body": json.dumps(CREDITS)}
+        payload = CLAUDE_USAGE if "anthropic" in target else CODEX_USAGE
+        return {"status_code": 200, "body": json.dumps(payload)}
+
+
+def test_a_slow_proxy_cannot_hold_the_refresh_past_the_deadline() -> None:
+    """The hub runs inside the usage refresh. Sixteen accounts at fifteen
+    seconds a call would hold every provider's numbers for minutes."""
+    slow = _SlowTransport()
+    snapshots = collect_hub(
+        settings("http://127.0.0.1:8317"), now=NOW, key_reader=lambda: KEY, identities=LocalIdentities(),
+        transport=slow, deadline_seconds=30.0, monotonic=slow.monotonic,
+    )
+
+    assert slow.clock <= 30.0, "no call starts after the deadline"
+    assert all(timeout <= 15.0 for timeout in slow.timeouts)
+    assert slow.timeouts[-1] <= 10.0, "the last call only gets the time that is left"
+    by_instance = {snapshot.source_instance_id: snapshot for snapshot in snapshots}
+    assert by_instance[instance_for("a1")].state is ProviderSourceState.READY
+    late = by_instance[instance_for("a3")]
+    assert late.state is ProviderSourceState.UNAVAILABLE and late.reason_code == "cliproxy_slow"
+
+
+def test_an_account_the_deadline_missed_keeps_its_last_reading() -> None:
+    first = collect_hub(settings("http://127.0.0.1:8317"), now=NOW, key_reader=lambda: KEY,
+                        identities=LocalIdentities(), transport=_SlowTransport(), deadline_seconds=600.0)
+    previous = {snapshot.identity: snapshot for snapshot in first}
+
+    slow = _SlowTransport()
+    again = collect_hub(
+        settings("http://127.0.0.1:8317"), now=NOW + 600, key_reader=lambda: KEY, identities=LocalIdentities(),
+        transport=slow, deadline_seconds=30.0, monotonic=slow.monotonic, previous=previous,
+    )
+
+    codex = {snapshot.source_instance_id: snapshot for snapshot in again}[instance_for("a3")]
+    assert codex == previous[("codex", instance_for("a3"))], "the old reading, with its old time"
+
+
+def test_a_forced_refresh_still_waits_a_minute_after_the_last_hub_read(hub: FakeHub) -> None:
+    current = {"cliproxy_hub": settings(hub.url)}
+    source = HubSource(settings_loader=lambda: type("S", (), current)(), key_reader=lambda: KEY, identities=LocalIdentities)
+    source(NOW)
+    asked = len(hub.paths)
+
+    source(NOW + 30, force=True)
+    assert len(hub.paths) == asked, "a menu open right after a read asks the proxy nothing"
+    source(NOW + 61, force=True)
+    assert len(hub.paths) > asked, "past the floor a forced refresh reads"

@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -60,6 +61,13 @@ CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 HUB_TIMEOUT_SECONDS = 15.0
+#: The whole hub read, every account included, finishes inside this. The
+#: hub runs inside the usage refresh, so a slow proxy would otherwise hold
+#: back every provider's numbers (16 accounts x 2 calls x 15 s).
+HUB_DEADLINE_SECONDS = 30.0
+#: A forced refresh (Refresh, a menu open) still waits this long after the
+#: last hub read; only the interval between ordinary reads is skipped.
+HUB_FORCED_FLOOR_SECONDS = 60.0
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_ACCOUNTS = 16
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -143,20 +151,40 @@ class HubAccount:
 class HubClient:
     """The management API, with the refusals built in."""
 
-    def __init__(self, base_url: str, key: str, *, transport=_default_transport) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        key: str,
+        *,
+        transport=_default_transport,
+        deadline: float | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.base_url = base_url
         self._key = key
         self._transport = transport
+        #: A ``monotonic()`` moment every call must finish by; None is none.
+        self._deadline = deadline
+        self._monotonic = monotonic
+
+    def out_of_time(self) -> bool:
+        return self._deadline is not None and self._monotonic() >= self._deadline
 
     def _management(self, method: str, path: str, body: object = None) -> object:
         if path not in ALLOWED_PATHS or "reset" in path:
             raise HubError(0, "path_refused")
+        timeout = HUB_TIMEOUT_SECONDS
+        if self._deadline is not None:
+            left = self._deadline - self._monotonic()
+            if left <= 0.0:
+                raise HubError(0, "deadline")
+            timeout = min(timeout, left)
         return self._transport(
             method,
             f"{self.base_url}{MANAGEMENT_PREFIX}{path}",
             headers={"Authorization": f"Bearer {self._key}"},
             body=body,
-            timeout=HUB_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
 
     def accounts(self) -> list[HubAccount]:
@@ -308,18 +336,12 @@ def _account_snapshot(client: HubClient, account: HubAccount, now: float) -> Pro
         )
         credits = _reset_credit_count(client, account, now)
         if credits is not None:
-            _RESET_CREDITS[account.instance] = credits
             snapshot = replace(snapshot, reset_credits=credits)
     else:
         snapshot = _hub_lanes(
             parse_claude_usage(windows=windows_from_payload(document), observed_at=now, account_label=account.email)
         )
     return replace(snapshot, source_instance_id=account.instance)
-
-
-#: Available Codex reset credits per hub account, counted read-only (the
-#: redeem endpoint is never called). Read by the usage projection's detail.
-_RESET_CREDITS: dict[str, int] = {}
 
 
 def _reset_credit_count(client: HubClient, account: HubAccount, now: float) -> int | None:
@@ -350,10 +372,6 @@ def _reset_credit_count(client: HubClient, account: HubAccount, now: float) -> i
         if expires > now:
             count += 1
     return count
-
-
-def reset_credits(instance: str) -> int | None:
-    return _RESET_CREDITS.get(instance)
 
 
 def _quota_snapshot(client: HubClient, account: HubAccount, provider_id: str, now: float):
@@ -477,8 +495,16 @@ def collect_hub(
     key_reader: Callable[[], str | None],
     identities: LocalIdentities | None = None,
     transport=_default_transport,
+    previous: Mapping[tuple[str, str], ProviderUsageSnapshot] | None = None,
+    deadline_seconds: float = HUB_DEADLINE_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[ProviderUsageSnapshot, ...]:
-    """Every hub account's snapshot, or the hub's own trouble; () when off."""
+    """Every hub account's snapshot, or the hub's own trouble; () when off.
+
+    The whole read stops at ``deadline_seconds``. An account it did not
+    reach in time keeps its ``previous`` snapshot (which says how old it
+    is), or says the proxy was too slow when there is none.
+    """
     config = normalize_cliproxy_hub(settings if isinstance(settings, Mapping) else getattr(settings, "cliproxy_hub", None))
     if not config["enabled"]:
         return ()
@@ -494,7 +520,9 @@ def collect_hub(
             now, state=ProviderSourceState.NEEDS_CONSENT, reason="cliproxy_key_missing",
             action="Run jrbar providers credential set cliproxy management --stdin",
         )
-    client = HubClient(base, key, transport=transport)
+    client = HubClient(
+        base, key, transport=transport, deadline=monotonic() + deadline_seconds, monotonic=monotonic
+    )
     try:
         accounts = client.accounts()
     except HubError as error:
@@ -517,6 +545,11 @@ def collect_hub(
     for account in accounts[:MAX_ACCOUNTS]:
         if mine.owns(account):
             continue
+        if client.out_of_time():
+            late = _late_account(account, previous, now)
+            if late is not None:
+                snapshots.append(late)
+            continue
         try:
             if account.provider in ("claude", "codex"):
                 snapshots.append(_account_snapshot(client, account, now))
@@ -528,7 +561,12 @@ def collect_hub(
                 snapshot = _quota_snapshot(client, account, _QUOTA_PROVIDER_IDS[account.provider], now)
                 if snapshot is not None:
                     snapshots.append(snapshot)
-        except (HubError, ValueError, TypeError):
+        except (HubError, ValueError, TypeError) as error:
+            if isinstance(error, HubError) and error.reason == "deadline":
+                late = _late_account(account, previous, now)
+                if late is not None:
+                    snapshots.append(late)
+                continue
             provider_id = account.provider if account.provider in ("claude", "codex") else None
             if provider_id is not None:
                 snapshots.append(
@@ -545,6 +583,27 @@ def collect_hub(
         seen.add(snapshot.identity)
         unique.append(snapshot)
     return tuple(unique)
+
+
+def _late_account(
+    account: HubAccount,
+    previous: Mapping[tuple[str, str], ProviderUsageSnapshot] | None,
+    now: float,
+) -> ProviderUsageSnapshot | None:
+    """An account the read ran out of time for: its last snapshot, else a
+    card that says the proxy was too slow (Claude and Codex only)."""
+    provider_id = account.provider if account.provider in ("claude", "codex") else _QUOTA_PROVIDER_IDS.get(account.provider)
+    if provider_id is None:
+        return None
+    kept = (previous or {}).get((provider_id, account.instance))
+    if kept is not None:
+        return kept
+    if provider_id not in ("claude", "codex"):
+        return None
+    return _failure(
+        provider_id, account.instance, now=now, state=ProviderSourceState.UNAVAILABLE,
+        reason="cliproxy_slow", action="Retry", label=account.email,
+    )
 
 
 def keychain_key_reader(credentials: object = None) -> Callable[[], str | None]:
@@ -568,7 +627,9 @@ def keychain_key_reader(credentials: object = None) -> Callable[[], str | None]:
 
 class HubSource:
     """The hub for the usage runtime: collected at most once per
-    ``min_interval_seconds``, the last answer served in between."""
+    ``min_interval_seconds``, the last answer served in between. A forced
+    refresh reads sooner, but never within ``HUB_FORCED_FLOOR_SECONDS`` of
+    the last read, since every menu open forces one."""
 
     def __init__(
         self,
@@ -601,11 +662,17 @@ class HubSource:
                 self._last, self._last_at = (), None
             return ()
         with self._lock:
-            fresh = self._last_at is not None and now - self._last_at < config["min_interval_seconds"]
-            if fresh and not force:
+            interval = HUB_FORCED_FLOOR_SECONDS if force else config["min_interval_seconds"]
+            if self._last_at is not None and now - self._last_at < interval:
                 return self._last
+            previous = {snapshot.identity: snapshot for snapshot in self._last}
         snapshots = collect_hub(
-            config, now=now, key_reader=self._key_reader, identities=self._identities(), transport=self._transport
+            config,
+            now=now,
+            key_reader=self._key_reader,
+            identities=self._identities(),
+            transport=self._transport,
+            previous=previous,
         )
         with self._lock:
             self._last, self._last_at = snapshots, now
@@ -614,6 +681,8 @@ class HubSource:
 
 __all__ = [
     "ALLOWED_PATHS",
+    "HUB_DEADLINE_SECONDS",
+    "HUB_FORCED_FLOOR_SECONDS",
     "HUB_SOURCE_ID",
     "HubAccount",
     "HubClient",
@@ -624,6 +693,5 @@ __all__ = [
     "instance_for",
     "keychain_key_reader",
     "local_identities",
-    "reset_credits",
     "validated_hub_url",
 ]

@@ -28,7 +28,11 @@ Without the key, the hub says it needs one and makes no requests.
 - It connects only to a loopback address. Any other URL is refused before
   a connection is made.
 - It asks at most once every 5 minutes (`cliproxy_hub.min_interval_seconds`,
-  300 to 3600).
+  300 to 3600). Refresh asks sooner, but never within a minute of the last
+  read.
+- A whole read takes at most 30 seconds. An account it could not reach in
+  time keeps its last reading, marked with its age, so a slow proxy never
+  holds back the other providers' numbers.
 - It lists the proxy's accounts and reads each one's usage through the
   proxy's `api-call` route; the proxy fills in the account's own token.
   From CLIProxyAPI 7.3 on, it also uses the read-only quota routes.
