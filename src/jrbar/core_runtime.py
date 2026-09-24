@@ -4857,6 +4857,10 @@ def build_headless_controller_class() -> type:
 
         def _sync_hardware_device(self, request):
             if request.device.device_id in self._core_held_preview_devices():
+                # A re-anchor this command was queued for is spent here: left
+                # pending, the next unrelated Dot write took it and was
+                # logged (and counted) as a re-sync.
+                self._core_linked_drop_force(request)
                 # A request queued before the hold began, or one that
                 # slipped past the build-time skip: the held patch is the
                 # truth on this device until the sheet ends it. Reporting
@@ -4902,6 +4906,9 @@ def build_headless_controller_class() -> type:
                     legacy.log_status_bar(
                         f"core: dot role could not plan ({reason}); falling through"
                     )
+            # Not the linked write path (no role drives it, or the role
+            # could not plan): a queued re-anchor is spent here too.
+            self._core_linked_drop_force(request)
             return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
 
         # -- linked Pro + Dot writes -------------------------------------------
@@ -5044,6 +5051,18 @@ def build_headless_controller_class() -> type:
             except Exception:
                 return False
             return True
+
+        def _core_linked_drop_force(self, request) -> None:
+            """A Dot command that will not reach the linked write path spends
+            any re-anchor that was queued for the Dot."""
+            from ._led_status_legacy import led_count_for_target
+
+            try:
+                if led_count_for_target(request.device.target) != 2:
+                    return
+            except Exception:
+                return
+            self._core_linked.take_force()
 
         def _core_linked_sync_tick(self, now: float) -> None:
             """The closed loop, once a second from the housekeeping tick:

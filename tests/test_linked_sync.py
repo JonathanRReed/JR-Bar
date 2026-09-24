@@ -279,8 +279,14 @@ def test_the_closed_loop_reanchors_at_most_every_twenty_seconds() -> None:
     assert asked and asked[0] <= 21
     assert all(later - earlier >= 20 for earlier, later in pairwise(asked))
     document = link.document(dot_id="dot", tolerance_ms=40, correction=True)
-    assert document["sync_writes_hour"] == len(asked)
+    # Asked for and never written (here nothing writes them): not counted.
+    # They were counted on the ask, so a refused re-anchor read as a sync.
+    assert document["sync_writes_hour"] == 0
     assert document["tolerance_ms"] == 40.0
+    for _ in range(2):
+        link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="reanchor", sample=None)
+    link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="coupled", sample=None)
+    assert link.document(dot_id="dot", tolerance_ms=40, correction=True)["sync_writes_hour"] == 2
 
 
 def test_the_period_lock_steps_down_rather_than_change_the_period() -> None:

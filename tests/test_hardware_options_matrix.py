@@ -712,6 +712,33 @@ def test_the_timing_readout_follows_the_measured_error__and_1_more(rig: Rig) -> 
     assert doc_significant_equal("lights", first, second)
 
 
+def test_a_refused_reanchor_is_not_carried_to_the_next_dot_write(rig: Rig) -> None:
+    """The closed loop asks for a Dot-only re-anchor while a calibration
+    preview holds the Dot, so the write path refuses it. That request used
+    to stay pending: the next ordinary Dot write took it, bypassed the
+    deduper and was logged and counted as a re-sync."""
+    from jrbar.core_runtime import _Preview
+
+    controller = rig.controller
+    rig.plan()
+    rig.plan()
+    link = controller._core_linked
+    controller._core_previews["dot"] = _Preview(
+        "#FFFFFF", time.monotonic() + 60, time.time(), (rig.dot.device_id,), held=True
+    )
+    assert controller._core_linked_request_dot_write("reanchor")
+    controller._core_previews.pop("dot")
+    # The Dot's role taken away by the time the queued write runs: refused
+    # the same way.
+    rig.set("dot_role", "status")
+    assert controller._core_linked_request_dot_write("reanchor")
+    rig.set("dot_role", "extend")
+    rig.set("linked_dot_scale", 0.6)
+    rig.plan()
+    assert link.dot_write is not None and link.dot_write.reason != "reanchor"
+    assert link.document(dot_id=rig.dot.device_id, tolerance_ms=40, correction=True)["sync_writes_hour"] == 0
+
+
 # --- foreign writes ---------------------------------------------------------------
 
 

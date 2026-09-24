@@ -218,6 +218,10 @@ class LinkedSync:
             self.last_dot_write_epoch = time.time()
             if reason in ("reanchor", "blind", "check"):
                 self.last_sync_write_at = self.now()
+            if reason in ("reanchor", "blind"):
+                # Counted when written, not when asked for: a re-anchor the
+                # write path refused never reached the Dot.
+                self.reanchors.append(self.now())
 
     # -- the closed loop (main thread) -------------------------------------
 
@@ -315,8 +319,10 @@ class LinkedSync:
         return None
 
     def note_reanchor_requested(self, now: float) -> None:
+        """A re-anchor was asked for: the loop waits out the interval from
+        now rather than ask again every second while it is queued. It is
+        counted in ``sync_writes_hour`` only once it is written."""
         self.last_sync_write_at = now
-        self.reanchors.append(now)
         while self.reanchors and now - self.reanchors[0] > 3600.0:
             self.reanchors.popleft()
 
