@@ -62,6 +62,14 @@ import Testing
         #expect(tankRow?.opens == "Opens the Aquarium")
     }
 
+    /// The Notch card, and its Synced lyrics switch, sits on the
+    /// Utilities page, so the lyrics row's Try it lands there.
+    @Test func theLyricsRowOpensThePageWithTheNotchCard() {
+        let lyricsRow = WhatsNewCatalog.entries.first { $0.id == "lyrics" }
+        #expect(lyricsRow?.tryIt == .settings(page: "utilities"))
+        #expect(lyricsRow?.opens == "Opens Settings › Utilities, where the Notch card's lyrics switch is")
+    }
+
     // MARK: The gate
 
     @Test func theWindowIsOwedOnlyAfterSetupAndOncePerRelease() {

@@ -80,7 +80,7 @@ enum WhatsNewCatalog {
             id: "lyrics", symbol: "quote.bubble",
             title: "Lyrics are opt-in",
             detail: "Synced lyrics come from LRCLIB on the internet, so they wait for your click now.",
-            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Notch card's lyrics switch is"),
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where the Notch card's lyrics switch is"),
     ]
 }
 
