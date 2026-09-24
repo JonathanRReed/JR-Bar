@@ -38,6 +38,18 @@ struct GraphSceneModel {
         layout.order.contains { nodes[$0].map { Self.moves($0.activity) } ?? false }
     }
 
+    /// The hubs and clusters to draw: the layout's, and any that left with
+    /// the latest change and are still fading out.
+    var hubsDrawn: [OverviewGraphLayout.Hub] {
+        let kept = Set(layout.hubs.map(\.id))
+        return layout.hubs + (previous?.hubs.filter { !kept.contains($0.id) } ?? [])
+    }
+
+    var clustersDrawn: [OverviewGraphLayout.Cluster] {
+        let kept = Set(layout.clusters.map(\.id))
+        return layout.clusters + (previous?.clusters.filter { !kept.contains($0.id) } ?? [])
+    }
+
     /// Each provider's accent, parsed once per update rather than per frame.
     var accents: [String: Color] {
         var accents: [String: Color] = [:]
@@ -104,11 +116,11 @@ struct GraphScene: View, Animatable {
                                    side: painter.side(of: node.id), worker: painter.isWorker(node.id))
                         .tag("label." + node.id)
                 }
-                ForEach(model.layout.hubs) { hub in
+                ForEach(model.hubsDrawn) { hub in
                     GraphHubCaption(provider: hub.id, detail: model.hubCaptions[hub.id] ?? "")
                         .tag("hub." + hub.id)
                 }
-                ForEach(model.layout.clusters) { cluster in
+                ForEach(model.clustersDrawn) { cluster in
                     GraphClusterTitle(cluster: cluster).tag("cluster." + cluster.id)
                 }
                 ForEach(GraphGlyph.all(for: model), id: \.self) { glyph in
@@ -174,18 +186,29 @@ private struct GraphPainter {
         }
     }
 
+    /// A hub's centre through the settle: one arriving fades up, one
+    /// leaving fades out where it stood.
     func hubCenter(_ hub: Layout.Hub) -> (point: CGPoint, alpha: Double) {
         guard settling else { return (hub.center, 1) }
-        guard let before = model.previous?.hubs.first(where: { $0.id == hub.id }) else { return (hub.center, progress) }
+        let before = model.previous?.hubs.first { $0.id == hub.id }
+        guard model.layout.hubs.contains(where: { $0.id == hub.id }) else { return (hub.center, 1 - progress) }
+        guard let before else { return (hub.center, progress) }
         return (Self.mix(before.center, hub.center, progress), 1)
     }
 
     func clusterFrame(_ cluster: Layout.Cluster) -> (rect: CGRect, alpha: Double) {
         guard settling else { return (cluster.frame, 1) }
-        guard let before = model.previous?.clusters.first(where: { $0.id == cluster.id }) else {
-            return (cluster.frame, progress)
-        }
+        let before = model.previous?.clusters.first { $0.id == cluster.id }
+        guard model.layout.clusters.contains(where: { $0.id == cluster.id }) else { return (cluster.frame, 1 - progress) }
+        guard let before else { return (cluster.frame, progress) }
         return (Self.mix(before.frame, cluster.frame, progress), 1)
+    }
+
+    /// A hub's spokes: to the sessions it feeds now, and while settling to
+    /// the ones that just left, fading with them.
+    func spokeIDs(_ hub: Layout.Hub) -> [String] {
+        guard settling, let before = model.previous?.hubs.first(where: { $0.id == hub.id }) else { return hub.sessionIDs }
+        return hub.sessionIDs + before.sessionIDs.filter { model.layout.nodes[$0] == nil && !hub.sessionIDs.contains($0) }
     }
 
     /// Nodes that left with the latest change, still fading out.
@@ -352,7 +375,7 @@ private struct GraphPainter {
     }
 
     private func drawClusters(_ context: inout GraphicsContext, visible: CGRect) {
-        for cluster in model.layout.clusters {
+        for cluster in model.clustersDrawn {
             let (rect, alpha) = clusterFrame(cluster)
             guard rect.intersects(visible) else { continue }
             var c = context
@@ -400,10 +423,10 @@ private struct GraphPainter {
     }
 
     private func drawSpokes(_ context: inout GraphicsContext) {
-        for hub in model.layout.hubs {
+        for hub in model.hubsDrawn {
             let (center, hubAlpha) = hubCenter(hub)
             let accent = accent(hub.id)
-            for id in hub.sessionIDs {
+            for id in spokeIDs(hub) {
                 guard let node = model.nodes[id], let (rect, alpha) = frame(of: id) else { continue }
                 let side = side(of: id)
                 let start = CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
@@ -450,7 +473,7 @@ private struct GraphPainter {
     }
 
     private func drawHubs(_ context: inout GraphicsContext) {
-        for hub in model.layout.hubs {
+        for hub in model.hubsDrawn {
             let (center, alpha) = hubCenter(hub)
             var c = context
             c.opacity = alpha * light("hub:" + hub.id)
@@ -769,7 +792,7 @@ struct GraphGlyph: Hashable {
     var tag: String { "glyph.\(provider).\(tier).\(solid)" }
 
     static func all(for model: GraphSceneModel) -> [GraphGlyph] {
-        var glyphs: Set<GraphGlyph> = Set(model.layout.hubs.map { GraphGlyph(provider: $0.id, tier: .hub, solid: true) })
+        var glyphs: Set<GraphGlyph> = Set(model.hubsDrawn.map { GraphGlyph(provider: $0.id, tier: .hub, solid: true) })
         for node in model.nodes.values {
             let worker = (model.layout.nodes[node.id] ?? model.previous?.nodes[node.id])?.isWorker ?? false
             glyphs.insert(GraphGlyph(provider: node.provider, tier: worker ? .worker : .session,

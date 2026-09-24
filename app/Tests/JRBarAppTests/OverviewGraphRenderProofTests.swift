@@ -203,5 +203,41 @@ struct OverviewGraphRenderProofTests {
             written.append(shot.name)
         }
         #expect(written.count == shots.count)
+
+        // Two frames of the scene alone: halfway through settling after two
+        // sessions arrive and one leaves, and the resting forms Reduce
+        // Motion draws instead of the moving layer.
+        let before = sparse.map(OverviewGraphNode.init)
+        let arriving = [
+            OverviewGraphNode(id: "gemini:docs", project: "jr-bar", provider: "gemini", activity: .working,
+                              label: "Docs sweep"),
+            OverviewGraphNode(id: "claude:tests", parentID: "claude:night", project: "jr-bar", provider: "claude",
+                              activity: .working, label: "Test lane"),
+        ]
+        let after = before.filter { $0.id != "codex:notes" } + arriving
+        let scenes: [(String, OverviewGraphLayout?, [OverviewGraphNode], Double, Bool)] = [
+            ("overview-graph-settling-light", OverviewGraphLayout.make(before), after, 0.5, true),
+            ("overview-graph-still-dark", nil, busy.map(OverviewGraphNode.init), 1, false),
+        ]
+        for (name, previous, nodes, settle, motion) in scenes {
+            let layout = OverviewGraphLayout.make(nodes)
+            var all = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+            for node in before where all[node.id] == nil { all[node.id] = node }
+            let model = GraphSceneModel(layout: layout, previous: previous, nodes: all,
+                                        captions: [:], hubCaptions: [:], unseen: [], selectedID: nil, lit: nil,
+                                        now: now.timeIntervalSince1970)
+            let size = CGSize(width: 900, height: 560)
+            let scheme: ColorScheme = name.hasSuffix("dark") ? .dark : .light
+            let view = GraphScene(model: model, camera: GraphCamera.fit(layout.bounds, in: size),
+                                  settle: settle, dim: 0, generation: 1, motion: motion, running: false,
+                                  frozenTime: 1.35)
+                .frame(width: size.width, height: size.height)
+                .environment(\.colorScheme, scheme)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let image = try #require(renderer.cgImage)
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try png.write(to: dir.appendingPathComponent("\(name).png"))
+        }
     }
 }

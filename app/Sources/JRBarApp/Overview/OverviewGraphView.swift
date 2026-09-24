@@ -215,7 +215,8 @@ struct OverviewGraphCanvas: View {
         GeometryReader { proxy in
             let size = proxy.size
             let whole = GraphCamera.fit(current.layout.bounds, in: size, inset: 16)
-            let view = camera(current, size: size, whole: whole)
+            let focus = Self.focus(current)
+            let view = camera(current, size: size, whole: whole, focus: focus)
             let scene = model(current)
             ZStack(alignment: .topLeading) {
                 GraphScene(model: scene, camera: view, settle: Double(generation),
@@ -224,8 +225,12 @@ struct OverviewGraphCanvas: View {
                            running: store.windowOpen && store.pane == .graph && onScreen,
                            frozenTime: frozenTime)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovered)
+                    // Someone new waiting on a map too big to show whole:
+                    // the opening view glides to them rather than jumping.
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.6), value: focus)
                 hoverCard(current, camera: view, size: size)
-                GraphZoomControls(scale: view.scale, whole: abs(view.scale - whole.scale) < 0.005 && view == whole,
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hover)
+                GraphZoomControls(scale: view.scale, whole: view == whole,
                                   zoom: { factor in
                                       zoom(by: factor, about: CGPoint(x: size.width / 2, y: size.height / 2), from: view)
                                   },
@@ -315,13 +320,18 @@ struct OverviewGraphCanvas: View {
         .onChange(of: store.now) { refreshUsage(current) }
     }
 
+    /// The first session waiting on you, which the opening view keeps in
+    /// sight.
+    static func focus(_ current: Shown) -> String? {
+        current.layout.order.first { current.nodes[$0]?.activity == .waiting }
+    }
+
     /// The camera the framing asks for at this size.
-    private func camera(_ current: Shown, size: CGSize, whole: GraphCamera) -> GraphCamera {
+    private func camera(_ current: Shown, size: CGSize, whole: GraphCamera, focus: String?) -> GraphCamera {
         switch framing {
         case .opening:
-            let waiting = current.layout.order.first { current.nodes[$0]?.activity == .waiting }
             return GraphCamera.opening(current.layout.bounds, in: size,
-                                       focus: waiting.flatMap { current.layout.nodes[$0]?.frame.insetBy(dx: -12, dy: -12) },
+                                       focus: focus.flatMap { current.layout.nodes[$0]?.frame.insetBy(dx: -12, dy: -12) },
                                        inset: 16)
         case .whole: return whole
         case .manual(let camera): return camera
