@@ -263,6 +263,35 @@ struct WindowsRenderProofTests {
         store.windowDidClose()
         let empty = HistoryStore(core: CoreModel(socketPath: "/nonexistent.sock"))
         try Self.write("history-offline", size: CGSize(width: 720, height: 420)) { HistoryView(store: empty) }
+        // The mock seeds two days, too few for the rhythm; it is drawn
+        // again over the weeks a busy Mac loads, and over its first four.
+        for (name, reach) in [("history-rhythm", 20), ("history-rhythm-short", 3)] {
+            let busy = HistoryStore(core: CoreModel(socketPath: "/nonexistent.sock"))
+            busy.now = Self.now
+            busy.loadedAt = Self.now
+            busy.rows = Self.historyRows(daysBack: reach)
+            try Self.write(name, size: CGSize(width: 720, height: 96)) {
+                HistoryFilterBar(store: busy).frame(maxHeight: .infinity, alignment: .top)
+            }
+        }
+    }
+
+    /// A made-up History: a few rows an hour through each working day,
+    /// quieter weekends, the odd failure.
+    static func historyRows(daysBack: Int) -> [CoreHistoryRow] {
+        let shape = [5, 9, 14, 7, 11, 2, 0, 6, 12, 16, 10, 13, 3, 1, 8, 15, 9, 12, 4, 0, 7]
+        let kinds = ["started", "completed", "asked", "answered", "completed"]
+        var rows: [CoreHistoryRow] = []
+        for back in 0...daysBack {
+            let count = shape[back % shape.count] + (back == 0 ? 3 : 0)
+            for index in 0..<count {
+                let at = t - Double(back) * 86400 - Double(index) * 1500
+                let kind = back % 4 == 1 && index == 0 ? "failed" : kinds[index % kinds.count]
+                rows.append(CoreHistoryRow(at: at, kind: kind, provider: "claude", session: "claude:s\(back)",
+                                           label: "session \(back)"))
+            }
+        }
+        return rows
     }
 
     // MARK: Usage Center

@@ -36,12 +36,19 @@ struct HistoryRhythmTests {
         #expect(days.last?.date == calendar.startOfDay(for: now))
     }
 
-    @Test("a long history is cut to two weeks; a single day still draws a line")
+    @Test("a long history is cut to two weeks; a single morning is one day")
     func spanBounds() {
         let long = HistoryRhythm.days([row(daysAgo(40))], loadedFrom: daysAgo(40), now: now, calendar: calendar)
         #expect(long.count == HistoryRhythm.span)
-        let today = HistoryRhythm.days([row(daysAgo(0))], loadedFrom: daysAgo(0), now: now, calendar: calendar)
-        #expect(today.count == 2)
+        let morning = HistoryRhythm.days([row(daysAgo(0))], loadedFrom: daysAgo(0), now: now, calendar: calendar)
+        #expect(morning.count == 1)
+    }
+
+    @Test("the strip waits for three days of rows, and draws nothing with none")
+    func drawsFromThreeDays() {
+        #expect(!HistoryRhythm.draws([], today: now, calendar: calendar))
+        #expect(!HistoryRhythm.draws([row(daysAgo(0)), row(daysAgo(1))], today: now, calendar: calendar))
+        #expect(HistoryRhythm.draws([row(daysAgo(0)), row(daysAgo(2))], today: now, calendar: calendar))
     }
 
     @Test("quiet days inside the range count zero, and failures are counted apart")

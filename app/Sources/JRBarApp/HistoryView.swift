@@ -178,6 +178,11 @@ struct AwayBanner: View {
 
 struct HistoryFilterBar: View {
     @Bindable var store: HistoryStore
+    /// The rhythm's day under the pointer: while there is one, the caption
+    /// beside the strip reads it instead of the counts.
+    @ViewState private var hoveredDay: HistoryRhythm.Day?
+
+    private var today: Date { Calendar.current.startOfDay(for: store.now) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -186,19 +191,15 @@ struct HistoryFilterBar: View {
                                   text: $store.filter.text)
                     .frame(maxWidth: 300)
                 Spacer(minLength: 8)
-                if let loadedAt = store.loadedAt {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text("\(store.filtered.count) of \(store.rows.count)")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        Text(freshness(loadedAt))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .monospacedDigit()
+                if let hoveredDay {
+                    caption(hoveredDay.title, hoveredDay.detail)
+                } else if let loadedAt = store.loadedAt {
+                    caption("\(store.filtered.count) of \(store.rows.count)", freshness(loadedAt))
                 }
-                HistoryRhythm(store: store)
-                    .frame(width: 190, height: 34)
+                if HistoryRhythm.draws(store.rows, today: today) {
+                    HistoryRhythm(store: store, today: today, hovered: $hoveredDay)
+                        .frame(width: 190, height: 34)
+                }
             }
             SnapshotScrollView(axes: .horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
@@ -249,6 +250,20 @@ struct HistoryFilterBar: View {
         .clipped()
     }
 
+    /// Two right-aligned lines beside the rhythm: the counts and their
+    /// age, or the hovered day and what happened in it.
+    private func caption(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+        .monospacedDigit()
+    }
+
     /// "updated 12s ago", or "Refreshing…" while a load is out.
     private func freshness(_ loadedAt: Date) -> String {
         if store.loading { return "Refreshing…" }
@@ -259,13 +274,19 @@ struct HistoryFilterBar: View {
 
 /// Up to the last two weeks of History as one smooth line: how busy
 /// each day was across the rows the chips let through, today a dot at
-/// its end and a red mark under a day with a failure. It starts no
-/// earlier than the oldest row History loaded, so a day it never read
-/// never passes for a quiet one. Hover a day for its count; click it to
-/// show only that day, and again to show every day.
+/// its end and a red dot on a day with a failure. It starts no earlier
+/// than the oldest row History loaded, so a day it never read never
+/// passes for a quiet one, and it waits for three days of rows before it
+/// draws at all: a line through two points says nothing the day headers
+/// do not. Hover a day to read it beside the strip; click it to show
+/// only that day, and again to show every day.
 struct HistoryRhythm: View {
     @Bindable var store: HistoryStore
-    @ViewState private var hovered: Date?
+    /// The start of today. The strip moves with the date, never with the
+    /// window's one-second clock.
+    let today: Date
+    /// The day under the pointer, read out beside the strip.
+    @Binding var hovered: Day?
 
     /// One day of the strip.
     struct Day: Identifiable, Equatable {
@@ -273,20 +294,35 @@ struct HistoryRhythm: View {
         let rows: Int
         let failed: Int
         var id: Date { date }
+
+        private static let titleFormat: DateFormatter = {
+            let formatter = DateFormatter()
+            formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+            return formatter
+        }()
+
+        /// "Tue 22 Sep".
+        var title: String { Self.titleFormat.string(from: date) }
+
+        /// "12 rows · 1 failed".
+        var detail: String {
+            let count = "\(rows) row\(rows == 1 ? "" : "s")"
+            return failed > 0 ? "\(count) · \(failed) failed" : count
+        }
     }
 
     static let span = 14
+    /// The fewest days the strip draws.
+    static let minimumDays = 3
 
     /// Rows per local day from the day of `loadedFrom` (the oldest row
-    /// loaded) to today — at most `span` days, at least two — oldest
-    /// first. Empty days inside that range count as zero, so a quiet
-    /// weekend stays on the floor.
+    /// loaded) to today — at most `span` days — oldest first. Empty days
+    /// inside that range count as zero, so a quiet weekend stays on the
+    /// floor.
     static func days(_ rows: [CoreHistoryRow], loadedFrom: Date?, now: Date, span: Int = HistoryRhythm.span,
                      calendar: Calendar = .current) -> [Day] {
         let today = calendar.startOfDay(for: now)
-        let oldest = calendar.startOfDay(for: loadedFrom ?? now)
-        let reach = calendar.dateComponents([.day], from: oldest, to: today).day ?? 0
-        let back = min(span - 1, max(1, reach))
+        let back = min(span - 1, reach(from: loadedFrom, to: today, calendar: calendar))
         var counts: [Date: (rows: Int, failed: Int)] = [:]
         for row in rows {
             let day = calendar.startOfDay(for: row.date)
@@ -302,20 +338,26 @@ struct HistoryRhythm: View {
         }
     }
 
+    /// Whole days from the oldest loaded row's day to today.
+    private static func reach(from oldest: Date?, to today: Date, calendar: Calendar) -> Int {
+        guard let oldest else { return 0 }
+        let first = calendar.startOfDay(for: oldest)
+        return max(0, calendar.dateComponents([.day], from: first, to: today).day ?? 0)
+    }
+
+    /// True once the loaded rows reach back the strip's fewest days.
+    static func draws(_ rows: [CoreHistoryRow], today: Date, calendar: Calendar = .current) -> Bool {
+        reach(from: rows.map(\.date).min(), to: calendar.startOfDay(for: today), calendar: calendar) >= minimumDays - 1
+    }
+
     /// The rows the chips let through, whatever day is picked: the strip
     /// is the map the day filter is chosen from.
     private var days: [Day] {
         var filter = store.filter
         filter.day = nil
         filter.text = ""
-        return Self.days(filter.apply(store.rows), loadedFrom: store.rows.map(\.date).min(), now: store.now)
+        return Self.days(filter.apply(store.rows), loadedFrom: store.rows.map(\.date).min(), now: today)
     }
-
-    private static let dayTitle: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE d MMM"
-        return formatter
-    }()
 
     /// The day whose point is nearest `date`: the points sit at each
     /// day's start, so the pointer snaps to the closer of two.
@@ -329,81 +371,87 @@ struct HistoryRhythm: View {
         return first...max(first, days.last?.date ?? first)
     }
 
-    /// Headroom over the busiest day for today's dot, and a little floor
-    /// under zero for the failure marks.
-    static func scale(peak: Int) -> ClosedRange<Double> {
-        let top = Double(peak)
-        return (-top * 0.14)...(top * 1.3)
+    /// The day under `location` in the chart's overlay.
+    private static func day(at location: CGPoint, in days: [Day], proxy: ChartProxy, geometry: GeometryProxy) -> Day? {
+        guard let plot = proxy.plotFrame.map({ geometry[$0] }),
+              let date: Date = proxy.value(atX: location.x - plot.origin.x) else { return nil }
+        let nearest = nearestDay(date)
+        return days.first { $0.date == nearest }
+    }
+
+    /// A failure's mark on the line: a red dot ringed in the window's
+    /// colour so it sits on the line rather than in it.
+    private static var failureDot: some View {
+        Circle()
+            .fill(Color.red)
+            .frame(width: 5, height: 5)
+            .padding(1.25)
+            .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
     }
 
     var body: some View {
-        let days = days
-        let peak = max(1, days.map(\.rows).max() ?? 1)
+        let days = self.days
+        let peak = Double(max(1, days.map(\.rows).max() ?? 1))
         Chart {
             ForEach(days) { day in
                 AreaMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
-                    .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.32), Color.accentColor.opacity(0.02)],
+                    .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.30), Color.accentColor.opacity(0.02)],
                                                     startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.monotone)
                 LineMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
                     .foregroundStyle(Color.accentColor)
                     .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
-                if day.failed > 0 {
-                    PointMark(x: .value("Day", day.date), y: .value("Rows", 0))
-                        .symbolSize(14)
-                        .foregroundStyle(Color.red)
-                }
+            }
+            if let picked = store.filter.day ?? hovered?.date {
+                RuleMark(x: .value("Day", picked))
+                    .foregroundStyle(Color.primary.opacity(store.filter.day == nil ? 0.2 : 0.45))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
             }
             if let last = days.last {
                 PointMark(x: .value("Day", last.date), y: .value("Rows", last.rows))
                     .symbolSize(18)
                     .foregroundStyle(Color.accentColor)
             }
-            if let picked = store.filter.day ?? hovered.map(Self.nearestDay) {
-                RuleMark(x: .value("Day", picked))
-                    .foregroundStyle(Color.primary.opacity(store.filter.day == nil ? 0.2 : 0.45))
-                    .lineStyle(StrokeStyle(lineWidth: 1))
+            ForEach(days.filter { $0.failed > 0 }) { day in
+                PointMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
+                    .symbol { Self.failureDot }
             }
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
-        .chartYScale(domain: Self.scale(peak: peak))
-        .chartXScale(domain: Self.span(days), range: .plotDimension(padding: 5))
+        .chartYScale(domain: 0...(peak * 1.25), range: .plotDimension(startPadding: 4, endPadding: 4))
+        .chartXScale(domain: Self.span(days), range: .plotDimension(padding: 6))
         .chartLegend(.hidden)
-        .chartXSelection(value: $hovered)
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 Rectangle().fill(.clear).contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        var day: Day?
+                        if case .active(let location) = phase {
+                            day = Self.day(at: location, in: days, proxy: proxy, geometry: geometry)
+                        }
+                        if hovered != day { hovered = day }
+                    }
                     .onTapGesture { location in
-                        guard let plot = proxy.plotFrame.map({ geometry[$0] }),
-                              let date: Date = proxy.value(atX: location.x - plot.origin.x) else { return }
-                        let day = Self.nearestDay(date)
-                        store.filter.day = store.filter.day.map { Calendar.current.isDate($0, inSameDayAs: day) } == true ? nil : day
+                        guard let day = Self.day(at: location, in: days, proxy: proxy, geometry: geometry) else { return }
+                        let picked = store.filter.day.map { Calendar.current.isDate($0, inSameDayAs: day.date) } ?? false
+                        store.filter.day = picked ? nil : day.date
                     }
             }
         }
-        .padding(.vertical, 2)
         .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
             .fill(Color.primary.opacity(0.03)))
-        .help(hoverText(days) ?? "The last \(days.count) days — click a day to show only that day")
+        .help("Click a day to show only that day")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Activity over the last \(days.count) days")
         .accessibilityValue(summary(days))
     }
 
-    /// "Tue 22 Sep · 12 rows · 1 failed" for the day under the pointer.
-    private func hoverText(_ days: [Day]) -> String? {
-        guard let hovered, let day = days.first(where: { $0.date == Self.nearestDay(hovered) }) else { return nil }
-        var text = "\(Self.dayTitle.string(from: day.date)) · \(day.rows) row\(day.rows == 1 ? "" : "s")"
-        if day.failed > 0 { text += " · \(day.failed) failed" }
-        return text + " — click to show only this day"
-    }
-
     private func summary(_ days: [Day]) -> String {
         let total = days.reduce(0) { $0 + $1.rows }
         let busiest = days.max { $0.rows < $1.rows }
-        return "\(total) rows" + (busiest.map { $0.rows > 0 ? ", busiest \(Self.dayTitle.string(from: $0.date))" : "" } ?? "")
+        return "\(total) rows" + (busiest.map { $0.rows > 0 ? ", busiest \($0.title)" : "" } ?? "")
     }
 }
 
