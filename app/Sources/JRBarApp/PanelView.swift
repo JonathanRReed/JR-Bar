@@ -177,13 +177,12 @@ struct ActivityMark: View {
 }
 
 /// A small count in a capsule. `symbol` names what is counted, so a bare
-/// "10" beside a session's name never reads as a version or a score.
+/// "10" beside a session's model never reads as a version or a score.
+/// It rides a line of small type, so the capsule draws past the count's
+/// height instead of adding to it and the line keeps its height.
 struct CountBadge: View {
     let text: String
     var symbol: String? = nil
-    /// In a line of small type the capsule draws past the count's height
-    /// instead of adding to it, so the line keeps its height.
-    var inline: Bool = false
 
     var body: some View {
         HStack(spacing: 2.5) {
@@ -199,8 +198,7 @@ struct CountBadge: View {
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .padding(.horizontal, 5)
-        .padding(.vertical, inline ? 0 : 1.5)
-        .background(Capsule().fill(.primary.opacity(0.08)).padding(.vertical, inline ? -1.5 : 0))
+        .background(Capsule().fill(.primary.opacity(0.08)).padding(.vertical, -1.5))
     }
 }
 
@@ -776,7 +774,7 @@ struct SessionRowView: View {
                         if row.workers > 0 {
                             // The run's workers ride the model line, so the
                             // title keeps the label column's whole width.
-                            CountBadge(text: "\(row.workers)", symbol: "square.stack", inline: true)
+                            CountBadge(text: "\(row.workers)", symbol: "square.stack")
                                 .help(row.workersText ?? "")
                         }
                         if let fact = row.activityFact {
