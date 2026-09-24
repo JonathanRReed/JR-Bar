@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// A standard titled window for the Control Center (⌘K from the panel, the
-/// footer's overflow menu, the status menu, the app menu and Settings ›
-/// Devices).
+/// The Creator Micro window: the pad drawn as it is, its session keys,
+/// banks and bindings. Opened from the panel's More menu, the status
+/// menu, the app menu, Settings › Devices, the rail's "…" key and
+/// `jrbar://window/creator-micro` (`control-center` still works). It is
+/// named for the pad it drives; it has no chord of its own.
 @MainActor
 final class ControlCenterWindowController: NSObject, NSWindowDelegate {
     private let store: DeckStore
@@ -35,10 +37,14 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
     /// the grid on every deck state. Internal for the lifecycle test.
     @discardableResult
     func attachContent(to window: NSWindow) -> NSViewController {
-        WindowContentLifecycle.attach(to: window, title: "Control Center", subtitle: "Creator Micro 2") {
+        WindowContentLifecycle.attach(to: window, title: Self.title) {
             WindowContentLifecycle.hosting(ControlCenterView(store: store))
         }
     }
+
+    /// The window's name: the pad's, not a second "Control Center" beside
+    /// macOS's own.
+    static let title = "Creator Micro"
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(

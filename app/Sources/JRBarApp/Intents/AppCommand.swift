@@ -47,8 +47,24 @@ enum AppCommand: Equatable, Sendable {
     /// A window by the name a link uses: `jrbar://open/<name>`,
     /// `jrbar://window/<name>`, or the bare `jrbar://<name>`.
     enum AppWindow: String, CaseIterable, Sendable {
-        case overview, history, usage, effects, controlCenter = "control-center", setup
+        case overview, history, usage, effects, controlCenter = "creator-micro", setup
         case whatsNew = "whats-new"
+
+        /// Names a link may still use for a window that was renamed:
+        /// the Creator Micro window was the Control Center, and links,
+        /// deck keys and scripts written then keep working.
+        nonisolated static let aliases: [String: AppWindow] = ["control-center": .controlCenter]
+
+        /// The window a link names, by its own name or an older one,
+        /// in any case.
+        nonisolated init?(linkName: String) {
+            let name = linkName.lowercased()
+            if let window = AppWindow(rawValue: name) ?? Self.aliases[name] {
+                self = window
+            } else {
+                return nil
+            }
+        }
     }
 
     /// Whose colours a linked burst wears: the focused session's (a bare
@@ -141,10 +157,10 @@ enum AppCommand: Equatable, Sendable {
             let page = object.lowercased()
             return SettingsPageName.known.contains(page) ? .settings(page: page) : nil
         case "open", "window":
-            guard let object, let window = AppWindow(rawValue: object.lowercased()) else { return nil }
+            guard let object, let window = AppWindow(linkName: object) else { return nil }
             return .window(window)
-        case "overview", "history", "usage", "effects", "control-center", "setup", "whats-new":
-            return AppWindow(rawValue: verb).map(AppCommand.window)
+        case "overview", "history", "usage", "effects", "creator-micro", "control-center", "setup", "whats-new":
+            return AppWindow(linkName: verb).map(AppCommand.window)
         case "toggle":
             guard let object, let toggle = SystemToggle(name: object) else { return nil }
             guard let raw = query["on"] else { return .toggle(toggle, on: nil) }

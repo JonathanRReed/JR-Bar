@@ -128,6 +128,15 @@ struct WindowContentLifecycleTests {
         #expect(!store.isWindowOpen)
     }
 
+    @Test func creatorMicroIsNamedForThePad() {
+        let controller = ControlCenterWindowController(store: DeckStore(core: CoreModel()))
+        let window = Self.window(resizable: true)
+        controller.attachContent(to: window)
+        #expect(window.title == "Creator Micro")
+        #expect(window.subtitle.isEmpty, "the name says it; no second line repeats it")
+        WindowContentLifecycle.detach(from: window)
+    }
+
     @Test func historyDropsItsGraphOnClose() async {
         let store = HistoryStore(core: CoreModel())
         store.mode = .events

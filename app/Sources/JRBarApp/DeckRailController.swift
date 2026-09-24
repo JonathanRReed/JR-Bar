@@ -4,7 +4,7 @@ import QuartzCore
 import SwiftUI
 
 /// The Rail: a thin glass strip of fourteen cells (the thirteen keys and a
-/// "…" that opens the Control Center) on a screen edge, always on top, on
+/// "…" that opens the Creator Micro window) on a screen edge, always on top, on
 /// every Space, never key, never auto-hidden. Click sends `deck_press` for
 /// the cell's key; hover shows its label in a pill beside the strip. Shown
 /// while the daemon's `rail.edge` is not `off` and the core is live; the
@@ -32,7 +32,7 @@ final class DeckRailController {
 
     var isShown: Bool { panel?.isVisible ?? false }
 
-    /// The screen the rail lives on: the Control Center window's, else the
+    /// The screen the rail lives on: the Creator Micro window's, else the
     /// one with the key window, else the main one. Resolved every time.
     private var screen: NSScreen? {
         NSApp.windows.first { $0.identifier?.rawValue == "jrbar.control-center" && $0.isVisible }?.screen
@@ -169,7 +169,7 @@ final class DeckRailController {
         self.label = label
         let content: RailLabelView
         if DeckRailGeometry.isOverflowCell(cell) {
-            content = RailLabelView(title: "Open Control Center", subtitle: store.banks.title, provider: nil, number: "…")
+            content = RailLabelView(title: "Open Creator Micro", subtitle: store.banks.title, provider: nil, number: "…")
         } else {
             let slot = store.slots[safe: cell] ?? DeckSlot(index: cell)
             content = RailLabelView(title: slot.title, subtitle: slot.subtitle, provider: slot.provider, number: "\(cell + 1)",
@@ -452,7 +452,7 @@ struct RailSlotCell: View {
     }
 }
 
-/// The "…" cell: opens the Control Center on this bank.
+/// The "…" cell: opens the Creator Micro window on this bank.
 struct RailOverflowCell: View {
     @Bindable var store: DeckStore
     let cell: Int
@@ -471,8 +471,8 @@ struct RailOverflowCell: View {
         .contentShape(Rectangle())
         .onHover { store.railHoveredCell = $0 ? cell : (store.railHoveredCell == cell ? nil : store.railHoveredCell) }
         .onTapGesture { store.onOpenControlCenter?() }
-        .help("Open Control Center, \(store.banks.title.lowercased())")
-        .accessibilityLabel("Open Control Center, \(store.banks.title.lowercased())")
+        .help("Open the Creator Micro window, \(store.banks.title.lowercased())")
+        .accessibilityLabel("Open the Creator Micro window, \(store.banks.title.lowercased())")
         .accessibilityAddTraits(.isButton)
     }
 }

@@ -29,6 +29,15 @@ import Testing
             #expect(parse("jrbar://window/\(window.rawValue)") == .window(window))
             #expect(parse("jrbar://\(window.rawValue)") == .window(window), "the bare verb list keeps up")
         }
+        for alias in AppCommand.AppWindow.aliases.keys {
+            let aliased = AppCommand.AppWindow.aliases[alias]
+            #expect(parse("jrbar://window/\(alias)") == aliased.map(AppCommand.window), "an older name keeps working")
+            #expect(parse("jrbar://\(alias)") == aliased.map(AppCommand.window))
+        }
+        #expect(parse("jrbar://window/creator-micro") == .window(.controlCenter))
+        #expect(parse("jrbar://open/Control-Center") == .window(.controlCenter))
+        #expect(AppCommand.window(.controlCenter).link.absoluteString == "jrbar://window/creator-micro",
+                "a new link names the window by the pad")
         #expect(parse("jrbar://window/whats-new") == .window(.whatsNew))
         #expect(parse("jrbar://window/Whats-New") == .window(.whatsNew))
         #expect(parse("jrbar://window/nowhere") == nil)

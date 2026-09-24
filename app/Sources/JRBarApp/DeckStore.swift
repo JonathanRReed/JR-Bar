@@ -2,7 +2,7 @@ import AppKit
 import JRBarCore
 import Observation
 
-/// The Control Center's state: the daemon's `state.deck`, the controls lit
+/// The Creator Micro window's state: the daemon's `state.deck`, the controls lit
 /// by `deck_input` events, the sheets, the receipt line, and every deck
 /// command. One instance is shared by the window, the rail and the
 /// Settings › Devices card.
