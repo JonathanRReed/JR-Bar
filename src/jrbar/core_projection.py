@@ -1203,6 +1203,10 @@ def usage_document(
                     # (S6.1: unclassified lanes must not drive decisions).
                     "bindable": getattr(lane, "bindable", True) is not False,
                     "forecast": window_forecast,
+                    # Which source read this window ("claude-oauth",
+                    # "claude-statusline", "cliproxy"): the card names a
+                    # stand-in source instead of passing it off as direct.
+                    "source": getattr(lane, "source_id", None),
                 }
             )
         state = getattr(getattr(snapshot, "state", None), "value", None)

@@ -309,7 +309,12 @@ Vocabulary:
   lane knows it; `bindable` is false for a lane the provider's own catalog
   does not know — evidence only, never an applicable constraint;
   `fidelity` is `stale` when the source is stale, else
-  `official`; `state` is the `ProviderSourceState` value.
+  `official`; `state` is the `ProviderSourceState` value. `source`
+  (additive, 2026-09-24) is the lane's source id — `claude-oauth`,
+  `claude-statusline` (Claude Code's own statusLine report, standing in
+  while OAuth is rate limited or signed out), `cliproxy` (read through the
+  CLIProxyAPI hub), `opencode-go-api`, … — so a card can name a stand-in
+  source instead of passing it off as a direct read.
 - `usage.providers[].constrained` is the window the daemon says is worth
   watching — not the name convention but the least headroom among the
   `bindable` windows that were actually measured: `{id, name, used_pct,
@@ -318,10 +323,15 @@ Vocabulary:
   Null when nothing applicable was measured. The app's card leads with
   this window and explains the pick when it departs from the `5h`
   convention; an unclassified lane cannot win it even at 1 % left.
-- `usage.providers[].quota_source` is whether a quota collector exists for
-  the provider at all (read off `provider_usage_platform`'s descriptors,
-  not the snapshot's claims), so a "show meters" control can hide instead
-  of drawing dead.
+- `usage.providers[].quota_source` is whether this reading can carry a
+  quota at all: a quota collector exists for the provider (read off
+  `provider_usage_platform`'s descriptors), AND the snapshot is not
+  `unsupported` (since 2026-09-24, per snapshot). OpenCode is the case
+  that needs the second half: without an OpenCode Go key, or with a Zen
+  key that has no Go subscription (`reason` `opencode_no_quota_source` /
+  `opencode_go_not_subscribed`), it reports `unsupported` with its token
+  totals and no windows. A "show meters" control hides instead of drawing
+  dead, and the Usage Center says why in words.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),
@@ -725,9 +735,13 @@ range: a `usage_history` reply that went out `pending` or `stale` now has
 a fresh document behind it, ask again); `quota_reset` (`provider`,
 `instance`, `label` such as "Weekly reset", `lane`: the usage lane that
 refilled, `weekly` / `five-hour` / a product-scoped id ending in
-`-weekly`; published on every detected reset regardless of the
+`-weekly`, and `event_id`, the same id the celebration delivery and the
+usage hooks carry; published on every confirmed reset regardless of the
 celebration preferences, so the Usage Center can pulse the card and the
-Confetti toy can fire on the weekly one); `quota_pace` (`provider`,
+Confetti toy can fire on the weekly one. A reset whose boundary passed
+between two reads fires at once; a jump of 50 points or more without the
+boundary passing waits for a confirming read 60 s to 30 min later whose
+reset time matches within two minutes — `provider_usage_qol.confirm_reset_events`); `quota_pace` (`provider`,
 `lane`, `label` the lane's name, `remaining_percent`, `runs_out_at` and
 `resets_at` as epochs, and `detail` in words, "30% left · runs out around
 3:40 PM · resets 5:30 PM"; once per reset window, when a lane is newly
