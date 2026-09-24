@@ -313,6 +313,11 @@ struct ReconstructedTimelineView: View {
     /// The node's drop from its row's top — the spine breaks this much
     /// either side of it.
     static let nodeInset: CGFloat = 2
+    /// The spine's x, through the nodes' centres.
+    static let spineX: CGFloat = clockWidth + gutter + nodeSize / 2 - 0.5
+    /// Where the spine resumes under a node, and under a result's dot.
+    static let spineTop: CGFloat = nodeInset * 2 + nodeSize + 2
+    static let spineTopUnderDot: CGFloat = nodeInset + nodeSize / 2 + 7
 
     /// One row on the spine: its clock, its node, its body, and the
     /// spine running on from under the node to the next one — unless it
@@ -342,9 +347,8 @@ struct ReconstructedTimelineView: View {
                 Rectangle()
                     .fill(Color.primary.opacity(0.1))
                     .frame(width: 1)
-                    .padding(.top, small ? Self.nodeInset + Self.nodeSize / 2 + 7
-                                         : Self.nodeInset * 2 + Self.nodeSize + 2)
-                    .offset(x: Self.clockWidth + Self.gutter + Self.nodeSize / 2 - 0.5)
+                    .padding(.top, small ? Self.spineTopUnderDot : Self.spineTop)
+                    .offset(x: Self.spineX)
             }
         }
         .accessibilityElement(children: .combine)
@@ -430,18 +434,22 @@ struct ReconstructedTimelineView: View {
                 node(Self.symbol(item), tint: Self.tint(item))
             }
         } content: {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                rowBody(item)
-                if item.sidechain {
-                    tag("subagent", tint: .purple)
+            rowBody(item)
+                .padding(.leading, item.sidechain ? 10 : 0)
+                .overlay(alignment: .leading) {
+                    if item.sidechain {
+                        Capsule().fill(Color.purple.opacity(0.35)).frame(width: 2)
+                    }
                 }
-            }
-            .padding(.leading, item.sidechain ? 10 : 0)
-            .overlay(alignment: .leading) {
-                if item.sidechain {
-                    Capsule().fill(Color.purple.opacity(0.35)).frame(width: 2)
-                }
-            }
+        }
+    }
+
+    /// A subagent's row wears its tag on its first line, beside the name
+    /// or the text — never out past a tool call's block.
+    @ViewBuilder
+    private func subagentTag(_ item: ReconstructedItem) -> some View {
+        if item.sidechain {
+            tag("subagent", tint: .purple)
         }
     }
 
@@ -461,14 +469,18 @@ struct ReconstructedTimelineView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
+                    subagentTag(item)
                 }
                 itemText(item)
             }
         case .toolUse:
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.name ?? "tool")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(item.isError ? Color.red : Self.toolTint)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.name ?? "tool")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(item.isError ? Color.red : Self.toolTint)
+                    subagentTag(item)
+                }
                 if item.redacted {
                     redactedText
                 } else if let text = item.text {
@@ -484,31 +496,44 @@ struct ReconstructedTimelineView: View {
                 }
             }
         case .toolResult:
-            if item.redacted {
-                redactedText
-            } else if let text = item.text {
-                Text(text)
-                    .font(.system(size: 11, design: item.isError ? .monospaced : .default))
-                    .foregroundStyle(item.isError ? Color.red : Color.secondary)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, item.isError ? 7 : 0)
-                    .padding(.vertical, item.isError ? 4 : 0)
-                    .background {
-                        if item.isError {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.red.opacity(0.08))
-                        }
-                    }
-            } else {
-                Text(item.isError ? "failed" : "done")
-                    .font(.system(size: 11))
-                    .foregroundStyle(item.isError ? Color.red : Color.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                resultText(item)
+                subagentTag(item)
             }
         case .turnEnd:
-            Text(item.name.map { "Turn ended · \($0)" } ?? "Turn ended")
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(item.name.map { "Turn ended · \($0)" } ?? "Turn ended")
+                    .font(.system(size: 11))
+                    .foregroundStyle(item.isError ? Color.orange : Color.secondary)
+                subagentTag(item)
+            }
+        }
+    }
+
+    /// A result's words: its text (an error's on a red wash), else just
+    /// "done" or "failed".
+    @ViewBuilder
+    private func resultText(_ item: ReconstructedItem) -> some View {
+        if item.redacted {
+            redactedText
+        } else if let text = item.text {
+            Text(text)
+                .font(.system(size: 11, design: item.isError ? .monospaced : .default))
+                .foregroundStyle(item.isError ? Color.red : Color.secondary)
+                .lineLimit(4)
+                .textSelection(.enabled)
+                .padding(.horizontal, item.isError ? 7 : 0)
+                .padding(.vertical, item.isError ? 4 : 0)
+                .background {
+                    if item.isError {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.red.opacity(0.08))
+                    }
+                }
+        } else {
+            Text(item.isError ? "failed" : "done")
                 .font(.system(size: 11))
-                .foregroundStyle(item.isError ? Color.orange : Color.secondary)
+                .foregroundStyle(item.isError ? Color.red : Color.secondary)
         }
     }
 

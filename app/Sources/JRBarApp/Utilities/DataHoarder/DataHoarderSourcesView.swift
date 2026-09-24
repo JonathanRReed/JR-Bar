@@ -35,7 +35,8 @@ struct DataHoarderSourcesView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(Array(model.sourceInventories.enumerated()), id: \.element.id) { index, inventory in
-                        if index > 0 { Divider().padding(.leading, 38) }
+                        // Inset to the names, the way a grouped list rules.
+                        if index > 0 { Divider().padding(.leading, 60) }
                         sourceRow(inventory)
                     }
                 }
