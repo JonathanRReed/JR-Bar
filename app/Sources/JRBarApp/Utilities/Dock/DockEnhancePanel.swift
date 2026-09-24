@@ -333,7 +333,7 @@ final class DockToastPanel: NSPanel {
         animationBehavior = .none
         sharingType = .none
         collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .fullScreenAuxiliary, .ignoresCycle]
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+        level = DockPreviewPanel.level(coversLabel: false)
         title = "JR-Bar Dock Toast"
     }
 
@@ -341,16 +341,19 @@ final class DockToastPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     /// Show `text` over `tile` (AppKit space) off the Dock's `edge`,
-    /// for `duration`, then fade.
+    /// for `duration`, then fade. It sits where a preview would — the
+    /// card's distance from the Dock, over or clear of the name bubble
+    /// of the tile titled `title`, at the preview's level for that.
     func show(_ text: String, over tile: CGRect, edge: DockEdge, screen: CGRect,
-              duration: TimeInterval = 1.4) {
+              placement: DockPlacement, title: String, duration: TimeInterval = 1.4) {
         model.text = text
         hosting.invalidateIntrinsicContentSize()
         hosting.layoutSubtreeIfNeeded()
         let fit = hosting.intrinsicContentSize
         let size = CGSize(width: min(max(fit.width, 80), 420), height: max(fit.height, 28))
-        setFrame(DockEnhanceMath.panelFrame(anchor: tile, edge: edge, size: size,
-                                            screen: screen, gap: 10), display: true)
+        level = DockPreviewPanel.level(coversLabel: placement.coversLabel)
+        setFrame(placement.frame(anchor: tile, edge: edge, size: size, screen: screen, title: title),
+                 display: true)
         fadeWork?.cancel()
         alphaValue = 1
         orderFrontRegardless()

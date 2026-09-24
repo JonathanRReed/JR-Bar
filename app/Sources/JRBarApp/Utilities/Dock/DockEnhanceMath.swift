@@ -653,6 +653,44 @@ enum DockEnhanceMath {
 
 }
 
+// MARK: - Placement (pure, tested)
+
+/// How far off the Dock a preview (or a toast) opens, from the card's
+/// knobs at show time: the distance from the Dock, whether it covers
+/// the Dock's name bubble, and — covering, with the Dock magnifying
+/// under the pointer — the swollen icon's reach, so the glass never
+/// sits over it. Not covering keeps the band the bubble needs.
+struct DockPlacement: Equatable {
+    /// The card's distance from the Dock, in points.
+    var gap: CGFloat
+    var coversLabel: Bool
+    /// The Dock magnifies and the pointer is on it — a keyboard-opened
+    /// preview magnifies nothing.
+    var magnifying = false
+    /// The Dock's `largesize`; nil when never set.
+    var largesize: CGFloat? = nil
+
+    /// The band kept for the name bubble over a tile titled `title`.
+    func labelClearance(title: String, edge: DockEdge) -> CGFloat {
+        coversLabel ? 0 : DockEnhanceMath.nativeLabelClearance(title: title, edge: edge)
+    }
+
+    /// The magnified icon's reach past `anchor`, when it counts.
+    func reach(anchor: CGRect, edge: DockEdge) -> CGFloat {
+        guard coversLabel, magnifying else { return 0 }
+        return DockEnhanceMath.magnifiedReach(tileExtent: DockEnhanceMath.tileExtent(anchor, edge: edge),
+                                              largesize: largesize)
+    }
+
+    /// The frame for a panel of `size` over the tile `anchor`, whose
+    /// name bubble reads `title`.
+    func frame(anchor: CGRect, edge: DockEdge, size: CGSize, screen: CGRect, title: String) -> CGRect {
+        DockEnhanceMath.panelFrame(anchor: anchor, edge: edge, size: size, screen: screen, gap: gap,
+                                   labelClearance: labelClearance(title: title, edge: edge),
+                                   magnifiedReach: reach(anchor: anchor, edge: edge))
+    }
+}
+
 // MARK: - Spacing (pure, tested)
 
 /// Every inset the preview panel draws, from one spacing scale (the

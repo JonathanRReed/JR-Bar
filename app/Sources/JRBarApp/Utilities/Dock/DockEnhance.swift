@@ -98,8 +98,6 @@ final class DockEnhanceController {
     nonisolated static let itemsTTL: TimeInterval = 0.25
     /// How close to a screen edge counts as "near" for the fast refresh.
     nonisolated static let edgeReach: CGFloat = 120
-    /// Air between the dock and the preview panel.
-    static let panelGap: CGFloat = 10
     /// The dock list's frame, inflated toward the screen so a
     /// magnified icon's overflow still counts as "over the dock".
     nonisolated static let listSlop: CGSize = CGSize(width: 20, height: 96)
@@ -133,6 +131,9 @@ final class DockEnhanceController {
     /// panel centred on the frame sat 200 pt off the icon (measured:
     /// tile 288–325, pointer 542). The pointer is where the icon is.
     @ObservationIgnored private var magnificationOn = false
+    /// The Dock's magnified icon size (`largesize`), read with the flag;
+    /// nil when it was never set — the Dock then swells to 128.
+    @ObservationIgnored private var magnifiedSize: CGFloat?
     /// The list's app tiles, read once per `itemsTTL` for the list
     /// frame they were read under.
     @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)?
@@ -461,7 +462,9 @@ final class DockEnhanceController {
         let wasTrusted = accessibilityTrusted
         accessibilityTrusted = AXIsProcessTrusted()
         screenCaptureGranted = force ? FoldCapturePermission.recheck() : FoldCapturePermission.granted
-        magnificationOn = UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "magnification") ?? false
+        let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
+        magnificationOn = dockDefaults?.bool(forKey: "magnification") ?? false
+        magnifiedSize = (dockDefaults?.object(forKey: "largesize") as? NSNumber).map { CGFloat($0.doubleValue) }
         if running, !wasTrusted, accessibilityTrusted {
             schedulePanelWarmup(layoutOnly: panel != nil)
         }
@@ -753,13 +756,10 @@ final class DockEnhanceController {
 
         let panel = ensurePanel()
         panel.apply(preview.metrics)
-        let size = panel.fittingSize()
-        let target = DockEnhanceMath.panelFrame(
-            anchor: itemFrame, edge: edge, size: size,
-            screen: screenFrame, gap: Self.panelGap,
-            labelClearance: DockEnhanceMath.nativeLabelClearance(
-                title: preview.appName, edge: edge))
-        panel.present(frame: target, dockedAt: edge, coversLabel: preferences.coverDockLabel)
+        let place = placement
+        let target = targetFrame(item: itemFrame, edge: edge, screen: screenFrame,
+                                 size: panel.fittingSize(), placement: place)
+        panel.present(frame: target, dockedAt: edge, coversLabel: place.coversLabel)
         watchers.start(escape: true, clickAway: true)
         switcher.setPreviewOpen(true)
         // An app tile's cards follow the app while the panel is up — a
@@ -1021,16 +1021,30 @@ final class DockEnhanceController {
     private func anchorPanel(to item: DockAXItem) {
         guard let panel, panel.isVisible, let anchor else { return }
         let itemFrame = anchorFrame(for: item, edge: anchor.edge, pointer: NSEvent.mouseLocation)
-        let size = panel.fittingSize()
-        let target = DockEnhanceMath.panelFrame(anchor: itemFrame, edge: anchor.edge, size: size,
-                                                screen: anchor.screen, gap: Self.panelGap,
-                                                labelClearance: DockEnhanceMath.nativeLabelClearance(
-                                                    title: preview.appName, edge: anchor.edge))
+        let target = targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen,
+                                 size: panel.fittingSize())
         self.anchor = (item, anchor.edge, anchor.screen)
         if abs(target.minX - panel.frame.minX) > 1 || abs(target.minY - panel.frame.minY) > 1
             || abs(target.width - panel.frame.width) > 1 || abs(target.height - panel.frame.height) > 1 {
             panel.setFrame(target, display: true)
         }
+    }
+
+    /// How far off the Dock the panel opens, from the card as it stands:
+    /// read at every show, re-anchor and refit, so a knob changed in
+    /// Settings lands on the next move.
+    private var placement: DockPlacement {
+        DockPlacement(gap: CGFloat(preferences.dockGap), coversLabel: preferences.coverDockLabel,
+                      magnifying: magnificationOn && !keyboardPinned, largesize: magnifiedSize)
+    }
+
+    /// The one frame the show, the re-anchor and the refit share: the
+    /// panel of `size` off the tile `item` (the anchor — under
+    /// magnification the icon at the pointer) toward the screen's middle.
+    private func targetFrame(item itemFrame: CGRect, edge: DockEdge, screen: CGRect, size: CGSize,
+                             placement place: DockPlacement? = nil) -> CGRect {
+        (place ?? placement).frame(anchor: itemFrame, edge: edge, size: size, screen: screen,
+                                   title: preview.appName)
     }
 
     /// The retained panel, built once with its actions wired — internal
@@ -1943,7 +1957,8 @@ final class DockEnhanceController {
             ? DockEnhanceMath.magnifiedAnchor(tile: tile, edge: edge, pointer: pointer) : tile
         let panel = toast ?? DockToastPanel()
         toast = panel
-        panel.show(text, over: anchor, edge: edge, screen: screen.frame, duration: duration)
+        panel.show(text, over: anchor, edge: edge, screen: screen.frame, placement: placement,
+                   title: item.title ?? "", duration: duration)
     }
 
     /// The header's "Never Preview <App>": the app joins the exclusion
@@ -1984,10 +1999,7 @@ final class DockEnhanceController {
         // the pointer, so refitting on it jumped the panel off the icon.
         let itemFrame = anchorFrame(for: anchor.item, edge: anchor.edge,
                                     pointer: NSEvent.mouseLocation)
-        panel.setFrame(DockEnhanceMath.panelFrame(
-            anchor: itemFrame, edge: anchor.edge, size: size,
-            screen: anchor.screen, gap: Self.panelGap,
-            labelClearance: DockEnhanceMath.nativeLabelClearance(
-                title: preview.appName, edge: anchor.edge)), display: true)
+        panel.setFrame(targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen, size: size),
+                       display: true)
     }
 }

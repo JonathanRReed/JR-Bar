@@ -177,33 +177,93 @@ import Testing
         #expect(right.origin.x == 1156, "a right-edge dock opens left of it")
     }
 
-    @Test func thePanelLeavesRoomForTheNativeDockLabel() {
+    @Test func coveringTheLabelTheGlassSitsTheCardsDistanceOffTheIcon() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let size = CGSize(width: 200, height: 100)
-        let gap: CGFloat = 10
+        let covering = DockPlacement(gap: 4, coversLabel: true)
+        let bottomItem = CGRect(x: 700, y: 0, width: 55, height: 62)
+        let bottom = covering.frame(anchor: bottomItem, edge: .bottom, size: size, screen: screen,
+                                    title: "Ghostty")
+        #expect(bottom.minY - bottomItem.maxY == 4, "the glass sits 4 pt above the icon, over the name bubble")
+        let leftItem = CGRect(x: 0, y: 400, width: 62, height: 55)
+        let left = covering.frame(anchor: leftItem, edge: .left, size: size, screen: screen,
+                                  title: "T3 Code (Nightly)")
+        #expect(left.minX - leftItem.maxX == 4, "a side Dock's long name keeps no band either")
+        let rightItem = CGRect(x: 1378, y: 400, width: 62, height: 55)
+        let right = covering.frame(anchor: rightItem, edge: .right, size: size, screen: screen,
+                                   title: "Visual Studio Code")
+        #expect(rightItem.minX - right.maxX == 4)
+        for gap in [CGFloat(0), 12, 40] {
+            let place = DockPlacement(gap: gap, coversLabel: true)
+            let frame = place.frame(anchor: bottomItem, edge: .bottom, size: size, screen: screen, title: "Safari")
+            #expect(frame.minY - bottomItem.maxY == max(DockEnhanceMath.minimumGap, gap),
+                    "gap \(gap) lands as asked, never under the corridor's floor")
+        }
+    }
+
+    @Test func notCoveringTheLabelThePanelLeavesTheBubblesBand() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 200, height: 100)
+        let classic = DockPlacement(gap: 4, coversLabel: false)
         let bottomItem = CGRect(x: 700, y: 0, width: 40, height: 40)
-        let bottom = DockEnhanceMath.panelFrame(
-            anchor: bottomItem, edge: .bottom, size: size, screen: screen, gap: gap)
-        #expect(bottom.minY - bottomItem.maxY >= gap + DockEnhanceMath.nativeLabelHeight,
+        let bottom = classic.frame(anchor: bottomItem, edge: .bottom, size: size, screen: screen, title: "Safari")
+        #expect(bottom.minY - bottomItem.maxY >= 4 + DockEnhanceMath.nativeLabelHeight,
                 "the native app-name bubble fits between a bottom Dock icon and the preview")
 
-        let sideClearance = DockEnhanceMath.nativeLabelClearance(
-            title: "T3 Code (Nightly)", edge: .left)
+        let sideClearance = DockEnhanceMath.nativeLabelClearance(title: "T3 Code (Nightly)", edge: .left)
         #expect(sideClearance > DockEnhanceMath.nativeLabelHeight)
         #expect(sideClearance <= DockEnhanceMath.nativeSideLabelLimit)
         let leftItem = CGRect(x: 0, y: 400, width: 40, height: 40)
-        let left = DockEnhanceMath.panelFrame(
-            anchor: leftItem, edge: .left, size: size, screen: screen, gap: gap,
-            labelClearance: sideClearance)
-        #expect(left.minX - leftItem.maxX >= gap + sideClearance,
+        let left = classic.frame(anchor: leftItem, edge: .left, size: size, screen: screen,
+                                 title: "T3 Code (Nightly)")
+        #expect(left.minX - leftItem.maxX >= 4 + sideClearance,
                 "the native app-name bubble fits beside a left Dock icon")
-
         let rightItem = CGRect(x: 1400, y: 400, width: 40, height: 40)
-        let right = DockEnhanceMath.panelFrame(
-            anchor: rightItem, edge: .right, size: size, screen: screen, gap: gap,
-            labelClearance: sideClearance)
-        #expect(rightItem.minX - right.maxX >= gap + sideClearance,
+        let right = classic.frame(anchor: rightItem, edge: .right, size: size, screen: screen,
+                                  title: "T3 Code (Nightly)")
+        #expect(rightItem.minX - right.maxX >= 4 + sideClearance,
                 "the native app-name bubble fits beside a right Dock icon")
+        #expect(classic.reach(anchor: bottomItem, edge: .bottom) == 0)
+        #expect(DockPlacement(gap: 4, coversLabel: false, magnifying: true, largesize: 128)
+            .reach(anchor: bottomItem, edge: .bottom) == 0,
+                "under the Dock's level a magnified icon draws over the panel anyway")
+    }
+
+    @Test func coveringUnderMagnificationTheGlassClearsTheSwollenIcon() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 200, height: 100)
+        let tile = CGRect(x: 700, y: 0, width: 55, height: 62)
+        let set = DockPlacement(gap: 4, coversLabel: true, magnifying: true, largesize: 96)
+        let frame = set.frame(anchor: tile, edge: .bottom, size: size, screen: screen, title: "Ghostty")
+        let setReach: CGFloat = 96 - 62
+        #expect(frame.minY - tile.maxY == 4 + setReach, "the gap plus largesize less the tile")
+        let unset = DockPlacement(gap: 4, coversLabel: true, magnifying: true, largesize: nil)
+        let far = unset.frame(anchor: tile, edge: .bottom, size: size, screen: screen, title: "Ghostty")
+        let defaultReach: CGFloat = 128 - 62
+        #expect(far.minY - tile.maxY == 4 + defaultReach, "an unset largesize is the Dock's own 128")
+        let side = CGRect(x: 0, y: 400, width: 62, height: 55)
+        let left = unset.frame(anchor: side, edge: .left, size: size, screen: screen, title: "Ghostty")
+        #expect(left.minX - side.maxX == 4 + defaultReach, "a side Dock swells across its width")
+        #expect(DockEnhanceMath.magnifiedReach(tileExtent: 140, largesize: 128) == 0,
+                "a tile already bigger than the magnified size reaches nothing")
+    }
+
+    @Test func theRoadToTheCardsHoldsAtEveryDistance() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 300, height: 120)
+        for gap in [CGFloat(0), 40] {
+            let place = DockPlacement(gap: gap, coversLabel: true)
+            let bottomItem = CGRect(x: 700, y: 0, width: 55, height: 62)
+            let bottom = place.frame(anchor: bottomItem, edge: .bottom, size: size, screen: screen, title: "Safari")
+            let up = CGPoint(x: bottomItem.midX, y: (bottomItem.maxY + bottom.minY) / 2)
+            #expect(DockEnhanceMath.inCorridor(item: bottomItem, panel: bottom, edge: .bottom, point: up, slop: 6),
+                    "halfway up at gap \(gap)")
+            let leftItem = CGRect(x: 0, y: 400, width: 62, height: 55)
+            let left = place.frame(anchor: leftItem, edge: .left, size: size, screen: screen, title: "Safari")
+            let across = CGPoint(x: (leftItem.maxX + left.minX) / 2, y: leftItem.midY)
+            #expect(DockEnhanceMath.inCorridor(item: leftItem, panel: left, edge: .left, point: across, slop: 6),
+                    "halfway across at gap \(gap)")
+        }
     }
 
     @Test func thePanelCentresOnTheTileClampedToTheScreen() {
