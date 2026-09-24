@@ -261,6 +261,38 @@ struct WindowsRenderProofTests {
         #expect(store.awakeHold?.symbol == "cup.and.saucer.fill")
     }
 
+    /// The panel beside the live case: one working row quiet for over an
+    /// hour, another working, an idle one, and a provider with nothing to
+    /// say sharing the Usage list's quiet row.
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func panelQuiet() throws {
+        let quietSessions = [
+            CoreSession(id: "claude:menubar", provider: "claude", label: "Menu bar and icon layout audit",
+                        cwd: "/Users/me/Downloads/JR-Bar", mode: "working", since: Self.t - 65 * 60, workers: 1),
+            CoreSession(id: "codex:inkling", provider: "codex", label: "Improve Inkling suggestions",
+                        cwd: "/Users/me/Downloads/inkling", mode: "working", since: Self.t - 15),
+            CoreSession(id: "gemini:notes", provider: "gemini", label: "release notes",
+                        cwd: "/Users/me/src/notes", mode: "idle", since: Self.t - 600),
+        ]
+        let quietUsage = CoreUsage(refreshedAt: Self.t - 39, providers: [
+            CoreProviderUsage(id: "codex", windows: [
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 48, resetsAt: Self.t + 5 * 86400 + 6 * 3600),
+            ], fidelity: "official", state: "ready"),
+            CoreProviderUsage(id: "claude", windows: [
+                CoreUsageWindow(key: "5h", name: "5h", usedPct: 19, resetsAt: Self.t + 3600),
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 19, resetsAt: Self.t + 3 * 86400 + 4 * 3600),
+            ], fidelity: "official", state: "ready"),
+            CoreProviderUsage(id: "opencode", windows: [
+                CoreUsageWindow(key: "5h", name: "5h", usedPct: 0, resetsAt: Self.t + 2 * 3600),
+            ], state: "ready"),
+        ])
+        let store = Self.panelStore(CoreState(now: Self.t, aggregate: CoreAggregate(mode: "working", active: 2),
+                                              sessions: quietSessions, devices: Self.devices, usage: quietUsage))
+        try Self.write("panel-quiet", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
+        #expect(store.headerCounts == "2 of 3 sessions")
+        #expect(store.quietUsage.map(\.id) == ["opencode"])
+    }
+
     // MARK: The mock daemon
 
     /// `app/scripts/mock-core.py` on a socket of its own under the temp
