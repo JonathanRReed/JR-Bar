@@ -7,7 +7,7 @@ import JRBarCore
 
 /// Render proof for the Confetti work: freeze a burst ~0.9 s in and
 /// write one 2× PNG per landing mode × palette to
-/// `/tmp/confetti-proof`. Manual evidence for the review, not a golden
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/confetti-proof`). Manual evidence for the review, not a golden
 /// test — the pieces are a fresh roll every run. It only runs when
 /// `JRBAR_RENDER_PROOF=1` is in the environment, so the regular suite
 /// never writes files.
@@ -17,7 +17,8 @@ struct ConfettiRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write /tmp/confetti-proof PNGs"))
     func snapshots() throws {
-        let dir = URL(fileURLWithPath: "/tmp/confetti-proof", isDirectory: true)
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/confetti-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let screenH = 900.0
         var written: [String] = []

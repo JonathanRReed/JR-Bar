@@ -9,7 +9,7 @@ import JRBarCore
 /// pose-shapes that read at a glance (pacing, waving, asleep, slumped,
 /// celebrating — plus the care layers: the missing-you droop and a
 /// treat's hearts), still poses in a dark capsule, 4×, written to
-/// `/tmp/buddy-proof`. Manual evidence for the review, not a golden
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/buddy-proof`). Manual evidence for the review, not a golden
 /// test — the skeleton's still poses are deterministic, but the proof
 /// exists so a human can look at them. It only runs when
 /// `JRBAR_RENDER_PROOF=1` is in the environment, so the regular suite
@@ -20,7 +20,8 @@ struct BuddyRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write /tmp/buddy-proof PNGs"))
     func snapshots() throws {
-        let dir = URL(fileURLWithPath: "/tmp/buddy-proof", isDirectory: true)
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/buddy-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let moods: [(name: String, mood: NotchBuddyToy.Mood, tint: Color,
                      care: BuddyCare.Mood, treatAge: TimeInterval?, crumbAge: TimeInterval?)] = [
@@ -78,7 +79,8 @@ struct BuddyRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write /tmp/buddy-proof PNGs"))
     func scaledSnapshots() throws {
-        let dir = URL(fileURLWithPath: "/tmp/buddy-proof", isDirectory: true)
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/buddy-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var written: [String] = []
         for character in BuddyCharacter.allCases {

@@ -138,7 +138,6 @@ struct NotchSurfaceRenderProofTests {
         let (toy, store, _) = Self.makeToy()
         defer { withExtendedLifetime(store) {} }
         let depth = max(toy.notchDepth, 32)
-        let canvas = CGSize(width: 520, height: 150)
 
         // Resting: working dots on the left, the ask on the right.
         let idle = toy.idleLayout
