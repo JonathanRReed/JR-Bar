@@ -123,6 +123,33 @@ struct UtilitySurfacesRenderProofTests {
     }
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
+    func layoutEditor() throws {
+        let subjects = Fixtures.barItems.map {
+            MenuBarProfileSubject(key: $0.bundleID ?? $0.id, isApp: $0.bundleID != nil,
+                                  title: $0.ownerName, item: $0)
+        }
+        let sections: [String: MenuBarItemSection] = [
+            "istat": .shown, "weather": .shown, "vpn": .hidden, "tailscale": .hidden,
+            "dropover": .hidden, "shottr": .hidden, "bt": .shown,
+        ]
+        let faces = Fixtures.barModel().glyphs
+        for (name, fill) in [("layout-editor", true), ("layout-editor-empty", false)] {
+            let source = MenuBarLayoutEditorView.Source(
+                subjects: { subjects },
+                section: { fill ? sections[$0.id] ?? .shown : ($0.id == "vpn" ? .hidden : .shown) },
+                setSection: { _, _ in },
+                face: { faces[$0.id] })
+            let view = MenuBarLayoutEditorView(source: source, placement: { _ in "hidden" })
+                .padding(16)
+                .frame(width: 520)
+            for dark in [true, false] {
+                try Self.write(view, glassRadius: nil, name: name, dark: dark,
+                               canvas: CGSize(width: 520, height: 160), window: true)
+            }
+        }
+    }
+
+    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
     func timeline() throws {
         let view = ReconstructedTimelineView(reconstruction: Fixtures.reconstruction(),
                                              viewState: ReconstructedTimelineViewState())
@@ -461,7 +488,7 @@ private enum Fixtures {
 
     static let barItems: [MenuBarItem] = [
         MenuBarItem(id: "istat", ownerPID: 11, ownerName: "iStat Menus",
-                    bounds: CGRect(x: 1200, y: 0, width: 44, height: 24), title: "CPU",
+                    bounds: CGRect(x: 1200, y: 0, width: 58, height: 24), title: "CPU",
                     windowID: 1, bundleID: "com.bjango.istatmenus"),
         MenuBarItem(id: "weather", ownerPID: 12, ownerName: "Weather",
                     bounds: CGRect(x: 1250, y: 0, width: 40, height: 24), title: "72°",
