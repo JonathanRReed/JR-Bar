@@ -38,7 +38,7 @@ struct AquariumControlsView: View {
             dayNightRow
             Toggle(isOn: bind(\.sound)) {
                 SettingLabel(title: "Sound",
-                             subtitle: "A plop, a gulp, a clink — only when you tap, at the Sounds page's volume. Quiet during Focus.")
+                             subtitle: "A plop, a gulp, a clink — for your taps and what happens in the open window, at the Sounds page's volume. Quiet during Focus.")
             }
 
             DisclosureGroup(isExpanded: $fineTune) {
