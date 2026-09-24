@@ -292,6 +292,10 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         # and the brightness it earns already shows in the surfaces.
         ("auto_dim", "reading"),
         ("auto_dim", "raw"),
+        # The Dot's phase error drifts by tenths of a millisecond between
+        # reads; the sync tick sends the frame itself when it reaches
+        # another 5 ms step or crosses the tolerance (readout_mark).
+        ("dot_link", "phase_error_ms"),
     ),
 }
 
@@ -5059,8 +5063,15 @@ def build_headless_controller_class() -> type:
             link.consume()
             if link.read_due(now):
                 link.start_read(dot.device_id, Path(dot.target).parent)
+            from .linked_runtime import readout_mark
+
+            tolerance = getattr(self.settings, "linked_sync_tolerance_ms", 40.0)
+            if readout_mark(link.current_error(now), tolerance) != getattr(self, "_core_linked_sent_mark", None):
+                # The readout ("Within N ms", "Re-syncing") moved: a fresh
+                # read landed or the drift carried the error a step on.
+                self._core_publish_lights(force=True)
             reason = link.due(
-                tolerance_ms=getattr(self.settings, "linked_sync_tolerance_ms", 40.0),
+                tolerance_ms=tolerance,
                 now=now,
                 dot_id=dot.device_id,
             )
@@ -6021,7 +6032,11 @@ def build_headless_controller_class() -> type:
                     "core: widget snapshot write failed: "
                     + traceback.format_exc(limit=3))
 
-        def _core_publish_lights(self) -> None:
+        def _core_publish_lights(self, *, force: bool = False) -> None:
+            """Build and send the lights frame when it changed in a way that
+            matters. ``force`` sends it anyway: the linked sync tick uses it
+            when the Dot's phase error moved to another readout step, which
+            the drift alone (volatile) never earns."""
             if getattr(self, "_core_in_refresh", False):
                 return
             server = getattr(self, "_core", None)
@@ -6034,9 +6049,13 @@ def build_headless_controller_class() -> type:
                 return
             with self._core_lock:
                 previous = self._core_documents.get("lights")
-                if previous is not None and doc_significant_equal("lights", previous, document):
+                if not force and previous is not None and doc_significant_equal("lights", previous, document):
                     return
                 self._core_documents["lights"] = document
+            from .linked_runtime import readout_mark
+
+            link = document.get("dot_link") or {}
+            self._core_linked_sent_mark = readout_mark(link.get("phase_error_ms"), link.get("tolerance_ms"))
             server.publish_lights(document)
             self._core_lights_generation += 1
             self._core_note_frame(self._core_lights_frame_times)

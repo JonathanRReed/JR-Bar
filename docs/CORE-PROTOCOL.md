@@ -689,14 +689,14 @@ end) and with every refresh.
 
   | field | meaning |
   | --- | --- |
-  | `phase_error_ms` | how far the Dot's phase is from the strip's right now, ms, signed (positive: the Dot is ahead); predicted between fresh reads from the Dot's measured clock; null before the first timed Dot write |
+  | `phase_error_ms` | how far the Dot's phase is from the strip's right now, ms, signed (positive: the Dot is ahead); predicted between fresh reads from the Dot's measured clock; null before the first timed Dot write. Drift alone does not re-send the frame: the daemon sends it when the error reaches another 5 ms step or crosses `tolerance_ms` |
   | `clock_rate` | the rate the Dot's program is written for, in Dot-ms per real ms (0.9734: 2.66% slow); 1.0 with clock correction off |
   | `clock_source` | `measured`, `warm` (the saved rate or the 0.9734 warm start), `frozen` (fresh reads stopped moving; re-anchored blind every 60 s) or `off` |
   | `tolerance_ms` | `linked_sync_tolerance_ms` in effect |
   | `last_sync_at` | epoch of the last timed Dot write |
   | `sync_writes_hour` | Dot-only re-anchors in the last hour |
   | `rotation` | how the last Dot write was rotated: `exact`, `snapped` (at a line boundary, to fit the 512-byte budget) or `unrotated` |
-  | `check_until` | while Check sync runs, when it ends (epoch); null otherwise |
+  | `check_until` | while Check sync runs, when it ends (epoch, fixed when the check starts); null otherwise |
   | `style` / `rung` | `dot_extend_style`, and the period lock's rung: `brightest`, `average`, `soft`, `static` or `continue` |
 
 - `device_receipts` (additive, 2026-09-24; absent when empty) is keyed by

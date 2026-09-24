@@ -114,8 +114,11 @@ class LinkedSync:
         self.reanchors: deque[float] = deque()
         self.last_read_at: float | None = None
         self.read_failures = 0
+        #: A running Check sync's end: monotonic, for the loop, and the
+        #: wall-clock moment the lights frame names -- fixed once, so every
+        #: build during a check does not look like a new frame.
         self.check_until: float | None = None
-        self.check_started_epoch: float | None = None
+        self.check_until_epoch: float | None = None
         self._force_reason: str | None = None
         self._lock = threading.Lock()
         self._pending: tuple[str, DeviceStatus | None] | None = None
@@ -133,6 +136,15 @@ class LinkedSync:
         self.phase_error_ms = None
         self.error_at = None
         self.check_until = None
+        self.check_until_epoch = None
+
+    def start_check(self, until: float, until_epoch: float) -> None:
+        self.check_until = float(until)
+        self.check_until_epoch = float(until_epoch)
+
+    def end_check(self) -> None:
+        self.check_until = None
+        self.check_until_epoch = None
 
     # -- forcing the Dot ---------------------------------------------------
 
@@ -335,11 +347,24 @@ class LinkedSync:
             "sync_writes_hour": len(self.reanchors),
             "rotation": record.rotation if record is not None else None,
             "check_until": (
-                None
-                if self.check_until is None or self.check_until <= now
-                else time.time() + (self.check_until - now)
+                None if self.check_until is None or self.check_until <= now else self.check_until_epoch
             ),
         }
+
+
+#: The timing readout's resolution: the lights frame is re-sent when the
+#: Dot's phase error moves to another 5 ms step or across the tolerance,
+#: not on every tenth of a millisecond it drifts.
+READOUT_STEP_MS: Final = 5.0
+
+
+def readout_mark(error_ms: float | None, tolerance_ms: object) -> tuple[int, bool] | None:
+    """What the "Within N ms" readout can show of an error: its 5 ms step
+    and whether it is past the tolerance. ``None``: nothing measured."""
+    if error_ms is None:
+        return None
+    size = abs(float(error_ms))
+    return int(size // READOUT_STEP_MS), size > clamp_tolerance(tolerance_ms)
 
 
 def _spawn_daemon(work: Callable[[], None]) -> None:
@@ -354,8 +379,10 @@ __all__ = [
     "BLIND_REANCHOR_SECONDS",
     "CHECK_SYNC_PROGRAM",
     "CHECK_SYNC_SECONDS",
+    "READOUT_STEP_MS",
     "DotWriteRecord",
     "LinkedEpoch",
     "LinkedSync",
+    "readout_mark",
     "trim_setting",
 ]

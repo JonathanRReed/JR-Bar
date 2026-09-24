@@ -661,6 +661,57 @@ def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_1_more(
     assert eject_guard_commands.status(rig.controller, {})["mounted_volume_uuid"] is None
 
 
+# --- the timing readout ------------------------------------------------------------
+
+
+def test_the_timing_readout_follows_the_measured_error__and_1_more(rig: Rig) -> None:
+    # --- scenario: a_new_read_republishes_only_when_the_readout_moves
+    """The sync tick used to update the phase error without sending a
+    lights frame, so "Within N ms" showed whatever it was at the last
+    write. It sends one now when the error reaches another 5 ms step or
+    crosses the tolerance -- and not for a tenth of a millisecond."""
+    from jrbar.core_runtime import doc_significant_equal
+
+    controller = rig.controller
+    rig.plan()
+    rig.plan()
+    sent: list[dict] = []
+    controller._core = SimpleNamespace(publish_lights=sent.append)
+    link = controller._core_linked
+    now = link.now()
+    link.last_read_at = now  # no fresh read due in this test
+    link.phase_error_ms, link.error_at, link.drift_ms_per_s = 3.0, now, 0.0
+    controller._core_publish_lights(force=True)
+    count = len(sent)
+    link.phase_error_ms = 3.4
+    controller._core_linked_sync_tick(now)
+    assert len(sent) == count
+    link.phase_error_ms = 12.0
+    controller._core_linked_sync_tick(now)
+    assert len(sent) == count + 1 and sent[-1]["dot_link"]["phase_error_ms"] == 12.0
+    # Past the tolerance, with the last re-anchor too recent for another:
+    # the readout says "Re-syncing" at once rather than at the next write.
+    link.last_sync_write_at = now
+    link.phase_error_ms = 45.0
+    controller._core_linked_sync_tick(now)
+    assert len(sent) == count + 2 and sent[-1]["dot_link"]["phase_error_ms"] == 45.0
+    # A drift of a tenth of a millisecond alone is not a new frame.
+    first = controller._core_build_lights()
+    link.phase_error_ms = 45.1
+    assert doc_significant_equal("lights", first, controller._core_build_lights())
+
+    # --- scenario: a_running_check_names_one_end_on_every_build
+    """``check_until`` was recomputed from the clock on every build, so
+    each one looked like a new frame for the whole minute."""
+    from jrbar.linked_check import start_check
+
+    start_check(controller, {"seconds": 30})
+    first = controller._core_build_lights()
+    second = controller._core_build_lights()
+    assert first["dot_link"]["check_until"] == second["dot_link"]["check_until"] is not None
+    assert doc_significant_equal("lights", first, second)
+
+
 # --- foreign writes ---------------------------------------------------------------
 
 

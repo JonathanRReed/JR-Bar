@@ -60,6 +60,7 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     strip_controller = runtime.agent_controller_for_device(strip)
     program = apply_brightness(CHECK_SYNC_PROGRAM, strip_controller.brightness)
     until = time.monotonic() + seconds
+    until_epoch = time.time() + seconds
     # Both holds are registered BEFORE either write, as a calibration
     # preview's is: a live command already queued on the write worker used
     # to land in the gap, paint over the flash and move the strip's recorded
@@ -95,7 +96,7 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     )
     runtime._core_linked_pro_program = (write.nominal_program or program, write.state)
     runtime._core_hardware_anchor[strip.device_id] = anchor
-    link.check_until = until
+    link.start_check(until, until_epoch)
     try:
         dot_write = _write_dot(runtime, dot, reason="check")
     except Exception as exc:
@@ -109,14 +110,14 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     )
     legacy.log_status_bar(f"linked sync: check started for {int(seconds)} s")
     runtime._core_publish_lights()
-    return {"until": time.time() + seconds, "devices": [strip.device_id, dot.device_id]}
+    return {"until": until_epoch, "devices": [strip.device_id, dot.device_id]}
 
 
 def _withdraw(runtime: Any) -> None:
     """Take back the holds a check that never started registered."""
     runtime._core_previews.pop("hardware", None)
     runtime._core_previews.pop("dot", None)
-    runtime._core_linked.check_until = None
+    runtime._core_linked.end_check()
 
 
 def _write_dot(runtime: Any, dot: Any, *, reason: str):
