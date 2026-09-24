@@ -200,6 +200,144 @@ enum TankPaint {
                                      center: p, startRadius: 0, endRadius: radius))
     }
 
+    // MARK: The water around a thing
+
+    /// A colour as plain numbers, so the water's palette can be sampled
+    /// and mixed per piece without a trip through NSColor.
+    typealias RGB = SIMD3<Double>
+
+    static func color(_ c: RGB, _ alpha: Double = 1) -> Color {
+        Color(red: c.x, green: c.y, blue: c.z).opacity(alpha)
+    }
+
+    static func mix(_ a: RGB, _ b: RGB, _ t: Double) -> RGB { a + (b - a) * t }
+
+    /// What lies between a piece and the glass: how much of the water's
+    /// own colour veils it, the light that reaches its crown from the
+    /// surface, and how deep into the night the tank is.
+    struct Atmosphere {
+        /// 0 against the glass … 1 lost in the water.
+        var haze: Double
+        var hazeColor: RGB
+        /// The surface light's colour.
+        var light: RGB
+        /// 0 by day … 1 deepest night: the crown light dims and the
+        /// veil darkens toward the night water.
+        var night: Double
+    }
+
+    /// Seats a piece in the water, so every piece in the shop reads as
+    /// one illustrated set: `draw` paints the piece in its own layer,
+    /// then — only where it painted — the surface light falls on its
+    /// crown with a net of caustics, its foot darkens where the sand
+    /// hides the light, and the water between it and the glass veils
+    /// the whole. `rect` bounds the piece in the context's units;
+    /// `unit` is points per unit, so the net keeps a screen size.
+    static func seat(_ c: inout GraphicsContext, in rect: CGRect, unit: Double = 1,
+                     atmosphere a: Atmosphere, seed: UInt64, caustics: Bool = true,
+                     draw: (inout GraphicsContext) -> Void) {
+        c.drawLayer { layer in
+            draw(&layer)
+            layer.blendMode = .sourceAtop
+            let box = Path(rect.insetBy(dx: -2 / unit, dy: -2 / unit))
+            let day = 1 - a.night * 0.75
+            layer.fill(box, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: color(a.light, 0.30 * day), location: 0),
+                    .init(color: color(a.light, 0.08 * day), location: 0.32),
+                    .init(color: color(a.light, 0), location: 0.55),
+                ]),
+                startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+            if caustics, day > 0.3 {
+                // The net: the crown lit, then each cell cut back out,
+                // so only the light between the cells stays.
+                layer.drawLayer { net in
+                    net.fill(box, with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: color(a.light, 0.24 * day), location: 0),
+                            .init(color: color(a.light, 0.08 * day), location: 0.4),
+                            .init(color: color(a.light, 0), location: 0.7),
+                        ]),
+                        startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                        endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+                    net.blendMode = .destinationOut
+                    net.fill(causticCells(in: rect, cell: 13 / unit, seed: seed), with: .color(.black))
+                }
+            }
+            layer.fill(box, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: .black.opacity(0), location: 0.55),
+                    .init(color: .black.opacity(0.30), location: 1),
+                ]),
+                startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+            if a.haze > 0.005 {
+                layer.fill(box, with: .color(color(a.hazeColor, min(0.92, a.haze))))
+            }
+        }
+    }
+
+    /// Caustics: the net of light the surface ripples focus onto
+    /// whatever is below, as the cells between its bright lines — a
+    /// jittered lattice of cells, each drawn a little smaller than its
+    /// corners so the net shows where they don't reach. Fill them out
+    /// of a lit layer. Seeded, so a baked piece keeps its net.
+    static func causticCells(in rect: CGRect, cell: Double, seed: UInt64) -> Path {
+        let columns = max(1, Int((rect.width / cell).rounded(.up)) + 1)
+        let rows = max(1, Int((rect.height / (cell * 0.7)).rounded(.up)) + 1)
+        var rng = Seeded(seed)
+        var corners: [CGPoint] = []
+        corners.reserveCapacity((columns + 1) * (rows + 1))
+        for row in 0...rows {
+            for col in 0...columns {
+                let stagger = row.isMultiple(of: 2) ? 0 : 0.5
+                corners.append(CGPoint(
+                    x: rect.minX + (Double(col) - 0.5 + stagger + rng.next(-0.38, 0.38)) * cell,
+                    y: rect.minY + (Double(row) - 0.5 + rng.next(-0.3, 0.3)) * cell * 0.7))
+            }
+        }
+        var p = Path()
+        for row in 0..<rows {
+            for col in 0..<columns {
+                addCausticCell(&p, corners[row * (columns + 1) + col],
+                               corners[row * (columns + 1) + col + 1],
+                               corners[(row + 1) * (columns + 1) + col + 1],
+                               corners[(row + 1) * (columns + 1) + col],
+                               keep: rng.next(0.84, 0.91))
+            }
+        }
+        return p
+    }
+
+    /// One cell of a caustic net: the quad `a b c d` drawn `keep` of
+    /// its size about its middle, the sides straight and only the
+    /// corners rounded — so the light left between two cells is a thin,
+    /// even line that swells where the lines meet, a net rather than a
+    /// field of spots.
+    static func addCausticCell(_ p: inout Path, _ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint,
+                               keep: Double) {
+        let cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4
+        func pulled(_ q: CGPoint) -> CGPoint {
+            CGPoint(x: cx + (q.x - cx) * keep, y: cy + (q.y - cy) * keep)
+        }
+        func toward(_ from: CGPoint, _ to: CGPoint, _ f: Double) -> CGPoint {
+            CGPoint(x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f)
+        }
+        let q0 = pulled(a), q1 = pulled(b), q2 = pulled(c), q3 = pulled(d)
+        let corner = 0.3
+        p.move(to: toward(q0, q1, corner))
+        p.addLine(to: toward(q0, q1, 1 - corner))
+        p.addQuadCurve(to: toward(q1, q2, corner), control: q1)
+        p.addLine(to: toward(q1, q2, 1 - corner))
+        p.addQuadCurve(to: toward(q2, q3, corner), control: q2)
+        p.addLine(to: toward(q2, q3, 1 - corner))
+        p.addQuadCurve(to: toward(q3, q0, corner), control: q3)
+        p.addLine(to: toward(q3, q0, 1 - corner))
+        p.addQuadCurve(to: toward(q0, q1, corner), control: q0)
+        p.closeSubpath()
+    }
+
     /// How far decor sinks into the water's colour: a little by
     /// night, more in the dark themes, so a lit castle never reads as a
     /// sticker on the abyss. Light sources (windows, lamps, glows) are

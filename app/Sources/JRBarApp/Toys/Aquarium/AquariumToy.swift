@@ -218,6 +218,15 @@ final class AquariumToy: Toy {
     var controls: AnyView {
         AnyView(
             VStack(alignment: .leading, spacing: 4) {
+                LabeledContent {
+                    TankSwatch(themeID: game.themeID, substrateID: game.substrateID)
+                } label: {
+                    SettingLabel(title: "In the tank", subtitle: fact)
+                }
+
+                Divider()
+                    .padding(.vertical, 4)
+
                 Toggle(isOn: showLabels) {
                     SettingLabel(title: "Show labels", subtitle: "The session's name under its fish.")
                 }
@@ -241,6 +250,10 @@ final class AquariumToy: Toy {
                 } label: {
                     SettingLabel(title: "Day & night", subtitle: dayNightSubtitle)
                 }
+
+                Divider()
+                    .padding(.vertical, 4)
+
                 LabeledContent {
                     Button("Fill screen") { self.fillScreen() }
                 } label: {
@@ -277,13 +290,6 @@ final class AquariumToy: Toy {
                     Toggle(isOn: saverClock) {
                         SettingLabel(title: "Clock on the screensaver", subtitle: "The time and date, quietly, in a corner.")
                     }
-                }
-                LabeledContent {
-                    Text(fact)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } label: {
-                    SettingLabel(title: "In the tank")
                 }
             }
         )
@@ -738,5 +744,52 @@ final class AquariumToy: Toy {
                 self.observeSessions()
             }
         }
+    }
+}
+
+/// The card's glimpse of the tank: the water in the theme it wears,
+/// light falling through it and the floor it sits on — a still
+/// picture, so the card costs nothing to show.
+private struct TankSwatch: View {
+    let themeID: String
+    let substrateID: String
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+        Canvas { canvas, size in
+            let rect = Path(CGRect(origin: .zero, size: size))
+            canvas.fill(rect, with: .linearGradient(
+                Gradient(stops: AquariumView.waterStops(forTheme: themeID)),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            let light = AquariumView.water(forTheme: themeID)
+            var shafts = canvas
+            shafts.blendMode = .plusLighter
+            for (x, w) in [(0.22, 0.10), (0.42, 0.06), (0.58, 0.12)] as [(Double, Double)] where light.shafts > 0 {
+                var beam = Path()
+                beam.move(to: CGPoint(x: size.width * (x - w / 2), y: 0))
+                beam.addLine(to: CGPoint(x: size.width * (x + w / 2), y: 0))
+                beam.addLine(to: CGPoint(x: size.width * (x + w * 1.4 + 0.12), y: size.height))
+                beam.addLine(to: CGPoint(x: size.width * (x + 0.12), y: size.height))
+                beam.closeSubpath()
+                shafts.fill(beam, with: .linearGradient(
+                    Gradient(colors: [TankPaint.color(light.light, 0.22 * light.shafts), .clear]),
+                    startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            }
+            var sand = Path()
+            sand.move(to: CGPoint(x: 0, y: size.height * 0.80))
+            sand.addQuadCurve(to: CGPoint(x: size.width, y: size.height * 0.76),
+                              control: CGPoint(x: size.width * 0.5, y: size.height * 0.70))
+            sand.addLine(to: CGPoint(x: size.width, y: size.height))
+            sand.addLine(to: CGPoint(x: 0, y: size.height))
+            sand.closeSubpath()
+            canvas.fill(sand, with: .linearGradient(
+                Gradient(colors: AquariumView.sandSwatch(forSubstrate: substrateID)),
+                startPoint: CGPoint(x: 0, y: size.height * 0.72), endPoint: CGPoint(x: 0, y: size.height)))
+        }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.35), .black.opacity(0.15)],
+                                                   startPoint: .top, endPoint: .bottom), lineWidth: 0.5))
+        .frame(width: 76, height: 46)
+        .accessibilityHidden(true)
     }
 }

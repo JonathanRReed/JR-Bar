@@ -5,13 +5,14 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// Render proof for the expanded Aquarium: one synthetic tank that
-/// owns every shop item — all the new decor, all six pets, wearables,
-/// a buried treasure, a resident or two — rendered at 1200×700 under
-/// four looks so a human can eyeball the tranche-2B art the way the
-/// review screenshots do. Off by default; set `JRBAR_RENDER_PROOF=1`
-/// to write `aquarium-*.png` into `JRBAR_RENDER_PROOF_DIR` (default
-/// `/tmp/jrbar-audit`).
+/// Render proof for the Aquarium: one synthetic tank that owns every
+/// shop item — all the decor, all the pets, wearables, a buried
+/// treasure, a resident or two — rendered at 1200×700 and 2× under
+/// every theme, floor, back wall, visitor and a night, beside a starter
+/// tank, the empty tank, a small window, the shop and the card, so a
+/// human can eyeball the art the way the review screenshots do. Off by
+/// default; set `JRBAR_RENDER_PROOF=1` to write `aquarium-*.png` into
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
 @Suite("Aquarium render proof")
 @MainActor
 struct AquariumRenderProofTests {
@@ -158,17 +159,38 @@ struct AquariumRenderProofTests {
         #expect(try render(AquariumWaterMood(shaft: 1)) > calm + 0.005)
     }
 
+    /// Writes one render into the proof directory at 2× — the scale a
+    /// Retina display draws the tank at, so the art is judged as seen.
+    private static func writePNG<V: View>(_ view: V, size: CGSize, name: String,
+                                          into dir: URL) throws -> Bool {
+        let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
+        renderer.scale = 2
+        guard let image = renderer.cgImage,
+              let png = NSBitmapImageRep(cgImage: image)
+                .representation(using: .png, properties: [:]) else {
+            Issue.record("render failed for \(name)")
+            return false
+        }
+        try png.write(to: dir.appendingPathComponent("\(name).png"))
+        return true
+    }
+
+    /// The lookbook: every theme, floor, back wall and visitor, a
+    /// night, a starter tank that owns nothing, the quiet empty tank,
+    /// and the shop — the looks a person actually meets.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write /tmp/jrbar-audit PNGs"))
     func snapshots() throws {
         let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
                       ?? "/tmp/jrbar-audit", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let tank = CGSize(width: 1200, height: 700)
         // name, theme, substrate, backdrop, pinned night, visitor.
         let shots: [(String, String, String, String, Double,
                      AquariumVisitor?)] = [
-            ("aquarium-abyss", "abyss", "black", "reefwall", 0, .submarine),
             ("aquarium-classic-day", "classic", "classic", "classic", 0, .submarine),
+            ("aquarium-classic-night", "classic", "classic", "classic", 1, nil),
+            ("aquarium-abyss", "abyss", "black", "reefwall", 0, .submarine),
             ("aquarium-sunset", "sunset", "classic", "rocky", 0.35, .submarine),
             ("aquarium-kelp", "kelp", "white", "classic", 0.1, .submarine),
             // The substrate proofs: same classic tank, only the floor
@@ -178,25 +200,132 @@ struct AquariumRenderProofTests {
             // The two remaining visitors, each pinned mid-parade.
             ("aquarium-abyss-visitors", "abyss", "black", "reefwall", 0, .whale),
             ("aquarium-diver", "classic", "classic", "reefwall", 0.45, .diver),
+            // The rest of the shop's water.
+            ("aquarium-reef", "reef", "classic", "classic", 0, nil),
+            ("aquarium-lagoon", "lagoon", "white", "classic", 0, nil),
+            ("aquarium-twilight", "twilight", "classic", "rocky", 0.2, nil),
+            ("aquarium-midnight", "midnight", "black", "reefwall", 0.6, nil),
+            ("aquarium-dawn", "dawn", "classic", "classic", 0.1, nil),
+            ("aquarium-blackwater", "blackwater", "classic", "rocky", 0, nil),
         ]
-        var written: [String] = []
+        var written = 0
         for (name, theme, substrate, backdrop, night, visitor) in shots {
             let view = AquariumView(fixture: Self.fixture(
                 themeID: theme, substrateID: substrate,
                 backdropID: backdrop, night: night, visitor: visitor))
-                .frame(width: 1200, height: 700)
-            let renderer = ImageRenderer(content: view)
-            renderer.scale = 1
-            guard let image = renderer.nsImage,
-                  let tiff = image.tiffRepresentation,
-                  let rep = NSBitmapImageRep(data: tiff),
-                  let png = rep.representation(using: .png, properties: [:]) else {
-                Issue.record("render failed for \(name)")
-                continue
-            }
-            try png.write(to: dir.appendingPathComponent("\(name).png"))
-            written.append("\(name).png")
+            if try Self.writePNG(view, size: tank, name: name, into: dir) { written += 1 }
         }
-        #expect(written.count == 8)
+        // A new tank: the seeded bed only, four sessions swimming.
+        var starter = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        starter.game = AquariumGame(pearls: 12)
+        starter.fish.removeAll { $0.isResident }
+        if try Self.writePNG(AquariumView(fixture: starter), size: tank,
+                             name: "aquarium-starter", into: dir) { written += 1 }
+        // Quiet water: nothing swimming, nothing bought.
+        let empty = AquariumView.Fixture(fish: [], night: 0)
+        if try Self.writePNG(AquariumView(fixture: empty), size: tank,
+                             name: "aquarium-empty", into: dir) { written += 1 }
+        // A small window, the size a tank first opens at.
+        let small = AquariumView(fixture: Self.fixture(
+            themeID: "classic", substrateID: "classic", backdropID: "classic",
+            night: 0, visitor: nil))
+        if try Self.writePNG(small, size: CGSize(width: 640, height: 400),
+                             name: "aquarium-small", into: dir) { written += 1 }
+        // The tap juice no swim-through catches: the half-dug treasure,
+        // a gold burst just popped and one falling, a bubble-ring trick,
+        // a bloop and a pearl on its way home to the chip.
+        if try Self.writePNG(Self.tapEvents(), size: CGSize(width: 640, height: 360),
+                             name: "aquarium-events", into: dir) { written += 1 }
+        // The shop's shelves over a rich purse, light and dark — drawn
+        // without the popover's scroll view, which the renderer skips.
+        var purse = Self.fixture(themeID: "classic", substrateID: "classic",
+                                 backdropID: "classic", night: 0, visitor: nil)
+        purse.game?.inventory = ["plant": 1, "rock": 1, "castle": 1, "themeReef": 1, "sandWhite": 1]
+        let shopTank = AquariumView(fixture: purse)
+        for scheme in [ColorScheme.light, .dark] {
+            let shelves = shopTank.shopShelves(game: purse.game ?? AquariumGame(), adults: purse.fish)
+                .padding(16)
+                .frame(width: 348, height: 3400, alignment: .top)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, scheme)
+            if try Self.writePNG(shelves, size: CGSize(width: 348, height: 3400),
+                                 name: "aquarium-shop-\(scheme == .dark ? "dark" : "light")",
+                                 into: dir) { written += 1 }
+        }
+        // The card's controls and the live tank's HUD, from a real toy
+        // on a scratch save.
+        let core = CoreModel()
+        core.apply(.state(CoreState(sessions: (0..<3).map {
+            CoreSession(id: "s\($0)", provider: "claude", mode: "idle_ready", lifecycle: "active")
+        })))
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        let save = AquariumSaveFile(url: FileManager.default.temporaryDirectory
+            .appending(path: "jrbar-proof-\(UUID().uuidString)")
+            .appending(path: "aquarium-save.json"))
+        defer { try? FileManager.default.removeItem(at: save.url.deletingLastPathComponent()) }
+        let toy = AquariumToy(core: core, store: store, saveFile: save)
+        for scheme in [ColorScheme.light, .dark] {
+            let card = toy.controls
+                .padding(16)
+                .frame(width: 560, alignment: .top)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, scheme)
+            if try Self.writePNG(card, size: CGSize(width: 560, height: 520),
+                                 name: "aquarium-card-\(scheme == .dark ? "dark" : "light")",
+                                 into: dir) { written += 1 }
+        }
+        if try Self.writePNG(AquariumView(toy: toy), size: CGSize(width: 900, height: 520),
+                             name: "aquarium-hud", into: dir) { written += 1 }
+        // The chrome alone over a flat sea, drawn through a hosting
+        // view — the image renderer leaves Liquid Glass out entirely.
+        let chrome = AquariumView(toy: toy).gameChrome(fish: [])
+            .background(Color(red: 0.06, green: 0.34, blue: 0.52))
+        let host = NSHostingView(rootView: chrome.frame(width: 900, height: 200))
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 200)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: dir.appendingPathComponent("aquarium-chrome.png"))
+                written += 1
+            }
+        }
+        #expect(written == shots.count + 10)
+    }
+
+    /// A patch of the classic tank with every tap event caught mid-way,
+    /// each drawn by the pass the live canvas uses.
+    private static func tapEvents() -> some View {
+        var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        fixture.fish = []
+        let tank = AquariumView(fixture: fixture)
+        let now = Date()
+        let motion = tank.motion
+        motion.goldBursts = [(x: CGPoint(x: 110, y: 250), bornAt: now.addingTimeInterval(-0.22)),
+                             (x: CGPoint(x: 250, y: 250), bornAt: now.addingTimeInterval(-0.62))]
+        motion.tricks = ["ring": (kind: .ring,
+                                  until: now.addingTimeInterval(AquariumBehavior.trickDuration * 0.55))]
+        motion.puffs = [(x: 0.62, y: 0.42, bornAt: now.addingTimeInterval(-0.18))]
+        motion.flights = [(from: CGPoint(x: 540, y: 280), bornAt: now.addingTimeInterval(-0.3))]
+        motion.pearlChip = CGPoint(x: 600, y: 40)
+        let ringLayout = AquariumView.Layout(x: 470, y: 200)
+        let t = now.timeIntervalSince1970
+        return Canvas { canvas, size in
+            tank.drawWater(canvas: &canvas, size: size, t: t)
+            tank.drawBackdrop(canvas: &canvas, size: size)
+            tank.drawFarSand(canvas: &canvas, size: size)
+            tank.drawSand(canvas: &canvas, size: size, t: t)
+            tank.drawTreasure(canvas: &canvas, size: size, t: t, now: now)
+            tank.drawGoldBursts(canvas: &canvas, size: size, now: now)
+            tank.drawTrickRings(canvas: &canvas, size: size, layouts: ["ring": ringLayout], now: now)
+            tank.drawPuffs(canvas: &canvas, size: size, now: now)
+            tank.drawFlights(canvas: &canvas, size: size, now: now)
+        }
     }
 }

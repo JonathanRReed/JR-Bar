@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The tank's window (docs/TOYS.md): titled, resizable, remembers its
-/// frame. "Fill screen" turns it borderless across the main screen
-/// until Esc; closing it switches the toy off through the store.
+/// The tank's window (docs/TOYS.md): resizable, remembers its frame, the
+/// water running edge to edge under a clear title bar with only the
+/// traffic lights floating over it. "Fill screen" turns it borderless
+/// across the main screen until Esc; closing it switches the toy off
+/// through the store.
 @MainActor
 final class AquariumWindowController: NSObject, NSWindowDelegate {
     /// The owning toy. The controller keeps it — the window's view
@@ -21,7 +23,12 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     /// What Fill screen suspended, to put back on Esc.
     private var savedFrame: NSRect?
     private var savedLevel: NSWindow.Level = .normal
-    private var savedMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+    private var savedMask: NSWindow.StyleMask = AquariumWindowController.styleMask
+
+    /// The window's own look: titled for its traffic lights and its
+    /// resize edges, the content under the title bar.
+    static let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable,
+                                                .fullSizeContentView]
     private(set) var filled = false
 
     init(toy: AquariumToy) {
@@ -48,10 +55,15 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> AquariumWindow {
         let window = AquariumWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: Self.styleMask,
             backing: .buffered,
             defer: false)
         window.title = "Aquarium"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        // The deep water, so a resize or the first frame never flashes
+        // the system's grey.
+        window.backgroundColor = NSColor(srgbRed: 0.02, green: 0.07, blue: 0.25, alpha: 1)
         window.contentView = NSHostingView(rootView: AquariumView(toy: toy))
         window.minSize = NSSize(width: 480, height: 300)
         window.isReleasedWhenClosed = false
