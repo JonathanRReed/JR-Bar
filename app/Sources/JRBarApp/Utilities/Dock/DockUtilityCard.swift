@@ -150,6 +150,37 @@ struct DockUtilityControls: View {
                              subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")
             }
             .disabled(!ownSwitcher)
+            LabeledContent {
+                Picker(selection: switcherOrder) {
+                    Text("Most recent first").tag(DockSwitcherOrder.recent)
+                    Text("Grouped by app").tag(DockSwitcherOrder.byApp)
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+            } label: {
+                SettingLabel(title: "Window order",
+                             subtitle: "The strip's windows by when you last used them, or each app's together.")
+            }
+            .disabled(!ownSwitcher)
+            Toggle(isOn: switcherWindowless) {
+                SettingLabel(title: "Apps with no windows",
+                             subtitle: "Running apps with no open window get a card at the end of the strip; picking one brings the app forward.")
+            }
+            .disabled(!ownSwitcher)
+            LabeledContent {
+                Picker(selection: switcherStyle) {
+                    Text("Stills").tag(DockSwitcherStyle.stills)
+                    Text("Icons").tag(DockSwitcherStyle.icons)
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+            } label: {
+                SettingLabel(title: "Card faces",
+                             subtitle: "Each window's still, or its app's icon — icons never capture, so the recording dot stays off.")
+            }
+            .disabled(!ownSwitcher)
             let learned = utility.settings().enhance.learnedPicks.count
             if learned > 0 {
                 HStack(spacing: SettingsMetrics.s) {
@@ -432,6 +463,18 @@ struct DockUtilityControls: View {
     private var dockGap: Binding<Double> {
         Binding(get: { utility.enhance.preferences.dockGap },
                 set: { utility.enhance.preferences.dockGap = $0.rounded() })
+    }
+    private var switcherOrder: Binding<DockSwitcherOrder> {
+        Binding(get: { utility.enhance.preferences.switcherOrder },
+                set: { utility.enhance.preferences.switcherOrder = $0 })
+    }
+    private var switcherWindowless: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.switcherShowsWindowless },
+                set: { utility.enhance.preferences.switcherShowsWindowless = $0 })
+    }
+    private var switcherStyle: Binding<DockSwitcherStyle> {
+        Binding(get: { utility.enhance.preferences.switcherStyle },
+                set: { utility.enhance.preferences.switcherStyle = $0 })
     }
     private var cardsHugWindows: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.cardsHugWindows },

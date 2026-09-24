@@ -141,6 +141,9 @@ enum ToySearchCatalog {
             ToySearchRow("Switcher", keywords: ["alt tab", "option tab"]),
             ToySearchRow("⌥⇥ window switcher", keywords: ["alt tab", "option tab", "windows"]),
             ToySearchRow("⌘⇥ app switcher", keywords: ["command tab", "cmd tab", "apps"]),
+            ToySearchRow("Window order", keywords: ["sort", "recent", "group by app", "alt tab"]),
+            ToySearchRow("Apps with no windows", keywords: ["windowless", "hidden apps", "alt tab"]),
+            ToySearchRow("Card faces", keywords: ["thumbnails", "icons", "style", "alt tab"]),
             ToySearchRow("Never preview", keywords: ["exclude", "ignore"]),
         ],
         "agents": [

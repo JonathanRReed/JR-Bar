@@ -214,4 +214,22 @@ struct DockSettingsTests {
         round.enhance.cardsHugWindows = true
         #expect(try decode(DockSettings.self, encode(round)) == round)
     }
+
+    @Test("the switcher's order, windowless cards and card faces default to today's strip and decode tolerantly")
+    func switcherKnobs() throws {
+        let s = DockSettings().enhance
+        #expect(s.switcherOrder == .recent)
+        #expect(s.switcherShowsWindowless == false)
+        #expect(s.switcherStyle == .stills)
+        let junk = try decode(DockSettings.self,
+                              #"{"enhance": {"switcherOrder": "alphabet", "switcherShowsWindowless": "on", "switcherStyle": 2}}"#)
+        #expect(junk.enhance.switcherOrder == .recent)
+        #expect(junk.enhance.switcherShowsWindowless == false)
+        #expect(junk.enhance.switcherStyle == .stills)
+        var round = DockSettings()
+        round.enhance.switcherOrder = .byApp
+        round.enhance.switcherShowsWindowless = true
+        round.enhance.switcherStyle = .icons
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+    }
 }

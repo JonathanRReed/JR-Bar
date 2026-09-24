@@ -261,6 +261,19 @@ struct UtilitySurfacesRenderProofTests {
                                name: name, dark: dark, canvas: CGSize(width: 1100, height: 520))
             }
         }
+        // Grouped by app, with a running app that has no window at the
+        // strip's end.
+        let grouped = Fixtures.switcherModel(stills: true)
+        let calculator = SwitcherItem(id: "app9", pid: 9, appName: "Calculator",
+                                      icon: Fixtures.icon("/System/Applications/Calculator.app"),
+                                      title: "Calculator", minimized: false, onScreen: false,
+                                      element: nil, windowID: nil, windowless: true)
+        grouped.items = DockSwitcherList.arranged(grouped.items + [calculator], order: .byApp)
+        grouped.selection = grouped.items.count - 1
+        for dark in [true, false] {
+            try Self.write(DockSwitcherView(model: grouped), glassRadius: grouped.metrics.cornerRadius,
+                           name: "switcher-byapp-windowless", dark: dark, canvas: CGSize(width: 1300, height: 520))
+        }
         // The strip at the spacing stops it shares with the preview.
         for stop in [DockPreviewSpacing.tight, .standard] {
             let model = Fixtures.switcherModel(stills: true)

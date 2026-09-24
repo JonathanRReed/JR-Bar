@@ -129,6 +129,21 @@ final class DockEnhancePreferences {
         get { read().cardsHugWindows }
         set { write?({ var s = read(); s.cardsHugWindows = newValue; return s }()) }
     }
+    /// The ⌥⇥ strip's order.
+    var switcherOrder: DockSwitcherOrder {
+        get { read().switcherOrder }
+        set { write?({ var s = read(); s.switcherOrder = newValue; return s }()) }
+    }
+    /// Running apps with no window get a card.
+    var switcherShowsWindowless: Bool {
+        get { read().switcherShowsWindowless }
+        set { write?({ var s = read(); s.switcherShowsWindowless = newValue; return s }()) }
+    }
+    /// The strip's card faces.
+    var switcherStyle: DockSwitcherStyle {
+        get { read().switcherStyle }
+        set { write?({ var s = read(); s.switcherStyle = newValue; return s }()) }
+    }
     /// The metrics every inset in the preview reads, at the stored scale.
     var metrics: DockPreviewMetrics { DockPreviewMetrics.scaled(read().previewSpacing) }
 

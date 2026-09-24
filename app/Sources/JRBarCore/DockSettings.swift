@@ -120,6 +120,24 @@ public enum DockPreviewTrigger: String, Codable, CaseIterable, Sendable {
     case middleClick
 }
 
+/// How the ⌥⇥ strip orders its windows.
+public enum DockSwitcherOrder: String, Codable, CaseIterable, Sendable {
+    /// The most recent window first — the window server's z-order.
+    case recent
+    /// Each app's windows together, the apps in the order of their most
+    /// recent window — Witch's and AltTab's grouped strip.
+    case byApp
+}
+
+/// What the ⌥⇥ strip's cards show.
+public enum DockSwitcherStyle: String, Codable, CaseIterable, Sendable {
+    /// Each window's still, over its app's icon — captures, like the
+    /// previews' thumbnails.
+    case stills
+    /// The app's icon only: no capture, so no recording dot.
+    case icons
+}
+
 /// The preview's named spacing stops. The stored value is the scale
 /// itself, so a fine-tuned 0.85 sits between stops and the card calls
 /// it Custom. Tight is the default; Standard is the look before the
@@ -242,6 +260,14 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// a wide one a wide card — with the still filling it, instead of a
     /// 16:10 box that letterboxes anything else. Off by default.
     public var cardsHugWindows: Bool
+    /// The ⌥⇥ strip's order: most recent window first (the default), or
+    /// grouped by app.
+    public var switcherOrder: DockSwitcherOrder
+    /// Running apps with no open window get a card of their own at the
+    /// strip's end. Off by default — the strip lists windows.
+    public var switcherShowsWindowless: Bool
+    /// The strip's card faces: window stills (the default) or app icons.
+    public var switcherStyle: DockSwitcherStyle
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -273,7 +299,10 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 previewSpacing: Double = DockEnhanceSettings.defaultSpacing,
                 dockGap: Double = DockEnhanceSettings.defaultDockGap,
                 coverDockLabel: Bool = true,
-                cardsHugWindows: Bool = false) {
+                cardsHugWindows: Bool = false,
+                switcherOrder: DockSwitcherOrder = .recent,
+                switcherShowsWindowless: Bool = false,
+                switcherStyle: DockSwitcherStyle = .stills) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -296,6 +325,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.dockGap = Self.clampedDockGap(dockGap)
         self.coverDockLabel = coverDockLabel
         self.cardsHugWindows = cardsHugWindows
+        self.switcherOrder = switcherOrder
+        self.switcherShowsWindowless = switcherShowsWindowless
+        self.switcherStyle = switcherStyle
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -327,6 +359,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case frontAppChord
         case previewSpacing, dockGap, coverDockLabel
         case cardsHugWindows
+        case switcherOrder, switcherShowsWindowless, switcherStyle
     }
 
     public init(from decoder: any Decoder) throws {
@@ -357,6 +390,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
             (try? c.decodeIfPresent(Double.self, forKey: .dockGap)) ?? Self.defaultDockGap)
         coverDockLabel = (try? c.decodeIfPresent(Bool.self, forKey: .coverDockLabel)) ?? true
         cardsHugWindows = (try? c.decodeIfPresent(Bool.self, forKey: .cardsHugWindows)) ?? false
+        switcherOrder = (try? c.decodeIfPresent(DockSwitcherOrder.self, forKey: .switcherOrder)) ?? .recent
+        switcherShowsWindowless = (try? c.decodeIfPresent(Bool.self, forKey: .switcherShowsWindowless)) ?? false
+        switcherStyle = (try? c.decodeIfPresent(DockSwitcherStyle.self, forKey: .switcherStyle)) ?? .stills
     }
 }
 

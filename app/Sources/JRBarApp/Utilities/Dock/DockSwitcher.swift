@@ -36,6 +36,9 @@ struct SwitcherItem: Identifiable {
     /// most urgent session its app hosts). Drives the "needs you" lane,
     /// the provider mark and the type-ahead's session search.
     var agent: DockAgentMark? = nil
+    /// A running app with no open window, listed on its own card —
+    /// picking it brings the app forward.
+    var windowless = false
 }
 
 /// One window out of `CGWindowListCopyWindowInfo`, already filtered to
@@ -395,6 +398,35 @@ enum DockSwitcherList {
     /// minimized window belongs to no display and stays, as does a row
     /// with no frame to judge — the filter narrows, it never hides
     /// what it can't place.
+    /// The strip in the card's order: as built (most recent window
+    /// first), or each app's windows together, the apps in the order of
+    /// their most recent window and each app's windows keeping theirs.
+    static func arranged(_ items: [SwitcherItem], order: DockSwitcherOrder) -> [SwitcherItem] {
+        guard order == .byApp else { return items }
+        var rank: [pid_t: Int] = [:]
+        for (index, item) in items.enumerated() where rank[item.pid] == nil { rank[item.pid] = index }
+        return items.enumerated()
+            .sorted { lhs, rhs in
+                let a = rank[lhs.element.pid] ?? 0, b = rank[rhs.element.pid] ?? 0
+                return a != b ? a < b : lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
+    /// One card per running app with no window on the strip — `apps` in
+    /// the order given (the workspace's), less every app `listed` already
+    /// shows. The card carries no window: picking it activates the app.
+    static func windowlessItems(apps: [(pid: pid_t, name: String, icon: NSImage?)],
+                                listed: Set<pid_t>) -> [SwitcherItem] {
+        apps.filter { !listed.contains($0.pid) }.map { app in
+            var item = SwitcherItem(id: "app\(app.pid)", pid: app.pid, appName: app.name, icon: app.icon,
+                                    title: app.name, minimized: false, onScreen: false,
+                                    element: nil, windowID: nil)
+            item.windowless = true
+            return item
+        }
+    }
+
     static func onDisplay(_ items: [SwitcherItem], display: CGRect) -> [SwitcherItem] {
         items.filter { item in
             guard !item.minimized, let frame = item.frame else { return true }
@@ -1137,6 +1169,13 @@ final class DockSwitcherController {
     /// The card's spacing scale, read at each open — the strip's air
     /// follows the preview's (`DockSwitcherMetrics`).
     var spacing: () -> Double = { 1 }
+    /// The strip's order, read at each build.
+    var order: () -> DockSwitcherOrder = { .recent }
+    /// Running apps with no window get a card at the strip's end.
+    var showsWindowless: () -> Bool = { false }
+    /// The card's face pick: false keeps the strip to icons and never
+    /// captures.
+    var stillsWanted: () -> Bool = { true }
     /// The daemon's live agent sessions, reduced to marks — the Dock
     /// utility wires it to `state.sessions`. Empty means no lane.
     var agentMarks: () -> [DockAgentMark] = { [] }
@@ -1518,12 +1557,22 @@ final class DockSwitcherController {
             }
         }
         let apps = read.apps
-        let items = DockSwitcherList.order(
+        var items = DockSwitcherList.order(
             rows: read.rows,
             offRows: read.offRows,
             windowsForApp: { windows.windows[$0] ?? [] },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
+        if showsWindowless() {
+            let own = ProcessInfo.processInfo.processIdentifier
+            let running = NSWorkspace.shared.runningApplications.filter {
+                $0.activationPolicy == .regular && !$0.isTerminated && $0.processIdentifier != own
+            }
+            items += DockSwitcherList.windowlessItems(
+                apps: running.map { ($0.processIdentifier, $0.localizedName ?? "App", $0.icon) },
+                listed: Set(items.map(\.pid)))
+        }
+        items = DockSwitcherList.arranged(items, order: order())
         // The Dock's unread badges ride the window cards too — Mail's 3
         // shows on each Mail window, the way the tile shows it.
         let badged = badges.isEmpty ? items : items.map { item in
@@ -1898,7 +1947,7 @@ final class DockSwitcherController {
     private func loadThumbnails() {
         thumbGeneration += 1
         let generation = thumbGeneration
-        guard thumbsAllowed() else { panel?.apply(thumbnails: [:]); return }
+        guard thumbsAllowed(), stillsWanted() else { panel?.apply(thumbnails: [:]); return }
         let offscreen = offscreenAllowed()
         // The unfiltered list: typing a letter shouldn't lose stills
         // already on the card.
@@ -2348,6 +2397,7 @@ struct DockSwitcherView: View {
 
     /// "Safari", "Notes · Minimized", "Finder · Off screen".
     private func zoomSubtitle(_ item: SwitcherItem) -> String {
+        if item.windowless { return "\(item.appName) · No open windows" }
         guard item.minimized || !item.onScreen else { return item.appName }
         let state = item.minimized ? "Minimized" : (item.windowID == nil ? "Preview unavailable" : "Off screen")
         return "\(item.appName) · \(state)"
