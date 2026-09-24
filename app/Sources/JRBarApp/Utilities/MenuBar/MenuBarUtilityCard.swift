@@ -334,7 +334,7 @@ struct MenuBarUtilityControls: View {
                 .padding(.top, 4)
             } label: {
                 SettingLabel(title: "Advanced",
-                             subtitle: "Item spacing, profiles, the ⌘⇧K command bar, hotkeys, rules, and the arrange run.")
+                             subtitle: "Item spacing, profiles, the ⌘⇧K command bar, hotkeys and rules.")
             }
         }
         .onAppear { utility.refreshListing() }
@@ -986,7 +986,7 @@ private struct MenuBarWhileRulesControls: View {
 }
 
 /// The Automate rows: the ⌘⇧K command bar, the global hotkeys, the
-/// trigger rules, and the physical arrange — the actions half of the
+/// trigger rules, and a word on ordering the bar — the actions half of the
 /// utility, each row landing on `MenuBarActions` through the utility.
 private struct MenuBarAutomationControls: View {
     let utility: MenuBarUtility
@@ -1006,12 +1006,20 @@ private struct MenuBarAutomationControls: View {
     @ViewState private var actionSeconds = 4.0
     @ViewState private var actionScript = ""
 
+    /// The button names the key that opens the palette — whatever the
+    /// Shortcuts page bound it to, or nothing once it is switched off.
+    private var commandBarTitle: String {
+        guard let bound = utility.resolvedHotkeyBindings().first(where: { $0.action == .commandBar }),
+              bound.enabled else { return "Open" }
+        return "Open (" + bound.displayString + ")"
+    }
+
     var body: some View {
         SettingLabel(title: "Automate",
                      subtitle: "The command bar, global hotkeys, and rules that fire on their own.")
 
         LabeledContent {
-            Button("Open (⌘⇧K)") { utility.openCommandBar() }
+            Button(commandBarTitle) { utility.openCommandBar() }
                 .controlSize(.small)
         } label: {
             SettingLabel(title: "Command bar",
@@ -1043,7 +1051,7 @@ private struct MenuBarAutomationControls: View {
 
         rulesSection
         MenuBarWhileRulesControls(utility: utility)
-        arrangeSection
+        orderNote
     }
 
     private func hotkeyTitle(_ action: MenuBarHotkeyAction) -> String {
@@ -1253,56 +1261,15 @@ private struct MenuBarAutomationControls: View {
         }
     }
 
-    // MARK: Arrange
+    // MARK: Order
 
+    /// The spacer engine leaves the order to the hand that owns it: a
+    /// ⌘-drag, as macOS has always allowed. Under the concealer macOS
+    /// orders the bar itself, so there is nothing to say.
     @ViewBuilder
-    private var arrangeSection: some View {
-        if utility.arrangeAvailable {
-            arrangeEditor
-        } else {
-            SettingLabel(title: "Arrange",
-                         subtitle: "macOS orders the menu bar itself while it hides items for JR-Bar, so there is nothing to arrange — and nothing moves your cursor. Arrange comes back if the spacer engine stands in.")
-        }
-    }
-
-    @ViewBuilder
-    private var arrangeEditor: some View {
-        SettingLabel(title: "Arrange",
-                     subtitle: "Physically reorder the bar — ⌘-drags move the real cursor. Keep hands off while it runs; Esc or any input cancels.")
-        ForEach(utility.arrangeItems, id: \.id) { item in
-            HStack(spacing: 8) {
-                Image(nsImage: item.owner?.icon ?? NSImage())
-                    .resizable()
-                    .frame(width: 14, height: 14)
-                Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 4)
-                Button { utility.moveArrangeItem(id: item.id, by: -1) } label: {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                Button { utility.moveArrangeItem(id: item.id, by: 1) } label: {
-                    Image(systemName: "chevron.right")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-            }
-        }
-        HStack(spacing: 8) {
-            Button(utility.arranging ? "Arranging…" : "Arrange now") {
-                utility.arrangeNow()
-            }
-            .controlSize(.small)
-            .disabled(utility.arranging || utility.arrangeItems.isEmpty)
-            if let note = utility.arrangeNote {
-                Text(note)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+    private var orderNote: some View {
+        if !utility.concealing {
+            SettingLabel(title: "Order", subtitle: "⌘-drag items to order them.")
         }
     }
 }

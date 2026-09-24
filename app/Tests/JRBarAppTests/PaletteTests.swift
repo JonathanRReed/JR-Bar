@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Foundation
+import SwiftUI
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
@@ -150,6 +151,106 @@ struct PaletteTests {
                 == ["Open", "Hide", "Always Hide", "Show"])
         #expect(PaletteRanking.filterActions(item.actions, query: "hid").map(\.title)
                 == ["Hide", "Always Hide"])
+    }
+
+    // MARK: Folded ranking — parity with the unfolded matcher
+
+    /// The matcher as it read before folding: every field lowercased and
+    /// copied per call. The folded one must score exactly the same.
+    private static func unfoldedScore(_ query: String, _ candidate: String) -> Int? {
+        let qs = Array(query.lowercased().filter { !$0.isWhitespace })
+        guard !qs.isEmpty else { return 0 }
+        let cs = Array(candidate.lowercased())
+        var qi = 0
+        var total = 0
+        var lastMatch = -2
+        var streak = 0
+        for (i, ch) in cs.enumerated() where qi < qs.count {
+            guard ch == qs[qi] else { continue }
+            var pts = 2
+            if i == lastMatch + 1 {
+                streak += 1
+                pts += 4 * streak
+            } else {
+                streak = 0
+            }
+            if i == 0 || [" ", "·", "-", "/", ":"].contains(cs[i - 1]) {
+                pts += 8
+            }
+            if qi == 0 && i == 0 { pts += 10 }
+            total += pts
+            lastMatch = i
+            qi += 1
+        }
+        guard qi == qs.count else { return nil }
+        return total - cs.count / 4
+    }
+
+    private static func unfoldedMatch(_ item: PaletteItem, query: String) -> PaletteRanking.Match? {
+        let floor = 3 * query.filter { !$0.isWhitespace }.count
+        var best: PaletteRanking.Match?
+        func consider(_ value: Int?, verb: String? = nil) {
+            guard let value, value >= floor else { return }
+            if value > (best?.score ?? .min) { best = PaletteRanking.Match(score: value, verbID: verb) }
+        }
+        consider(unfoldedScore(query, item.title))
+        for action in item.actions where unfoldedScore(query, action.title) == nil {
+            consider(unfoldedScore(query, "\(action.title) \(item.title)").map { $0 - 1 }, verb: action.id)
+        }
+        for keyword in item.keywords { consider(unfoldedScore(query, keyword).map { $0 * 4 / 5 }) }
+        if let subtitle = item.subtitle { consider(unfoldedScore(query, subtitle).map { $0 / 2 }) }
+        consider(unfoldedScore(query, item.kind).map { $0 / 2 })
+        return best
+    }
+
+    /// A seeded generator, so a failing row can be replayed.
+    private struct SplitMix: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+    }
+
+    @Test("folded ranking scores every random row exactly as the unfolded matcher did")
+    func foldedParity() {
+        // Plain letters and digits, the word breaks, capitals, accents
+        // precomposed and combining, a German ß, emoji with a skin tone
+        // and a flag — every kind of character a menu title carries.
+        let alphabet: [String] = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM0123456789").map(String.init)
+            + [" ", " ", "·", "-", "/", ":", "é", "e\u{301}", "É", "ü", "ß", "İ", "👍🏽", "🇸🇪", "Å", "\u{212B}"]
+        var rng = SplitMix(state: 0x5EED)
+        func text(_ range: ClosedRange<Int>) -> String {
+            (0..<Int.random(in: range, using: &rng)).map { _ in alphabet.randomElement(using: &rng)! }.joined()
+        }
+        var rows: [PaletteItem] = []
+        for index in 0..<300 {
+            let verbs = (0..<Int.random(in: 0...3, using: &rng)).map { _ in text(2...8) }
+            let keywords = (0..<Int.random(in: 0...3, using: &rng)).map { _ in text(3...10) }
+            let subtitle = Bool.random(using: &rng) ? text(4...24) : nil
+            rows.append(row("r\(index)", text(1...20), subtitle: subtitle, keywords: keywords, verbs: verbs))
+        }
+        var matched = 0
+        for _ in 0..<200 {
+            let query = text(1...5)
+            let folded = PaletteRanking.FoldedQuery(query)
+            for item in rows {
+                let old = Self.unfoldedMatch(item, query: query)
+                #expect(PaletteRanking.match(PaletteRanking.FoldedItem(item), query: folded) == old,
+                        "row \(item.id), query \(query)")
+                if old != nil { matched += 1 }
+            }
+            #expect(MenuBarCommands.score(query, rows[0].title) == Self.unfoldedScore(query, rows[0].title))
+        }
+        #expect(matched > 100, "the sample reaches the scoring, not only misses")
+        let ranked = PaletteRanking.arrange(rows, folded: rows.map(PaletteRanking.FoldedItem.init),
+                                            query: "ab", usage: PaletteUsage(), now: now)
+        #expect(ranked.flatMap(\.items).map(\.id)
+                == PaletteRanking.arrange(rows, query: "ab", usage: PaletteUsage(), now: now)
+                    .flatMap(\.items).map(\.id))
     }
 
     // MARK: Shortcuts
@@ -537,5 +638,39 @@ struct PaletteTests {
         controller.handle(.cancel)
         #expect(controller.model.query.isEmpty)
         #expect(controller.handle(.cancel), "the second ⎋ is still the palette's")
+    }
+
+    // MARK: The panel
+
+    @Test("the panel joins every Space without also asking to move to the active one")
+    func panelBehavior() {
+        let behavior = PalettePanel.behavior
+        #expect(!(behavior.contains(.canJoinAllSpaces) && behavior.contains(.moveToActiveSpace)),
+                "AppKit throws on the pair, and the palette never opens")
+        #expect(behavior.contains(.fullScreenAuxiliary), "it opens over a full-screen app too")
+        let panel = PalettePanel(content: EmptyView())
+        #expect(panel.collectionBehavior == behavior)
+        #expect(!panel.isVisible, "building the panel puts nothing on screen")
+        panel.close()
+    }
+
+    @Test("headless, the session counts as open once its rows are in")
+    func headlessOpen() {
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        controller.sources = { [PaletteClosureSource(build: { [self.row("a", "Alpha")] })] }
+        controller.open()
+        #expect(controller.isOpen)
+        #expect(controller.model.rows.map(\.id) == ["a"])
+        controller.close()
+        #expect(!controller.isOpen)
+    }
+
+    @Test("a tag that only repeats its section's header is left off; under Results it stays")
+    func tagsDoNotRepeatTheHeader() {
+        let tags = [PaletteTag(text: "Needs You", tone: .attention), PaletteTag(text: "2m")]
+        #expect(PaletteRowView.shownTags(tags, under: PaletteSection.needsYou.title) == [PaletteTag(text: "2m")])
+        #expect(PaletteRowView.shownTags(tags, under: PaletteSection.results.title) == tags)
+        #expect(PaletteRowView.shownTags(tags, under: nil) == tags)
     }
 }

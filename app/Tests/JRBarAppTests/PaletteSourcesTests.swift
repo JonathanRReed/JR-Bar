@@ -560,6 +560,27 @@ struct PaletteSourcesTests {
         #expect(HistoryPaletteRows.items(query: "fl", rows: rows, now: now, verbs: historyVerbs(log)).isEmpty)
     }
 
+    @Test("the palette's Open Session goes through SessionOpener, and a refusal is the verb's HUD line")
+    func openSessionThroughOpener() async {
+        let log = Log()
+        let ticket = PaletteVerbTicket()
+        let refused = PaletteVerbScope.$ticket.withValue(ticket) {
+            PaletteWiring.openSession("remote:studio:claude:x") { id in
+                log.calls.append("open:\(id)")
+                return "Running on studio — open it there"
+            }
+        }
+        await refused.value
+        #expect(log.calls == ["open:remote:studio:claude:x"])
+        #expect(ticket.lines == ["Running on studio — open it there"])
+
+        let opened = PaletteVerbScope.$ticket.withValue(ticket) {
+            PaletteWiring.openSession("claude:live") { _ in nil }
+        }
+        await opened.value
+        #expect(ticket.lines.count == 1, "a session in front says nothing")
+    }
+
     /// The fetches a history source made.
     @MainActor
     final class Fetches {
@@ -696,18 +717,38 @@ struct PaletteSourcesTests {
             return PaletteWindowVerbs(
                 overview: { log.calls.append("overview") }, usageCenter: {}, history: {}, effects: {},
                 deck: {}, replay: {}, archive: openArchive,
-                panel: {}, checkForUpdates: {}, settings: { log.calls.append("settings:\($0.rawValue)") })
+                panel: {}, checkForUpdates: {}, settings: { log.calls.append("settings:\($0.rawValue)") },
+                whatsNew: { log.calls.append("whatsNew") })
         }
         let with = WindowPaletteRows.items(verbs: verbs(archive: true))
         #expect(with.contains { $0.id == "open.archive" })
         #expect(!WindowPaletteRows.items(verbs: verbs(archive: false)).contains { $0.id == "open.archive" })
         _ = with.first { $0.id == "open.overview" }?.primary?.run()
+        let whatsNew = PaletteRanking.rank(with, query: "release notes", usage: PaletteUsage(), now: now).first
+        #expect(whatsNew?.id == "open.whatsNew")
+        #expect(whatsNew?.kind == "Window")
+        _ = whatsNew?.primary?.run()
         let pages = WindowPaletteRows.settingsItems { log.calls.append("settings:\($0.rawValue)") }
         #expect(pages.count == SettingsStore.Page.allCases.count)
         let hit = PaletteRanking.rank(pages, query: "screen bar", usage: PaletteUsage(), now: now).first
         #expect(hit?.id == "settings.devices")
         _ = hit?.primary?.run()
-        #expect(log.calls == ["overview", "settings:devices"])
+        #expect(log.calls == ["overview", "whatsNew", "settings:devices"])
+    }
+
+    @Test("the palette's What's New takes the route jrbar://window/whats-new takes")
+    func whatsNewRoutesLikeTheLink() {
+        let router = AppCommandRouter.shared
+        let saved = router.openWindow
+        defer { router.openWindow = saved }
+        var opened: [AppCommand.AppWindow] = []
+        router.openWindow = { opened.append($0) }
+        let windows = PaletteWiring.Windows(
+            overview: {}, usageCenter: { _ in }, history: {}, effects: {}, deck: {}, replay: {},
+            panel: {}, checkForUpdates: {}, settings: { _ in })
+        windows.whatsNew()
+        #expect(opened == [.whatsNew])
+        #expect(AppCommand.parse(URL(string: "jrbar://window/whats-new")!) == .window(.whatsNew))
     }
 
     // MARK: Live rows

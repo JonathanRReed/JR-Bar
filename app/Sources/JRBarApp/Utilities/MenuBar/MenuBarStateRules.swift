@@ -243,6 +243,18 @@ final class MenuBarStateRunner {
         if previous != MenuBarStateOutcome() { onOutcomeChange() }
     }
 
+    /// A relaunch after a quit mid-rule, which leaves the rule's scene
+    /// on the strip and yours saved: once the levels are in, a rule
+    /// holding a scene keeps both; otherwise yours goes back and is
+    /// forgotten. A rule that no longer holds never moves, so it would
+    /// never put it back — and the next rule to let go would restore it
+    /// over whatever you picked meanwhile.
+    func restoreSceneAfterRelaunch() {
+        guard outcome.ledScene == nil, let before = sceneBeforeRule() else { return }
+        setSceneBeforeRule(nil)
+        setScene(before)
+    }
+
     /// The scene a rule wants. Entering remembers yours (once — a scene
     /// already remembered is a relaunch mid-rule, not yours); leaving
     /// puts yours back unless you changed the scene yourself meanwhile.

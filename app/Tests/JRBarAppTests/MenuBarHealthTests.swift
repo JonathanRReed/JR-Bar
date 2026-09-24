@@ -74,6 +74,23 @@ struct MenuBarHealthTests {
     }
 
     @MainActor
+    @Test("Hand over finds every rival release the rival check knows, newest first")
+    func handoverProbesFollowTheRivals() {
+        #expect(ExternalProviders.bartender.bundleIDs == [
+            "com.surteesstudios.Bartender-7", "com.surteesstudios.Bartender-6",
+            "com.surteesstudios.Bartender-5", "com.surteesstudios.Bartender-4",
+            "com.surteesstudios.Bartender",
+        ])
+        for (probe, name) in [(ExternalProviders.bartender, "Bartender"), (ExternalProviders.ice, "Ice"),
+                              (ExternalProviders.hiddenBar, "Hidden Bar")] {
+            let rival = MenuBarRivals.known.first { $0.name == name }
+            #expect(Set(probe.bundleIDs) == rival?.bundleIDs, "\(name)")
+            #expect(!probe.bundleIDs.isEmpty, "\(name)")
+        }
+        #expect(MenuBarRivals.bundleIDs(of: "Nobody").isEmpty)
+    }
+
+    @MainActor
     @Test("the fit-edge dial nudges the learned edge and the reset forgets it")
     func fitEdgeDial() {
         let hider = MenuBarItemHider()

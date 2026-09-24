@@ -24,9 +24,6 @@ enum MenuBarCommandAction: Equatable, Sendable {
     case hideAll
     /// Every app shown, and kept that way.
     case showAll
-    /// The physical reorder flow — drags the pointer. Offered only on
-    /// the spacer engine; under the concealer macOS orders the bar.
-    case arrange
     /// A saved profile, or `MenuBarProfiles.noneID`.
     case applyProfile(id: String)
     /// The live layout saved under a name — a same-named profile is
@@ -117,15 +114,76 @@ enum MenuBarCommands {
     /// prefix for the query's first character. Longer candidates pay a
     /// small tax so a short exact word beats a long ramble.
     nonisolated static func score(_ query: String, _ candidate: String) -> Int? {
-        let qs = Array(query.lowercased().filter { !$0.isWhitespace })
+        score(Folded(query: query), Folded(candidate))
+    }
+
+    /// Text folded for the matcher: lowercased once, one key per
+    /// character. A list that asks the same rows on every keystroke —
+    /// the palette's — folds each field once and the query once per
+    /// keystroke, instead of lowercasing and copying every field for
+    /// every letter typed.
+    struct Folded: Equatable, Sendable {
+        let keys: [UInt64]
+        /// Which characters occur, one bit per letter, digit or bucket
+        /// of the rest: a query needing a bit the candidate lacks cannot
+        /// be a subsequence of it, so most rows fail on one AND.
+        let mask: UInt64
+
+        /// A candidate: every character, spaces included — they mark
+        /// word starts.
+        nonisolated init(_ text: String) {
+            self.init(keys: text.lowercased().map(Folded.key))
+        }
+
+        /// A query: its spaces dropped, as the matcher reads it.
+        nonisolated init(query: String) {
+            self.init(keys: query.lowercased().filter { !$0.isWhitespace }.map(Folded.key))
+        }
+
+        private nonisolated init(keys: [UInt64]) {
+            self.keys = keys
+            mask = keys.reduce(0) { $0 | Folded.bit($1) }
+        }
+
+        /// A key's bit in `mask`: a–z and 0–9 their own, the rest shared.
+        nonisolated static func bit(_ key: UInt64) -> UInt64 {
+            switch key {
+            case 97...122: return 1 << (key - 97)
+            case 48...57: return 1 << (key - 48 + 26)
+            default: return 1 << (36 + key % 28)
+            }
+        }
+
+        /// One character's key, equal exactly when the characters are:
+        /// plain ASCII is its own scalar; anything else compares the
+        /// way `Character` does, canonically — the one scalar its
+        /// composed form has, or, for a cluster that stays several (an
+        /// emoji sequence, a flag), its hash above the scalar range.
+        nonisolated static func key(_ character: Character) -> UInt64 {
+            let scalars = character.unicodeScalars
+            if scalars.count == 1, let scalar = scalars.first, scalar.isASCII { return UInt64(scalar.value) }
+            let composed = String(character).precomposedStringWithCanonicalMapping.unicodeScalars
+            if composed.count == 1, let scalar = composed.first { return UInt64(scalar.value) }
+            return 0x11_0000 &+ (UInt64(bitPattern: Int64(character.hashValue)) >> 1)
+        }
+    }
+
+    /// The characters a word starts after.
+    nonisolated static let wordBreaks: Set<UInt64> = Set([" ", "·", "-", "/", ":"].map(Folded.key))
+
+    /// `score(_:_:)` over folded text — the same points, nothing
+    /// lowercased or copied.
+    nonisolated static func score(_ query: Folded, _ candidate: Folded) -> Int? {
+        let qs = query.keys
         guard !qs.isEmpty else { return 0 }
-        let cs = Array(candidate.lowercased())
+        guard query.mask & ~candidate.mask == 0 else { return nil }
+        let cs = candidate.keys
         var qi = 0
         var total = 0
         var lastMatch = -2
         var streak = 0
-        for (i, ch) in cs.enumerated() where qi < qs.count {
-            guard ch == qs[qi] else { continue }
+        for i in cs.indices {
+            guard cs[i] == qs[qi] else { continue }
             var pts = 2
             if i == lastMatch + 1 {
                 streak += 1
@@ -133,13 +191,14 @@ enum MenuBarCommands {
             } else {
                 streak = 0
             }
-            if i == 0 || [" ", "·", "-", "/", ":"].contains(cs[i - 1]) {
+            if i == 0 || wordBreaks.contains(cs[i - 1]) {
                 pts += 8
             }
             if qi == 0 && i == 0 { pts += 10 }
             total += pts
             lastMatch = i
             qi += 1
+            if qi == qs.count { break }
         }
         guard qi == qs.count else { return nil }
         return total - cs.count / 4
@@ -172,7 +231,6 @@ enum MenuBarCommands {
     /// than the picker can.
     nonisolated static func build(items: [MenuBarItem],
                                   sections: [String: MenuBarItemSection],
-                                  concealing: Bool = false,
                                   profiles: [MenuBarSettings.Profile] = [],
                                   activeProfileID: String? = nil,
                                   rules: [MenuBarTriggerRule] = [],
@@ -194,7 +252,7 @@ enum MenuBarCommands {
             appRow(key: group.key, section: group.section, items: group.items,
                    split: splitKeys.contains(group.key))
         }
-        out += commandRows(concealing: concealing)
+        out += commandRows()
         out += profileRows(profiles, active: activeProfileID)
         out += rules.map(ruleRow)
         return out
@@ -263,12 +321,9 @@ enum MenuBarCommands {
             keywords: first.bundleID.map { [$0] } ?? [], verbs: verbs)
     }
 
-    /// The bar-wide commands. Arrange is the app's only synthetic
-    /// pointer input and cannot deliver under the concealer — macOS
-    /// orders the bar itself on 27 — so it is offered only while the
-    /// spacer engine runs.
-    nonisolated static func commandRows(concealing: Bool) -> [MenuBarCommand] {
-        var rows = [
+    /// The bar-wide commands.
+    nonisolated static func commandRows() -> [MenuBarCommand] {
+        [
             MenuBarCommand(
                 id: "menubar.reveal", kind: .command, title: "Reveal Hidden Items",
                 subtitle: "The hidden apps, back until the re-hide clock runs out",
@@ -300,30 +355,20 @@ enum MenuBarCommands {
                 verbs: [MenuBarCommandVerb(id: "run", title: "Show All", symbol: "eye",
                                            action: .showAll, confirmation: "All apps shown")]),
         ]
-        if !concealing {
-            rows.append(MenuBarCommand(
-                id: "menubar.arrange", kind: .command, title: "Arrange Menu Bar Items…",
-                subtitle: "⌘-drags items into your saved order — the pointer moves",
-                symbol: "arrow.left.arrow.right", tint: .gray, keywords: ["reorder", "sort"],
-                verbs: [MenuBarCommandVerb(id: "run", title: "Arrange", symbol: "arrow.left.arrow.right",
-                                           action: .arrange)]))
-        }
-        return rows
     }
 
     /// The parked utility's one row. ⌘⇧K still opens the palette with
     /// the Menu Bar utility off or handed to Bartender, Ice or Hidden
     /// Bar, but nothing on the bar answers JR-Bar then: a Hide would
-    /// write maps no engine reads while the HUD said it worked, a
-    /// reveal would poke a stopped clock, and Arrange would drag the
-    /// pointer for nobody. So the verbs wait, and the row says where
-    /// the utility switches back on.
+    /// write maps no engine reads while the HUD said it worked, and a
+    /// reveal would poke a stopped clock. So the verbs wait, and the
+    /// row says where the utility switches back on.
     nonisolated static func parkedRows() -> [MenuBarCommand] {
         [MenuBarCommand(
             id: "menubar.off", kind: .command, title: "Menu Bar Utility Is Off",
             subtitle: "Off or handed to another app — hiding, profiles and rules wait for it",
             symbol: "menubar.rectangle", tint: .gray,
-            keywords: ["hide", "reveal", "show", "profile", "rule", "arrange",
+            keywords: ["hide", "reveal", "show", "profile", "rule",
                        "bartender", "ice", "hidden bar"],
             verbs: [MenuBarCommandVerb(id: "settings", title: "Open Utilities Settings",
                                        symbol: "gearshape", action: .openSettings)])]
@@ -420,18 +465,6 @@ enum MenuBarCommands {
                                          confirmation: "Rule on"),
             ])
     }
-
-    /// The section map `hideAll` should write: every listed
-    /// unprotected item → `.hidden`, no other keys. Protected owners
-    /// are skipped — the file can never carry an assignment for the
-    /// clock.
-    nonisolated static func hideAllSections(items: [MenuBarItem]) -> [String: MenuBarItemSection] {
-        var map: [String: MenuBarItemSection] = [:]
-        for item in items where !MenuBarItemLister.isProtected(item) {
-            map[item.id] = .hidden
-        }
-        return map
-    }
 }
 
 extension MenuBarCommand {
@@ -500,8 +533,6 @@ final class MenuBarCommandBar {
     /// Whether the utility runs. Parked, the listing and maps are the
     /// card's leftovers, so the rows built from them would lie.
     var running: @MainActor () -> Bool = { true }
-    /// Whether the concealer runs — Arrange's row hides while it does.
-    var concealing: @MainActor () -> Bool = { false }
     var profiles: @MainActor () -> [MenuBarSettings.Profile] = { [] }
     /// The profile the bar wears now — its row is tagged Current.
     var activeProfileID: @MainActor () -> String? = { nil }
@@ -527,7 +558,7 @@ final class MenuBarCommandBar {
     /// The menu bar's rows at this moment.
     func menuBarItems() -> [PaletteItem] {
         let commands = running()
-            ? MenuBarCommands.build(items: items(), sections: sections(), concealing: concealing(),
+            ? MenuBarCommands.build(items: items(), sections: sections(),
                                     profiles: profiles(), activeProfileID: activeProfileID(), rules: rules())
             : MenuBarCommands.parkedRows()
         return commands

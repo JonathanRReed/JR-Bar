@@ -15,7 +15,9 @@ import OSLog
 /// Hover is a poll timer, not an event tap: a global `mouseMoved`
 /// monitor delivers ~125 events a second and every delivery costs a
 /// `TCCAccessRequest` round trip — that was the tccd flood. With hover
-/// reveal switched off the poll idles and reads nothing. One global
+/// reveal switched off the poll idles and reads nothing, and it parks
+/// outright while the displays sleep, the session is switched away or
+/// the screen is locked. One global
 /// monitor covers the discrete gestures (click, scroll); local
 /// monitors are gone entirely, so a click on our own chevron or Item
 /// Bar can never be mistaken for an empty-space gesture.
@@ -70,6 +72,12 @@ final class MenuBarReveal {
 
     private var globalMonitor: Any?
     private var hoverTimer: Timer?
+    /// Whether the hover poll runs — between `startHoverPoll()` and
+    /// `stop()`, parked or not.
+    private var polling = false
+    /// Why the hover poll is parked, if it is.
+    private(set) var parkReasons: Set<ParkReason> = []
+    private var presenceObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     /// The armed rehide's cancel token, whatever clock supplied it.
     private var cancelPendingRehide: (() -> Void)?
     private var screenObserver: NSObjectProtocol?
@@ -95,6 +103,10 @@ final class MenuBarReveal {
     /// checks, this often, whether the setting has come back on — the
     /// utility tells the reveal nothing when a toggle flips.
     nonisolated static let idlePollInterval: TimeInterval = 1.0
+    /// The share of each wait the system may shift a poll by, so the
+    /// menu bar's, the Screen Bar's and the Dock's pointer polls land
+    /// on the same wakeups instead of three chains of their own.
+    nonisolated static let pollTolerance: Double = 0.2
     /// How far below the row "far" starts.
     nonisolated static let nearReach: CGFloat = 120
     /// A gesture burst this close together is one reveal, not many —
@@ -128,20 +140,86 @@ final class MenuBarReveal {
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .scrollWheel],
             handler: { [weak self] event in self?.noteGlobalEvent(event) })
+        watchPresence()
+        if MenuBarStateRunner.screenIsLocked() { park(.locked) }
+        startHoverPoll()
+    }
+
+    /// The hover poll alone, without the gestures' monitor — `start()`
+    /// runs it, and a test can.
+    func startHoverPoll() {
+        polling = true
+        guard !isParked else { return }
         scheduleHoverPoll(after: Self.hoverPollInterval)
     }
 
     /// One-shot, re-armed at the cadence the last poll earned.
     private func scheduleHoverPoll(after interval: TimeInterval) {
         hoverTimer?.invalidate()
+        hoverTimer = nil
+        guard polling, !isParked else { return }
         let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.scheduleHoverPoll(after: self.hoverTick())
             }
         })
+        timer.tolerance = interval * Self.pollTolerance
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer
+    }
+
+    /// Whether a poll is armed — false while parked or stopped.
+    var hoverPollArmed: Bool { hoverTimer != nil }
+
+    // MARK: Parking
+
+    /// Why the hover poll sleeps: nobody points at a bar on a display
+    /// that is asleep, in a session switched away, or behind the lock
+    /// screen. The poll parks on the first reason and resumes once every
+    /// one has cleared — a wake that still shows the lock screen stays
+    /// parked until the unlock.
+    enum ParkReason: Hashable, Sendable {
+        case displaysAsleep, sessionInactive, locked
+    }
+
+    var isParked: Bool { !parkReasons.isEmpty }
+
+    func park(_ reason: ParkReason) {
+        parkReasons.insert(reason)
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        // Entry is learned afresh on the way back.
+        hoverInside = false
+        hoverDwellDeadline = nil
+    }
+
+    func unpark(_ reason: ParkReason) {
+        guard parkReasons.remove(reason) != nil, !isParked, polling else { return }
+        scheduleHoverPoll(after: Self.hoverPollInterval)
+    }
+
+    /// The display, session and lock notices that park and resume the
+    /// poll, for as long as the reveal runs.
+    private func watchPresence() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let distributed = DistributedNotificationCenter.default()
+        let notices: [(NotificationCenter, Notification.Name, ParkReason, Bool)] = [
+            (workspace, NSWorkspace.screensDidSleepNotification, .displaysAsleep, true),
+            (workspace, NSWorkspace.screensDidWakeNotification, .displaysAsleep, false),
+            (workspace, NSWorkspace.sessionDidResignActiveNotification, .sessionInactive, true),
+            (workspace, NSWorkspace.sessionDidBecomeActiveNotification, .sessionInactive, false),
+            (distributed, Notification.Name("com.apple.screenIsLocked"), .locked, true),
+            (distributed, Notification.Name("com.apple.screenIsUnlocked"), .locked, false),
+        ]
+        for (center, name, reason, parks) in notices {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    if parks { self?.park(reason) } else { self?.unpark(reason) }
+                }
+            }
+            presenceObservers.append((center, token))
+        }
     }
 
     /// One poll, and the wait it earns: fast near the bar, slower far
@@ -164,6 +242,10 @@ final class MenuBarReveal {
         globalMonitor = nil
         hoverTimer?.invalidate()
         hoverTimer = nil
+        polling = false
+        parkReasons = []
+        for observer in presenceObservers { observer.center.removeObserver(observer.token) }
+        presenceObservers = []
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
         cancelPendingRehide?()
@@ -178,6 +260,7 @@ final class MenuBarReveal {
     isolated deinit {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         hoverTimer?.invalidate()
+        for observer in presenceObservers { observer.center.removeObserver(observer.token) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         cancelPendingRehide?()
     }

@@ -200,6 +200,39 @@ struct MenuBarStateRuleTests {
     }
 
     @MainActor
+    @Test("after a quit mid-rule, yours comes back once the rule no longer holds; a holding rule keeps both")
+    func sceneAfterQuit() {
+        let rules = [rule(.microphoneLive, [.ledScene(scene: "focus")])]
+        // The quit left the rule's scene on the strip and yours saved.
+        let holding = MenuBarStateRunner()
+        let kept = Recorder()
+        kept.scene = "focus"
+        kept.before = "calm"
+        kept.wire(holding, rules: rules)
+        holding.absorb(.micInUse(true))
+        holding.restoreSceneAfterRelaunch()
+        #expect(kept.scene == "focus", "the rule holds again: its scene stays")
+        #expect(kept.before == "calm")
+        holding.absorb(.micInUse(false))
+        #expect(kept.scene == "calm")
+
+        let lapsed = MenuBarStateRunner()
+        let stale = Recorder()
+        stale.scene = "focus"
+        stale.before = "calm"
+        stale.wire(lapsed, rules: rules)
+        lapsed.absorb(.micInUse(false))
+        #expect(stale.scene == "focus", "a rule that no longer holds never moves on its own")
+        lapsed.restoreSceneAfterRelaunch()
+        #expect(stale.scene == "calm")
+        #expect(stale.before == nil)
+        stale.scene = "night"
+        lapsed.absorb(.micInUse(true))
+        lapsed.absorb(.micInUse(false))
+        #expect(stale.scene == "night", "the next rule to let go puts back what you picked, not the stale scene")
+    }
+
+    @MainActor
     @Test("the agents' quiet is leased on entry and ended on exit; stop lets everything go")
     func quietLease() {
         let runner = MenuBarStateRunner()
@@ -392,6 +425,40 @@ struct MenuBarStateRuleTests {
         utility.stateRules.absorb(.micInUse(false))
         utility.stateRules.absorb(.micInUse(true), now: Date().addingTimeInterval(1))
         #expect(utility.activeOverlay == .hideEverything, "the rule taking hold again wins")
+    }
+
+    /// The daemon's feed as a test steers it.
+    @MainActor
+    private final class Feed {
+        var facts = MenuBarCoreFacts()
+    }
+
+    @MainActor
+    @Test("a relaunch puts the saved scene back at the core's first live facts, once — parked, no rule on")
+    func utilitySceneAfterQuit() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.curation.sceneBeforeRule = "calm"
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+        let recorder = Recorder()
+        recorder.scene = "focus"
+        utility.stateRules.currentScene = { [unowned recorder] in recorder.scene }
+        utility.stateRules.setScene = { [unowned recorder] in recorder.scene = $0 }
+        let feed = Feed()
+        utility.coreFacts = { [unowned feed] in feed.facts }
+        utility.coreFactsChanged()
+        #expect(recorder.scene == "focus", "a dead feed can't take the write: nothing yet")
+        #expect(state.curation.sceneBeforeRule == "calm")
+        feed.facts.live = true
+        utility.coreFactsChanged()
+        #expect(recorder.scene == "calm")
+        #expect(state.curation.sceneBeforeRule == nil)
+        state.curation.sceneBeforeRule = "dusk"
+        recorder.scene = "night"
+        feed.facts.askPending = true
+        utility.coreFactsChanged()
+        #expect(recorder.scene == "night", "once a launch")
     }
 
     // MARK: The file

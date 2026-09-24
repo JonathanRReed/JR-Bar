@@ -170,7 +170,8 @@ struct PaletteView: View {
                     .padding(.bottom, 4)
                     .accessibilityAddTraits(.isHeader)
                 ForEach(section.items) { item in
-                    PaletteRowView(item: item, selected: item.id == model.selectedID)
+                    PaletteRowView(item: item, selected: item.id == model.selectedID,
+                                   sectionTitle: section.section.title)
                         .id(item.id)
                         .onTapGesture { onActivate(item.id) }
                         .contextMenu {
@@ -272,6 +273,17 @@ struct PaletteView: View {
 struct PaletteRowView: View {
     let item: PaletteItem
     let selected: Bool
+    /// The header the row stands under: a tag that only repeats it
+    /// ("Needs You" under Needs You) is left off; under Results it shows.
+    var sectionTitle: String?
+
+    /// The tags worth drawing under `sectionTitle`.
+    static func shownTags(_ tags: [PaletteTag], under sectionTitle: String?) -> [PaletteTag] {
+        guard let sectionTitle else { return tags }
+        return tags.filter { $0.text.caseInsensitiveCompare(sectionTitle) != .orderedSame }
+    }
+
+    private var tags: [PaletteTag] { Self.shownTags(item.tags, under: sectionTitle) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -292,7 +304,7 @@ struct PaletteRowView: View {
                 }
             }
             Spacer(minLength: 12)
-            ForEach(item.tags, id: \.self) { tag in
+            ForEach(tags, id: \.self) { tag in
                 PaletteTagView(tag: tag)
             }
             Text(item.kind)
@@ -315,7 +327,7 @@ struct PaletteRowView: View {
     private var accessibilityLabel: String {
         var parts = [item.title]
         if let subtitle = item.subtitle, !subtitle.isEmpty { parts.append(subtitle) }
-        parts += item.tags.map(\.text)
+        parts += tags.map(\.text)
         if let note = item.accessibilityNote { parts.append(note) }
         parts.append(item.kind)
         return parts.joined(separator: ", ")

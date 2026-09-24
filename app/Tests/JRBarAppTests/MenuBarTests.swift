@@ -5,10 +5,10 @@ import Testing
 @testable import JRBarCore
 
 /// The Menu Bar utility's pure halves (docs/UTILITIES.md): the window
-/// list's filter rules, the zone plan, and the position seeding that
-/// drives the ⌘-drag mover. All are functions of plain inputs so the
+/// list's filter rules, the cover plan, the reveal's state machine and
+/// the Item Bar's layout. All are functions of plain inputs so the
 /// rules get tested without a screen, a status item, or another app's
-/// items to move.
+/// items.
 @Suite("Menu Bar")
 struct MenuBarTests {
     /// A `CGWindowList` window-info dict the way the real list hands
@@ -39,14 +39,6 @@ struct MenuBarTests {
     /// The menu bar strip the tests filter against.
     private let row = CGRect(x: 0, y: 0, width: 1512, height: 24)
     private let ownPID: pid_t = 42
-
-    /// A fixed zone layout: always-hidden under x=100, hidden in
-    /// 124–500, shown right of x=524.
-    private let zones = MenuBarZones(
-        regionMin: 0,
-        alwaysHiddenControl: CGRect(x: 100, y: 0, width: 24, height: 24),
-        hiddenControl: CGRect(x: 500, y: 0, width: 24, height: 24),
-        regionMax: 1512)
 
     // MARK: Lister — one dict → an item or not
 
@@ -102,6 +94,25 @@ struct MenuBarTests {
         #expect(MenuBarItemLister.item(from: info(x: 2400), ownPID: ownPID, rows: [row]) != nil)
     }
 
+    @Test("a scan walks every app on the slow clock, with no owners known, or when a launch's walk is due")
+    func fullWalkCadence() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        func walks(_ seconds: TimeInterval, owners: Bool = true, due: [Date] = []) -> Bool {
+            MenuBarItemLister.walksAll(now: t0.addingTimeInterval(seconds), lastFull: t0,
+                                       ownersKnown: owners, launchWalksDue: due)
+        }
+        #expect(!walks(20), "a known owner set carries the quick scans past the old 20 s")
+        #expect(!walks(MenuBarItemLister.fullScanInterval - 1))
+        #expect(walks(MenuBarItemLister.fullScanInterval))
+        #expect(walks(1, owners: false), "nothing known yet: walk")
+        let launch = t0.addingTimeInterval(5)
+        let due = MenuBarItemLister.launchWalkDelays.map { launch.addingTimeInterval($0) }
+        #expect(!walks(6, due: due))
+        #expect(walks(7, due: due), "two seconds after the launch")
+        #expect(walks(35, due: due), "half a minute after it")
+        #expect(MenuBarItemLister.launchWalkDelays == [2, 10, 30])
+    }
+
     @Test("an empty window name is no title")
     func emptyTitle() {
         let item = MenuBarItemLister.item(from: info(title: ""), ownPID: ownPID, rows: [row])
@@ -153,32 +164,6 @@ struct MenuBarTests {
         // A listing taken without a snapshot knows no identifiers.
         #expect(MenuBarItemLister.items(from: infos, ownPID: ownPID, rows: [row])
                     .allSatisfy { $0.bundleID == nil })
-    }
-
-    // MARK: Zones — the physical section model
-
-    @Test("an item's section is the zone its center sits in")
-    func zoneMembership() {
-        #expect(zones.section(atCenterX: 60) == .alwaysHidden)
-        #expect(zones.section(atCenterX: 110) == .hidden)   // inside the ah control's own frame
-        #expect(zones.section(atCenterX: 300) == .hidden)
-        #expect(zones.section(atCenterX: 490) == .hidden)   // up to the chevron's left edge
-        #expect(zones.section(atCenterX: 600) == .shown)
-    }
-
-    @Test("drops target the zone's near edge so reflow finds the slot")
-    func zoneDropTargets() {
-        #expect(zones.dropX(for: .alwaysHidden) == zones.regionMin + 14)
-        #expect(zones.dropX(for: .hidden) == zones.alwaysHiddenControl.maxX
-                + (zones.hiddenControl.minX - zones.alwaysHiddenControl.maxX) / 2)
-        #expect(zones.dropX(for: .shown) == zones.hiddenControl.maxX + 16)
-        // A hidden zone collapsed to a sliver still drops just left of
-        // the chevron.
-        let tight = MenuBarZones(regionMin: 0,
-                                 alwaysHiddenControl: CGRect(x: 100, y: 0, width: 24, height: 24),
-                                 hiddenControl: CGRect(x: 130, y: 0, width: 24, height: 24),
-                                 regionMax: 1512)
-        #expect(tight.dropX(for: .hidden) == tight.hiddenControl.minX - 14)
     }
 
     // MARK: Hider — the plan
@@ -296,47 +281,6 @@ struct MenuBarTests {
         #expect(plan.hidden.map(\.id) == ["Keep"])
         #expect(plan.shown.map(\.id) == ["Up"])
         #expect(plan.hiddenCovers == [600...624])
-    }
-
-    // MARK: Mover — position seeding
-
-    @Test("an assigned item in the wrong zone earns a drag into its zone")
-    func moveStepsBasics() {
-        let items = [item("Hide", x: 800), item("Show", x: 300), item("Keep", x: 700)]
-        let steps = MenuBarItemMover.moveSteps(
-            items: items, zones: zones,
-            sections: ["Hide": .hidden, "Show": .shown], row: row)
-        // "Show" is already in the hidden zone and assigned shown → it
-        // drags right of the chevron. "Hide" is in the shown zone → it
-        // drags between the controls. "Keep" is unassigned → untouched.
-        #expect(steps.count == 2)
-        let hide = steps.first { $0.itemID == "Hide" }
-        #expect(hide?.from.x == 812)
-        #expect(hide?.to.x == zones.dropX(for: .hidden))
-        let show = steps.first { $0.itemID == "Show" }
-        #expect(show?.to.x == zones.dropX(for: .shown))
-    }
-
-    @Test("protected, unassigned, and parked items are never moved")
-    func moveStepsExclusions() {
-        let items = [
-            item("Sys", owner: "MenuBarAgent", x: 800),
-            item("Free", x: 850),
-            item("Parked", x: 7, y: 970),
-        ]
-        let steps = MenuBarItemMover.moveSteps(
-            items: items, zones: zones,
-            sections: ["Sys": .hidden, "Parked": .hidden], row: row)
-        #expect(steps.isEmpty)
-    }
-
-    @Test("always-hidden drops go first — a later leftward push can't undo them")
-    func moveStepsOrdering() {
-        let items = [item("ToAH", x: 800), item("ToHidden", x: 850)]
-        let steps = MenuBarItemMover.moveSteps(
-            items: items, zones: zones,
-            sections: ["ToAH": .alwaysHidden, "ToHidden": .hidden], row: row)
-        #expect(steps.map(\.itemID) == ["ToAH", "ToHidden"])
     }
 
     // MARK: The Item Bar's layout
@@ -540,6 +484,26 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("the hover poll parks while the displays sleep or the screen is locked, and resumes once both clear")
+    func hoverPollParks() {
+        let h = RevealHarness()
+        h.reveal.startHoverPoll()
+        #expect(h.reveal.hoverPollArmed)
+        h.reveal.park(.displaysAsleep)
+        h.reveal.park(.locked)
+        #expect(!h.reveal.hoverPollArmed)
+        h.reveal.unpark(.displaysAsleep)
+        #expect(!h.reveal.hoverPollArmed, "awake behind the lock screen: still parked")
+        h.reveal.unpark(.locked)
+        #expect(h.reveal.hoverPollArmed)
+        h.reveal.stop()
+        #expect(!h.reveal.hoverPollArmed)
+        h.reveal.park(.sessionInactive)
+        h.reveal.unpark(.sessionInactive)
+        #expect(!h.reveal.hoverPollArmed, "a resume after stop arms nothing")
+    }
+
+    @MainActor
     @Test("with hover reveal off the poll idles and reads no zone, items or hot frames")
     func hoverPollIdlesWhenOff() async {
         let h = RevealHarness()
@@ -738,27 +702,6 @@ struct MenuBarTests {
         utility.reveal.onReveal()
         #expect(!utility.bar.isOpen)
         #expect(utility.hider.revealed.isEmpty)
-    }
-
-    @MainActor
-    @Test("the control installs once per run and stop tears it all the way down")
-    func chevronLifecycle() {
-        let utility = MenuBarUtility()
-        utility.installChevron()
-        let first = utility.chevron
-        #expect(first != nil)
-        utility.installChevron()
-        #expect(utility.chevron === first, "a second install must not stack a status item")
-        utility.removeChevron()
-        #expect(utility.chevron == nil)
-        // disable → enable leaves exactly one; disable again drops it.
-        utility.installChevron()
-        #expect(utility.chevron != nil)
-        utility.removeChevron()
-        #expect(utility.chevron == nil)
-        // stop on a parked utility is a no-op.
-        utility.stop()
-        #expect(utility.chevron == nil)
     }
 
     @MainActor

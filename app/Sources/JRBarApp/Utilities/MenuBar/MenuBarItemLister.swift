@@ -326,12 +326,39 @@ enum MenuBarItemLister {
     private(set) static var axOwnerPIDs: Set<pid_t> = []
     @MainActor
     private static var lastFullScanAt = Date.distantPast
-    /// How long a quick scan may stand in for a full one. App launches
-    /// and quits trigger a full scan on their own.
-    nonisolated static let fullScanInterval: TimeInterval = 20
+    /// The full walks app launches asked for that are still to come.
+    @MainActor
+    private(set) static var launchWalksDue: [Date] = []
+    /// How long a quick scan may stand in for a full one. A walk asks
+    /// every running app — 140-odd Accessibility servers woken for a
+    /// handful of items — and launches and quits force one on their
+    /// own, so this only catches an app that adds its extra later (a
+    /// toggled preference, a call starting) with no launch to say so.
+    nonisolated static let fullScanInterval: TimeInterval = 120
+    /// After a launch, full walks this long after it too: an app draws
+    /// its extra anywhere from a beat to half a minute after the launch
+    /// notification, past the walk the launch itself forces.
+    nonisolated static let launchWalkDelays: [TimeInterval] = [2, 10, 30]
+
     /// Forces the next scan to walk every app.
     @MainActor
     static func invalidateOwners() { lastFullScanAt = .distantPast }
+
+    /// An app launched: the next scan walks every app, and so does the
+    /// first scan after each of `launchWalkDelays`. The listing loop's
+    /// own cadence runs them — no timer of their own.
+    @MainActor
+    static func noteLaunch(at now: Date = Date()) {
+        invalidateOwners()
+        launchWalksDue += launchWalkDelays.map { now.addingTimeInterval($0) }
+    }
+
+    /// Whether a scan at `now` walks every app: no owners known yet, the
+    /// last full walk `fullScanInterval` old, or a launch's walk due.
+    nonisolated static func walksAll(now: Date, lastFull: Date, ownersKnown: Bool,
+                                     launchWalksDue due: [Date]) -> Bool {
+        !ownersKnown || now.timeIntervalSince(lastFull) >= fullScanInterval || due.contains { $0 <= now }
+    }
 
     /// Re-run the AX scan off the main actor and refill `axItems`.
     /// Callers pick the cadence; the in-flight flag makes overlap a
@@ -344,10 +371,10 @@ enum MenuBarItemLister {
         defer { axScanInFlight = false }
         let rows = menuBarRows()
         let now = Date()
-        let walkAll = full || axOwnerPIDs.isEmpty
-            || now.timeIntervalSince(lastFullScanAt) >= fullScanInterval
-        // Our own app stays in the scan — its extras items list as
-        // protected, so the chevron and the always-hidden control split
+        let walkAll = full || walksAll(now: now, lastFull: lastFullScanAt,
+                                       ownersKnown: !axOwnerPIDs.isEmpty, launchWalksDue: launchWalksDue)
+        // Our own app stays in the scan: its extras (spacers, the agent
+        // item, the combined item) list as protected, so they split
         // cover runs instead of disappearing under a merged one.
         let targets = NSWorkspace.shared.runningApplications.compactMap { app -> MenuBarAX.Target? in
             guard !app.isTerminated,
@@ -371,6 +398,7 @@ enum MenuBarItemLister {
         if walkAll {
             axOwnerPIDs = Set(scanned.0.map(\.ownerPID))
             lastFullScanAt = now
+            launchWalksDue.removeAll { $0 <= now }
         }
         return scanned.0
     }

@@ -167,9 +167,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Named presets: a captured section map plus the cover appearance
     /// and control layout, applied wholesale through reconcile.
     public var profiles: [Profile]
-    /// The physical order the Arrange action drives the bar to — item
-    /// ids left→right. Written by the card's order editor; read only by
-    /// the explicit arrange button, never by reconcile.
+    /// The order the retired Arrange action drove the bar to — item ids
+    /// left→right. Still decoded so an older file round-trips; nothing
+    /// writes or reads it now.
     public var arrangeOrder: [String]
     /// The global hotkeys. Empty means the shipping set
     /// (`MenuBarHotkeys.standard`) — the card materializes the list the

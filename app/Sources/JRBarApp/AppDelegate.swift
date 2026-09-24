@@ -920,7 +920,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // utility's stop below would otherwise re-arm it.
         utilitiesStore?.menuBar.actions.shutDownPalette()
         // A clean quit puts the menu bar's hidden items back before the
-        // spacers vanish with the process.
+        // spacers vanish with the process. The "while" rules keep their
+        // LED scene: the write that would put yours back could never
+        // land, and the next launch restores it once the core is live.
+        utilitiesStore?.menuBar.stop(forQuit: true)
         utilitiesStore?.stop()
         // The child gets SIGTERM and three seconds before SIGKILL.
         supervisor?.stop(gracePeriod: 3.0)

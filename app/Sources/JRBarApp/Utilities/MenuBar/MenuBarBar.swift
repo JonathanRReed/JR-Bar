@@ -207,6 +207,16 @@ enum MenuBarBarKeys {
         return .text(characters)
     }
 
+    /// Whether the bar's local key monitor takes a key-down. The
+    /// keyboard's bar claims every key aimed at its own window — it
+    /// answers its own and swallows the rest, so a stray ⌘Q or ⌘W never
+    /// reaches JR-Bar's menus from under it — and leaves a key aimed at
+    /// another JR-Bar window, the palette's field, to that window. The
+    /// pointer's bar takes Esc alone, to fold.
+    nonisolated static func claims(keyCode: UInt16, keyboard: Bool, inBar: Bool) -> Bool {
+        keyboard ? inBar : Int(keyCode) == kVK_Escape
+    }
+
     /// The typed filter's chip width — measured in the chip's own font,
     /// so the glass grows by what the chip draws.
     nonisolated static func chipWidth(_ query: String) -> CGFloat {
@@ -560,6 +570,8 @@ struct MenuBarBarView: View {
     /// feature is off, and the menu leaves the row out.
     var updateWatch: @MainActor (MenuBarItem) -> Bool? = { _ in nil }
     var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
+    /// The tile under the pointer, for its plate.
+    @ViewState private var hoveredID: String?
 
     private var items: [MenuBarItem] { model.visibleItems }
 
@@ -593,14 +605,16 @@ struct MenuBarBarView: View {
                                         }
                                     } label: {
                                         tileLabel(for: item, width: width)
-                                            .background {
-                                                if item.id == selectedID {
-                                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                                        .fill(Color.accentColor.opacity(0.22))
-                                                }
-                                            }
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MenuBarTileStyle(selected: item.id == selectedID,
+                                                                  hovered: item.id == hoveredID))
+                                    .onHover { inside in
+                                        if inside {
+                                            hoveredID = item.id
+                                        } else if hoveredID == item.id {
+                                            hoveredID = nil
+                                        }
+                                    }
                                     .id(item.id)
                                     .accessibilityLabel(itemLabel(for: item))
                                     .accessibilityAddTraits(item.id == selectedID ? .isSelected : [])
@@ -721,6 +735,29 @@ struct MenuBarBarView: View {
     }
 }
 
+/// A tile's plate: the keyboard's selection in the accent, the pointer's
+/// hover and press in a quiet fill, so a click on the glass answers
+/// before the item's own menu opens.
+private struct MenuBarTileStyle: ButtonStyle {
+    var selected: Bool
+    var hovered: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Self.fill(selected: selected, hovered: hovered, pressed: configuration.isPressed))
+            }
+            .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+
+    static func fill(selected: Bool, hovered: Bool, pressed: Bool) -> Color {
+        if selected { return Color.accentColor.opacity(pressed ? 0.3 : 0.22) }
+        if pressed { return Color.primary.opacity(0.14) }
+        return hovered ? Color.primary.opacity(0.08) : .clear
+    }
+}
+
 /// The coordinator: owns the panel, answers `toggle`, and watches for
 /// the click outside that dismisses it. `MenuBarUtility` wires the
 /// callbacks; the card's "Open Item Bar" button and the chevron's
@@ -775,9 +812,6 @@ final class MenuBarBar {
     func toggle() {
         if isOpen { close() } else { open() }
     }
-
-    /// Whether the open bar is the keyboard's.
-    var isKeyboardDriven: Bool { isOpen && model.keys != nil }
 
     /// The screen the bar hangs from — the pointer's, so a multi-
     /// display setup opens it where the hand is, falling back to the
@@ -959,20 +993,18 @@ final class MenuBarBar {
             matching: .keyDown,
             handler: { [weak self] event in
                 guard let self else { return event }
-                // The keyboard's bar owns the keys while it holds key:
-                // it answers its own and swallows the rest, so a stray
-                // ⌘Q or ⌘W never reaches JR-Bar's menus from under it.
-                // A pointer's bar only folds on Esc.
-                if self.model.keys != nil {
-                    if let key = MenuBarBarKeys.key(keyCode: event.keyCode,
-                                                    characters: event.charactersIgnoringModifiers,
-                                                    modifiers: event.modifierFlags) {
-                        self.press(key)
-                    }
+                let keyboard = self.model.keys != nil
+                guard MenuBarBarKeys.claims(keyCode: event.keyCode, keyboard: keyboard,
+                                            inBar: event.window === self.panel) else { return event }
+                guard keyboard else {
+                    self.close()
                     return nil
                 }
-                guard event.keyCode == UInt16(kVK_Escape) else { return event }
-                self.close()
+                if let key = MenuBarBarKeys.key(keyCode: event.keyCode,
+                                                characters: event.charactersIgnoringModifiers,
+                                                modifiers: event.modifierFlags) {
+                    self.press(key)
+                }
                 return nil
             }) {
             dismissMonitors.append(localKeys)

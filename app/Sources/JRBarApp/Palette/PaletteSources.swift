@@ -982,6 +982,7 @@ struct PaletteWindowVerbs {
     var panel: @MainActor () -> Void
     var checkForUpdates: @MainActor () -> Void
     var settings: @MainActor (SettingsStore.Page) -> Void
+    var whatsNew: @MainActor () -> Void = {}
 }
 
 enum WindowPaletteRows {
@@ -1024,6 +1025,10 @@ enum WindowPaletteRows {
             items.append(window("archive", "Data Hoarder Archive", "Captured transcripts, full text",
                                 "archivebox.fill", .brown, keywords: ["transcripts", "search"], run: archive))
         }
+        items.append(window("whatsNew", "What's New", "What changed in this release of JR-Bar",
+                            "sparkles", .yellow,
+                            keywords: ["whats new", "release notes", "changelog", "new features", "tour"],
+                            run: verbs.whatsNew))
         items.append(PaletteItem(
             id: "open.updates", title: "Check for Updates…", icon: .symbol("arrow.down.circle.fill", .blue),
             kind: "Command", section: .open,

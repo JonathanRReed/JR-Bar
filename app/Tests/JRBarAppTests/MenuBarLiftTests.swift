@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -79,5 +80,18 @@ struct MenuBarLiftTests {
         #expect(decoded.curation.updateWatch == ["com.vpn"])
         utility.setWatchesUpdates(false, for: vpn)
         #expect(state.curation.updateWatch.isEmpty)
+    }
+}
+
+/// The tile's press: what counts as the app having got it.
+@Suite("Menu Bar — the tile's press")
+struct MenuBarPressTests {
+    @Test("a press the app answers late while tracking its menu counts as delivered")
+    func pressDelivered() {
+        #expect(MenuBarAX.delivered(.success))
+        #expect(MenuBarAX.delivered(.cannotComplete), "the menu is open — no fallback over it")
+        #expect(!MenuBarAX.delivered(.actionUnsupported), "no press offered: try AXShowMenu, then raise")
+        #expect(!MenuBarAX.delivered(.invalidUIElement))
+        #expect(!MenuBarAX.delivered(.apiDisabled))
     }
 }
