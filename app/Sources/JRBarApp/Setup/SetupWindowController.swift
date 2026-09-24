@@ -14,6 +14,8 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
 
     let store: SetupStore
     private var window: NSWindow?
+    /// What waits for the walkthrough to go away (`afterClose`).
+    private var afterCloseActions: [@MainActor () -> Void] = []
 
     init(store: SetupStore = SetupStore()) {
         self.store = store
@@ -65,6 +67,14 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
 
     func close() {
         window?.close()
+    }
+
+    /// Runs `action` once the walkthrough's window closes, finished or
+    /// dismissed, or straight away when it isn't up: the first launch's
+    /// panel waits here, so one surface asks for attention at a time.
+    func afterClose(_ action: @escaping @MainActor () -> Void) {
+        guard isVisible else { action(); return }
+        afterCloseActions.append(action)
     }
 
     var isVisible: Bool { window?.isVisible ?? false }
@@ -133,5 +143,12 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         store.stopPermissionUpdates()
         WindowContentLifecycle.retractWhenLastWindowCloses()
+        let waiting = afterCloseActions
+        afterCloseActions = []
+        // After the close has finished, like the retraction, so what
+        // follows doesn't land under the closing window.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { for action in waiting { action() } }
+        }
     }
 }

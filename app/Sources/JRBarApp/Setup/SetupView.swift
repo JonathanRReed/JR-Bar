@@ -95,30 +95,117 @@ struct SetupProgress: View {
 
 // MARK: - Welcome
 
-/// The mark and the one line it stands for.
+/// The mark and the one line it stands for, then the Screen Bar in
+/// miniature: what the band at the top of the screen is saying, so the
+/// first thing that lights up after setup already reads.
 struct SetupWelcomeStep: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(nsImage: StatusItemController.glyph())
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 44, height: 44)
-                .foregroundStyle(.primary)
-                .padding(18)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.12))
-                )
-            Text("Your agents, your menu bar, your notch — one app.")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
+                Image(nsImage: StatusItemController.glyph())
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 30, height: 30)
+                    .foregroundStyle(.primary)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12))
+                    )
+                    .accessibilityHidden(true)
+                Text("Your agents, your menu bar, your notch — one app.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            SetupScreenBarPrimer()
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, 24)
+    }
+}
+
+/// The Screen Bar's vocabulary: the band itself, playing a breathe in a
+/// provider's colour and then the ask's amber beat, and one row per
+/// thing its colour and motion mean. The words and the marks are the
+/// retired first-run card's; the menu-bar icon's line is on the Done step.
+struct SetupScreenBarPrimer: View {
+    /// A slow breathe in Codex's accent (`#2B8FFF`) handing off to the
+    /// ask's hard amber beat (`#FF3A00`, `ASK_AMBER`), then quiet —
+    /// through the same safety-compiled renderer the band itself uses.
+    /// Finite: `LEDStripPreview` loops it with a rest, which is the
+    /// beat's "then quiet" for free.
+    static let demoProgram = """
+        #020204
+        #2B8FFF 2200ms pulse
+        #FF3A00 540ms pulse
+        #020204 1400ms none
+        """
+
+    private var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("The Screen Bar")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                LEDStripPreview(program: Self.demoProgram, style: .band, dotSize: 5, showsBackground: false)
+                    .frame(width: 120)
+                    .accessibilityLabel("Screen Bar preview: a breathe, then an amber beat")
+            }
+            Text("The thin band at the top edge of the screen is your agents' status — the colour is who, the motion is what they're doing.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            fact {
+                HStack(spacing: 5) {
+                    ProviderTile(style: ProviderStyle.style(for: "claude"), size: 16)
+                    ProviderTile(style: ProviderStyle.style(for: "codex"), size: 16)
+                    ProviderTile(style: ProviderStyle.style(for: "gemini"), size: 16)
+                }
+            } text: {
+                Text("Colour names the provider — every agent keeps its own.")
+            }
+            fact {
+                ActivityMark(activity: .waiting, accent: .orange, reduced: reduced)
+            } text: {
+                Text("A hard amber beat — one swell, then quiet — means it's waiting on you.")
+            }
+            fact {
+                HStack(spacing: 8) {
+                    ActivityMark(activity: .failed, accent: .red, reduced: reduced)
+                    ActivityMark(activity: .working, accent: ProviderStyle.style(for: "codex").accent, reduced: reduced)
+                    ActivityMark(activity: .done, accent: .green, reduced: reduced)
+                }
+            } text: {
+                Text("Red means it broke — everything else is working or done.")
+            }
+            fact {
+                Image(systemName: "cursorarrow.rays")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            } text: {
+                Text("Hover the band to see who's asking — click it to jump to that session.")
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+    }
+
+    /// One row: the marks in a fixed-width column, the sentence beside them.
+    private func fact<Marks: View>(@ViewBuilder marks: () -> Marks, @ViewBuilder text: () -> Text) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            marks()
+                .frame(width: 60, alignment: .leading)
+                .accessibilityHidden(true)
+            text()
+                .font(.callout)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
