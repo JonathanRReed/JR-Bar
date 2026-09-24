@@ -11,13 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from jrbar.local_api_contract import LocalAPIRequest, ReplayGuard
 from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 from jrbar.provider_usage_store import default_provider_usage_state_path
 from jrbar.providers import default_state_dir
 from jrbar.serve import (
     _read_json,
-    build_authenticated_local_api_response,
     build_serve_document,
     create_serve_server,
 )
@@ -365,46 +363,6 @@ def test_cli_status_requires_token_unless_anonymous_compatibility_is_explicit(
     assert cmd_serve(parser.parse_args(["serve", "--allow-anonymous-status"])) == 0
     assert calls[-1]["allow_anonymous_status"] is True
     assert calls[-1]["status_access_token"] is None
-
-
-def test_in_process_integrations_are_authenticated_and_only_reuse_redacted_projection(
-    tmp_path: Path,
-) -> None:
-    _write_private_state(tmp_path)
-    secret = b"local-integration-test-key"
-    request = LocalAPIRequest(
-        client_id="streamdeck",
-        capability="agents.read",
-        nonce="n-1",
-        issued_at=1000.0,
-        expires_at=1020.0,
-    ).sign(secret)
-    guard = ReplayGuard()
-
-    response = build_authenticated_local_api_response(
-        request.encode(),
-        secret=secret,
-        replay_guard=guard,
-        home=tmp_path,
-        now=1001.0,
-    )
-    response_document = json.loads(response.encode())
-
-    assert response_document["capability"] == "agents.read"
-    assert response_document["data"] == {
-        "agents": build_serve_document(tmp_path)["agents"]
-    }
-    with pytest.raises(ValueError, match="replayed"):
-        build_authenticated_local_api_response(
-            request,
-            secret=secret,
-            replay_guard=guard,
-            home=tmp_path,
-            now=1001.0,
-        )
-
-    encoded = response.encode()
-    assert all(sentinel.encode() not in encoded for sentinel in PRIVATE_SENTINELS)
 
 
 def test_a_peer_cannot_pin_serve_threads__and_1_more(monkeypatch) -> None:

@@ -26,20 +26,11 @@ import hmac
 import json
 import math
 import threading
-import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from .local_api_contract import (
-    LocalAPIRequest,
-    LocalAPIResponse,
-    ReplayGuard,
-    decode_request,
-    redacted_response,
-    validate_authenticated_request,
-)
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_facts import NextActor, SourceFreshness, SourceHealth, WorkLifecycle
 from .provider_usage_platform import ProviderSourceState, provider_descriptors
@@ -231,38 +222,6 @@ def build_serve_document(home: Path | None = None) -> dict:
         "agents": _public_agents(latest),
         "usage": _public_usage(usage),
     }
-
-
-def build_authenticated_local_api_response(
-    request: LocalAPIRequest | bytes | str,
-    *,
-    secret: bytes,
-    replay_guard: ReplayGuard,
-    home: Path | None = None,
-    now: float | None = None,
-) -> LocalAPIResponse:
-    """Serve one authenticated read request without adding a new transport."""
-    if not isinstance(replay_guard, ReplayGuard):
-        raise ValueError("local API replay guard required")
-    parsed = request if type(request) is LocalAPIRequest else decode_request(request)
-    generated_at = time.time() if now is None else now
-    validate_authenticated_request(
-        parsed,
-        secret,
-        now=generated_at,
-        replay_guard=replay_guard,
-    )
-    document = build_serve_document(home)
-    projections: dict[str, dict[str, object]] = {
-        "status.read": {"status": document},
-        "agents.read": {"agents": document["agents"]},
-        "usage.read": {"usage": document["usage"]},
-    }
-    return redacted_response(
-        parsed.capability,
-        projections[parsed.capability],
-        generated_at=generated_at,
-    )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -528,7 +487,6 @@ __all__ = [
     "SERVE_DEFAULT_PORT",
     "SERVE_SCHEMA_VERSION",
     "ServeConfiguration",
-    "build_authenticated_local_api_response",
     "build_serve_document",
     "create_serve_server",
     "serve",
