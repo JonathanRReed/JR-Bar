@@ -556,6 +556,7 @@ struct ShelfShakeExclusionsRow: View {
                         .background(Capsule().fill(Color.primary.opacity(0.07)))
                     }
                 }
+                .padding(.top, SettingsMetrics.xs)
                 .padding(.bottom, SettingsMetrics.s)
             }
         }
@@ -576,9 +577,12 @@ struct ShelfShakeExclusionsRow: View {
         return apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// An app's own name for a bundle id, when it is installed.
+    /// An app's own name for a bundle id when it is installed, else the
+    /// id's last word ("com.apple.iWork.Keynote" → "Keynote").
     static func name(of bundleID: String) -> String {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
+        }
         return FileManager.default.displayName(atPath: url.path)
             .replacingOccurrences(of: ".app", with: "")
     }

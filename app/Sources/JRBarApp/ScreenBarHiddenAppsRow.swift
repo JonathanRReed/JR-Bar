@@ -42,6 +42,7 @@ struct ScreenBarHiddenAppsRow: View {
                             chip(id)
                         }
                     }
+                    .padding(.top, SettingsMetrics.xs)
                     .padding(.bottom, SettingsMetrics.s)
                 }
                 if let name = ScreenBarLiveStatus.shared.steppedAsideForApp {
