@@ -13,13 +13,12 @@ import OSLog
 /// spacer again: a two-state dance at three beats a second, verified
 /// live. The always-hidden section is override-only now.
 struct MenuBarControlFrames: Equatable, Sendable {
-    /// The boundary's live frame: the hidden run's edge and spacer —
-    /// JR-Bar's own status item when it hosts the run, else the
-    /// separate chevron.
+    /// The boundary's live frame: JR-Bar's own status item, which hosts
+    /// the hidden run. nil without a host.
     var hidden: CGRect?
-    /// The boundary's glyph share — the icon's own width when JR-Bar's
-    /// item hosts the run (a strip of session dots is wider than a
-    /// chevron), `glyphLength` for the separate chevron.
+    /// The boundary's glyph share: the icon's own width (a strip of
+    /// session dots is wider than a chevron), or `glyphLength` when no
+    /// host reports one.
     var hiddenGlyph: CGFloat = MenuBarControlFrames.glyphLength
 
     /// The glyph's share of a control — the part that is not spacer.
@@ -80,9 +79,9 @@ final class MenuBarMemoryFitEdgeStore: MenuBarFitEdgeStore {
 /// still need.
 ///
 /// Sections are *positional*, the way Bartender's separator works: an
-/// item to the left of the boundary is hidden, an item to the left of
-/// the always-hidden control is always-hidden, everything else is
-/// shown. Hiding is the boundary growing a spacer: macOS 26 packs the
+/// item to the left of the boundary is hidden, everything else is
+/// shown, and only an explicit override makes an item always-hidden.
+/// Hiding is the boundary growing a spacer: macOS 26 packs the
 /// status region right-to-left and parks whatever no longer fits in
 /// its own overflow — verified live — so a spacer that claims the
 /// stretch left of the boundary takes the hidden items off the row

@@ -373,8 +373,8 @@ enum MenuBarItemLister {
         let now = Date()
         let walkAll = full || walksAll(now: now, lastFull: lastFullScanAt,
                                        ownersKnown: !axOwnerPIDs.isEmpty, launchWalksDue: launchWalksDue)
-        // Our own app stays in the scan — its extras items list as
-        // protected, so the chevron and the always-hidden control split
+        // Our own app stays in the scan: its extras (spacers, the agent
+        // item, the combined item) list as protected, so they split
         // cover runs instead of disappearing under a merged one.
         let targets = NSWorkspace.shared.runningApplications.compactMap { app -> MenuBarAX.Target? in
             guard !app.isTerminated,
