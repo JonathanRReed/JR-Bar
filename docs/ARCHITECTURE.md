@@ -126,9 +126,10 @@ listed is a helper of the row it sits next to alphabetically.
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
 | Legacy AppKit UI (kept for `open_legacy_window`, retired one window at a time) | `status_bar_legacy.py`, `_status_bar_production.py`, `settings_window*.py`, `*_pane.py`, `agent_browser*.py`, `effect_studio_window.py`, `deck_control_center_window.py`, `why_panel.py`, `usage_view.py`, `main_menu.py`, `native_ui.py`, `window_presentation.py` |
 
-`sidepulse` (in `src/sidepulse`) is a one-release import shim that aliases
-`sidepulse.*` to `jrbar.*` so hook commands registered before the rename
-keep working until the first launch rewrites them.
+The one-release `sidepulse` import shim and console alias are gone. Hook
+commands registered before the rename (`python -m sidepulse.hook_client`
+and the rest) are still recognised by `providers.py` and `install.py`, and
+the first launch rewrites them to the bundled shim.
 
 ## The Swift package
 

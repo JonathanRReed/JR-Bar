@@ -44,8 +44,9 @@ def test_compatibility_packages_are_included() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     assert '"jrbar*"' in text
-    # The import-compat shim ships for one release so pre-rename hook
-    # commands (`python -m sidepulse.hook_client`) keep resolving.
-    assert '"sidepulse*"' in text
+    # The one-release `sidepulse` import shim and console alias are gone;
+    # installs re-point pre-rename hook commands at jrbar.
+    assert '"sidepulse*"' not in text
+    assert 'sidepulse = "' not in text
     assert "agent_monitor" not in text
     assert "sidepulse_cli" not in text

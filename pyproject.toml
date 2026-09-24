@@ -72,15 +72,10 @@ dev = [
 [project.scripts]
 jrbar = "jrbar.cli_entry:jrbar_main"
 jrbar-integrations = "jrbar.integration_cli:main"
-# Transitional alias for one release: shells and docs that still call
-# `sidepulse` keep working while installs are re-pointed at `jrbar`.
-sidepulse = "jrbar.cli_entry:jrbar_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-# `sidepulse*` is the import-compat shim (src/sidepulse) that aliases
-# `sidepulse.*` -> `jrbar.*` for hook commands registered before the rename.
-include = ["jrbar*", "sidepulse*"]
+include = ["jrbar*"]
 
 [tool.setuptools.package-data]
 "jrbar.resources" = [

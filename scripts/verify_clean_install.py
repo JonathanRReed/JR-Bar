@@ -68,21 +68,13 @@ for module in (
     "jrbar.integration_settings",
     "jrbar.status_bar_launch",
     "jrbar.t3_compat",
-    "sidepulse",
-    "sidepulse.hook_client",
-    "sidepulse.hook_entry",
 ):
     __import__(module)
 """
         run(python, "-c", probe, cwd=root)
 
         bin_dir = environment / "bin"
-        for name in (
-            "jrbar",
-            "jrbar-integrations",
-            # Transitional alias kept for one release after the rename.
-            "sidepulse",
-        ):
+        for name in ("jrbar", "jrbar-integrations"):
             path = bin_dir / name
             if not path.is_file() or not os.access(path, os.X_OK):
                 raise RuntimeError(f"missing installed console script: {path}")
@@ -91,9 +83,10 @@ for module in (
         run(bin_dir / "jrbar", "integrations", "status", "--json", cwd=root)
         run(bin_dir / "jrbar-integrations", "status", "--json", cwd=root)
         run(bin_dir / "jrbar", "agent-monitor", "--help", cwd=root)
-        run(bin_dir / "sidepulse", "--help", cwd=root)
-        run(python, "-m", "sidepulse.hook_client", cwd=root)
-        run(python, "-m", "sidepulse.hook_entry", cwd=root)
+        run(python, "-m", "jrbar.hook_client", cwd=root)
+        run(python, "-m", "jrbar.hook_entry", cwd=root)
+        if (bin_dir / "sidepulse").exists():
+            raise RuntimeError("the retired sidepulse console alias is still installed")
 
         if platform.system() == "Darwin":
             run(python, "-c", "import jrbar.status_bar", cwd=root)

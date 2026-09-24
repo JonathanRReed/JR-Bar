@@ -20,9 +20,14 @@ fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install --upgrade "$SOURCE_DIR"
 
-for command in jrbar jrbar-integrations sidepulse; do
+for command in jrbar jrbar-integrations; do
     ln -sfn "$VENV_DIR/bin/$command" "$BIN_DIR/$command"
 done
+# The `sidepulse` alias lasted one release; drop the link an older run of
+# this script made, and only that link.
+if [ -L "$BIN_DIR/sidepulse" ] && [ "$(readlink "$BIN_DIR/sidepulse")" = "$VENV_DIR/bin/sidepulse" ]; then
+    rm -f "$BIN_DIR/sidepulse"
+fi
 
 printf '%s\n' "JR-Bar installed in $VENV_DIR"
 printf '%s\n' "Commands linked in $BIN_DIR"
