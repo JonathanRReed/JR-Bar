@@ -47,4 +47,48 @@ struct ConfettiRenderProofTests {
         }
         #expect(written.count == 9)
     }
+
+    /// The burst as a person sees it, over a desktop under the menu bar:
+    /// the pop's first beat, the cone at full spread, and Rest's ribbons
+    /// lying on the band — each palette. Written to
+    /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the confetti frames"))
+    func onDesktop() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let screenH = 700.0
+        let frames: [(String, ConfettiLanding, TimeInterval)] = [
+            ("pop", .rest, 0.12), ("spread", .rest, 0.55), ("fall", .rest, 1.2), ("rested", .rest, 3.6),
+            ("fade", .fade, 1.1),
+        ]
+        for palette in ConfettiPalette.allCases {
+            for (label, landing, at) in frames {
+                var settings = ConfettiSettings(enabled: true)
+                settings.landing = landing
+                settings.palette = palette
+                let viewHeight = ConfettiView.viewHeight(for: landing, screenHeight: screenH)
+                var view = ConfettiView(color: ProviderStyle.style(for: "claude").accent, flash: false,
+                                        settings: settings, viewHeight: viewHeight,
+                                        screenHeight: screenH, bandBottom: 44)
+                view.frozen = at
+                let scene = ZStack(alignment: .top) {
+                    ProofDesktop(dark: true)
+                    Rectangle().fill(Color.black.opacity(0.22)).frame(height: 32)
+                    UnevenRoundedRectangle(bottomLeadingRadius: 8, bottomTrailingRadius: 8,
+                                           style: .continuous)
+                        .fill(.black).frame(width: 185, height: 32)
+                    view.frame(width: 900, height: viewHeight)
+                }
+                .frame(width: 900, height: viewHeight)
+                let renderer = ImageRenderer(content: scene)
+                renderer.scale = 2
+                let image = try #require(renderer.cgImage)
+                let png = try #require(NSBitmapImageRep(cgImage: image)
+                    .representation(using: .png, properties: [:]))
+                try png.write(to: dir.appendingPathComponent("confetti-\(palette.rawValue)-\(label).png"))
+            }
+        }
+    }
 }
