@@ -1338,19 +1338,25 @@ struct UsageSection: View {
                         }
                     }
                     .padding(.horizontal, 6)
+                    // A list that scrolls ends in room as deep as the fade,
+                    // so scrolled to its end the last row clears the fade
+                    // and reads at full strength.
+                    .padding(.bottom, layout.usageScroll ? Self.fadeDepth : 0)
                     .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed),
                                value: store.usage.map(\.identity) + store.quietUsage.map(\.identity))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.usageHeight))
                 .clipped()
-                // The fourth row shows its top half: it fades over that
-                // half, tile and words together.
-                .modifier(ScrollEdgeFade(active: layout.usageScroll, depth: CGFloat(PanelLayout.usageRowHeight / 2)))
+                .modifier(ScrollEdgeFade(active: layout.usageScroll, depth: Self.fadeDepth))
             }
         }
         .padding(.bottom, CGFloat(PanelLayout.usageBottomPadding))
     }
+
+    /// The list is cut with its last row's top half showing: the fade
+    /// covers that half, tile and words together.
+    static let fadeDepth = CGFloat(PanelLayout.usageRowHeight / 2)
 
     private var refreshed: String? {
         guard let at = store.core.state?.usage?.refreshedAt else { return nil }
