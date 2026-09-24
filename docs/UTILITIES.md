@@ -242,16 +242,20 @@ section covers the preview's air and where it sits.
 
 - **Spacing** is one scale, stored as `DockEnhanceSettings.previewSpacing`
   (0.5…1.6). The card's segmented control offers **Tight** (0.6, the
-  default), **Standard** (1.0) and **Roomy** (1.4), shows **Custom** for
-  anything between, and "Fine spacing" under More preview options sets
-  it in 0.05 steps. `DockPreviewMetrics.scaled(s)` turns the scale into
-  every inset the panel draws: glass edge to content, the air between
+  default), **Standard** (1.0) and **Roomy** (1.4); between the stops no
+  segment is lit and the row's subtitle names the value ("Custom: 85%"),
+  so the row keeps its shape. "Fine spacing" under More preview options
+  sets it in 0.05 steps. `DockPreviewMetrics.scaled(s)` turns the scale
+  into every inset the panel draws: glass edge to content, the air between
   sections, the card plate's reach, card to card, still to caption, the
   ask and list rows' padding, the header icon and the verb discs. Each is
   its Standard value times the scale, held at a floor (the plate never
   under 4 pt, so the waiting ring's 3 pt reach stays on it; verb discs
-  never under 20 pt). Below 0.8 the hairline between sections goes and
-  the air alone separates them. The corners are derived, so they stay
+  never under 20 pt). The header's icon and verb discs are controls, not
+  air: they shrink toward Tight and stop at Standard's 30 and 22 pt, so
+  Roomy is air round the header, not a bigger one. Below 0.8 the
+  hairline between sections goes and the air alone separates them. The
+  corners are derived, so they stay
   concentric: plate = still corner + pad, glass = plate + inset (24 at
   Standard, where it was 20). Standard is otherwise the look before the
   knob: Safari's three-card panel is 496×194 at Standard and 472×165 at
@@ -269,12 +273,20 @@ section covers the preview's air and where it sits.
   panel sits one level under the Dock and keeps today's band (34 pt on a
   bottom Dock; the name's width, up to 240 pt, beside a side Dock).
 - One `DockPlacement` serves the show, the re-anchor, the refit and the
-  gesture toast; three call sites used to repeat one expression.
+  gesture toast; three call sites used to repeat one expression. All
+  three set the panel's level from it too, so turning the cover on or off
+  while a preview is up lands on its next move. Covering, the opening
+  drift stops a point short of the gap (a 10 pt drift over the Dock's
+  window crossed the hovered icon and could take the Dock's hover);
+  under the Dock it drifts the full 10.
 - The card's live sample (`DockPreviewSample`) draws a desk, a Dock of
   55 pt tiles and Safari's preview placed by that same frame math, with
   the name bubble where the Dock would show it. It draws built-in stills
   (`DockPreviewSamples`, which the render proofs use too), never a
-  capture, so opening Settings never lights the recording dot.
+  capture, so opening Settings never lights the recording dot. Its desk
+  is one fixed size (600×380), measured to hold the roomiest spacing at
+  the farthest gap with the name band kept, so the card never jumps
+  under a slider.
 - The ⌥⇥ switcher follows the same scale (`DockSwitcherMetrics`): the
   pane, row and strip insets and the card gap scale with it, the zoom
   pane narrows to 80 % at the tight end, and the glass corner is the
@@ -282,7 +294,10 @@ section covers the preview's air and where it sits.
 - **Cards take each window's shape** (off): a card's width follows its
   window's aspect, held between 0.6 and 1.9 of the height, and the still
   fills it from the top-leading corner — no letterbox beside a portrait
-  window.
+  window. The caption and plate keep a 96 pt column, the narrow still
+  centred in it, so a portrait window's title still reads. The still's
+  box is pinned, so pointing at a card never widens it; a still too
+  narrow for the row of hover verbs stacks them down its edge.
 - The switcher's own knobs: **Window order** (most recent first, or
   grouped by app), **Apps with no windows** (off: a card per running app
   with none, at the strip's end) and **Card faces** (stills, or icons that
