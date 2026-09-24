@@ -404,6 +404,57 @@ visitor is still marked seen and its caption tells the story), tapped
 fish do no tricks, and the sips, spirals, rings & bursts hold at a
 still pose — poses stay.
 
+### Swimming
+
+A fish cruises in gentle arcs: the wander bends its path at a turn
+*rate* (`AquariumSteering`), a weak spring holds it near its own depth,
+its climb stays under about 26° and its drawn pitch is eased and
+clamped, so it never noses straight up or down. Turning back is its own
+behaviour — a committed U-turn (`SwimTurn`) — started by the glass seen
+far enough ahead that the turn fits, by food or a tap behind it, or by a
+whim that has lasted a beat; a turn is followed by a cooldown before
+the next whim, so a fish reverses about twice a minute at Natural,
+mostly at the glass, with the odd mid-tank change of mind. A fish at a
+work station swims to it and hovers once it is close, nosing at the
+point instead of circling it.
+
+The turn itself (`AquariumTurn`) is a U-turn in depth, after the
+classic 2D turn strip: the fish stays level, drifts forward about half a
+body and comes back, its head swings round ahead of its tail (a
+per-point warp along the body that can never fold), and for four or
+five frames in the middle it is drawn head-on (`AquariumFishFront`) —
+a proper face built from each species' kit, both eyes on you, the
+pectorals out, the tail tips sweeping behind, a white collar on a
+banded fish, a translucent fan for the betta's veil, spines on the
+puffer. The facing only flips inside that head-on frame, so no fish ever
+mirrors where you can see it. The tail kicks out of the turn. Hats sit
+square on the crown head-on, glasses cover both eyes, the bow tie knots
+at the middle of the chin and the laptop sits the frame out. The
+seahorse, which stands upright, flicks round through a narrow side view
+instead.
+
+Everything else that used to mirror in one frame turns too: fry squash
+through zero at each end of their orbit, a completing fish facing left
+turns round before it corkscrews out, a fish that darts for a finished
+run's pellet runs through its own turn, the turtle comes round over
+1.4 s with a small dip, each tetra turns on its own beat, and the
+axolotl ambles back with a turn instead of jumping home. An ask holds
+the turn about a third of the way round, level, both eyes on you,
+whatever the fish was doing when it came; answering swims it back down
+from the glass. Every change of state starts from where the fish was
+last drawn and settles over about half a second. The bubbles, rings,
+the z's and the station's work hang off the nose as the turn carries
+it. The glad swimmer's flourish is a true barrel roll. Reduce Motion
+only ever shows a turn's two ends.
+
+Three settings shape it (`AquariumSwimRows`, in the card's Fine-tune
+section): **Swim pace** — Calm, Natural (the default) or Lively — sets
+how hard the wander bends, how long a fish waits between turns, how long
+a turn takes and how fast it cruises; **Swimming speed** (0.5–1.6×)
+speeds swimming and turning together, so the paths keep their shape and
+only run faster; **Fish size** (0.6–1.6×) scales every fish, and the
+hover box with it.
+
 ## Notch Buddy (native)
 
 A tiny creature in the `NotchHUD` panel that lives by the agent state:
