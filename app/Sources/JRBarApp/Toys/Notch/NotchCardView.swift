@@ -890,8 +890,9 @@ struct NotchCardView: View {
     }
 
     /// One quota meter: provider, window, a continuous bar, the percent
-    /// — with the reset countdown the ear's drain arc only hints at, and
-    /// the status feed's incident mark when the vendor is having a day.
+    /// — with the reset countdown the ear's drain arc only hints at (a
+    /// broken source's fix once the reset is past), and the status
+    /// feed's incident mark when the vendor is having a day.
     private func meterRow(_ meter: NotchIslandMeter) -> some View {
         let accent = ProviderStyle.style(for: meter.provider).accent
         return HStack(spacing: 7) {
@@ -905,7 +906,7 @@ struct NotchCardView: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule(style: .continuous).fill(style.chipFaint))
-            if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date()) {
+            if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date(), fix: meter.fix) {
                 Text(countdown)
                     .font(.system(size: 10))
                     .monospacedDigit()

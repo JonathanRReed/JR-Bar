@@ -296,7 +296,7 @@ struct ProviderUsageCard: View {
                         .foregroundStyle(UsageColors.level(primary.usedPct, accent: style.accent))
                         .contentTransition(.numericText())
                         .help(primary.isUnknown ? "\(style.name) reports this window without a number" : "")
-                    Text("\(primary.longName) window · \(PanelStore.countdown(to: primary.resetsAt, now: store.now) ?? "no reset time")")
+                    Text(UsageCenterStore.headlineResetLine(primary, of: provider, now: store.now))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .monospacedDigit()
@@ -380,7 +380,8 @@ struct ProviderUsageCard: View {
         HStack(alignment: .top, spacing: 14) {
             ForEach(orderedWindows) { window in
                 QuotaRing(window: window, forecast: store.forecast(for: provider, window: window), accent: style.accent,
-                          now: store.now, reduced: store.reduceMotion)
+                          now: store.now, reduced: store.reduceMotion,
+                          reset: UsageCenterStore.resetText(window, of: provider, now: store.now))
             }
         }
     }
@@ -758,7 +759,7 @@ struct CombinedUsageCard: View {
                     }
                 }
                 Spacer(minLength: 4)
-                Text(leading.flatMap { PanelStore.countdown(to: $0.resetsAt, now: store.now) } ?? "")
+                Text(UsageCenterStore.resetText(leading, of: provider, now: store.now) ?? "")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
@@ -937,6 +938,10 @@ struct QuotaRing: View {
     let accent: Color
     let now: Date
     let reduced: Bool
+    /// The window's reset in words (`UsageCenterStore.resetText`): a
+    /// countdown, or a broken source's fix once the reset is past; nil
+    /// when the window names no reset.
+    let reset: String?
 
     /// Nil when the window has no reading: the ring is drawn as a hairline
     /// round a dash, never as an arc of zero.
@@ -951,6 +956,9 @@ struct QuotaRing: View {
         return AnyShapeStyle(AngularGradient(colors: [color.opacity(0.7), color], center: .center,
                                              startAngle: .degrees(-8), endAngle: .degrees(max(4, 360 * fraction))))
     }
+
+    /// VoiceOver's line: the window, its reading and its reset.
+    private var spokenLine: String { "\(window.longName) window \(window.spokenPercent), \(reset ?? "")" }
 
     /// Where the window lands at reset at this pace, as a fraction of the
     /// ring — past 1 when it would run out first.
@@ -993,7 +1001,7 @@ struct QuotaRing: View {
             .frame(width: 66, height: 66)
             Text(window.shortName)
                 .font(.caption.weight(.semibold))
-            Text(PanelStore.countdown(to: window.resetsAt, now: now) ?? "no reset time")
+            Text(reset ?? "no reset time")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
@@ -1013,7 +1021,7 @@ struct QuotaRing: View {
               : "\(window.longName) window: \(window.spokenPercent)"
                 + (projected.map { " · at this pace \(Int(($0 * 100).rounded()))% by the reset" } ?? ""))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.longName) window \(window.spokenPercent), \(PanelStore.countdown(to: window.resetsAt, now: now) ?? "")")
+        .accessibilityLabel(spokenLine)
     }
 }
 

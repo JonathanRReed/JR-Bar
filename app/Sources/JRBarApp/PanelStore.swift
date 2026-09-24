@@ -709,17 +709,22 @@ final class PanelStore {
         }
         let right = NotchIsland.meters(core.state?.usage).first
             .map { meter in
-                // The ear's words: the percent, then the reset countdown
-                // and a live vendor incident — the peek and VoiceOver get
-                // the detail the 16 pt ring cannot spell out.
-                var text = meter.percentText
-                if let countdown = Self.countdown(to: meter.resetsAt, now: Date()) { text += " · \(countdown)" }
-                if meter.incident { text += " · incident" }
-                return ScreenBarWingSlot(text: text, provider: meter.provider,
-                                         meter: meter.percent.map { min(1, max(0, $0 / 100)) },
-                                         tone: meter.incident ? .attention : .neutral)
+                ScreenBarWingSlot(text: Self.meterWingText(meter, now: Date()), provider: meter.provider,
+                                  meter: meter.percent.map { min(1, max(0, $0 / 100)) },
+                                  tone: meter.incident ? .attention : .neutral)
             } ?? (mediaTookLeft && mediaArt == nil ? nil : mediaViz)
         return ScreenBarWings(left: left, right: right)
+    }
+
+    /// The meter ear's words: the percent, then the reset countdown (a
+    /// broken source's fix once the reset is past) and a live vendor
+    /// incident — the peek and VoiceOver get the detail the 16 pt ring
+    /// cannot spell out.
+    nonisolated static func meterWingText(_ meter: NotchIslandMeter, now: Date) -> String {
+        var text = meter.percentText
+        if let countdown = Self.countdown(to: meter.resetsAt, now: now, fix: meter.fix) { text += " · \(countdown)" }
+        if meter.incident { text += " · incident" }
+        return text
     }
 
     /// The left ear's activity slot for the focus pick: its provider's
@@ -1351,7 +1356,7 @@ final class PanelStore {
     }
 
     static func usageTag(for usage: CoreProviderUsage, primary: CoreUsageWindow?, heldIdle: Bool, now: Date) -> UsageTag? {
-        if usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale" { return .stale }
+        if usage.isStale { return .stale }
         if (primary?.usedPct ?? 0) >= 100 || usage.forecast?.pace?.lowercased() == "exhausted" { return .usedUp }
         // A held-idle provider's last slope is history, and a window that
         // resets before the forecast runs dry is on track.
@@ -1381,17 +1386,16 @@ final class PanelStore {
     static func usageResetLine(for usage: CoreProviderUsage, primary: CoreUsageWindow?, secondary: CoreUsageWindow?,
                                noRoomForOneMore: Bool, now: Date) -> String {
         let action = usage.action?.trimmingCharacters(in: .whitespaces) ?? ""
-        let broken = !action.isEmpty
-            && (usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale")
-        var parts: [String] = broken ? [action] : []
+        let fix = usage.staleFix
+        var parts: [String] = fix.map { [$0] } ?? []
         for window in [primary, secondary].compactMap({ $0 }) {
-            // Past as `countdown` counts it: under a second to go is past.
-            if broken, let resetsAt = window.resetsAt, resetsAt - now.timeIntervalSince1970 < 1 { continue }
+            // The fix already leads, so a past window has nothing to add.
+            if fix != nil, let resetsAt = window.resetsAt, resetHasPassed(resetsAt, now: now) { continue }
             if let text = countdown(to: window.resetsAt, now: now) { parts.append("\(window.shortName) \(text)") }
         }
         // An old reading's burn is history; the question it answers is
         // for a live one.
-        if noRoomForOneMore, !broken { parts.append("no room for +1") }
+        if noRoomForOneMore, fix == nil { parts.append("no room for +1") }
         if parts.isEmpty {
             if !action.isEmpty { return action }
             if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
@@ -1984,15 +1988,33 @@ final class PanelStore {
 
     nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {
         guard let epoch else { return nil }
-        let seconds = Int(epoch - now.timeIntervalSince1970)
         // Past the reset the number on screen is the old window's until
         // the next reading lands; "resets now" read like a promise.
-        if seconds <= 0 { return "reset — waiting for a new reading" }
+        if resetHasPassed(epoch, now: now) { return "reset — waiting for a new reading" }
+        let seconds = Int(epoch - now.timeIntervalSince1970)
         let minutes = (seconds + 30) / 60
         if minutes < 60 { return "resets in \(max(1, minutes))m" }
         let hours = minutes / 60
         if hours < 24 { return String(format: "resets in %dh %02dm", hours, minutes % 60) }
         return "resets in \(hours / 24)d \(hours % 24)h"
+    }
+
+    /// A window's reset for a source that may be broken, the panel's
+    /// rule for every usage surface: past its reset, a stale source with
+    /// a fix-it (`fix`, `CoreProviderUsage.staleFix`: "Reconnect
+    /// Claude", "Run grok login") names the fix, because the new reading
+    /// `countdown` would wait for never comes until someone acts. A
+    /// healthy source, a stale one with no fix, and a reset still ahead
+    /// read exactly as `countdown` words them.
+    nonisolated static func countdown(to epoch: Double?, now: Date, fix: String?) -> String? {
+        if let epoch, let fix, !fix.isEmpty, resetHasPassed(epoch, now: now) { return fix }
+        return countdown(to: epoch, now: now)
+    }
+
+    /// Under a second to go is past: the whole seconds `countdown`
+    /// counts down have run out.
+    nonisolated static func resetHasPassed(_ epoch: Double, now: Date) -> Bool {
+        epoch - now.timeIntervalSince1970 < 1
     }
 
     /// The daemon's `forecast.pace` as the outcome it names, not the

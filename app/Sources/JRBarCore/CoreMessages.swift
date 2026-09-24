@@ -1224,6 +1224,23 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         return fidelity != "official"
     }
 
+    /// The daemon marks the reading stale, by state or by fidelity: the
+    /// last refresh did not land, so the figures are the last ones that
+    /// did.
+    public var isStale: Bool {
+        state?.lowercased() == "stale" || fidelity?.lowercased() == "stale"
+    }
+
+    /// A broken source's fix: the daemon's fix-it ("Reconnect Claude",
+    /// "Run grok login") on a stale reading, trimmed. Nil for a healthy
+    /// source, and for a stale one with nothing to do about it. A
+    /// window past its reset names this instead of waiting for a new
+    /// reading, since none comes until the person acts.
+    public var staleFix: String? {
+        guard isStale, let action = action?.trimmingCharacters(in: .whitespaces), !action.isEmpty else { return nil }
+        return action
+    }
+
     /// The window every surface leads with — the Usage Center's
     /// headline, the menu-bar meter, the notch card's meter, the Screen
     /// Bar's ear ring: the daemon's `constrained` pick when it names a

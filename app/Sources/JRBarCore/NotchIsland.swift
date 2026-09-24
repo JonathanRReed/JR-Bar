@@ -63,9 +63,14 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
     /// The provider's status feed names a live incident — the ear
     /// flips to the attention tone and the card row says so.
     public var incident: Bool
+    /// The provider's fix when its source is broken
+    /// (`CoreProviderUsage.staleFix`, "Reconnect Claude"): a countdown
+    /// already past its reset names it instead of waiting for a reading.
+    public var fix: String?
 
     public init(id: String, provider: String, window: String, percent: Double?,
-                resetsAt: Double? = nil, windowSpan: TimeInterval? = nil, incident: Bool = false) {
+                resetsAt: Double? = nil, windowSpan: TimeInterval? = nil, incident: Bool = false,
+                fix: String? = nil) {
         self.id = id
         self.provider = provider
         self.window = window
@@ -73,6 +78,7 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
         self.resetsAt = resetsAt
         self.windowSpan = windowSpan
         self.incident = incident
+        self.fix = fix
     }
 
     /// `42%`, or `—` when the provider stated no number.
@@ -211,7 +217,8 @@ public enum NotchIsland {
                                     window: window.shortName, percent: window.usedPct,
                                     resetsAt: window.resetsAt,
                                     windowSpan: UsageWindowLabel.windowSpan(id: window.id, name: window.name),
-                                    incident: provider.incident?.isEmpty == false)
+                                    incident: provider.incident?.isEmpty == false,
+                                    fix: provider.staleFix)
         }.prefix(meterLimit).map { $0 }
     }
 

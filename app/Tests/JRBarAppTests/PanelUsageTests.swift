@@ -85,14 +85,13 @@ struct PanelUsageTests {
 
     // MARK: What each row says
 
-    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+    private let now = BrokenUsageSources.now
 
     private func provider(_ id: String, _ pct: Double?, state: String? = nil, fidelity: String? = nil,
                           resetsIn: Double? = 3 * 3600, forecast: CoreUsageForecast? = nil,
                           incident: String? = nil, action: String? = nil) -> CoreProviderUsage {
-        let reset = resetsIn.map { now.timeIntervalSince1970 + $0 }
-        return CoreProviderUsage(id: id, windows: [CoreUsageWindow(key: "5h", name: "5h", usedPct: pct, resetsAt: reset)],
-                                 fidelity: fidelity, state: state, forecast: forecast, action: action, incident: incident)
+        BrokenUsageSources.provider(id, pct, state: state, fidelity: fidelity, resetsIn: resetsIn,
+                                    forecast: forecast, incident: incident, action: action)
     }
 
     private func resetLine(_ usage: CoreProviderUsage, noRoom: Bool = false) -> String {
@@ -132,18 +131,20 @@ struct PanelUsageTests {
 
     @Test("a stale source leads with its fix and never says it is waiting for a reading")
     func staleLeadsWithTheFix() {
-        let broken = provider("claude", 19, state: "stale", resetsIn: -37 * 60, action: "Reconnect Claude")
+        let broken = BrokenUsageSources.claude
         #expect(resetLine(broken) == "Reconnect Claude")
         #expect(!resetLine(broken, noRoom: true).contains("no room"), "an old burn answers nothing")
         let weekly = CoreUsageWindow(key: "7d", name: "7d", usedPct: 12, resetsAt: now.timeIntervalSince1970 + 3 * 86_400)
         var both = broken
         both.windows.append(weekly)
         #expect(resetLine(both) == "Reconnect Claude · 7d resets in 3d 0h", "a reset still ahead is still true")
-        let grok = provider("grok", 31, state: "stale", resetsIn: -3600, action: "Run grok login")
-        #expect(resetLine(grok) == "Run grok login")
+        #expect(resetLine(BrokenUsageSources.grok) == "Run grok login")
+        let fidelityStale = provider("claude", 19, fidelity: "stale", resetsIn: -60, action: "Reconnect Claude")
+        #expect(resetLine(fidelityStale) == "Reconnect Claude", "stale by fidelity is stale")
 
         // Without a fix to offer, the old wording stands; live rows are unchanged.
-        #expect(resetLine(provider("claude", 19, state: "stale", resetsIn: -60)) == "5h reset — waiting for a new reading")
+        #expect(resetLine(BrokenUsageSources.staleWithoutFix) == "5h reset — waiting for a new reading")
+        #expect(resetLine(BrokenUsageSources.healthyPast) == "5h reset — waiting for a new reading")
         #expect(resetLine(provider("claude", 40, action: "Retry")) == "5h resets in 3h 00m")
         #expect(resetLine(provider("claude", 40), noRoom: true) == "5h resets in 3h 00m · no room for +1")
         #expect(resetLine(provider("grok", nil, state: "needs_sign_in", resetsIn: nil, action: "Run grok login")) == "Run grok login")
