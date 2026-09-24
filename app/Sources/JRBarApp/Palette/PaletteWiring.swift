@@ -20,6 +20,9 @@ enum PaletteWiring {
         var panel: @MainActor () -> Void
         var checkForUpdates: @MainActor () -> Void
         var settings: @MainActor (SettingsStore.Page) -> Void
+        /// What's New opens the way `jrbar://window/whats-new` does, so the
+        /// row, the link and the menus land on the one route.
+        var whatsNew: @MainActor () -> Void = { _ = AppCommandRouter.shared.perform(.window(.whatsNew)) }
     }
 
     static func sources(panel: PanelStore,
@@ -296,7 +299,8 @@ enum PaletteWiring {
             archive: archive,
             panel: windows.panel,
             checkForUpdates: windows.checkForUpdates,
-            settings: windows.settings)
+            settings: windows.settings,
+            whatsNew: windows.whatsNew)
         let rows = WindowPaletteRows.items(verbs: verbs)
         let pages = WindowPaletteRows.settingsItems(open: windows.settings)
         return rows + pages
