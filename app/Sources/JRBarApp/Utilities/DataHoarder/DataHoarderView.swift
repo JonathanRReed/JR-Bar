@@ -716,8 +716,6 @@ struct DataHoarderView: View {
     }
 }
 
-/// Parses the FTS `snippet()` `«hit»` markers into a tinted
-/// AttributedString; anything unmarked stays plain.
 /// One archived file in the list: whose it is, what it is called, where
 /// and when it ran, its size, whether capture is still following it, and
 /// — for a search — the lines that matched.
@@ -778,6 +776,8 @@ struct ArchiveRecordRow: View {
     }
 }
 
+/// Parses the FTS `snippet()` `«hit»` markers into a tinted
+/// AttributedString; anything unmarked stays plain.
 func markedSnippet(_ snippet: String) -> AttributedString {
     var out = AttributedString()
     var rest = snippet[...]

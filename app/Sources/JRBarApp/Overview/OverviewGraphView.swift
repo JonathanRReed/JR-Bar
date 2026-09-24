@@ -128,8 +128,9 @@ struct OverviewGraphCanvas: View {
     }
 
     /// The hover card sits right of its node, or left when the right edge
-    /// is too close.
-    static func cardX(for placed: OverviewGraphLayout.Placed, in width: CGFloat) -> CGFloat {
+    /// is too close. Pure arithmetic, so the nonisolated alignment-guide
+    /// closure can call it.
+    nonisolated static func cardX(for placed: OverviewGraphLayout.Placed, in width: CGFloat) -> CGFloat {
         let right = placed.center.x + placed.diameter / 2 + 12
         return right + 250 > width ? max(8, placed.center.x - placed.diameter / 2 - 262) : right
     }
