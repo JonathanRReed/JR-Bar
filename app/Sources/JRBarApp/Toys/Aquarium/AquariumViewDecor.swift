@@ -448,27 +448,32 @@ extension AquariumView {
             seg.addQuadCurve(to: to,
                              control: CGPoint(x: (from.x + to.x) / 2 + bend,
                                               y: (from.y + to.y) / 2))
-            canvas.stroke(seg, with: .color(shadow.opacity(0.8 - wash * 0.3)),
-                          style: StrokeStyle(lineWidth: w + 1.6, lineCap: .round))
-            canvas.stroke(seg, with: .color(bright.opacity(0.85 - wash * 0.35)),
+            canvas.stroke(seg, with: .color(shadow.opacity(0.85 - wash * 0.3)),
+                          style: StrokeStyle(lineWidth: w + 1.8, lineCap: .round))
+            canvas.stroke(seg, with: .color(bright.opacity(0.9 - wash * 0.35)),
                           style: StrokeStyle(lineWidth: w, lineCap: .round))
+            // A lit core down each branch, so it reads round.
+            canvas.stroke(seg.offsetBy(dx: -w * 0.18, dy: 0),
+                          with: .color(Color(red: 1.0, green: 0.86, blue: 0.78).opacity(0.45 - wash * 0.2)),
+                          style: StrokeStyle(lineWidth: max(0.6, w * 0.32), lineCap: .round))
             guard forks > 0 else {
                 tips.append(to)
                 return
             }
             let spread = 0.45 + Double((b >> UInt64(forks * 7 + 12)) & 0xFF) / 0xFF * 0.4
-            grow(to, angle - spread, len * 0.66, forks - 1, w * 0.72)
-            grow(to, angle + spread * 0.8, len * 0.66, forks - 1, w * 0.72)
+            grow(to, angle - spread, len * 0.68, forks - 1, w * 0.74)
+            grow(to, angle + spread * 0.8, len * 0.68, forks - 1, w * 0.74)
         }
         grow(CGPoint(x: baseX, y: baseY),
              -.pi / 2 + (Double((b >> 8) & 0xFF) / 0xFF - 0.5) * 0.4,
-             hgt * 0.5, 2, 3.0 * piece.scale * Self.decorBoost * 0.75)
+             hgt * 0.42, 3, 3.0 * piece.scale * Self.decorBoost * 1.15)
+        // Polyp tips: a pale bead with a soft halo.
+        var beads = Path()
         for tip in tips {
-            canvas.fill(Path(ellipseIn: CGRect(x: tip.x - 1.4, y: tip.y - 1.4,
-                                               width: 2.8, height: 2.8)),
-                        with: .color(Color(red: 0.98, green: 0.80, blue: 0.72)
-                                        .opacity(0.7 - wash * 0.3)))
+            beads.addEllipse(in: CGRect(x: tip.x - 2, y: tip.y - 2, width: 4, height: 4))
         }
+        canvas.fill(beads, with: .color(Color(red: 1.0, green: 0.86, blue: 0.78).opacity(0.85 - wash * 0.35)))
+        canvas.stroke(beads, with: .color(shadow.opacity(0.5 - wash * 0.2)), lineWidth: 0.6)
     }
 
     /// The brain coral: a shaded dome with concentric groove arcs and

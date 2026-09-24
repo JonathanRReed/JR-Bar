@@ -436,12 +436,13 @@ extension AquariumView {
             let bx = w * bandX
             let strap = Path(CGRect(x: bx - w * 0.055, y: bodyTop, width: w * 0.11, height: h * 0.60))
             TankPaint.cylinder(&c, strap, lit: brassLit, base: brass, shade: brassDark, outline: line, lineWidth: w * 0.012)
-            var arc = Path()
-            arc.move(to: CGPoint(x: bx, y: 0))
-            arc.addQuadCurve(to: CGPoint(x: bx * 0.6, y: -h * 0.52 * (1 - abs(bandX) * 0.9)),
-                             control: CGPoint(x: bx * 1.05, y: -h * 0.36))
-            lidCtx.stroke(arc, with: .color(brassDark), style: StrokeStyle(lineWidth: w * 0.13, lineCap: .butt))
-            lidCtx.stroke(arc, with: .color(brass), style: StrokeStyle(lineWidth: w * 0.09, lineCap: .butt))
+            // Over the lid the strap runs straight up its face to the
+            // dome's silhouette.
+            var over = lidCtx
+            over.clip(to: lid)
+            let lidStrap = Path(CGRect(x: bx - w * 0.055, y: -h * 0.7, width: w * 0.11, height: h * 0.7))
+            TankPaint.cylinder(&over, lidStrap, lit: brassLit, base: brass, shade: brassDark, outline: line,
+                               lineWidth: w * 0.012)
             var rivets = Path()
             for k in 0..<3 {
                 let ry = bodyTop + h * 0.1 + Double(k) * h * 0.18
