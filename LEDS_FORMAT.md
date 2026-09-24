@@ -28,6 +28,16 @@ or
 To recap, write to LEDS.LED what you want displayed.
 That's all you have to know.
 
+Each device runs programs on its own clock, from the moment it parses the
+file. The Pro's clock (`uptime_ms` in STATUS.TXT) keeps the Mac's time to
+about 0.02%; the first Dot's (`ticks`) ran about 2.7% slow when measured, so
+two devices started together drift apart by roughly 27 ms a second. JR-Bar
+writes a linked Dot's program for the Dot's measured clock and re-phases it
+from the strip's start (docs/CORE-PROTOCOL.md, "Keeping the Dot on the
+strip's beat"). The host caches STATUS.TXT: a plain read can return the
+same numbers for minutes, so a fresh reading needs the cache invalidated
+first (`mmap` + `msync(MS_INVALIDATE)` + `pread`).
+
 In JR-Bar, Effect Studio › Program writes and checks these programs: it judges
 every keystroke with the rules the firmware uses (the line and column of any
 error), shows the byte and line budget, previews the program on the strip, the

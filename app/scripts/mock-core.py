@@ -1082,6 +1082,13 @@ def default_settings_document() -> dict:
         },
         "link_screen_bar_to_hardware": True,
         "linked_dot_scale": 0.3,
+        # The linked Dot's timing (jrbar.linked_sync), the daemon's defaults.
+        "linked_dot_clock_correction": True,
+        "linked_dot_phase_trim_ms": 0.0,
+        "linked_sync_tolerance_ms": 40.0,
+        "dot_extend_style": "mirror",
+        "dot_extend_side": "after_last",
+        "linked_follow_brightness": True,
         "menu_bar_icon_style": "meters",
         "menu_bar_label_enabled": False,
         "milestone_odometer_enabled": False,
@@ -1304,6 +1311,16 @@ class World:
         # companion_of}: the lights document shows the patch while held,
         # exactly as the daemon's `_core_previews` do.
         self.calibration_previews: dict[str, dict] = {}
+        # Check sync's end (epoch), and the eject guard the way the first
+        # install left it: installed, never told which SidePulse, never run.
+        self.sync_check_until = 0.0
+        self.eject_guard: dict = {
+            "installed": True, "scope": "user", "plist_path": None, "volume_uuid": None,
+            "run_at_load": False, "keep_alive": False, "loaded": True, "running": False,
+            "runs": 0, "pid": None, "last_exit": "(never exited)", "protects": False,
+            "mounted_volume_uuid": "B293BB91-193C-3A17-88DC-35CD9BA19B2F",
+            "mounted_name": "SidePulse", "protects_mounted": False,
+        }
         # Deck: the board's ordered identities (a digest per session; new ones
         # are appended, positions are stable, absent ones keep their slot as
         # "Reserved" until cleared), pins by identity, the bank, the rail
@@ -1936,6 +1953,22 @@ class World:
         else:
             dot_link = {"state": {"extend": "linked", "asks": "beacon", "status": "solo"}[role],
                         "role": role, "error": None}
+            if role == "extend":
+                # The daemon's timing fields: a Dot held inside the
+                # tolerance on a clock 2.66% slow, re-synced now and then.
+                correcting = bool(self.document.get("linked_dot_clock_correction", True))
+                dot_link.update({
+                    "phase_error_ms": 12.0,
+                    "clock_rate": 0.9734 if correcting else 1.0,
+                    "clock_source": "measured" if correcting else "off",
+                    "tolerance_ms": float(self.document.get("linked_sync_tolerance_ms", 40.0)),
+                    "last_sync_at": self.anchor,
+                    "sync_writes_hour": 2,
+                    "rotation": "exact",
+                    "check_until": self.sync_check_until if self.sync_check_until > time.time() else None,
+                    "style": self.document.get("dot_extend_style", "mirror"),
+                    "rung": "brightest",
+                })
         surfaces = {
             "hardware": dict(surface),
             "screen_bar": screen_bar,
@@ -2528,7 +2561,8 @@ class World:
             self.push_settings()
             if path == "auto_dim" or path.startswith("auto_dim.") or path in (
                     "dot_role", "dot_role_include_completions", "devices_linked", "linked_dot_scale",
-                    "link_screen_bar_to_hardware", "screen_bar_phase_offset_ms"):
+                    "link_screen_bar_to_hardware", "screen_bar_phase_offset_ms",
+                    "linked_dot_clock_correction", "linked_sync_tolerance_ms", "dot_extend_style"):
                 self.push_lights(self.lights_semantic)
             self.push_log("info", f"setting {path} changed")
             # Like the daemon's reply: the value AS STORED, so a bounced
@@ -2677,6 +2711,21 @@ class World:
             with self.lock:
                 self.previews[surface] = time.time() + seconds
             result = {"surface": surface, "until": self.previews[surface]}
+        elif name == "linked_sync_check":
+            # Check sync: a minute of matched flashes on both devices.
+            seconds = max(10.0, min(120.0, float(args.get("seconds", 60))))
+            with self.lock:
+                self.sync_check_until = time.time() + seconds
+            self.push_lights(self.lights_semantic)
+            result = {"until": self.sync_check_until, "devices": [PRO_ID, DOT_ID]}
+        elif name == "eject_guard":
+            result = dict(self.eject_guard)
+        elif name == "protect_sidepulse":
+            with self.lock:
+                self.eject_guard.update(volume_uuid=self.eject_guard["mounted_volume_uuid"],
+                                        run_at_load=True, keep_alive=True, loaded=True, running=True,
+                                        runs=1, protects=True, protects_mounted=True)
+            result = dict(self.eject_guard)
         elif name == "set_device_display":
             with self.lock:
                 for entry in self.document.get("devices", []):

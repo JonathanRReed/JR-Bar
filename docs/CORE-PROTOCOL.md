@@ -661,9 +661,12 @@ end) and with every refresh.
   relay epoch and anchor, and only after such a coupled write has landed
   cleanly does the `dot` surface carry the strip's anchor and the two
   loop as one unit. `linked_skew_ms` is the last measured gap between the
-  Pro's and the Dot's write completion (11 ms on this Mac), always paired
-  with `linked_skew_at`, the epoch it was measured; both appear or
-  neither does.
+  Pro's and the Dot's writes reaching the devices (their fsync returns;
+  11 ms on this Mac), always paired with `linked_skew_at`, the epoch it
+  was measured; both appear or neither does. It is a diagnostic only
+  since 2026-09-24: the Dot's phase comes from the strip's recorded start
+  (see "Keeping the Dot on the strip's beat"), and
+  `linked_skew_corrected_ms` is no longer sent.
 - `dot_link` (top level, always present) is the daemon's own word for the
   Pro + Dot link — the truth `devices_linked` can only guess at:
   `{state, role, error}`. `role` is the normalised `dot_role` (null when
@@ -681,6 +684,29 @@ end) and with every refresh.
   | `linked` | the link is in effect for an extend Dot beside a connected strip; the Dot carries the strip's anchor once a coupled write has landed clean (`linked_skew_ms` appears then) |
   | `failed` | role `extend`, both devices connected, and the Dot's half of the last linked write failed (`error` says how) |
 
+  Additive (2026-09-24), with `state` `linked` only -- the pair's timing,
+  measured, so the app never has to claim "in step" on its own:
+
+  | field | meaning |
+  | --- | --- |
+  | `phase_error_ms` | how far the Dot's phase is from the strip's right now, ms, signed (positive: the Dot is ahead); predicted between fresh reads from the Dot's measured clock; null before the first timed Dot write |
+  | `clock_rate` | the rate the Dot's program is written for, in Dot-ms per real ms (0.9734: 2.66% slow); 1.0 with clock correction off |
+  | `clock_source` | `measured`, `warm` (the saved rate or the 0.9734 warm start), `frozen` (fresh reads stopped moving; re-anchored blind every 60 s) or `off` |
+  | `tolerance_ms` | `linked_sync_tolerance_ms` in effect |
+  | `last_sync_at` | epoch of the last timed Dot write |
+  | `sync_writes_hour` | Dot-only re-anchors in the last hour |
+  | `rotation` | how the last Dot write was rotated: `exact`, `snapped` (at a line boundary, to fit the 512-byte budget) or `unrotated` |
+  | `check_until` | while Check sync runs, when it ends (epoch); null otherwise |
+  | `style` / `rung` | `dot_extend_style`, and the period lock's rung: `brightest`, `average`, `soft`, `static` or `continue` |
+
+- `device_receipts` (additive, 2026-09-24; absent when empty) is keyed by
+  device id: `{foreign_write_at, foreign_writes, paused}`. At the reassert
+  cadence (never faster) the daemon reads the device's `LEDS.LED` past the
+  host's cache and compares it with what it last wrote; a mismatch is
+  another writer (upstream's app, a shell `echo`). The first is written
+  over at that reassert and noted here; a second inside ten minutes sets
+  `paused` and the daemon stops rewriting that device until its own next
+  change, so two apps never fight over the flash.
   `no_dot`/`no_strip`/`failed` are the states a settings toggle cannot
   express: unplugging the strip the Dot was extending forgets the strip's
   last program with it — the Dot's next request falls through to its own
@@ -1351,9 +1377,9 @@ Dot now carries a **role** — `dot_role` in the settings document, and
 | `status` | The Dot renders its own two-LED semantic display (`dot_binary_heartbeat` through the ambient dispatch), exactly as an unlinked Dot always has. `role` is then absent from the frame: nothing is driving the Dot but the Dot. |
 
 `extend` also carries the strip's brightness, once. The strip's own
-`brightness` line caps the Dot, `linked_dot_scale` (default 0.3) then takes
-a fraction of the **light** that means, and the write boundary does the one
-sRGB decode. Scaling the code instead and letting the boundary decode the
+`brightness` lines are the Dot's too (`linked_follow_brightness`),
+`linked_dot_scale` (default 0.3) takes a fraction of the **light** each one
+means, and the write boundary does the one sRGB decode. Scaling the code instead and letting the boundary decode the
 result is the same arithmetic in the wrong domain: 0.3 arrived at the
 hardware as 6.7% of the strip's light. `asks` is not scaled at all -- a
 beacon dimmed to a third is a beacon nobody notices.
@@ -1443,6 +1469,66 @@ raises `DeviceWriteError`. The animation validator calls both of those a
 exactly why nothing noticed an eight-colour strip program being written to
 a two-LED Dot: LEDs 0 and 1 were black in most frames of the chase, so a
 lit strip sat beside a Dot that looked dead.
+
+## Keeping the Dot on the strip's beat
+
+Added 2026-09-24 (`jrbar.linked_sync`, `jrbar.device_clock`,
+`jrbar.linked_runtime`). The firmware starts a program's clock when it
+parses the file and has no start time, epoch or sync directive, and the
+first Dot's own clock runs about 2.7% slow (its `STATUS.TXT` `ticks`
+advance about 973 ms per 1000 ms of real time; the Pro's `uptime_ms`
+matches the Mac's to 0.02%). So:
+
+- **One start.** The daemon records `A_pro`, the moment the followed strip
+  took its current program -- the fsync return of that write, reasserts
+  included -- and the Dot, the Screen Bar (`screen_bar_anchor`) and the
+  lights document's `dot` anchor all use it. A Dot-only write never moves
+  it.
+- **Every Dot write is phased from it.** After the safety gate has judged
+  the Dot's program in real milliseconds, the write boundary rotates it to
+  the phase the strip will be on when the Dot parses it (a `pulse` cut
+  mid-flight becomes its two `cosine` halves; a curve cut part-way is
+  spelled with the easing that fits it) and retimes it for the Dot's clock,
+  every lap exact to half a millisecond. The firmware parser checks the
+  exact bytes; the gate never re-judges the scaled text. Over budget, the
+  cut moves to the nearest line boundary, then to none.
+- **A strip restart always restarts the Dot**, whatever the Dot's deduper
+  thinks; the Dot's dedupe token carries `A_pro` and never the rotation.
+- **The period is locked.** The strip's program is compiled once at its own
+  LED count and the Dot is derived from that; if the Dot's own gate would
+  change the loop's length it steps down (band average, `none` softened to
+  `linear`, the loop's mean colour held still) instead.
+- **The loop closes.** Every 20 s a fresh read of the Dot's `ticks`
+  (mmap + `msync(MS_INVALIDATE)` + `pread`, on a worker thread, abandoned
+  after 0.5 s) feeds a per-device rate estimate, saved in
+  `~/.local/state/jrbar/device-clocks.json`. Between reads the error is
+  predicted from the measured drift; past 75% of the tolerance the Dot
+  alone is re-anchored, at most once every 20 s. The strip is never
+  rewritten for sync.
+
+### Settings
+
+| path | type | default | meaning |
+| --- | --- | --- | --- |
+| `linked_dot_clock_correction` | bool | `true` | Retime the Dot for its clock and close the loop. Off, every Dot write still starts on the strip's beat but drifts between writes. |
+| `linked_dot_phase_trim_ms` | number, -250..250 | `0` | A constant nudge of the Dot against the strip; positive runs it ahead. |
+| `linked_sync_tolerance_ms` | number, 20..200 | `40` | How far the Dot may drift before a re-anchor. |
+| `dot_extend_style` | `"mirror"` \| `"continue"` | `"mirror"` | Fold the strip into two bands, or let light run off the end of the strip into the Dot (travelling light only; anything else mirrors). |
+| `dot_extend_side` | `"after_last"` \| `"before_first"` | `"after_last"` | Continue only: which end of the strip the Dot carries on from. The Dot's own `devices[].led_direction` (default `forward`) flips its two LEDs. |
+| `linked_follow_brightness` | bool | `true` | A linked Dot takes the strip's brightness lines times `linked_dot_scale` (in light), capped by its own manual brightness, and ignores its own auto-brightness. |
+
+Brightness, on the strip and the Dot alike (upstream #38): every authored
+`brightness M` becomes `round(M·N/255)` for a device cap `N`, and `N` goes
+in front only when the program has none and `N < 255`. A custom
+`brightness 255` no longer escapes the cap.
+
+### Commands
+
+| command | args | result |
+| --- | --- | --- |
+| `linked_sync_check` | `{seconds?}` (default 60, 10-120) | `{until, devices}`. Both devices flash white for 80 ms every 2 s, the Dot timed like any linked write and re-anchored by the loop if it drifts; both are held (like a calibration preview) until `until`. `not_ready` unless the Dot is linked with role `extend` beside a strip; `busy` under a calibration hold. |
+| `eject_guard` | - | The SD eject guard as launchd has it: `{installed, scope, plist_path, volume_uuid, run_at_load, keep_alive, loaded, running, runs, pid, last_exit, protects, mounted_volume_uuid, mounted_name, protects_mounted}`. Read-only. |
+| `protect_sidepulse` | - | Reinstalls the guard for the mounted SidePulse's volume UUID (user scope, started) and answers like `eject_guard`. Only ever from the person's click. `not_found` with no SidePulse mounted. |
 
 ## Light and presence settings the legacy window owned
 
