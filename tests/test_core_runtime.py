@@ -351,8 +351,16 @@ def test_ready_comes_before_the_pad_the_agents_and_the_peers(headless, monkeypat
     assert len(timing) == 1
     assert "launch_to_ready=" in timing[0] and "deferred=" in timing[0]
 
-    # A daemon already shutting down starts none of it.
+    # A runtime a deck_set_settings restart already started is kept, not
+    # orphaned behind a second one.
     started.clear()
+    controller._jrbar_optional_integration_runtime = "restarted"
+    controller.coreLaunchDeferred_(None)
+    assert started == []
+    assert controller._jrbar_optional_integration_runtime == "restarted"
+
+    # A daemon already shutting down starts none of it.
+    controller._jrbar_optional_integration_runtime = None
     controller._runtime_termination_started = True
     controller.coreLaunchDeferred_(None)
     assert started == []

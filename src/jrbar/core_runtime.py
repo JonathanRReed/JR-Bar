@@ -4058,9 +4058,15 @@ def build_headless_controller_class() -> type:
             def start_deck() -> None:
                 # The Creator Micro 2 output service and deck input, exactly
                 # as the menu-bar app started them (provider_usage_status_bar).
+                from .deck_controller import _lifecycle_lock
                 from .optional_integration_runtime import start_optional_integration_runtime
 
-                self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
+                # A deck_set_settings answered since 'ready' may already
+                # have started one on its restart thread; a second here
+                # would orphan it, still running with nobody to close it.
+                with _lifecycle_lock(self):
+                    if getattr(self, "_jrbar_optional_integration_runtime", None) is None:
+                        self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
                 self._core_deck_probe_now()
 
             def start_remote_peers() -> None:
