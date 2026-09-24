@@ -453,36 +453,35 @@ struct NotchHUDView: View {
             // The level capsule: the key's symbol, then one continuous
             // fill — the unbroken language the Screen Bar speaks, never
             // a row of segments.
+            // The HUD material follows the appearance, so the fill is the
+            // label colour rather than the island's white.
             HStack(spacing: 10) {
-                Image(systemName: meter.symbol)
+                Image(systemName: meter.symbol, variableValue: meter.muted ? nil : meter.fraction)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(meter.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
+                    .frame(width: 20)
+                NotchLevelBar(fraction: meter.fraction,
+                              tint: meter.muted ? .red : .primary,
+                              track: .primary.opacity(0.14), dimmed: meter.muted, glows: false)
+                    .frame(width: 112)
+                    .animation(.smooth(duration: 0.16), value: meter.fraction)
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 9)
+            .fixedSize()
+        } else if model.toastActive {
+            HStack(spacing: 8) {
+                Image(systemName: model.symbol)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(meter.muted ? .red : .secondary)
-                    .frame(width: 18)
-                Capsule(style: .continuous)
-                    .fill(Color.white.opacity(0.22))
-                    .frame(width: 110, height: 6)
-                    .overlay(alignment: .leading) {
-                        Capsule(style: .continuous)
-                            .fill(meter.muted ? Color.red.opacity(0.85) : Color.white.opacity(0.92))
-                            .frame(width: max(6, 110 * min(1, max(0, meter.fraction))), height: 6)
-                            .opacity(meter.fraction > 0 ? 1 : 0)
-                    }
-                    .animation(.easeOut(duration: 0.12), value: meter.fraction)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.primary)
+                Text(model.text)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .fixedSize()
-        } else if model.toastActive {
-            HStack(spacing: 7) {
-                Image(systemName: model.symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(model.text)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
             .fixedSize()
         } else if let buddy = model.buddy, buddy.isOn, !buddy.isFree {
             // The docked slot is the pet itself: the character with its

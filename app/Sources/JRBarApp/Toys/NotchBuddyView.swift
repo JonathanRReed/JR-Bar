@@ -771,8 +771,9 @@ struct BuddyFigure: View {
                 .frame(width: 8 * (1 - air * 0.35), height: 1.5)
                 .offset(y: 7)
             ZStack {
+                if mood != .asleep, wearsBehind, let wearing { outfit(wearing) }
                 characterBody
-                if mood == .asleep { cap } else if let wearing { outfit(wearing) }
+                if mood == .asleep { cap } else if !wearsBehind, let wearing { outfit(wearing) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -868,6 +869,14 @@ struct BuddyFigure: View {
         }
     }
 
+    /// The nightcap's cone, in its 10×6 box.
+    private static let capCone = Path { p in
+        p.move(to: CGPoint(x: 1.0, y: 5.2))
+        p.addQuadCurve(to: CGPoint(x: 4.4, y: 0.8), control: CGPoint(x: 1.8, y: 1.6))
+        p.addQuadCurve(to: CGPoint(x: 9.2, y: 3.8), control: CGPoint(x: 7.6, y: 0.4))
+        p.addQuadCurve(to: CGPoint(x: 1.0, y: 5.2), control: CGPoint(x: 5.4, y: 4.6))
+    }
+
     /// The nightcap: a soft cone flopped over the head with a folded
     /// brim and a pom, drooping a lag behind the breath so it reads as
     /// fabric. It's part of the asleep pose — Reduce Motion keeps it.
@@ -875,22 +884,30 @@ struct BuddyFigure: View {
     private var cap: some View {
         let droop = still ? 6.0 : 6 + 5 * sin(phase * 1.1 - 0.7)
         let elder = stage == .elder
+        let cloth = Color(red: 0.52, green: 0.60, blue: 0.92)
         return ZStack {
-            Path { p in
-                p.move(to: CGPoint(x: 1.0, y: 5.2))
-                p.addQuadCurve(to: CGPoint(x: 4.4, y: 0.8), control: CGPoint(x: 1.8, y: 1.6))
-                p.addQuadCurve(to: CGPoint(x: 9.2, y: 3.8), control: CGPoint(x: 7.6, y: 0.4))
-                p.addQuadCurve(to: CGPoint(x: 1.0, y: 5.2), control: CGPoint(x: 5.4, y: 4.6))
-            }
-            .fill(Color(red: 0.55, green: 0.62, blue: 0.90))
-            .frame(width: 10, height: 6)
+            Self.capCone
+                .fill(LinearGradient(colors: [cloth.mix(with: .white, by: 0.22), cloth,
+                                              cloth.mix(with: .black, by: 0.18)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 10, height: 6)
+            // One soft stripe across the cone — flannel, not a party hat.
+            Self.capCone
+                .fill(.white.opacity(0.22))
+                .frame(width: 10, height: 6)
+                .mask(Capsule().frame(width: 12, height: 0.9).rotationEffect(.degrees(-18))
+                    .offset(x: 1.4, y: -0.4))
             Circle()
-                .fill(elder ? Color(red: 1.0, green: 0.82, blue: 0.36) : .white.opacity(0.85))
+                .fill(RadialGradient(colors: [elder ? Color(red: 1.0, green: 0.9, blue: 0.55) : .white,
+                                              elder ? Color(red: 0.95, green: 0.72, blue: 0.28)
+                                                    : Color(white: 0.8)],
+                                     center: UnitPoint(x: 0.35, y: 0.3), startRadius: 0, endRadius: 1.2))
                 .frame(width: elder ? 1.9 : 1.7, height: elder ? 1.9 : 1.7)
                 .offset(x: elder ? 5.4 : 4.2, y: 0.8)   // the pom on the tip
             Capsule()
-                .fill(.white.opacity(0.5))
-                .frame(width: 7.4, height: 1.2)
+                .fill(LinearGradient(colors: [.white.opacity(0.75), .white.opacity(0.5)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: 7.6, height: 1.4)
                 .offset(x: -1.0, y: 2.0)         // the folded brim
         }
         .frame(width: 10, height: 6)
@@ -900,65 +917,55 @@ struct BuddyFigure: View {
         .offset(y: -6.7)
     }
 
-    /// The buddy shelf's pieces, drawn where the nightcap sits — the
-    /// crown of every body — and small enough to read as a detail at
-    /// 18 pt.
+    /// The crab's eyes stand on stalks above its crown, so what it wears
+    /// sits behind them: the stalks and eyes stay in front of the hat
+    /// rather than vanishing under it.
+    private var wearsBehind: Bool { character == .crab }
+
+    /// Where a worn piece sits on each body: the crown's centre, the line
+    /// a hat's cuff rests on, and how wide the head is to the hat. The
+    /// bow and the flower pin themselves to either side of the same seat.
+    private var seat: (x: Double, y: Double, scale: Double) {
+        switch character {
+        case .dot: return (0, -3.4, 1)
+        case .cat: return (0, -2.5, 0.96)
+        case .ghost: return (0, -4.2, 0.96)
+        case .robot: return (0.5, -3.1, 0.98)
+        case .owl: return (0, -3.2, 1)
+        case .slime: return (0, -3.6, 0.82)
+        case .axolotl: return (0, -2.6, 1)
+        case .crab: return (0, -1.6, 0.78)
+        case .mushroom: return (0, -3.6, 1.04)
+        case .ufo: return (0, -3.2, 0.8)
+        }
+    }
+
+    /// The buddy shelf's pieces, drawn at each body's seat and small
+    /// enough to read as a detail at 18 pt: a ribbed beanie with its
+    /// cuff and pom, a two-loop bow with its tails, a daisy with a leaf.
     @ViewBuilder private func outfit(_ item: ShopItem) -> some View {
+        let seat = self.seat
         switch item {
         case .buddyBeanie:
-            let knit = Color(red: 0.80, green: 0.36, blue: 0.34)
-            ZStack {
-                UnevenRoundedRectangle(topLeadingRadius: 4.2, bottomLeadingRadius: 0.6,
-                                       bottomTrailingRadius: 0.6, topTrailingRadius: 4.2,
-                                       style: .continuous)
-                    .fill(knit)
-                    .frame(width: 8.4, height: 4.4)
-                    .offset(y: 0.2)
-                Capsule().fill(knit.opacity(0.75))
-                    .overlay(Capsule().fill(.white.opacity(0.18)))
-                    .frame(width: 9, height: 1.5)
-                    .offset(y: 1.9)
-                Circle().fill(.white.opacity(0.9))
-                    .frame(width: 1.8, height: 1.8)
-                    .offset(y: -1.9)
-            }
-            .frame(width: 10, height: 6)
-            .offset(y: -6.0)
+            BuddyBeanie()
+                .frame(width: 10, height: 7)
+                .scaleEffect(seat.scale, anchor: .bottom)
+                .offset(x: seat.x, y: seat.y - 3.5)
         case .buddyBow:
-            let ribbon = Color(red: 0.95, green: 0.50, blue: 0.66)
-            ZStack {
-                Path { p in
-                    p.move(to: CGPoint(x: 2.5, y: 2))
-                    p.addLine(to: CGPoint(x: 0, y: 0.4))
-                    p.addLine(to: CGPoint(x: 0, y: 3.6))
-                    p.closeSubpath()
-                    p.move(to: CGPoint(x: 2.5, y: 2))
-                    p.addLine(to: CGPoint(x: 5, y: 0.4))
-                    p.addLine(to: CGPoint(x: 5, y: 3.6))
-                    p.closeSubpath()
-                }
-                .fill(ribbon)
-                Circle().fill(ribbon.opacity(0.9))
-                    .overlay(Circle().fill(.white.opacity(0.25)))
-                    .frame(width: 1.6, height: 1.6)
-                    .offset(x: 0, y: 0)
-            }
-            .frame(width: 5, height: 4)
-            .rotationEffect(.degrees(-14))
-            .offset(x: 3.6, y: -5.0)
+            BuddyBow()
+                .frame(width: 6, height: 4.4)
+                .scaleEffect(seat.scale)
+                .rotationEffect(.degrees(-16))
+                .offset(x: seat.x + 3.9 * seat.scale, y: seat.y - 0.8)
         case .buddyFlower:
-            ZStack {
-                ForEach(0..<5, id: \.self) { i in
-                    let a = Double(i) / 5 * 2 * .pi
-                    Circle().fill(Color(red: 0.99, green: 0.96, blue: 0.92))
-                        .frame(width: 1.8, height: 1.8)
-                        .offset(x: cos(a) * 1.2, y: sin(a) * 1.2)
-                }
-                Circle().fill(Color(red: 0.98, green: 0.78, blue: 0.30))
-                    .frame(width: 1.4, height: 1.4)
-            }
-            .frame(width: 4.4, height: 4.4)
-            .offset(x: -3.8, y: -4.8)
+            // The robot's antenna holds the left of its crown, so its
+            // flower goes behind the other ear.
+            let side: Double = character == .robot ? 1 : -1
+            BuddyFlower()
+                .frame(width: 5, height: 5)
+                .scaleEffect(seat.scale)
+                .rotationEffect(.degrees(12 * -side))
+                .offset(x: seat.x + side * 3.9 * seat.scale, y: seat.y - 0.6)
         default:
             EmptyView()
         }
@@ -972,11 +979,20 @@ struct BuddyFigure: View {
         if let z = zee(0) { zView(z) }
         if let z = zee(1) { zView(z) }
         if bang.opacity > 0.01 {
+            // The ask's badge: white on an amber pill with a warm halo —
+            // a sign held up, not a letter floating loose.
             Text(askCount > 1 ? "!\(askCount)" : "!")
-                .font(.system(size: askCount > 1 ? 5.2 : 7, weight: .black, design: .rounded))
-                .foregroundStyle(.orange)
+                .font(.system(size: 5.2, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, askCount > 1 ? 1.5 : 0)
+                .frame(minWidth: 6, minHeight: 6)
+                .background(Capsule(style: .continuous)
+                    .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.67, blue: 0.25),
+                                                  Color(red: 0.98, green: 0.47, blue: 0.1)],
+                                         startPoint: .top, endPoint: .bottom)))
+                .shadow(color: .orange.opacity(0.45), radius: 1)
                 .scaleEffect(max(bang.scale, 0.01))
-                .offset(y: -8)
+                .offset(y: -8.6)
                 .opacity(bang.opacity)
         }
         if let s = sparkle {
@@ -1070,6 +1086,141 @@ struct BuddyFigure: View {
         .scaleEffect(c.scale)
         .offset(x: c.x, y: c.y)
         .opacity(c.opacity)
+    }
+}
+
+// MARK: - Wardrobe
+
+/// The beanie, in a 10×7 box whose bottom edge is the cuff's: a knit
+/// dome lit from the top-left with its ribs showing, a turned-up cuff a
+/// shade lighter, and a pom on top.
+private struct BuddyBeanie: View {
+    private static let knit = Color(red: 0.86, green: 0.33, blue: 0.36)
+
+    private static let dome = Path { p in
+        p.move(to: CGPoint(x: 1.0, y: 5.6))
+        p.addCurve(to: CGPoint(x: 5.0, y: 1.2), control1: CGPoint(x: 1.0, y: 2.7),
+                   control2: CGPoint(x: 2.7, y: 1.2))
+        p.addCurve(to: CGPoint(x: 9.0, y: 5.6), control1: CGPoint(x: 7.3, y: 1.2),
+                   control2: CGPoint(x: 9.0, y: 2.7))
+        p.closeSubpath()
+    }
+
+    private static let ribs = Path { p in
+        for x in [3.1, 5.0, 6.9] {
+            p.move(to: CGPoint(x: x + (x - 5) * 0.25, y: 2.4))
+            p.addLine(to: CGPoint(x: x + (x - 5) * 0.4, y: 5.4))
+        }
+    }
+
+    private static let cuffRibs = Path { p in
+        for i in 0..<7 {
+            let x = 1.6 + Double(i) * 1.13
+            p.move(to: CGPoint(x: x, y: 5.3))
+            p.addLine(to: CGPoint(x: x, y: 6.7))
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Self.dome.fill(LinearGradient(colors: [Self.knit.mix(with: .white, by: 0.2), Self.knit,
+                                                   Self.knit.mix(with: .black, by: 0.2)],
+                                          startPoint: .topLeading, endPoint: .bottomTrailing))
+            Self.ribs.stroke(.black.opacity(0.16), style: StrokeStyle(lineWidth: 0.4, lineCap: .round))
+            RoundedRectangle(cornerRadius: 0.9, style: .continuous)
+                .fill(LinearGradient(colors: [Self.knit.mix(with: .white, by: 0.28),
+                                              Self.knit.mix(with: .white, by: 0.08)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: 9.4, height: 2.0)
+                .offset(x: 0.3, y: 5.0)
+            Self.cuffRibs.stroke(.black.opacity(0.12), lineWidth: 0.3)
+            Circle()
+                .fill(RadialGradient(colors: [.white, Color(white: 0.84)],
+                                     center: UnitPoint(x: 0.35, y: 0.3), startRadius: 0, endRadius: 1.3))
+                .frame(width: 2.2, height: 2.2)
+                .offset(x: 3.9, y: -0.2)
+        }
+        .frame(width: 10, height: 7, alignment: .topLeading)
+    }
+}
+
+/// The bow, in a 6×4.4 box: two rounded loops with their inner folds
+/// shaded, a knot, and two short tails cut on the slant.
+private struct BuddyBow: View {
+    private static let ribbon = Color(red: 0.97, green: 0.45, blue: 0.66)
+
+    private static let loops = Path { p in
+        p.move(to: CGPoint(x: 3.0, y: 2.0))
+        p.addCurve(to: CGPoint(x: 0.3, y: 0.5), control1: CGPoint(x: 2.2, y: 0.7),
+                   control2: CGPoint(x: 0.9, y: -0.1))
+        p.addCurve(to: CGPoint(x: 3.0, y: 2.0), control1: CGPoint(x: -0.2, y: 1.8),
+                   control2: CGPoint(x: 1.6, y: 3.4))
+        p.move(to: CGPoint(x: 3.0, y: 2.0))
+        p.addCurve(to: CGPoint(x: 5.7, y: 0.5), control1: CGPoint(x: 3.8, y: 0.7),
+                   control2: CGPoint(x: 5.1, y: -0.1))
+        p.addCurve(to: CGPoint(x: 3.0, y: 2.0), control1: CGPoint(x: 6.2, y: 1.8),
+                   control2: CGPoint(x: 4.4, y: 3.4))
+    }
+
+    private static let tails = Path { p in
+        p.move(to: CGPoint(x: 2.7, y: 2.2))
+        p.addLine(to: CGPoint(x: 1.5, y: 4.3))
+        p.addLine(to: CGPoint(x: 2.3, y: 4.0))
+        p.addLine(to: CGPoint(x: 3.1, y: 2.4))
+        p.closeSubpath()
+        p.move(to: CGPoint(x: 3.3, y: 2.2))
+        p.addLine(to: CGPoint(x: 4.5, y: 4.3))
+        p.addLine(to: CGPoint(x: 3.7, y: 4.0))
+        p.addLine(to: CGPoint(x: 2.9, y: 2.4))
+        p.closeSubpath()
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Self.tails.fill(Self.ribbon.mix(with: .black, by: 0.18))
+            Self.loops.fill(LinearGradient(colors: [Self.ribbon.mix(with: .white, by: 0.25), Self.ribbon,
+                                                    Self.ribbon.mix(with: .black, by: 0.15)],
+                                           startPoint: .top, endPoint: .bottom))
+            Self.loops.stroke(Self.ribbon.mix(with: .black, by: 0.3).opacity(0.6), lineWidth: 0.3)
+            RoundedRectangle(cornerRadius: 0.5, style: .continuous)
+                .fill(Self.ribbon.mix(with: .black, by: 0.08))
+                .overlay(RoundedRectangle(cornerRadius: 0.5, style: .continuous)
+                    .fill(.white.opacity(0.25)).padding(.bottom, 0.8))
+                .frame(width: 1.5, height: 1.6)
+                .offset(x: 2.25, y: 1.2)
+        }
+        .frame(width: 6, height: 4.4, alignment: .topLeading)
+    }
+}
+
+/// The flower, in a 5×5 box: five cream petals round a golden eye, a
+/// blush at their bases, and one leaf tucked behind.
+private struct BuddyFlower: View {
+    var body: some View {
+        ZStack {
+            Ellipse()
+                .fill(LinearGradient(colors: [Color(red: 0.5, green: 0.82, blue: 0.45),
+                                              Color(red: 0.28, green: 0.62, blue: 0.32)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: 1.4, height: 2.6)
+                .rotationEffect(.degrees(40))
+                .offset(x: 1.5, y: 1.6)
+            ForEach(0..<5, id: \.self) { i in
+                Ellipse()
+                    .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.98, blue: 0.95),
+                                                  Color(red: 0.98, green: 0.84, blue: 0.88)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(width: 1.55, height: 2.2)
+                    .offset(y: -1.05)
+                    .rotationEffect(.degrees(Double(i) * 72))
+            }
+            Circle()
+                .fill(RadialGradient(colors: [Color(red: 1.0, green: 0.86, blue: 0.4),
+                                              Color(red: 0.93, green: 0.62, blue: 0.18)],
+                                     center: UnitPoint(x: 0.4, y: 0.35), startRadius: 0, endRadius: 0.8))
+                .frame(width: 1.45, height: 1.45)
+        }
+        .frame(width: 5, height: 5)
     }
 }
 

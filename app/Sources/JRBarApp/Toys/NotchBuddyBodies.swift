@@ -153,6 +153,8 @@ struct CrabBody: View {
             legs(left: false)
             stalks
             shell
+            eyeballs
+                .offset(y: -5.9)
             BuddyEyes(pose: pose, lid: lid, pupilColor: buddyHole, lidColor: tint,
                       pupilScale: 0.8)
                 .offset(y: -5.9)
@@ -190,6 +192,23 @@ struct CrabBody: View {
                 .rotationEffect(.degrees(7))
                 .offset(x: 2.2, y: -3.6)
         }
+    }
+
+    /// The eyes' own balls on the stalk tips — pale, so the pupils read
+    /// against the pill instead of vanishing into it. Shut, they are
+    /// the shell's colour, and the lid line is what shows.
+    private var eyeballs: some View {
+        HStack(spacing: 1.2) {
+            eyeball
+            eyeball
+        }
+    }
+
+    private var eyeball: some View {
+        Circle()
+            .fill(pose.eyesClosed ? AnyShapeStyle(tint) : AnyShapeStyle(Color(white: 0.96)))
+            .overlay(Circle().strokeBorder(tint.mix(with: .black, by: 0.25), lineWidth: 0.4))
+            .frame(width: 3.2, height: 3.2)
     }
 
     /// Three little legs a side, peeking under the shell's rim.

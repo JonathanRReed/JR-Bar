@@ -315,7 +315,9 @@ enum SystemLevelReader {
 /// The level capsule's glyph and title — pure, so the device mapping is
 /// pinned without audio hardware. Volume names the device the sound is
 /// going to (MediaMate's device icons, off the same default-output read
-/// the level comes from); brightness dims its sun with the level; the
+/// the level comes from); the plain speaker is the three-wave one, whose
+/// waves the level face lights with the level (a variable symbol, as
+/// the system HUD draws it); brightness dims its sun with the level; the
 /// keyboard keeps its own.
 enum NotchLevelGlyph {
     static func volume(level: Float, muted: Bool, transport: UInt32?, name: String?) -> String {
@@ -337,8 +339,7 @@ enum NotchLevelGlyph {
                 ? "headphones" : "hifispeaker.fill"
         default:
             if lower.contains("headphone") { return "headphones" }
-            return level < 0.34 ? "speaker.wave.1.fill"
-                : level < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+            return "speaker.wave.3.fill"
         }
     }
 

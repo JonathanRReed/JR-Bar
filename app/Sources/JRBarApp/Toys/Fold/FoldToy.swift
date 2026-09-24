@@ -1129,9 +1129,12 @@ final class FoldToy: Toy {
 }
 
 /// The lid seen from the side: the deck, the hinge, the lid at the
-/// measured angle, and a tick where the fold starts (in "Set angle"
-/// mode) — so where the fold begins reads at a glance, and the glyph
-/// tilts along while the sensor or a demo moves it.
+/// measured angle with its screen lit along the inside face, and — in
+/// "Set angle" mode — the fold's zone swept out from the deck up to
+/// where the fold starts, so where the fold begins reads at a glance.
+/// The glyph tilts along while the sensor or a demo moves it; with no
+/// reading the lid stands as a faint dashed ghost. Drawn in whatever
+/// frame it is given.
 struct FoldLidGlyph: View {
     let angle: Double?
     let activation: Double?
@@ -1145,26 +1148,68 @@ struct FoldLidGlyph: View {
 
     var body: some View {
         Canvas { context, size in
-            let hinge = CGPoint(x: size.width * 0.38, y: size.height - 3)
-            let lidLength = Double(size.height) - 6
-            var deck = Path()
-            deck.move(to: hinge)
-            deck.addLine(to: CGPoint(x: size.width - 2, y: hinge.y))
-            context.stroke(deck, with: .color(.secondary), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            let unit = min(size.width / 44, size.height / 26)
+            let hinge = CGPoint(x: size.width * 0.36, y: size.height - 3 * unit)
+            let lidLength = Double(size.height) - 7 * unit
             if let activation {
-                let tick = Self.lidEnd(hinge: hinge, length: lidLength + 3, degrees: activation)
-                context.fill(Path(ellipseIn: CGRect(x: tick.x - 1.5, y: tick.y - 1.5, width: 3, height: 3)),
+                // The fold zone: shut up to the start angle.
+                let radius = lidLength + 3 * unit
+                var wedge = Path()
+                wedge.move(to: hinge)
+                wedge.addArc(center: hinge, radius: radius, startAngle: .degrees(0),
+                             endAngle: .degrees(-min(180, max(0, activation))), clockwise: true)
+                wedge.closeSubpath()
+                context.fill(wedge, with: .color(Color.accentColor.opacity(0.1)))
+                var rim = Path()
+                rim.addArc(center: hinge, radius: radius, startAngle: .degrees(0),
+                           endAngle: .degrees(-min(180, max(0, activation))), clockwise: true)
+                context.stroke(rim, with: .color(Color.accentColor.opacity(0.45)),
+                               style: StrokeStyle(lineWidth: max(0.8, unit * 0.6), dash: [2 * unit, 1.6 * unit]))
+                let tick = Self.lidEnd(hinge: hinge, length: radius, degrees: activation)
+                let dot = 1.6 * unit
+                context.fill(Path(ellipseIn: CGRect(x: tick.x - dot, y: tick.y - dot, width: dot * 2, height: dot * 2)),
                              with: .color(.accentColor))
             }
-            if let angle {
-                var lid = Path()
-                lid.move(to: hinge)
-                lid.addLine(to: Self.lidEnd(hinge: hinge, length: lidLength, degrees: angle))
-                context.stroke(lid, with: .color(.primary.opacity(0.8)),
-                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            // The deck: the keyboard half, with a lit top edge.
+            var deck = Path()
+            deck.move(to: CGPoint(x: hinge.x, y: hinge.y))
+            deck.addLine(to: CGPoint(x: size.width - 2 * unit, y: hinge.y))
+            context.stroke(deck, with: .color(Color.primary.opacity(0.4)),
+                           style: StrokeStyle(lineWidth: 2.6 * unit, lineCap: .round))
+            context.stroke(deck, with: .color(Color.primary.opacity(0.18)),
+                           style: StrokeStyle(lineWidth: 0.7 * unit, lineCap: .round))
+            // The lid, or its ghost while there is no reading.
+            let degrees = angle ?? 105
+            let end = Self.lidEnd(hinge: hinge, length: lidLength, degrees: degrees)
+            var lid = Path()
+            lid.move(to: hinge)
+            lid.addLine(to: end)
+            guard angle != nil else {
+                context.stroke(lid, with: .color(Color.primary.opacity(0.25)),
+                               style: StrokeStyle(lineWidth: 1.4 * unit, lineCap: .round,
+                                                  dash: [2.4 * unit, 2 * unit]))
+                return
             }
+            context.stroke(lid, with: .color(Color.primary.opacity(0.85)),
+                           style: StrokeStyle(lineWidth: 2.2 * unit, lineCap: .round))
+            // The screen along the lid's inside face, glowing faintly.
+            let radians = min(180, max(0, degrees)) * .pi / 180
+            let inset = CGSize(width: sin(radians) * 1.9 * unit, height: cos(radians) * 1.9 * unit)
+            var screen = Path()
+            screen.move(to: CGPoint(x: hinge.x + inset.width + (end.x - hinge.x) * 0.12,
+                                    y: hinge.y + inset.height + (end.y - hinge.y) * 0.12))
+            screen.addLine(to: CGPoint(x: end.x + inset.width - (end.x - hinge.x) * 0.06,
+                                       y: end.y + inset.height - (end.y - hinge.y) * 0.06))
+            context.stroke(screen, with: .color(Color.accentColor.opacity(0.25)),
+                           style: StrokeStyle(lineWidth: 3 * unit, lineCap: .round))
+            context.stroke(screen, with: .color(Color.accentColor),
+                           style: StrokeStyle(lineWidth: 0.9 * unit, lineCap: .round))
+            // The hinge itself.
+            let knuckle = 1.5 * unit
+            context.fill(Path(ellipseIn: CGRect(x: hinge.x - knuckle, y: hinge.y - knuckle,
+                                                width: knuckle * 2, height: knuckle * 2)),
+                         with: .color(Color.primary.opacity(0.7)))
         }
-        .frame(width: 44, height: 26)
         .accessibilityHidden(true)
     }
 }
@@ -1196,14 +1241,21 @@ enum FoldSessionState {
     }
 }
 
-/// The card's disclosure body. Every row writes `store.state.fold` (which
-/// persists itself) except the provider picker, which goes through
-/// `setProvider` so the swap can stop our renderer and open theirs.
+/// The card's disclosure body: the lid at the top, live — its angle,
+/// what the fold is doing, and Try it — then the rows in runs: how it
+/// folds, how the room looks, how it sounds, the simulator, and who
+/// renders it. Every row writes `store.state.fold` (which persists
+/// itself) except the provider picker, which goes through `setProvider`
+/// so the swap can stop our renderer and open theirs. Nothing here
+/// touches the fold's motion.
 private struct FoldControlsView: View {
     let toy: FoldToy
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            hero
+            Divider().padding(.vertical, 6)
+
             Picker(selection: toy.bind(\.anchor)) {
                 Text("Set angle").tag(FoldAnchor.angle)
                 Text("Wherever the lid rests").tag(FoldAnchor.movement)
@@ -1211,105 +1263,56 @@ private struct FoldControlsView: View {
                 SettingLabel(title: "Fold from", subtitle: "A fixed angle, or wherever the lid was parked when it started to move.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.activationAngle), in: 60...160)
-                        .frame(width: 180)
-                        .disabled(toy.settings.anchor == .movement)
-                    ValueText(text: "\(Int(toy.settings.activationAngle.rounded()))°")
-                }
-            } label: {
-                SettingLabel(title: "Starts folding at", subtitle: "The lid angle where the tilt begins.")
-            }
+            sliderRow(SettingLabel(title: "Starts folding at",
+                                   subtitle: "The lid angle where the tilt begins."),
+                      value: toy.bind(\.activationAngle), range: 60...160,
+                      readout: "\(Int(toy.settings.activationAngle.rounded()))°")
+                .disabled(toy.settings.anchor == .movement)
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.perspective), in: 0...1)
-                        .frame(width: 180)
-                    ValueText(text: percent(toy.settings.perspective))
-                }
-            } label: {
-                SettingLabel(title: "Perspective", subtitle: "How much the far edge tapers, like a real tilted plane.")
-            }
+            sliderRow(SettingLabel(title: "Release when parked",
+                                   subtitle: "Seconds a lid held mid-fold waits before the desktop comes back — until the hinge moves again."),
+                      value: toy.bind(\.dwellTimeout), range: 0...10, step: 1,
+                      readout: toy.settings.dwellTimeout == 0 ? "Off" : "\(Int(toy.settings.dwellTimeout))s")
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.shade), in: 0...1)
-                        .frame(width: 180)
-                    ValueText(text: percent(toy.settings.shade))
-                }
-            } label: {
-                SettingLabel(title: "Shade", subtitle: "How dark the room goes toward the hinge and the far wall.")
-            }
+            sliderRow(SettingLabel(title: "Jitter",
+                                   subtitle: "Ignore angle wobbles smaller than this."),
+                      value: toy.bind(\.jitterTolerance), range: 0...5, step: 0.5,
+                      readout: degrees(toy.settings.jitterTolerance))
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.blur), in: 0...1)
-                        .frame(width: 180)
-                    ValueText(text: percent(toy.settings.blur))
-                }
-            } label: {
-                SettingLabel(title: "Blur", subtitle: "How much the room defocuses — deeper layers and the far edge soften first. Never under Reduce Motion.")
-            }
+            Divider().padding(.vertical, 6)
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.frost), in: 0...1)
-                        .frame(width: 180)
-                    ValueText(text: percent(toy.settings.frost))
-                }
-            } label: {
-                SettingLabel(title: "Frost", subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic.")
-            }
+            sliderRow(SettingLabel(title: "Perspective",
+                                   subtitle: "How much the far edge tapers, like a real tilted plane."),
+                      value: toy.bind(\.perspective), range: 0...1, readout: percent(toy.settings.perspective))
+            sliderRow(SettingLabel(title: "Shade",
+                                   subtitle: "How dark the room goes toward the hinge and the far wall."),
+                      value: toy.bind(\.shade), range: 0...1, readout: percent(toy.settings.shade))
+            sliderRow(SettingLabel(title: "Blur",
+                                   subtitle: "How much the room defocuses — deeper layers and the far edge soften first. Never under Reduce Motion."),
+                      value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
+            sliderRow(SettingLabel(title: "Frost",
+                                   subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic."),
+                      value: toy.bind(\.frost), range: 0...1, readout: percent(toy.settings.frost))
 
-            LabeledContent {
-                Toggle("", isOn: toy.bind(\.holdPicture))
-                    .labelsHidden()
-            } label: {
+            Toggle(isOn: toy.bind(\.holdPicture)) {
                 SettingLabel(title: "Hold picture in place", subtitle: "The desktop stays put while the lid tilts over it; off keeps the picture glued to the glass.")
             }
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.jitterTolerance), in: 0...5, step: 0.5)
-                        .frame(width: 180)
-                    ValueText(text: degrees(toy.settings.jitterTolerance))
-                }
-            } label: {
-                SettingLabel(title: "Jitter", subtitle: "Ignore angle wobbles smaller than this.")
-            }
+            Divider().padding(.vertical, 6)
 
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.bind(\.dwellTimeout), in: 0...10, step: 1)
-                        .frame(width: 180)
-                    ValueText(text: toy.settings.dwellTimeout == 0
-                              ? "Off" : "\(Int(toy.settings.dwellTimeout))s")
-                }
-            } label: {
-                SettingLabel(title: "Release when parked", subtitle: "Seconds a lid held mid-fold waits before the desktop comes back — until the hinge moves again.")
-            }
-
-            LabeledContent {
-                Toggle("", isOn: toy.bind(\.restoreSound))
-                    .labelsHidden()
-            } label: {
+            Toggle(isOn: toy.bind(\.restoreSound)) {
                 SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
             }
 
-            LabeledContent {
-                Picker("", selection: toy.bind(\.hingeVoice)) {
-                    Text("Off").tag(HingeVoice.off)
-                    Text("Creak").tag(HingeVoice.creak)
-                    Text("Paper rustle").tag(HingeVoice.rustle)
-                }
-                .labelsHidden()
-                .frame(width: 150)
+            Picker(selection: toy.bind(\.hingeVoice)) {
+                Text("Off").tag(HingeVoice.off)
+                Text("Creak").tag(HingeVoice.creak)
+                Text("Paper rustle").tag(HingeVoice.rustle)
             } label: {
                 SettingLabel(title: "Hinge voice", subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
             }
+            .pickerStyle(.menu)
 
             LabeledContent {
                 HStack(spacing: 10) {
@@ -1323,37 +1326,7 @@ private struct FoldControlsView: View {
                 SettingLabel(title: "Simulate a fold", subtitle: "Pretends the lid is moving while you drag.")
             }
 
-            LabeledContent {
-                HStack(spacing: 8) {
-                    Button(toy.tryingIt ? "Folding…" : "Try it") { toy.tryIt() }
-                        .controlSize(.small)
-                        .disabled(toy.tryingIt || !toy.isOn || toy.settings.provider != .jrbar)
-                        .help("Plays one close and reopen through the fold, no lid needed.")
-                }
-            } label: {
-                SettingLabel(title: "Try it", subtitle: "One scripted close and reopen, the fold's own motion.")
-            }
-
-            LabeledContent {
-                HStack(spacing: 8) {
-                    FoldLidGlyph(angle: toy.glyphAngle,
-                                 activation: toy.settings.anchor == .angle
-                                     ? toy.settings.activationAngle : nil)
-                    Text(toy.angleText)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            } label: {
-                SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
-            }
-
-            LabeledContent {
-                Text(toy.foldDetail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } label: {
-                SettingLabel(title: "Fold state", subtitle: "What the fold is doing right now.")
-            }
+            Divider().padding(.vertical, 6)
 
             Picker(selection: toy.providerBinding) {
                 Text("JR-Bar").tag(FoldProvider.jrbar)
@@ -1363,7 +1336,6 @@ private struct FoldControlsView: View {
                 SettingLabel(title: "Render with", subtitle: "Let Bendy or Lid Plane draw the fold instead.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
 
             providerNote
 
@@ -1371,14 +1343,78 @@ private struct FoldControlsView: View {
                 SettingLabel(title: "Wallpaper without Screen Recording",
                              subtitle: "With no permission, the wallpaper alone folds — same motion, no windows in the room.")
             }
-            .toggleStyle(.checkbox)
 
             if toy.isOn && !FoldCapturePermission.granted {
                 HStack(spacing: 8) {
                     Button("Allow Screen Recording") { toy.requestScreenRecording() }
                     Button("Open Settings") { toy.openScreenRecordingSettings() }
                 }
+                .padding(.top, 4)
             }
+        }
+    }
+
+    /// The card's head: the lid drawn large on its own tile, live, beside
+    /// its angle, what the fold is doing right now, and the one-click
+    /// demo.
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 16) {
+            FoldLidGlyph(angle: toy.glyphAngle,
+                         activation: toy.settings.anchor == .angle ? toy.settings.activationAngle : nil)
+                .frame(width: 118, height: 70)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.primary.opacity(0.045)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
+            VStack(alignment: .leading, spacing: 6) {
+                SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
+                Text(toy.angleText)
+                    .font(angleFont)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(toy.glyphAngle == nil ? .secondary : .primary)
+                Text(toy.foldDetail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Fold state: \(toy.foldDetail)")
+                Button(toy.tryingIt ? "Folding…" : "Try it") { toy.tryIt() }
+                    .controlSize(.regular)
+                    .disabled(toy.tryingIt || !toy.isOn || toy.settings.provider != .jrbar)
+                    .help("Plays one close and reopen through the fold, no lid needed.")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// The angle in big digits while there is one; a missing reading
+    /// ("no sensor", "—") says so a size down, as a note, not a number.
+    private var angleFont: Font {
+        toy.glyphAngle == nil
+            ? .system(size: 17, weight: .medium, design: .rounded)
+            : .system(size: 26, weight: .semibold, design: .rounded)
+    }
+
+    /// One slider row: the label, the slider and its readout.
+    private func sliderRow(_ label: SettingLabel, value: Binding<Double>,
+                           range: ClosedRange<Double>, step: Double? = nil,
+                           readout: String) -> some View {
+        LabeledContent {
+            HStack(spacing: 10) {
+                if let step {
+                    Slider(value: value, in: range, step: step)
+                        .frame(width: 180)
+                } else {
+                    Slider(value: value, in: range)
+                        .frame(width: 180)
+                }
+                ValueText(text: readout)
+            }
+        } label: {
+            label
         }
     }
 

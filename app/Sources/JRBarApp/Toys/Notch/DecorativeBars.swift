@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The decorative playing tell every media surface shares — the island's
-/// strip, the Screen Bar's media ear and the card's media row: bars
-/// bouncing on their own phases at 12 fps, set dressing and not a
+/// strip, the Screen Bar's media ear and the card's media row: rounded
+/// bars breathing out from their middle like a waveform, each on its
+/// own phase at 12 fps, set dressing and not a
 /// spectrum (a live audio tap draws the real levels instead, six bands,
 /// so six bars here too and nothing jumps when it takes over). Not
 /// `live` — paused, out of sight — or under Reduce Motion they stand
@@ -24,14 +25,14 @@ struct DecorativeBars: View {
         let moving = live && !reduceMotion
         TimelineView(.animation(minimumInterval: Self.frameInterval, paused: !moving)) { context in
             let t = moving ? context.date.timeIntervalSinceReferenceDate : 0
-            HStack(alignment: .bottom, spacing: spacing) {
+            HStack(alignment: .center, spacing: spacing) {
                 ForEach(0..<count, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: min(1, barWidth / 2), style: .continuous)
+                    Capsule(style: .continuous)
                         .fill(color)
                         .frame(width: barWidth, height: Self.barHeight(index: index, at: t, height: height))
                 }
             }
-            .frame(height: height, alignment: .bottom)
+            .frame(height: height, alignment: .center)
         }
         .accessibilityHidden(true)
     }

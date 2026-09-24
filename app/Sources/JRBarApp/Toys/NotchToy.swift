@@ -484,13 +484,17 @@ final class NotchToy: Toy {
 
     /// Lines the ask face gives its summary: one on the capsule, as many
     /// as the takeover card's width needs (capped) — decided here so the
-    /// frame is exactly the drawn copy.
+    /// frame is exactly the drawn copy. The takeover counts the command
+    /// the agent wants to run too, so the card grows to show it rather
+    /// than cutting it at the first line's end.
     var askSummaryLines: Int {
         _ = displayVersion
         guard let capsule = activeCapsule, capsule.kind == .ask, capsule.takeover else { return 1 }
         let slot = ScreenBarGeometry.preferredScreen().flatMap { ScreenBarGeometry.islandSlot(on: $0) }
         let width = NotchIslandLayout.askWidth(slotWidth: slot?.width ?? 0, takeover: true)
-        return NotchIslandLayout.askSummaryLines(askSummary(capsule), width: width,
+        let copy = [askSummary(capsule), liveAsk(for: capsule)?.previewLine]
+            .compactMap { $0 }.joined(separator: " · ")
+        return NotchIslandLayout.askSummaryLines(copy, width: width,
                                                  maxLines: NotchIslandLayout.askTakeoverLines)
     }
 
@@ -1732,8 +1736,9 @@ final class NotchToy: Toy {
 
     /// A now-playing refresh landed: keep the media, and reframe — the
     /// strip changes the idle width. The capsule face does not measure
-    /// media, so a mid-capsule update just waits.
-    private func noteMedia(_ media: AlcoveMedia?) {
+    /// media, so a mid-capsule update just waits. Internal for the
+    /// render proofs.
+    func noteMedia(_ media: AlcoveMedia?) {
         guard media != islandMedia else { return }
         islandMedia = media
         if currentFace != .notice {

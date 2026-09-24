@@ -21,10 +21,9 @@ struct NotchCardHitAreaTests {
 
     @Test("every small card control is at least 24 points to hit")
     func targetsReach24() throws {
-        // The header's marks draw 20 points and grow 2 across and 4 up
-        // and down; the tabs draw 18 tall and grow 4.
-        #expect(20 + 2 * 2 >= NotchCardView.hitSide)
-        #expect(20 + 2 * 4 >= NotchCardView.hitSide)
+        // The header's round marks and the Open chip draw 22 points and
+        // grow 2 each way; the tabs draw 18 tall and grow 4.
+        #expect(22 + 2 * 2 >= NotchCardView.hitSide)
         #expect(18 + 2 * 4 >= NotchCardView.hitSide)
         let source = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
