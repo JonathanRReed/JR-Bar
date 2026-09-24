@@ -4,7 +4,7 @@ import QuartzCore
 import SwiftUI
 
 /// The Rail: a thin glass strip of fourteen cells (the thirteen keys and a
-/// "…" that opens the Control Center) on a screen edge, always on top, on
+/// "…" that opens the Creator Micro window) on a screen edge, always on top, on
 /// every Space, never key, never auto-hidden. Click sends `deck_press` for
 /// the cell's key; hover shows its label in a pill beside the strip. Shown
 /// while the daemon's `rail.edge` is not `off` and the core is live; the
@@ -32,7 +32,7 @@ final class DeckRailController {
 
     var isShown: Bool { panel?.isVisible ?? false }
 
-    /// The screen the rail lives on: the Control Center window's, else the
+    /// The screen the rail lives on: the Creator Micro window's, else the
     /// one with the key window, else the main one. Resolved every time.
     private var screen: NSScreen? {
         NSApp.windows.first { $0.identifier?.rawValue == "jrbar.control-center" && $0.isVisible }?.screen
@@ -169,7 +169,7 @@ final class DeckRailController {
         self.label = label
         let content: RailLabelView
         if DeckRailGeometry.isOverflowCell(cell) {
-            content = RailLabelView(title: "Open Control Center", subtitle: store.banks.title, provider: nil, number: "…")
+            content = RailLabelView(title: "Open Creator Micro", subtitle: store.banks.title, provider: nil, number: "…")
         } else {
             let slot = store.slots[safe: cell] ?? DeckSlot(index: cell)
             content = RailLabelView(title: slot.title, subtitle: slot.subtitle, provider: slot.provider, number: "\(cell + 1)",
@@ -452,7 +452,7 @@ struct RailSlotCell: View {
     }
 }
 
-/// The "…" cell: opens the Control Center on this bank.
+/// The "…" cell: opens the Creator Micro window on this bank.
 struct RailOverflowCell: View {
     @Bindable var store: DeckStore
     let cell: Int
@@ -471,8 +471,8 @@ struct RailOverflowCell: View {
         .contentShape(Rectangle())
         .onHover { store.railHoveredCell = $0 ? cell : (store.railHoveredCell == cell ? nil : store.railHoveredCell) }
         .onTapGesture { store.onOpenControlCenter?() }
-        .help("Open Control Center, \(store.banks.title.lowercased())")
-        .accessibilityLabel("Open Control Center, \(store.banks.title.lowercased())")
+        .help("Open the Creator Micro window, \(store.banks.title.lowercased())")
+        .accessibilityLabel("Open the Creator Micro window, \(store.banks.title.lowercased())")
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -526,8 +526,10 @@ struct RailLabelView: View {
                         .frame(width: 220, alignment: .leading)
                 }
                 if isInteractive, let ask, let desk {
+                    // At least the text's width, and wider when the hold
+                    // ring joins the verbs, so no button is cut short.
                     RailAskVerbs(ask: ask, desk: desk)
-                        .frame(width: 220, alignment: .trailing)
+                        .frame(minWidth: 220, alignment: .trailing)
                         .padding(.top, 5)
                 }
             }
@@ -545,16 +547,42 @@ struct RailLabelView: View {
 /// The ask pill's verbs: Deny, Always Allow where the agent's hook
 /// offers it, Approve — or a held question's options — each only where
 /// the daemon says the answer can land. Every one is a click through
-/// the shared desk; the line it earns replaces the buttons.
+/// the shared desk; the line it earns replaces the buttons. While the
+/// agent's hook holds the ask, a ring beside them empties over the hold
+/// (`RailHoldRing`); when the hold lapses the ring goes, and so do the
+/// verbs only the hold could carry.
 struct RailAskVerbs: View {
     let ask: CoreAsk
     let desk: AskAnswerDesk
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var choices: [CoreAskChoice] { ask.decision?.choices ?? [] }
 
     var body: some View {
+        let now = Date()
+        if RailHoldRing.fraction(of: ask, at: now) != nil, let until = ask.decision?.holdUntil {
+            // Ticks only while the deadline runs, and once more as it
+            // passes, to take the ring and the held verbs down.
+            TimelineView(.explicit(RailHoldRing.ticks(from: now, until: Date(timeIntervalSince1970: until),
+                                                      every: reduceMotion ? RailHoldRing.step : 1))) { context in
+                verbs(at: context.date)
+            }
+        } else {
+            verbs(at: now)
+        }
+    }
+
+    private func verbs(at now: Date) -> some View {
         let busy = desk.isPending(ask.session)
-        HStack(spacing: 6) {
+        let held = ask.isHeld(at: now)
+        let hold = RailHoldRing.fraction(of: ask, at: now)
+        return HStack(spacing: 6) {
+            if let hold, desk.note(for: ask.session) == nil {
+                RailHoldRing(fraction: reduceMotion ? RailHoldRing.stepped(hold) : hold,
+                             secondsLeft: RailHoldRing.secondsLeft(of: ask, at: now),
+                             animated: !reduceMotion)
+            }
             Spacer(minLength: 0)
             if let note = desk.note(for: ask.session) {
                 Text(note.text)
@@ -567,7 +595,7 @@ struct RailAskVerbs: View {
                     Button("Deny") { Task { await desk.answer(ask, .deny) } }
                         .disabled(busy)
                 }
-                if AskVerbs.chooses(ask) {
+                if held, AskVerbs.chooses(ask) {
                     Menu(AskChoiceLayout.menuTitle(choices, picks: desk.picks(for: ask))) {
                         AskChoiceMenuItems(choices: choices, picks: desk.picks(for: ask),
                                            pick: { desk.pick($0, in: $1, of: ask) },
@@ -576,7 +604,7 @@ struct RailAskVerbs: View {
                     .fixedSize()
                     .disabled(busy)
                 }
-                if AskVerbs.alwaysAllows(ask) {
+                if held, AskVerbs.alwaysAllows(ask) {
                     Button("Always Allow") { Task { await desk.answer(ask, .always) } }
                         .disabled(busy)
                         .help("Approve, and let the agent remember the rule it offered")
@@ -589,6 +617,74 @@ struct RailAskVerbs: View {
             }
         }
         .controlSize(.small)
+    }
+}
+
+/// The agent's hook holds a decide-lane ask for a short window (45 s)
+/// before its own prompt carries on. The ring shows what is left of it,
+/// full at the start and empty at `hold_until`: the same measure the
+/// panel's card and the notch draw. Under Reduce Motion it moves in
+/// steps, not a sweep.
+struct RailHoldRing: View {
+    /// 1 at the start of the hold, 0 when it lapses.
+    let fraction: Double
+    let secondsLeft: Int
+    var animated = true
+
+    /// The hold's usual length, for asks that do not say when it began.
+    nonisolated static let nominalSeconds: Double = 45
+    /// How far one Reduce Motion step moves.
+    nonisolated static let step: TimeInterval = 5
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.primary.opacity(0.12), lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: fraction)
+                .stroke(SessionActivity.waiting.tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(animated ? .linear(duration: 1) : nil, value: fraction)
+        }
+        .frame(width: 13, height: 13)
+        .padding(.leading, 2)
+        .help("The agent is holding this for your answer: \(secondsLeft) s left")
+        .accessibilityElement()
+        .accessibilityLabel("Held for your answer, \(secondsLeft) seconds left")
+    }
+
+    /// What is left of the hold at `now`, 0...1; nil when the ask is not
+    /// held or its hold has no deadline. The window runs from when the ask
+    /// opened when that is known and plausible, else the usual 45 s.
+    nonisolated static func fraction(of ask: CoreAsk, at now: Date) -> Double? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        let remaining = until - now.timeIntervalSince1970
+        var window = nominalSeconds
+        if let opened = ask.openedAt, (5...600).contains(until - opened) { window = until - opened }
+        return min(1, max(0, remaining / window))
+    }
+
+    /// When the ring redraws: now, every `step` until the deadline, and
+    /// the deadline itself — then nothing more.
+    nonisolated static func ticks(from now: Date, until deadline: Date, every step: TimeInterval) -> [Date] {
+        guard deadline > now, step > 0 else { return [now] }
+        var ticks = Array(stride(from: now, to: deadline, by: step))
+        ticks.append(deadline)
+        return ticks
+    }
+
+    /// Whole seconds left, never below zero.
+    nonisolated static func secondsLeft(of ask: CoreAsk, at now: Date) -> Int {
+        guard let until = ask.decision?.holdUntil else { return 0 }
+        return max(0, Int((until - now.timeIntervalSince1970).rounded(.up)))
+    }
+
+    /// The ring under Reduce Motion: rounded up to the next ninth, so it
+    /// moves in 5-second steps over a 45-second hold and never reads
+    /// empty while time is left.
+    nonisolated static func stepped(_ fraction: Double) -> Double {
+        let steps = nominalSeconds / step
+        return (fraction * steps).rounded(.up) / steps
     }
 }
 

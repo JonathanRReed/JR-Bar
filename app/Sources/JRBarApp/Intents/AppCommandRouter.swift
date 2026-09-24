@@ -5,9 +5,9 @@ import JRBarCore
 /// Where an `AppCommand` lands. The router holds the app's hands as
 /// closures the delegate wires once — the panel, the windows, the core's
 /// quiet and open verbs, the Screen Bar, the toys, the menu bar — so a
-/// link, a shortcut and a Shortcuts action run the same code, and a
-/// command that cannot run now is refused out loud (a toast on the
-/// panel) rather than silently dropped.
+/// link and a shortcut run the same code, and a command that cannot run
+/// now is refused out loud (a toast on the panel) rather than silently
+/// dropped.
 @MainActor
 final class AppCommandRouter {
     static let shared = AppCommandRouter()

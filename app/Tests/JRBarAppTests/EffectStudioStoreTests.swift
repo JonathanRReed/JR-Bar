@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import JRBarCore
@@ -166,5 +167,31 @@ import Testing
         let bare = EffectStudioLibraryTests.makeEffect("bare")
         #expect(store.previewProgram(for: bare) == "off")
         #expect(store.previewLedCount(for: bare) == 8)
+    }
+
+    @Test func theClockRunsOnlyWhileSomeOfTheOpenWindowShows() {
+        let store = Self.makeStore()
+        #expect(!store.clockRunning)
+        store.windowDidOpen()
+        #expect(store.clockRunning)
+        store.covered = true
+        #expect(!store.clockRunning, "a covered studio stops its clock")
+        store.covered = false
+        #expect(store.clockRunning)
+        store.windowDidClose()
+        #expect(!store.clockRunning)
+        // Uncovered while closed: still nothing to tick for.
+        store.covered = true
+        store.covered = false
+        #expect(!store.clockRunning)
+    }
+
+    @Test func anOffscreenWindowCountsAsCovered() {
+        let store = Self.makeStore()
+        let controller = EffectStudioWindowController(store: store)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        controller.noteOcclusion(of: window)
+        #expect(store.covered, "a window that was never ordered in shows nothing")
     }
 }

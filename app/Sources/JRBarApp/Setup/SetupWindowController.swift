@@ -14,6 +14,8 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
 
     let store: SetupStore
     private var window: NSWindow?
+    /// What waits for the walkthrough to go away (`afterClose`).
+    private var afterCloseActions: [@MainActor () -> Void] = []
 
     init(store: SetupStore = SetupStore()) {
         self.store = store
@@ -30,6 +32,7 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         store.present()
         let window = self.window ?? makeWindow()
         self.window = window
+        attachContent(to: window)
         // An accessory app is never frontmost on its own; the window
         // needs the app active to draw its controls as key. The same two
         // calls the Settings window uses.
@@ -66,59 +69,54 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
+    /// Runs `action` once the walkthrough's window closes, finished or
+    /// dismissed, or straight away when it isn't up: the first launch's
+    /// panel waits here, so one surface asks for attention at a time.
+    func afterClose(_ action: @escaping @MainActor () -> Void) {
+        guard isVisible else { action(); return }
+        afterCloseActions.append(action)
+    }
+
     var isVisible: Bool { window?.isVisible ?? false }
 
+    /// The walkthrough's SwiftUI graph lives only while the window is
+    /// open (`WindowContentLifecycle`); the step lives in the store.
+    /// Internal for the lifecycle test.
+    @discardableResult
+    func attachContent(to window: NSWindow) -> NSViewController {
+        WindowContentLifecycle.attach(to: window, title: "Welcome to JR-Bar") {
+            WindowContentLifecycle.glassPlate(around: NSHostingController(rootView: SetupView(store: store)),
+                                              size: Self.contentSize)
+        }
+    }
+
     private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: SetupView(store: store))
-        let window = NSWindow(contentViewController: hosting)
-        window.title = "Welcome to JR-Bar"
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: Self.contentSize),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        attachContent(to: window)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.styleMask = [.titled, .closable, .fullSizeContentView]
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.setContentSize(Self.contentSize)
         window.center()
         window.identifier = NSUserInterfaceItemIdentifier("setup")
-        // The floating glass card: the window's content IS the plate,
-        // with the hosting view inside. The window supplies its own
-        // rounding, so the plate's corner radius stays square to it.
-        // `JRBAR_PLAIN_MATERIAL` swaps in a plain effect view, as the
-        // other glass surfaces do.
-        if ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] == nil {
-            let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: Self.contentSize))
-            glass.style = .regular
-            glass.cornerRadius = 0
-            glass.contentView = hosting.view
-            window.contentView = glass
-        } else {
-            let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: Self.contentSize))
-            effect.material = .windowBackground
-            effect.blendingMode = .behindWindow
-            effect.state = .active
-            hosting.view.translatesAutoresizingMaskIntoConstraints = false
-            effect.addSubview(hosting.view)
-            NSLayoutConstraint.activate([
-                hosting.view.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-                hosting.view.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-                hosting.view.topAnchor.constraint(equalTo: effect.topAnchor),
-                hosting.view.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-            ])
-            window.contentView = effect
-        }
         return window
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         store.stopPermissionUpdates()
-        // Back to a pure menu-bar process once the window goes away —
-        // the same retraction the Settings window does.
+        WindowContentLifecycle.retractWhenLastWindowCloses()
+        let waiting = afterCloseActions
+        afterCloseActions = []
+        // After the close has finished, like the retraction, so what
+        // follows doesn't land under the closing window.
         DispatchQueue.main.async {
-            if NSApp.windows.allSatisfy({ !$0.isVisible || $0 is NSPanel }) {
-                NSApp.hide(nil)
-                NSApp.unhide(nil)
-            }
+            MainActor.assumeIsolated { for action in waiting { action() } }
         }
     }
 }

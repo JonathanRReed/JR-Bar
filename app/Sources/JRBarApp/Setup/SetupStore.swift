@@ -160,7 +160,6 @@ final class SetupStore {
 
     var canGoBack: Bool { step != .welcome }
     var canSkip: Bool { step.skippable }
-    var canGoNext: Bool { true }
 
     /// The primary button's word: Get Started → Next → Finish.
     var nextTitle: String {
@@ -200,12 +199,36 @@ final class SetupStore {
     }
 
     /// Finish/Open Toys: stamps `finishedAt` (the gate's "never again"),
-    /// records the run's outcomes, and lets the window close.
+    /// records the run's outcomes, and lets the window close. The first
+    /// finish on a Mac also counts this release's What's New as seen:
+    /// everything in it is simply how JR-Bar works for someone new.
     func finish() {
         completedSteps.insert(.done)
+        if state.finishedAt == nil, state.whatsNewSeen == nil {
+            state.whatsNewSeen = WhatsNewCatalog.releaseID
+        }
         state.finishedAt = Date().timeIntervalSince1970
         save()
         onFinished?()
+    }
+
+    // MARK: What's New
+
+    /// Whether the walkthrough has ever run to its end — What's New waits
+    /// for that.
+    var hasFinished: Bool { state.finishedAt != nil }
+
+    /// The release whose What's New was last closed.
+    var whatsNewSeen: String? { state.whatsNewSeen }
+
+    /// Closing What's New stamps its release, in the same `setup.json`
+    /// this store writes, so neither write loses the other's. Straight
+    /// through `persist`: `save()` would rewrite the last run's step
+    /// outcomes from this launch's empty ones.
+    func markWhatsNewSeen(_ release: String) {
+        guard state.whatsNewSeen != release else { return }
+        state.whatsNewSeen = release
+        persist(state)
     }
 
     /// The Done step's "Open Toys" — finishes like Finish and opens the

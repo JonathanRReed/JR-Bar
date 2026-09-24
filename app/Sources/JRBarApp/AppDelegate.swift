@@ -24,13 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var historyStore: HistoryStore?
     private var historyWindow: HistoryWindowController?
     private var overviewWindow: OverviewWindowController?
-    private var replayWindow: ReplayWindowController?
     private var usageStore: UsageCenterStore?
     private var usageWindow: UsageCenterWindowController?
     private var effectsStore: EffectStudioStore?
     private var effectsWindow: EffectStudioWindowController?
     private var deckStore: DeckStore?
     private var controlCenterWindow: ControlCenterWindowController?
+    private var whatsNewWindow: WhatsNewWindowController?
     private var rail: DeckRailController?
     private var events: EventCoordinator?
     private var toysStore: ToysStore?
@@ -46,8 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// through the same `PanelHotkey` plumbing, its own signature.
     private var shelfHotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
-    /// The one-shot onboarding card, alive only while it is on screen.
-    private var firstRunCard: FirstRunCard?
     private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source, anchor: Double?)?
     private var lastLightsSource: String?
@@ -540,14 +538,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return MenuBarCoreFacts.read(core: core, aggregate: store.aggregate)
         }
 
-        // Event Replay: the read-only journaled-events surface (S7.4).
-        let replayStore = ReplayStore(core: core)
-        let replayWindow = ReplayWindowController(store: replayStore)
-        self.replayWindow = replayWindow
-        statusItem.onOpenReplay = { [weak replayWindow] in replayWindow?.show() }
-        // History owns the journal now (its Events tab), and its rows point
-        // at the Overview's inspector for a session's full story.
-        replayWindow.redirect = { [weak historyWindow] in historyWindow?.showEvents() }
+        // Event Replay is History's Events tab: History owns the journal,
+        // and its rows point at the Overview's inspector for a session's
+        // full story.
+        statusItem.onOpenReplay = { [weak historyWindow] in historyWindow?.showEvents() }
         historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
         // Usage Center (⌘U) and Effect Studio windows.
@@ -617,7 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 history: { [weak historyWindow] in historyWindow?.show() },
                 effects: { [weak effectsWindow] in effectsWindow?.show() },
                 deck: { [weak controlCenterWindow] in controlCenterWindow?.show() },
-                replay: { [weak replayWindow] in replayWindow?.show() },
+                replay: { [weak historyWindow] in historyWindow?.showEvents() },
                 panel: { [weak panel] in panel?.toggle() },
                 checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
                 settings: { [weak settingsWindow] page in settingsWindow?.show(page: page) }))
@@ -777,7 +771,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
         setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(page: .toys) }
-        if setup.store.shouldPresentOnLaunch { setup.show() }
+        let setupShown = setup.store.shouldPresentOnLaunch
+        if setupShown { setup.show() }
+
+        // What's New: once per release, after Setup has run to its end
+        // and never in the launch that shows it, at the first moment the
+        // monitor is live, the session unlocked and nothing full screen
+        // in front. Closing it stamps the release in setup.json.
+        let whatsNew = WhatsNewWindowController()
+        whatsNew.markSeen = { [weak setup] release in setup?.store.markWhatsNewSeen(release) }
+        self.whatsNewWindow = whatsNew
+        if WhatsNewGate.isArmed(setupFinished: setup.store.hasFinished, setupShownThisLaunch: setupShown,
+                                seen: setup.store.whatsNewSeen) {
+            whatsNew.arm(core: core)
+        }
 
         // Developer switches: `JRBAR_OPEN_PANEL=1` opens the panel shortly
         // after launch (screenshots, design passes) without a click;
@@ -823,6 +830,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                     StatusItemController.renderStyles(to: directory, live: statusItem.meters, liveDots: statusItem.sessionDots)
                     print("status icons: re-rendered with \(statusItem.meters.count) live meters, \(statusItem.sessionDots.count) sessions")
                 }
+            }
+        }
+        // `JRBAR_OPEN_WHATS_NEW=1` opens What's New by hand (screenshots);
+        // closing it stamps the release like any close.
+        if environment["JRBAR_OPEN_WHATS_NEW"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak whatsNew] in
+                MainActor.assumeIsolated { whatsNew?.show() }
             }
         }
         if environment["JRBAR_OPEN_HISTORY"] != nil {
@@ -950,10 +964,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// General turns it off.
     private func completeFirstRun(with bundled: CoreSupervisor.BundledCore, core: CoreModel) {
         let stamp = bundled.buildStamp
-        // True only on the launch that registers the login item below —
-        // the one launch the onboarding card may appear on. Read now,
-        // before that block sets the flag.
-        let isFirstLaunch = !appState.loginItemRegistered
         if appState.bundledHooksInstalledFor != stamp {
             core.appendLocalLog(level: "supervisor", "first launch of \(stamp): installing provider hooks for \(bundled.hookShim)")
             DispatchQueue.global(qos: .utility).async { [weak self, weak core] in
@@ -981,15 +991,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                             self?.settingsWindow?.show(page: .agents)
                         }
                     }
-                    // The onboarding card trails the toast rather than
-                    // racing it: it explains the bar the hooks just made
-                    // live. `wasShown` keeps it once-ever even when the
-                    // toast itself repeats (a failed install retries).
-                    if isFirstLaunch {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
-                            MainActor.assumeIsolated { self?.showFirstRunCard() }
-                        }
-                    }
                     NSLog("JR-Bar hooks: install all exited %d", result.status)
                 }
             }
@@ -998,9 +999,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // The very first launch opens the panel once, so the one
             // surface a menu-bar app has is found without a lucky click.
             // `loginItemRegistered` is the flag — it is only ever false
-            // before this first run completes.
+            // before this first run completes. Setup, which presents on
+            // that launch too, goes first: the panel waits until it is
+            // finished or dismissed.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
-                MainActor.assumeIsolated { self?.panel?.open() }
+                MainActor.assumeIsolated {
+                    SetupWindowController.shared.afterClose { self?.panel?.open() }
+                }
             }
             do {
                 try SMAppService.mainApp.register()
@@ -1012,18 +1017,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             persistAppState()
         }
         NSLog("JR-Bar login item: %@", Self.describe(SMAppService.mainApp.status))
-    }
-
-    /// The one-card onboarding: a small glass panel hung under the band it
-    /// describes, shown after the first-launch hook-install toast. The
-    /// marker file (`FirstRunCard.wasShown`, beside `app-state.json`) is
-    /// written when it is presented, so it can never be shown twice.
-    private func showFirstRunCard() {
-        guard !FirstRunCard.wasShown else { return }
-        let card = FirstRunCard(anchorRect: { [weak self] in self?.screenBar?.bandScreenRect })
-        card.onOpenSettings = { [weak self] in self?.settingsWindow?.show() }
-        firstRunCard = card
-        card.show()
     }
 
     // MARK: App state
@@ -1696,15 +1689,6 @@ extension AppDelegate {
         // Shortcuts send it, `state.power.hold` is what the chip shows.
         if let core { SystemTogglesStore.shared.state.attachLease(to: core) }
         wireCommandRouter()
-        // Shortcuts' "Open Agent Session" picks from the live list.
-        JRBarIntentBridge.sessions = { [weak self] in
-            (self?.core?.sessions ?? []).map { session in
-                (session.id,
-                 SessionLabel.display(label: session.label, shortId: session.shortId,
-                                      id: session.id, provider: session.provider),
-                 SessionLabel.providerName(session.provider))
-            }
-        }
         // App actions bound on Settings › Shortcuts, and the one key the
         // daemon's retired registry held, adopted when its settings land.
         AppHotkeys.shared.start()
@@ -1782,9 +1766,7 @@ extension AppDelegate {
             case .effects: self?.effectsWindow?.show()
             case .controlCenter: self?.controlCenterWindow?.show()
             case .setup: SetupWindowController.show()
-            // No window yet: the name routes so the menus and the palette
-            // can list it before What's New is built.
-            case .whatsNew: break
+            case .whatsNew: self?.whatsNewWindow?.show()
             }
         }
         router.quiet = { [weak self] mode, seconds in

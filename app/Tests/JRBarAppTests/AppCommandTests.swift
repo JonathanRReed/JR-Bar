@@ -4,9 +4,9 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// The `jrbar://` vocabulary and the router behind links, shortcuts and
-/// Shortcuts actions: every link parses whole or not at all, and a
-/// command that cannot run is refused out loud.
+/// The `jrbar://` vocabulary and the router behind links and shortcuts:
+/// every link parses whole or not at all, and a command that cannot run
+/// is refused out loud.
 @Suite struct AppCommandTests {
     private func parse(_ text: String) -> AppCommand? {
         URL(string: text).flatMap(AppCommand.parse)
@@ -29,6 +29,15 @@ import Testing
             #expect(parse("jrbar://window/\(window.rawValue)") == .window(window))
             #expect(parse("jrbar://\(window.rawValue)") == .window(window), "the bare verb list keeps up")
         }
+        for alias in AppCommand.AppWindow.aliases.keys {
+            let aliased = AppCommand.AppWindow.aliases[alias]
+            #expect(parse("jrbar://window/\(alias)") == aliased.map(AppCommand.window), "an older name keeps working")
+            #expect(parse("jrbar://\(alias)") == aliased.map(AppCommand.window))
+        }
+        #expect(parse("jrbar://window/creator-micro") == .window(.controlCenter))
+        #expect(parse("jrbar://open/Control-Center") == .window(.controlCenter))
+        #expect(AppCommand.window(.controlCenter).link.absoluteString == "jrbar://window/creator-micro",
+                "a new link names the window by the pad")
         #expect(parse("jrbar://window/whats-new") == .window(.whatsNew))
         #expect(parse("jrbar://window/Whats-New") == .window(.whatsNew))
         #expect(parse("jrbar://window/nowhere") == nil)
@@ -111,6 +120,37 @@ import Testing
         #expect(parse("jrbar://ask") == .revealAsk)
         #expect(parse("jrbar://shelf") == .shelf)
         #expect(parse("jrbar://session?id=claude%3Asession%3Aabc") == .openSession("claude:session:abc"))
+    }
+
+    @Test func everyCommandsLinkReadsBackAsItself() {
+        var commands: [AppCommand] = [
+            .panel(toggle: false), .panel(toggle: true),
+            .settings(page: nil), .settings(page: "notifications"),
+            .toggle(.darkMode, on: nil), .toggle(.keepAwake, on: true), .toggle(.mute, on: false),
+            .keepAwake(seconds: nil), .keepAwake(seconds: 0), .keepAwake(seconds: 5400),
+            .quiet(mode: nil, seconds: 3600), .quiet(mode: "asks_only", seconds: 900), .endQuiet,
+            .deepWork(seconds: 1500),
+            .screenBar(on: nil), .screenBar(on: true), .screenBar(on: false),
+            .confetti(), .confetti(tint: .provider("codex")), .confetti(tint: .session("claude:session:abc")),
+            .openSession("claude:session:abc"), .revealAsk, .shelf,
+        ]
+        commands += AppCommand.AppWindow.allCases.map(AppCommand.window)
+        commands += AppCommand.MenuBarVerb.allCases.map(AppCommand.menuBar)
+        for command in commands {
+            #expect(AppCommand.parse(command.link) == command, "\(command.link.absoluteString)")
+        }
+    }
+
+    @Test func aSessionLinkCarriesItsIDInTheQuery() {
+        #expect(AppCommand.openSession("claude:session:abc").link.absoluteString
+                == "jrbar://session?id=claude:session:abc")
+        // Whatever an id holds arrives whole: nothing in it reads as the
+        // link's own structure.
+        for id in ["codex:session:a b", "odd&id=1+2#x/y?z", "café:session:ü", "remote:studio-mac:claude:session:9"] {
+            let link = AppCommand.openSession(id).link
+            #expect(link.absoluteString.hasPrefix("jrbar://session?id="))
+            #expect(AppCommand.parse(link) == .openSession(id), "\(link.absoluteString)")
+        }
     }
 
     @Test func aConfettiLinkNamesWhoseColoursItWears() {
@@ -320,23 +360,6 @@ import Testing
         other.setChord(nil, for: AppShortcutCatalog.revealAskID)
         other.adoptLegacy(shortcuts: shortcuts)
         #expect(other.chord(for: AppShortcutCatalog.revealAskID) == nil)
-    }
-
-    @Test func theShortcutsParametersCoverTheVocabulary() {
-        // Every chip is pickable in Shortcuts, and every pick is a chip.
-        #expect(Set(QuickToggleOption.allCases.compactMap(\.toggle)) == Set(SystemToggle.allCases))
-        #expect(QuickToggleOption.allCases.count == SystemToggle.allCases.count)
-        // Every quiet mode Shortcuts offers is one the daemon takes.
-        #expect(Set(QuietModeOption.allCases.map(\.rawValue)) == AppCommand.quietModes)
-    }
-
-    @MainActor
-    @Test func aShortcutsActionThrowsTheRoutersRefusal() {
-        let router = AppCommandRouter.shared
-        let saved = router.revealAsk
-        defer { router.revealAsk = saved }
-        router.revealAsk = { "No agent is waiting on you." }
-        #expect(throws: JRBarIntentError.self) { try JRBarIntentBridge.run(.revealAsk) }
     }
 
     @Test func everyChipHasAnActionAndEveryIDIsUnique() {

@@ -26,10 +26,24 @@ enum LEDPreviewSamplers {
     }
 }
 
+private struct LEDPreviewsHeldKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Every LED preview below holds the frame it shows: the window they
+    /// sit in is covered, minimised or on another Space.
+    var ledPreviewsHeld: Bool {
+        get { self[LEDPreviewsHeldKey.self] }
+        set { self[LEDPreviewsHeldKey.self] = newValue }
+    }
+}
+
 /// A live rendering of a LEDS program: a row of glowing dots (the strip)
 /// or one blended band (the Screen Bar). Driven by a 30 Hz timeline that
-/// pauses for static programs and under Reduce Motion, where the frame
-/// shown is the program's brightest moment instead of a black start.
+/// pauses for static programs, while its window is out of sight
+/// (`ledPreviewsHeld`) and under Reduce Motion, where the frame shown is
+/// the program's brightest moment instead of a black start.
 struct LEDStripPreview: View {
     enum Style { case dots, band }
 
@@ -48,6 +62,7 @@ struct LEDStripPreview: View {
     var phase: TimeInterval = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.ledPreviewsHeld) private var held
     @ViewState private var origin = Date()
 
     private var sampler: LEDSSampler? { LEDPreviewSamplers.sampler(for: program, ledCount: ledCount) }
@@ -69,7 +84,7 @@ struct LEDStripPreview: View {
 
     var body: some View {
         let sampler = self.sampler
-        let still = paused || reduceMotion || (sampler?.isStatic ?? true)
+        let still = paused || held || reduceMotion || (sampler?.isStatic ?? true)
         // A paused preview (a library row that is not selected) shows the
         // program's brightest moment, not a black first frame.
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: still)) { context in

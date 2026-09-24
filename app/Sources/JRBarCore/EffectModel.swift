@@ -103,12 +103,29 @@ public struct EffectParameter: Codable, Hashable, Sendable, Identifiable {
         unit = try c.decodeIfPresent(String.self, forKey: .unit)
     }
 
-    /// "Duration seconds" from `duration_seconds`.
+    /// The name a person reads: plain words for the ids that are jargon
+    /// (`duration_seconds` is "Cycle length", `seed` "Variation"), else
+    /// the id in sentence case — "Fill direction" from `fill_direction`.
+    /// The raw id stays one hover away, in the row's tooltip.
     public var title: String {
+        if let plain = Self.plainTitles[name] { return plain }
         let words = name.split(separator: "_").map(String.init)
         guard let first = words.first else { return name }
         return ([first.prefix(1).uppercased() + first.dropFirst()] + words.dropFirst()).joined(separator: " ")
     }
+
+    /// The parameters whose ids read as engineering: how long one cycle
+    /// takes, which of the repeatable patterns plays, how far Flicker's
+    /// brightness wanders, how many waves, and which colours. Flicker has
+    /// both a seed and a `variation`, so the seed's "Variation" leaves the
+    /// other a name of its own.
+    static let plainTitles: [String: String] = [
+        "duration_seconds": "Cycle length",
+        "seed": "Variation",
+        "variation": "Brightness swing",
+        "wave_count": "Waves",
+        "palette": "Colours",
+    ]
 
     /// The native control for this parameter.
     public var control: EffectParameterControl {
@@ -511,9 +528,6 @@ public enum EffectScope: String, Codable, Hashable, Sendable, CaseIterable, Iden
         case .device: return "Device"
         }
     }
-
-    /// Every scope but `global` names a target.
-    public var needsTarget: Bool { self != .global }
 
     /// Most specific first, the daemon's `_SCOPE_PRECEDENCE`.
     public static let precedence: [EffectScope] = [.device, .project, .providerInstance, .provider, .scene, .semantic, .global]

@@ -2,10 +2,10 @@ import Foundation
 import JRBarCore
 
 /// A verb JR-Bar performs on request from outside its own surfaces: a
-/// `jrbar://` link (Raycast Quicklinks, Alfred, Shortcuts' Open URL, a
-/// deck key, `open` in a script), a global shortcut bound on Settings ›
-/// Shortcuts, or a Shortcuts action. One vocabulary for all of them, so
-/// every route does exactly what the others do.
+/// `jrbar://` link (Raycast Quicklinks, Alfred, Shortcuts' Open URLs, a
+/// deck key, `open` in a script) or a global shortcut bound on Settings ›
+/// Shortcuts. One vocabulary for both, so every route does exactly what
+/// the others do.
 ///
 /// Deliberately absent: answering an ask. Approve and Deny stay on the
 /// panel, the banner and the island, where the ask itself is on screen —
@@ -47,8 +47,24 @@ enum AppCommand: Equatable, Sendable {
     /// A window by the name a link uses: `jrbar://open/<name>`,
     /// `jrbar://window/<name>`, or the bare `jrbar://<name>`.
     enum AppWindow: String, CaseIterable, Sendable {
-        case overview, history, usage, effects, controlCenter = "control-center", setup
+        case overview, history, usage, effects, controlCenter = "creator-micro", setup
         case whatsNew = "whats-new"
+
+        /// Names a link may still use for a window that was renamed:
+        /// the Creator Micro window was the Control Center, and links,
+        /// deck keys and scripts written then keep working.
+        nonisolated static let aliases: [String: AppWindow] = ["control-center": .controlCenter]
+
+        /// The window a link names, by its own name or an older one,
+        /// in any case.
+        nonisolated init?(linkName: String) {
+            let name = linkName.lowercased()
+            if let window = AppWindow(rawValue: name) ?? Self.aliases[name] {
+                self = window
+            } else {
+                return nil
+            }
+        }
     }
 
     /// Whose colours a linked burst wears: the focused session's (a bare
@@ -141,10 +157,10 @@ enum AppCommand: Equatable, Sendable {
             let page = object.lowercased()
             return SettingsPageName.known.contains(page) ? .settings(page: page) : nil
         case "open", "window":
-            guard let object, let window = AppWindow(rawValue: object.lowercased()) else { return nil }
+            guard let object, let window = AppWindow(linkName: object) else { return nil }
             return .window(window)
-        case "overview", "history", "usage", "effects", "control-center", "setup", "whats-new":
-            return AppWindow(rawValue: verb).map(AppCommand.window)
+        case "overview", "history", "usage", "effects", "creator-micro", "control-center", "setup", "whats-new":
+            return AppWindow(linkName: verb).map(AppCommand.window)
         case "toggle":
             guard let object, let toggle = SystemToggle(name: object) else { return nil }
             guard let raw = query["on"] else { return .toggle(toggle, on: nil) }
@@ -221,6 +237,77 @@ enum AppCommand: Equatable, Sendable {
         default:
             return nil
         }
+    }
+
+    /// The `jrbar://` link that names this command, the one `parse` reads
+    /// back: what a reminder, a deck key or a menu row carries to run it
+    /// later. Values ride in the query, percent-encoded, so a session id
+    /// keeps its colons out of the path and whatever else it holds
+    /// arrives whole (`jrbar://session?id=claude:session:…`).
+    nonisolated var link: URL {
+        var path: [String]
+        var query: [(name: String, value: String)] = []
+        switch self {
+        case .panel(let toggle):
+            path = toggle ? ["panel", "toggle"] : ["panel"]
+        case .settings(let page):
+            path = ["settings"] + (page.map { [$0] } ?? [])
+        case .window(let window):
+            path = ["window", window.rawValue]
+        case .toggle(let toggle, let on):
+            path = ["toggle", toggle.rawValue]
+            if let on { query.append(("on", on ? "1" : "0")) }
+        case .keepAwake(let seconds):
+            path = ["awake"]
+            if let seconds { query.append(("for", String(seconds))) }
+        case .quiet(let mode, let seconds):
+            path = ["quiet"]
+            if let mode { query.append(("mode", mode)) }
+            query.append(("for", String(seconds)))
+        case .endQuiet:
+            path = ["quiet", "end"]
+        case .deepWork(let seconds):
+            path = ["deepwork"]
+            query.append(("for", String(seconds)))
+        case .screenBar(let on):
+            path = ["screenbar", on.map { $0 ? "on" : "off" } ?? "toggle"]
+        case .confetti(let tint):
+            path = ["confetti"]
+            switch tint {
+            case .focused: break
+            case .provider(let id): query.append(("provider", id))
+            case .session(let id): query.append(("session", id))
+            }
+        case .menuBar(let verb):
+            path = ["menubar", verb.rawValue]
+        case .openSession(let id):
+            path = ["session"]
+            query.append(("id", id))
+        case .revealAsk:
+            path = ["ask"]
+        case .shelf:
+            path = ["shelf"]
+        }
+        var parts = URLComponents()
+        parts.scheme = Self.scheme
+        parts.host = path[0]
+        parts.percentEncodedPath = path.dropFirst().map { "/" + linkEncoded($0) }.joined()
+        if !query.isEmpty {
+            parts.percentEncodedQuery = query.map { $0.name + "=" + linkEncoded($0.value) }.joined(separator: "&")
+        }
+        // Every piece above is encoded down to URL-safe ASCII, so the
+        // components always make a URL.
+        return parts.url!
+    }
+
+    /// Everything but unreserved ASCII and the colon a daemon id is built
+    /// from, percent-encoded: `&`, `=`, `+`, `#`, `/` and anything past
+    /// ASCII can't be misread as structure.
+    nonisolated private static let linkSafe = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:")
+
+    nonisolated private func linkEncoded(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: Self.linkSafe) ?? ""
     }
 
     /// Seconds from `now` to the next time the clock reads `raw` —

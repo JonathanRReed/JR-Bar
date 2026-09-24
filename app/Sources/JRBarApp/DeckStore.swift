@@ -2,7 +2,7 @@ import AppKit
 import JRBarCore
 import Observation
 
-/// The Control Center's state: the daemon's `state.deck`, the controls lit
+/// The Creator Micro window's state: the daemon's `state.deck`, the controls lit
 /// by `deck_input` events, the sheets, the receipt line, and every deck
 /// command. One instance is shared by the window, the rail and the
 /// Settings › Devices card.
@@ -51,6 +51,10 @@ final class DeckStore {
     var isWindowOpen = false
     /// The rail's "…" cell and Settings open the window through this.
     var onOpenControlCenter: (@MainActor () -> Void)?
+    /// How a session row opens its session: the opener every surface
+    /// shares, so a window the daemon cannot find is still raised. Tests
+    /// stage the answer.
+    @ObservationIgnored var opener: @MainActor (_ session: String) async -> String? = { await SessionOpener.open($0) }
 
     /// A state the app expects the daemon to confirm (a pin, a bank step,
     /// a cleared board), shown until the next `state` arrives.
@@ -276,6 +280,12 @@ final class DeckStore {
 
     // MARK: Commands
 
+    /// A session row's click: its window in front, or the refusal on the
+    /// status line where the click happened.
+    func openSession(_ id: String) async {
+        if let refusal = await opener(id) { fail(refusal) }
+    }
+
     /// A click on a key or a rail cell: what the physical press would do.
     func press(index: Int) {
         run("deck_press") { try await self.core.deckPress(index: index) }
@@ -331,10 +341,6 @@ final class DeckStore {
 
     func approveDevice() {
         run("deck_approve_device", success: "Approved \(device?.serial ?? "the device")") { try await self.core.deckApproveDevice() }
-    }
-
-    func setSettings(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil) {
-        run("deck_set_settings") { try await self.core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled) }
     }
 
     /// The four calibrated analog sectors (AG20–AG23), while

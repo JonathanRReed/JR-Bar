@@ -96,7 +96,6 @@ public struct LEDSKeyframePlan: Sendable, Equatable {
     }
 
     public var isStatic: Bool { lead == nil && loop == nil }
-    public var loopSpanMs: Int { loop?.durationMs ?? 0 }
     public var keyframeCount: Int { (lead?.count ?? 0) + (loop?.count ?? 0) }
 
     /// Renders `sampler` into tracks, or nil when the program is too long to

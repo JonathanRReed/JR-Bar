@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import JRBarCore
 import JRBarUI
+import SwiftUI
 @testable import JRBarApp
 
 /// The walkthrough's rules: step order and skip bounds, how each step's
@@ -357,5 +358,34 @@ import JRBarUI
         #expect(!store.shouldPresentOnLaunch, "a finished setup never auto-presents again")
         let fresh = SetupStore(model: SetupModel(), load: { SetupState(presentedCount: 1) }, persist: { _ in })
         #expect(fresh.shouldPresentOnLaunch)
+    }
+}
+
+/// The walkthrough's window: what waits for it to go, and the Screen
+/// Bar's story on its first step (the retired first-run card's).
+@MainActor
+@Suite struct SetupWindowTests {
+    final class Ran { var count = 0 }
+
+    @Test func whatWaitsForSetupRunsAtOnceWhenItIsNotUp() {
+        let store = SetupStore(model: SetupModel(), load: { SetupState() }, persist: { _ in })
+        let controller = SetupWindowController(store: store)
+        let ran = Ran()
+        controller.afterClose { ran.count += 1 }
+        #expect(ran.count == 1, "with no walkthrough on screen, the first-launch panel opens as before")
+    }
+
+    @Test func theWelcomeStepTellsTheScreenBarsStoryInItsSpace() {
+        // The band demo goes through the presentation-safety compiler,
+        // like the band itself; a refused program would draw red.
+        #expect(LEDPreviewSamplers.sampler(for: SetupScreenBarPrimer.demoProgram, ledCount: 8) != nil)
+        let host = NSHostingView(rootView: SetupWelcomeStep()
+            .frame(width: SetupWindowController.contentSize.width)
+            .fixedSize(horizontal: false, vertical: true))
+        host.layoutSubtreeIfNeeded()
+        // The step sits between the header and the footer of a 520 pt
+        // window: about 390 pt of room.
+        #expect(host.fittingSize.height > 200)
+        #expect(host.fittingSize.height <= 380, "\(host.fittingSize.height)")
     }
 }

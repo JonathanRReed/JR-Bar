@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// A standard titled window for the Control Center (⌘K from the panel, the
-/// footer's overflow menu, the status menu, the app menu and Settings ›
-/// Devices).
+/// The Creator Micro window: the pad drawn as it is, its session keys,
+/// banks and bindings. Opened from the panel's More menu, the status
+/// menu, the app menu, Settings › Devices, the rail's "…" key and
+/// `jrbar://window/creator-micro` (`control-center` still works). It is
+/// named for the pad it drives; it has no chord of its own.
 @MainActor
 final class ControlCenterWindowController: NSObject, NSWindowDelegate {
     private let store: DeckStore
@@ -17,6 +19,7 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
+        attachContent(to: window)
         store.windowDidOpen()
         NSRunningApplication.current.activate()
         NSApp.activate()
@@ -29,14 +32,31 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
 
     var isVisible: Bool { window?.isVisible ?? false }
 
+    /// The pad's SwiftUI graph lives only while the window is open
+    /// (`WindowContentLifecycle`): a closed window no longer re-renders
+    /// the grid on every deck state. Internal for the lifecycle test.
+    @discardableResult
+    func attachContent(to window: NSWindow) -> NSViewController {
+        WindowContentLifecycle.attach(to: window, title: Self.title) {
+            WindowContentLifecycle.hosting(ControlCenterView(store: store))
+        }
+    }
+
+    /// The window's name: the pad's, not a second "Control Center" beside
+    /// macOS's own.
+    static let title = "Creator Micro"
+
     private func makeWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: ControlCenterView(store: store))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Control Center"
-        window.subtitle = "Creator Micro 2"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 740),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        attachContent(to: window)
         window.setContentSize(NSSize(width: 1000, height: 740))
-        window.minSize = NSSize(width: ControlCenterView.minSize.width, height: ControlCenterView.minSize.height)
+        // The pad's own minimum is a content size, and this window's title
+        // bar sits above its content; with no limits coming from SwiftUI,
+        // the window carries it as one.
+        window.contentMinSize = NSSize(width: ControlCenterView.minSize.width, height: ControlCenterView.minSize.height)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -46,12 +66,8 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         store.windowDidClose()
-        DispatchQueue.main.async {
-            if NSApp.windows.allSatisfy({ !$0.isVisible || $0 is NSPanel }) {
-                NSApp.hide(nil)
-                NSApp.unhide(nil)
-            }
-        }
+        WindowContentLifecycle.retractWhenLastWindowCloses()
     }
 }

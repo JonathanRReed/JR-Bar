@@ -7,6 +7,7 @@ import SwiftUI
 final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     private let store: EffectStudioStore
     private var window: NSWindow?
+    private var occlusionObserver: NSObjectProtocol?
 
     init(store: EffectStudioStore) {
         self.store = store
@@ -16,21 +17,41 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     func show(effect: String? = nil) {
         let window = self.window ?? makeWindow()
         self.window = window
+        attachContent(to: window)
         if let effect { store.selectedID = effect }
         store.windowDidOpen()
         NSRunningApplication.current.activate()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        noteOcclusion(of: window)
+    }
+
+    /// Occlusion covers every way the studio goes out of sight while open —
+    /// behind another window, minimised, on another Space — and the
+    /// ordering out at close. The store holds its previews and its clock
+    /// until some of the window shows again. Internal for the test.
+    func noteOcclusion(of window: NSWindow) {
+        store.covered = !window.occlusionState.contains(.visible)
     }
 
     var isVisible: Bool { window?.isVisible ?? false }
 
+    /// The studio's SwiftUI graph lives only while the window is open
+    /// (`WindowContentLifecycle`); the selection lives in the store.
+    /// Internal for the lifecycle test.
+    @discardableResult
+    func attachContent(to window: NSWindow) -> NSViewController {
+        WindowContentLifecycle.attach(to: window, title: "Effect Studio", subtitle: "JR-Bar") {
+            WindowContentLifecycle.hosting(EffectStudioView(store: store))
+        }
+    }
+
     private func makeWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: EffectStudioView(store: store))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Effect Studio"
-        window.subtitle = "JR-Bar"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 680),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        attachContent(to: window)
         window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 1060, height: 680))
         window.minSize = NSSize(width: 900, height: 540)
@@ -42,16 +63,20 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         let toolbar = NSToolbar(identifier: "effects-toolbar")
         toolbar.displayMode = .iconAndLabel
         window.toolbar = toolbar
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window, queue: .main) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let window else { return }
+                    self.noteOcclusion(of: window)
+                }
+            }
         return window
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         store.windowDidClose()
-        DispatchQueue.main.async {
-            if NSApp.windows.allSatisfy({ !$0.isVisible || $0 is NSPanel }) {
-                NSApp.hide(nil)
-                NSApp.unhide(nil)
-            }
-        }
+        WindowContentLifecycle.retractWhenLastWindowCloses()
     }
 }

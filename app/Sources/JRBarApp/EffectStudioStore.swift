@@ -24,6 +24,12 @@ final class EffectStudioStore {
         didSet { UserDefaults.standard.set(selectedID, forKey: "effectStudioSelection") }
     }
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    /// The window is open but nothing of it shows: covered, minimised, on
+    /// another Space. The previews hold their frame and the clock stops
+    /// until it shows again.
+    var covered = false {
+        didSet { if covered != oldValue { syncTicker() } }
+    }
 
     /// Edited parameter values per effect id (only the ones the user touched).
     private(set) var edits: [String: [String: JSONValue]] = [:]
@@ -76,23 +82,14 @@ final class EffectStudioStore {
 
     func windowDidOpen() {
         isOpen = true
-        ticker?.invalidate()
-        ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.now = Date()
-                self.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                if let until = self.hardwarePreviewUntil, until <= self.now { self.hardwarePreviewUntil = nil }
-            }
-        }
+        syncTicker()
         observeCore()
         reload()
     }
 
     func windowDidClose() {
         isOpen = false
-        ticker?.invalidate()
-        ticker = nil
+        syncTicker()
         hardwarePreviewUntil = nil
         renderTask?.cancel()
         renderTask = nil
@@ -108,6 +105,29 @@ final class EffectStudioStore {
         lastError = nil
         statusClear?.cancel()
         statusClear = nil
+    }
+
+    /// Whether the half-second clock runs: only while the window is open
+    /// and some of it shows.
+    var clockRunning: Bool { ticker != nil }
+
+    private func syncTicker() {
+        guard isOpen, !covered else {
+            ticker?.invalidate()
+            ticker = nil
+            return
+        }
+        guard ticker == nil else { return }
+        tick()
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+    }
+
+    private func tick() {
+        now = Date()
+        reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if let until = hardwarePreviewUntil, until <= now { hardwarePreviewUntil = nil }
     }
 
     private func observeCore() {

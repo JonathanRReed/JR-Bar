@@ -2,7 +2,7 @@ import JRBarCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The Control Center: the Creator Micro 2 drawn as its real pad, one key
+/// The Creator Micro window: the Creator Micro 2 drawn as its real pad, one key
 /// per session slot, the dial and joystick around it, the bank pager under
 /// it and the session list beside it. Everything on it is the daemon's
 /// `state.deck`; the app never talks to the pad itself.
@@ -14,8 +14,7 @@ struct ControlCenterView: View {
     var body: some View {
         Group {
             if !store.isLive {
-                DeckEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                               text: "The Creator Micro 2 is driven by the monitor. The pad appears here as soon as the socket is live.")
+                DeckOfflinePad(store: store)
             } else {
                 content
             }
@@ -153,50 +152,87 @@ struct ControlCenterView: View {
 
 // MARK: - Empty states
 
-struct DeckEmptyState: View {
-    let symbol: String
-    let title: String
-    let text: String
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.secondary)
-            Text(title).font(.title3.weight(.semibold))
-            Text(text)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 380)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
-    }
-}
-
-/// No pad: the same silhouette, unlit but still the board (the slots and
-/// the rail need no hardware), with the one sentence that helps.
+/// No pad: the notice that helps, first and hard to miss, then the same
+/// silhouette, unlit but still the board — the slots and the rail need
+/// no hardware.
 struct DeckAbsentPad: View {
     @Bindable var store: DeckStore
 
     var body: some View {
         VStack(spacing: 18) {
+            DeckNotice(symbol: "power",
+                       title: "Turn on your Creator Micro 2 or plug it in",
+                       text: "It connects over USB or Bluetooth (USB wins when both are up). The first pad seen with a stable serial is offered for approval here. The slots work without it.",
+                       footnote: "JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings › Remote.")
             PadIllustration(store: store)
                 .opacity(0.72)
-            VStack(spacing: 4) {
-                Text("Turn on your Creator Micro 2 or plug it in").font(.headline)
-                Text("It connects over USB or Bluetooth (USB wins when both are up). The first pad seen with a stable serial is offered for approval here. The slots work without it.")
-                    .multilineTextAlignment(.center)
+        }
+    }
+}
+
+/// The monitor is away: the board stays drawn, unlit and out of reach
+/// (nothing on it could reach the daemon), under the notice that says
+/// why and when it comes back.
+struct DeckOfflinePad: View {
+    @Bindable var store: DeckStore
+
+    var body: some View {
+        VStack(spacing: 22) {
+            DeckNotice(symbol: "bolt.horizontal.circle",
+                       title: "Waiting for the monitor",
+                       text: "The Creator Micro 2 is driven by JR-Bar's monitor. Its keys light up here again as soon as the monitor is back.",
+                       tint: .orange)
+            PadIllustration(store: store)
+                .opacity(0.45)
+                .saturation(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The one thing the window needs you to know, as a card: a mark in its
+/// tint, a headline, what to do, and an optional aside.
+struct DeckNotice: View {
+    let symbol: String
+    let title: String
+    let text: String
+    var footnote: String? = nil
+    var tint: Color = .blue
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 42, height: 42)
+                .background(Circle().fill(tint.opacity(0.14)))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text(text)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: 460)
-                Text("JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings › Remote.")
-                    .multilineTextAlignment(.center)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: 460)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let footnote {
+                    Text(footnote)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
             }
+            Spacer(minLength: 0)
         }
+        .padding(16)
+        .frame(maxWidth: 640)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tint.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(0.24), lineWidth: 1))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -881,7 +917,7 @@ struct SessionDragRow: View {
         .background(hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { store.core.openSession(session.id) }
+        .onTapGesture { Task { await store.openSession(session.id) } }
         .draggable(session.id) {
             HStack(spacing: 8) {
                 ProviderTile(style: style, size: 20)
@@ -898,7 +934,7 @@ struct SessionDragRow: View {
             } else {
                 Text("On another bank")
             }
-            Button("Open session") { store.core.openSession(session.id) }
+            Button("Open session") { Task { await store.openSession(session.id) } }
         }
         .accessibilityLabel("\(session.displayLabel), \(activity.word)\(boundKey.map { ", key \($0 + 1)" } ?? "")")
     }
