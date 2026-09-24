@@ -151,9 +151,9 @@ not restore the firmware map.
 ## Provider compatibility
 
 T3 is an optional read-only SQLite source. The compatibility manifest records a
-source review of `ea646c0834a3394ecb0be4a30c5d367e5a9002bd`; the highest
-**tested** version is still 0.0.33, and a source review is not a live
-compatibility certification. Missing native thread IDs are accepted without
+source review of `cb1a3f34670b06148d88806a9534772879c30ecd` (2026-09-24); the
+highest **tested** version is 0.0.43, from a read-only probe of a live 0.0.43
+database, and a source review is not a live compatibility certification. Missing native thread IDs are accepted without
 reusing T3's own IDs as native resume IDs. A ready or idle transport is not
 successful completion — only an unambiguous completed-turn projection is. Gemini
 is not aliased to the separate Antigravity harness.
