@@ -239,25 +239,9 @@ public enum TranscriptProbe {
 /// A line that is not a JSON object stores `"[unparsed N bytes]"` so a
 /// redacted segment never fabricates structure it could not read.
 public enum TranscriptRedactor {
-    /// Keys whose *string* values carry prompts, responses, or tool payloads.
-    /// Membership only matters for documentation now — the verbatim rule is
-    /// ``safeKeys``, and no sensitive key is on it. The set still marks
-    /// subtrees that are content by *name* when callers reason about shape.
-    static let sensitiveKeys: Set<String> = [
-        "content", "text", "message", "thinking", "prompt", "summary",
-        "input", "output", "result", "command", "arguments", "instructions",
-        "query", "last_assistant_message",
-        // Tool results and edit payloads: Bash stdout/stderr, Edit/Write
-        // originals and patches — these carry file contents and command
-        // output verbatim in Claude transcripts.
-        "stdout", "stderr", "originalFile", "oldString", "newString",
-        "structuredPatch", "patch", "diff", "fileText", "data", "response",
-        "body", "payload", "toolUseResult", "file_content", "contents",
-    ]
-
     /// Keys that stay verbatim even inside a redacted subtree — the shape
-    /// markers reconstruction and search rely on. Everything else under a
-    /// sensitive key is content, whatever name it wears.
+    /// markers reconstruction and search rely on. Everything else in a
+    /// redacted subtree is content, whatever name it wears.
     static let structuralKeys: Set<String> = [
         "type", "role", "name", "id", "tool_use_id", "toolUseId", "model",
         "stop_reason", "finish_reason", "status", "is_error", "isError",
@@ -339,7 +323,8 @@ public enum TranscriptRedactor {
         return data
     }
 
-    /// `insideSensitive` is set while descending under a sensitive key, so
+    /// `insideSensitive` is set while descending under any key off
+    /// ``safeKeys``, so
     /// a bare string element — `"content": ["…"]` — or a string under an
     /// unknown nested key — `"input": {"payload": "…"}` — is still treated
     /// as content. Structural fields (`type`, `role`, `name`) survive at

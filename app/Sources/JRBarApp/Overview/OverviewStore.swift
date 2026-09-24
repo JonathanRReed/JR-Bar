@@ -635,7 +635,6 @@ final class OverviewStore {
     /// A remote row cannot be opened from this Mac — the inspector,
     /// the context menu and Return all gate on this.
     func canOpen(_ entry: CoreRosterEntry) -> Bool { !entry.session.remote }
-    var canOpenSelected: Bool { selected.map(canOpen) ?? false }
 
     /// Open the selected session's terminal or app so the outcome reaches
     /// the user: "Opened {name}" once it is in front, the refusal on
@@ -1259,18 +1258,11 @@ final class OverviewStore {
         }
     }
 
-    // MARK: Timeline kind filter + facts
+    // MARK: Timeline view + facts
 
-    /// The inspector's kind chips: All / Messages / Tools / Errors —
-    /// a display cut over `timeline`, never a second fetch. The chips
-    /// are the shared timeline view's; its state object is the one source
-    /// of truth, so a chip click and this property never disagree.
-    typealias TimelineKindFilter = ReconstructedTimelineView.KindFilter
+    /// The inspector timeline's kind chips and gap disclosure — the
+    /// shared timeline view's state, owned here so it survives redraws.
     let timelineViewState = ReconstructedTimelineViewState()
-    var timelineKind: TimelineKindFilter {
-        get { timelineViewState.kind }
-        set { timelineViewState.kind = newValue }
-    }
 
     /// The loaded transcript as the shared timeline view draws it. A
     /// running session's last row is mid-turn by definition, so its story
@@ -1300,37 +1292,6 @@ final class OverviewStore {
         var requests: Int
     }
     @ObservationIgnored private var timelineReconstructionCache: (key: TimelineReconstructionKey, value: SessionReconstruction)?
-
-    var filteredTimeline: [CoreTimelineItem] {
-        switch timelineKind {
-        case .all: return timeline
-        case .messages: return timeline.filter { $0.kind == "message" }
-        case .tools: return timeline.filter { $0.kind == "tool_use" || $0.kind == "tool_result" }
-        case .errors: return timeline.filter { $0.isError == true }
-        // Proxy requests ride on the reconstruction, never on the
-        // transcript's own items.
-        case .requests: return []
-        }
-    }
-
-    /// Per-chip counts so the chips tell the truth before filtering.
-    var timelineKindCounts: (messages: Int, tools: Int, errors: Int) {
-        var messages = 0, tools = 0, errors = 0
-        for item in timeline {
-            if item.kind == "message" { messages += 1 }
-            if item.kind == "tool_use" || item.kind == "tool_result" { tools += 1 }
-            if item.isError == true { errors += 1 }
-        }
-        return (messages, tools, errors)
-    }
-
-    /// The first error row's seq — the "Jump to error" scroll target.
-    /// Read from the FILTERED list: scrolling to a seq the active kind
-    /// filter doesn't render would land nowhere.
-    /// The jump target searches the whole timeline, not the filtered
-    /// slice: under a kind filter the error is never in it, which is
-    /// exactly when "jump to error" earns its keep.
-    var firstErrorSeq: Int? { timeline.first { $0.isError == true }?.seq }
 
     /// The transcript's last stated model — surfaced in the inspector as
     /// "Model (transcript)" so the source is named honestly.

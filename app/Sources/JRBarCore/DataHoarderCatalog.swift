@@ -859,10 +859,6 @@ final class DataHoarderCatalog {
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError() }
     }
 
-    func legacyFingerprint() throws -> String? {
-        try metadata(key: "legacy_manifest_sha256")
-    }
-
     func legacySignature() throws -> String? {
         try metadata(key: "legacy_manifest_signature")
     }

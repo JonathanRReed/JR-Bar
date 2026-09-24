@@ -353,10 +353,6 @@ import JRBarCore
         store.filter = OverviewFilter(preset: .all)
         #expect(store.canOpen(store.rows.first { $0.id == "local" }!))
         #expect(!store.canOpen(store.rows.first { $0.id == "away" }!))
-        store.selectionChanged(to: ["away"])
-        #expect(!store.canOpenSelected)
-        store.selectionChanged(to: ["local"])
-        #expect(store.canOpenSelected)
     }
 
     // MARK: Saved-filter apply clears search
@@ -482,27 +478,6 @@ import JRBarCore
         let olderCount = max(0, store.timeline.count - (store.timelinePage?.events.count ?? 0))
         #expect(olderCount == 2)
         #expect(store.timeline.prefix(olderCount).map(\.seq) == [3, 4])
-    }
-
-    // MARK: Kind chips
-
-    @Test func kindFilterCountsAndSlices() {
-        let store = Self.store(with: [])
-        store.timeline = [
-            CoreTimelineItem(seq: 1, kind: "message", role: "user"),
-            CoreTimelineItem(seq: 2, kind: "tool_use", name: "Bash"),
-            CoreTimelineItem(seq: 3, kind: "tool_result", isError: true),
-            CoreTimelineItem(seq: 4, kind: "message", role: "assistant"),
-        ]
-        let counts = store.timelineKindCounts
-        #expect(counts.messages == 2 && counts.tools == 2 && counts.errors == 1)
-        store.timelineKind = .errors
-        #expect(store.filteredTimeline.map(\.seq) == [3])
-        store.timelineKind = .messages
-        #expect(store.filteredTimeline.map(\.seq) == [1, 4])
-        #expect(store.firstErrorSeq == 3)
-        store.timelineKind = .all
-        #expect(store.filteredTimeline.count == 4)
     }
 
     // MARK: Accessibility strings
