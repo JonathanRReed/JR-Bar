@@ -1343,6 +1343,43 @@ final class PanelStore {
         return nil
     }
 
+    /// A stale reading's tag help: old, and the daemon's fix when it
+    /// has one ("Reconnect Claude"), so the hover says what to do.
+    static func staleHelp(action: String?) -> String {
+        let old = "This reading is old — the last refresh did not land"
+        guard let action = action?.trimmingCharacters(in: .whitespaces), !action.isEmpty else { return old }
+        return "\(old). \(action) to get a new one."
+    }
+
+    /// A usage row's second line: "5h resets in 1h 02m · 7d resets in
+    /// 3d 5h", plus "no room for +1" when one more agent would not fit
+    /// before the reset. A stale reading with a fix-it (`action`,
+    /// "Reconnect Claude", "Run grok login") leads with the fix, and a
+    /// window already past its reset says nothing: the source is broken,
+    /// so no new reading is on its way to wait for. With no reset to
+    /// name, the fix-it beats the bare state word.
+    static func usageResetLine(for usage: CoreProviderUsage, primary: CoreUsageWindow?, secondary: CoreUsageWindow?,
+                               noRoomForOneMore: Bool, now: Date) -> String {
+        let action = usage.action?.trimmingCharacters(in: .whitespaces) ?? ""
+        let broken = !action.isEmpty
+            && (usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale")
+        var parts: [String] = broken ? [action] : []
+        for window in [primary, secondary].compactMap({ $0 }) {
+            // Past as `countdown` counts it: under a second to go is past.
+            if broken, let resetsAt = window.resetsAt, resetsAt - now.timeIntervalSince1970 < 1 { continue }
+            if let text = countdown(to: window.resetsAt, now: now) { parts.append("\(window.shortName) \(text)") }
+        }
+        // An old reading's burn is history; the question it answers is
+        // for a live one.
+        if noRoomForOneMore, !broken { parts.append("no room for +1") }
+        if parts.isEmpty {
+            if !action.isEmpty { return action }
+            if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
+            return "no reset time"
+        }
+        return parts.joined(separator: " · ")
+    }
+
     /// The slider's value: a local drag wins; devices that disagree show
     /// the brightest of them (the slider reads "Mixed"); else the Pro's
     /// brightness, else the lights document's.

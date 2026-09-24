@@ -1442,32 +1442,22 @@ struct UsageRow: View {
 
     private func tagHelp(_ tag: PanelStore.UsageTag) -> String {
         switch tag {
-        case .stale: return "This reading is old — the last refresh did not land"
+        case .stale: return PanelStore.staleHelp(action: usage.action)
         case .usedUp: return "The \(windows.primary?.longName ?? "leading") window is used up until it resets"
         case .runsOut: return paceForecast.map { $0.headline(now: store.now) } ?? "The forecast runs dry before the reset"
         case .incident(let text): return text
         }
     }
 
-    /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line: the resets
-    /// only, plus "no room for +1" when one more agent would not fit
-    /// before the reset. With no reset to name, the daemon's own fix-it
-    /// (`action`, "Retry later", "Run grok login") beats the bare state word.
+    /// The resets, one line (`PanelStore.usageResetLine`): a stale
+    /// source's fix-it first, "no room for +1" when one more agent would
+    /// not fit before the reset.
     private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
-        var parts: [String] = []
-        if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
-        if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
         // The decision the panel is opened for, said only when the answer
         // is no: one more agent at today's burn would not fit.
-        if let forecast = paceForecast, SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) == false {
-            parts.append("no room for +1")
-        }
-        if parts.isEmpty {
-            if let action = usage.action, !action.isEmpty { return action }
-            if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
-            return "no reset time"
-        }
-        return parts.joined(separator: " · ")
+        let noRoom = paceForecast.map { SessionAwarePace.roomForOneMore($0, now: store.now.timeIntervalSince1970) == false } ?? false
+        return PanelStore.usageResetLine(for: usage, primary: primary, secondary: secondary,
+                                         noRoomForOneMore: noRoom, now: store.now)
     }
 
     /// A window with no reading is grey: not calm, not spent -- unread.
