@@ -122,7 +122,7 @@ struct LightExplanationTests {
         ]))
         let explanation = try #require(LightExplainer.explain(lights: Self.lights(why: "idle"), state: Self.state(), settings: document, now: Self.now))
         let labels = explanation.details.map(\.label)
-        #expect(labels == ["Hardware", "Screen Bar", "Dot", "Dot role", "Screen Bar link", "Global brightness", "Idle dim", "Quiet hours"])
+        #expect(labels == ["Hardware", "Screen Bar", "Dot", "Dot role", "Screen Bar link", "Maximum brightness", "Idle dim", "Quiet hours"])
         // The role decides the Dot's program and its `why`, so the popover
         // names it; a frame with no `role` means the Dot drives itself.
         #expect(explanation.details.first { $0.label == "Dot role" }?.value == "On its own · its own display")
@@ -131,7 +131,7 @@ struct LightExplanationTests {
         let beacon = try #require(LightExplainer.explain(lights: driven, state: Self.state(), settings: document, now: Self.now))
         #expect(beacon.details.first { $0.label == "Dot role" }?.value == "Alert beacon")
         #expect(explanation.details.first?.value == "8 LEDs · beat · red · 79% bright · started 12 s ago")
-        #expect(explanation.details.first { $0.label == "Global brightness" }?.value == "80%")
+        #expect(explanation.details.first { $0.label == "Maximum brightness" }?.value == "80%")
         #expect(explanation.details.first { $0.label == "Idle dim" }?.value == "to 30% after 10 min")
         #expect(explanation.details.first { $0.label == "Quiet hours" }?.value == "dark 22:00–07:00")
     }

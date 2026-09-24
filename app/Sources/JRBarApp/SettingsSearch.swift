@@ -37,7 +37,7 @@ enum SettingsSearch {
         .init(.general, "Startup", "Setup", subtitle: "The first-run walkthrough — agents, permissions, menu bar."),
         .init(.general, "Menu bar", "Panel hotkey"),
         .init(.general, "Menu bar", "Shelf hotkey"),
-        .init(.general, "Brightness", "Global brightness", subtitle: "One dial over every surface."),
+        .init(.general, "Brightness", "Maximum brightness", subtitle: "Caps every light JR-Bar drives."),
         .init(.general, "Software Update", "Version"),
         .init(.general, "Software Update", "Automatically check for updates"),
         .init(.general, "Software Update", "Advanced"),

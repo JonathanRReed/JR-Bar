@@ -346,7 +346,7 @@ public enum LightExplainer {
         }
         if let settings = context.settings {
             let global = settings.double("global_brightness_scale") ?? 1
-            result.append(.init(label: "Global brightness", value: "\(Int((global * 100).rounded()))%"))
+            result.append(.init(label: "Maximum brightness", value: "\(Int((global * 100).rounded()))%"))
             if settings.bool("idle_dim_enabled") == true {
                 let after = Int(settings.double("idle_dim_after_minutes") ?? 10)
                 let fraction = Int(((settings.double("idle_dim_fraction") ?? 0.3) * 100).rounded())

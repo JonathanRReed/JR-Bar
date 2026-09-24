@@ -39,7 +39,7 @@ struct GeneralPage: View {
         }
 
         SettingGroup("Brightness") {
-            SettingSlider(store, "Global brightness", subtitle: "One dial over every surface.",
+            SettingSlider(store, "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
                           path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
         }
 
@@ -1077,7 +1077,7 @@ enum ScreenBarCameraHold {
     static func subtitle(cameraReadable: Bool) -> String {
         cameraReadable
             ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber."
-            : "Needs a camera reading: turn on Mic & camera indicators under Toys › Notch."
+            : "Needs a camera reading: turn on Mic & camera indicators under Utilities › Notch."
     }
 }
 
