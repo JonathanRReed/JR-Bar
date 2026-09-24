@@ -1061,6 +1061,41 @@ struct MenuBarActionsTests {
     }
 
     @MainActor
+    @Test("with both sets on the app's one registry, a re-sync after the full set starts leaves ⌘⇧K live")
+    func parkedPaletteKeySharedCenter() {
+        // Production shares HotkeyCenter.shared between the parked key and
+        // the full set, under one id. The first palette verb writes state,
+        // which re-syncs the parked key — that must not take the full
+        // set's live ⌘⇧K down with it.
+        let box = BindingBox()
+        let actions = MenuBarActions(bindings: [box.binding])
+        let fake = FakeRegistrar()
+        let center = HotkeyCenter(registrar: fake)
+        actions.hotkeys.center = center
+        actions.parkedPaletteKey.center = center
+        func live() -> Int { fake.registered.count - fake.unregistered }
+        let id = MenuBarHotkeys.registryID(for: .commandBar)
+        let chord = HotkeyChord(box.binding)
+
+        actions.paletteBinding = { box.binding }
+        #expect(center.status(of: id) == .active(chord), "parked: the palette's key alone")
+        actions.start()
+        #expect(actions.parkedPaletteKey.bindings.isEmpty, "the parked set forgets the key it handed over")
+        #expect(center.status(of: id) == .active(chord))
+        #expect(live() == 1)
+        actions.syncParkedPaletteKey()
+        actions.syncParkedPaletteKey()
+        #expect(center.status(of: id) == .active(chord), "the full set's key survives the re-sync")
+        #expect(live() == 1)
+        actions.stop()
+        #expect(center.status(of: id) == .active(chord), "parked again")
+        #expect(live() == 1)
+        actions.shutDownPalette()
+        #expect(center.status(of: id) == .inactive)
+        #expect(live() == 0)
+    }
+
+    @MainActor
     @Test("command, hotkey and trigger actions all land on the one delegate")
     func facadeRouting() async throws {
         let actions = MenuBarActions(bindings: [])

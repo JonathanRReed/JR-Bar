@@ -1006,12 +1006,20 @@ private struct MenuBarAutomationControls: View {
     @ViewState private var actionSeconds = 4.0
     @ViewState private var actionScript = ""
 
+    /// The button names the key that opens the palette — whatever the
+    /// Shortcuts page bound it to, or nothing once it is switched off.
+    private var commandBarTitle: String {
+        guard let bound = utility.resolvedHotkeyBindings().first(where: { $0.action == .commandBar }),
+              bound.enabled else { return "Open" }
+        return "Open (" + bound.displayString + ")"
+    }
+
     var body: some View {
         SettingLabel(title: "Automate",
                      subtitle: "The command bar, global hotkeys, and rules that fire on their own.")
 
         LabeledContent {
-            Button("Open (⌘⇧K)") { utility.openCommandBar() }
+            Button(commandBarTitle) { utility.openCommandBar() }
                 .controlSize(.small)
         } label: {
             SettingLabel(title: "Command bar",

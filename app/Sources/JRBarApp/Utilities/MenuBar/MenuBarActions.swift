@@ -169,7 +169,7 @@ final class MenuBarActions {
     /// only while an enabled rule can fire, so an actions start with no
     /// rules leaves the source parked.
     func start() {
-        parkedPaletteKey.stop()
+        dropParkedPaletteKey()
         hotkeys.start()
     }
 
@@ -202,7 +202,7 @@ final class MenuBarActions {
         let wanted = !shutDown && !hotkeys.started
             ? paletteBinding().flatMap { $0.enabled ? $0 : nil } : nil
         guard let wanted else {
-            parkedPaletteKey.stop()
+            dropParkedPaletteKey()
             return
         }
         guard parkedPaletteKey.bindings != [wanted] || !parkedPaletteKey.started else { return }
@@ -211,11 +211,23 @@ final class MenuBarActions {
         parkedPaletteKey.start()
     }
 
+    /// Take the parked key down, if it is up, and forget its binding.
+    /// The parked key and the full set hold ⌘⇧K under the same registry
+    /// id (Settings reads that one id either way), so a stop that
+    /// unregisters by binding would take the full set's live key with
+    /// it — only a parked key that is actually up may unregister, and
+    /// once down it names nothing.
+    private func dropParkedPaletteKey() {
+        guard parkedPaletteKey.started else { return }
+        parkedPaletteKey.stop()
+        parkedPaletteKey.bindings = []
+    }
+
     /// `applicationWillTerminate`: fold the palette, drop the parked key.
     func shutDownPalette() {
         shutDown = true
         commandBar.close()
-        parkedPaletteKey.stop()
+        dropParkedPaletteKey()
     }
 
     /// The binding lives in the persisted settings, which the card can
