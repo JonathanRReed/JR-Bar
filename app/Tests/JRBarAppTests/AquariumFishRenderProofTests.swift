@@ -8,8 +8,9 @@ import JRBarCore
 /// Render proof for the Aquarium's creatures: every species in three
 /// provider palettes and all three moods, the lineup at the size the
 /// tank actually draws, the swim cycle and the turn, every hat and
-/// accessory on every body, the six pets, the overlay marks and a
-/// meal's pellets. Off by
+/// accessory on every body (and eyewear through a turn), the six pets,
+/// the overlay marks, a meal's pellets, and a cast drawn through the
+/// tank's own fish pass with labels and the hover tag. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write `fish-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
 @Suite("Aquarium fish render proof")
