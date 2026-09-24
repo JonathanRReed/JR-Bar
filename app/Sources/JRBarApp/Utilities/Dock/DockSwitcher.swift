@@ -2273,15 +2273,28 @@ struct DockSwitcherView: View {
         }
     }
 
+    /// Every card in a strip shares one slot, so a row of windows reads
+    /// as a row, not a ragged line sized by each title: the still's
+    /// width once any card has one, an icon card's narrower slot while
+    /// none has.
+    static func slotWidth(hasStills: Bool) -> CGFloat { hasStills ? 128 : 96 }
+    static let slotHeight: CGFloat = 76
+    static let cardRadius: CGFloat = 12
+
+    /// A ring drawn `inset` inside a card keeps the card's curve — the
+    /// same centre, a radius smaller by the inset.
+    static func ringRadius(inset: CGFloat) -> CGFloat { max(cardRadius - inset, 0) }
+
     private func card(_ item: SwitcherItem, selected: Bool) -> some View {
-        VStack(spacing: 5) {
+        let slot = Self.slotWidth(hasStills: !model.thumbnails.isEmpty)
+        return VStack(spacing: 5) {
             if let still = model.thumbnails[item.id] {
                 // AltTab's card: the window's own pixels, its app
                 // badged in the corner.
                 Image(nsImage: still)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 128, maxHeight: 76)
+                    .frame(maxWidth: slot, maxHeight: Self.slotHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .overlay(alignment: .bottomLeading) {
                         Image(nsImage: item.icon ?? NSImage())
@@ -2297,7 +2310,10 @@ struct DockSwitcherView: View {
                             }
                             .padding(3)
                     }
-                    .frame(height: 76)
+                    // The agent's mark rides the still's own corner, where
+                    // the preview card draws it.
+                    .overlay(alignment: .topTrailing) { agentDot(item).padding(5) }
+                    .frame(width: slot, height: Self.slotHeight)
             } else {
                 Image(nsImage: item.icon ?? NSImage())
                     .resizable()
@@ -2310,47 +2326,50 @@ struct DockSwitcherView: View {
                                 .offset(x: 8, y: -6)
                         }
                     }
-                    .frame(height: 76, alignment: .center)
+                    .frame(width: slot, height: Self.slotHeight)
+                    .overlay(alignment: .topTrailing) { agentDot(item).padding(4) }
             }
             Text(AppNameChannel.split(item.title).base)
                 .font(.caption2)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: 96)
+                .frame(width: slot)
         }
         .padding(8)
         .opacity(item.onScreen ? 1 : 0.65)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
                 .fill(selected ? AnyShapeStyle(.tint.opacity(0.3))
                                : AnyShapeStyle(.quaternary.opacity(0.4))))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
                 .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
         // The "needs you" ring: a waiting agent's card is outlined in
         // its provider's colour, inside the selection ring so both read.
         .overlay {
             if let agent = item.agent, agent.isWaiting {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                let inset: CGFloat = selected ? 3 : 0
+                RoundedRectangle(cornerRadius: Self.ringRadius(inset: inset), style: .continuous)
                     .strokeBorder(agent.accent.opacity(0.9), lineWidth: 1.5)
-                    .padding(selected ? 3 : 0)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if let agent = item.agent {
-                DockAgentDot(mark: agent)
-                    .padding(6)
+                    .padding(inset)
             }
         }
         // A guarded ⌘W/⌘Q's first press: the card rings in the agent's
         // colour until the second press or the guard's window lapses.
         .overlay {
             if model.armedID == item.id {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
                     .strokeBorder(model.armedAccent ?? .accentColor, lineWidth: 3)
             }
         }
         .help(help(for: item))
+    }
+
+    @ViewBuilder
+    private func agentDot(_ item: SwitcherItem) -> some View {
+        if let agent = item.agent {
+            DockAgentDot(mark: agent)
+        }
     }
 
     /// The Dock tile's unread pill, verbatim.

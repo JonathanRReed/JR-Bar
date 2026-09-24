@@ -487,4 +487,14 @@ struct DockSwitcherTests {
         ]
         #expect(DockSwitcherList.badges(of: tiles) == [mail.path: "3"])
     }
+
+    @Test("a strip's cards share one slot, and a ring inset in a card keeps its curve")
+    func cardSlot() {
+        #expect(DockSwitcherView.slotWidth(hasStills: true) == 128)
+        #expect(DockSwitcherView.slotWidth(hasStills: false) == 96,
+                "icon cards alone keep the narrower slot")
+        #expect(DockSwitcherView.ringRadius(inset: 0) == DockSwitcherView.cardRadius)
+        #expect(DockSwitcherView.ringRadius(inset: 3) == DockSwitcherView.cardRadius - 3)
+        #expect(DockSwitcherView.ringRadius(inset: 40) == 0)
+    }
 }
