@@ -41,6 +41,7 @@ struct AgentAlertRulesTable: View {
                 }
                 .padding(.horizontal, SettingsMetrics.m)
                 .padding(.vertical, SettingsMetrics.s + 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(InsetPanel())
             }
         }
