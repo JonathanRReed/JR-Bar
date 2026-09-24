@@ -45,6 +45,22 @@ enum PaletteWiring {
         ]
     }
 
+    /// A palette verb's Open Session: `SessionOpener`, the path the
+    /// panel's rows take, so a session the daemon cannot find is raised
+    /// by the Dock's window locator instead of dead-ending, and a
+    /// refusal ("Running on studio — open it there", an ended session's
+    /// `not_found`) is heard as the verb's HUD line. The ticket is read
+    /// before the hop, the same one the verb runs under.
+    @discardableResult
+    static func openSession(_ id: String,
+                            via open: @escaping @MainActor (String) async -> String? = { await SessionOpener.open($0) })
+        -> Task<Void, Never> {
+        let ticket = PaletteVerbScope.ticket
+        return Task { @MainActor in
+            if let refusal = await open(id) { ticket?.hear(refusal) }
+        }
+    }
+
     /// History's rows through the daemon's `list_history`, matched by the
     /// window's own filter; a pick raises the window with the query as
     /// its filter and the row selected, and a live session opens as the
@@ -66,7 +82,7 @@ enum PaletteWiring {
                     windows.history()
                 },
                 isLive: { store.isLiveSession($0) },
-                openSession: { store.core.openSession($0) },
+                openSession: { openSession($0) },
                 canResume: { store.canResume($0) },
                 // History's notice is the HUD's line: it reports through
                 // the verb's ticket like the panel's toast.
@@ -154,7 +170,7 @@ enum PaletteWiring {
                 if let row = panel.rows.first(where: { $0.id == id }) {
                     panel.open(row)
                 } else {
-                    panel.openExplainedSession()
+                    openSession(id)
                 }
             },
             copy: { text in
@@ -249,7 +265,7 @@ enum PaletteWiring {
                 hoarder.openArchive()
             },
             sessionFor: { hoarder.model.sessionResolver?($0) },
-            openSession: { hoarder.model.sessionOpener?($0) })
+            openSession: { openSession($0) })
         return PaletteClosureSource(build: { [] }, search: { query in
             let trimmed = query.trimmingCharacters(in: .whitespaces)
             guard hoarder.model.enabled, trimmed.count >= ArchivePaletteRows.minimumQuery else { return [] }

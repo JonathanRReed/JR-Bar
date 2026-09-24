@@ -560,6 +560,27 @@ struct PaletteSourcesTests {
         #expect(HistoryPaletteRows.items(query: "fl", rows: rows, now: now, verbs: historyVerbs(log)).isEmpty)
     }
 
+    @Test("the palette's Open Session goes through SessionOpener, and a refusal is the verb's HUD line")
+    func openSessionThroughOpener() async {
+        let log = Log()
+        let ticket = PaletteVerbTicket()
+        let refused = PaletteVerbScope.$ticket.withValue(ticket) {
+            PaletteWiring.openSession("remote:studio:claude:x") { id in
+                log.calls.append("open:\(id)")
+                return "Running on studio — open it there"
+            }
+        }
+        await refused.value
+        #expect(log.calls == ["open:remote:studio:claude:x"])
+        #expect(ticket.lines == ["Running on studio — open it there"])
+
+        let opened = PaletteVerbScope.$ticket.withValue(ticket) {
+            PaletteWiring.openSession("claude:live") { _ in nil }
+        }
+        await opened.value
+        #expect(ticket.lines.count == 1, "a session in front says nothing")
+    }
+
     /// The fetches a history source made.
     @MainActor
     final class Fetches {
