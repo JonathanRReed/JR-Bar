@@ -60,6 +60,46 @@ import JRBarCore
         #expect(store.rows.map(\.id) == ["a", "b"])
     }
 
+    @Test("an empty Needs me is nobody waiting, with the whole roster's working count one click away")
+    func quietNeedsMe() {
+        let store = Self.store(with: [
+            Self.entry("w1", mode: "tool_running"),
+            Self.entry("w2", mode: "working"),
+            Self.entry("done", mode: "completed", lifecycle: "completed", outcome: "succeeded"),
+        ])
+        #expect(store.filter.preset == .needsMe, "Needs me stays the default view")
+        #expect(store.rows.isEmpty)
+        #expect(store.nobodyWaiting)
+        #expect(store.workingOverall == 2)
+        #expect(store.wholeRosterPhrase == "2 working overall · 3 outside this view")
+
+        store.search = "w1"
+        #expect(!store.nobodyWaiting, "a search that matches nothing is not the quiet state")
+        store.search = ""
+
+        store.showWorking()
+        #expect(store.filter.preset == .working)
+        #expect(Set(store.rows.map(\.id)) == ["w1", "w2"])
+        #expect(!store.nobodyWaiting)
+        #expect(store.wholeRosterPhrase == "2 working overall · 1 outside this view")
+
+        store.filter = OverviewFilter(preset: .all)
+        #expect(store.wholeRosterPhrase == nil, "every row shows: nothing to add")
+        #expect(!Self.store(with: []).nobodyWaiting, "an empty roster is Nothing on record")
+    }
+
+    @Test("History's and the Overview's times follow the reader's 12- or 24-hour clock")
+    func localeClocks() {
+        let date = Date(timeIntervalSince1970: 1_788_982_900)
+        let us = Locale(identifier: "en_US"), gb = Locale(identifier: "en_GB")
+        for text in [HistoryStore.clock(date, locale: us), OverviewStore.clockTime(date, locale: us)] {
+            #expect(text.hasSuffix("AM") || text.hasSuffix("PM"), "\(text)")
+        }
+        for text in [HistoryStore.clock(date, locale: gb), OverviewStore.clockTime(date, locale: gb)] {
+            #expect(!text.hasSuffix("AM") && !text.hasSuffix("PM"), "\(text)")
+        }
+    }
+
     @Test func workingPresetUsesTheCanonicalStateWord() {
         let store = Self.store(with: [
             Self.entry("w", mode: "tool_running"),
@@ -353,10 +393,6 @@ import JRBarCore
         store.filter = OverviewFilter(preset: .all)
         #expect(store.canOpen(store.rows.first { $0.id == "local" }!))
         #expect(!store.canOpen(store.rows.first { $0.id == "away" }!))
-        store.selectionChanged(to: ["away"])
-        #expect(!store.canOpenSelected)
-        store.selectionChanged(to: ["local"])
-        #expect(store.canOpenSelected)
     }
 
     // MARK: Saved-filter apply clears search
@@ -484,27 +520,6 @@ import JRBarCore
         #expect(store.timeline.prefix(olderCount).map(\.seq) == [3, 4])
     }
 
-    // MARK: Kind chips
-
-    @Test func kindFilterCountsAndSlices() {
-        let store = Self.store(with: [])
-        store.timeline = [
-            CoreTimelineItem(seq: 1, kind: "message", role: "user"),
-            CoreTimelineItem(seq: 2, kind: "tool_use", name: "Bash"),
-            CoreTimelineItem(seq: 3, kind: "tool_result", isError: true),
-            CoreTimelineItem(seq: 4, kind: "message", role: "assistant"),
-        ]
-        let counts = store.timelineKindCounts
-        #expect(counts.messages == 2 && counts.tools == 2 && counts.errors == 1)
-        store.timelineKind = .errors
-        #expect(store.filteredTimeline.map(\.seq) == [3])
-        store.timelineKind = .messages
-        #expect(store.filteredTimeline.map(\.seq) == [1, 4])
-        #expect(store.firstErrorSeq == 3)
-        store.timelineKind = .all
-        #expect(store.filteredTimeline.count == 4)
-    }
-
     // MARK: Accessibility strings
 
     @Test func attentionLabelSpeaksWaitingAgeAndFailure() {
@@ -556,5 +571,13 @@ import JRBarCore
         try store.saveExport(to: mdURL, markdown: true)
         let savedMD = try String(decoding: Data(contentsOf: mdURL), as: UTF8.self)
         #expect(savedMD == "# audit\n")
+    }
+
+    @Test("Compare's durations count whole minutes and seconds", arguments: [
+        (45.0, "45s"), (95.0, "1m 35s"), (119.0, "1m 59s"), (150.4, "2m 30s"),
+        (3599.0, "59m 59s"), (5399.0, "89m 59s"), (5400.0, "1.5h"),
+    ])
+    func compareDuration(seconds: Double, text: String) {
+        #expect(CompareRunsSheet.durationText(seconds) == text)
     }
 }

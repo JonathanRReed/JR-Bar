@@ -55,3 +55,26 @@ import Testing
                                         options: Self.providers, maxNames: 1) == "Claude, +2")
     }
 }
+
+/// Settings › Agents: the rows whose CLI the daemon did not find fold
+/// under one "CLI not found (N)" disclosure; the rest keep their order.
+@Suite struct AgentsPagePartitionTests {
+    @Test func missingCLIsGroupAndUnknownsStay() {
+        let detected: [String: Bool] = ["claude": true, "gemini": false, "pi": false]
+        let split = AgentsPage.partition(["claude", "codex", "gemini", "grok", "pi"]) { detected[$0] }
+        #expect(split.found == ["claude", "codex", "grok"], "a daemon that does not say keeps the row up top")
+        #expect(split.missing == ["gemini", "pi"])
+        let empty = AgentsPage.partition([]) { _ in false }
+        #expect(empty.found.isEmpty && empty.missing.isEmpty)
+    }
+}
+
+/// Settings › Lighting: close colour pairs sit under one line that says
+/// how many there are.
+@MainActor
+@Suite struct ColorVisionNoteSummaryTests {
+    @Test func theLineCountsThePairs() {
+        #expect(ColorVisionNote.summary(1) == "Colour vision: 1 pair close — Review")
+        #expect(ColorVisionNote.summary(4) == "Colour vision: 4 pairs close — Review")
+    }
+}

@@ -149,13 +149,58 @@ public struct HistoryFilter: Equatable, Sendable {
 public struct HistoryDay: Identifiable, Equatable, Sendable {
     public var date: Date
     public var title: String
+    /// One row per run of consecutive rows about one session: the newest.
     public var rows: [CoreHistoryRow]
+    /// A row's id → the older rows of its session folded under it,
+    /// newest first. Absent for a row that stands alone.
+    public var folded: [String: [CoreHistoryRow]] = [:]
     public var id: Date { date }
+
+    public init(date: Date, title: String, rows: [CoreHistoryRow], folded: [String: [CoreHistoryRow]] = [:]) {
+        self.date = date
+        self.title = title
+        self.rows = rows
+        self.folded = folded
+    }
 }
 
 public enum HistoryGrouping {
-    /// Groups newest first; titles are Today, Yesterday, then a weekday
-    /// and date. `now` and `calendar` are injectable for tests.
+    /// Consecutive rows (newest first) about one session fold under the
+    /// newest, so a session that ended forty turns in a row reads as one
+    /// row, not forty. A failure never folds and never takes others in:
+    /// it stays its own red row. Rows with no session stand alone.
+    public static func fold(_ rows: [CoreHistoryRow]) -> (rows: [CoreHistoryRow], folded: [String: [CoreHistoryRow]]) {
+        var heads: [CoreHistoryRow] = []
+        var folded: [String: [CoreHistoryRow]] = [:]
+        for row in rows {
+            if let head = heads.last, let session = row.session, !session.isEmpty, head.session == session,
+               head.kind != "failed", row.kind != "failed" {
+                folded[head.id, default: []].append(row)
+            } else {
+                heads.append(row)
+            }
+        }
+        return (heads, folded)
+    }
+
+    /// "Finished ×2 · Started": what a folded row stands for beyond itself.
+    public static func foldedSummary(_ rows: [CoreHistoryRow]) -> String {
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for row in rows {
+            if counts[row.kind] == nil { order.append(row.kind) }
+            counts[row.kind, default: 0] += 1
+        }
+        return order.map { kind in
+            let word = CoreHistoryRow(at: 0, kind: kind).kindWord
+            let count = counts[kind] ?? 0
+            return count > 1 ? "\(word) ×\(count)" : word
+        }.joined(separator: " · ")
+    }
+
+    /// Groups newest first, folding each day's consecutive rows of one
+    /// session (`fold`); titles are Today, Yesterday, then a weekday and
+    /// date. `now` and `calendar` are injectable for tests.
     public static func days(_ rows: [CoreHistoryRow], now: Date = Date(), calendar: Calendar = .current) -> [HistoryDay] {
         var buckets: [Date: [CoreHistoryRow]] = [:]
         for row in rows {
@@ -170,17 +215,24 @@ public enum HistoryGrouping {
             if day == today { title = "Today" }
             else if let yesterday = calendar.date(byAdding: .day, value: -1, to: today), day == yesterday { title = "Yesterday" }
             else { title = formatter.string(from: day) }
-            return HistoryDay(date: day, title: title, rows: buckets[day]!.sorted { $0.at > $1.at })
+            let run = fold(buckets[day]!.sorted { $0.at > $1.at })
+            return HistoryDay(date: day, title: title, rows: run.rows, folded: run.folded)
         }
     }
 }
 
 /// "While you were away: 2 finished, 1 needed you" — built from the unseen
-/// rows at the top of the history. Nil when the newest row was seen.
+/// rows at the top of the history, counting sessions rather than rows: a
+/// session that finished eight turns while you were out finished once
+/// here. Nil when the newest row was seen.
 public struct AwaySummary: Equatable, Sendable {
     public var rows: [CoreHistoryRow]
     public var since: Date
+    /// Kind → how many sessions had a row of that kind in the run. A row
+    /// with no session (a quota crossing) counts on its own.
     public var counts: [String: Int]
+    /// How many sessions the run covers, sessionless rows each as one.
+    public var sessions: Int
 
     public var text: String {
         let order = ["completed", "asked", "failed", "answered", "started", "quota_crossed", "ended"]
@@ -196,7 +248,8 @@ public struct AwaySummary: Equatable, Sendable {
             default: return "\(count) ended"
             }
         }
-        return "While you were away: " + (parts.isEmpty ? "\(rows.count) events" : parts.joined(separator: ", "))
+        let fallback = sessions == 1 ? "1 session" : "\(sessions) sessions"
+        return "While you were away: " + (parts.isEmpty ? fallback : parts.joined(separator: ", "))
     }
 
     /// Only a run of unseen rows at the newest end counts as "away"; older
@@ -209,8 +262,14 @@ public struct AwaySummary: Equatable, Sendable {
             run.append(row)
         }
         guard !run.isEmpty else { return nil }
-        var counts: [String: Int] = [:]
-        for row in run { counts[row.kind, default: 0] += 1 }
-        return AwaySummary(rows: run, since: run.last!.date, counts: counts)
+        var seen: [String: Set<String>] = [:]
+        var everyone: Set<String> = []
+        for row in run {
+            let who = row.session.flatMap { $0.isEmpty ? nil : $0 } ?? "row:\(row.id)"
+            seen[row.kind, default: []].insert(who)
+            everyone.insert(who)
+        }
+        return AwaySummary(rows: run, since: run.last!.date, counts: seen.mapValues(\.count),
+                           sessions: everyone.count)
     }
 }

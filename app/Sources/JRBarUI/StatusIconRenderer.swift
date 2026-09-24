@@ -432,7 +432,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         switch meter.warning {
         case .red: return .systemRed
         case .amber: return .systemOrange
-        case .none: return meter.accentHex.flatMap(NSColor.init(statusHex:))
+        case .none: return meter.accentHex.flatMap(NSColor.init(hex:))
         }
     }
 
@@ -489,7 +489,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         if spec.style == .agents { return drawAgents(spec) }
         if spec.style == .orbit { return drawOrbit(spec) }
         let warning = spec.ringWarning
-        let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
+        let tint = spec.tintHex.flatMap(NSColor.init(hex:))
         let template = warning == .none && tint == nil
         let image = NSImage(size: size, flipped: false) { _ in
             let glyphColor: NSColor = template ? .black : (tint ?? .labelColor)
@@ -587,7 +587,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     static func dotColor(_ spec: StatusIconSpec) -> NSColor? {
         switch spec.dot {
         case .idle: return nil
-        case .working: return spec.tintHex.flatMap(NSColor.init(statusHex:)) ?? .systemTeal
+        case .working: return spec.tintHex.flatMap(NSColor.init(hex:)) ?? .systemTeal
         case .ask: return .systemOrange
         case .error: return .systemRed
         case .done: return .systemGreen
@@ -638,7 +638,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// in `labelColor`, which the drawing handler re-resolves for the
     /// current appearance.
     static func drawAgents(_ spec: StatusIconSpec) -> NSImage {
-        let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
+        let tint = spec.tintHex.flatMap(NSColor.init(hex:))
         let coloured = spec.sessions.contains { $0.state != .idle }
         let template = !coloured && tint == nil
         let imageSize = Self.size(for: spec)
@@ -682,7 +682,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         let color: NSColor?
         switch session.state {
         case .idle: color = nil
-        case .working: color = session.accentHex.flatMap(NSColor.init(statusHex:)) ?? .systemTeal
+        case .working: color = session.accentHex.flatMap(NSColor.init(hex:)) ?? .systemTeal
         case .ask: color = .systemOrange
         case .error: color = .systemRed
         case .done: color = .systemGreen
@@ -705,7 +705,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
             // The configured accent wins over the neutral fill; a warning
             // wins over the accent, because a near-full window outranks a
             // brand colour.
-            if !template, let accent = meter.accentHex.flatMap({ NSColor(statusHex: $0) }) {
+            if !template, let accent = meter.accentHex.flatMap({ NSColor(hex: $0) }) {
                 return accent
             }
             return ink.withAlphaComponent(template ? 1 : 0.85)
@@ -753,7 +753,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// and nothing else, which is what keeps it compact.
     static func drawCompact(_ spec: StatusIconSpec) -> NSImage {
         let meter = tightestMeter(spec)
-        let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
+        let tint = spec.tintHex.flatMap(NSColor.init(hex:))
         let colour = compactColor(meter) ?? tint
         let template = colour == nil
         let imageSize = Self.size(for: spec)
@@ -948,7 +948,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// template image like the glyph alone.
     static func drawOrbit(_ spec: StatusIconSpec) -> NSImage {
         let warning = spec.ringWarning
-        let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
+        let tint = spec.tintHex.flatMap(NSColor.init(hex:))
         let template = warning == .none && tint == nil
         let image = NSImage(size: orbitSize, flipped: false) { _ in
             let center = NSPoint(x: orbitSize.width / 2, y: orbitSize.height / 2)
@@ -1032,7 +1032,10 @@ public final class StatusIconRenderer: @unchecked Sendable {
 }
 
 extension NSColor {
-    convenience init?(statusHex hex: String) {
+    /// `#RRGGBB` (the `#` optional, surrounding whitespace ignored) as an
+    /// sRGB colour; nil for anything else. The one parser the app, the
+    /// settings pages and the status icon share.
+    public convenience init?(hex: String) {
         var text = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("#") { text.removeFirst() }
         guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }

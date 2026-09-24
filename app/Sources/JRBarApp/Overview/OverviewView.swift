@@ -14,9 +14,6 @@ struct OverviewView: View {
     /// The row whose ask gets a free-text reply — the Reply… prompt's
     /// target. nil hides the sheet.
     @ViewState private var replyEntry: CoreRosterEntry?
-    /// The inspector's Advanced disclosure (static topology), closed
-    /// until opened and remembered once it is.
-    @AppStorage("overview.advancedExpanded") private var advancedExpanded = false
 
     var body: some View {
         NavigationSplitView {
@@ -110,9 +107,6 @@ struct OverviewView: View {
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
             Task { await store.loadTimeline(for: id) }
-            if let entry = store.selected {
-                Task { await store.loadRadarReport(for: entry) }
-            }
         }
     }
 
@@ -124,11 +118,13 @@ struct OverviewView: View {
             // The Usage tag carries `saved: nil` — emit it that way while
             // the usage pane is up or a live saved filter makes the
             // selection match nothing and the sidebar shows no highlight.
-            get: { SidebarSelection(filter: store.filter, saved: store.pane == .usage ? nil : store.activeSavedFilter, pane: store.pane) },
+            get: { SidebarSelection(filter: store.filter, saved: store.pane == .roster ? store.activeSavedFilter : nil, pane: store.pane) },
             set: { selection in
                 guard let selection else { return }
                 if selection.pane == .usage {
                     store.showUsage()
+                } else if selection.pane == .graph {
+                    store.showGraph()
                 } else {
                     store.pane = .roster
                     store.workerFilter = nil
@@ -157,6 +153,8 @@ struct OverviewView: View {
                 }
             }
             Section("Insights") {
+                Label("Graph", systemImage: "point.3.connected.trianglepath.dotted")
+                    .tag(SidebarSelection(filter: store.filter, saved: nil, pane: .graph))
                 Label("Usage", systemImage: "chart.xyaxis.line")
                     .tag(SidebarSelection(filter: store.filter, saved: nil, pane: .usage))
             }
@@ -237,10 +235,10 @@ struct OverviewView: View {
 
     @ViewBuilder
     private var content: some View {
-        if store.pane == .usage {
-            UsageGraphView(store: store)
-        } else {
-            rosterContent
+        switch store.pane {
+        case .usage: UsageGraphView(store: store)
+        case .graph: OverviewGraphView(store: store)
+        case .roster: rosterContent
         }
     }
 
@@ -336,6 +334,14 @@ struct OverviewView: View {
             } else if let error = store.error, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "exclamationmark.triangle", title: "Couldn't load the roster",
                                    text: error)
+            } else if store.nobodyWaiting {
+                // The default view with nothing to answer is good news,
+                // not a filter that failed.
+                let working = store.workingOverall
+                OverviewEmptyState(symbol: "checkmark.circle", title: "Nobody's waiting on you",
+                                   text: "When an agent asks for you, it lands here.",
+                                   actionTitle: working > 0 ? "Show \(working) working" : nil,
+                                   action: { store.showWorking() })
             } else if store.rows.isEmpty {
                 OverviewEmptyState(symbol: store.roster.isEmpty ? "tray" : "line.3.horizontal.decrease.circle",
                                    title: store.roster.isEmpty ? "Nothing on record" : "Nothing matches",
@@ -345,12 +351,15 @@ struct OverviewView: View {
             } else {
                 rosterTable
             }
-            if let note = store.coverageNote {
+            if store.coverageNote != nil {
+                // The daemon's note says the roster keeps statuses, not
+                // every run; where the rest are is what the reader needs.
                 Divider()
-                Text(note)
+                Text("Older runs live in History (⌘Y)")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
                     .padding(.horizontal, 12).padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(store.coverageNote ?? "")
             }
             if store.counts.listed < store.counts.total {
                 Divider()
@@ -394,8 +403,8 @@ struct OverviewView: View {
                             if store.showsUnseenDot(entry) {
                                 // `state.unseen_completions`: finished
                                 // since the user last looked — the same
-                                // accent dot the panel gives the row.
-                                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                                // unseen dot the panel gives the row.
+                                UnseenDot()
                                     .help("Finished since you last looked")
                             }
                             if OverviewStore.isSnoozed(entry, now: store.now) {
@@ -507,13 +516,17 @@ struct OverviewView: View {
                                                send: { Task { await store.sendPicks(entry: entry) } })
                         }
                         Button("Deny ask") { Task { await store.declineQuestion(entry: entry) } }
-                    } else if let entry, store.askAction(for: entry) == .actionable {
+                    } else if let entry, store.askAction(for: entry) == .actionable, let ask = entry.session.ask {
                         Divider()
-                        Button("Approve ask") { Task { await store.answerAsk(entry: entry, approve: true) } }
-                        if let ask = entry.session.ask, AskVerbs.alwaysAllows(ask) {
+                        if AskVerbs.approves(ask) {
+                            Button("Approve ask") { Task { await store.answerAsk(entry: entry, approve: true) } }
+                        }
+                        if AskVerbs.alwaysAllows(ask) {
                             Button("Always allow") { Task { await store.alwaysAllow(entry: entry) } }
                         }
-                        Button("Deny ask") { Task { await store.answerAsk(entry: entry, approve: false) } }
+                        if AskVerbs.denies(ask) {
+                            Button("Deny ask") { Task { await store.answerAsk(entry: entry, approve: false) } }
+                        }
                         if store.canReply(entry) {
                             Button("Reply…") { replyEntry = entry }
                         }
@@ -571,6 +584,10 @@ struct OverviewView: View {
             if counts.hidden > 0 {
                 Text("· \(counts.hidden) hidden").foregroundStyle(.tertiary)
             }
+            if let whole = store.wholeRosterPhrase {
+                // The counts above are this view's; this is everyone's.
+                Text("· \(whole)").foregroundStyle(.tertiary).lineLimit(1)
+            }
             Spacer()
             if store.loading {
                 ProgressView().controlSize(.mini)
@@ -588,7 +605,8 @@ struct OverviewView: View {
     /// The wiring row: core link, this Mac, each peer, each device,
     /// each provider — the live connections the roster runs on, visible
     /// even when no session is. A chip focuses the same link's facts in
-    /// the inspector.
+    /// the inspector. The row scrolls sideways, and its edges fade so a
+    /// chip cut by the pane reads as "more", not as a clipped view.
     @ViewBuilder
     private var connectionsStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -598,6 +616,15 @@ struct OverviewView: View {
                 }
             }
             .padding(.horizontal, 12)
+        }
+        .mask {
+            HStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 12)
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 12)
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.bottom, 5)
@@ -835,7 +862,6 @@ struct OverviewView: View {
                         .disabled(store.comparing)
                         .help("Side by side with \(previous.session.label ?? previous.session.shortId ?? "the last finished run") in the same folder")
                     }
-                    advancedSection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -969,10 +995,11 @@ struct OverviewView: View {
 
     /// The "Waiting on you" section: the ask's summary and age, then the
     /// explicit actions — Approve / Deny / Reply…. Every button sends
-    /// through `answerAskNow` with the ask's `request` pinned, so the
-    /// daemon itself refuses a stale card (`stale_request`) or an ask
-    /// that moved on. Nothing here ever auto-answers; disabled buttons
-    /// carry the reason as a tooltip rather than silently greying.
+    /// with the ask's `request` pinned, so the daemon itself refuses a
+    /// stale card (`stale_request`) or an ask that moved on; Approve and
+    /// Deny go through the shared desk and are drawn only where it would
+    /// send them. Nothing here ever auto-answers; disabled buttons carry
+    /// the reason as a tooltip rather than silently greying.
     @ViewBuilder
     private func waitingSection(entry: CoreRosterEntry, ask: CoreAsk) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1005,10 +1032,12 @@ struct OverviewView: View {
             } else {
                 let reason = store.askDisabledReason(for: entry)
                 HStack(spacing: 8) {
-                    Button("Approve") {
-                        Task { await store.answerAsk(entry: entry, approve: true) }
+                    if reason != nil || AskVerbs.approves(ask) {
+                        Button("Approve") {
+                            Task { await store.answerAsk(entry: entry, approve: true) }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                     if AskVerbs.alwaysAllows(ask) {
                         // Its own button: the agent remembers the rule.
                         Button("Always Allow") {
@@ -1017,16 +1046,18 @@ struct OverviewView: View {
                         .buttonStyle(.bordered).controlSize(.small)
                         .help("Approve, and let the agent remember the rule it offered")
                     }
-                    Button("Deny") {
-                        Task { await store.answerAsk(entry: entry, approve: false) }
+                    if reason != nil || AskVerbs.denies(ask) {
+                        Button("Deny") {
+                            Task { await store.answerAsk(entry: entry, approve: false) }
+                        }
+                        .buttonStyle(.bordered).controlSize(.small).tint(.red)
                     }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
                     if store.canReply(entry) {
                         Button("Reply…") { replyEntry = entry }
                             .buttonStyle(.bordered).controlSize(.small)
                     }
                 }
-                .disabled(reason != nil)
+                .disabled(reason != nil || store.askDesk.isPending(entry.id))
                 .help(reason ?? (ask.isHeldForDecision
                     ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
                     : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
@@ -1247,81 +1278,13 @@ struct OverviewView: View {
     private static func toolText(_ tool: ObservedToolMap.Tool) -> String {
         tool.failures > 0 ? "\(tool.name) ×\(tool.calls) (\(tool.failures) failed)" : "\(tool.name) ×\(tool.calls)"
     }
-
-    // MARK: Advanced (static topology)
-
-    /// The Agentic Radar lens, behind a disclosure that stays closed
-    /// until opened: Radar scans agent frameworks (LangGraph, CrewAI…),
-    /// not Claude Code or Codex sessions, so it is a specialist's tool,
-    /// not a fact every row should carry. When open it shows only a
-    /// report imported for this row's repository — never the newest
-    /// report of another project. Every edge is labeled "static", never
-    /// an observed call; it feeds nothing (T38).
-    @ViewBuilder
-    private func advancedSection(for entry: CoreRosterEntry) -> some View {
-        DisclosureGroup(isExpanded: $advancedExpanded) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text("Static topology")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                    Text("static")
-                        .font(.system(size: 8, weight: .medium))
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Color.purple.opacity(0.15), in: .capsule)
-                        .foregroundStyle(.purple)
-                    Spacer()
-                    Button("Import…") { importRadarReport() }
-                        .controlSize(.mini)
-                        .help("Import an Agentic Radar JSON report — its edges are listed for the repository it names")
-                }
-                if let report = store.radarReport(for: entry) {
-                    let edges = report.edges
-                    ForEach(Array(edges.prefix(12).enumerated()), id: \.offset) { _, edge in
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 8)).foregroundStyle(.quaternary)
-                            Text("\(edge.source) → \(edge.target)")
-                                .font(.system(size: 10)).foregroundStyle(.secondary)
-                                .lineLimit(1).truncationMode(.middle)
-                            if let kind = edge.kind {
-                                Text(kind).font(.system(size: 8)).foregroundStyle(.quaternary)
-                            }
-                        }
-                    }
-                    if edges.isEmpty {
-                        Text("The report for this repository has no edges.")
-                            .font(.system(size: 10)).foregroundStyle(.quaternary)
-                    }
-                    Text("\(report.repository ?? "report") · \(report.nodes.count) nodes · \(report.edges.count) edges")
-                        .font(.system(size: 9)).foregroundStyle(.quaternary)
-                } else {
-                    Text(store.radarReports.isEmpty
-                         ? "No Radar reports imported."
-                         : "No imported report names \(store.repositoryName(for: entry) ?? "this repository").")
-                        .font(.system(size: 10)).foregroundStyle(.quaternary)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("Advanced")
-                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-        }
-    }
-
-    private func importRadarReport() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await store.importRadarReport(path: url.path) }
-    }
 }
 
 /// S7.4 run comparison: two sides on retained facts — roster axes,
 /// transcript aggregates, ledger interruptions — with the benchmark
 /// warning and named gaps always visible, never a verdict the facts
 /// cannot carry.
-private struct CompareRunsSheet: View {
+struct CompareRunsSheet: View {
     let comparison: CoreRunComparison
     /// Both sides' `session_usage` — model, tokens, cost — which the
     /// daemon's comparison names as untracked; read here, per side.
@@ -1482,9 +1445,14 @@ private struct CompareRunsSheet: View {
         }
     }
 
-    private static func durationText(_ seconds: Double) -> String {
+    /// Whole minutes and seconds under an hour and a half: a formatted
+    /// `seconds / 60` rounds, so 119 s would read "2m 59s".
+    static func durationText(_ seconds: Double) -> String {
         if seconds < 90 { return String(format: "%.0fs", seconds) }
-        if seconds < 5400 { return String(format: "%.0fm %.0fs", seconds / 60, seconds.truncatingRemainder(dividingBy: 60)) }
+        if seconds < 5400 {
+            let whole = Int(seconds)
+            return "\(whole / 60)m \(whole % 60)s"
+        }
         return String(format: "%.1fh", seconds / 3600)
     }
 
@@ -1503,6 +1471,9 @@ struct OverviewEmptyState: View {
     let symbol: String
     let title: String
     let text: String
+    /// One way on from the empty state, when there is an obvious one.
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1510,9 +1481,14 @@ struct OverviewEmptyState: View {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             Text(text).font(.system(size: 11)).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center).frame(maxWidth: 320)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.link).font(.system(size: 12))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
+        // A button of its own must stay a button to VoiceOver.
+        .accessibilityElement(children: actionTitle == nil ? .combine : .contain)
     }
 }
 
@@ -1695,7 +1671,7 @@ private struct ReplyPromptSheet: View {
         let reply = text
         sending = true
         Task {
-            await store.answerAsk(entry: entry, approve: true, replyText: reply)
+            await store.reply(entry: entry, text: reply)
             sending = false
             // The daemon's verdict lands on the store's status line;
             // close only on a delivered answer — a refusal keeps the

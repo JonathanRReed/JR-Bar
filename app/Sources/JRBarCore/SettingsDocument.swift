@@ -133,10 +133,9 @@ public func normalizedColorHex(_ text: String) -> String? {
 // MARK: - Key catalogue
 
 /// Every setting the Settings window can read or write, by page. Paths are
-/// the Python `AgentMonitorSettings` document keys where one exists (see
-/// `src/jrbar/_settings_legacy.py`); the few that do not are listed under
-/// `SettingsKey.appIntroduced`. A test checks that the seeded mock
-/// document carries every one of these.
+/// the Python `AgentMonitorSettings` document keys (see
+/// `src/jrbar/_settings_legacy.py`); a row whose key the daemon's document
+/// does not carry is shown disabled (`isProvided`).
 public struct SettingsKey: Hashable, Sendable, Identifiable {
     public enum Page: String, CaseIterable, Sendable {
         case general, agents, usage, devices, lighting, notifications, remote, advanced
@@ -297,16 +296,6 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         keys.append(SettingsKey(.notifications, "closed_lid_grace_minutes", .number))
         return keys
     }()
-
-    /// Keys with no Python field: the daemon is expected to add them. The
-    /// mock document carries them so the pages can be exercised.
-    /// (`menu_bar_icon_style`, `devices_linked`, `devices[].resting_glow`
-    /// and `quota_alert_thresholds` all grew daemon fields; the app keeps
-    /// a launch-time copy of the first only because the document does not
-    /// exist before connect.)
-    public static let appIntroduced: Set<String> = [
-        "cloud_ingest_token_path",
-    ]
 
     public static func keys(on page: Page) -> [SettingsKey] { all.filter { $0.page == page } }
 

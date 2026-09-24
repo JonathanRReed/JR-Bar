@@ -103,6 +103,51 @@ public struct ArchiveSourceInventory: Sendable, Identifiable {
     }
 }
 
+/// What a backfill window would read from one source, from its metadata
+/// inventory alone — the size a consent sheet quotes before anything is
+/// opened.
+public struct ArchiveBackfillEstimate: Sendable, Equatable {
+    public let fileCount: Int
+    public let byteCount: Int64
+
+    public init(fileCount: Int, byteCount: Int64) {
+        self.fileCount = fileCount
+        self.byteCount = byteCount
+    }
+
+    public static let zero = ArchiveBackfillEstimate(fileCount: 0, byteCount: 0)
+
+    /// Files modified within the last `days` (0 or less: every file) —
+    /// the same test the capture engine's backfill window applies.
+    public static func of(_ inventory: ArchiveSourceInventory, days: Int,
+                          now: Date = Date()) -> ArchiveBackfillEstimate {
+        let since = days > 0 ? now.addingTimeInterval(-Double(days) * 86_400) : .distantPast
+        let files = inventory.files.filter { ($0.modifiedAt ?? .distantPast) >= since }
+        return ArchiveBackfillEstimate(fileCount: files.count, byteCount: sum(files.map(\.byteCount)))
+    }
+
+    /// Files modified after `since` — at most what a source scanned before
+    /// reads when it resumes: new files whole, grown files from their
+    /// saved offsets.
+    public static func of(_ inventory: ArchiveSourceInventory, changedAfter since: Date) -> ArchiveBackfillEstimate {
+        let files = inventory.files.filter { ($0.modifiedAt ?? .distantPast) > since }
+        return ArchiveBackfillEstimate(fileCount: files.count, byteCount: sum(files.map(\.byteCount)))
+    }
+
+    /// Several sources' estimates added, saturating rather than wrapping.
+    public static func total(_ parts: [ArchiveBackfillEstimate]) -> ArchiveBackfillEstimate {
+        ArchiveBackfillEstimate(fileCount: parts.reduce(0) { $0 + $1.fileCount },
+                                byteCount: sum(parts.map(\.byteCount)))
+    }
+
+    private static func sum(_ sizes: [Int64]) -> Int64 {
+        sizes.reduce(0) { total, size in
+            let (next, overflow) = total.addingReportingOverflow(max(0, size))
+            return overflow ? .max : next
+        }
+    }
+}
+
 /// Discovers transcript metadata without opening file contents.
 /// `maximumVisitedEntries` bounds filesystem work and `maximumFiles` bounds
 /// retained metadata per source. An inventory warning marks either truncation.

@@ -69,8 +69,13 @@ struct HistoryView: View {
                 HistoryEmptyState(store: store)
             } else if store.filtered.isEmpty {
                 VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(.quaternary)
                     Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     Button("Clear search") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 12))
+                    if store.offersHoarder {
+                        HoarderOfferLine { store.offerHoarder() }
+                            .padding(.top, 10)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -79,7 +84,8 @@ struct HistoryView: View {
                         ForEach(store.days) { day in
                             Section {
                                 ForEach(Array(day.rows.enumerated()), id: \.element.id) { index, row in
-                                    HistoryRowView(row: row, store: store, isLast: index == day.rows.count - 1)
+                                    HistoryRowView(row: row, folded: day.folded[row.id] ?? [], store: store,
+                                                   isLast: index == day.rows.count - 1)
                                 }
                             } header: {
                                 DayHeader(title: day.title, count: day.rows.count)
@@ -89,6 +95,9 @@ struct HistoryView: View {
                     .padding(.bottom, 12)
                 }
             }
+        }
+        .sheet(item: $store.hoarderOffer) { offer in
+            DataHoarderOfferSheet(offer: offer) { store.hoarderOffer = nil }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -121,6 +130,23 @@ struct HistoryView: View {
                 .disabled(!store.isLive || store.loading)
             }
         }
+    }
+}
+
+/// The empty search's one line: History searched only its rows, and the
+/// Data Hoarder could keep the transcripts behind them.
+struct HoarderOfferLine: View {
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "archivebox").foregroundStyle(.tertiary)
+            Text("Only these rows were searched.").foregroundStyle(.secondary)
+            Button("Keep a searchable copy of your sessions…", action: action)
+                .buttonStyle(.link)
+        }
+        .font(.system(size: 11))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -304,6 +330,8 @@ enum HistoryKindStyle {
 
 struct HistoryRowView: View {
     let row: CoreHistoryRow
+    /// The session's older rows folded under this one, newest first.
+    var folded: [CoreHistoryRow] = []
     @Bindable var store: HistoryStore
     let isLast: Bool
     @ViewState private var hovering = false
@@ -324,13 +352,13 @@ struct HistoryRowView: View {
             header
             if expanded {
                 timeline
-                    .padding(.leading, 78)
+                    .padding(.leading, 96)
                     .padding(.trailing, 20)
                     .padding(.vertical, 6)
                     .transition(.opacity)
             }
             if !isLast {
-                Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 78).padding(.trailing, 16)
+                Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 96).padding(.trailing, 16)
             }
         }
     }
@@ -383,7 +411,9 @@ struct HistoryRowView: View {
             HStack(alignment: .center, spacing: 10) {
                 Text(HistoryStore.clock(row.date))
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
-                    .frame(width: 38, alignment: .trailing)
+                    .lineLimit(1)
+                    // Room for "12:35 PM" on a 12-hour clock.
+                    .frame(width: 56, alignment: .trailing)
                 ProviderTile(style: style, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -394,8 +424,14 @@ struct HistoryRowView: View {
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         }
+                        if !folded.isEmpty {
+                            Text("+\(folded.count)")
+                                .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                                .foregroundStyle(.tertiary)
+                                .help(Self.foldedHelp(folded))
+                        }
                         if row.unseen {
-                            Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Newer than your last visit here")
+                            UnseenDot().help("Newer than your last visit here")
                         }
                     }
                     if let snippet = store.transcriptSnippet(for: row) {
@@ -482,7 +518,13 @@ struct HistoryRowView: View {
                             : (resumable ? "Ended — Resume picks it back up where it ran"
                                          : "Ended; the session is gone from the daemon so there is nothing to open")))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))")
+        .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))"
+                            + (folded.isEmpty ? "" : ", and \(folded.count) earlier"))
+    }
+
+    /// "3 earlier: Finished ×2 · Started".
+    static func foldedHelp(_ folded: [CoreHistoryRow]) -> String {
+        "\(folded.count) earlier: \(HistoryGrouping.foldedSummary(folded))"
     }
 }
 
@@ -508,6 +550,7 @@ struct EventLogView: View {
                         : "The event journal lives in the monitor. It appears when the socket is live.")
             } else if store.events.isEmpty {
                 VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(.quaternary)
                     Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     Button("Clear filter") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).font(.system(size: 12))
                 }

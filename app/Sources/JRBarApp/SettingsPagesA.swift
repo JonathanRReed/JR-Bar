@@ -39,7 +39,7 @@ struct GeneralPage: View {
         }
 
         SettingGroup("Brightness") {
-            SettingSlider(store, "Global brightness", subtitle: "One dial over every surface.",
+            SettingSlider(store, "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
                           path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
         }
 
@@ -262,24 +262,53 @@ struct AgentsPage: View {
     /// `hooks_doctor`'s per-provider report — read when the page shows
     /// and again whenever an install or removal settles.
     @ViewState private var doctor = HooksDoctorModel()
+    /// `t3code_integration` — the T3 Code row shows once it says the
+    /// database is on this Mac.
+    @ViewState private var t3 = T3CodeModel()
 
     static let openChoices: [(value: String, label: String)] = [
         ("", "Automatic"), ("app", "Its app"), ("terminal", "Terminal"), ("vscode", "VS Code"),
     ]
 
+    /// The providers split by whether the daemon found the agent's CLI on
+    /// this Mac: the rows that can take an install, then the ones that
+    /// cannot. A daemon that does not say keeps the row in the first list.
+    nonisolated static func partition(_ providers: [String],
+                                      detected: (String) -> Bool?) -> (found: [String], missing: [String]) {
+        (providers.filter { detected($0) != false }, providers.filter { detected($0) == false })
+    }
+
     var body: some View {
-        SettingGroup("Providers", note: "Hooks let each agent report its sessions. “Clicks open” picks what a click on a session raises.") {
-            ForEach(SettingsKey.providers, id: \.self) { provider in
+        let split = Self.partition(SettingsKey.providers) { store.hookDetected($0) }
+        SettingGroup("Providers", note: "Hooks let each agent report its sessions. Each row's … menu reinstalls or removes them and picks what a click on a session opens.") {
+            ForEach(split.found, id: \.self) { provider in
                 AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider))
             }
+            // Not a hook: T3 Code is read from its own database, by opt-in.
+            T3CodeRow(model: t3, core: store.core)
+            if !split.missing.isEmpty {
+                // No CLI to hook into: out of the way, but Remove stays a
+                // click away for hooks an old install left behind.
+                DisclosureGroup("CLI not found (\(split.missing.count))") {
+                    ForEach(split.missing, id: \.self) { provider in
+                        AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider))
+                    }
+                }
+                .help("No CLI for these agents in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin")
+            }
         }
-        .task { doctor.refresh(core: store.core) }
+        .task {
+            doctor.refresh(core: store.core)
+            t3.refresh(core: store.core)
+        }
         .onChange(of: store.hookBusy) { before, after in
             // An install, repair or removal just finished: read again.
             if after.count < before.count { doctor.refresh(core: store.core) }
         }
         .onChange(of: store.core.isLive) { _, live in
-            if live { doctor.refresh(core: store.core) }
+            guard live else { return }
+            doctor.refresh(core: store.core)
+            t3.refresh(core: store.core)
         }
 
         SettingGroup("Transcripts", note: "Reads each agent's local transcript files for token and cost figures.") {
@@ -328,92 +357,100 @@ struct AgentRow: View {
         }
     }
 
+    private var busy: Bool { store.hookBusy.contains(provider) }
+    private var cliMissing: Bool { store.hookDetected(provider) == false }
+    private var canInstall: Bool { store.core.isLive && !cliMissing && !busy }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             ProviderTile(style: style, size: 24)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(style.name)
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(style.name)
                     Circle().fill(statusColor).frame(width: 6, height: 6)
                     Text(statusWord)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    if store.hookDetected(provider) == false {
-                        Text("· CLI not found")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
                 }
-                // The reply's own words, where the click happened.
-                if let note = store.hookNotes[provider] {
-                    Text(note.text)
-                        .font(.caption)
-                        .foregroundStyle(note.isError ? Color.red : Color.secondary)
-                        .lineLimit(1)
-                        .transition(.opacity)
-                } else if let doctor, let reason = HooksDoctor.repairReason(doctor) {
-                    // Something to fix, and the fix beside it.
-                    HStack(spacing: 6) {
-                        Text(reason)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Button("Repair") { store.installHooks(provider) }
-                            .buttonStyle(.link)
-                            .font(.caption)
-                            .disabled(!store.core.isLive || store.hookBusy.contains(provider)
-                                      || store.hookDetected(provider) == false)
-                            .help("Reinstall \(style.name)'s hooks the way JR-Bar writes them today")
-                    }
-                } else if let doctor, let line = HooksDoctor.line(doctor) {
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help("From the monitor's hook doctor")
-                }
+                statusLine
             }
-            Spacer()
-            Text("Clicks open")
-                .font(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if busy {
+                ProgressView().controlSize(.mini)
+            } else if status == "missing", !cliMissing {
+                // Not hooked yet: the one thing to do, in reach.
+                Button("Install") { store.installHooks(provider) }
+                    .controlSize(.small)
+                    .disabled(!canInstall)
+            }
+            actions
+        }
+        .padding(.vertical, 1)
+    }
+
+    /// The full-width line under the name — the last click's answer, the
+    /// hook doctor's repair with its button, or its plain report — wrapping
+    /// to two lines rather than cutting the doctor off mid-word.
+    @ViewBuilder
+    private var statusLine: some View {
+        if let note = store.hookNotes[provider] {
+            // The reply's own words, where the click happened.
+            Text(note.text)
+                .font(.caption)
+                .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .transition(.opacity)
+        } else if let doctor, let reason = HooksDoctor.repairReason(doctor) {
+            // Something to fix, and the fix beside it.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Repair") { store.installHooks(provider) }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .disabled(!canInstall)
+                    .help("Reinstall \(style.name)'s hooks the way JR-Bar writes them today")
+            }
+        } else if let doctor, let line = HooksDoctor.line(doctor) {
+            Text(line)
+                .font(.caption)
                 .foregroundStyle(.tertiary)
-                .lineLimit(1)
-            Picker("Clicks open", selection: store.optionalString("session_open_preferences.\(provider)")) {
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .help("From the monitor's hook doctor")
+        }
+    }
+
+    /// Reinstall, Remove and what a click opens, behind one … so the row
+    /// fits the window.
+    private var actions: some View {
+        Menu {
+            Button(status == "ok" ? "Reinstall Hooks" : "Install Hooks") { store.installHooks(provider) }
+                .disabled(!canInstall)
+            Button("Remove Hooks") { store.uninstallHooks(provider) }
+                .disabled(!store.core.isLive || status == "missing" || busy)
+            Divider()
+            Picker("Clicks Open", selection: store.optionalString("session_open_preferences.\(provider)")) {
                 ForEach(AgentsPage.openChoices, id: \.value) { choice in
                     Text(choice.label).tag(choice.value)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 104)
             .disabled(!store.isProvided("session_open_preferences"))
-            .help("What a click on one of this provider's sessions raises")
-            Button { store.installHooks(provider) } label: {
-                if store.hookBusy.contains(provider) {
-                    ProgressView().controlSize(.mini).frame(width: 58)
-                } else {
-                    Text(status == "ok" ? "Reinstall" : "Install").frame(width: 58)
-                }
-            }
-            .controlSize(.small)
-            .disabled(!store.core.isLive || store.hookDetected(provider) == false
-                      || store.hookBusy.contains(provider))
-            .help(store.hookDetected(provider) == false
-                  ? "No \(style.name) CLI found in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin"
-                  : "")
-            Button { store.uninstallHooks(provider) } label: {
-                Text("Remove").frame(width: 52)
-            }
-            .controlSize(.small)
-            .disabled(!store.core.isLive || status == "missing" || store.hookBusy.contains(provider))
+        } label: {
+            Image(systemName: "ellipsis.circle")
         }
-        .padding(.vertical, 1)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(cliMissing
+              ? "No \(style.name) CLI found in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin"
+              : "Hooks, and what a click on one of \(style.name)'s sessions opens")
+        .accessibilityLabel("\(style.name) options")
     }
 }
 
@@ -1050,7 +1087,7 @@ enum ScreenBarCameraHold {
     static func subtitle(cameraReadable: Bool) -> String {
         cameraReadable
             ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber."
-            : "Needs a camera reading: turn on Mic & camera indicators under Toys › Notch."
+            : "Needs a camera reading: turn on Mic & camera indicators under Utilities › Notch."
     }
 }
 

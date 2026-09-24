@@ -33,6 +33,15 @@ final class DataHoarderUtility: Toy {
         })
     }
 
+    /// History's offer, accepted: the chosen agent sources capture from
+    /// now on, the backfill window reads their last `backfillDays`, and the
+    /// utility switches on. Full content stays whatever the card says —
+    /// off unless chosen there.
+    func keepTranscripts(sourceIDs: [String], backfillDays: Int) {
+        model.keepAgentTranscripts(sourceIDs: sourceIDs, backfillDays: backfillDays)
+        isOn = true
+    }
+
     func openArchive() {
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 620),
@@ -733,8 +742,42 @@ final class DataHoarderModel {
         return list
     }
 
+    /// The known agent transcript sources — every default but the proxy's
+    /// request logs, which are not sessions.
+    static func agentSources(_ all: [ArchiveSource] = ArchiveSource.defaults()) -> [ArchiveSource] {
+        all.filter { $0.id != ArchiveSource.cliProxyAPILogs }
+    }
+
+    /// The utility is on and at least one agent source captures — History
+    /// stops offering the Data Hoarder once this holds. A paused capture
+    /// still counts: pausing was a choice, not a gap to sell into.
+    var keepsAgentTranscripts: Bool {
+        let agents = Set(Self.agentSources().map(\.id))
+        return enabled && captureSettings.enabledSources.contains(where: agents.contains)
+    }
+
+    /// The settings half of `DataHoarderUtility.keepTranscripts`: sources on
+    /// and the backfill window set, persisted through the store callback,
+    /// without raising the card's import review — the window already reads
+    /// the recent files, and a review would import them a second time.
+    func keepAgentTranscripts(sourceIDs: [String], backfillDays: Int) {
+        var settings = captureSettings
+        for id in sourceIDs { settings.captureSources[id] = true }
+        settings.backfillDays = backfillDays > 0 ? backfillDays : nil
+        captureSettings = settings
+    }
+
+    /// Whether switching a source on should open the import review: only
+    /// when no backfill window reads the recent files by itself.
+    var offersImportReviewOnCapture: Bool { captureSettings.backfillDays == nil }
+
+    /// The backfill window's start for a capture run starting `now`.
+    func backfillSince(now: Date = Date()) -> Date? {
+        captureSettings.backfillDays.map { now.addingTimeInterval(-Double($0) * 86_400) }
+    }
+
     func setCapture(_ on: Bool, sourceID: String) {
-        if on { backfillOffer = sourceID }
+        if on, offersImportReviewOnCapture { backfillOffer = sourceID }
         // Nested mutation still fires `captureSettings`' didSet, which
         // persists through the store and re-applies capture.
         captureSettings.captureSources[sourceID] = on
@@ -742,14 +785,13 @@ final class DataHoarderModel {
 
     /// Mirrors a persisted settings struct in without echoing it back —
     /// the store is the owner, this only keeps the card's bindings fresh.
+    /// The whole struct comes across: a field left behind here (trash
+    /// retention once was) reads as unset after a relaunch, and the next
+    /// card edit would write that blank back over the saved choice.
     func applyCaptureSettings(_ settings: DataHoarderSettings) {
         guard captureSettings != settings else { return }
-        var copy = captureSettings
-        copy.captureSources = settings.captureSources
-        copy.fullContent = settings.fullContent
-        copy.paused = settings.paused
         suppressCaptureNotify = true
-        captureSettings = copy
+        captureSettings = settings
         suppressCaptureNotify = false
     }
 
@@ -767,43 +809,69 @@ final class DataHoarderModel {
         return (sources, signature)
     }
 
+    /// The apply on its way, if any. Applies run one after another, so a
+    /// stop and a start — or two starts — never interleave on the engine,
+    /// where a second start's `stop` could land mid-rescan and the first
+    /// would then open a stream nothing stops. A newer plan cancels the one
+    /// before it rather than waiting it out: a first start can be reading a
+    /// 30-day backfill, and a pause or switch-off must not queue behind
+    /// gigabytes of transcripts. The engine's rescan stops at its next
+    /// file without stamping the scan, so the backfill resumes next start.
+    @ObservationIgnored private var applyTask: Task<Void, Never>?
+    @ObservationIgnored private var appliesInFlight = 0
+    /// Engine applies launched; tests read it to see a repeat dropped.
+    @ObservationIgnored private(set) var captureApplies = 0
+
+    /// A new plan always applies. The same plan re-applies only when no
+    /// apply is on its way and the engine disagrees with it — switching on
+    /// sets `enabled` twice (the utility, then the store's echo), and the
+    /// echo must not start a second engine behind the first.
+    private func needsApply(_ sources: [ArchiveSource], _ signature: String) -> Bool {
+        if signature != appliedCaptureSignature { return true }
+        return appliesInFlight == 0 && captureRunning != !sources.isEmpty
+    }
+
     /// Re-derives what should be running. Utility off or paused ⇒ nothing
     /// watches — the disabled-module rule is enforced here, not by trusting
     /// the watcher list to be empty.
     func applyCapture() {
         let (sources, signature) = capturePlan()
-        guard signature != appliedCaptureSignature || captureRunning != !sources.isEmpty else {
-            return
-        }
+        guard needsApply(sources, signature) else { return }
         appliedCaptureSignature = signature
         let full = captureSettings.fullContent
-        Task {
-            if sources.isEmpty {
-                await capture.stop()
-                captureRunning = false
-            } else {
-                await capture.start(sources: sources, fullContent: full)
-                captureRunning = !(await capture.activeSourceIDs).isEmpty
-            }
-            await refreshCaptureStatus()
-            pumpSearchIndex()
+        let since = backfillSince()
+        let previous = applyTask
+        previous?.cancel()
+        appliesInFlight += 1
+        captureApplies += 1
+        applyTask = Task {
+            await previous?.value
+            await runApply(sources: sources, fullContent: full, backfillSince: since)
+            appliesInFlight -= 1
         }
     }
 
     /// Awaitable twin of `applyCapture` for tests and any caller that must
     /// not race a pending fire-and-forget capture task.
     func applyCaptureNow() async {
+        await applyTask?.value
         let (sources, signature) = capturePlan()
-        guard signature != appliedCaptureSignature || captureRunning != !sources.isEmpty else {
+        guard needsApply(sources, signature) else {
             await refreshCaptureStatus()
             return
         }
         appliedCaptureSignature = signature
+        captureApplies += 1
+        await runApply(sources: sources, fullContent: captureSettings.fullContent,
+                       backfillSince: backfillSince())
+    }
+
+    private func runApply(sources: [ArchiveSource], fullContent: Bool, backfillSince: Date?) async {
         if sources.isEmpty {
             await capture.stop()
             captureRunning = false
         } else {
-            await capture.start(sources: sources, fullContent: captureSettings.fullContent)
+            await capture.start(sources: sources, fullContent: fullContent, backfillSince: backfillSince)
             captureRunning = !(await capture.activeSourceIDs).isEmpty
         }
         await refreshCaptureStatus()

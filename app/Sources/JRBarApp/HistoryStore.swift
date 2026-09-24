@@ -190,6 +190,56 @@ final class HistoryStore {
         }
     }
 
+    // MARK: The Data Hoarder offer
+
+    /// Whether the Data Hoarder already keeps agent transcripts. Set by
+    /// the app delegate; unset reads as yes, so nothing is offered.
+    var hoarderKeepsTranscripts: (() -> Bool)?
+    /// The consent sheet's Turn On: the chosen sources and the backfill
+    /// window, handed to the utility — set by the app delegate.
+    @ObservationIgnored var keepTranscripts: (@MainActor (_ sourceIDs: [String], _ days: Int) -> Void)?
+    /// Whether Data Hoarder's full-content switch is on — the sheet's
+    /// consent text says verbatim, not redacted, when it is.
+    @ObservationIgnored var hoarderFullContent: () -> Bool = { false }
+    /// When each agent source was last kept — the sheet's estimate for a
+    /// source kept before counts what changed since, not the window.
+    @ObservationIgnored var hoarderResumePoints: @MainActor ([String]) async -> [String: Date] = { _ in [:] }
+    /// The folders the sheet looks in; tests point it at fixtures.
+    @ObservationIgnored var offerSources: () -> [ArchiveSource] = { DataHoarderModel.agentSources() }
+    /// The open consent sheet, if any.
+    var hoarderOffer: DataHoarderOffer?
+
+    /// The empty search's one-line offer: a real query found nothing, and
+    /// no transcript copy exists for it to have searched.
+    var offersHoarder: Bool {
+        trimmedQuery.count >= Self.transcriptQueryMinimum && keepTranscripts != nil
+            && !(hoarderKeepsTranscripts?() ?? true)
+    }
+
+    /// The offer's click opens the sheet. Only file names, sizes and dates
+    /// are read for its estimate; contents wait for its Turn On.
+    func offerHoarder() {
+        guard offersHoarder, let keep = keepTranscripts else { return }
+        hoarderOffer = DataHoarderOffer(sources: offerSources(), fullContent: hoarderFullContent(),
+                                        resumePoints: hoarderResumePoints) { [weak self] sourceIDs, days in
+            let resuming = self?.hoarderOffer?.resumesEveryChosenSource ?? false
+            keep(sourceIDs, days)
+            self?.hoarderTurnedOn(days: days, resuming: resuming)
+        }
+    }
+
+    /// Turn On landed: the search reruns against what is indexed so far,
+    /// and the notice says the copy is still filling — or, when every
+    /// chosen folder was kept before, that it picks up where it stopped.
+    func hoarderTurnedOn(days: Int, resuming: Bool = false) {
+        hoarderOffer = nil
+        say(resuming
+                ? "Data Hoarder picks up where it stopped — search reaches it as it indexes"
+                : "Data Hoarder is reading the last \(days) days — search reaches it as it indexes",
+            isError: false)
+        searchTranscripts(debounce: .seconds(2))
+    }
+
     /// The session uuids the current text found in transcripts.
     private var liveTranscriptHits: Set<String> {
         transcriptHits.query == trimmedQuery && !trimmedQuery.isEmpty ? Set(transcriptHits.snippets.keys) : []
@@ -309,26 +359,19 @@ final class HistoryStore {
         // an ended row keeps its history but has nothing to show — Resume
         // is its verb.
         guard isLiveSession(row.session), let session = row.session else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let reply = try await self.core.send("open_session", args: ["session": .string(session)])
-                guard !reply.ok else { return }
-                // The daemon could not find a running session's window;
-                // the Dock's window locator may still raise it.
-                if reply.error?.code == "not_found", self.raiseSessionWindow?(session) == true { return }
-                self.say(reply.error?.message ?? "Could not open \(row.displayTitle)", isError: true)
-            } catch {
-                self.say("The monitor is not answering", isError: true)
-            }
-        }
+        Task { [weak self] in await self?.open(session: session) }
     }
 
-    // MARK: Resume
+    /// One live session, through `SessionOpener` — the daemon, then the
+    /// Dock's window locator — with its refusal, if any, as the notice.
+    func open(session: String) async {
+        if let refusal = await opener(session) { say(refusal, isError: true) }
+    }
 
-    /// The exact window a live session runs in, through the Dock's window
-    /// locator — Open's fallback when the daemon cannot find it.
-    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
+    /// Opening a session: `SessionOpener` in production; tests stage it.
+    @ObservationIgnored var opener: @MainActor (_ session: String) async -> String? = { await SessionOpener.open($0) }
+
+    // MARK: Resume
 
     /// The last Open or Resume's outcome, in the daemon's words — a
     /// receipt or a refusal — for a few seconds under the filter bar.
@@ -461,10 +504,9 @@ final class HistoryStore {
 
     // MARK: Formatting
 
-    static func clock(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+    /// The time of day in the reader's own 12- or 24-hour clock.
+    static func clock(_ date: Date, locale: Locale = .autoupdatingCurrent) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     }
 
     /// `m:ss` under an hour, `h:mm:ss` after; monospaced in the column.

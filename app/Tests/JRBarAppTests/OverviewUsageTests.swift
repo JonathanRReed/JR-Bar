@@ -174,4 +174,75 @@ import JRBarCore
         #expect(store.rows.map(\.id) == ["ov-b", "ov-a"])
         #expect(store.derivedComputations == sorted + 1)
     }
+
+    /// A staged `usage_graph`: each ask waits until the test answers it.
+    @MainActor
+    final class GraphGate {
+        var asks: [String] = []
+        var waiting: [CheckedContinuation<CoreUsageGraphDocument, Error>] = []
+
+        func fetch(_ days: Int, _ metric: String, _ providers: [String]?) async throws -> CoreUsageGraphDocument {
+            asks.append("\(days)|\(metric)|\((providers ?? []).joined(separator: ","))")
+            return try await withCheckedThrowingContinuation { waiting.append($0) }
+        }
+
+        func answer(_ result: Result<CoreUsageGraphDocument, Error>) {
+            waiting.removeFirst().resume(with: result)
+        }
+
+        /// Lets the store's tasks run until `count` asks are out.
+        func settle(until count: Int) async {
+            for _ in 0..<1_000 where waiting.count < count { await Task.yield() }
+        }
+    }
+
+    @Test("picks made during a scan wait for it and then ask once, with the latest picks")
+    func oneGraphInFlight() async {
+        let store = OverviewStore(core: CoreModel())
+        let gate = GraphGate()
+        store.fetchGraph = { try await gate.fetch($0, $1, $2) }
+
+        let first = Task { await store.loadGraph() }
+        await gate.settle(until: 1)
+        store.graphDays = 7
+        await store.loadGraph()
+        store.graphMetric = "cost"
+        await store.loadGraph()
+        store.graphProviders = ["codex"]
+        await store.loadGraph()
+        #expect(gate.asks == ["30|tokens|"], "a pick during a scan sends nothing of its own")
+        #expect(store.graphLoading)
+
+        gate.answer(.failure(CoreReplyError(code: "error", message: "the old picks failed")))
+        await gate.settle(until: 1)
+        #expect(gate.asks == ["30|tokens|", "7|cost|codex"], "one follow-up, with every pick made meanwhile")
+        #expect(store.graphError == nil, "the superseded reply is dropped")
+        #expect(store.graphLoading)
+
+        gate.answer(.success(CoreUsageGraphDocument(summary: "latest")))
+        await first.value
+        #expect(store.graph?.summary == "latest")
+        #expect(store.graphRequestKey == "7|cost|codex")
+        #expect(!store.graphLoading)
+        #expect(!store.graphInFlight)
+    }
+
+    @Test("picks that move and come back during a scan take its reply as current")
+    func picksThatComeBackAskNothingMore() async {
+        let store = OverviewStore(core: CoreModel())
+        let gate = GraphGate()
+        store.fetchGraph = { try await gate.fetch($0, $1, $2) }
+
+        let first = Task { await store.loadGraph() }
+        await gate.settle(until: 1)
+        store.graphDays = 7
+        await store.loadGraph()
+        store.graphDays = 30
+        await store.loadGraph()
+        gate.answer(.success(CoreUsageGraphDocument(summary: "thirty")))
+        await first.value
+        #expect(gate.asks == ["30|tokens|"])
+        #expect(store.graph?.summary == "thirty")
+        #expect(!store.graphLoading)
+    }
 }

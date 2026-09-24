@@ -450,7 +450,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         // History window (⌘Y).
         let historyStore = HistoryStore(core: core)
-        historyStore.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         let historyWindow = HistoryWindowController(store: historyStore)
         self.historyStore = historyStore
         self.historyWindow = historyWindow
@@ -465,13 +464,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         historyStore.archiveSearchAvailable = { [weak utilitiesStore] in
             utilitiesStore?.dataHoarder.model.enabled ?? false
         }
+        // An empty search offers the Data Hoarder until it keeps agent
+        // transcripts; the offer's sheet turns it on only on its click.
+        historyStore.hoarderKeepsTranscripts = { [weak utilitiesStore] in
+            utilitiesStore?.dataHoarder.model.keepsAgentTranscripts ?? true
+        }
+        historyStore.hoarderFullContent = { [weak utilitiesStore] in
+            utilitiesStore?.dataHoarder.model.captureSettings.fullContent ?? false
+        }
+        historyStore.hoarderResumePoints = { [weak utilitiesStore] ids in
+            await utilitiesStore?.dataHoarder.model.capture.lastScans(sourceIDs: ids) ?? [:]
+        }
+        historyStore.keepTranscripts = { [weak utilitiesStore] sourceIDs, days in
+            utilitiesStore?.dataHoarder.keepTranscripts(sourceIDs: sourceIDs, backfillDays: days)
+        }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
         // Overview window (⌘O): the scoped roster workspace.
         let overviewStore = OverviewStore(core: core)
         // One per-session usage reader for the panel and the Overview.
         overviewStore.sessionUsage = store.sessionUsage
-        overviewStore.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         // The Usage heatmap's day click, one window over.
         overviewStore.onOpenHistoryDay = { [weak historyWindow] day in historyWindow?.show(day: day) }
         // Data Hoarder honesty for the inspector's Source line: the

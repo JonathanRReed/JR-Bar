@@ -216,6 +216,62 @@ struct DataHoarderModelTests {
         #expect(model.captureRunning == false)
     }
 
+    @Test func pausingDuringTheFirstBackfillCancelsItInsteadOfWaiting() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let watch = root.appending(path: "watch")
+        try FileManager.default.createDirectory(at: watch, withIntermediateDirectories: true)
+        try Data("inside the window\n".utf8).write(to: watch.appending(path: "a.jsonl"))
+        let archive = DataHoarderArchive(root: root.appending(path: "archive"))
+        let model = DataHoarderModel(archive: archive)
+        model.captureSettings.captureSources = [watch.path: true]
+        model.captureSettings.backfillDays = 30
+        await model.applyCaptureNow()
+
+        // Turn On queues a start that would read the backfill; Pause lands
+        // before it runs. The pause cancels the start instead of queueing
+        // behind the whole window.
+        model.enabled = true
+        model.captureSettings.paused = true
+        await model.applyCaptureNow()
+        #expect(await model.capture.activeSourceIDs.isEmpty)
+        #expect(model.captureRunning == false)
+        // Nothing read, and the scan left unstamped — the next start
+        // reads the window from its beginning.
+        #expect(try await archive.records().isEmpty)
+        #expect(try await archive.metadata(key: "capture_last_scan:" + watch.path) == nil)
+    }
+
+    @Test func switchingOnTwiceStartsTheEngineOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let watch = root.appending(path: "watch")
+        try FileManager.default.createDirectory(at: watch, withIntermediateDirectories: true)
+        let model = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "archive")))
+        model.captureSettings.captureSources = [watch.path: true]
+        await model.applyCaptureNow()
+        let before = model.captureApplies
+
+        // The utility's setter, then the store's echo of the same value.
+        model.enabled = true
+        model.enabled = true
+        #expect(model.captureApplies == before + 1)
+        await model.applyCaptureNow()
+        #expect(model.captureApplies == before + 1)
+        #expect(await model.capture.activeSourceIDs == [watch.path])
+
+        // A real change while an apply is on its way still queues behind it.
+        model.enabled = false
+        model.enabled = true
+        model.enabled = false
+        await model.applyCaptureNow()
+        #expect(model.captureApplies == before + 4)
+        #expect(await model.capture.activeSourceIDs.isEmpty)
+        #expect(model.captureRunning == false)
+    }
+
     @Test func captureTogglesPersistThroughTheStoreCallback() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -240,6 +296,60 @@ struct DataHoarderModelTests {
         model.applyCaptureSettings(incoming)
         #expect(model.captureSettings.captureSources == ["claude-projects": true])
         #expect(mirrored == false, "mirroring must not bounce the same settings back")
+
+        // Every persisted dial mirrors in — trash retention included, or a
+        // relaunch would show "keep forever" and the next edit would save it.
+        incoming.trashRetentionDays = 30
+        model.applyCaptureSettings(incoming)
+        #expect(model.captureSettings == incoming)
+        #expect(mirrored == false)
+    }
+
+    @Test func historyOfferTurnsAgentSourcesOnWithABackfillWindowAndNoReview() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var persisted = UtilitiesState()
+        let model = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "archive")))
+        model.onCaptureSettingsChange = { persisted.dataHoarder = $0 }
+        #expect(model.keepsAgentTranscripts == false)
+        #expect(model.offersImportReviewOnCapture)
+
+        model.keepAgentTranscripts(sourceIDs: ["claude-projects", "codex-sessions"], backfillDays: 30)
+        #expect(persisted.dataHoarder.captureSources == ["claude-projects": true, "codex-sessions": true])
+        #expect(persisted.dataHoarder.backfillDays == 30)
+        // Consent covers structure only: full content stays off.
+        #expect(persisted.dataHoarder.fullContent == false)
+        // The window reads the recent files itself — no import review that
+        // would archive them a second time.
+        #expect(model.backfillOffer == nil)
+        #expect(model.offersImportReviewOnCapture == false)
+        model.setCapture(true, sourceID: "gemini-chats")
+        #expect(model.backfillOffer == nil)
+        // Settings alone do not count: the utility must be on. Paused
+        // first, so switching on never watches this Mac's real agent
+        // folders from a test — and a paused capture still counts.
+        #expect(model.keepsAgentTranscripts == false)
+        model.captureSettings.paused = true
+        model.enabled = true
+        #expect(model.keepsAgentTranscripts)
+
+        let now = Date(timeIntervalSince1970: 5_000_000)
+        #expect(model.backfillSince(now: now) == now.addingTimeInterval(-30 * 86_400))
+        model.captureSettings.backfillDays = nil
+        #expect(model.backfillSince(now: now) == nil)
+
+        // The proxy's request logs are not a session source.
+        let other = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "other")))
+        other.captureSettings.paused = true
+        other.enabled = true
+        other.captureSettings.captureSources = [ArchiveSource.cliProxyAPILogs: true]
+        #expect(other.keepsAgentTranscripts == false)
+        #expect(!DataHoarderModel.agentSources().map(\.id).contains(ArchiveSource.cliProxyAPILogs))
+        await model.applyCaptureNow()
+        await other.applyCaptureNow()
+        #expect(await model.capture.activeSourceIDs.isEmpty)
+        #expect(await other.capture.activeSourceIDs.isEmpty)
     }
 
     @Test func searchRunsCancellablePagesAndLoadMore() async throws {

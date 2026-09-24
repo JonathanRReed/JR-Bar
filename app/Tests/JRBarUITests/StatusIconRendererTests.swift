@@ -674,3 +674,16 @@ struct StatusCompactPercentTests {
         #expect(StatusIconRenderer.tooltip(StatusIconSpec(style: .compactPercent), headline: "JR-Bar · Idle") == "JR-Bar · Idle")
     }
 }
+
+@Suite("Hex colours")
+struct HexColorTests {
+    @Test("#RRGGBB parses with or without the hash and round-trips; anything else is nil")
+    func parses() throws {
+        let cyan = try #require(NSColor(hex: "#00E5FF"))
+        #expect(cyan.statusHex == "#00E5FF")
+        #expect(NSColor(hex: "  00e5ff\n")?.statusHex == "#00E5FF")
+        for bad in ["", "#", "#FFF", "#00E5FF00", "zzzzzz", "#12 456"] {
+            #expect(NSColor(hex: bad) == nil, "\(bad)")
+        }
+    }
+}

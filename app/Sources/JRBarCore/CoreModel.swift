@@ -356,40 +356,6 @@ public final class CoreModel {
             cursor: result["cursor"]?.stringValue)
     }
 
-    /// `list_radar_reports`: summaries of the bounded static-topology
-    /// reports imported so far (S7.5).
-    public func listRadarReports() async throws -> [CoreRadarSummary] {
-        let reply = try await send("list_radar_reports")
-        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "list_radar_reports failed") }
-        let rows = reply.result?["reports"]?.arrayValue ?? []
-        let decoder = JSONDecoder()
-        return rows.compactMap { value -> CoreRadarSummary? in
-            guard let data = try? JSONEncoder().encode(value) else { return nil }
-            return try? decoder.decode(CoreRadarSummary.self, from: data)
-        }
-    }
-
-    /// `radar_report`: one stored report's normalized graph.
-    public func radarReport(id: String) async throws -> CoreRadarReport {
-        let reply = try await send("radar_report", args: ["id": .string(id)])
-        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "radar_report failed") }
-        guard let result = reply.result?["report"] else {
-            throw CoreReplyError(code: "bad_reply", message: "radar_report: missing report")
-        }
-        return try ReplyDecoding.decode(CoreRadarReport.self, from: result)
-    }
-
-    /// `import_radar_report`: bounded, data-only import — the file is
-    /// parsed and stored, never executed (S7.5).
-    public func importRadarReport(path: String) async throws -> CoreRadarSummary {
-        let reply = try await send("import_radar_report", args: ["path": .string(path)])
-        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "import_radar_report failed") }
-        guard let result = reply.result?["imported"] else {
-            throw CoreReplyError(code: "bad_reply", message: "import_radar_report: missing summary")
-        }
-        return try ReplyDecoding.decode(CoreRadarSummary.self, from: result)
-    }
-
     /// A line from the app itself (the supervisor, a delivery failure) in
     /// the same tail as the daemon's `log` messages.
     public func appendLocalLog(level: String = "info", _ message: String) {

@@ -120,7 +120,7 @@ struct DataHoarderView: View {
                     listContent
                     footerCounts
                 }
-                .frame(minWidth: 260, idealWidth: 300, maxWidth: 380,
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 420,
                        maxHeight: .infinity, alignment: .top)
                 detail.frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -195,45 +195,55 @@ struct DataHoarderView: View {
 
     // MARK: Search filters
 
+    /// Two rows so the list column never overflows: what the records are
+    /// (provider, project, state), then when they were active. One wide
+    /// row pushed the column past its maximum and clipped the search
+    /// field and every row on both sides.
     private var filterBar: some View {
-        HStack(spacing: 8) {
-            Picker("Provider", selection: $model.searchFilter.provider) {
-                Text("All providers").tag(String?.none)
-                Text("Claude").tag(String?.some("claude"))
-                Text("Codex").tag(String?.some("codex"))
-                Text("Other").tag(String?.some("other"))
-            }
-            .pickerStyle(.menu).fixedSize().labelsHidden()
-            .accessibilityLabel("Filter by provider")
-            Picker("Project", selection: $model.searchFilter.project) {
-                Text("All projects").tag(String?.none)
-                ForEach(model.availableProjects, id: \.self) { project in
-                    Text(project).tag(String?.some(project))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Picker("Provider", selection: $model.searchFilter.provider) {
+                    Text("All providers").tag(String?.none)
+                    Text("Claude").tag(String?.some("claude"))
+                    Text("Codex").tag(String?.some("codex"))
+                    Text("Other").tag(String?.some("other"))
                 }
+                .pickerStyle(.menu).labelsHidden().frame(maxWidth: 120)
+                .accessibilityLabel("Filter by provider")
+                Picker("Project", selection: $model.searchFilter.project) {
+                    Text("All projects").tag(String?.none)
+                    ForEach(model.availableProjects, id: \.self) { project in
+                        Text(project).tag(String?.some(project))
+                    }
+                }
+                .pickerStyle(.menu).labelsHidden().frame(maxWidth: 140)
+                .accessibilityLabel("Filter by project")
+                Picker("State", selection: $model.searchFilter.state) {
+                    Text("Any state").tag(CaptureState?.none)
+                    Text("Live").tag(CaptureState?.some(.live))
+                    Text("Closed").tag(CaptureState?.some(.closed))
+                    Text("Gap").tag(CaptureState?.some(.gap))
+                    Text("Snapshot").tag(CaptureState?.some(.snapshot))
+                }
+                .pickerStyle(.menu).labelsHidden().frame(maxWidth: 110)
+                .accessibilityLabel("Filter by capture state")
             }
-            .pickerStyle(.menu).fixedSize().labelsHidden()
-            .accessibilityLabel("Filter by project")
-            Picker("State", selection: $model.searchFilter.state) {
-                Text("Any state").tag(CaptureState?.none)
-                Text("Live").tag(CaptureState?.some(.live))
-                Text("Closed").tag(CaptureState?.some(.closed))
-                Text("Gap").tag(CaptureState?.some(.gap))
-                Text("Snapshot").tag(CaptureState?.some(.snapshot))
-            }
-            .pickerStyle(.menu).fixedSize().labelsHidden()
-            .accessibilityLabel("Filter by capture state")
-            DatePicker("From", selection: fromBinding, displayedComponents: .date)
-                .labelsHidden().fixedSize()
-                .accessibilityLabel("Filter from date")
-            if model.searchFilter.from != nil {
-                clearFilterButton { model.searchFilter.from = nil }
-            }
-            Text("–").foregroundStyle(.tertiary)
-            DatePicker("To", selection: toBinding, displayedComponents: .date)
-                .labelsHidden().fixedSize()
-                .accessibilityLabel("Filter to date")
-            if model.searchFilter.to != nil {
-                clearFilterButton { model.searchFilter.to = nil }
+            HStack(spacing: 6) {
+                Text("Active").foregroundStyle(.secondary)
+                DatePicker("From", selection: fromBinding, displayedComponents: .date)
+                    .labelsHidden().fixedSize()
+                    .accessibilityLabel("Filter from date")
+                if model.searchFilter.from != nil {
+                    clearFilterButton { model.searchFilter.from = nil }
+                }
+                Text("–").foregroundStyle(.tertiary)
+                DatePicker("To", selection: toBinding, displayedComponents: .date)
+                    .labelsHidden().fixedSize()
+                    .accessibilityLabel("Filter to date")
+                if model.searchFilter.to != nil {
+                    clearFilterButton { model.searchFilter.to = nil }
+                }
+                Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, 12)
@@ -302,39 +312,15 @@ struct DataHoarderView: View {
         } else {
             List(selection: $model.selectedID) {
                 ForEach(model.records) { record in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(record.name).font(.body.weight(.medium)).lineLimit(1)
-                        Text("\(DataHoarderModel.bytes(record.byteCount)) · \(record.importedAt.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                    .tag(record.id)
+                    ArchiveRecordRow(record: record, snippets: [])
+                        .tag(record.id)
                 }
             }
         }
     }
 
     private func searchRow(_ result: ArchiveSearchResult) -> some View {
-        let record = result.record
-        return VStack(alignment: .leading, spacing: 3) {
-            Text(record.title ?? record.name).font(.body.weight(.medium)).lineLimit(1)
-            HStack(spacing: 6) {
-                if let provider = record.provider {
-                    Text(provider).padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
-                }
-                if let project = record.project { Text(project).lineLimit(1) }
-                Text((record.lastActivityAt ?? record.importedAt).formatted(date: .abbreviated, time: .omitted))
-                Text(DataHoarderModel.bytes(record.byteCount))
-            }
-            .font(.caption).foregroundStyle(.secondary)
-            ForEach(result.snippets, id: \.self) { snippet in
-                Text(markedSnippet(snippet))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        }
-        .padding(.vertical, 4)
+        ArchiveRecordRow(record: result.record, snippets: result.snippets)
     }
 
     private var footerCounts: some View {
@@ -730,6 +716,66 @@ struct DataHoarderView: View {
     }
 }
 
+/// One archived file in the list: whose it is, what it is called, where
+/// and when it ran, its size, whether capture is still following it, and
+/// — for a search — the lines that matched.
+struct ArchiveRecordRow: View {
+    let record: ArchiveRecord
+    let snippets: [String]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if let provider = record.provider, provider != "other" {
+                ProviderTile(style: ProviderStyle.style(for: provider), size: 22)
+            } else {
+                Image(systemName: record.name.hasSuffix(".log") ? "doc.plaintext" : "doc.text")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.quaternary.opacity(0.5)))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(record.title ?? record.name).font(.body.weight(.medium)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    stateMark
+                }
+                Text(Self.detail(record))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                ForEach(snippets, id: \.self) { snippet in
+                    Text(markedSnippet(snippet))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    /// "JR-Bar · Sep 23 · 1.2 MB": the project when known, the day it
+    /// last ran (or was saved), and the size.
+    static func detail(_ record: ArchiveRecord) -> String {
+        let day = (record.lastActivityAt ?? record.importedAt).formatted(date: .abbreviated, time: .omitted)
+        return [record.project.map { URL(fileURLWithPath: $0).lastPathComponent }, day,
+                DataHoarderModel.bytes(record.byteCount)].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var stateMark: some View {
+        switch record.captureState {
+        case .live:
+            Circle().fill(.green).frame(width: 6, height: 6)
+                .help("Capturing — new lines land as they are written")
+        case .gap:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9)).foregroundStyle(.orange)
+                .help("The source was replaced or cut short; what was captured is kept")
+        case .closed, .snapshot:
+            EmptyView()
+        }
+    }
+}
+
 /// Parses the FTS `snippet()` `«hit»` markers into a tinted
 /// AttributedString; anything unmarked stays plain.
 func markedSnippet(_ snippet: String) -> AttributedString {
@@ -782,6 +828,14 @@ struct DataHoarderCaptureControls: View {
                 .toggleStyle(.checkbox)
             Text("Off keeps each line's structure — types, timestamps, tool names, token counts — but stores prompt and response text as “[redacted]”. On stores transcripts verbatim; already-archived copies are unchanged either way.")
                 .font(.caption).foregroundStyle(.secondary)
+            Picker("When a source starts", selection: backfillBinding) {
+                Text("Follow new activity only").tag(0)
+                Text("Also read the last 7 days").tag(7)
+                Text("Also read the last 30 days").tag(30)
+                Text("Also read the last 90 days").tag(90)
+            }
+            .pickerStyle(.menu).fixedSize()
+            .help("Read once, on a source's first scan: files modified in the window are archived from their start; older files wait for Also import existing files.")
             Toggle("Pause capture", isOn: $model.captureSettings.paused)
                 .toggleStyle(.checkbox)
             if model.captureRunning {
@@ -800,11 +854,18 @@ struct DataHoarderCaptureControls: View {
     private func captureBinding(_ sourceID: String) -> Binding<Bool> {
         Binding(get: { model.captureSettings.captureSources[sourceID] ?? false },
                 set: { on in
+                    let review = on && model.offersImportReviewOnCapture
                     model.setCapture(on, sourceID: sourceID)
-                    if on {
+                    if review {
                         open()
                         Task { await model.offerBackfill(for: sourceID) }
                     }
                 })
+    }
+
+    /// 0 stands for "no window" — the picker needs a concrete tag for nil.
+    private var backfillBinding: Binding<Int> {
+        Binding(get: { model.captureSettings.backfillDays ?? 0 },
+                set: { model.captureSettings.backfillDays = $0 > 0 ? $0 : nil })
     }
 }

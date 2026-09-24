@@ -3138,49 +3138,6 @@ def _cmd_session_usage(self, args):
     return document
 
 
-@command("import_radar_report", main_thread=False)
-def _cmd_import_radar_report(self, args):
-    """Store a bounded, version-checked Radar report (S7.5/T38).
-
-    Import is data-only: the file is parsed, capped, normalized and
-    stored — never executed. Every imported edge is ``evidence:
-    "static"``; the inspector labels it and nothing consumes it as a
-    live call.
-    """
-    from .radar_import import RadarImportError, import_radar_report
-
-    raw_path = args.get("path")
-    if not isinstance(raw_path, str) or not raw_path.strip():
-        raise CommandError("invalid_value", "path is required")
-    try:
-        summary = import_radar_report(Path(raw_path))
-    except RadarImportError as error:
-        raise CommandError(error.code, str(error)) from error
-    return {"imported": summary}
-
-
-@command("list_radar_reports", main_thread=False)
-def _cmd_list_radar_reports(self, args):
-    """The stored report summaries (analyzer, scan, repo, counts)."""
-    from .radar_import import list_radar_reports
-
-    return {"reports": list_radar_reports()}
-
-
-@command("radar_report", main_thread=False)
-def _cmd_radar_report(self, args):
-    """One stored report's normalized graph for the inspector lens."""
-    from .radar_import import load_radar_report
-
-    report_id = args.get("id")
-    if not isinstance(report_id, str) or not report_id:
-        raise CommandError("invalid_value", "id is required")
-    report = load_radar_report(report_id)
-    if report is None:
-        raise CommandError("not_found", f"unknown report id: {report_id}")
-    return {"report": report}
-
-
 @command("replay_events")
 def _cmd_replay_events(self, args):
     """The resumable event stream's suffix after a cursor.
@@ -3339,6 +3296,34 @@ def _cmd_hooks_doctor(self, args):
     from .hook_doctor import hook_doctor_report
 
     return hook_doctor_report()
+
+
+@command("t3code_integration")
+def _cmd_t3code_integration(self, args):
+    """Settings > Agents' T3 Code row: whether T3 Code's database is on
+    this Mac, whether JR-Bar reads it, and the reader's last look. With
+    ``enabled`` it flips the opt-in in integrations.json first and
+    reconciles the T3 reader at once rather than on the next refresh."""
+    from .t3code_toggle import T3CodeToggleRefused, t3code_integration, t3code_observation
+
+    enabled = args.get("enabled")
+    if enabled is not None and type(enabled) is not bool:
+        raise CommandError("invalid_args", "enabled is true or false")
+    try:
+        document, settings = t3code_integration(enabled)
+    except T3CodeToggleRefused as error:
+        raise CommandError("refused", f"integrations.json was not changed: {error}") from error
+    if enabled is not None:
+        try:
+            from .t3_compat import update_t3_snapshot_runtime
+
+            update_t3_snapshot_runtime(self, settings)
+        except Exception as exc:
+            self._core_log(f"core: t3 reconcile failed: {exc.__class__.__name__}")
+    document["observation"] = (
+        t3code_observation(getattr(self, "_t3_snapshot_service", None)) if document["enabled"] else None
+    )
+    return document
 
 
 @command("quit")

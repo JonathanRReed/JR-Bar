@@ -280,7 +280,7 @@ struct ReconstructedTimelineView: View {
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(.tertiary)
                 .frame(width: 40, alignment: .leading)
-            Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+            UnseenDot()
                 .frame(width: 12)
             Text(text)
                 .font(.system(size: 10))

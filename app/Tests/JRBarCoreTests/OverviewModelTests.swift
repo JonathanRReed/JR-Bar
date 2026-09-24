@@ -89,17 +89,4 @@ struct OverviewModelTests {
         #expect(map.totalCalls == 6)
         #expect(ObservedToolMap.splitMCP("mcp__bad") == nil)
     }
-
-    @Test("a Radar report speaks only for its own repository")
-    func radarMatch() {
-        let reports = [
-            CoreRadarSummary(id: "old", repository: "https://github.com/jr/JR-Bar.git", importedAt: 1, nodes: 3, edges: 2),
-            CoreRadarSummary(id: "new", repository: "jr/JR-Bar", importedAt: 5, nodes: 3, edges: 2),
-            CoreRadarSummary(id: "other", repository: "jr/crew-demo", importedAt: 9, nodes: 3, edges: 2),
-        ]
-        #expect(RadarReportMatch.pick(reports, repository: "JR-Bar")?.id == "new")
-        #expect(RadarReportMatch.pick(reports, repository: "sidepulse") == nil)
-        #expect(RadarReportMatch.pick(reports, repository: nil) == nil)
-        #expect(RadarReportMatch.repositoryKey("git@github.com:jr/JR-Bar.git") == "jr-bar")
-    }
 }

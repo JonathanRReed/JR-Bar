@@ -64,20 +64,22 @@ final class OverviewStore {
     /// whole two-thousand-row record.
     static let usageRowBudget = 48
 
-    init(core: CoreModel) {
+    init(core: CoreModel, desk: AskAnswerDesk? = nil) {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
-        self.ownDesk = AskAnswerDesk(core: core)
+        self.ownDesk = desk ?? AskAnswerDesk(core: core)
+        self.fetchGraph = { [weak core] days, metric, providers in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.usageGraph(days: days, metric: metric, providers: providers)
+        }
     }
 
-    /// Always allow and a held question's picks go through the panel's
-    /// shared desk (one pending set, one set of picks across surfaces);
-    /// this store's own only until the app delegate publishes that one.
+    /// Approve, Deny, Always allow and a held question's picks go through
+    /// the panel's shared desk (one pending set, one set of picks across
+    /// surfaces); this store's own only until the app delegate publishes
+    /// that one.
     private let ownDesk: AskAnswerDesk
     var askDesk: AskAnswerDesk { AskAnswerDesk.shared ?? ownDesk }
-    /// The exact window a live session runs in, through the Dock's
-    /// window locator — Open's fallback when the daemon cannot find it.
-    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     /// Reads usage for the rows the table leads with and the selection.
     func refreshSessionUsage(force: Bool = false) {
@@ -244,6 +246,8 @@ final class OverviewStore {
     struct DerivedResult {
         var rows: [CoreRosterEntry] = []
         var stripCounts = StripCounts()
+        /// Working rows across the whole roster, whatever the cut.
+        var workingOverall = 0
     }
     /// The summary strip's counts — computed over the SAME filtered rows
     /// the table shows (S7.1: the strip and the list never disagree).
@@ -302,6 +306,7 @@ final class OverviewStore {
             if entry.axes?.review == "unreviewed" { result.stripCounts.unreviewed += 1 }
             if entry.visibility == "hidden" { result.stripCounts.hidden += 1 }
         }
+        result.workingOverall = roster.reduce(0) { $0 + (OverviewPreset.working.matches($1) ? 1 : 0) }
         derivedComputations += 1
         derivedCache = (key, result)
         return result
@@ -311,6 +316,35 @@ final class OverviewStore {
     /// applies to the whole filtered set so a column click never lies
     /// about the order the daemon sent.
     var rows: [CoreRosterEntry] { derived.rows }
+
+    /// Working rows across the whole roster, whatever the view shows.
+    var workingOverall: Int { derived.workingOverall }
+
+    /// The whole roster's word beside a strip the view has cut down —
+    /// "2 working overall · 14 outside this view" — so "0 live" under
+    /// Needs me never reads as nothing running. nil when every row shows.
+    var wholeRosterPhrase: String? {
+        let outside = roster.count - rows.count
+        guard outside > 0 else { return nil }
+        return (workingOverall > 0 ? "\(workingOverall) working overall · " : "") + "\(outside) outside this view"
+    }
+
+    /// Needs me with nothing waiting — the quiet state, not a filter that
+    /// matched nothing: no search, worker or day cut narrows it.
+    var nobodyWaiting: Bool {
+        rows.isEmpty && !roster.isEmpty && filter.preset == .needsMe && activeSavedFilter == nil
+            && search.isEmpty && workerFilter == nil && dayFilter == nil
+    }
+
+    /// "Show 2 working", from the quiet Needs me view.
+    func showWorking() {
+        pane = .roster
+        workerFilter = nil
+        dayFilter = nil
+        activeSavedFilter = nil
+        search = ""
+        filter = OverviewFilter(preset: .working)
+    }
 
     /// A Model or Cost column click: those orders move when a reading
     /// lands, every other order does not.
@@ -344,11 +378,19 @@ final class OverviewStore {
 
     var isLive: Bool { core.isLive }
 
-    var selected: CoreRosterEntry? { rows.first { $0.id == selectedID } }
+    /// The inspector's session. The Graph draws the whole roster rather
+    /// than the table's cut, so a node picked there resolves against it.
+    var selected: CoreRosterEntry? {
+        pane == .graph ? roster.first { $0.id == selectedID } : rows.first { $0.id == selectedID }
+    }
 
     // MARK: Lifecycle
 
+    /// Whether the window is on screen — the Graph animates only then.
+    private(set) var windowOpen = false
+
     func windowDidOpen() {
+        windowOpen = true
         now = Date()
         selectedLinkID = nil
         lastEventID = core.lastEvent?.id
@@ -365,6 +407,7 @@ final class OverviewStore {
     }
 
     func windowDidClose() {
+        windowOpen = false
         clock?.invalidate()
         clock = nil
         loadWork?.cancel()
@@ -619,8 +662,8 @@ final class OverviewStore {
 
     // MARK: Actions on rows
 
-    /// A transient status line for action outcomes — the daemon's own
-    /// words ("Opened in iTerm", a refusal reason), never a guessed
+    /// A transient status line for action outcomes — a receipt ("Opened
+    /// fix-ci") or the refusal in the daemon's own words, never a guessed
     /// success. Cleared by the next action or the next roster load.
     var actionStatus: String?
     var actionIsError = false
@@ -633,42 +676,28 @@ final class OverviewStore {
     /// A remote row cannot be opened from this Mac — the inspector,
     /// the context menu and Return all gate on this.
     func canOpen(_ entry: CoreRosterEntry) -> Bool { !entry.session.remote }
-    var canOpenSelected: Bool { selected.map(canOpen) ?? false }
 
-    /// Open the selected session's terminal through `send` so the reply
-    /// reaches the user: "Opened in {app}" on success, the daemon's
-    /// refusal string on failure — never a silent `post`.
+    /// Open the selected session's terminal or app so the outcome reaches
+    /// the user: "Opened {name}" once it is in front, the refusal on
+    /// failure — never a silent `post`.
     func openSelected() {
         guard let entry = selected, canOpen(entry) else { return }
         let id = entry.id
         Task { await openSession(id) }
     }
 
+    /// Through `SessionOpener`: the daemon, then the Dock's window
+    /// locator for a running session the daemon could not find.
     func openSession(_ id: String) async {
-        do {
-            let reply = try await core.send("open_session", args: ["session": .string(id)])
-            if reply.ok {
-                let app = reply.result?["activated"]?.stringValue
-                report(app.map { "Opened in \($0)" } ?? "Open request sent")
-            } else if reply.error?.code == "not_found", isLiveLocal(id), raiseSessionWindow?(id) == true {
-                // The daemon could not find a running session's window;
-                // the Dock's window locator could, and raised it.
-                report("Raised its window")
-            } else {
-                report(reply.error?.message ?? "Open refused", isError: true)
-            }
-        } catch {
-            report(Self.describe(error), isError: true)
+        if let refusal = await opener(id) {
+            report(refusal, isError: true)
+        } else {
+            report("Opened \(roster.first { $0.id == id }?.session.displayLabel ?? "the session")")
         }
     }
 
-    /// A local row still running — the only kind whose window a refused
-    /// open is worth looking for.
-    private func isLiveLocal(_ id: String) -> Bool {
-        guard let entry = roster.first(where: { $0.id == id }) else { return false }
-        let activity = SessionActivity.reduce(entry.session)
-        return !entry.session.remote && !activity.isClearable && activity != .failed
-    }
+    /// Opening a session: `SessionOpener` in production; tests stage it.
+    @ObservationIgnored var opener: @MainActor (_ session: String) async -> String? = { await SessionOpener.open($0) }
 
     // MARK: New session here
 
@@ -799,47 +828,48 @@ final class OverviewStore {
     }
 
     /// Whether the Reply… button is offered: the ask must accept free
-    /// text AND be actionable. Approve/Deny only needs actionable.
+    /// text AND be actionable.
     func canReply(_ entry: CoreRosterEntry) -> Bool {
         askAction(for: entry) == .actionable && entry.session.ask?.wantsTextReply == true
     }
 
-    /// `answer_ask` awaited: the reply carries the daemon's verdict —
-    /// `answered: true` plus the surface's receipt on success; on
-    /// `ok: false` the refusal message (`stale_request`, `not_frontmost`,
-    /// `accessibility_required`, `unsupported`, …) is surfaced verbatim.
-    /// `request` pins the answer to the ask the user is looking at, so a
-    /// stale card can never approve its replacement. Never auto-answers:
-    /// every call comes from an explicit button.
-    func answerAsk(entry: CoreRosterEntry, approve: Bool, replyText: String? = nil) async {
-        // A silent early-return leaves actionIsError false, and the reply
-        // sheet reads that as "sent" — dismissing and dropping the draft.
-        // A stale ask must refuse loudly instead.
-        guard askAction(for: entry) == .actionable else {
+    /// Approve or Deny, from an explicit button, through the desk: the
+    /// ask's `request` pinned so a stale card can never approve its
+    /// replacement, one pending set with every other surface, and the
+    /// daemon's refusal (`stale_request`, `not_frontmost`, …) on the
+    /// status line — never a guessed success.
+    func answerAsk(entry: CoreRosterEntry, approve: Bool) async {
+        guard askAction(for: entry) == .actionable, let ask = deskAsk(for: entry) else {
             report(askDisabledReason(for: entry) ?? "This ask can no longer be answered", isError: true)
             return
         }
-        let ask = entry.session.ask
+        await answerThroughDesk(ask, approve ? .approve : .deny)
+    }
+
+    /// A typed reply to a `replyable` ask: `answer_ask` with `reply_text`,
+    /// awaited, the request pinned — the one answer the desk has no
+    /// verdict for yet. The daemon's refusal is surfaced verbatim.
+    func reply(entry: CoreRosterEntry, text: String) async {
+        // A silent early-return leaves actionIsError false, and the reply
+        // sheet reads that as "sent" — dismissing and dropping the draft.
+        // A stale ask must refuse loudly instead.
+        guard canReply(entry) else {
+            report(askDisabledReason(for: entry) ?? "This ask no longer takes a reply", isError: true)
+            return
+        }
         do {
             let reply = try await core.answerAskNow(
-                session: entry.id, approve: approve,
-                replyText: replyText, request: ask?.request)
+                session: entry.id, approve: true,
+                replyText: text, request: entry.session.ask?.request)
             if reply.ok {
-                report(Self.answeredText(reply, approve: approve, replied: replyText != nil))
+                report(AskAnswerLine.replied(reply))
                 await load()
             } else {
-                report(reply.error?.message ?? "Answer refused", isError: true)
+                report(reply.error?.message ?? "Reply refused", isError: true)
             }
         } catch {
             report(Self.describe(error), isError: true)
         }
-    }
-
-    /// The status line for an answer that went out, with the route the
-    /// reply names — "Approved · sent through the agent's permission
-    /// hook", "Reply sent · typed into the terminal" — the panel's words.
-    nonisolated static func answeredText(_ reply: CoreReply, approve: Bool, replied: Bool) -> String {
-        replied ? AskAnswerLine.replied(reply) : AskAnswerLine.sent(approve ? .approve : .deny, reply: reply)
     }
 
     /// `dismiss_session`: acknowledge a live-but-going-nowhere row until
@@ -932,15 +962,14 @@ final class OverviewStore {
         return until > now.timeIntervalSince1970
     }
 
-    /// "until 14:30" for the snoozed chip's tooltip.
+    /// "Snoozed until 2:30 PM" for the snoozed chip's tooltip.
     static func snoozeWakeText(_ entry: CoreRosterEntry) -> String? {
         entry.session.snoozedUntil.map { "Snoozed until \(clockTime(Date(timeIntervalSince1970: $0)))" }
     }
 
-    static func clockTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+    /// The time of day in the reader's own 12- or 24-hour clock.
+    static func clockTime(_ date: Date, locale: Locale = .autoupdatingCurrent) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     }
 
     /// `state.unseen_completions`: ids of rows that finished since the
@@ -1269,18 +1298,11 @@ final class OverviewStore {
         }
     }
 
-    // MARK: Timeline kind filter + facts
+    // MARK: Timeline view + facts
 
-    /// The inspector's kind chips: All / Messages / Tools / Errors —
-    /// a display cut over `timeline`, never a second fetch. The chips
-    /// are the shared timeline view's; its state object is the one source
-    /// of truth, so a chip click and this property never disagree.
-    typealias TimelineKindFilter = ReconstructedTimelineView.KindFilter
+    /// The inspector timeline's kind chips and gap disclosure — the
+    /// shared timeline view's state, owned here so it survives redraws.
     let timelineViewState = ReconstructedTimelineViewState()
-    var timelineKind: TimelineKindFilter {
-        get { timelineViewState.kind }
-        set { timelineViewState.kind = newValue }
-    }
 
     /// The loaded transcript as the shared timeline view draws it. A
     /// running session's last row is mid-turn by definition, so its story
@@ -1310,37 +1332,6 @@ final class OverviewStore {
         var requests: Int
     }
     @ObservationIgnored private var timelineReconstructionCache: (key: TimelineReconstructionKey, value: SessionReconstruction)?
-
-    var filteredTimeline: [CoreTimelineItem] {
-        switch timelineKind {
-        case .all: return timeline
-        case .messages: return timeline.filter { $0.kind == "message" }
-        case .tools: return timeline.filter { $0.kind == "tool_use" || $0.kind == "tool_result" }
-        case .errors: return timeline.filter { $0.isError == true }
-        // Proxy requests ride on the reconstruction, never on the
-        // transcript's own items.
-        case .requests: return []
-        }
-    }
-
-    /// Per-chip counts so the chips tell the truth before filtering.
-    var timelineKindCounts: (messages: Int, tools: Int, errors: Int) {
-        var messages = 0, tools = 0, errors = 0
-        for item in timeline {
-            if item.kind == "message" { messages += 1 }
-            if item.kind == "tool_use" || item.kind == "tool_result" { tools += 1 }
-            if item.isError == true { errors += 1 }
-        }
-        return (messages, tools, errors)
-    }
-
-    /// The first error row's seq — the "Jump to error" scroll target.
-    /// Read from the FILTERED list: scrolling to a seq the active kind
-    /// filter doesn't render would land nowhere.
-    /// The jump target searches the whole timeline, not the filtered
-    /// slice: under a kind filter the error is never in it, which is
-    /// exactly when "jump to error" earns its keep.
-    var firstErrorSeq: Int? { timeline.first { $0.isError == true }?.seq }
 
     /// The transcript's last stated model — surfaced in the inspector as
     /// "Model (transcript)" so the source is named honestly.
@@ -1404,75 +1395,10 @@ final class OverviewStore {
         return id.split(separator: ":").last.map(String.init) ?? id
     }
 
-    // MARK: Topology (S7.5)
-
-    /// Imported Radar report summaries, and the graphs loaded so far —
-    /// the static-topology lens, which now lives under the inspector's
-    /// Advanced disclosure. Imported edges are `evidence: "static"` —
-    /// labels, never live-call proof (T38).
-    var radarReports: [CoreRadarSummary] = []
-    private(set) var radarGraphs: [String: CoreRadarReport] = [:]
-    var radarLoaded = false
-
-    /// The report summaries, loaded once; a graph is fetched only when a
-    /// selected row's repository has one.
-    func loadRadarIfNeeded() async {
-        guard !radarLoaded else { return }
-        radarLoaded = true
-        do {
-            radarReports = try await core.listRadarReports()
-        } catch {
-            // No reports is the common case — not an error surface.
-            radarReports = []
-        }
-    }
-
-    /// The repository name a row's static topology is filed under: its
-    /// git repository when the lookup landed, else the cwd's folder.
-    func repositoryName(for entry: CoreRosterEntry) -> String? {
-        if let workspace = workspace(for: entry) { return workspace.repositoryName }
-        return entry.session.cwd.map { ($0 as NSString).lastPathComponent }
-    }
-
-    /// The imported report for this row's repository — never the newest
-    /// report of some other project, which is what the old lens showed.
-    func radarSummary(for entry: CoreRosterEntry) -> CoreRadarSummary? {
-        RadarReportMatch.pick(radarReports, repository: repositoryName(for: entry))
-    }
-
-    func radarReport(for entry: CoreRosterEntry) -> CoreRadarReport? {
-        radarSummary(for: entry).flatMap { radarGraphs[$0.id] }
-    }
-
-    func loadRadarReport(for entry: CoreRosterEntry) async {
-        await loadRadarIfNeeded()
-        guard let summary = radarSummary(for: entry), radarGraphs[summary.id] == nil else { return }
-        if let report = try? await core.radarReport(id: summary.id) {
-            radarGraphs[summary.id] = report
-        }
-    }
-
-    /// The repository's static edges, first dozen. Evidence is always
-    /// "static" — the view labels it and nothing else consumes it (T38).
-    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
-        radarReport(for: entry)?.edges ?? []
-    }
-
-    func importRadarReport(path: String) async {
-        do {
-            _ = try await core.importRadarReport(path: path)
-            radarLoaded = false
-            radarGraphs = [:]
-            await loadRadarIfNeeded()
-        } catch {
-            self.error = Self.describe(error)
-        }
-    }
-
     // MARK: Observed tools
 
     /// The tools and MCP servers the selected run called, from its loaded
-    /// transcript — the observed half of the relationship lens.
+    /// transcript — the Overview's relationship lens.
     var observedTools: ObservedToolMap { ObservedToolMap.build(from: timeline) }
 
     // MARK: Usage pane
@@ -1481,9 +1407,87 @@ final class OverviewStore {
     /// the Usage graph. Sidebar rows pick it; `filter`/`saved` only
     /// apply to the roster.
     enum Pane: String, Hashable {
-        case roster, usage
+        case roster, usage, graph
     }
     var pane: Pane = .roster
+
+    // MARK: Graph pane
+
+    /// What the Graph draws: what is happening now, or every row on record.
+    enum GraphScope: String, CaseIterable, Identifiable {
+        case active = "Active"
+        case everything = "Everything"
+        var id: String { rawValue }
+    }
+    var graphScope: GraphScope = .active
+    /// How long a finished run stays on the Active graph.
+    static let graphFinishedWindow: TimeInterval = 3_600
+
+    /// The sidebar's Graph row. The selection carries over when the
+    /// session is on record, so the inspector keeps what it showed.
+    func showGraph() {
+        pane = .graph
+        if let id = selectedID, !roster.contains(where: { $0.id == id }) {
+            selectedID = nil
+            selectedIDs = []
+        }
+    }
+
+    /// The Graph's sessions. Active keeps everything live — working,
+    /// asking, failed, idle — plus runs that finished in the last hour,
+    /// and the parent of any worker it keeps, so a family never floats
+    /// loose. Everything is the whole record, rows the panel's aging
+    /// hides included. The sidebar's search applies to both.
+    var graphNodes: [OverviewGraphNode] {
+        // Only Active's one-hour horizon needs the clock. Everything must
+        // not read it, or the whole record would lay out again each second.
+        let clock = graphScope == .active ? now : .distantFuture
+        return Self.graphEntries(roster, scope: graphScope, search: search, now: clock).map(OverviewGraphNode.init)
+    }
+
+    static func graphEntries(_ roster: [CoreRosterEntry], scope: GraphScope, search: String,
+                             now: Date) -> [CoreRosterEntry] {
+        let searched = roster.filter { search.isEmpty || matchesSearch($0, search) }
+        guard scope == .active else { return searched }
+        let horizon = now.timeIntervalSince1970 - graphFinishedWindow
+        var kept = Set(searched.filter { entry in
+            guard entry.visibility != "hidden" else { return false }
+            switch SessionActivity.reduce(entry.session) {
+            case .working, .waiting, .failed, .idle: return true
+            case .done, .ended: return (entry.session.updatedAt ?? entry.session.since ?? 0) >= horizon
+            }
+        }.map(\.id))
+        let byID = Dictionary(roster.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for id in kept {
+            var parent = byID[id]?.session.parent
+            var hops = 0
+            while let next = parent, hops < 8, let entry = byID[next] {
+                kept.insert(next)
+                parent = entry.session.parent
+                hops += 1
+            }
+        }
+        return roster.filter { kept.contains($0.id) }
+    }
+
+    /// One click on a node: it becomes the inspector's session.
+    func selectInGraph(_ id: String?) {
+        selectedID = id
+        selectedIDs = id.map { [$0] } ?? []
+        if id != nil { selectedLinkID = nil }
+    }
+
+    /// A node's "Show in Roster": the table, cut to everything on record,
+    /// with that row selected.
+    func showInRoster(_ id: String) {
+        pane = .roster
+        workerFilter = nil
+        dayFilter = nil
+        activeSavedFilter = nil
+        filter = OverviewFilter(preset: .all)
+        search = ""
+        selectionChanged(to: [id])
+    }
 
     /// The `usage_graph` document — the shared-axis multi-provider
     /// chart the daemon computes from local transcripts. The pane asks
@@ -1501,6 +1505,15 @@ final class OverviewStore {
     /// overwrite a newer pick's document (same discipline as
     /// `timelineSessionID`).
     var graphRequestKey: String?
+    /// One `usage_graph` at a time. The daemon runs this client's
+    /// commands in order, so every extra scan queues ahead of each
+    /// Approve; a pick made mid-scan only marks `graphFollowUp`, and the
+    /// running load asks once more, with the latest picks, when it lands.
+    @ObservationIgnored private(set) var graphInFlight = false
+    @ObservationIgnored private var graphFollowUp = false
+    /// The `usage_graph` round trip, replaceable in tests.
+    @ObservationIgnored var fetchGraph: @MainActor (_ days: Int, _ metric: String, _ providers: [String]?)
+        async throws -> CoreUsageGraphDocument
     var graphDays = 30
     /// `tokens` | `cost` | `sessions` | `percent`.
     var graphMetric = "tokens"
@@ -1520,31 +1533,57 @@ final class OverviewStore {
         if graph == nil || stale { Task { await loadGraph() } }
     }
 
+    /// The request key for the current picks.
+    var graphPickKey: String {
+        "\(graphDays)|\(graphMetric)|\((graphProviders ?? []).joined(separator: ","))"
+    }
+
     /// Fetch the chart for the current picks. Slow on a cold transcript
-    /// cache (~30s) — the view shows its scanning state meanwhile.
+    /// cache (~30s) — the view shows its scanning state meanwhile. A call
+    /// while one is out returns at once: the running load asks again
+    /// with the newest picks when its reply lands, so any number of
+    /// picker clicks during a scan cost one more scan, not one each.
     func loadGraph() async {
-        let providers = graphProviders
-        let key = "\(graphDays)|\(graphMetric)|\((providers ?? []).joined(separator: ","))"
-        graphRequestKey = key
+        graphRequestKey = graphPickKey
         graphLoading = true
-        defer { if graphRequestKey == key { graphLoading = false } }
-        do {
-            let document = try await core.usageGraph(days: graphDays, metric: graphMetric,
-                                                     providers: providers)
-            guard graphRequestKey == key else { return }
-            graph = document
-            graphLoadedAt = Date()
-            graphError = nil
-            // A reply can name a source the registry did not (t3code
-            // appears only when its T3 coverage exists).
-            for id in document.graph.providers + document.graph.series.map(\.providerId)
-            where !graphProviderOptions.contains(id) {
-                graphProviderOptions.append(id)
-            }
-        } catch {
-            guard graphRequestKey == key else { return }
-            graphError = Self.describe(error)
+        guard !graphInFlight else {
+            graphFollowUp = true
+            return
         }
+        graphInFlight = true
+        defer {
+            graphInFlight = false
+            graphLoading = false
+        }
+        repeat {
+            graphFollowUp = false
+            let days = graphDays, metric = graphMetric, providers = graphProviders
+            let key = graphPickKey
+            graphRequestKey = key
+            let outcome: Result<CoreUsageGraphDocument, Error>
+            do {
+                outcome = .success(try await fetchGraph(days, metric, providers))
+            } catch {
+                outcome = .failure(error)
+            }
+            // Picks that moved and came back leave this reply current.
+            if graphFollowUp, graphPickKey == key { graphFollowUp = false }
+            if graphFollowUp { continue }
+            switch outcome {
+            case .success(let document):
+                graph = document
+                graphLoadedAt = Date()
+                graphError = nil
+                // A reply can name a source the registry did not (t3code
+                // appears only when its T3 coverage exists).
+                for id in document.graph.providers + document.graph.series.map(\.providerId)
+                where !graphProviderOptions.contains(id) {
+                    graphProviderOptions.append(id)
+                }
+            case .failure(let error):
+                graphError = Self.describe(error)
+            }
+        } while graphFollowUp
     }
 
     /// The provider picker's option set — the daemon's registry, so an

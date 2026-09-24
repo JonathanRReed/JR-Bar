@@ -190,6 +190,8 @@ struct UsageForecastTests {
         #expect(UsageForecast.relative(to: Self.now + 4 * 60, now: now) == "in 4m")
         #expect(UsageForecast.relative(to: Self.now + 72 * 60, now: now) == "in 1h 12m")
         #expect(UsageForecast.relative(to: Self.now + 30 * 3600, now: now) == "in 1d 6h")
-        #expect(UsageForecast.clock(Self.now, timeZone: Self.utc) == "19:41")
+        #expect(UsageForecast.clock(Self.now, timeZone: Self.utc, locale: Locale(identifier: "en_GB")) == "19:41")
+        let twelveHour = UsageForecast.clock(Self.now, timeZone: Self.utc, locale: Locale(identifier: "en_US"))
+        #expect(twelveHour.hasPrefix("7:41") && twelveHour.hasSuffix("PM"), "a 12-hour locale reads its own clock: \(twelveHour)")
     }
 }
