@@ -395,6 +395,44 @@ def test_warm_index_validates_metadata_without_opening_unchanged_transcripts(
     assert transcript_opens == [], "metadata-only cache hits must not reopen source files"
 
 
+def test_an_index_full_of_stale_rows_saves_the_scan_and_the_next_scan_hits(tmp_path: Path) -> None:
+    """A device-number change left 5,419 stale rows in the live Codex index;
+    pruning them wedged it, so every scan after re-read 14.7 GB."""
+    now = time.time()
+    root = tmp_path / "projects"
+    _write_transcript(root, "one.jsonl", [_claude_line("s1", "m1", now - DAY)])
+    _write_transcript(root, "two.jsonl", [_claude_line("s2", "m2", now - DAY)])
+    cache = tmp_path / "usage-scan-cache.json"
+    index_path = cache.with_suffix(".files.sqlite3")
+    _scan(root, cache, since_epoch=now - 30 * DAY)
+    connection = sqlite3.connect(index_path)
+    try:
+        connection.execute("DELETE FROM files")
+        connection.executemany(
+            "INSERT INTO files(file_key, document, sequence) VALUES (?, ?, ?)",
+            [(f"claude:16777231:{1_000_000_000 + n}", "{}", n + 1) for n in range(6000)],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    # Only the index can serve these files: the legacy cache holds nothing.
+    cache.write_text("{}", encoding="utf-8")
+
+    rebuilt = _scan(root, cache, since_epoch=now - 30 * DAY)
+    assert rebuilt.source_coverage["claude"].files_read == 2
+
+    cache.write_text("{}", encoding="utf-8")
+    warm = _scan(root, cache, since_epoch=now - 30 * DAY)
+    assert warm.records == rebuilt.records
+    assert warm.source_coverage["claude"].files_read == 0
+    assert warm.source_coverage["claude"].cache_hits == 2
+    connection = sqlite3.connect(index_path)
+    try:
+        assert connection.execute("SELECT count(*) FROM files").fetchone() == (2,)
+    finally:
+        connection.close()
+
+
 @pytest.mark.parametrize("corruption", ["records", "negative-index", "negative-tokens", "timestamp", "tables"])
 def test_invalid_index_document_cannot_replace_source_usage(tmp_path: Path, corruption: str) -> None:
     now = time.time()

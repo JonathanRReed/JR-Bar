@@ -135,6 +135,87 @@ def test_source_or_version_change_discards_old_rows_but_keeps_secret__and_1_more
     reopened.close()
 
 
+def _seed_stale_rows(path: Path, count: int) -> None:
+    """Rows keyed the way a changed device number leaves them: all stale."""
+    with sqlite3.connect(path) as connection:
+        connection.executemany(
+            "INSERT INTO files(file_key, document, sequence) VALUES (?, ?, ?)",
+            [(f"codex:16777231:{1_000_000_000 + n}", json.dumps(_document(n)), n + 1) for n in range(count)],
+        )
+    connection.close()
+
+
+def _row_keys(path: Path) -> set[str]:
+    connection = sqlite3.connect(path)
+    try:
+        return {row[0] for row in connection.execute("SELECT file_key FROM files")}
+    finally:
+        connection.close()
+
+
+def test_prune_clears_thousands_of_stale_rows_and_the_scan_still_saves(tmp_path: Path) -> None:
+    """The live Codex index sat unsaved from Sep 13: one progress budget over
+    5,419 stale rows interrupted the prune, which refused every put after it."""
+    path = tmp_path / "usage.sqlite"
+    created = _open(path)
+    assert created is not None
+    created.close()
+    _seed_stale_rows(path, 6000)
+
+    index = _open(path)
+    assert index is not None
+    index.prune({"codex:16777234:1"})
+    assert index.put("codex:16777234:1", _document(1))
+    index.close()
+
+    assert _row_keys(path) == {"codex:16777234:1"}
+    reopened = _open(path)
+    assert reopened is not None
+    assert reopened.get("codex:16777234:1") == _document(1)
+    assert reopened.put("codex:16777234:2", _document(2)), "the row count was left wrong"
+    reopened.close()
+
+
+class _DeleteFailsAfterFirstChunk:
+    """A connection whose second DELETE chunk fails, as an interrupt would."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self.deletes = 0
+
+    def executemany(self, sql: str, rows):
+        if sql.startswith("DELETE"):
+            self.deletes += 1
+            if self.deletes == 2:
+                raise sqlite3.OperationalError("interrupted")
+        return self._connection.executemany(sql, rows)
+
+    def __getattr__(self, name: str):
+        return getattr(self._connection, name)
+
+
+def test_a_failed_prune_is_undone_on_its_own_and_the_puts_still_commit(tmp_path: Path) -> None:
+    path = tmp_path / "usage.sqlite"
+    created = _open(path)
+    assert created is not None
+    assert created.put("kept-before", _document(1))
+    created.close()
+    _seed_stale_rows(path, 1000)
+
+    index = _open(path)
+    assert index is not None
+    failing = _DeleteFailsAfterFirstChunk(index._connection)
+    index._connection = failing
+    index.prune({"kept-before", "live"})
+    assert failing.deletes == 2, "the prune never reached a second chunk"
+    assert index.put("live", _document(2)), "a failed prune refused the scan's writes"
+    index.close()
+
+    keys = _row_keys(path)
+    assert {"kept-before", "live"} <= keys
+    assert len(keys) == 1002, "the first chunk's deletes were not rolled back with the rest"
+
+
 
 def test_row_and_document_caps_reject_new_rows_without_evicting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from jrbar import usage_file_index
