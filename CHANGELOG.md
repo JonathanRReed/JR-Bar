@@ -4,6 +4,77 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+### Overnight pass (2026-09-24)
+
+- ⌘⇧K opens again. The palette panel asked AppKit for two Space
+  behaviours it refuses together and crashed on every open; it now
+  takes the panel's one Space rule. It survives its first verb, the
+  Item Bar stops eating its keys, rows fold for the matcher once instead
+  of on every keystroke, and What's New is a row.
+- Closed windows stop costing CPU. Every titled window lets go of its
+  view graph on close (one content lifecycle), Effect Studio rests out
+  of sight, the Screen Bar parks its clocks while nobody can see it,
+  notch ambient motion rests, the Overview's Graph animates only what
+  moves, the Dock preview's pointer tick and the menu bar's reveal poll
+  sleep with the displays, the full Accessibility walk runs every two
+  minutes and after launches instead of continuously, and Shelf timers
+  wake once for the soonest deadline, not at all without one.
+- Codex usage moves again: pruning thousands of stale rows no longer
+  wedges the file index (it had been stuck since Sep 13), transcripts
+  stream a line at a time, and latest.json is written at most every five
+  seconds. A lane that will run out before its reset reaches the app as
+  `quota_pace`.
+- Approve never waits behind a scan: slow reads (usage graphs, History)
+  run on their own lane, `ready` answers before the pad, agents and
+  peers start, and a hook past every ingress slot is answered
+  `refused_full` and spooled, never dropped. A dropped socket takes the
+  dead daemon's asks with it, so a restart leaves no stale ask behind.
+- One answer desk and one opener everywhere. The panel, notch capsule
+  and card, Dock preview, Overview, banners, History, Creator Micro and
+  the palette answer through the shared desk and open sessions through
+  one `SessionOpener` (raise the live pane first). A held ask's verbs
+  carry a ring that drains with the hold.
+- Synced lyrics stay off until you turn them on; nothing is sent to
+  lrclib.net by default.
+- The Overview gains a Graph pane (sessions, their workers and state);
+  the Agentic Radar lens is gone, app and daemon together. An empty
+  Needs me says nobody is waiting, and Compare reads 119 seconds as
+  1m 59s.
+- History reads a session's run of rows as one row, draws the one
+  unseen dot (also in the Overview, the live tail, the panel and the
+  Screen Bar's peek), and an empty search offers the Data Hoarder with
+  its size first. The Data Hoarder cancels a backfill on pause, keeps
+  trash retention across relaunches, and says what a kept folder will
+  really read.
+- What's New comes up once per release with a Try it for each thing.
+  The Control Center window is Creator Micro, named for its pad. Setup
+  is one onboarding. Event Replay's window is gone (its routes live in
+  History). Every command has a `jrbar://` link, and the App Intents
+  Shortcuts could never list are deleted.
+- The panel tidies up: usage rows say one thing each and the quiet
+  providers share a row, the workers badge reads "10 workers", the
+  footer fits with Quit at the bottom of More, the brightness slider
+  says Mixed when devices disagree, and feedback a closed panel would
+  swallow shows in a HUD under the pointer. The presence report carries
+  the Mac's Focus, so Follow Focus has something to follow.
+- Dock: ⌥⇥ reads each app's windows side by side, the preview takes
+  only its bare keys, and the Dock card leads with what most people
+  set. Menu bar: Arrange and the fallback chevron are gone, Item Bar
+  tiles answer the pointer, Hand over recognises every Bartender
+  release, and quitting mid-rule no longer strands the LED scene.
+- Notch, Screen Bar and Shelf: the card's Open is a quiet chip and its
+  small controls are 24 points to hit; the right ear marks a battery
+  that cannot carry the run; the closed-lid hold is a laptop mark, only
+  while the lid is shut; a shelved file shares through the system share
+  menu; a session's reminder links back to it. The Aquarium's fish,
+  decor, pets and visitors were repainted.
+- Settings search reaches the rows inside toy and utility cards; T3
+  Code has its own Agents row; times follow the Mac's 12- or 24-hour
+  clock.
+- Slimmer: the legacy Python windows, the retired NSMenu tree, the
+  sidepulse shim, four speculative adapter modules and the test-only
+  facades are deleted — about 9k lines net across 456 files.
+
 - Asks answer from any terminal: Claude Code's and Codex's
   PermissionRequest hook is installed as a decide lane, so Approve, Deny
   and the new Always Allow reply through the agent's own hook instead of
