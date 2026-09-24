@@ -130,7 +130,8 @@ def quote_cost(provider: str, quote: PriceQuote | None, inp: int, cached_in: int
         return 0.0
     input_rate, output_rate, cache_rate = quote.input_per_mtok, quote.output_per_mtok, quote.cache_read_per_mtok
     # OpenAI bills cache writes at the plain input rate; Anthropic at 1.25x.
-    write_rate = input_rate if provider == "codex" else input_rate * usage_stats.CACHE_WRITE_RATE
+    default_write = 1.0 if provider == "codex" else usage_stats.CACHE_WRITE_RATE
+    write_rate = input_rate * usage_stats.cache_write_rate_for_model(quote.model, default_write)
     return (inp * input_rate + cached_in * cache_rate + cache_create * write_rate + out * output_rate) / 1_000_000.0
 
 

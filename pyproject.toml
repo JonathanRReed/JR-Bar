@@ -80,6 +80,7 @@ include = ["jrbar*"]
 [tool.setuptools.package-data]
 "jrbar.resources" = [
     "integration_compatibility.json",
+    "model_pricing.json",
     "provider_fixture_ownership.json",
     "provider_hook_compatibility.json",
     "sd_eject_guard.c",
