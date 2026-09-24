@@ -191,8 +191,9 @@ final class NotchCardModel {
     /// answer path only ever offers the click-to-open. Tests hand in
     /// their own.
     @ObservationIgnored var askDesk: @MainActor () -> AskAnswerDesk? = { AskAnswerDesk.shared }
-    /// How long an open's refusal stays under its row.
-    static let openNoteLife: TimeInterval = 4
+    /// How long an open's refusal stays under its row; tests hold it
+    /// longer than a loaded run can take.
+    @ObservationIgnored var openNoteLife: TimeInterval = 4
     /// Session → why its last open did not land, drawn where the ask's
     /// refusal would be. The row stays; the person can try again.
     private(set) var openRefusals: [String: String] = [:]
@@ -225,7 +226,7 @@ final class NotchCardModel {
         openRefusals[session] = line
         let token = UUID()
         openRefusalTokens[session] = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.openNoteLife) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + openNoteLife) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.openRefusalTokens[session] == token else { return }
                 self.openRefusals[session] = nil

@@ -299,15 +299,17 @@ struct AskSurfacesTests {
     @Test("the glass card opens through the one opener and keeps a refusal to read")
     func notchCardOpensThroughTheOpener() async {
         let presenter = NotchCardPresenter(model: makeTestCardModel())
+        // A loaded parallel run can take longer than the note's 4 s life.
+        presenter.model.openNoteLife = 3600
         let log = Log()
         presenter.openSession = { id in
             log.calls.append(id)
             return id == "claude:done" ? "That session is gone" : nil
         }
         await presenter.open("claude:done").value
+        #expect(presenter.model.openRefusals["claude:done"] == "That session is gone")
         await presenter.open("claude:run").value
         #expect(log.calls == ["claude:done", "claude:run"])
-        #expect(presenter.model.openRefusals["claude:done"] == "That session is gone")
         #expect(presenter.model.openRefusals["claude:run"] == nil)
         // The row's click and the header's Open take the same path.
         presenter.model.onOpenRow?("claude:row")
