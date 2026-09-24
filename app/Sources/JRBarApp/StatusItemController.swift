@@ -367,6 +367,17 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The mirror's face frame in AppKit screen coordinates — written by
     /// the utility on every move, nil while the mirror is down.
     var mirroredFaceFrame: NSRect?
+    /// The slot the item keeps while mirrored under the `.slot` seat —
+    /// the mirror's width, damped by the utility; nil is the slim slot.
+    private(set) var mirrorSlotLength: CGFloat?
+
+    /// The utility's `.slot` seat sizes the real item to the mirror, so
+    /// the visible icon covers exactly the space macOS reserves.
+    func setMirrorSlotLength(_ length: CGFloat?) {
+        guard length != mirrorSlotLength else { return }
+        mirrorSlotLength = length
+        syncLength()
+    }
     /// Fires whenever `face` changes — the mirror's feed.
     var onFaceChange: (@MainActor () -> Void)?
     private var appearanceWatch: NSKeyValueObservation?
@@ -455,16 +466,18 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private func syncLength() {
         let length = Self.itemLength(mirrored: faceMirrored, hasLabel: currentLabel != nil,
                                      spacer: boundarySpacer, stripWidth: currentWidth,
-                                     glyphWidth: naturalWidth)
+                                     glyphWidth: naturalWidth, slotLength: mirrorSlotLength)
         if statusItem.length != length { statusItem.length = length }
     }
 
-    /// The item's length: the slim slot while mirrored; otherwise a
-    /// label's variable length, the folded width with a spacer out, a
-    /// strip's own width, or the square.
+    /// The item's length: the slim slot while mirrored — or the
+    /// mirror's own width under the `.slot` seat; otherwise a label's
+    /// variable length, the folded width with a spacer out, a strip's
+    /// own width, or the square.
     static func itemLength(mirrored: Bool, hasLabel: Bool, spacer: CGFloat,
-                           stripWidth: CGFloat, glyphWidth: CGFloat) -> CGFloat {
-        if mirrored { return anchorSlimLength }
+                           stripWidth: CGFloat, glyphWidth: CGFloat,
+                           slotLength: CGFloat? = nil) -> CGFloat {
+        if mirrored { return max(anchorSlimLength, slotLength ?? 0) }
         if hasLabel { return NSStatusItem.variableLength }
         if spacer > 0 { return (stripWidth > 0 ? stripWidth : glyphWidth) + spacer }
         if stripWidth > 0 { return stripWidth }

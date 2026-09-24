@@ -6,8 +6,10 @@ import Testing
 
 /// ⌘-drag across the icon hides or shows: the pure rules — which side a
 /// drop landed on, what the press took hold of, whether the agent really
-/// moved it, what a drop writes and what it says — and the settings
-/// behind them.
+/// moved it, what a drop writes and what it says — and the utility's
+/// guards, the `424c08ad` lessons pinned: only an observed press and
+/// release writes, one write per drag, and a listing that changes on
+/// its own never writes.
 @Suite("Menu Bar — ⌘-drag across the icon")
 struct MenuBarDragLearnTests {
     /// The bar the tests drag on, in Quartz points: the band's edge at
@@ -197,6 +199,237 @@ struct MenuBarDragLearnTests {
                                          crossed: true, row: Self.row, concealed: []).confirmed)
         #expect(!MenuBarDragLearn.verdict(grabbed: slack, before: before, after: nil,
                                           crossed: false, row: Self.row, concealed: []).confirmed)
+    }
+
+    // MARK: The utility — one press, one release, one write
+
+    /// Records what the utility's concealer asks of the agent.
+    @MainActor
+    private final class FakeBackend: MenuBarConcealBackend {
+        var n = 0
+        func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+            n += 1
+            return MenuBarAssertionToken(NSNumber(value: n))
+        }
+        func invalidate(_ token: MenuBarAssertionToken) {}
+    }
+
+    /// A utility under a fake concealer on the test bar, with the drag's
+    /// seams steered: the press snapshot, the confirming read, no settle,
+    /// the icon at 1040–1112, and notes recorded instead of shown.
+    @MainActor
+    private final class Harness {
+        let utility: MenuBarUtility
+        var state: MenuBarSettings
+        var writes = 0
+        var notes: [String] = []
+        var listing: [MenuBarItem]
+        var fresh: [MenuBarItem]?
+        var rows: [CGRect] = [MenuBarDragLearnTests.row]
+
+        init(state: MenuBarSettings = MenuBarSettings(enabled: true, concealSeeded: true),
+             listing: [MenuBarItem] = MenuBarDragLearnTests.bar()) {
+            self.state = state
+            self.listing = listing
+            self.fresh = listing
+            utility = MenuBarUtility(runningBundleIDRead: {
+                [MenuBarDragLearnTests.tailscaleID, MenuBarDragLearnTests.istatID, MenuBarDragLearnTests.slackID]
+            })
+            utility.settings = { [unowned self] in self.state }
+            utility.onSettingsChange = { [unowned self] draft in
+                self.state = draft
+                self.writes += 1
+            }
+            utility.concealer = MenuBarConcealer(backend: FakeBackend())
+            utility.concealerStartedAt = .distantPast
+            utility.dragListing = { [unowned self] in self.listing }
+            utility.dragFreshListing = { [unowned self] _ in self.fresh }
+            utility.dragSettle = 0
+            utility.dragUnfreezeDelay = 0
+            utility.dragIconSpan = { MenuBarDragLearnTests.icon }
+            utility.dragRows = { [unowned self] in self.rows }
+            utility.presentDropNote = { [unowned self] text in self.notes.append(text) }
+            utility.hider.listItems = { [unowned self] in self.listing }
+            utility.hider.rowRect = { MenuBarDragLearnTests.row }
+            utility.hider.shuttersSuppressed = true
+        }
+
+        /// One ⌘-drag from `from` to `to` (x on the row), settled.
+        func drag(from: CGFloat, to: CGFloat, option: Bool = false, y: CGFloat = 18) async {
+            utility.commandPressed(at: CGPoint(x: from, y: 18))
+            utility.commandReleased(at: CGPoint(x: to, y: y), option: option)
+            await utility.dragConfirmTask?.value
+            utility.dragConfirmTask = nil
+        }
+    }
+
+    @MainActor
+    @Test("one press and release across the icon writes exactly one app — and a second release writes nothing")
+    func pressReleaseWritesOnce() async {
+        let h = Harness()
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.state.concealedApps == [Self.tailscaleID: .hidden])
+        #expect(h.writes == 1)
+        #expect(h.notes.isEmpty)
+        // No press, no drag: a stray release is nothing.
+        h.utility.commandReleased(at: CGPoint(x: 1000, y: 18), option: false)
+        await h.utility.dragConfirmTask?.value
+        #expect(h.writes == 1, "one write per drag")
+        #expect(!h.utility.dragFrozen, "the icon thaws once the drop is settled")
+    }
+
+    @MainActor
+    @Test("a listing reflow with no press writes nothing — the 424c08ad regression")
+    func reflowWritesNothing() async {
+        let h = Harness()
+        // The bar reflows under nobody's hand: Tailscale lands left of
+        // the icon, the recording indicator shifts everything, a
+        // relaunch reorders — pass after pass.
+        for listing in [Self.moved("Tailscale", to: 1045, in: h.listing), Self.bar(shift: -56),
+                        Self.bar(shift: -56, rightOfCC: -56), Self.bar()] {
+            h.listing = listing
+            h.fresh = listing
+            h.utility.hider.reconcile()
+        }
+        await Task.yield()
+        #expect(h.writes == 0)
+        #expect(h.state.concealedApps.isEmpty && h.state.sections.isEmpty)
+    }
+
+    @MainActor
+    @Test("a drag under a profile that speaks for the app writes the profile's delta, not the base")
+    func profileDelta() async {
+        var state = MenuBarSettings(enabled: true, concealSeeded: true)
+        state.profiles = [MenuBarSettings.Profile(id: "work", name: "Work", sections: [:],
+                                                  concealedApps: [Self.tailscaleID: .shown])]
+        state.curation.activeProfileID = "work"
+        let h = Harness(state: state)
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.state.profiles.first?.concealedApps[Self.tailscaleID] == .hidden)
+        #expect(h.state.concealedApps[Self.tailscaleID] == nil, "the base is untouched")
+        #expect(h.writes == 1)
+    }
+
+    @MainActor
+    @Test("⌥ at the drop writes Always Hidden; a drop back right of the icon shows it again")
+    func optionAndShow() async {
+        let h = Harness()
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        await h.drag(from: 1131, to: 1000, option: true)
+        #expect(h.state.concealedApps[Self.tailscaleID] == .alwaysHidden)
+        // Revealed inline, the assertion holds nothing and Tailscale
+        // stands drawn left of the icon; dragged back out.
+        h.utility.concealer = MenuBarConcealer(backend: FakeBackend())
+        h.listing = Self.moved("Tailscale", to: 1045, in: Self.bar())
+        h.fresh = Self.bar()
+        await h.drag(from: 1057, to: 1300)
+        #expect(h.state.concealedApps[Self.tailscaleID] == .shown)
+        #expect(h.writes == 2)
+    }
+
+    @MainActor
+    @Test("a 56 pt whole-bar shift with no reorder writes nothing unless the drop crossed the icon")
+    func shiftGuard() async {
+        let h = Harness()
+        h.fresh = Self.bar(shift: -56, rightOfCC: -56)
+        // Slack, shown left of the icon, dragged further left: no crossing.
+        await h.drag(from: 1012, to: 990)
+        #expect(h.writes == 0)
+        #expect(h.notes == [MenuBarDropNote.notMoved.text])
+        // Tailscale across the icon under the same shift: believed.
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.state.concealedApps == [Self.tailscaleID: .hidden])
+        #expect(h.writes == 1)
+    }
+
+    @MainActor
+    @Test("each drop the bar cannot honour says why and writes nothing")
+    func unhonouredNotes() async {
+        let h = Harness()
+        // macOS's own item.
+        await h.drag(from: 1280, to: 1000)
+        #expect(h.notes.last == MenuBarDropNote.systemItem.text)
+        // Another display's bar.
+        let second = CGRect(x: 1512, y: 0, width: 1920, height: 24)
+        h.rows = [Self.row, second]
+        h.utility.commandPressed(at: CGPoint(x: 1600, y: 10))
+        h.utility.commandReleased(at: CGPoint(x: 1560, y: 10), option: false)
+        #expect(h.notes.last == MenuBarDropNote.otherDisplay.text)
+        // The agent did not move it.
+        h.fresh = h.listing
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.notes.last == MenuBarDropNote.notMoved.text)
+        #expect(h.writes == 0)
+        #expect(h.notes.count == 3)
+    }
+
+    @MainActor
+    @Test("Apple's extra takes its cover and says so; a multi-item app says the whole app moved")
+    func notesWithWrites() async {
+        let h = Harness()
+        h.fresh = Self.moved("Passwords", to: 1045, in: h.listing)
+        await h.drag(from: 1240, to: 1000)
+        #expect(h.state.sections["Passwords"] == .hidden, "a cover where it sits")
+        #expect(h.state.concealedApps.isEmpty)
+        #expect(h.notes.last == MenuBarDropNote.appleExtraCovered.text)
+        h.fresh = Self.moved("iStat Menus#0", to: 1045, in: h.listing)
+        await h.drag(from: 1165, to: 1000)
+        #expect(h.state.concealedApps[Self.istatID] == .hidden)
+        #expect(h.notes.last == MenuBarDropNote.wholeApp(name: "iStat Menus", hidden: true).text)
+        #expect(h.writes == 2)
+    }
+
+    @MainActor
+    @Test("with concealAppleExtras on, Apple's extra hides through the agent like any app")
+    func appleExtraConcealed() async {
+        var state = MenuBarSettings(enabled: true, concealSeeded: true)
+        state.curation.concealAppleExtras = true
+        let h = Harness(state: state)
+        h.fresh = Self.moved("Passwords", to: 1045, in: h.listing)
+        await h.drag(from: 1240, to: 1000)
+        #expect(h.state.concealedApps["com.apple.Passwords.MenuBarExtra"] == .hidden)
+        #expect(h.state.sections.isEmpty)
+        #expect(h.notes.isEmpty)
+    }
+
+    @MainActor
+    @Test("never during the start grace, never with the setting off, never our own slot")
+    func guards() async {
+        let h = Harness()
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        h.utility.concealerStartedAt = Date()
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.writes == 0, "the engine's first seconds")
+        h.utility.concealerStartedAt = .distantPast
+        h.state.curation.dragToHide = false
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.writes == 0, "switched off")
+        h.state.curation.dragToHide = true
+        await h.drag(from: 1090, to: 1000)
+        #expect(h.writes == 0, "our own slot is not an item to pick")
+        #expect(!h.utility.dragFrozen)
+        h.utility.concealer = nil
+        await h.drag(from: 1131, to: 1000)
+        #expect(h.writes == 0, "only under the concealer")
+    }
+
+    @MainActor
+    @Test("the drag freezes the icon and the hover reveal until the drop is settled")
+    func freezeLifecycle() async {
+        let h = Harness()
+        h.utility.dragUnfreezeDelay = 60
+        h.utility.commandPressed(at: CGPoint(x: 1131, y: 18))
+        #expect(h.utility.dragFrozen)
+        #expect(h.utility.dragFrozenMaxX == Self.icon.upperBound)
+        #expect(h.utility.reveal.suppressed(), "the hover reveal stands down mid-drag")
+        h.fresh = Self.moved("Tailscale", to: 1045, in: h.listing)
+        h.utility.commandReleased(at: CGPoint(x: 1000, y: 18), option: false)
+        await h.utility.dragConfirmTask?.value
+        #expect(h.utility.dragFrozen, "a beat after the write, still frozen")
+        h.utility.thawDrag(after: 0)
+        #expect(!h.utility.dragFrozen)
     }
 
     // MARK: Settings

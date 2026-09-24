@@ -367,6 +367,36 @@ struct MenuBarConcealerTests {
         }
     }
 
+    @Test("with the flag on a covered extra's pick becomes its app's section, and back when it goes off")
+    func appleExtrasMigration() {
+        var weather = item("Weather", owner: "Weather", x: 1300)
+        weather.bundleID = "com.apple.weather.menu"
+        var slack = item("Slack", owner: "Slack", x: 1000)
+        slack.bundleID = "com.tinyspeck.slackmacgap"
+        let on = MenuBarUtility.migrateAppleExtras(on: true, sections: ["Weather": .alwaysHidden],
+                                                  concealedApps: ["com.tinyspeck.slackmacgap": .hidden],
+                                                  items: [weather, slack])
+        #expect(on.sections.isEmpty)
+        #expect(on.concealedApps == ["com.tinyspeck.slackmacgap": .hidden,
+                                     "com.apple.weather.menu": .alwaysHidden])
+        let off = MenuBarUtility.migrateAppleExtras(on: false, sections: on.sections,
+                                                   concealedApps: on.concealedApps, items: [weather, slack])
+        #expect(off.sections == ["Weather": .alwaysHidden], "a cover where it sits again")
+        #expect(off.concealedApps == ["com.tinyspeck.slackmacgap": .hidden])
+        // An extra not listed right now keeps its pick where it is.
+        let unlisted = MenuBarUtility.migrateAppleExtras(on: true, sections: ["Weather": .hidden],
+                                                        concealedApps: [:], items: [slack])
+        #expect(unlisted.sections == ["Weather": .hidden])
+        // The filter keeps what today's flags can act on.
+        var curation = MenuBarCuration()
+        let apps: [String: MenuBarItemSection] = ["com.apple.weather.menu": .hidden, "x.app": .hidden,
+                                                  "com.apple.menuextra.clock": .hidden]
+        #expect(MenuBarUtility.supportedConcealed(apps, curation: curation) == ["x.app": .hidden])
+        curation.concealAppleExtras = true
+        curation.concealSystemItems = true
+        #expect(MenuBarUtility.supportedConcealed(apps, curation: curation) == apps)
+    }
+
     @Test("the clock and Control Center leave the system-item list only with the flag; Wi-Fi never")
     func systemItemsTable() {
         let all = MenuBarConcealPlan.allSystemItems
@@ -378,6 +408,8 @@ struct MenuBarConcealerTests {
                 == all.filter { $0 != 2 && $0 != 8 })
         #expect(MenuBarConcealPlan.concealableSystemItems["com.apple.menuextra.wifi"] == nil)
         #expect(MenuBarConcealPlan.concealableSystemItems["com.apple.menuextra.battery"] == nil)
+        #expect(MenuBarUtility.systemKeys(in: hidden.union(["x.app"]))
+                == ["com.apple.menuextra.clock", "com.apple.menuextra.controlcenter"])
     }
 
     @Test("the helper hears the plain allowlist while every system item stays, the object otherwise")

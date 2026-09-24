@@ -61,10 +61,10 @@ struct MenuBarUtilityControls: View {
                 }
             }
 
-            CardNote(utility.concealing
-                        ? "Drag an app to Hidden or Always below and macOS hides it. The JR-Bar icon stands at the right end of the gap, with a ‹ that brings hidden items back; hidden apps keep running and stay reachable in the Item Bar."
-                        : "Everything left of the JR-Bar icon is tucked away. ⌘-drag an item across the icon, or drag its tile below, to hide or show it.")
+            CardNote(MenuBarDragRows.cardNote(concealing: utility.concealing,
+                                              dragToHide: utility.settings().curation.dragToHide))
                 .padding(.vertical, SettingsMetrics.xs)
+            MenuBarDragRows(utility: utility)
             if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
                     SettingLabel(title: "Hide the way macOS hides",
@@ -189,6 +189,7 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Hidden items as tiles",
                              subtitle: "A glass strip under the menu bar with a live tile per hidden item — also on the JR-Bar icon's right-click menu.")
             }
+            MenuBarItemBarAnchorRow(utility: utility)
 
             if !utility.accessibilityGranted {
                 HStack(spacing: SettingsMetrics.s) {
@@ -294,6 +295,7 @@ struct MenuBarUtilityControls: View {
                                  subtitle: "An exact gap in points — the presets above all live on this dial.")
                 }
                 engineControls
+                MenuBarPlacementRows(utility: utility)
                 MenuBarProfilesControls(utility: utility)
                 MenuBarAutomationControls(utility: utility)
             } label: {
@@ -356,7 +358,7 @@ struct MenuBarUtilityControls: View {
 
     /// The override picker for one item.
     private func overrideRow(_ item: MenuBarItem) -> some View {
-        let appChoice = utility.concealing && item.bundleID.map { MenuBarConcealPlan.canConcealApp($0) } == true
+        let appChoice = utility.concealing && item.bundleID.map(utility.canConceal) == true
         return LabeledContent {
             Picker(selection: Binding(
                 get: { utility.effectiveSection(for: item) },
@@ -1253,14 +1255,19 @@ private struct MenuBarAutomationControls: View {
 
     // MARK: Order
 
-    /// The spacer engine leaves the order to the hand that owns it: a
-    /// ⌘-drag, as macOS has always allowed. Under the concealer macOS
-    /// orders the bar itself, so there is nothing to say.
+    /// The order is the hand's under both engines: a ⌘-drag, as macOS
+    /// has always allowed — and across the JR-Bar icon it picks the
+    /// section too.
     @ViewBuilder
     private var orderNote: some View {
-        if !utility.concealing {
-            SettingLabel(title: "Order", subtitle: "⌘-drag items to order them.")
+        SettingLabel(title: "Order", subtitle: orderSubtitle)
+    }
+
+    private var orderSubtitle: String {
+        guard utility.concealing, utility.settings().curation.dragToHide else {
+            return "⌘-drag items to order them."
         }
+        return "⌘-drag items to order them — across the JR-Bar icon to hide or show them."
     }
 }
 
