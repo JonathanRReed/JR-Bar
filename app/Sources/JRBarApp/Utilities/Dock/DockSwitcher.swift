@@ -978,12 +978,14 @@ final class SwitcherKeyTap: @unchecked Sendable {
                    code == 123 || code == 124 {
                     return swallow { self.onPreviewAction(code == 123 ? "tile-left" : "tile-right") }
                 }
-                if Self.previewKeyCodes.contains(code),
-                   flags.intersection([.maskCommand, .maskControl, .maskShift, .maskAlternate]).isEmpty,
+                let bare = flags.intersection([.maskCommand, .maskControl, .maskShift, .maskAlternate]).isEmpty
+                if Self.previewKeyCodes.contains(code), bare,
                    walked || !Self.returnKeyCodes.contains(code) {
                     return swallow { self.onPreviewKey(code) }
                 }
-                if plain, !wanted.isEmpty,
+                // W/M/F and Space bare too: ⇧W types a capital into the
+                // front app, it never closes the walked card.
+                if bare, !wanted.isEmpty,
                    let char = keyboard.character(for: code)?.lowercased(), wanted.contains(char) {
                     return swallow { self.onPreviewAction(char) }
                 }
