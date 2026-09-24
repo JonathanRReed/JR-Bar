@@ -1032,7 +1032,6 @@ def iris_close(
 
 LED_DIRECTION_FORWARD = "forward"
 LED_DIRECTION_REVERSED = "reversed"
-LED_DIRECTIONS: tuple[str, ...] = (LED_DIRECTION_FORWARD, LED_DIRECTION_REVERSED)
 
 
 def normalize_led_direction(value: object) -> str:
@@ -1101,15 +1100,6 @@ def oriented_program(program: str, *, led_count: int, direction: str) -> str:
         return program
     _checked, after = read_program(text, led_count=count)
     return program if errors_only(after) else text
-
-
-def oriented(lines: list[str], *, led_count: int, direction: str) -> list[str]:
-    """``oriented_program`` for a list of lines, one line back per line in."""
-    if normalize_led_direction(direction) != LED_DIRECTION_REVERSED:
-        return list(lines)
-    text = oriented_program("\n".join(lines), led_count=led_count, direction=direction)
-    mirrored = text.splitlines()
-    return mirrored if len(mirrored) == len(lines) else list(lines)
 
 
 # --- One dispatcher ---------------------------------------------------------
@@ -1219,7 +1209,6 @@ def render_motion(
     cycle_ms: int,
     params=None,
     compact: bool = False,
-    direction: str = LED_DIRECTION_FORWARD,
     dot_travel: str = DEFAULT_DOT_TRAVEL_STYLE,
     head: str | None = None,
     ceiling: float = 1.0,
@@ -1235,11 +1224,16 @@ def render_motion(
     tolerantly: a missing or out-of-range value is its default.
 
     ``compact`` gives a circulating motion one lap instead of a set, for a
-    program that shares its 512 bytes. ``direction`` mirrors the result for
-    a strip mounted the other way round. ``dot_travel`` is how a travelling
+    program that shares its 512 bytes. ``dot_travel`` is how a travelling
     motion moves on two LEDs. ``head`` is the tool tint for the motions
     whose crest can carry it, and ``ceiling`` is how far ``peak`` was
     scaled from the full colour, so chosen colours are dimmed to match.
+
+    Everything here is drawn with LED 0 on the left. A strip mounted the
+    other way round is mirrored once, as the last step, over the whole
+    program its renderer builds (``oriented_program``, through
+    ``colors._honours_strip_direction`` and the presentation wrapper), so a
+    shared strip and a Cycle turn turn round with it, not only one motion.
 
     When the chosen values would leave less than ``reserve_bytes`` of the
     firmware's 512 for the caller's own lines (a settle ease, ``repeat``, a
@@ -1265,7 +1259,7 @@ def render_motion(
     lines = draw(values)
     if values and not fits(lines, reserve_bytes=reserve_bytes):
         lines = draw({})
-    return oriented(lines, led_count=led_count, direction=direction)
+    return lines
 
 
 def _motion_lines(

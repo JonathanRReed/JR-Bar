@@ -2989,22 +2989,6 @@ def _motion_turn_lines(
     )
 
 
-_TRAVELLING_MOTIONS = frozenset(
-    {
-        MOTION_CHASE,
-        MOTION_COMET,
-        MOTION_MARQUEE,
-        MOTION_TIDE,
-        MOTION_GRADIENT,
-        MOTION_KITT,
-        MOTION_SCANNER,
-        MOTION_CONVERGE,
-        MOTION_STACK,
-        MOTION_PENDULUM,
-    }
-)
-
-
 def _cycle_program(
     agents: list[_ActiveAgent],
     *,
