@@ -139,14 +139,9 @@ enum ToySearchCatalog {
             ToySearchRow("Never preview", keywords: ["exclude", "ignore"]),
         ],
         "agents": [
-            ToySearchRow("Group by", keywords: ["grouping", "provider", "project"]),
-            ToySearchRow("Peer sessions", keywords: ["remote", "other macs"]),
-            ToySearchRow("Ended sessions"),
-            ToySearchRow("Idle sessions"),
-            ToySearchRow("Elapsed time", keywords: ["duration", "column"]),
-            ToySearchRow("Quiet while you watch", keywords: ["mute", "focused"]),
-            ToySearchRow("Rows", keywords: ["limit", "more"]),
             ToySearchRow("Alert rules", keywords: ["loud", "quiet", "per agent"]),
+            ToySearchRow("Quiet while you watch", keywords: ["mute", "focused"]),
+            ToySearchRow("Sessions", keywords: ["overview", "roster", "open"]),
         ],
     ]
 }

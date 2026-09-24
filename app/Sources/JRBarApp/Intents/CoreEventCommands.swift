@@ -19,7 +19,7 @@ extension AppCommand {
         let command: AppCommand
         switch event.kind {
         case CoreEvent.openWindowKind:
-            guard let name = event.window, let window = AppWindow(rawValue: name) else { return nil }
+            guard let name = event.window, let window = AppWindow(linkName: name) else { return nil }
             command = .window(window)
         case CoreEvent.revealAskKind:
             command = .revealAsk
