@@ -294,18 +294,32 @@ struct FoldMathTests {
 
     // MARK: Try it
 
-    @Test("the demo folds past activation and comes back to where it started")
+    @Test("the demo folds below the reference and comes back to where it started")
     func tryItScript() {
-        let start = FoldTryIt.startAngle(current: 110, activation: 65)
+        let start = FoldTryIt.startAngle(current: 110, reference: 65)
         #expect(start == 110)
-        #expect(FoldTryIt.angle(at: 0, start: start, activation: 65) == 110)
-        let bottom = FoldTryIt.angle(at: FoldTryIt.closeDuration + 0.1, start: start, activation: 65)
+        #expect(FoldTryIt.angle(at: 0, start: start, reference: 65) == 110)
+        let bottom = FoldTryIt.angle(at: FoldTryIt.closeDuration + 0.1, start: start, reference: 65)
         #expect(bottom == 65 - FoldTryIt.depth)
         #expect(FoldMath.deltaRadians(angle: bottom ?? 0, reference: 65) > 0.5, "a real fold")
-        let end = FoldTryIt.angle(at: FoldTryIt.totalDuration, start: start, activation: 65)
+        let end = FoldTryIt.angle(at: FoldTryIt.totalDuration, start: start, reference: 65)
         #expect(abs((end ?? 0) - 110) < 1e-9)
-        #expect(FoldTryIt.angle(at: FoldTryIt.totalDuration + 0.01, start: start, activation: 65) == nil)
-        #expect(FoldTryIt.angle(at: -0.1, start: start, activation: 65) == nil)
+        #expect(FoldTryIt.angle(at: FoldTryIt.totalDuration + 0.01, start: start, reference: 65) == nil)
+        #expect(FoldTryIt.angle(at: -0.1, start: start, reference: 65) == nil)
+    }
+
+    @Test("from a resting lid the demo starts where the lid rests and folds 50° below it")
+    func tryItFromRest() {
+        // The Duo's default: the reference is where the lid rests, not the
+        // stored activation angle — a 105° rest folds to 55°, not 27°.
+        let start = FoldTryIt.startAngle(current: 105, reference: 105, lead: 0)
+        #expect(start == 105, "no lead: the resting fold starts with the first move")
+        let bottom = FoldTryIt.angle(at: FoldTryIt.closeDuration, start: start, reference: 105)
+        #expect(bottom == 55)
+        #expect(FoldTryIt.bottomAngle(reference: 105) == 105 - FoldTryIt.depth)
+        // A lid a hair below its anchor still starts from the anchor.
+        #expect(FoldTryIt.startAngle(current: 103, reference: 105, lead: 0) == 105)
+        #expect(FoldTryIt.startAngle(current: 103, reference: 105, lead: -4) == 105, "a lead never goes negative")
     }
 
     @Test("the demo's close only ever goes down, and its reopen only up")
@@ -313,7 +327,7 @@ struct FoldMathTests {
         var last = Double.infinity
         for step in 0...60 {
             let t = FoldTryIt.closeDuration * Double(step) / 60
-            let a = FoldTryIt.angle(at: t, start: 120, activation: 90) ?? .nan
+            let a = FoldTryIt.angle(at: t, start: 120, reference: 90) ?? .nan
             #expect(a <= last + 1e-9)
             last = a
         }
@@ -321,7 +335,7 @@ struct FoldMathTests {
         last = -.infinity
         for step in 0...60 {
             let t = reopenStart + FoldTryIt.openDuration * Double(step) / 60
-            let a = FoldTryIt.angle(at: t, start: 120, activation: 90) ?? .nan
+            let a = FoldTryIt.angle(at: t, start: 120, reference: 90) ?? .nan
             #expect(a >= last - 1e-9)
             last = a
         }
@@ -329,11 +343,11 @@ struct FoldMathTests {
 
     @Test("the demo starts above the fold and never reaches the shut-lid pause")
     func tryItBounds() {
-        #expect(FoldTryIt.startAngle(current: nil, activation: 65) == 110)
-        #expect(FoldTryIt.startAngle(current: 60, activation: 65) == 73, "a lid already folding starts just above")
-        #expect(FoldTryIt.startAngle(current: .nan, activation: 150) == 158)
-        #expect(FoldTryIt.bottomAngle(activation: 30) > FoldPause.closedAngle)
-        let lowest = FoldTryIt.angle(at: FoldTryIt.closeDuration, start: 80, activation: 30)
+        #expect(FoldTryIt.startAngle(current: nil, reference: 65) == 110)
+        #expect(FoldTryIt.startAngle(current: 60, reference: 65) == 73, "a lid already folding starts just above")
+        #expect(FoldTryIt.startAngle(current: .nan, reference: 150) == 158)
+        #expect(FoldTryIt.bottomAngle(reference: 30) > FoldPause.closedAngle)
+        let lowest = FoldTryIt.angle(at: FoldTryIt.closeDuration, start: 80, reference: 30)
         #expect(FoldPause.reason(angle: lowest, closedLid: false, builtInPresent: true,
                                  mirrored: false, screenAsleep: false) == nil)
     }

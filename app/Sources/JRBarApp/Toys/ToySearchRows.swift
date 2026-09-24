@@ -85,6 +85,7 @@ enum ToySearchCatalog {
             ToySearchRow("In the tank", keywords: ["fish", "sessions"]),
         ],
         "fold": [
+            ToySearchRow("Look", keywords: ["duo", "iphone", "room", "style"]),
             ToySearchRow("Render with", keywords: ["bendy", "lid plane"]),
             ToySearchRow("Fold from", keywords: ["angle"]),
             ToySearchRow("Starts folding at", keywords: ["angle", "lid"]),
@@ -92,7 +93,8 @@ enum ToySearchCatalog {
             ToySearchRow("Shade", keywords: ["dark"]),
             ToySearchRow("Blur", keywords: ["focus", "depth"]),
             ToySearchRow("Frost", keywords: ["milky", "cover"]),
-            ToySearchRow("Hold picture in place", keywords: ["parallax"]),
+            ToySearchRow("Hold picture in place", keywords: ["parallax", "hold", "still"]),
+            ToySearchRow("Goes dark over", keywords: ["fade", "darken", "black"]),
             ToySearchRow("Jitter", keywords: ["wobble", "sensor"]),
             ToySearchRow("Release when parked", keywords: ["timeout"]),
             ToySearchRow("Click on return", keywords: ["sound", "tink"]),
