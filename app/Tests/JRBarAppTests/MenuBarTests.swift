@@ -843,4 +843,36 @@ struct MenuBarTests {
         h.reveal.frontAppChanged()
         #expect(h.hides == 1)
     }
+
+    @Test("the monitor hands the drag only a ⌘-press on a bar and the release that ends it")
+    func dragEventForwarding() {
+        /// One left-button event and whether the drag hears it.
+        struct Step {
+            var down: Bool
+            var command = false
+            var onBar = true
+            var heard: Bool
+            var why: String
+        }
+        let steps = [
+            Step(down: true, heard: false, why: "a plain press is no drag"),
+            Step(down: false, heard: false, why: "and its release is never handed over"),
+            Step(down: true, command: true, onBar: false, heard: false, why: "a ⌘-press off every bar"),
+            Step(down: false, heard: false, why: "its release neither"),
+            Step(down: true, command: true, heard: true, why: "a ⌘-press on a bar"),
+            Step(down: false, heard: true, why: "its release ends the drag"),
+            Step(down: false, heard: false, why: "one release per press"),
+            // A ⌘-press whose release was lost, then a plain click: the
+            // click's release is the click's, not the drag's.
+            Step(down: true, command: true, heard: true, why: "a ⌘-press whose release gets lost"),
+            Step(down: true, heard: false, why: "a plain click after it"),
+            Step(down: false, heard: false, why: "the click's release is the click's"),
+        ]
+        var held = false
+        for step in steps {
+            let heard = MenuBarReveal.forwardsDragEvent(down: step.down, command: step.command,
+                                                       onBar: step.onBar, held: &held)
+            #expect(heard == step.heard, "\(step.why)")
+        }
+    }
 }

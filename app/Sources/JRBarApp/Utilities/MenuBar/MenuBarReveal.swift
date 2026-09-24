@@ -60,13 +60,16 @@ final class MenuBarReveal {
     /// A ⌘-press anywhere, in AppKit screen coordinates — the drag
     /// learn's fallback while the click bridge's tap is down.
     var onCommandDown: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
-    /// Every left-button release, in AppKit screen coordinates — the
-    /// fallback's end of a drag.
+    /// The release that ends a ⌘-press on a bar, in AppKit screen
+    /// coordinates — the fallback's end of a drag. No other release is
+    /// handed over.
     var onPointerUp: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
 
     /// Seams so a test can drive the gestures without a screen, a
     /// pointer, or a real clock.
     var row: @MainActor () -> NSRect? = { MenuBarReveal.currentMenuBarRow() }
+    /// Every display's menu bar band, for the ⌘-drag's fallback.
+    var barRows: @MainActor () -> [NSRect] = { MenuBarReveal.everyMenuBarRow() }
     var mouseLocation: @MainActor () -> NSPoint = { NSEvent.mouseLocation }
     /// The dwell's clock — a test steers it.
     var now: @MainActor () -> Date = { Date() }
@@ -141,6 +144,12 @@ final class MenuBarReveal {
     private final class RowGate: @unchecked Sendable {
         let lock = NSLock()
         var row: NSRect = .zero
+        /// Every display's menu bar band — where a ⌘-press may start a
+        /// drag, another display's included (the drop gets its note).
+        var barRows: [NSRect] = []
+        /// A ⌘-press on a bar went to the main actor and its release has
+        /// not: the one mouse-up the monitor forwards.
+        var commandHeld = false
     }
     nonisolated private let gate = RowGate()
 
@@ -321,13 +330,42 @@ final class MenuBarReveal {
             .insetBy(dx: 0, dy: -rowSlack)
     }
 
-    /// The monitor's cached row, recomputed on start and when the
+    /// Every screen's menu bar band in AppKit coordinates, slack
+    /// included — each as deep as its own notch.
+    private static func everyMenuBarRow() -> [NSRect] {
+        NSScreen.screens.map { screen in
+            let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen), 1)
+            return NSRect(x: screen.frame.minX, y: screen.frame.maxY - depth,
+                          width: screen.frame.width, height: depth)
+                .insetBy(dx: 0, dy: -rowSlack)
+        }
+    }
+
+    /// The monitor's cached rows, recomputed on start and when the
     /// screens change.
     private func refreshRowCache() {
         let rect = row() ?? .zero
+        let bars = [rect] + barRows()
         gate.lock.lock()
         gate.row = rect
+        gate.barRows = bars
         gate.lock.unlock()
+    }
+
+    /// Whether the monitor hands a left-button event to the ⌘-drag's
+    /// fallback: a ⌘-press on a menu bar, then the one release that
+    /// ends it. Every other press and release stays off the main actor,
+    /// and a plain press while one is held means that release was lost —
+    /// the next release belongs to the plain click, never to the drag.
+    nonisolated static func forwardsDragEvent(down: Bool, command: Bool, onBar: Bool,
+                                              held: inout Bool) -> Bool {
+        if down {
+            held = command && onBar
+            return held
+        }
+        guard held else { return false }
+        held = false
+        return true
     }
 
     // MARK: Monitor handler (off-actor)
@@ -338,14 +376,23 @@ final class MenuBarReveal {
     nonisolated private func noteGlobalEvent(_ event: NSEvent) {
         let point = NSEvent.mouseLocation
         let flags = event.modifierFlags
-        if event.type == .leftMouseUp {
-            Task { @MainActor [weak self] in self?.onPointerUp(point, flags) }
-            return
-        }
-        // A ⌘-press is a drag's start: reported, and never a reveal click.
-        let command = event.type == .leftMouseDown && flags.contains(.command)
-        if command {
-            Task { @MainActor [weak self] in self?.onCommandDown(point, flags) }
+        let down = event.type == .leftMouseDown
+        // A ⌘-press on a bar is a drag's start: reported, and never a
+        // reveal click; its release is its end. Any other press or
+        // release costs no hop here.
+        let command = down && flags.contains(.command)
+        if down || event.type == .leftMouseUp {
+            gate.lock.lock()
+            let onBar = gate.barRows.contains { $0.contains(point) }
+            let forward = Self.forwardsDragEvent(down: down, command: command, onBar: onBar,
+                                                 held: &gate.commandHeld)
+            gate.lock.unlock()
+            if forward, down {
+                Task { @MainActor [weak self] in self?.onCommandDown(point, flags) }
+            } else if forward {
+                Task { @MainActor [weak self] in self?.onPointerUp(point, flags) }
+            }
+            if !down { return }
         }
         gate.lock.lock()
         let inside = gate.row.contains(point)
