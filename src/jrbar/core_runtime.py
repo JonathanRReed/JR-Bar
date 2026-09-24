@@ -1784,15 +1784,10 @@ def _clear_provider_motion_assignment(self, record) -> None:
     effect = cache.registry().get(record.effect_id)
     if effect is None or effect.catalog != "provider_animation":
         return
-    from .colors import PROVIDER_ANIMATION_AUTO
-
     legacy = self._core_legacy()
-    try:
-        colors = self.settings.colors.with_agent_animation(
-            record.target_id, PROVIDER_ANIMATION_AUTO
-        )
-    except (TypeError, ValueError):
-        return
+    # Back to what the provider plays when nobody chose -- OpenCode's own
+    # Pendulum, not an Automatic nobody picked.
+    colors = self.settings.colors.without_agent_animation(record.target_id)
     self.settings = self.settings.with_colors(colors)
     try:
         legacy.save_settings(self.settings)

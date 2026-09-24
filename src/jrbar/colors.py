@@ -1404,6 +1404,22 @@ class ColorSettings:
             provider_animation_parameters=parameters,
         )
 
+    def without_agent_animation(self, provider: str) -> ColorSettings:
+        """This provider back on whatever it plays when nobody chose: its own
+        default motion when it has one (OpenCode's Pendulum), else
+        Automatic. Both the choice and its values leave the file, which is
+        what undoing an Effect Studio assignment means -- where choosing
+        Automatic is a choice of its own and sticks."""
+        animations = dict(self.provider_animation)
+        parameters = dict(self.provider_animation_parameters)
+        animations.pop(provider, None)
+        parameters.pop(provider, None)
+        return replace(
+            self,
+            provider_animation=animations,
+            provider_animation_parameters=parameters,
+        )
+
     def agent_animation_parameters(self, provider: str | None) -> dict[str, Any]:
         """The Effect Studio values this provider's motion was given, or {}
         -- or, while it plays its own default motion, that motion's values."""

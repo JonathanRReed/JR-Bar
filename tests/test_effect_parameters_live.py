@@ -316,3 +316,50 @@ def test_opencode_swings_its_own_motion_until_told_otherwise() -> None:
     assert reloaded.provider_animation_parameters == {}
     # Automatic is still never stored for a provider without a motion of its own.
     assert "claude" not in defaults.with_agent_animation("claude", "auto").provider_animation
+
+
+def test_clearing_an_assignment_gives_back_the_providers_own_motion() -> None:
+    """Undoing an Effect Studio assignment puts OpenCode back on its own
+    Pendulum, not on an Automatic nobody chose, and takes the values with
+    it; a provider without a motion of its own goes back to Automatic."""
+    from jrbar import core_runtime
+    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.effect_assignment_store import EffectAssignmentRecord
+    from jrbar.effect_registry import EFFECT_REGISTRY
+    from jrbar.effect_studio import AssignmentScope
+
+    class Host:
+        _effect_assignment_cache = SimpleNamespace(registry=lambda: EFFECT_REGISTRY)
+
+        def __init__(self) -> None:
+            self.settings = AgentMonitorSettings()
+            self.saved: list = []
+            self.published = 0
+
+        def _core_legacy(self):
+            return SimpleNamespace(save_settings=self.saved.append)
+
+        def _core_publish_settings(self) -> None:
+            self.published += 1
+
+    host = Host()
+    comet = get_effect("comet")
+    values = core_effects.normalize_parameters(comet, {"duration_seconds": 0.5})
+    for provider in ("opencode", "claude"):
+        assert core_runtime._apply_provider_motion_assignment(
+            host, comet, AssignmentScope.PROVIDER, provider, values
+        ) is None
+        assert host.settings.colors.agent_animation(provider) == "comet"
+        core_runtime._clear_provider_motion_assignment(
+            host, EffectAssignmentRecord("comet", AssignmentScope.PROVIDER, provider)
+        )
+    colors = host.settings.colors
+    assert colors.provider_animation == {}
+    assert colors.provider_animation_parameters == {}
+    assert colors.agent_animation("opencode") == colors_module.MOTION_PENDULUM
+    assert colors.agent_cycle_ms("opencode", 500) == 2400
+    assert colors.agent_animation("claude") == colors_module.PROVIDER_ANIMATION_AUTO
+    assert len(host.saved) == 4 and host.published == 4
+    # Choosing Automatic in Settings is still a choice, and it sticks.
+    chosen = colors.with_agent_animation("opencode", colors_module.PROVIDER_ANIMATION_AUTO)
+    assert chosen.agent_animation("opencode") == colors_module.PROVIDER_ANIMATION_AUTO
