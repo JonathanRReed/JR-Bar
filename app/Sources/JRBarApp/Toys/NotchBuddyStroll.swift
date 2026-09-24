@@ -53,7 +53,7 @@ struct BuddyStroll: Equatable {
 
     /// The quiet stretch after a walk, and the chance each once-a-minute
     /// beat takes once it has passed, for a walk about every `every`
-    /// minutes (the card's "How often it walks"). At the default twelve
+    /// minutes (the card's "Time between walks"). At the default twelve
     /// that is eight quiet minutes and a one-in-four chance a minute —
     /// the cadence the walkabout has always had.
     static func minGap(every: Double) -> TimeInterval {

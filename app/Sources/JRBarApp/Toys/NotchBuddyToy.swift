@@ -126,7 +126,8 @@ final class NotchBuddyToy: Toy {
                 set: { self.store?.state.notchBuddy.walkabout = $0 })
     }
 
-    /// About how many minutes between walks — the card's dial.
+    /// About how many minutes between walks — the card's "Time between
+    /// walks". Right on the dial is longer between walks, so rarer.
     var walkEvery: Double {
         NotchBuddySettings.clampedWalkEvery(store?.state.notchBuddy.walkEvery
                                             ?? NotchBuddySettings.defaultWalkEvery)
@@ -1317,8 +1318,8 @@ private struct BuddyControlsView: View {
                     ValueText(text: NotchBuddyToy.walkWords(toy.walkEvery))
                 }
             } label: {
-                SettingLabel(title: "How often it walks",
-                             subtitle: "About one walk in this many minutes of work.")
+                SettingLabel(title: "Time between walks",
+                             subtitle: "About this many minutes of work pass between one walk and the next.")
             }
             .disabled(!toy.takesWalks)
 

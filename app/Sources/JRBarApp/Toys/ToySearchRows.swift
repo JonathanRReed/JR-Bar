@@ -59,7 +59,7 @@ enum ToySearchCatalog {
             ToySearchRow("Size", keywords: ["bigger", "smaller"]),
             ToySearchRow("Caption on hover", keywords: ["name tag", "label", "caption"]),
             ToySearchRow("Take walks", keywords: ["walkabout", "stroll", "wander"]),
-            ToySearchRow("How often it walks", keywords: ["walk", "stroll", "frequency"]),
+            ToySearchRow("Time between walks", keywords: ["walk", "stroll", "frequency", "how often"]),
         ],
         "confetti": [
             ToySearchRow("Weekly reset", keywords: ["trigger"]),

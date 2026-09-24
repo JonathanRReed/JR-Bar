@@ -374,7 +374,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// checks the item is owned before drawing it.
     public var wearing: String?
     /// About how many minutes pass between the floating buddy's walks
-    /// while the agents work — the card's "How often it walks". Twelve
+    /// while the agents work — the card's "Time between walks". Twelve
     /// is the cadence the walkabout always had; stored clamped into
     /// `walkEveryRange`.
     public var walkEvery: Double = NotchBuddySettings.defaultWalkEvery
