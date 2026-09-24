@@ -399,8 +399,8 @@ struct OverviewView: View {
                             if store.showsUnseenDot(entry) {
                                 // `state.unseen_completions`: finished
                                 // since the user last looked — the same
-                                // accent dot the panel gives the row.
-                                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                                // unseen dot the panel gives the row.
+                                UnseenDot()
                                     .help("Finished since you last looked")
                             }
                             if OverviewStore.isSnoozed(entry, now: store.now) {

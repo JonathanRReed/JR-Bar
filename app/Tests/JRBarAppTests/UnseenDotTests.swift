@@ -20,4 +20,16 @@ struct UnseenDotTests {
         #expect(host.fittingSize == CGSize(width: UnseenDot.diameter, height: UnseenDot.diameter))
         #expect(UnseenDot.diameter == 5)
     }
+
+    @Test("History, the Overview and the timeline's live tail draw the dot, not an accent circle",
+          arguments: ["HistoryView.swift", "Overview/OverviewView.swift",
+                      "Utilities/DataHoarder/ReconstructedTimelineView.swift"])
+    func adopted(file: String) throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/JRBarApp/\(file)")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        #expect(source.contains("UnseenDot()"))
+        #expect(!source.contains("Circle().fill(Color.accentColor)"))
+    }
 }

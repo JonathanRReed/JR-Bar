@@ -404,7 +404,7 @@ struct HistoryRowView: View {
                                 .help(Self.foldedHelp(folded))
                         }
                         if row.unseen {
-                            Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Newer than your last visit here")
+                            UnseenDot().help("Newer than your last visit here")
                         }
                     }
                     if let snippet = store.transcriptSnippet(for: row) {
