@@ -306,6 +306,9 @@ import Testing
             return UInt8(v * 255)
         }
         let renderer = try Self.duoRenderer(Self.makeFrame(width: n, height: n, gray: shapes))
+        // Where MPS can't run (some virtual GPUs) the pyramid is plain
+        // mipmaps: a degraded blur this test doesn't claim is Gaussian.
+        guard renderer.params.pyramidShift == 1 else { return }
         let device = renderer.device
         let probe = """
         struct DuoProbe { float lod; float shift; float pad0; float pad1; };
