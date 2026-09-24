@@ -2,116 +2,89 @@ import Foundation
 import Testing
 @testable import JRBarApp
 
-/// `AppleDockControl`'s contract (docs/TOY-PARITY.md P1): the first
-/// hide saves `autohide`, every write restarts the Dock, and
-/// `restore()` puts the saved value back — logged, reversible, and
-/// never writing `com.apple.dock` outside the explicit calls.
+/// `AppleDockControl`'s contract (docs/TOY-PARITY.md P1): what an old
+/// Replace build saved before hiding Apple's Dock is picked up at
+/// launch, `restore()` puts it back with one Dock restart — logged —
+/// and with nothing saved it never writes `com.apple.dock` at all.
 @Suite struct DockControlTests {
 
     /// The injectable suite — an in-memory `autohide` plus a write log.
     private final class FakeDefaults: AppleDockDefaults {
         var store: [String: Bool] = [:]
         var writes: [(String, Bool)] = []
-        func boolValue(forKey key: String) -> Bool? { store[key] }
         func setBool(_ value: Bool, forKey key: String) {
             store[key] = value
             writes.append((key, value))
         }
+        func setDouble(_ value: Double, forKey key: String) {}
+        func removeValue(forKey key: String) {}
+        func synchronize() {}
     }
 
+    /// The key an old build's hide mirrored `autohide` into.
+    static let savedAutohideKey = "JRBarDock.savedAutohide"
+
     private func makeControl(
-        _ defaults: FakeDefaults
-    ) -> (AppleDockControl, FakeDefaults, Restarter, Log) {
+        _ defaults: FakeDefaults, saved: Bool? = nil
+    ) -> (AppleDockControl, Restarter, Log, UserDefaults) {
         // Isolated persistence — the crash-safe mirror defaults to
         // `.standard`, which parallel tests would share and corrupt.
         let persistence = UserDefaults(
             suiteName: "DockControlTests.\(UUID().uuidString)")!
+        if let saved { persistence.set(saved, forKey: Self.savedAutohideKey) }
         let control = AppleDockControl(defaults: defaults, persistence: persistence)
         let restarter = Restarter()
         control.restartDock = { restarter.count += 1 }
         let log = Log()
         control.onLog = { log.lines.append($0) }
-        return (control, defaults, restarter, log)
+        return (control, restarter, log, persistence)
     }
 
     private final class Restarter: @unchecked Sendable { var count = 0 }
     private final class Log: @unchecked Sendable { var lines: [String] = [] }
 
-    @Test func hidingSavesTheLiveValueWritesAndRestarts() {
-        let defaults = FakeDefaults()
-        defaults.store["autohide"] = false
-        let (control, _, restarter, _) = makeControl(defaults)
-
-        control.setAppleDockHidden(true)
-
-        #expect(defaults.store["autohide"] == true)
-        #expect(control.savedAutohide == false, "the user's off is saved before our write")
-        #expect(restarter.count == 1, "autohide takes on a Dock relaunch")
-        #expect(control.isAppleDockHidden == true)
-    }
-
-    @Test func aSecondHideDoesNotResave() {
-        let defaults = FakeDefaults()
-        let (control, _, restarter, _) = makeControl(defaults)
-
-        control.setAppleDockHidden(true)   // saves `false` (absent), writes true
-        defaults.store["autohide"] = false // someone else flips it back
-        control.setAppleDockHidden(true)   // must not overwrite the saved value
-
-        #expect(control.savedAutohide == false)
-        #expect(restarter.count == 2)
-    }
-
     @Test func restorePutsTheSavedValueBack() {
         let defaults = FakeDefaults()
-        defaults.store["autohide"] = false
-        let (control, _, restarter, log) = makeControl(defaults)
+        defaults.store["autohide"] = true   // the old bar's hide
+        let (control, restarter, log, persistence) = makeControl(defaults, saved: false)
+        #expect(control.savedAutohide == false, "the saved value is picked up at launch")
 
-        control.setAppleDockHidden(true)
         #expect(control.restore() == true)
 
         #expect(defaults.store["autohide"] == false)
         #expect(control.savedAutohide == nil)
-        #expect(restarter.count == 2)
-        #expect(log.lines.contains { $0.contains("Saved") })
+        #expect(restarter.count == 1, "autohide takes on a Dock relaunch")
         #expect(log.lines.contains { $0.contains("Restored") })
+        #expect(persistence.object(forKey: Self.savedAutohideKey) == nil,
+                "the next launch finds nothing left to restore")
     }
 
     @Test func restorePreservesAUsersOn() {
         let defaults = FakeDefaults()
-        defaults.store["autohide"] = true   // the user already auto-hides
-        let (control, _, _, _) = makeControl(defaults)
+        defaults.store["autohide"] = true   // the user already auto-hid
+        let (control, _, _, _) = makeControl(defaults, saved: true)
 
-        control.setAppleDockHidden(true)
         #expect(control.restore() == true)
         #expect(defaults.store["autohide"] == true,
                 "restore means THEIR value, not the dock's default")
     }
 
+    @Test func restoreRunsOnce() {
+        let defaults = FakeDefaults()
+        let (control, restarter, _, _) = makeControl(defaults, saved: false)
+
+        #expect(control.restore() == true)
+        #expect(control.restore() == false, "handed back — nothing left to write")
+        #expect(defaults.writes.count == 1)
+        #expect(restarter.count == 1)
+    }
+
     @Test func restoreWithNothingSavedIsANoOp() {
         let defaults = FakeDefaults()
-        let (control, _, restarter, _) = makeControl(defaults)
+        let (control, restarter, _, _) = makeControl(defaults)
 
         #expect(control.restore() == false)
         #expect(defaults.writes.isEmpty, "restore never invents a write")
         #expect(restarter.count == 0, "…nor a restart")
-    }
-
-    @Test func unhideWritesDirectly() {
-        let defaults = FakeDefaults()
-        defaults.store["autohide"] = true
-        let (control, _, restarter, _) = makeControl(defaults)
-
-        control.setAppleDockHidden(false)
-
-        #expect(defaults.store["autohide"] == false)
-        #expect(control.savedAutohide == nil, "unhide is not a hide — nothing was saved")
-        #expect(restarter.count == 1)
-    }
-
-    @Test func absentAutohideReadsAsShown() {
-        let defaults = FakeDefaults()
-        let (control, _, _, _) = makeControl(defaults)
-        #expect(control.isAppleDockHidden == false, "no key is the Dock's default: shown")
     }
 }
