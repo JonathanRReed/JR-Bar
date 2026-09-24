@@ -334,34 +334,44 @@ struct ConfettiBurst {
         return best
     }
 
+    /// How much faster than its own flutter a late piece may be nudged in
+    /// Fall and Fade before it fades out in the air instead. Rest has no
+    /// cap: every piece lands.
+    static let nudgeCap = 1.3
+    /// A late piece's fade in the air, at the end of the burst.
+    static let airFade = 0.5
+
     /// Works out a piece's end: in Rest its ledge, touchdown and fade; in
     /// Fall its trip off the bottom; in Fade its trip into the band. A
     /// piece too slow to finish by the landing's deadline is nudged
-    /// faster — only as much as it needs, so most keep their own flutter.
+    /// faster — only as much as it needs, so most keep their own flutter;
+    /// in Fall and Fade one that would need more than `nudgeCap` fades
+    /// out where it is as the burst ends, so a curtain never bunches up
+    /// into one line catching up with itself.
     private static func plan(_ piece: inout Piece, recipe: Recipe, stage: ConfettiStage, ledges: [CGRect]) {
         let hang = min(1.5, max(0.7, recipe.hang))
         let launch = piece.launch
         let by = deadline(recipe.landing) * hang - launch.delay
-        func reach(_ y: Double) -> Double {
+        let natural = piece.vt
+        func reach(_ y: Double, cap: Double = .infinity) -> Double {
             let d = y - launch.y
             var t = ConfettiPhysics.settleTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf, d: d)
             if t > by {
                 let needed = ConfettiPhysics.flutterNeeded(vy: launch.vy, tau: launch.tau, tf: piece.tf,
                                                            d: d, by: by)
                 if needed.isFinite, needed > piece.vt {
-                    piece.vt = needed
+                    piece.vt = min(needed, natural * cap)
                     t = ConfettiPhysics.settleTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf, d: d)
                 }
             }
             return t
         }
         switch recipe.landing {
-        case .fall:
-            piece.end = reach(stage.height + piece.size * 0.5)
-            piece.fadeFrom = piece.end
-        case .fade:
-            piece.end = reach(stage.height * fadeBand.to)
-            piece.fadeFrom = piece.end
+        case .fall, .fade:
+            let target = recipe.landing == .fall ? stage.height + piece.size * 0.5 : stage.height * fadeBand.to
+            let t = reach(target, cap: nudgeCap)
+            piece.end = min(t, max(airFade, by))
+            piece.fadeFrom = t > piece.end ? piece.end - airFade : piece.end
         case .rest:
             let apex = launch.y + ConfettiPhysics.drop(
                 vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf,
@@ -467,11 +477,11 @@ struct ConfettiBurst {
         switch recipe.landing {
         case .fall:
             let band = stage.height * Self.fallBand
-            opacity = min(1, max(0, (stage.height - y) / max(1, band)))
+            opacity = min(1, max(0, (stage.height - y) / max(1, band))) * airOpacity(piece, at: t)
         case .fade:
             let from = stage.height * Self.fadeBand.from
             let to = stage.height * Self.fadeBand.to
-            opacity = 1 - ConfettiPhysics.smooth((y - from) / max(1, to - from))
+            opacity = (1 - ConfettiPhysics.smooth((y - from) / max(1, to - from))) * airOpacity(piece, at: t)
             transform = transform.scaledBy(x: 1 - 0.35 * (1 - opacity), y: 1 - 0.35 * (1 - opacity))
         case .rest:
             if t > piece.fadeFrom { opacity = max(0, 1 - (t - piece.fadeFrom) / Self.fadeOut) }
@@ -480,6 +490,12 @@ struct ConfettiBurst {
                      glint: light.glint, opacity: opacity,
                      ripple: (piece.ripple * t / (2 * .pi)).truncatingRemainder(dividingBy: 1),
                      resting: resting)
+    }
+
+    /// Fall and Fade: a late piece's fade in the air as the burst ends.
+    private func airOpacity(_ piece: Piece, at t: Double) -> Double {
+        guard piece.fadeFrom < piece.end, t > piece.fadeFrom else { return 1 }
+        return max(0, (piece.end - t) / (piece.end - piece.fadeFrom))
     }
 
     /// A piece's in-flight shape at `t` (for easing a landing from it).

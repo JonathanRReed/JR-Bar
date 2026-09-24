@@ -201,6 +201,25 @@ import JRBarCore
         #expect(late.count > big.pieces.count / 5)
     }
 
+    /// In Fall a piece is nudged at most 1.3× faster to make the deadline;
+    /// one that would need more fades out in the air as the burst ends,
+    /// so a curtain never bunches into one line catching up with itself.
+    @Test func lateFallPiecesFadeInTheAir() {
+        var tall = ConfettiStage.reference
+        tall.height = 1329
+        let rain = ConfettiBurst(stage: tall, recipe: .init(origin: .rain, landing: .fall), seed: 6)
+        let faded = rain.pieces.filter { $0.fadeFrom < $0.end }
+        #expect(!faded.isEmpty, "some of a tall screen's rain fades before the bottom")
+        for piece in faded {
+            #expect(abs(piece.end - piece.fadeFrom - ConfettiBurst.airFade) < 1e-9)
+            #expect(piece.launch.delay + piece.end <= ConfettiBurst.deadline(.fall) + 1e-9)
+        }
+        let index = rain.pieces.firstIndex { $0.fadeFrom < $0.end } ?? 0
+        let piece = rain.pieces[index]
+        let half = rain.frame(of: index, at: piece.launch.delay + piece.fadeFrom + ConfettiBurst.airFade / 2)
+        #expect((half?.opacity ?? 1) < 0.6)
+    }
+
     /// The same seed is the same burst — what the render proofs rely on.
     @Test func aSeedIsABurst() {
         let a = ConfettiBurst(stage: .reference, recipe: .init(), seed: 42)
