@@ -232,6 +232,11 @@ struct AquariumRenderProofTests {
             night: 0, visitor: nil))
         if try Self.writePNG(small, size: CGSize(width: 640, height: 400),
                              name: "aquarium-small", into: dir) { written += 1 }
+        // The tap juice no swim-through catches: the half-dug treasure,
+        // a gold burst just popped and one falling, a bubble-ring trick,
+        // a bloop and a pearl on its way home to the chip.
+        if try Self.writePNG(Self.tapEvents(), size: CGSize(width: 640, height: 360),
+                             name: "aquarium-events", into: dir) { written += 1 }
         // The shop's shelves over a rich purse, light and dark — drawn
         // without the popover's scroll view, which the renderer skips.
         var purse = Self.fixture(themeID: "classic", substrateID: "classic",
@@ -290,6 +295,37 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 9)
+        #expect(written == shots.count + 10)
+    }
+
+    /// A patch of the classic tank with every tap event caught mid-way,
+    /// each drawn by the pass the live canvas uses.
+    private static func tapEvents() -> some View {
+        var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        fixture.fish = []
+        let tank = AquariumView(fixture: fixture)
+        let now = Date()
+        let motion = tank.motion
+        motion.goldBursts = [(x: CGPoint(x: 110, y: 250), bornAt: now.addingTimeInterval(-0.22)),
+                             (x: CGPoint(x: 250, y: 250), bornAt: now.addingTimeInterval(-0.62))]
+        motion.tricks = ["ring": (kind: .ring,
+                                  until: now.addingTimeInterval(AquariumBehavior.trickDuration * 0.55))]
+        motion.puffs = [(x: 0.62, y: 0.42, bornAt: now.addingTimeInterval(-0.18))]
+        motion.flights = [(from: CGPoint(x: 540, y: 280), bornAt: now.addingTimeInterval(-0.3))]
+        motion.pearlChip = CGPoint(x: 600, y: 40)
+        let ringLayout = AquariumView.Layout(x: 470, y: 200)
+        let t = now.timeIntervalSince1970
+        return Canvas { canvas, size in
+            tank.drawWater(canvas: &canvas, size: size, t: t)
+            tank.drawBackdrop(canvas: &canvas, size: size)
+            tank.drawFarSand(canvas: &canvas, size: size)
+            tank.drawSand(canvas: &canvas, size: size, t: t)
+            tank.drawTreasure(canvas: &canvas, size: size, t: t, now: now)
+            tank.drawGoldBursts(canvas: &canvas, size: size, now: now)
+            tank.drawTrickRings(canvas: &canvas, size: size, layouts: ["ring": ringLayout], now: now)
+            tank.drawPuffs(canvas: &canvas, size: size, now: now)
+            tank.drawFlights(canvas: &canvas, size: size, now: now)
+        }
     }
 }
