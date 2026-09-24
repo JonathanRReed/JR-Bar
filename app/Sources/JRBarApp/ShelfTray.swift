@@ -508,19 +508,28 @@ final class ShelfTrayModel {
     /// the person pastes it into the session this opens. False when no
     /// file of the entry is present.
     @discardableResult
-    func copyForAgent(_ entry: ShelfEntry) -> Bool {
+    func copyForAgent(_ entry: ShelfEntry, to board: NSPasteboard = .general) -> Bool {
         let present = entries.first(where: { $0.id == entry.id })?.items.filter { !$0.missing } ?? []
         guard !present.isEmpty else { return false }
-        Self.copyForAgent(present.map(\.url), attachImage: canAttachCopy(entry))
+        copyForAgent(present.map(\.url), attachImage: canAttachCopy(entry), to: board)
         return true
     }
 
-    /// The pasteboard half, shared with a file dropped straight onto a
-    /// session row: the `@path` text first, a small single image as
-    /// image data beside it, then the file URLs for a GUI app.
-    static func copyForAgent(_ urls: [URL], attachImage: Bool) {
-        guard !urls.isEmpty else { return }
-        let board = NSPasteboard.general
+    /// The hand-off for files, shared with a file dropped straight onto
+    /// a session row. What JR-Bar just wrote is its own, not a copy to
+    /// offer back as the Paste chip on the next open — its change count
+    /// counts as pasted.
+    func copyForAgent(_ urls: [URL], attachImage: Bool, to board: NSPasteboard = .general) {
+        guard let written = Self.copyForAgent(urls, attachImage: attachImage, to: board) else { return }
+        pastedChangeCount = written
+        pasteOffered = false
+    }
+
+    /// The pasteboard write: the `@path` text first, a small single
+    /// image as image data beside it, then the file URLs for a GUI app.
+    /// The board's change count after the write; nil when nothing was.
+    static func copyForAgent(_ urls: [URL], attachImage: Bool, to board: NSPasteboard) -> Int? {
+        guard !urls.isEmpty else { return nil }
         board.clearContents()
         var objects: [NSPasteboardWriting] = [agentReferences(urls.map(\.path)) as NSString]
         if attachImage, urls.count == 1, let url = urls.first,
@@ -530,6 +539,7 @@ final class ShelfTrayModel {
         }
         board.writeObjects(objects)
         board.writeObjects(urls.map { $0 as NSURL })
+        return board.changeCount
     }
 
     /// Whether a dropped file is small enough to ride along as bytes.
@@ -550,9 +560,9 @@ final class ShelfTrayModel {
     /// strip offers a Paste chip. Read off the pasteboard's types and
     /// change count only; its contents are read on the click.
     private(set) var pasteOffered = false
-    /// The pasteboard generation last pasted, so the same copy is not
-    /// offered twice.
-    private var pastedChangeCount: Int?
+    /// The pasteboard generation last pasted — or written by a hand-off
+    /// to an agent — so the same copy is not offered twice.
+    private(set) var pastedChangeCount: Int?
 
     /// Look at the pasteboard as the card opens — types only.
     func notePasteboard(_ pasteboard: NSPasteboard = .general) {

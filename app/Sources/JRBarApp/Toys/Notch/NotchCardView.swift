@@ -247,8 +247,8 @@ final class NotchCardModel {
     func handFiles(_ urls: [URL], session: String) {
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty, !CoreSession.isRemoteID(session) else { return }
-        ShelfTrayModel.copyForAgent(files, attachImage: files.count == 1
-                                    && ShelfTrayModel.withinAttachBound(files[0]))
+        tray.copyForAgent(files, attachImage: files.count == 1
+                          && ShelfTrayModel.withinAttachBound(files[0]))
         onOpenRow?(session)
     }
 
