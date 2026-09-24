@@ -59,16 +59,19 @@ struct SnailSim: Equatable {
 
     /// One step of `dt` seconds. `pearl` is the x of the pearl it should
     /// fetch (the oldest resting one), or nil. Returns true when it
-    /// reached the pearl this step — the caller collects it. Reduce
+    /// reached the pearl this step — the caller collects it. A pearl
+    /// resting past the end of the bed (a leaving fish's, dropped at the
+    /// glass) is fetched from the end the snail can reach. Reduce
     /// Motion (`still`) skips the walk: the snail is simply there.
     @discardableResult
     mutating func step(dt: Double, pearl: Double?, still: Bool = false) -> Bool {
         let dt = max(0, min(0.25, dt))
         sinceMeal += dt
-        guard let pearl else {
+        guard let resting = pearl else {
             hustling = false
             return creep(dt: dt, still: still)
         }
+        let pearl = min(Self.ends.1, max(Self.ends.0, resting))
         napLeft = 0
         sinceNap = 0
         hustling = true

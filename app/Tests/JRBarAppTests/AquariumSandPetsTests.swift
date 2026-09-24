@@ -71,6 +71,24 @@ struct AquariumSandPetsTests {
         #expect(snail.huff == 0, "a pearl cheers it right up")
     }
 
+    @Test("a pearl past the end of the bed is fetched from the end, not chased forever")
+    func snailFetchesPastTheEnd() {
+        for (start, pearl) in [(0.5, 0.99), (0.5, 0.01)] {
+            var snail = SnailSim(x: start)
+            var reached = false
+            for _ in 0..<Int(10 / Self.dt) where snail.step(dt: Self.dt, pearl: pearl) {
+                reached = true
+                break
+            }
+            #expect(reached, "a pearl at \(pearl) was picked up")
+            #expect(snail.x >= SnailSim.ends.0 && snail.x <= SnailSim.ends.1)
+        }
+        var resting = SnailSim(x: 0.5)
+        let there = resting.step(dt: 1, pearl: 0.99, still: true)
+        #expect(there)
+        #expect(resting.x == SnailSim.ends.1)
+    }
+
     @Test("Reduce Motion: the snail is simply at the pearl")
     func snailStill() {
         var snail = SnailSim(x: 0.2)
