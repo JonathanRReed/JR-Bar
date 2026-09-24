@@ -417,10 +417,10 @@ public enum LightExplainer {
         "\(Int((fraction * 100).rounded()))%"
     }
 
-    static func clock(_ epoch: Double) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: epoch))
+    /// The time of day in the reader's own 12- or 24-hour clock.
+    static func clock(_ epoch: Double, locale: Locale = .autoupdatingCurrent) -> String {
+        Date(timeIntervalSince1970: epoch)
+            .formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     }
 
     static func minutes(_ total: Double) -> String {

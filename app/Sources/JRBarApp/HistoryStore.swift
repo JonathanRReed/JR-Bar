@@ -454,10 +454,9 @@ final class HistoryStore {
 
     // MARK: Formatting
 
-    static func clock(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+    /// The time of day in the reader's own 12- or 24-hour clock.
+    static func clock(_ date: Date, locale: Locale = .autoupdatingCurrent) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     }
 
     /// `m:ss` under an hour, `h:mm:ss` after; monospaced in the column.

@@ -327,13 +327,13 @@ struct HistoryRowView: View {
             header
             if expanded {
                 timeline
-                    .padding(.leading, 78)
+                    .padding(.leading, 96)
                     .padding(.trailing, 20)
                     .padding(.vertical, 6)
                     .transition(.opacity)
             }
             if !isLast {
-                Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 78).padding(.trailing, 16)
+                Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 96).padding(.trailing, 16)
             }
         }
     }
@@ -386,7 +386,9 @@ struct HistoryRowView: View {
             HStack(alignment: .center, spacing: 10) {
                 Text(HistoryStore.clock(row.date))
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
-                    .frame(width: 38, alignment: .trailing)
+                    .lineLimit(1)
+                    // Room for "12:35 PM" on a 12-hour clock.
+                    .frame(width: 56, alignment: .trailing)
                 ProviderTile(style: style, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {

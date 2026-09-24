@@ -953,15 +953,14 @@ final class OverviewStore {
         return until > now.timeIntervalSince1970
     }
 
-    /// "until 14:30" for the snoozed chip's tooltip.
+    /// "Snoozed until 2:30 PM" for the snoozed chip's tooltip.
     static func snoozeWakeText(_ entry: CoreRosterEntry) -> String? {
         entry.session.snoozedUntil.map { "Snoozed until \(clockTime(Date(timeIntervalSince1970: $0)))" }
     }
 
-    static func clockTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+    /// The time of day in the reader's own 12- or 24-hour clock.
+    static func clockTime(_ date: Date, locale: Locale = .autoupdatingCurrent) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     }
 
     /// `state.unseen_completions`: ids of rows that finished since the

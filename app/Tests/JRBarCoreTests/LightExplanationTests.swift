@@ -86,6 +86,17 @@ struct LightExplanationTests {
         #expect(explanation.session == nil)
     }
 
+    @Test("clock times follow the reader's 12- or 24-hour locale")
+    func localeClock() {
+        // The explainer reads the Mac's own time zone, so only the
+        // clock's shape is pinned here, not the hour.
+        let at = Self.now.timeIntervalSince1970
+        let twentyFour = LightExplainer.clock(at, locale: Locale(identifier: "en_GB"))
+        let twelve = LightExplainer.clock(at, locale: Locale(identifier: "en_US"))
+        #expect(!twentyFour.hasSuffix("AM") && !twentyFour.hasSuffix("PM"), "\(twentyFour)")
+        #expect(twelve.hasSuffix("AM") || twelve.hasSuffix("PM"), "\(twelve)")
+    }
+
     @Test("idle, failed and unknown whys all produce a line")
     func others() throws {
         let idle = try #require(LightExplainer.explain(lights: Self.lights(why: "idle", motion: "breathe", fallback: "#020204"), state: Self.state(), settings: nil, now: Self.now))

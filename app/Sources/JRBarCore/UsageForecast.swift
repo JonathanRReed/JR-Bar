@@ -188,12 +188,12 @@ public struct UsageForecast: Hashable, Sendable {
         return rate >= 10 ? String(format: "%.0f %%/h", rate) : String(format: "%.1f %%/h", rate)
     }
 
-    public static func clock(_ epoch: Double, timeZone: TimeZone = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.timeZone = timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: epoch))
+    /// The time of day in the reader's own clock: "10:47 PM" on a
+    /// 12-hour Mac, "22:47" on a 24-hour one, as the menu bar says it.
+    public static func clock(_ epoch: Double, timeZone: TimeZone = .current,
+                             locale: Locale = .autoupdatingCurrent) -> String {
+        Date(timeIntervalSince1970: epoch)
+            .formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone))
     }
 
     /// "in 1h 12m", "in 4m", "now", "2 d ago" is never needed: resets are ahead.

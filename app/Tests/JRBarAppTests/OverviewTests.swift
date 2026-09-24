@@ -88,6 +88,18 @@ import JRBarCore
         #expect(!Self.store(with: []).nobodyWaiting, "an empty roster is Nothing on record")
     }
 
+    @Test("History's and the Overview's times follow the reader's 12- or 24-hour clock")
+    func localeClocks() {
+        let date = Date(timeIntervalSince1970: 1_788_982_900)
+        let us = Locale(identifier: "en_US"), gb = Locale(identifier: "en_GB")
+        for text in [HistoryStore.clock(date, locale: us), OverviewStore.clockTime(date, locale: us)] {
+            #expect(text.hasSuffix("AM") || text.hasSuffix("PM"), "\(text)")
+        }
+        for text in [HistoryStore.clock(date, locale: gb), OverviewStore.clockTime(date, locale: gb)] {
+            #expect(!text.hasSuffix("AM") && !text.hasSuffix("PM"), "\(text)")
+        }
+    }
+
     @Test func workingPresetUsesTheCanonicalStateWord() {
         let store = Self.store(with: [
             Self.entry("w", mode: "tool_running"),
