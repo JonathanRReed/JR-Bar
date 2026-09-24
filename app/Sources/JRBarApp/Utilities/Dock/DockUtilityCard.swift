@@ -94,16 +94,20 @@ struct DockUtilityControls: View {
                              subtitle: "How long the pointer rests before the preview opens.")
             }
             .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
+
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
 
+            CardSectionHeader("Appearance")
+            appearance
+
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
             } label: {
                 SettingLabel(title: "More preview options",
-                             subtitle: "Card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
+                             subtitle: "Fine spacing, card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
             }
 
             DisclosureGroup(isExpanded: $showExclusions) {
@@ -144,6 +148,37 @@ struct DockUtilityControls: View {
             Toggle(isOn: switcherThisDisplay) {
                 SettingLabel(title: "⌥⇥ lists this display only",
                              subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")
+            }
+            .disabled(!ownSwitcher)
+            LabeledContent {
+                Picker(selection: switcherOrder) {
+                    Text("Most recent first").tag(DockSwitcherOrder.recent)
+                    Text("Grouped by app").tag(DockSwitcherOrder.byApp)
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+            } label: {
+                SettingLabel(title: "Window order",
+                             subtitle: "The strip's windows by when you last used them, or each app's together.")
+            }
+            .disabled(!ownSwitcher)
+            Toggle(isOn: switcherWindowless) {
+                SettingLabel(title: "Apps with no windows",
+                             subtitle: "Running apps with no open window get a card at the end of the strip; picking one brings the app forward.")
+            }
+            .disabled(!ownSwitcher)
+            LabeledContent {
+                Picker(selection: switcherStyle) {
+                    Text("Stills").tag(DockSwitcherStyle.stills)
+                    Text("Icons").tag(DockSwitcherStyle.icons)
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+            } label: {
+                SettingLabel(title: "Card faces",
+                             subtitle: "Each window's still, or its app's icon — icons never capture, so the recording dot stays off.")
             }
             .disabled(!ownSwitcher)
             let learned = utility.settings().enhance.learnedPicks.count
@@ -193,10 +228,60 @@ struct DockUtilityControls: View {
         }
     }
 
+    /// How much air the preview keeps and where it sits: a live sample
+    /// over drawn stills (no capture), the spacing stops, the distance
+    /// from the Dock and the name-label cover.
+    @ViewBuilder
+    private var appearance: some View {
+        let prefs = utility.enhance.preferences
+        DockPreviewSample(spacing: prefs.previewSpacing, dockGap: prefs.dockGap,
+                          coversLabel: prefs.coverDockLabel)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, SettingsMetrics.s)
+        // Between the stops no segment is lit and the subtitle names the
+        // value, so the control keeps its place beside the title.
+        LabeledContent {
+            Picker(selection: spacingStop) {
+                ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
+                    Text(stop.title).tag(Optional(stop))
+                }
+            } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+        } label: {
+            SettingLabel(title: "Spacing", subtitle: Self.spacingSubtitle(prefs.previewSpacing))
+        }
+        LabeledContent {
+            HStack(spacing: 10) {
+                Slider(value: dockGap, in: DockEnhancePreferences.dockGapRange)
+                    .frame(width: 140)
+                ValueText(text: "\(Int(prefs.dockGap.rounded())) pt")
+            }
+        } label: {
+            SettingLabel(title: "Distance from the Dock",
+                         subtitle: "The gap between the icon and the preview's glass.")
+        }
+        Toggle(isOn: coverDockLabel) {
+            SettingLabel(title: "Cover the Dock's name label",
+                         subtitle: "The preview sits over the name the Dock shows above the icon; its header names the app. Off, it floats above the name.")
+        }
+    }
+
     /// The rows past the everyday ones: what a card looks like and
     /// captures, which windows list, and the icon and keyboard gestures.
     private var previewOptions: some View {
         VStack(alignment: .leading, spacing: 0) {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: fineSpacing, in: DockEnhancePreferences.spacingRange, step: 0.05)
+                        .frame(width: 140)
+                    ValueText(text: Self.percent(utility.enhance.preferences.previewSpacing))
+                }
+            } label: {
+                SettingLabel(title: "Fine spacing",
+                             subtitle: "The spacing between the stops: 60% is Tight, 100% Standard, 140% Roomy. The ⌥⇥ switcher follows it too.")
+            }
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
                              subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
@@ -205,6 +290,10 @@ struct DockUtilityControls: View {
             Toggle(isOn: largePreviews) {
                 SettingLabel(title: "Large cards",
                              subtitle: "Bigger thumbnails for reading the window, not just the title.")
+            }
+            Toggle(isOn: cardsHugWindows) {
+                SettingLabel(title: "Cards take each window's shape",
+                             subtitle: "A tall window gets a narrow card and a wide one a wide card, its still filling it — no bars beside a portrait window.")
             }
             Toggle(isOn: offscreen) {
                 SettingLabel(title: "Capture every window",
@@ -340,6 +429,61 @@ struct DockUtilityControls: View {
     /// Whether JR-Bar's own hover watcher is the one running — the
     /// trigger, the icon gestures and ⌥` all ride it.
     private var ownPreviews: Bool { DockUtility.ownsPreviews(utility.settings()) }
+
+    /// "60%" — the fine spacing's readout.
+    static func percent(_ scale: Double) -> String {
+        "\(Int((scale * 100).rounded()))%"
+    }
+
+    /// The Spacing row's subtitle: what the knob does, and — between the
+    /// stops, where no segment is lit — the value Fine spacing set.
+    static func spacingSubtitle(_ scale: Double) -> String {
+        let lead = "The air around the cards inside the preview."
+        guard DockPreviewSpacing.stop(for: scale) == nil else {
+            return "\(lead) Standard is the roomier look it had before."
+        }
+        return "\(lead) Custom: \(percent(scale)), set with Fine spacing."
+    }
+
+    /// The stop the spacing sits on; nil between stops (Custom). Picking
+    /// a stop stores its scale.
+    private var spacingStop: Binding<DockPreviewSpacing?> {
+        Binding(get: { DockPreviewSpacing.stop(for: utility.enhance.preferences.previewSpacing) },
+                set: { stop in
+                    guard let stop else { return }
+                    utility.enhance.preferences.previewSpacing = stop.scale
+                })
+    }
+    /// The fine slider lands on its 0.05 steps exactly, so 0.6 reads as
+    /// Tight rather than a hair off it.
+    private var fineSpacing: Binding<Double> {
+        Binding(get: { utility.enhance.preferences.previewSpacing },
+                set: { utility.enhance.preferences.previewSpacing = ($0 * 20).rounded() / 20 })
+    }
+    private var dockGap: Binding<Double> {
+        Binding(get: { utility.enhance.preferences.dockGap },
+                set: { utility.enhance.preferences.dockGap = $0.rounded() })
+    }
+    private var switcherOrder: Binding<DockSwitcherOrder> {
+        Binding(get: { utility.enhance.preferences.switcherOrder },
+                set: { utility.enhance.preferences.switcherOrder = $0 })
+    }
+    private var switcherWindowless: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.switcherShowsWindowless },
+                set: { utility.enhance.preferences.switcherShowsWindowless = $0 })
+    }
+    private var switcherStyle: Binding<DockSwitcherStyle> {
+        Binding(get: { utility.enhance.preferences.switcherStyle },
+                set: { utility.enhance.preferences.switcherStyle = $0 })
+    }
+    private var cardsHugWindows: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.cardsHugWindows },
+                set: { utility.enhance.preferences.cardsHugWindows = $0 })
+    }
+    private var coverDockLabel: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.coverDockLabel },
+                set: { utility.enhance.preferences.coverDockLabel = $0 })
+    }
 
     // Nested settings structs get their own bindings — `bind` only
     // reaches top-level key paths cleanly through the write path.

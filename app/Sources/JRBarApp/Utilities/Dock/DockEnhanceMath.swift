@@ -113,15 +113,32 @@ enum DockEnhanceMath {
         return candidates.min(by: { $0.1 < $1.1 })?.0 ?? .bottom
     }
 
+    /// The least air the frame math leaves between a tile and its
+    /// panel, whatever the card asks: the road from the icon to the
+    /// cards (`inCorridor`) needs the panel strictly past the tile.
+    static let minimumGap: CGFloat = 2
+
+    /// How far a magnified icon swells past its resting tile, off the
+    /// Dock: the Dock's `largesize` (128 when it was never set, the
+    /// Dock's own default) less the tile's extent across the Dock. A
+    /// preview that covers the Dock rides at least this far out, so it
+    /// never sits over the swollen icon.
+    static func magnifiedReach(tileExtent: CGFloat, largesize: CGFloat?) -> CGFloat {
+        max(0, (largesize ?? 128) - tileExtent)
+    }
+
     /// Where a preview panel of `size` opens for a hovered item: off
     /// the dock toward the screen's middle, centred on the tile itself
     /// along the dock's run — the DockDoor read, where the panel sits
     /// over its app — and clamped inside the screen when the tile hugs
-    /// a screen edge.
+    /// a screen edge. The offset off the tile is the card's gap (never
+    /// under `minimumGap`), any band kept for the Dock's name bubble,
+    /// and a magnified icon's reach.
     static func panelFrame(anchor itemFrame: CGRect, edge: DockEdge, size: CGSize,
                            screen: CGRect, gap: CGFloat,
-                           labelClearance: CGFloat = nativeLabelHeight) -> CGRect {
-        let offset = gap + labelClearance
+                           labelClearance: CGFloat = nativeLabelHeight,
+                           magnifiedReach: CGFloat = 0) -> CGRect {
+        let offset = max(minimumGap, gap) + labelClearance + magnifiedReach
         switch edge {
         case .bottom:
             let x = min(max(itemFrame.midX - size.width / 2, screen.minX + 8),
@@ -205,9 +222,35 @@ enum DockEnhanceMath {
         return true
     }
 
+    /// The tile's extent across the Dock — its height on a bottom Dock,
+    /// its width on a side one: the size a magnified icon grows from.
+    static func tileExtent(_ tile: CGRect, edge: DockEdge) -> CGFloat {
+        edge == .bottom ? tile.height : tile.width
+    }
+
     /// A window card's thumbnail box — 16:10, two sizes.
     static func cardSize(large: Bool) -> CGSize {
         large ? CGSize(width: 208, height: 130) : CGSize(width: 144, height: 90)
+    }
+
+    /// A card that takes its window's shape: the box's height, and a
+    /// width that follows the window's aspect, held between 0.6 and 1.9
+    /// of the height so a phone-tall window or a ribbon-wide one still
+    /// reads as a card. No aspect to go on keeps the 16:10 box.
+    static func cardSize(large: Bool, aspect: CGFloat?) -> CGSize {
+        let box = cardSize(large: large)
+        guard let aspect, aspect.isFinite, aspect > 0 else { return box }
+        let h = box.height
+        return CGSize(width: min(max(h * aspect, h * 0.6), h * 1.9).rounded(), height: h)
+    }
+
+    /// A card's window aspect: its frame's while AX reports one (known
+    /// before the still lands, so the strip doesn't reflow when it does),
+    /// else the still's own.
+    static func aspect(of window: DockPreviewWindow) -> CGFloat? {
+        if let frame = window.frame, frame.width > 0, frame.height > 0 { return frame.width / frame.height }
+        if let size = window.thumbnail?.size, size.width > 0, size.height > 0 { return size.width / size.height }
+        return nil
     }
 
     /// Whether `windowCount` crossed the compact-list limit — 0 is
@@ -628,4 +671,152 @@ enum DockEnhanceMath {
         return nil
     }
 
+}
+
+// MARK: - Placement (pure, tested)
+
+/// How far off the Dock a preview (or a toast) opens, from the card's
+/// knobs at show time: the distance from the Dock, whether it covers
+/// the Dock's name bubble, and — covering, with the Dock magnifying
+/// under the pointer — the swollen icon's reach, so the glass never
+/// sits over it. Not covering keeps the band the bubble needs.
+struct DockPlacement: Equatable {
+    /// The card's distance from the Dock, in points.
+    var gap: CGFloat
+    var coversLabel: Bool
+    /// The Dock magnifies and the pointer is on it — a keyboard-opened
+    /// preview magnifies nothing.
+    var magnifying = false
+    /// The Dock's `largesize`; nil when never set.
+    var largesize: CGFloat? = nil
+
+    /// How far the glass drifts in as it opens. Covering, it rides over
+    /// the Dock's own window, so it stops a point short of the gap: a
+    /// drift across the icon under the pointer would take the Dock's
+    /// hover (its bubble and magnification would flicker). Under the
+    /// Dock, the Dock draws over it anyway, so it drifts the full 10.
+    var openingDrift: CGFloat {
+        guard coversLabel else { return 10 }
+        return min(10, max(0, max(DockEnhanceMath.minimumGap, gap) - 1))
+    }
+
+    /// The band kept for the name bubble over a tile titled `title`.
+    func labelClearance(title: String, edge: DockEdge) -> CGFloat {
+        coversLabel ? 0 : DockEnhanceMath.nativeLabelClearance(title: title, edge: edge)
+    }
+
+    /// The magnified icon's reach past `anchor`, when it counts.
+    func reach(anchor: CGRect, edge: DockEdge) -> CGFloat {
+        guard coversLabel, magnifying else { return 0 }
+        return DockEnhanceMath.magnifiedReach(tileExtent: DockEnhanceMath.tileExtent(anchor, edge: edge),
+                                              largesize: largesize)
+    }
+
+    /// The frame for a panel of `size` over the tile `anchor`, whose
+    /// name bubble reads `title`.
+    func frame(anchor: CGRect, edge: DockEdge, size: CGSize, screen: CGRect, title: String) -> CGRect {
+        DockEnhanceMath.panelFrame(anchor: anchor, edge: edge, size: size, screen: screen, gap: gap,
+                                   labelClearance: labelClearance(title: title, edge: edge),
+                                   magnifiedReach: reach(anchor: anchor, edge: edge))
+    }
+}
+
+// MARK: - Spacing (pure, tested)
+
+/// Every inset the preview panel draws, from one spacing scale (the
+/// card's Spacing: Tight 0.6, Standard 1.0, Roomy 1.4). Each token is
+/// its Standard value times the scale, rounded to a point and held at a
+/// floor, so the tightest stop still clears the agent ring (it reaches
+/// 3 pt past a still), keeps a verb disc a fair target, and leaves the
+/// still's shadow room inside the glass. The header's icon and verb
+/// discs are controls, not air, so they stop growing at Standard. The
+/// corners are derived, not scaled: the card plate is the still's
+/// corner plus its pad, and the glass is the plate's corner plus the
+/// panel's inset, so every curve shares one centre.
+struct DockPreviewMetrics: Equatable {
+    /// Glass edge to content.
+    let panelInset: CGFloat
+    /// Header, note, asks, rule and cards, one from the next.
+    let sectionSpacing: CGFloat
+    /// The card plate's reach past its still.
+    let cardPad: CGFloat
+    /// Plate to plate along the strip.
+    let cardSpacing: CGFloat
+    /// Still to caption.
+    let captionGap: CGFloat
+    /// An ask row's padding across and down.
+    let rowPadH: CGFloat
+    let rowPadV: CGFloat
+    /// A compact-list row's padding across.
+    let listPadH: CGFloat
+    /// The header's app icon. Spacing is air, not size: the icon
+    /// shrinks toward Tight but never grows past Standard's 30.
+    let headerIcon: CGFloat
+    /// The header's verb discs — never under 20, a fair target, and
+    /// never past Standard's 22.
+    let verbDisc: CGFloat
+    /// The hairline between sections. Below 0.8 the air alone
+    /// separates them.
+    let showsRule: Bool
+
+    /// The card plate's corner: concentric with the still inside it.
+    var plateRadius: CGFloat { DockChrome.stillRadius + cardPad }
+    /// The glass's corner: concentric with the plates inside it.
+    var panelRadius: CGFloat { plateRadius + panelInset }
+
+    static func scaled(_ scale: Double) -> DockPreviewMetrics {
+        let s = CGFloat(scale.isFinite ? scale : 1)
+        func token(_ base: CGFloat, floor: CGFloat) -> CGFloat { max(floor, (base * s).rounded()) }
+        return DockPreviewMetrics(panelInset: token(10, floor: 6),
+                                  sectionSpacing: token(10, floor: 6),
+                                  cardPad: token(6, floor: 4),
+                                  cardSpacing: token(4, floor: 2),
+                                  captionGap: token(6, floor: 3),
+                                  rowPadH: token(10, floor: 8),
+                                  rowPadV: token(8, floor: 6),
+                                  listPadH: token(8, floor: 6),
+                                  headerIcon: min(30, token(30, floor: 24)),
+                                  verbDisc: min(22, token(22, floor: 20)),
+                                  showsRule: s >= 0.8)
+    }
+
+    /// Standard: the look before the spacing knob, glass corner aside.
+    static let standard = scaled(1)
+}
+
+/// The ⌥⇥ switcher's air from the same spacing scale as the preview:
+/// the pane's inset, the rows' inset, the strip's inset and the gap
+/// between cards, each its Standard value times the scale held at a
+/// floor, and the zoom pane narrowing with the scale down to 80 %.
+/// The glass corner is derived — the card's corner plus the strip's
+/// inset, less two, the curve the switcher has always worn.
+struct DockSwitcherMetrics: Equatable {
+    /// Glass edge to the zoom pane, top and sides.
+    let paneInset: CGFloat
+    /// The search, hint and armed rows' inset.
+    let rowInset: CGFloat
+    /// Glass edge to the strip of cards.
+    let stripInset: CGFloat
+    /// Card to card along the strip.
+    let cardGap: CGFloat
+    /// The zoom pane's width.
+    let zoomWidth: CGFloat
+
+    /// A card's corner in the strip.
+    static let cardRadius: CGFloat = 14
+    /// The glass's corner, near-concentric with the strip's cards.
+    var cornerRadius: CGFloat { Self.cardRadius + stripInset - 2 }
+
+    static func scaled(_ scale: Double) -> DockSwitcherMetrics {
+        let s = CGFloat(scale.isFinite ? scale : 1)
+        func token(_ base: CGFloat, floor: CGFloat) -> CGFloat { max(floor, (base * s).rounded()) }
+        return DockSwitcherMetrics(paneInset: token(18, floor: 10),
+                                   rowInset: token(14, floor: 8),
+                                   stripInset: token(12, floor: 6),
+                                   cardGap: token(4, floor: 2),
+                                   zoomWidth: (360 * min(max(s, 0.8), 1)).rounded())
+    }
+
+    /// Standard: the switcher before the spacing knob.
+    static let standard = scaled(1)
 }

@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import Foundation
 import Testing
@@ -496,5 +497,66 @@ struct DockSwitcherTests {
         #expect(DockSwitcherView.ringRadius(inset: 0) == DockSwitcherView.cardRadius)
         #expect(DockSwitcherView.ringRadius(inset: 3) == DockSwitcherView.cardRadius - 3)
         #expect(DockSwitcherView.ringRadius(inset: 40) == 0)
+    }
+
+    @Test("the strip's air follows the preview's spacing; Standard is the switcher before it")
+    func switcherSpacing() {
+        let standard = DockSwitcherMetrics.scaled(1)
+        #expect(standard.paneInset == 18 && standard.rowInset == 14 && standard.stripInset == 12)
+        #expect(standard.cardGap == 4)
+        #expect(standard.cornerRadius == 24, "the corner the switcher has always worn")
+        #expect(standard.zoomWidth == 360)
+        #expect(DockSwitcherMetrics.standard == standard)
+        let tight = DockSwitcherMetrics.scaled(0.6)
+        #expect(tight.paneInset == 11 && tight.rowInset == 8 && tight.stripInset == 7 && tight.cardGap == 2)
+        #expect(tight.cornerRadius == 19)
+        #expect(tight.zoomWidth == 288, "the pane narrows with the scale, to 80 % at most")
+        #expect(DockSwitcherMetrics.scaled(1.4).zoomWidth == 360, "and never grows past its old width")
+        let least = DockSwitcherMetrics.scaled(0.5)
+        #expect(least.paneInset == 10 && least.rowInset == 8 && least.stripInset == 6 && least.cardGap == 2)
+        var previous = DockSwitcherMetrics.scaled(0.5)
+        for step in 11...32 {
+            let current = DockSwitcherMetrics.scaled(Double(step) / 20)
+            #expect(current.paneInset >= previous.paneInset && current.rowInset >= previous.rowInset)
+            #expect(current.stripInset >= previous.stripInset && current.cardGap >= previous.cardGap)
+            #expect(current.zoomWidth >= previous.zoomWidth && current.cornerRadius >= previous.cornerRadius)
+            previous = current
+        }
+    }
+
+    private func item(_ id: String, pid: pid_t, app: String) -> SwitcherItem {
+        SwitcherItem(id: id, pid: pid, appName: app, icon: nil, title: id, minimized: false,
+                     onScreen: true, element: nil, windowID: nil)
+    }
+
+    @Test("most recent first keeps the strip as built; grouped by app gathers each app's windows")
+    @MainActor func switcherOrder() {
+        let built = [item("a1", pid: 1, app: "A"), item("b1", pid: 2, app: "B"), item("a2", pid: 1, app: "A"),
+                     item("c1", pid: 3, app: "C"), item("b2", pid: 2, app: "B"), item("a3", pid: 1, app: "A")]
+        #expect(DockSwitcherList.arranged(built, order: .recent).map(\.id) == built.map(\.id))
+        #expect(DockSwitcherList.arranged(built, order: .byApp).map(\.id) == ["a1", "a2", "a3", "b1", "b2", "c1"],
+                "apps by their most recent window; each app's windows keep their own order")
+        #expect(DockSwitcherList.arranged([], order: .byApp).isEmpty)
+        // The needs-you lane still leads a grouped strip.
+        var waiting = item("c1", pid: 3, app: "C")
+        waiting.agent = DockPreviewSamples.waiting
+        let grouped = DockSwitcherList.arranged([item("a1", pid: 1, app: "A"), waiting, item("a2", pid: 1, app: "A")],
+                                               order: .byApp)
+        #expect(DockSwitcherList.needsYouFirst(grouped).items.first?.id == "c1")
+    }
+
+    @Test("apps with no windows get one card each, never one the strip already lists")
+    @MainActor func windowlessCards() {
+        let apps: [(pid: pid_t, name: String, icon: NSImage?)] = [(1, "Safari", nil), (4, "Calculator", nil),
+                                                                   (5, "Preview", nil)]
+        let cards = DockSwitcherList.windowlessItems(apps: apps, listed: [1, 2])
+        #expect(cards.map(\.id) == ["app4", "app5"])
+        #expect(cards.map(\.title) == ["Calculator", "Preview"], "the card is titled by its app")
+        #expect(cards.allSatisfy { $0.windowless && !$0.onScreen && $0.element == nil && $0.windowID == nil })
+        #expect(DockSwitcherList.windowlessItems(apps: apps, listed: [1, 4, 5]).isEmpty)
+        // They sit at the strip's end in recency order, and a grouped
+        // strip keeps them after the windowed apps.
+        let strip = [item("w1", pid: 1, app: "Safari")] + cards
+        #expect(DockSwitcherList.arranged(strip, order: .byApp).map(\.id) == ["w1", "app4", "app5"])
     }
 }

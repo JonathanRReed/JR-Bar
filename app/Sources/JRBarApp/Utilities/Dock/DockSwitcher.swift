@@ -36,6 +36,9 @@ struct SwitcherItem: Identifiable {
     /// most urgent session its app hosts). Drives the "needs you" lane,
     /// the provider mark and the type-ahead's session search.
     var agent: DockAgentMark? = nil
+    /// A running app with no open window, listed on its own card —
+    /// picking it brings the app forward.
+    var windowless = false
 }
 
 /// One window out of `CGWindowListCopyWindowInfo`, already filtered to
@@ -385,6 +388,37 @@ enum DockSwitcherList {
             return appMark(bundleID: bundleID, marks: marks)
         default:
             return nil
+        }
+    }
+
+    // MARK: Order
+
+    /// The strip in the card's order: as built (most recent window
+    /// first), or each app's windows together, the apps in the order of
+    /// their most recent window and each app's windows keeping theirs.
+    static func arranged(_ items: [SwitcherItem], order: DockSwitcherOrder) -> [SwitcherItem] {
+        guard order == .byApp else { return items }
+        var rank: [pid_t: Int] = [:]
+        for (index, item) in items.enumerated() where rank[item.pid] == nil { rank[item.pid] = index }
+        return items.enumerated()
+            .sorted { lhs, rhs in
+                let a = rank[lhs.element.pid] ?? 0, b = rank[rhs.element.pid] ?? 0
+                return a != b ? a < b : lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
+    /// One card per running app with no window on the strip — `apps` in
+    /// the order given (the workspace's), less every app `listed` already
+    /// shows. The card carries no window: picking it activates the app.
+    static func windowlessItems(apps: [(pid: pid_t, name: String, icon: NSImage?)],
+                                listed: Set<pid_t>) -> [SwitcherItem] {
+        apps.filter { !listed.contains($0.pid) }.map { app in
+            var item = SwitcherItem(id: "app\(app.pid)", pid: app.pid, appName: app.name, icon: app.icon,
+                                    title: app.name, minimized: false, onScreen: false,
+                                    element: nil, windowID: nil)
+            item.windowless = true
+            return item
         }
     }
 
@@ -1134,6 +1168,16 @@ final class DockSwitcherController {
     /// The preview's off-screen switch: minimized and other-Space
     /// windows only attempt captures when it's on.
     var offscreenAllowed: () -> Bool = { false }
+    /// The card's spacing scale, read at each open — the strip's air
+    /// follows the preview's (`DockSwitcherMetrics`).
+    var spacing: () -> Double = { 1 }
+    /// The strip's order, read at each build.
+    var order: () -> DockSwitcherOrder = { .recent }
+    /// Running apps with no window get a card at the strip's end.
+    var showsWindowless: () -> Bool = { false }
+    /// The card's face pick: false keeps the strip to icons and never
+    /// captures.
+    var stillsWanted: () -> Bool = { true }
     /// The daemon's live agent sessions, reduced to marks — the Dock
     /// utility wires it to `state.sessions`. Empty means no lane.
     var agentMarks: () -> [DockAgentMark] = { [] }
@@ -1515,12 +1559,22 @@ final class DockSwitcherController {
             }
         }
         let apps = read.apps
-        let items = DockSwitcherList.order(
+        var items = DockSwitcherList.order(
             rows: read.rows,
             offRows: read.offRows,
             windowsForApp: { windows.windows[$0] ?? [] },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
+        if showsWindowless() {
+            let own = ProcessInfo.processInfo.processIdentifier
+            let running = NSWorkspace.shared.runningApplications.filter {
+                $0.activationPolicy == .regular && !$0.isTerminated && $0.processIdentifier != own
+            }
+            items += DockSwitcherList.windowlessItems(
+                apps: running.map { ($0.processIdentifier, $0.localizedName ?? "App", $0.icon) },
+                listed: Set(items.map(\.pid)))
+        }
+        items = DockSwitcherList.arranged(items, order: order())
         // The Dock's unread badges ride the window cards too — Mail's 3
         // shows on each Mail window, the way the tile shows it.
         let badged = badges.isEmpty ? items : items.map { item in
@@ -1895,7 +1949,7 @@ final class DockSwitcherController {
     private func loadThumbnails() {
         thumbGeneration += 1
         let generation = thumbGeneration
-        guard thumbsAllowed() else { panel?.apply(thumbnails: [:]); return }
+        guard thumbsAllowed(), stillsWanted() else { panel?.apply(thumbnails: [:]); return }
         let offscreen = offscreenAllowed()
         // The unfiltered list: typing a letter shouldn't lose stills
         // already on the card.
@@ -1968,12 +2022,15 @@ enum DockSwitcherThumbs {
 /// key tap drives it and a card click commits.
 @MainActor
 final class DockSwitcherPanel: NSPanel {
-    /// The glass's corner — the strip's cards sit concentric inside it.
-    static let cornerRadius: CGFloat = 24
     private let model = DockSwitcherModel()
     private let hosting: NSHostingView<DockSwitcherView>
+    private let glass: NSGlassEffectView
+    private let container: NSView
+    /// The card's spacing scale, asked at each present.
+    private let spacing: () -> Double
 
     init(controller: DockSwitcherController) {
+        spacing = { [weak controller] in controller?.spacing() ?? 1 }
         model.onPick = { [weak controller] index in
             controller?.pick(index: index)
         }
@@ -1982,15 +2039,17 @@ final class DockSwitcherPanel: NSPanel {
         }
         hosting = NSHostingView(rootView: DockSwitcherView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
-        let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
-        glass.cornerRadius = Self.cornerRadius
+        let radius = model.metrics.cornerRadius
+        glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
+        glass.cornerRadius = radius
         glass.style = .regular
         hosting.frame = glass.bounds
         hosting.autoresizingMask = [.width, .height]
         glass.contentView = hosting
+        container = GlassBackdrop.rounded(glass, cornerRadius: radius)
         super.init(contentRect: NSRect(x: 0, y: 0, width: 420, height: 120),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
+        contentView = container
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -2012,6 +2071,7 @@ final class DockSwitcherPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     func present(model source: SwitcherModel) {
+        if !isVisible { apply(DockSwitcherMetrics.scaled(spacing())) }
         model.items = source.items
         model.selection = source.selection
         model.query = source.query
@@ -2029,6 +2089,17 @@ final class DockSwitcherPanel: NSPanel {
                 animator().alphaValue = 1
             }
         }
+    }
+
+    /// The strip takes the spacing's air and the glass its corner, with
+    /// the window's rounded shadow re-read — at each open, never while
+    /// the strip is up, so a gesture never sees it reflow.
+    private func apply(_ metrics: DockSwitcherMetrics) {
+        guard metrics != model.metrics else { return }
+        model.metrics = metrics
+        glass.cornerRadius = metrics.cornerRadius
+        container.layer?.cornerRadius = metrics.cornerRadius
+        invalidateShadow()
     }
 
     /// The async capture pass hands its batch over — merge and grow
@@ -2120,6 +2191,8 @@ final class DockSwitcherModel {
     var hints: String?
     /// ⌘⇥'s search latch: the query row shows even before a letter.
     var latched = false
+    /// The strip's air, from the card's spacing at open.
+    var metrics = DockSwitcherMetrics.standard
 }
 
 /// Hover selects only after the pointer has moved since the strip
@@ -2166,10 +2239,10 @@ struct DockSwitcherView: View {
                 // hover/selection.
                 if let item = zoomed {
                     zoom(item)
-                        .frame(maxWidth: Self.zoomWidth, minHeight: Self.zoomHeight(hasStills: hasStills),
+                        .frame(maxWidth: metrics.zoomWidth, minHeight: Self.zoomHeight(hasStills: hasStills),
                                alignment: .top)
-                        .padding(.top, 18)
-                        .padding(.horizontal, 18)
+                        .padding(.top, metrics.paneInset)
+                        .padding(.horizontal, metrics.paneInset)
                         .id(item.id)
                         .transition(.opacity)
                         .animation(.easeOut(duration: 0.12), value: item.id)
@@ -2181,20 +2254,20 @@ struct DockSwitcherView: View {
                     // A query that filtered every card away keeps only
                     // its field, with the strip's air above it.
                     searchRow
-                        .padding(.top, model.items.isEmpty ? 14 : 0)
-                        .padding(.bottom, 14)
-                        .padding(.horizontal, 14)
+                        .padding(.top, model.items.isEmpty ? metrics.rowInset : 0)
+                        .padding(.bottom, metrics.rowInset)
+                        .padding(.horizontal, metrics.rowInset)
                 }
                 if let hints = model.hints, model.armedNote == nil {
                     DockKeyHints(hints: hints)
-                        .padding(.bottom, 14)
-                        .padding(.horizontal, 14)
+                        .padding(.bottom, metrics.rowInset)
+                        .padding(.horizontal, metrics.rowInset)
                         .transition(.opacity)
                 }
                 if let note = model.armedNote {
                     armedRow(note)
-                        .padding(.bottom, 14)
-                        .padding(.horizontal, 14)
+                        .padding(.bottom, metrics.rowInset)
+                        .padding(.horizontal, metrics.rowInset)
                         .transition(.opacity)
                 }
             }
@@ -2220,7 +2293,7 @@ struct DockSwitcherView: View {
     }
 
     private var cards: some View {
-        HStack(alignment: .top, spacing: 4) {
+        HStack(alignment: .top, spacing: metrics.cardGap) {
             ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
                 card(item, selected: index == model.selection)
                     .id(item.id)
@@ -2230,12 +2303,14 @@ struct DockSwitcherView: View {
                     }
             }
         }
-        .padding(12)
+        .padding(metrics.stripInset)
     }
+
+    /// The air the strip was opened with.
+    private var metrics: DockSwitcherMetrics { model.metrics }
 
     // MARK: The pane
 
-    static let zoomWidth: CGFloat = 360
     /// The still's slot in the pane — fixed, so the title under it sits
     /// on one line whatever the window's shape. A strip with no stills
     /// at all (no Screen Recording) keeps a shorter slot: the icon, not
@@ -2280,7 +2355,7 @@ struct DockSwitcherView: View {
                         }
                 }
             }
-            .frame(maxWidth: Self.zoomWidth - 20, maxHeight: Self.zoomSlot(hasStills: hasStills))
+            .frame(maxWidth: metrics.zoomWidth - 20, maxHeight: Self.zoomSlot(hasStills: hasStills))
             .frame(height: Self.zoomSlot(hasStills: hasStills))
             VStack(spacing: 3) {
                 Text(zoomTitle(item))
@@ -2311,7 +2386,7 @@ struct DockSwitcherView: View {
                     .padding(.top, 1)
                 }
             }
-            .frame(maxWidth: Self.zoomWidth)
+            .frame(maxWidth: metrics.zoomWidth)
         }
     }
 
@@ -2324,6 +2399,7 @@ struct DockSwitcherView: View {
 
     /// "Safari", "Notes · Minimized", "Finder · Off screen".
     private func zoomSubtitle(_ item: SwitcherItem) -> String {
+        if item.windowless { return "\(item.appName) · No open windows" }
         guard item.minimized || !item.onScreen else { return item.appName }
         let state = item.minimized ? "Minimized" : (item.windowID == nil ? "Preview unavailable" : "Off screen")
         return "\(item.appName) · \(state)"
@@ -2342,7 +2418,7 @@ struct DockSwitcherView: View {
     /// none has.
     static func slotWidth(hasStills: Bool) -> CGFloat { hasStills ? 128 : 96 }
     static let slotHeight: CGFloat = 76
-    static let cardRadius: CGFloat = 14
+    static let cardRadius: CGFloat = DockSwitcherMetrics.cardRadius
 
     /// A ring drawn `inset` inside a card keeps the card's curve — the
     /// same centre, a radius smaller by the inset.
@@ -2477,6 +2553,7 @@ struct DockSwitcherView: View {
     }
 
     private func help(for item: SwitcherItem) -> String {
+        if item.windowless { return "\(item.appName) — no open windows" }
         var text = item.minimized ? "\(item.appName) — \(item.title) (minimized)" : "\(item.appName) — \(item.title)"
         if let agent = item.agent {
             text += "\n\(agent.providerName) · \(agent.label) — \(agent.statusLine)"
