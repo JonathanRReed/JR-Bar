@@ -315,7 +315,7 @@ struct UtilitySurfacesRenderProofTests {
             }
             if let glassRadius {
                 view.fixedSize()
-                    .background(ProofGlass(radius: glassRadius, dark: dark))
+                    .background(SurfaceProofGlass(radius: glassRadius, dark: dark))
             } else {
                 view
             }
@@ -364,7 +364,7 @@ private struct ProofWallpaper: View {
 
 /// A stand-in for the regular Liquid Glass a floating panel wears: a
 /// frosted fill over the wash, a hairline rim and a soft shadow.
-private struct ProofGlass: View {
+private struct SurfaceProofGlass: View {
     let radius: CGFloat
     let dark: Bool
 
