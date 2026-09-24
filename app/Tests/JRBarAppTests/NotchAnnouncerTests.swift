@@ -37,14 +37,13 @@ struct NotchAnnouncerTests {
         #expect(NotchLevelGlyph.volume(level: 0.5, muted: false,
                                        transport: kAudioDeviceTransportTypeBuiltIn,
                                        name: "External Headphones") == "headphones")
-        // Built-in speakers: the waves follow the level.
+        // Built-in speakers: the three-wave speaker at every level — the
+        // level face lights its waves with the level as a variable symbol.
         let speakers = kAudioDeviceTransportTypeBuiltIn
-        #expect(NotchLevelGlyph.volume(level: 0.2, muted: false, transport: speakers,
-                                       name: "MacBook Pro Speakers") == "speaker.wave.1.fill")
-        #expect(NotchLevelGlyph.volume(level: 0.5, muted: false, transport: speakers,
-                                       name: "MacBook Pro Speakers") == "speaker.wave.2.fill")
-        #expect(NotchLevelGlyph.volume(level: 0.9, muted: false, transport: speakers,
-                                       name: "MacBook Pro Speakers") == "speaker.wave.3.fill")
+        for level: Float in [0.2, 0.5, 0.9] {
+            #expect(NotchLevelGlyph.volume(level: level, muted: false, transport: speakers,
+                                           name: "MacBook Pro Speakers") == "speaker.wave.3.fill")
+        }
         // Muted or silent is the slash whatever the device.
         #expect(NotchLevelGlyph.volume(level: 0.5, muted: true,
                                        transport: kAudioDeviceTransportTypeBluetooth,

@@ -1342,7 +1342,7 @@ private struct ShelfTogglesRow: View {
                 Image(systemName: toggle.symbol)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(on ? style.inverseInk : AnyShapeStyle(style.subColor))
-                    .frame(width: 34, height: 34)
+                    .frame(width: 32, height: 32)
                     .background(Circle().fill(on ? style.ink : AnyShapeStyle(style.chipFill)))
                     .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))
                 Text(title)

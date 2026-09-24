@@ -191,7 +191,7 @@ struct NotchSurfaceRenderProofTests {
         // The level HUD, each key.
         let levels: [(String, AlcoveNotice)] = [
             ("volume", AlcoveNotice(id: "v", kind: .level, title: "Volume", subtitle: "", key: "v",
-                                    glyph: "speaker.wave.2.fill", fraction: 0.62)),
+                                    glyph: "speaker.wave.3.fill", fraction: 0.62)),
             ("muted", AlcoveNotice(id: "m", kind: .level, title: "Volume", subtitle: "", key: "m",
                                    glyph: "speaker.slash.fill", fraction: 0.62, muted: true)),
             ("brightness", AlcoveNotice(id: "b", kind: .level, title: "Brightness", subtitle: "", key: "b",
@@ -465,7 +465,7 @@ struct NotchSurfaceRenderProofTests {
                 ("meter", {
                     let m = NotchHUDModel()
                     m.toastActive = true
-                    m.meter = NotchHUDModel.Meter(symbol: "speaker.wave.2.fill", fraction: 0.62)
+                    m.meter = NotchHUDModel.Meter(symbol: "speaker.wave.3.fill", fraction: 0.62)
                     return m
                 }()),
                 ("muted", {
