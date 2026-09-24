@@ -198,6 +198,9 @@ final class HistoryStore {
     /// The consent sheet's Turn On: the chosen sources and the backfill
     /// window, handed to the utility — set by the app delegate.
     @ObservationIgnored var keepTranscripts: (@MainActor (_ sourceIDs: [String], _ days: Int) -> Void)?
+    /// Whether Data Hoarder's full-content switch is on — the sheet's
+    /// consent text says verbatim, not redacted, when it is.
+    @ObservationIgnored var hoarderFullContent: () -> Bool = { false }
     /// The folders the sheet looks in; tests point it at fixtures.
     @ObservationIgnored var offerSources: () -> [ArchiveSource] = { DataHoarderModel.agentSources() }
     /// The open consent sheet, if any.
@@ -214,7 +217,7 @@ final class HistoryStore {
     /// are read for its estimate; contents wait for its Turn On.
     func offerHoarder() {
         guard offersHoarder, let keep = keepTranscripts else { return }
-        hoarderOffer = DataHoarderOffer(sources: offerSources()) { [weak self] sourceIDs, days in
+        hoarderOffer = DataHoarderOffer(sources: offerSources(), fullContent: hoarderFullContent()) { [weak self] sourceIDs, days in
             keep(sourceIDs, days)
             self?.hoarderTurnedOn(days: days)
         }

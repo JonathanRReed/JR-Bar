@@ -84,6 +84,28 @@ import JRBarCore
         #expect(history.notice?.text.contains("last 90 days") == true)
     }
 
+    @Test("the sheet says verbatim, not redacted, when full content is already on")
+    func consentFollowsFullContent() throws {
+        let (redacted, _) = store(keeps: false)
+        redacted.filter.text = "auth middleware"
+        redacted.offerHoarder()
+        let quiet = try #require(redacted.hoarderOffer)
+        #expect(quiet.fullContent == false)
+        #expect(DataHoarderOffer.contentNote(fullContent: false).contains("[redacted]"))
+
+        // Ticked on the card once, then the utility switched off: Turn On
+        // keeps that switch, so the backfill is read verbatim.
+        let (verbatim, _) = store(keeps: false)
+        verbatim.hoarderFullContent = { true }
+        verbatim.filter.text = "auth middleware"
+        verbatim.offerHoarder()
+        let full = try #require(verbatim.hoarderOffer)
+        #expect(full.fullContent)
+        let note = DataHoarderOffer.contentNote(fullContent: true)
+        #expect(note == "Full content is on in Data Hoarder: prompts and responses are kept verbatim.")
+        #expect(!note.contains("[redacted]"))
+    }
+
     @Test("the estimate reads in plain words")
     func summaryWords() {
         #expect(DataHoarderOffer.summary(.zero).hasPrefix("No files in this window"))

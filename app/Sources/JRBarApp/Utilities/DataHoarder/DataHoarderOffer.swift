@@ -19,6 +19,9 @@ final class DataHoarderOffer: Identifiable {
     var chosen: Set<String> = []
     private(set) var loading = false
     private(set) var loaded = false
+    /// Data Hoarder's own "Store full prompts and responses" switch. Turn
+    /// On leaves it as it is, so the sheet must say which copy it keeps.
+    let fullContent: Bool
 
     private let sources: [ArchiveSource]
     private let scanner: DataHoarderSourceScanner
@@ -27,9 +30,11 @@ final class DataHoarderOffer: Identifiable {
 
     init(sources: [ArchiveSource] = DataHoarderModel.agentSources(),
          scanner: DataHoarderSourceScanner = DataHoarderSourceScanner(),
+         fullContent: Bool = false,
          now: @escaping () -> Date = Date.init,
          accept: @escaping @MainActor (_ sourceIDs: [String], _ days: Int) -> Void) {
         self.sources = sources
+        self.fullContent = fullContent
         self.scanner = scanner
         self.now = now
         onAccept = accept
@@ -77,6 +82,15 @@ final class DataHoarderOffer: Identifiable {
         return "Reads about \(DataHoarderModel.bytes(estimate.byteCount)) from \(files), then follows new activity live."
     }
 
+    /// What the kept copy holds — the consent the click gives. Full
+    /// content left on from an earlier visit means verbatim copies, and
+    /// the sheet must not promise redaction then.
+    static func contentNote(fullContent: Bool) -> String {
+        fullContent
+            ? "Full content is on in Data Hoarder: prompts and responses are kept verbatim."
+            : "Prompts and responses are kept as “[redacted]”: the copy holds each session's projects, branches, tools, models and times. Full content is a separate switch in Data Hoarder."
+    }
+
     /// A source row's trailing detail: "212 files · 1.3 GB".
     static func rowDetail(_ estimate: ArchiveBackfillEstimate, days: Int) -> String {
         guard estimate.fileCount > 0 else { return "nothing in \(days) days" }
@@ -118,9 +132,9 @@ struct DataHoarderOfferSheet: View {
                         .contentTransition(.numericText())
                 }
                 Label {
-                    Text("Prompts and responses are kept as “[redacted]”: the copy holds each session's projects, branches, tools, models and times. Full content is a separate switch in Data Hoarder.")
+                    Text(DataHoarderOffer.contentNote(fullContent: offer.fullContent))
                 } icon: {
-                    Image(systemName: "text.redaction")
+                    Image(systemName: offer.fullContent ? "text.quote" : "text.redaction")
                 }
                 Label {
                     Text("Nothing leaves this Mac. Turn it off any time under Utilities › Data Hoarder.")

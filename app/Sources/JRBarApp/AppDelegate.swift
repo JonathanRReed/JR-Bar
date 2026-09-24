@@ -475,6 +475,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         historyStore.hoarderKeepsTranscripts = { [weak utilitiesStore] in
             utilitiesStore?.dataHoarder.model.keepsAgentTranscripts ?? true
         }
+        historyStore.hoarderFullContent = { [weak utilitiesStore] in
+            utilitiesStore?.dataHoarder.model.captureSettings.fullContent ?? false
+        }
         historyStore.keepTranscripts = { [weak utilitiesStore] sourceIDs, days in
             utilitiesStore?.dataHoarder.keepTranscripts(sourceIDs: sourceIDs, backfillDays: days)
         }
