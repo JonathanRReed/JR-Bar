@@ -251,7 +251,11 @@ final class NotchToy: Toy {
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.workspaceVersion += 1 }
+                MainActor.assumeIsolated {
+                    self?.workspaceVersion += 1
+                    // Dropover opening or quitting moves the shake's yield.
+                    self?.syncShakeMonitor()
+                }
             })
         }
         observers.append(NotificationCenter.default.addObserver(
@@ -901,6 +905,22 @@ final class NotchToy: Toy {
     @ObservationIgnored var shakeDragMonitor: Any?
     @ObservationIgnored var shakeUpMonitor: Any?
     @ObservationIgnored var shakeSamples: [ShelfShakeDetector.Sample] = []
+    /// How the shake's monitors are made and let go — NSEvent's global
+    /// pair; a test hands in a counter so no suite watches real drags.
+    @ObservationIgnored var installShakeMonitor: (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any? = {
+        NSEvent.addGlobalMonitorForEvents(matching: $0, handler: $1)
+    }
+    @ObservationIgnored var removeShakeMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
+    /// The shelf apps that own the same shake, running now
+    /// (`UtilityRivals`, `.shelfGesture`); a test hands in its own list.
+    @ObservationIgnored var shelfRivalsRunning: @MainActor () -> [UtilityRivals.Rival] = {
+        UtilityRivals.running(for: .shelfGesture)
+    }
+    /// The app in front while the pointer shakes — the exclusion list's
+    /// read.
+    @ObservationIgnored var shakeFrontmostApp: @MainActor () -> String? = {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
     /// The fold-back timer after a shake-summon — a card nobody
     /// dropped on folds itself rather than standing open forever.
     @ObservationIgnored var shelfSummonExpiry: DispatchWorkItem?

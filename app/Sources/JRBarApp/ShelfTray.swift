@@ -836,6 +836,27 @@ enum ShelfShakeDetector {
         var at: TimeInterval
     }
 
+    /// The recognizer's thresholds for a sensitivity, 0…1 (Dropover's
+    /// slider): the middle is Alcove's four 30-point swings; all the way
+    /// up, three 20-point swings are enough; all the way down it takes
+    /// six of 45. Both fall as the sensitivity rises, so a shake that
+    /// counts at one setting counts at every setting above it.
+    static func thresholds(sensitivity: Double) -> (reversals: Int, amplitude: CGFloat) {
+        let s = sensitivity.isFinite ? min(1, max(0, sensitivity)) : 0.5
+        if s <= 0.5 {
+            let t = s / 0.5
+            return (Int((6 - 2 * t).rounded()), CGFloat(45 - 15 * t))
+        }
+        let t = (s - 0.5) / 0.5
+        return (Int((4 - t).rounded()), CGFloat(30 - 10 * t))
+    }
+
+    /// `isShake` at a sensitivity's thresholds.
+    static func isShake(_ samples: [Sample], sensitivity: Double) -> Bool {
+        let limits = thresholds(sensitivity: sensitivity)
+        return isShake(samples, reversals: limits.reversals, amplitude: limits.amplitude)
+    }
+
     /// Whether `samples` hold a shake. `reversals` completed legs of
     /// at least `amplitude` points inside any `window`-second span —
     /// the defaults are Alcove's: 4 reversals, 600 ms, 30 pt.
