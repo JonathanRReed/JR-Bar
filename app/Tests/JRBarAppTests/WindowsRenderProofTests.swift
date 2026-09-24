@@ -214,7 +214,8 @@ struct WindowsRenderProofTests {
 
     /// `app/scripts/mock-core.py` on a socket of its own under the temp
     /// directory — never the installed daemon's — paused at timeline step
-    /// `startAt`, with history answered whole.
+    /// `startAt`, with history answered whole. It watches this test
+    /// process and stops by itself if the run is killed before `terminate`.
     static func mock(startAt: Int, deck: String = "approved") async throws -> (CoreModel, Process) {
         let socket = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("jrbar-proof-\(UUID().uuidString.prefix(8)).sock")
@@ -224,7 +225,8 @@ struct WindowsRenderProofTests {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", script.path, "--socket", socket, "--step", "600", "--hot-history",
-                             "--start-at", "\(startAt)", "--deck", deck]
+                             "--start-at", "\(startAt)", "--deck", deck,
+                             "--parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()

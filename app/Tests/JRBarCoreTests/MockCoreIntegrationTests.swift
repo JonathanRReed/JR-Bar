@@ -21,10 +21,12 @@ struct MockCoreIntegrationTests {
         return (NSTemporaryDirectory() as NSString).appendingPathComponent(name)
     }
 
+    /// The mock watches this test process, so a killed run leaves none behind.
     static func launchMock(socket: String, extraArguments: [String] = ["--once"]) throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", scriptURL.path, "--socket", socket] + extraArguments
+        let watch = ["--parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"]
+        process.arguments = ["python3", scriptURL.path, "--socket", socket] + watch + extraArguments
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.standardError
         try process.run()
