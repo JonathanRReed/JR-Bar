@@ -1001,10 +1001,17 @@ def iris_open(
     ]
 
 
-def iris_close(*, led_count: int, step_ms: int = 75, hold_ms: int = 1000) -> list[str]:
+def iris_close(
+    *,
+    led_count: int,
+    step_ms: int = 75,
+    hold_ms: int = 1000,
+    to: str = "#000000",
+) -> list[str]:
     """The lid closes and so does the light: the outermost pair goes dark
     first and each pair inward follows ``step_ms`` later, until the centre
-    closes; then the strip holds black. Finite, and it ends black.
+    closes; then the strip holds. Finite, and it ends black -- or on ``to``,
+    the ember an agent that keeps working leaves behind.
 
     It starts from whatever the strip was showing, so the close is always
     the light the person was just looking at, drawn shut.
@@ -1015,8 +1022,8 @@ def iris_close(*, led_count: int, step_ms: int = 75, hold_ms: int = 1000) -> lis
     for index in range(count):
         distance = min(index, count - 1 - index)
         tail = f" {_time(distance * step)}" if distance else ""
-        segments.append(f"{index}:#000000 {_time(step)} ease{tail}")
-    return ["; ".join(segments), f"#000000 {_time(max(MIN_STEP_MS, int(hold_ms)))}"]
+        segments.append(f"{index}:{to} {_time(step)} ease{tail}")
+    return ["; ".join(segments), f"{to} {_time(max(MIN_STEP_MS, int(hold_ms)))}"]
 
 
 # --- Strip direction --------------------------------------------------------

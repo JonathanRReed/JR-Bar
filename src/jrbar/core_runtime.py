@@ -1856,6 +1856,36 @@ def _cmd_set_assignment(self, args):
     return result
 
 
+@command("list_lid_presets", main_thread=False)
+def _cmd_list_lid_presets(self, args):
+    """Every lid look for Effect Studio's Lid moments, drawn for the Pro and
+    the Dot, with the one each transition plays now."""
+    from . import lid_presets
+    from .status_bar_legacy import lid_accent_color
+
+    return lid_presets.lid_presets_document(self.settings, accent=lid_accent_color(self))
+
+
+@command("play_lid_preset")
+def _cmd_play_lid_preset(self, args):
+    """Plays one lid look on the connected strip and Dot exactly as a lid
+    change would, drawn for each device, then hands the light back."""
+    from . import lid_presets
+    from ._settings_legacy import LedAnimationSetting
+
+    kind = str(args.get("kind") or "")
+    name = str(args.get("name") or "")
+    entry = lid_presets.preset(kind, name)
+    if entry is None:
+        raise CommandError("invalid_args", f"no lid look {name!r} for {kind!r}")
+    _name, seconds, program = entry
+    animation = LedAnimationSetting(
+        program, seconds, shape=lid_presets.LID_PRESET_SHAPES.get((kind, name))
+    )
+    self.play_lid_animation(kind, animation=animation)
+    return {"kind": kind, "name": name, "seconds": seconds}
+
+
 @command("clear_assignment")
 def _cmd_clear_assignment(self, args):
     from . import core_effects

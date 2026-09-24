@@ -138,7 +138,7 @@ DEFAULT_LID_CLOSED_ACTIVE_PROGRAM = (
     "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine"
 )
 DEFAULT_LID_OPEN_ACTIVE_PROGRAM = (
-    "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse"
+    "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse\noff 300ms ease-out"
 )
 
 DEFAULT_IDLE_DIM_AFTER_MINUTES = 10.0
@@ -197,11 +197,16 @@ DEFAULT_LID_OPEN_ANIMATION_SECONDS = 1.0
 class LedAnimationSetting:
     program: str
     duration_seconds: float
+    # A lid look drawn per device (``lid_presets.LID_SHAPES``, the Iris
+    # looks) rather than one program for every LED count. ``program`` then
+    # holds its eight-LED form for anything that reads programs only.
+    shape: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "program": self.program,
             "duration_seconds": self.duration_seconds,
+            "shape": self.shape,
         }
 
 
@@ -335,7 +340,7 @@ class AgentMonitorSettings:
     )
     lid_open_active_animation: LedAnimationSetting = field(
         default_factory=lambda: LedAnimationSetting(
-            program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.2
+            program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.5
         )
     )
     battery_full_charge_watts: float | None = None
@@ -991,10 +996,12 @@ class AgentMonitorSettings:
         *,
         program: str,
         duration_seconds: float,
+        shape: str | None = None,
     ) -> AgentMonitorSettings:
         animation = LedAnimationSetting(
             program=program,
             duration_seconds=normalize_animation_duration(duration_seconds),
+            shape=_lid_shape_setting(shape),
         )
         if kind == LID_ANIMATION_CLOSED:
             return replace(self, lid_closed_animation=animation)
@@ -2098,7 +2105,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         lid_open_active_animation=_lid_animation_setting(
             data.get("lid_open_active_animation"),
             LedAnimationSetting(
-                program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.2
+                program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.5
             ),
         ),
         battery_full_charge_watts=_optional_float_setting(
@@ -2645,6 +2652,13 @@ def normalize_animation_duration(value: object) -> float:
     return max(0.1, min(10.0, float(value)))
 
 
+def _lid_shape_setting(value: object) -> str | None:
+    """A lid shape name this build draws, or None (play the program)."""
+    from .lid_presets import LID_SHAPES
+
+    return value if isinstance(value, str) and value in LID_SHAPES else None
+
+
 def _lid_animation_setting(
     value: object,
     default: LedAnimationSetting,
@@ -2657,7 +2671,13 @@ def _lid_animation_setting(
     duration = value.get("duration_seconds")
     if not isinstance(duration, (int, float)):
         duration = default.duration_seconds
+    from .lid_presets import upgraded_program
+
+    # An opening look saved before they all ended dark is today's version
+    # of the same look, so it stays the one picked.
+    program, duration = upgraded_program(program, duration)
     return LedAnimationSetting(
         program=program,
         duration_seconds=normalize_animation_duration(duration),
+        shape=_lid_shape_setting(value.get("shape")),
     )

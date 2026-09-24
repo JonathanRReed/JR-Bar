@@ -15325,9 +15325,15 @@ class StatusBarController(NSObject):
         devices: list[StatusBarDevice],
         token: int,
     ) -> None:
+        accent = lid_accent_color(self)
         for device in devices:
             try:
-                program = program_for_lid_animation(animation, brightness=device.brightness)
+                program = program_for_lid_animation(
+                    animation,
+                    brightness=device.brightness,
+                    led_count=led_count_for_target(device.target),
+                    accent=accent,
+                )
                 target = write_led_program(
                     program,
                     device_path=device.target,
@@ -16610,9 +16616,18 @@ def _installed_terminal_application() -> Path | None:
 
 
 def validate_lid_animation(animation: LedAnimationSetting) -> None:
+    from .lid_presets import lid_program
+
     program = normalize_led_text(animation.program)
     validate_led_text(program)
     validate_led_text(apply_brightness(program, 1))
+    shape = getattr(animation, "shape", None)
+    if shape:
+        # A shape look is drawn per device: every form it can take must be
+        # a program the firmware accepts, the Dot's two-LED one included.
+        for led_count in (8, 2):
+            drawn = normalize_led_text(lid_program(program, shape, led_count=led_count))
+            validate_led_text(apply_brightness(drawn, 1))
     normalize_animation_duration(animation.duration_seconds)
 
 
@@ -16620,9 +16635,38 @@ def program_for_lid_animation(
     animation: LedAnimationSetting,
     *,
     brightness: float = 255,
+    led_count: int = 8,
+    accent: str | None = None,
 ) -> str:
+    """What one device plays for a lid look: a shape look (Iris) drawn for
+    this device's LED count and, for the active looks, in ``accent`` -- the
+    colour of the agent still working; any other look, its program."""
+    from .lid_presets import lid_program
+
     validate_lid_animation(animation)
-    return apply_brightness(normalize_led_text(animation.program), brightness)
+    program = lid_program(
+        normalize_led_text(animation.program),
+        getattr(animation, "shape", None),
+        led_count=led_count,
+        accent=accent,
+    )
+    return apply_brightness(normalize_led_text(program), brightness)
+
+
+def lid_accent_color(target) -> str | None:
+    """The colour of the main agent working right now, for the Iris
+    (active) looks; None when nothing is working."""
+    snapshot = getattr(target, "last_snapshot", None)
+    if snapshot is None:
+        return None
+    busy = (AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS)
+    for status in snapshot.statuses:
+        if not status.is_subagent and status.mode in busy:
+            try:
+                return target.agent_render_colors().agent_color(status.provider)
+            except Exception:
+                return None
+    return None
 
 
 def restore_led_display(target, token_value) -> None:
