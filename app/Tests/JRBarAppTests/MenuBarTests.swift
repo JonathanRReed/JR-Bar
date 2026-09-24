@@ -102,6 +102,25 @@ struct MenuBarTests {
         #expect(MenuBarItemLister.item(from: info(x: 2400), ownPID: ownPID, rows: [row]) != nil)
     }
 
+    @Test("a scan walks every app on the slow clock, with no owners known, or when a launch's walk is due")
+    func fullWalkCadence() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        func walks(_ seconds: TimeInterval, owners: Bool = true, due: [Date] = []) -> Bool {
+            MenuBarItemLister.walksAll(now: t0.addingTimeInterval(seconds), lastFull: t0,
+                                       ownersKnown: owners, launchWalksDue: due)
+        }
+        #expect(!walks(20), "a known owner set carries the quick scans past the old 20 s")
+        #expect(!walks(MenuBarItemLister.fullScanInterval - 1))
+        #expect(walks(MenuBarItemLister.fullScanInterval))
+        #expect(walks(1, owners: false), "nothing known yet: walk")
+        let launch = t0.addingTimeInterval(5)
+        let due = MenuBarItemLister.launchWalkDelays.map { launch.addingTimeInterval($0) }
+        #expect(!walks(6, due: due))
+        #expect(walks(7, due: due), "two seconds after the launch")
+        #expect(walks(35, due: due), "half a minute after it")
+        #expect(MenuBarItemLister.launchWalkDelays == [2, 10, 30])
+    }
+
     @Test("an empty window name is no title")
     func emptyTitle() {
         let item = MenuBarItemLister.item(from: info(title: ""), ownPID: ownPID, rows: [row])

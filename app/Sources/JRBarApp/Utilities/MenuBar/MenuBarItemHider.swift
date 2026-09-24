@@ -342,15 +342,19 @@ final class MenuBarItemHider {
             MainActor.assumeIsolated { self?.menuBarChangedHands() }
         })
         // A launch or a quit changes who owns items: the next scan
-        // walks every app; the ones between ask only known owners.
-        for name in [NSWorkspace.didLaunchApplicationNotification,
-                     NSWorkspace.didTerminateApplicationNotification] {
-            observers.append(NSWorkspace.shared.notificationCenter.addObserver(
-                forName: name, object: nil, queue: .main
-            ) { _ in
-                MainActor.assumeIsolated { MenuBarItemLister.invalidateOwners() }
-            })
-        }
+        // walks every app, and after a launch a few later ones do too,
+        // for the extra that draws late; the scans between ask only
+        // known owners.
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { MenuBarItemLister.noteLaunch() }
+        })
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { MenuBarItemLister.invalidateOwners() }
+        })
         // The listing refreshes off-actor; each completed scan is a
         // reconcile. Skipped entirely without Accessibility — the
         // scan would only collect errors.
