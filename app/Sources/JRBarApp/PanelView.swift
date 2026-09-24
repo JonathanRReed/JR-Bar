@@ -177,7 +177,9 @@ struct ActivityMark: View {
 }
 
 /// A small count in a capsule. `symbol` names what is counted, so a bare
-/// "10" beside a session's name never reads as a version or a score.
+/// "10" beside a session's model never reads as a version or a score.
+/// It rides a line of small type, so the capsule draws past the count's
+/// height instead of adding to it and the line keeps its height.
 struct CountBadge: View {
     let text: String
     var symbol: String? = nil
@@ -196,8 +198,7 @@ struct CountBadge: View {
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .padding(.horizontal, 5)
-        .padding(.vertical, 1.5)
-        .background(Capsule().fill(.primary.opacity(0.08)))
+        .background(Capsule().fill(.primary.opacity(0.08)).padding(.vertical, -1.5))
     }
 }
 
@@ -248,9 +249,12 @@ struct PanelRowStyle: ButtonStyle {
 }
 
 /// A list cut half a row from its end fades out over the last few points,
-/// so the cut reads as "more below" rather than a torn row.
+/// so the cut reads as "more below" rather than a torn row. A list whose
+/// cut row is tall fades over the whole half row, so no part of it is
+/// left drawn at full strength beside a part already gone.
 struct ScrollEdgeFade: ViewModifier {
     let active: Bool
+    var depth: CGFloat = Self.fade
     static let fade: CGFloat = 16
 
     func body(content: Content) -> some View {
@@ -259,7 +263,7 @@ struct ScrollEdgeFade: ViewModifier {
                 Rectangle().fill(Color.black)
                 if active {
                     LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
-                        .frame(height: Self.fade)
+                        .frame(height: depth)
                 }
             }
         )
@@ -403,6 +407,7 @@ struct SessionsSection: View {
     let layout: PanelLayout
 
     var body: some View {
+        let trailing = trailingWidth
         VStack(spacing: 0) {
             SectionLabel(text: "Sessions", trailing: sessionsTrailing)
             if store.visibleRows.isEmpty {
@@ -415,7 +420,7 @@ struct SessionsSection: View {
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                         ForEach(store.visiblePlainRows) { row in
-                            SessionRowView(row: row, store: store)
+                            SessionRowView(row: row, store: store, trailingWidth: trailing)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
@@ -439,6 +444,12 @@ struct SessionsSection: View {
         .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.hiddenCount > 0)
+    }
+
+    /// The rows' shared trailing column, as wide as the widest state word
+    /// among them, or a quiet row's "quiet 1h 05m".
+    private var trailingWidth: CGFloat {
+        SessionRowView.trailingWidth(rows: store.visiblePlainRows, now: store.now)
     }
 
     /// "3" — or, while a find query narrows the list, "“opus” · 2 of 5".
@@ -661,10 +672,54 @@ struct SessionsEmptyState: View {
 struct SessionRowView: View {
     let row: SessionRow
     @Bindable var store: PanelStore
+    /// The state word, mark and elapsed time sit in one column every row
+    /// in the list shares (`trailingWidth(for:)`).
+    let trailingWidth: CGFloat
 
-    /// The state word, mark and elapsed time sit in one fixed column so the
-    /// label column never shifts as the clock ticks.
-    static let trailingWidth: CGFloat = 96
+    /// The trailing column: as wide as the widest state word the list
+    /// shows plus its mark, and never narrower than the longest elapsed
+    /// time a row can show -- "23h 59m", or "quiet 23h 59m" once a working
+    /// row has gone quiet (`quiet`). Shared, it keeps every row's title the
+    /// same room and every context hairline the same length; it moves only
+    /// when a row's word changes or a row goes quiet, never as the clock
+    /// ticks. A list of working rows leaves its titles the width "Waiting
+    /// on you" used to hold back.
+    static func trailingWidth(for activities: [SessionActivity], quiet: Bool = false) -> CGFloat {
+        let widest = activities.map { wordWidths[$0] ?? 0 }.max() ?? 0
+        let elapsed = quiet ? quietElapsedWidth : elapsedWidth
+        return max(elapsed, widest + markRoom).rounded(.up)
+    }
+
+    /// The column for these rows as they read at `now`: a quiet working
+    /// row's warning is never cut short.
+    static func trailingWidth(rows: [SessionRow], now: Date) -> CGFloat {
+        let quiet = rows.contains { $0.isQuiet(now: now) }
+        return trailingWidth(for: rows.map(\.activity), quiet: quiet)
+    }
+
+    /// The word's HStack spacing and the 8 pt mark.
+    static let markRoom: CGFloat = 5 + 8
+
+    /// Each state word in the trailing column's type.
+    static let wordWidths: [SessionActivity: CGFloat] = {
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let pairs = SessionActivity.allCases.map { activity in
+            (activity, (activity.word as NSString).size(withAttributes: [.font: font]).width)
+        }
+        return Dictionary(uniqueKeysWithValues: pairs)
+    }()
+
+    /// The longest elapsed time `PanelStore.elapsed` writes ("23h 59m").
+    static let elapsedWidth: CGFloat = elapsedTextWidth("00h 00m")
+
+    /// The same, on a working row gone quiet (`SessionRow.quietText`).
+    static let quietElapsedWidth: CGFloat = elapsedTextWidth("quiet 00h 00m")
+
+    /// `text` in the elapsed line's type.
+    static func elapsedTextWidth(_ text: String) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        return (text as NSString).size(withAttributes: [.font: font]).width
+    }
 
     /// Waiting and failed are the words that shout -- a failure used to be
     /// as quiet as "Idle" here, which is the app-side half of the same
@@ -679,10 +734,6 @@ struct SessionRowView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                        if row.workers > 0 {
-                            CountBadge(text: "\(row.workers)", symbol: "square.stack")
-                                .help(row.workersText ?? "")
-                        }
                         if row.activity == .done, store.unseenCompletionIDs.contains(row.id) {
                             // `state.unseen_completions`: the one unseen
                             // dot History gives a row newer than the last
@@ -720,6 +771,12 @@ struct SessionRowView: View {
                         // provider, so the model is the better use of the
                         // words.
                         Text(row.usage?.modelName ?? row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        if row.workers > 0 {
+                            // The run's workers ride the model line, so the
+                            // title keeps the label column's whole width.
+                            CountBadge(text: "\(row.workers)", symbol: "square.stack")
+                                .help(row.workersText ?? "")
+                        }
                         if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
@@ -744,6 +801,10 @@ struct SessionRowView: View {
                     }
                     .font(.system(size: 11))
                 }
+                // The label column runs to the trailing column whatever the
+                // title's length, so every hairline's track is the same and
+                // one row's fraction reads against another's.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .bottomLeading) {
                     // How full the run's context window is: a hairline under
                     // the words, below the text so nothing moves when it
@@ -766,7 +827,7 @@ struct SessionRowView: View {
                     Text(row.elapsedText(now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
-                .frame(width: Self.trailingWidth, alignment: .trailing)
+                .frame(width: trailingWidth, alignment: .trailing)
             }
         }
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: row.activity)
@@ -1275,17 +1336,25 @@ struct UsageSection: View {
                         }
                     }
                     .padding(.horizontal, 6)
+                    // A list that scrolls ends in room as deep as the fade,
+                    // so scrolled to its end the last row clears the fade
+                    // and reads at full strength.
+                    .padding(.bottom, layout.usageScroll ? Self.fadeDepth : 0)
                     .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed),
                                value: store.usage.map(\.identity) + store.quietUsage.map(\.identity))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.usageHeight))
                 .clipped()
-                .modifier(ScrollEdgeFade(active: layout.usageScroll))
+                .modifier(ScrollEdgeFade(active: layout.usageScroll, depth: Self.fadeDepth))
             }
         }
         .padding(.bottom, CGFloat(PanelLayout.usageBottomPadding))
     }
+
+    /// The list is cut with its last row's top half showing: the fade
+    /// covers that half, tile and words together.
+    static let fadeDepth = CGFloat(PanelLayout.usageRowHeight / 2)
 
     private var refreshed: String? {
         guard let at = store.core.state?.usage?.refreshedAt else { return nil }
@@ -1310,7 +1379,10 @@ struct UsageQuietRow: View {
 
     var body: some View {
         let names = providerNames
-        HStack(spacing: 9) {
+        // Laid out as a `UsageRow` is: the tile on the name's line and the
+        // lines hung from the row's top, so its tile and name sit where
+        // every row above puts them.
+        HStack(alignment: .top, spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 20 * 0.28, style: .continuous)
                     .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
@@ -1319,26 +1391,31 @@ struct UsageQuietRow: View {
                     .foregroundStyle(.tertiary)
             }
             .frame(width: 20, height: 20)
+            .alignmentGuide(.top) { $0[.top] + UsageRow.tileLift }
             VStack(alignment: .leading, spacing: 3) {
-                Text(names.joined(separator: ", "))
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // The chevron rides the name's line, where the rows above
+                // put their percent.
+                HStack(spacing: 4) {
+                    Text(names.joined(separator: ", "))
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .opacity(hovering && store.isOpen ? 1 : 0.5)
+                }
                 Text(PanelStore.quietSummary(providers))
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.tertiary)
-                .opacity(hovering && store.isOpen ? 1 : 0.5)
         }
         .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(hovering && store.isOpen ? 0.05 : 0))
@@ -1366,6 +1443,10 @@ struct UsageRow: View {
 
     /// The percent column: `~100%` fits with room to spare.
     static let percentWidth: CGFloat = 46
+    /// How far the 20 pt tile rises above the name's line box, which
+    /// centres it on the name. It is layout, not an offset, so the first
+    /// row's tile is never clipped by the list's top edge.
+    nonisolated static let tileLift: CGFloat = 2
 
     private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
     private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
@@ -1377,8 +1458,11 @@ struct UsageRow: View {
 
     var body: some View {
         let (primary, secondary) = windows
-        HStack(alignment: .center, spacing: 9) {
+        HStack(alignment: .top, spacing: 9) {
+            // The tile sits on the name's line, so the list's half row,
+            // cut below that line, shows a tile and a name together.
             ProviderTile(style: style, size: 20)
+                .alignmentGuide(.top) { $0[.top] + Self.tileLift }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
@@ -1418,7 +1502,9 @@ struct UsageRow: View {
             }
         }
         .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        // Hung from the top, as `UsageQuietRow` is, so every name in the
+        // list sits the same distance below its row's top.
+        .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(hovering ? 0.05 : 0))
@@ -1442,32 +1528,22 @@ struct UsageRow: View {
 
     private func tagHelp(_ tag: PanelStore.UsageTag) -> String {
         switch tag {
-        case .stale: return "This reading is old — the last refresh did not land"
+        case .stale: return PanelStore.staleHelp(action: usage.action)
         case .usedUp: return "The \(windows.primary?.longName ?? "leading") window is used up until it resets"
         case .runsOut: return paceForecast.map { $0.headline(now: store.now) } ?? "The forecast runs dry before the reset"
         case .incident(let text): return text
         }
     }
 
-    /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line: the resets
-    /// only, plus "no room for +1" when one more agent would not fit
-    /// before the reset. With no reset to name, the daemon's own fix-it
-    /// (`action`, "Retry later", "Run grok login") beats the bare state word.
+    /// The resets, one line (`PanelStore.usageResetLine`): a stale
+    /// source's fix-it first, "no room for +1" when one more agent would
+    /// not fit before the reset.
     private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
-        var parts: [String] = []
-        if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
-        if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
         // The decision the panel is opened for, said only when the answer
         // is no: one more agent at today's burn would not fit.
-        if let forecast = paceForecast, SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) == false {
-            parts.append("no room for +1")
-        }
-        if parts.isEmpty {
-            if let action = usage.action, !action.isEmpty { return action }
-            if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
-            return "no reset time"
-        }
-        return parts.joined(separator: " · ")
+        let noRoom = paceForecast.map { SessionAwarePace.roomForOneMore($0, now: store.now.timeIntervalSince1970) == false } ?? false
+        return PanelStore.usageResetLine(for: usage, primary: primary, secondary: secondary,
+                                         noRoomForOneMore: noRoom, now: store.now)
     }
 
     /// A window with no reading is grey: not calm, not spent -- unread.

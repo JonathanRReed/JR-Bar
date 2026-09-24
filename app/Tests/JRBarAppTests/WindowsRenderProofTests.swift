@@ -210,6 +210,89 @@ struct WindowsRenderProofTests {
         }
     }
 
+    /// The panel as the live check found it: two working sessions, one
+    /// with a long title and a worker, their context hairlines; stale
+    /// Claude and Grok readings whose sources need a fix; a Usage list
+    /// cut half a row in; and an armed closed-lid hold with the lid open.
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func panelLive() async throws {
+        let liveSessions = [
+            CoreSession(id: "claude:menubar", provider: "claude", label: "Menu bar and icon layout audit",
+                        cwd: "/Users/me/Downloads/JR-Bar", mode: "working", since: Self.t - 5, workers: 1),
+            CoreSession(id: "codex:inkling", provider: "codex", label: "Improve Inkling suggestions",
+                        cwd: "/Users/me/Downloads/inkling", mode: "working", since: Self.t - 15),
+        ]
+        let liveUsage = CoreUsage(refreshedAt: Self.t - 39, providers: [
+            CoreProviderUsage(id: "codex", windows: [
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 75, resetsAt: Self.t + 5 * 86400 + 6 * 3600),
+            ], fidelity: "official", state: "ready",
+               forecast: CoreUsageForecast(exhaustsAt: Self.t + 11 * 3600 + 59 * 60, pace: "ahead")),
+            CoreProviderUsage(id: "claude", windows: [
+                CoreUsageWindow(key: "5h", name: "5h", usedPct: 19, resetsAt: Self.t - 37 * 60),
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 19, resetsAt: Self.t + 3 * 86400 + 4 * 3600),
+            ], fidelity: "official", state: "stale", action: "Reconnect Claude", reason: "authentication_required"),
+            CoreProviderUsage(id: "devin", windows: [
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 100, resetsAt: Self.t + 2 * 86400 + 16 * 3600),
+                CoreUsageWindow(key: "daily", name: "Daily", usedPct: 2, resetsAt: Self.t + 16 * 3600 + 24 * 60),
+            ], state: "ready"),
+            CoreProviderUsage(id: "grok", windows: [
+                CoreUsageWindow(key: "credits", name: "Credits", usedPct: 31, resetsAt: Self.t - 3600),
+            ], state: "stale", action: "Run grok login"),
+            CoreProviderUsage(id: "gemini", windows: [
+                CoreUsageWindow(key: "daily", name: "Daily", usedPct: 0, resetsAt: Self.t + 5 * 3600),
+            ], state: "ready"),
+        ])
+        let armedLid = try JSONDecoder().decode(CorePower.self, from: Data(
+            #"{"keep_awake":true,"closed_lid":{"policy":"agents","holding":true,"lid_closed":false}}"#.utf8))
+        let store = Self.panelStore(CoreState(now: Self.t, aggregate: CoreAggregate(mode: "working", active: 2),
+                                              sessions: liveSessions, devices: Self.devices, usage: liveUsage,
+                                              power: armedLid, hiddenCount: 2))
+        store.sessionUsage.apply(SessionUsageDocument(sessions: [
+            "claude:menubar": SessionUsage(provider: "claude", model: "claude-opus-4-5",
+                                           contextTokens: 88_000, contextWindow: 200_000),
+            "codex:inkling": SessionUsage(provider: "codex", model: "gpt-5.1-codex",
+                                          contextTokens: 178_000, contextWindow: 200_000),
+        ]), asked: ["claude:menubar", "codex:inkling"])
+        store.fetchUsageHistory = { provider, _ in Self.week(provider == "claude" ? 4_000_000 : 1_500_000) }
+        store.refreshSparklines(force: true)
+        try await Task.sleep(for: .milliseconds(300))
+        try Self.write("panel-live", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
+        #expect(store.headerCounts == "2 sessions")
+        #expect(store.awakeHold?.symbol == "cup.and.saucer.fill")
+    }
+
+    /// The panel beside the live case: one working row quiet for over an
+    /// hour, another working, an idle one, and a provider with nothing to
+    /// say sharing the Usage list's quiet row.
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func panelQuiet() throws {
+        let quietSessions = [
+            CoreSession(id: "claude:menubar", provider: "claude", label: "Menu bar and icon layout audit",
+                        cwd: "/Users/me/Downloads/JR-Bar", mode: "working", since: Self.t - 65 * 60, workers: 1),
+            CoreSession(id: "codex:inkling", provider: "codex", label: "Improve Inkling suggestions",
+                        cwd: "/Users/me/Downloads/inkling", mode: "working", since: Self.t - 15),
+            CoreSession(id: "gemini:notes", provider: "gemini", label: "release notes",
+                        cwd: "/Users/me/src/notes", mode: "idle", since: Self.t - 600),
+        ]
+        let quietUsage = CoreUsage(refreshedAt: Self.t - 39, providers: [
+            CoreProviderUsage(id: "codex", windows: [
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 48, resetsAt: Self.t + 5 * 86400 + 6 * 3600),
+            ], fidelity: "official", state: "ready"),
+            CoreProviderUsage(id: "claude", windows: [
+                CoreUsageWindow(key: "5h", name: "5h", usedPct: 19, resetsAt: Self.t + 3600),
+                CoreUsageWindow(key: "7d", name: "7d", usedPct: 19, resetsAt: Self.t + 3 * 86400 + 4 * 3600),
+            ], fidelity: "official", state: "ready"),
+            CoreProviderUsage(id: "opencode", windows: [
+                CoreUsageWindow(key: "5h", name: "5h", usedPct: 0, resetsAt: Self.t + 2 * 3600),
+            ], state: "ready"),
+        ])
+        let store = Self.panelStore(CoreState(now: Self.t, aggregate: CoreAggregate(mode: "working", active: 2),
+                                              sessions: quietSessions, devices: Self.devices, usage: quietUsage))
+        try Self.write("panel-quiet", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
+        #expect(store.headerCounts == "2 of 3 sessions")
+        #expect(store.quietUsage.map(\.id) == ["opencode"])
+    }
+
     // MARK: The mock daemon
 
     /// `app/scripts/mock-core.py` on a socket of its own under the temp

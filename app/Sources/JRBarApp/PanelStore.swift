@@ -581,7 +581,27 @@ final class PanelStore {
             let total = state.mainSessions.count
             return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
         }
-        return parts.joined(separator: " · ")
+        return Self.countLine(parts: parts, headerWord: headerWord, total: state.mainSessions.count)
+    }
+
+    /// The count parts beside the header word, the word said once: a lone
+    /// "2 working" under "Working" reads "2 sessions" when those are all
+    /// the sessions listed, and "2 of 3 sessions" beside an idle or ended
+    /// one, since the word already says what they are doing. The number
+    /// never reads as the whole list when it is not.
+    nonisolated static func countLine(parts: [String], headerWord: String, total: Int) -> String {
+        guard parts.count == 1, let part = parts.first, let space = part.firstIndex(of: " "),
+              let count = Int(part[..<space]) else { return parts.joined(separator: " · ") }
+        // "2 need you" is the plural of the header's "Needs you".
+        func word(_ text: some StringProtocol) -> String {
+            text.lowercased().replacingOccurrences(of: "needs you", with: "need you")
+        }
+        guard word(part[part.index(after: space)...]) == word(headerWord) else { return part }
+        // More than the list holds (two asks on one session) is not a
+        // count of sessions: the daemon's own words stand.
+        if count > total { return part }
+        if count < total { return "\(count) of \(total) sessions" }
+        return count == 1 ? "1 session" : "\(count) sessions"
     }
 
     // MARK: Derived: sessions
@@ -800,7 +820,9 @@ final class PanelStore {
 
     /// Amphetamine's lesson: the hold is state worth a glance. A closed
     /// lid held open outranks the plain keep-awake, since it is the one
-    /// that keeps a shut laptop running.
+    /// that keeps a shut laptop running. It counts only while the lid
+    /// really is shut, as on the Screen Bar: with the lid open the hold
+    /// is only armed, and the cup tells the truth.
     nonisolated static func awakeHold(power: CorePower?, working: Int) -> (symbol: String, text: String)? {
         guard let power else { return nil }
         let agents = working == 1 ? "1 agent works" : "\(working) agents work"
@@ -808,7 +830,7 @@ final class PanelStore {
         // mark's tooltip, a line each.
         let facts = KeepAwakeReading(power: power).facts()
         func told(_ text: String) -> String { ([text] + facts).joined(separator: "\n") }
-        if power.closedLid?.holding == true {
+        if let lid = power.closedLid, lid.holding == true, lid.lidClosed == true {
             return ("laptopcomputer", told(working > 0
                 ? "Running with the lid closed while \(agents); it sleeps once they stop"
                 : "Running with the lid closed; it sleeps once the agents stop"))
@@ -1339,6 +1361,43 @@ final class PanelStore {
         }
         if let incident = usage.incident, !incident.isEmpty { return .incident(incident) }
         return nil
+    }
+
+    /// A stale reading's tag help: old, and the daemon's fix when it
+    /// has one ("Reconnect Claude"), so the hover says what to do.
+    static func staleHelp(action: String?) -> String {
+        let old = "This reading is old — the last refresh did not land"
+        guard let action = action?.trimmingCharacters(in: .whitespaces), !action.isEmpty else { return old }
+        return "\(old). \(action) to get a new one."
+    }
+
+    /// A usage row's second line: "5h resets in 1h 02m · 7d resets in
+    /// 3d 5h", plus "no room for +1" when one more agent would not fit
+    /// before the reset. A stale reading with a fix-it (`action`,
+    /// "Reconnect Claude", "Run grok login") leads with the fix, and a
+    /// window already past its reset says nothing: the source is broken,
+    /// so no new reading is on its way to wait for. With no reset to
+    /// name, the fix-it beats the bare state word.
+    static func usageResetLine(for usage: CoreProviderUsage, primary: CoreUsageWindow?, secondary: CoreUsageWindow?,
+                               noRoomForOneMore: Bool, now: Date) -> String {
+        let action = usage.action?.trimmingCharacters(in: .whitespaces) ?? ""
+        let broken = !action.isEmpty
+            && (usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale")
+        var parts: [String] = broken ? [action] : []
+        for window in [primary, secondary].compactMap({ $0 }) {
+            // Past as `countdown` counts it: under a second to go is past.
+            if broken, let resetsAt = window.resetsAt, resetsAt - now.timeIntervalSince1970 < 1 { continue }
+            if let text = countdown(to: window.resetsAt, now: now) { parts.append("\(window.shortName) \(text)") }
+        }
+        // An old reading's burn is history; the question it answers is
+        // for a live one.
+        if noRoomForOneMore, !broken { parts.append("no room for +1") }
+        if parts.isEmpty {
+            if !action.isEmpty { return action }
+            if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
+            return "no reset time"
+        }
+        return parts.joined(separator: " · ")
     }
 
     /// The slider's value: a local drag wins; devices that disagree show

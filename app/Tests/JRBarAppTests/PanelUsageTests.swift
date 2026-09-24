@@ -89,10 +89,16 @@ struct PanelUsageTests {
 
     private func provider(_ id: String, _ pct: Double?, state: String? = nil, fidelity: String? = nil,
                           resetsIn: Double? = 3 * 3600, forecast: CoreUsageForecast? = nil,
-                          incident: String? = nil) -> CoreProviderUsage {
+                          incident: String? = nil, action: String? = nil) -> CoreProviderUsage {
         let reset = resetsIn.map { now.timeIntervalSince1970 + $0 }
         return CoreProviderUsage(id: id, windows: [CoreUsageWindow(key: "5h", name: "5h", usedPct: pct, resetsAt: reset)],
-                                 fidelity: fidelity, state: state, forecast: forecast, incident: incident)
+                                 fidelity: fidelity, state: state, forecast: forecast, action: action, incident: incident)
+    }
+
+    private func resetLine(_ usage: CoreProviderUsage, noRoom: Bool = false) -> String {
+        let windows = PanelStore.windows(of: usage)
+        return PanelStore.usageResetLine(for: usage, primary: windows.primary, secondary: windows.secondary,
+                                         noRoomForOneMore: noRoom, now: now)
     }
 
     private func tag(_ usage: CoreProviderUsage, heldIdle: Bool = false) -> PanelStore.UsageTag? {
@@ -122,6 +128,33 @@ struct PanelUsageTests {
         #expect(PanelStore.paceHint("behind") == nil)
         #expect(PanelStore.paceHint("under") == nil)
         #expect(PanelStore.paceHint("ahead") == "runs out early")
+    }
+
+    @Test("a stale source leads with its fix and never says it is waiting for a reading")
+    func staleLeadsWithTheFix() {
+        let broken = provider("claude", 19, state: "stale", resetsIn: -37 * 60, action: "Reconnect Claude")
+        #expect(resetLine(broken) == "Reconnect Claude")
+        #expect(!resetLine(broken, noRoom: true).contains("no room"), "an old burn answers nothing")
+        let weekly = CoreUsageWindow(key: "7d", name: "7d", usedPct: 12, resetsAt: now.timeIntervalSince1970 + 3 * 86_400)
+        var both = broken
+        both.windows.append(weekly)
+        #expect(resetLine(both) == "Reconnect Claude · 7d resets in 3d 0h", "a reset still ahead is still true")
+        let grok = provider("grok", 31, state: "stale", resetsIn: -3600, action: "Run grok login")
+        #expect(resetLine(grok) == "Run grok login")
+
+        // Without a fix to offer, the old wording stands; live rows are unchanged.
+        #expect(resetLine(provider("claude", 19, state: "stale", resetsIn: -60)) == "5h reset — waiting for a new reading")
+        #expect(resetLine(provider("claude", 40, action: "Retry")) == "5h resets in 3h 00m")
+        #expect(resetLine(provider("claude", 40), noRoom: true) == "5h resets in 3h 00m · no room for +1")
+        #expect(resetLine(provider("grok", nil, state: "needs_sign_in", resetsIn: nil, action: "Run grok login")) == "Run grok login")
+    }
+
+    @Test("the Stale tag's help names the fix when the daemon has one")
+    func staleHelpNamesTheFix() {
+        #expect(PanelStore.staleHelp(action: "Reconnect Claude")
+                == "This reading is old — the last refresh did not land. Reconnect Claude to get a new one.")
+        #expect(PanelStore.staleHelp(action: nil) == "This reading is old — the last refresh did not land")
+        #expect(PanelStore.staleHelp(action: " ") == "This reading is old — the last refresh did not land")
     }
 
     @Test("0 %, windowless, not-found and disabled providers fold into one quiet row")
