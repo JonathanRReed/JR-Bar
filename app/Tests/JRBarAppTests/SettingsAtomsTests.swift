@@ -125,7 +125,8 @@ import Testing
         }
         let wide = height(width: 400)
         let narrow = height(width: 140)
+        let threeLines: CGFloat = 20 * 3 + 6 * 2
         #expect(wide == 20, "five 60 pt chips fit one 400 pt line")
-        #expect(narrow == 20 * 3 + 6 * 2, "two to a 140 pt line: three lines")
+        #expect(narrow == threeLines, "two to a 140 pt line: three lines")
     }
 }
