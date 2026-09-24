@@ -43,6 +43,13 @@ final class ScreenBarController {
     /// The defaults watch that re-reads the two switches above; held for
     /// the controller's life, which is the app's.
     private var defaultsObserver: NSObjectProtocol?
+    /// `screen_bar_hidden_apps`, live from the settings document: while
+    /// one of these apps is frontmost the band steps aside exactly as it
+    /// does over a full-screen video — ordered in, faded out, answering
+    /// nothing — and comes back when another app takes the front.
+    var hiddenApps: [String] = [] {
+        didSet { if hiddenApps != oldValue { updateVideoGuard() } }
+    }
     /// The now-playing app's bundle id while it is actually playing; nil
     /// when nothing plays or the source named no app.
     var nowPlaying: String? {
@@ -717,12 +724,24 @@ final class ScreenBarController {
     /// screen, the guard on, and the frontmost app both the one playing
     /// and filling the band's screen.
     private func wantsVideoGuard() -> Bool {
+        let front = NSWorkspace.shared.frontmostApplication
+        let aside = Self.stepsAside(forFrontmost: front?.bundleIdentifier, hiddenApps: hiddenApps)
+        let name = aside ? front?.localizedName : nil
+        if ScreenBarLiveStatus.shared.steppedAsideForApp != name { ScreenBarLiveStatus.shared.steppedAsideForApp = name }
+        if isShown, aside { return true }
         guard isShown, showsInFullScreen, hideOverVideo,
               let playing = nowPlaying,
               let front = NSWorkspace.shared.frontmostApplication,
               front.bundleIdentifier == playing,
               let screen = ScreenBarGeometry.preferredScreen() else { return false }
         return Self.windowFillsScreen(pid: front.processIdentifier, screen: screen)
+    }
+
+    /// Whether the app in front is one the person listed under "Hide
+    /// over these apps".
+    nonisolated static func stepsAside(forFrontmost front: String?, hiddenApps: [String]) -> Bool {
+        guard let front else { return false }
+        return hiddenApps.contains(front)
     }
 
     /// Fades the band out over a full-screen video, and back in after.
@@ -779,7 +798,10 @@ final class ScreenBarController {
         let note = menuMotionNote
         if status.motionNote != note { status.motionNote = note }
         if status.followingAlcove != (capsule != nil) { status.followingAlcove = capsule != nil }
-        if status.steppedAsideForVideo != steppedAsideForVideo { status.steppedAsideForVideo = steppedAsideForVideo }
+        // A listed app in front is its own reason, named on the card's
+        // hidden-apps row — not a video.
+        let overVideo = steppedAsideForVideo && status.steppedAsideForApp == nil
+        if status.steppedAsideForVideo != overVideo { status.steppedAsideForVideo = overVideo }
     }
 
     /// Each side's content-wing claim: the measured flank room beside the
@@ -1409,6 +1431,9 @@ final class ScreenBarLiveStatus {
     var followingAlcove = false
     /// True while the band has stepped aside for a full-screen video.
     var steppedAsideForVideo = false
+    /// The listed app the band has stepped aside for right now, by name;
+    /// nil while none of them is in front.
+    var steppedAsideForApp: String?
     /// True while the notch island's mic/camera poll runs — the only
     /// camera reading the band has (`ScreenBarCameraHold.readable`).
     /// Without it "Hold still on camera" has nothing to hold on, and the

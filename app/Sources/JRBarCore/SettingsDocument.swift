@@ -211,6 +211,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.devices, "screen_bar_wing_length", .nullableNumber),
             SettingsKey(.devices, "screen_bar_notch_wings", .bool),
             SettingsKey(.devices, "screen_bar_min_glow", .number),
+            SettingsKey(.devices, "screen_bar_hidden_apps", .stringList),
             // Lighting
             SettingsKey(.lighting, "colors.blend_mode", .string),
             SettingsKey(.lighting, "colors.cycle_speed_seconds", .number),

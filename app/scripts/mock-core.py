@@ -1104,6 +1104,7 @@ def default_settings_document() -> dict:
         "screen_bar_follow_alcove": True,
         "screen_bar_gap_width": None,
         "screen_bar_gauges_enabled": False,
+        "screen_bar_hidden_apps": [],
         "screen_bar_min_glow": 0.25,
         "screen_bar_notch_wings": True,
         "screen_bar_phase_offset_ms": 0.0,

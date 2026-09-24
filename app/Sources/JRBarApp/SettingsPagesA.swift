@@ -1061,6 +1061,7 @@ struct ScreenBarCard: View {
             }
             .pickerStyle(.menu)
         }
+        ScreenBarHiddenAppsRow(store: store)
         SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
         SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,
                       path: "screen_bar_notch_profile",

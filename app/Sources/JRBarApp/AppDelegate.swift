@@ -1433,6 +1433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.wingNoticesEnabled = document?.bool("screen_bar_wing_notices") ?? true
         screenBar.notchProfile = NotchProfile(setting: document?.string("screen_bar_notch_profile"))
         screenBar.notchCornerManual = document?.double("screen_bar_notch_corner").map { CGFloat($0) }
+        screenBar.hiddenApps = document?.strings("screen_bar_hidden_apps") ?? []
     }
 
     private func refreshAggregate() {

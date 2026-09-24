@@ -423,6 +423,10 @@ class AgentMonitorSettings:
     # hue otherwise; "spatial" always mirrors; "identity" always
     # collapses. Auto keeps the ripple in sync with the light bar.
     screen_bar_bracket_style: str = "auto"
+    # Apps the native Screen Bar steps aside for while one is frontmost,
+    # the way it does over a full-screen video: bundle ids, carried for
+    # the app like screen_bar_notch_wings (the daemon never reads it).
+    screen_bar_hidden_apps: tuple[str, ...] = ()
     # After this many continuous minutes with nothing active (idle), LED
     # brightness scales down by idle_dim_fraction -- a long-idle Mac
     # shouldn't keep a bright light going on the desk. Default on: dimming
@@ -1432,6 +1436,9 @@ class AgentMonitorSettings:
     def with_screen_bar_notch_wings(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_notch_wings=bool(enabled))
 
+    def with_screen_bar_hidden_apps(self, apps: object) -> AgentMonitorSettings:
+        return replace(self, screen_bar_hidden_apps=_screen_bar_hidden_apps_setting(apps))
+
     def with_screen_bar_bracket_style(self, style: str) -> AgentMonitorSettings:
         if style not in BRACKET_STYLE_CHOICES:
             raise ValueError(f"Unknown bracket style: {style}")
@@ -1704,6 +1711,7 @@ class AgentMonitorSettings:
             "screen_bar_notch_corner": self.screen_bar_notch_corner,
             "screen_bar_notch_wings": self.screen_bar_notch_wings,
             "screen_bar_bracket_style": self.screen_bar_bracket_style,
+            "screen_bar_hidden_apps": list(self.screen_bar_hidden_apps),
             "agent_keep_awake_enabled": self.agent_keep_awake_enabled,
             "keep_display_awake": self.keep_display_awake,
             "closed_lid_awake_policy": self.closed_lid_awake_policy,
@@ -2068,6 +2076,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             if data.get("screen_bar_bracket_style") in BRACKET_STYLE_CHOICES
             else "auto"
         ),
+        screen_bar_hidden_apps=_screen_bar_hidden_apps_setting(data.get("screen_bar_hidden_apps")),
         agent_keep_awake_enabled=_bool_setting(
             data.get("agent_keep_awake_enabled"), True
         ),
@@ -2423,6 +2432,24 @@ def normalize_idle_dim_after_minutes(
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return default
     return max(MIN_IDLE_DIM_AFTER_MINUTES, min(MAX_IDLE_DIM_AFTER_MINUTES, float(value)))
+
+
+MAX_SCREEN_BAR_HIDDEN_APPS = 64
+_BUNDLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-_]{0,254}$")
+
+
+def _screen_bar_hidden_apps_setting(value: object) -> tuple[str, ...]:
+    """Bundle ids, in order, each once: anything that is not a plausible
+    bundle id is dropped, and the list is bounded so a bad document can't
+    grow it without end. A missing or mistyped value is no apps."""
+    if not isinstance(value, (list, tuple)):
+        return ()
+    kept = (
+        item.strip()
+        for item in value
+        if isinstance(item, str) and _BUNDLE_ID_PATTERN.match(item.strip())
+    )
+    return tuple(dict.fromkeys(kept))[:MAX_SCREEN_BAR_HIDDEN_APPS]
 
 
 def _usage_graph_providers_setting(value: object) -> tuple[str, ...]:

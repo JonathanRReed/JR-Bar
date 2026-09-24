@@ -63,4 +63,14 @@ struct ScreenBarFullScreenTests {
                                                 steppedAsideForVideo: true)
         #expect(line == "Its own display · stepped aside for a full-screen video")
     }
+
+    // MARK: lane utilities
+
+    @Test func aListedAppInFrontStepsTheBandAside() {
+        let hidden = ["com.apple.Keynote", "us.zoom.xos"]
+        #expect(ScreenBarController.stepsAside(forFrontmost: "com.apple.Keynote", hiddenApps: hidden))
+        #expect(!ScreenBarController.stepsAside(forFrontmost: "com.mitchellh.ghostty", hiddenApps: hidden))
+        #expect(!ScreenBarController.stepsAside(forFrontmost: nil, hiddenApps: hidden))
+        #expect(!ScreenBarController.stepsAside(forFrontmost: "com.apple.Keynote", hiddenApps: []))
+    }
 }
