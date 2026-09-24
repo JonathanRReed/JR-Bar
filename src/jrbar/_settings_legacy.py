@@ -248,6 +248,14 @@ class DeviceDisplaySetting:
     # never muted); None = every signal. The per-Focus policy's
     # per-DEVICE sibling.
     signal_policy: str | None = None
+    # Which way round the strip is mounted: "forward" (LED 0 on the left)
+    # or "reversed". Every agent light drawn for this device is mirrored
+    # when reversed, so a comet still runs left to right on the desk.
+    led_direction: str = "forward"
+    # How a travelling motion moves on a two-LED device: "wipe" (LED 0
+    # rises, LED 1 rises, LED 0 falls, LED 1 falls -- a direction you can
+    # see) or "crossfade" (the older soft swap). Only a Dot reads it.
+    dot_travel_style: str = "wipe"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -271,6 +279,8 @@ class DeviceDisplaySetting:
             "blend_mode": self.blend_mode,
             "provider_pin": self.provider_pin,
             "signal_policy": self.signal_policy,
+            "led_direction": self.led_direction,
+            "dot_travel_style": self.dot_travel_style,
         }
 
     def channel_gains(self) -> tuple[float, float, float]:
@@ -1456,6 +1466,22 @@ class AgentMonitorSettings:
                 return device.signal_policy
         return None
 
+    def device_led_direction(self, device_id: str) -> str:
+        """``forward`` or ``reversed``: which way round this strip is
+        mounted. A device never seen is forward."""
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.led_direction
+        return "forward"
+
+    def device_dot_travel_style(self, device_id: str) -> str:
+        """``wipe`` or ``crossfade``: how travel looks on this device when
+        it has two LEDs."""
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.dot_travel_style
+        return "wipe"
+
     def with_device_signal_policy(
         self, device_id: str, policy: str | None
     ) -> AgentMonitorSettings:
@@ -2569,6 +2595,12 @@ def _device_display_settings(value: object, default_display: str) -> tuple[Devic
                     else None
                 ),
                 resting_glow=_fraction_setting(item.get("resting_glow"), 0.0),
+                led_direction=(
+                    "reversed" if item.get("led_direction") == "reversed" else "forward"
+                ),
+                dot_travel_style=(
+                    "crossfade" if item.get("dot_travel_style") == "crossfade" else "wipe"
+                ),
             )
         )
         seen.add(device_id)

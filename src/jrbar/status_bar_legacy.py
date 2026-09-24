@@ -12925,7 +12925,12 @@ class StatusBarController(NSObject):
                         if projection is not None
                         else None
                     ),
-                    color_settings=colors_for_render,
+                    color_settings=colors_module.with_tool_tint(
+                        colors_for_render,
+                        statuses,
+                        projection.dominant_provider if projection is not None else None,
+                        now=time.monotonic(),
+                    ),
                 )
                 program = apply_brightness(presentation.dsl, brightness)
             elif projection is not None:
@@ -13870,6 +13875,11 @@ class StatusBarController(NSObject):
             override = self.settings.device_blend_mode(device.device_id)
             if override:
                 colors_for_render = colors_for_render.with_blend_mode(override)
+            # This strip's own way round and, for a Dot, its way of travel.
+            colors_for_render = colors_for_render.for_device(
+                led_direction=self.settings.device_led_direction(device.device_id),
+                dot_travel_style=self.settings.device_dot_travel_style(device.device_id),
+            )
             statuses_for_device = request.statuses
             fallback_for_device = request.mode
             pin = self.settings.device_provider_pin(device.device_id)
@@ -13925,7 +13935,14 @@ class StatusBarController(NSObject):
                         if device_projection is not None
                         else None
                     ),
-                    color_settings=colors_for_render,
+                    color_settings=colors_module.with_tool_tint(
+                        colors_for_render,
+                        statuses_for_device,
+                        device_projection.dominant_provider
+                        if device_projection is not None
+                        else None,
+                        now=time.monotonic(),
+                    ),
                 )
                 continuity = continuous_presentation_identity(presentation)
                 if continuity is not None:

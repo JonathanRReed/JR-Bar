@@ -39,6 +39,8 @@ DEVICE_SETTING_PERSISTED_FIELDS = frozenset(
         "blend_mode",
         "provider_pin",
         "signal_policy",
+        "led_direction",
+        "dot_travel_style",
     }
 )
 DND_SETTING_PERSISTED_FIELDS = frozenset(
