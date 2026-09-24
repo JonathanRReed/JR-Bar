@@ -46,10 +46,20 @@ import Testing
         // ask, and none of these reaches past the Mac.
         for command in WhatsNewCatalog.entries.compactMap(\.tryIt) {
             switch command {
-            case .menuBar(.commandBar), .panel(toggle: false), .settings, .window, .shelf: continue
+            case .menuBar(.commandBar), .panel(toggle: false), .settings, .window, .shelf,
+                 .overviewGraph, .aquarium: continue
             default: Issue.record("\(command) is not a surface to open")
             }
         }
+    }
+
+    @Test func theGraphAndTheAquariumRowsOpenTheThingItself() {
+        let graphRow = WhatsNewCatalog.entries.first { $0.id == "graph" }
+        let tankRow = WhatsNewCatalog.entries.first { $0.id == "aquarium" }
+        #expect(graphRow?.tryIt == .overviewGraph)
+        #expect(graphRow?.opens == "Opens the Overview's Graph")
+        #expect(tankRow?.tryIt == .aquarium)
+        #expect(tankRow?.opens == "Opens the Aquarium")
     }
 
     // MARK: The gate
