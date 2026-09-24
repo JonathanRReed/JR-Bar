@@ -237,6 +237,15 @@ final class DockPreviewPanel: NSPanel {
         coversLabel ? .statusBar : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
     }
 
+    /// The level for `placement`: over the Dock while it covers the name
+    /// bubble, under it otherwise. The show, the re-anchor and the refit
+    /// all call it, so a cover flipped while the panel is up lands on
+    /// the next move rather than the next hover.
+    func hold(_ placement: DockPlacement) {
+        let wanted = Self.level(coversLabel: placement.coversLabel)
+        if level != wanted { level = wanted }
+    }
+
     /// The glass takes the spacing's corner — concentric with the card
     /// plates at the spacing's inset — and the window re-reads the
     /// rounded shadow. Called on every show.
@@ -259,11 +268,13 @@ final class DockPreviewPanel: NSPanel {
 
     /// Show at `target`, animating a short springy drift up off the
     /// dock — a 220 ms ease with a hint of overshoot, under the 250 ms
-    /// cap, so the panel visibly tracks which icon summoned it. A
-    /// retarget while visible just slides to the new anchor; dismiss
+    /// cap, so the panel visibly tracks which icon summoned it. The
+    /// drift and the level come from `placement`: covering the name
+    /// bubble, the glass never drifts across the icon under the pointer.
+    /// A retarget while visible just slides to the new anchor; dismiss
     /// stays instant (a leave means leave), and Reduce Motion snaps.
-    func present(frame target: CGRect, dockedAt edge: DockEdge, coversLabel: Bool) {
-        level = Self.level(coversLabel: coversLabel)
+    func present(frame target: CGRect, dockedAt edge: DockEdge, placement: DockPlacement) {
+        hold(placement)
         if isVisible, alphaValue > 0.5 {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
@@ -273,7 +284,7 @@ final class DockPreviewPanel: NSPanel {
             orderFrontRegardless()
             return
         }
-        let drift: CGFloat = 10
+        let drift = placement.openingDrift
         var start = target
         switch edge {
         case .bottom: start.origin.y -= drift

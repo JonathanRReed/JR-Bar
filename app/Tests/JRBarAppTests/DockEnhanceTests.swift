@@ -248,6 +248,22 @@ import Testing
                 "a tile already bigger than the magnified size reaches nothing")
     }
 
+    @Test func coveringTheGlassNeverDriftsAcrossTheIcon() {
+        #expect(DockPlacement(gap: 4, coversLabel: true).openingDrift == 3, "a point short of the 4 pt gap")
+        #expect(DockPlacement(gap: 0, coversLabel: true).openingDrift == 1, "the corridor's 2 pt floor, less one")
+        #expect(DockPlacement(gap: 40, coversLabel: true).openingDrift == 10, "a far panel drifts the full 10")
+        #expect(DockPlacement(gap: 4, coversLabel: false).openingDrift == 10, "under the Dock the Dock draws on top")
+    }
+
+    @Test func thePanelsLevelFollowsTheCoverWhileItIsUp() {
+        let panel = DockPreviewPanel(content: DockPreviewContent())
+        panel.hold(DockPlacement(gap: 4, coversLabel: true))
+        #expect(panel.level == .statusBar, "covering, it rides over the Dock's window")
+        panel.hold(DockPlacement(gap: 4, coversLabel: false))
+        #expect(panel.level == DockPreviewPanel.level(coversLabel: false))
+        #expect(panel.level.rawValue == Int(CGWindowLevelForKey(.dockWindow)) - 1, "just under the Dock")
+    }
+
     @Test func aCardThatHugsItsWindowTakesItsShapeWithinBounds() {
         let small = DockEnhanceMath.cardSize(large: false)
         #expect(DockEnhanceMath.cardSize(large: false, aspect: nil) == small, "no aspect keeps the 16:10 box")

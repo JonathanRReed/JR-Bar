@@ -760,7 +760,7 @@ final class DockEnhanceController {
         let place = placement
         let target = targetFrame(item: itemFrame, edge: edge, screen: screenFrame,
                                  size: panel.fittingSize(), placement: place)
-        panel.present(frame: target, dockedAt: edge, coversLabel: place.coversLabel)
+        panel.present(frame: target, dockedAt: edge, placement: place)
         watchers.start(escape: true, clickAway: true)
         switcher.setPreviewOpen(true)
         // An app tile's cards follow the app while the panel is up — a
@@ -1022,8 +1022,10 @@ final class DockEnhanceController {
     private func anchorPanel(to item: DockAXItem) {
         guard let panel, panel.isVisible, let anchor else { return }
         let itemFrame = anchorFrame(for: item, edge: anchor.edge, pointer: NSEvent.mouseLocation)
+        let place = placement
         let target = targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen,
-                                 size: panel.fittingSize())
+                                 size: panel.fittingSize(), placement: place)
+        panel.hold(place)
         self.anchor = (item, anchor.edge, anchor.screen)
         if abs(target.minX - panel.frame.minX) > 1 || abs(target.minY - panel.frame.minY) > 1
             || abs(target.width - panel.frame.width) > 1 || abs(target.height - panel.frame.height) > 1 {
@@ -1043,9 +1045,8 @@ final class DockEnhanceController {
     /// panel of `size` off the tile `item` (the anchor — under
     /// magnification the icon at the pointer) toward the screen's middle.
     private func targetFrame(item itemFrame: CGRect, edge: DockEdge, screen: CGRect, size: CGSize,
-                             placement place: DockPlacement? = nil) -> CGRect {
-        (place ?? placement).frame(anchor: itemFrame, edge: edge, size: size, screen: screen,
-                                   title: preview.appName)
+                             placement place: DockPlacement) -> CGRect {
+        place.frame(anchor: itemFrame, edge: edge, size: size, screen: screen, title: preview.appName)
     }
 
     /// The retained panel, built once with its actions wired — internal
@@ -2000,7 +2001,10 @@ final class DockEnhanceController {
         // the pointer, so refitting on it jumped the panel off the icon.
         let itemFrame = anchorFrame(for: anchor.item, edge: anchor.edge,
                                     pointer: NSEvent.mouseLocation)
-        panel.setFrame(targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen, size: size),
+        let place = placement
+        panel.hold(place)
+        panel.setFrame(targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen, size: size,
+                                   placement: place),
                        display: true)
     }
 }

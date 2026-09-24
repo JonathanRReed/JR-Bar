@@ -690,6 +690,16 @@ struct DockPlacement: Equatable {
     /// The Dock's `largesize`; nil when never set.
     var largesize: CGFloat? = nil
 
+    /// How far the glass drifts in as it opens. Covering, it rides over
+    /// the Dock's own window, so it stops a point short of the gap: a
+    /// drift across the icon under the pointer would take the Dock's
+    /// hover (its bubble and magnification would flicker). Under the
+    /// Dock, the Dock draws over it anyway, so it drifts the full 10.
+    var openingDrift: CGFloat {
+        guard coversLabel else { return 10 }
+        return min(10, max(0, max(DockEnhanceMath.minimumGap, gap) - 1))
+    }
+
     /// The band kept for the name bubble over a tile titled `title`.
     func labelClearance(title: String, edge: DockEdge) -> CGFloat {
         coversLabel ? 0 : DockEnhanceMath.nativeLabelClearance(title: title, edge: edge)
