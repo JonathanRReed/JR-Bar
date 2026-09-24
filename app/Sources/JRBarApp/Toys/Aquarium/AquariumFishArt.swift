@@ -346,7 +346,8 @@ enum CartoonFish {
 
     /// Draw one fish at the origin of `f` — already translated, rotated,
     /// flipped & scaled to unit space by the caller. `blink` is 0 open
-    /// …1 shut. `dead` (a sinking fish) crosses the eye out.
+    /// …1 shut. `dead` (a sinking fish) crosses the eye out and drains
+    /// the species' own colours — no neon, no yellow tail, no blush.
     /// `pointSize` is the fish's drawn length, so the outline keeps one
     /// weight and the fine detail drops out where it would only be
     /// noise.
@@ -359,8 +360,10 @@ enum CartoonFish {
         let pose = Pose(art: art, swim: swim)
         let lw = outlineWidth(pointSize)
         let detailed = pointSize >= 38
+        let vivid = !dead
 
-        drawFinsBehind(art: art, pose: pose, palette: palette, into: &f, lw: lw, detailed: detailed)
+        drawFinsBehind(art: art, pose: pose, palette: palette, into: &f, lw: lw,
+                       detailed: detailed, vivid: vivid)
 
         let body = pose.body(art.body)
         // The silhouette's edge goes down first, twice as wide as it
@@ -373,11 +376,12 @@ enum CartoonFish {
             near.append((fin, pose.fin(fin.path, fin)))
         }
         drawBody(body, art: art, pose: pose, palette: palette, into: &f,
-                 lw: lw, detailed: detailed, variant: variant,
+                 lw: lw, detailed: detailed, vivid: vivid, variant: variant,
                  shadows: near.map(\.path))
         for (fin, path) in near {
             // The near pectoral: its own lit membrane, rays and edge.
-            let base = fin.tint ?? palette.body
+            let tint = vivid ? fin.tint : nil
+            let base = tint ?? palette.body
             if fin.trim {
                 f.stroke(path, with: .color(palette.outline.opacity(0.95)),
                          style: StrokeStyle(lineWidth: lw * 3.2, lineJoin: .round))
@@ -386,7 +390,7 @@ enum CartoonFish {
                 Gradient(stops: [
                     .init(color: base.opacity(0.97), location: 0),
                     .init(color: base.opacity(0.82), location: 0.5),
-                    .init(color: (fin.tint ?? palette.light).opacity(0.66), location: 1),
+                    .init(color: (tint ?? palette.light).opacity(0.66), location: 1),
                 ]),
                 startPoint: pose.finPoint(fin.pivot, fin), endPoint: pose.finPoint(fin.tip, fin)))
             if detailed {
@@ -407,9 +411,11 @@ enum CartoonFish {
     /// radial wash — dense by the body, glassy out at the edges — and
     /// all the rays and edges go down in one stroke each, so a fish's
     /// fins cost a handful of fills however many it has. A tinted fin
-    /// (the tang's yellow) paints its own; spines are solid.
+    /// (the tang's yellow) paints its own while the fish is `vivid`;
+    /// spines are solid.
     private static func drawFinsBehind(art: Art, pose: Pose, palette: Palette,
-                                       into f: inout GraphicsContext, lw: Double, detailed: Bool) {
+                                       into f: inout GraphicsContext, lw: Double, detailed: Bool,
+                                       vivid: Bool) {
         var far = Path()
         var membrane = Path()
         var trims = Path()
@@ -428,7 +434,7 @@ enum CartoonFish {
             }
             if fin.layer == .far {
                 far.addPath(path)
-            } else if fin.tint != nil {
+            } else if fin.tint != nil, vivid {
                 tinted.append((fin, path))
             } else {
                 membrane.addPath(path)
@@ -444,22 +450,26 @@ enum CartoonFish {
         let reach = max(hypot(e.minX - centre.x, e.minY - centre.y), hypot(e.minX - centre.x, e.maxY - centre.y),
                         hypot(e.maxX - centre.x, e.minY - centre.y))
         let inner = min(art.bounds.width, art.bounds.height) * 0.4
+        // A veil keeps its colour right out to the edge — the richest
+        // part of a betta — where a plain fin thins to glass.
+        let veil = art.iridescent && vivid
         f.fill(membrane, with: .radialGradient(
             Gradient(stops: [
                 .init(color: palette.body.opacity(0.94), location: 0),
-                .init(color: palette.body.opacity(0.70), location: 0.45),
-                .init(color: palette.light.opacity(0.42), location: 1),
+                .init(color: palette.body.opacity(veil ? 0.82 : 0.70), location: 0.45),
+                .init(color: veil ? palette.body.opacity(0.62) : palette.light.opacity(0.42), location: 1),
             ]),
             center: centre, startRadius: inner, endRadius: reach * 0.9))
-        if art.iridescent {
-            // The shimmer: cyan through rose toward the veils' edges.
+        if veil {
+            // The shimmer: a cool sheen through a rosy blush toward the
+            // veils' edges, light enough to keep the fish's own colour.
             var sheen = f
             sheen.blendMode = .plusLighter
             sheen.fill(membrane, with: .radialGradient(
                 Gradient(stops: [
-                    .init(color: .clear, location: 0.1),
-                    .init(color: Color(red: 0.35, green: 0.80, blue: 1.0).opacity(0.30), location: 0.45),
-                    .init(color: Color(red: 1.0, green: 0.45, blue: 0.85).opacity(0.28), location: 0.8),
+                    .init(color: .clear, location: 0.15),
+                    .init(color: Color(red: 0.30, green: 0.70, blue: 1.0).opacity(0.18), location: 0.5),
+                    .init(color: Color(red: 1.0, green: 0.40, blue: 0.80).opacity(0.16), location: 0.82),
                     .init(color: .clear, location: 1),
                 ]),
                 center: centre, startRadius: inner, endRadius: reach * 0.9))
@@ -487,7 +497,7 @@ enum CartoonFish {
     /// gill cover. One clip to the silhouette carries all of it.
     private static func drawBody(_ body: Path, art: Art, pose: Pose, palette: Palette,
                                  into f: inout GraphicsContext, lw: Double, detailed: Bool,
-                                 variant: AquariumVariant?, shadows: [Path]) {
+                                 vivid: Bool, variant: AquariumVariant?, shadows: [Path]) {
         let r = art.bounds
         // Countershading: a deep back, the true colour across the
         // flank and a pale underside — for an upright seahorse, the
@@ -512,7 +522,7 @@ enum CartoonFish {
         }
         for mark in art.marks {
             paintMark(mark, path: mark.flexes ? pose.body(mark.path) : mark.path,
-                      palette: palette, into: &b, lw: lw)
+                      palette: palette, into: &b, lw: lw, vivid: vivid)
         }
         if let variant { drawVariant(variant, art: art, pose: pose, palette: palette, into: &b) }
         // Volume and the top light in one pass: the surface's glow soft
@@ -561,26 +571,29 @@ enum CartoonFish {
         }
     }
 
-    private static func color(_ tone: Mark.Tone, _ palette: Palette) -> Color {
+    private static func color(_ tone: Mark.Tone, _ palette: Palette, vivid: Bool) -> Color {
         switch tone {
         case .light: return palette.light
         case .dark: return palette.dark
         case .outline: return palette.outline
         case .white: return Color(red: 0.99, green: 0.99, blue: 0.97)
-        case .neonRed: return Color(red: 0.93, green: 0.20, blue: 0.30)
+        case .neonRed: return vivid ? Color(red: 0.93, green: 0.20, blue: 0.30) : palette.dark
         }
     }
 
+    /// One marking. A fish that isn't `vivid` keeps its pattern but
+    /// loses the colours of its own: the neon goes out, the shimmer
+    /// and the blush fade away.
     private static func paintMark(_ mark: Mark, path: Path, palette: Palette,
-                                  into b: inout GraphicsContext, lw: Double) {
+                                  into b: inout GraphicsContext, lw: Double, vivid: Bool) {
         switch mark.style {
         case .fill(let tone, let opacity):
-            b.fill(path, with: .color(color(tone, palette).opacity(opacity)))
+            b.fill(path, with: .color(color(tone, palette, vivid: vivid).opacity(opacity)))
         case .stroke(let tone, let width, let opacity):
-            b.stroke(path, with: .color(color(tone, palette).opacity(opacity)),
+            b.stroke(path, with: .color(color(tone, palette, vivid: vivid).opacity(opacity)),
                      style: StrokeStyle(lineWidth: width, lineCap: .round))
         case .dots(let tone, let width, let gap, let opacity):
-            b.stroke(path, with: .color(color(tone, palette).opacity(opacity)),
+            b.stroke(path, with: .color(color(tone, palette, vivid: vivid).opacity(opacity)),
                      style: StrokeStyle(lineWidth: width, lineCap: .round, dash: [0.0001, gap]))
         case .bar(let edge):
             b.stroke(path, with: .color(palette.outline.opacity(0.95)), lineWidth: edge + lw * 1.2)
@@ -588,6 +601,11 @@ enum CartoonFish {
             b.fill(path, with: .linearGradient(
                 Gradient(colors: [.white, Color(red: 0.90, green: 0.93, blue: 0.97)]),
                 startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)))
+        case .neon(let width) where !vivid:
+            b.stroke(path, with: .color(palette.light.opacity(0.6)),
+                     style: StrokeStyle(lineWidth: width, lineCap: .round))
+        case .sheen where !vivid, .blush where !vivid:
+            break
         case .neon(let width):
             var glow = b
             glow.blendMode = .plusLighter
