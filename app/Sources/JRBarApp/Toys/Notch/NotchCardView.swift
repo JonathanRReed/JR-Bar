@@ -337,6 +337,7 @@ struct NotchCardView: View {
     var width: CGFloat = NotchCardView.width
     /// The custom-timer popover — `ViewState`, not `@State`: the
     /// Command Line Tools ship no `SwiftUIMacros` plugin.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ViewState private var timerEntryShown = false
     @ViewState private var timerEntryName = ""
     @ViewState private var timerEntryMinutes = 10
@@ -373,10 +374,15 @@ struct NotchCardView: View {
 
     /// One row's content-follow fade: hidden until the frame has
     /// carried the expand, then in on its own stagger — frame leads,
-    /// content follows (`NotchMotion.rowStagger`/`rowFade`).
+    /// content follows (`NotchMotion.rowStagger`/`rowFade`). Each row
+    /// settles a few points down out of a soft focus as it arrives;
+    /// under Reduce Motion it only fades.
     private func revealRow<V: View>(_ index: Int, _ content: V) -> some View {
-        content
+        let settled = model.contentRevealed || reduceMotion
+        return content
             .opacity(model.contentRevealed ? 1 : 0)
+            .offset(y: settled ? 0 : -5)
+            .blur(radius: settled ? 0 : 2.5)
             .animation(.easeOut(duration: NotchMotion.rowFade)
                 .delay(Double(index) * NotchMotion.rowStagger),
                        value: model.contentRevealed)
@@ -455,9 +461,16 @@ struct NotchCardView: View {
             if let style = model.focus.style {
                 ProviderTile(style: style, size: pinned ? 26 : 20)
             } else {
+                // Nobody in focus: JR-Bar's own mark on a quiet tile the
+                // provider's would fill.
                 Image(nsImage: StatusItemController.glyph())
                     .renderingMode(.template)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(style.subColor)
+                    .frame(width: pinned ? 26 : 20, height: pinned ? 26 : 20)
+                    .background(RoundedRectangle(cornerRadius: (pinned ? 26 : 20) * 0.28, style: .continuous)
+                        .fill(style.chipFaint))
+                    .overlay(RoundedRectangle(cornerRadius: (pinned ? 26 : 20) * 0.28, style: .continuous)
+                        .strokeBorder(style.hairline, lineWidth: 0.5))
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.focus.label)

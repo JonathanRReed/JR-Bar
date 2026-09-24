@@ -53,6 +53,8 @@ struct NotchIslandView: View {
                     .opacity(noticeShown ? 1 : 0)
                     .offset(y: reduceMotion || noticeShown
                             ? 0 : -NotchMotion.noticeSlide)
+                    // The face comes into focus as it slides down.
+                    .blur(radius: reduceMotion || noticeShown ? 0 : 3)
                     .allowsHitTesting(shownNotice != nil)
             } else if toy.islandExpanded {
                 // The card, grown out of the notch — the same rows the

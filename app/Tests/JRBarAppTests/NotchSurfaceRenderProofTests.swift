@@ -304,6 +304,7 @@ struct NotchSurfaceRenderProofTests {
         defer { withExtendedLifetime(store) {} }
         let model = toy.cardModel
         Self.fill(model, monitor: monitor)
+        defer { Self.clearTray(model) }
         let depth = max(toy.notchDepth, 32)
         let width = NotchIslandLayout.expandedWidth(slotWidth: Self.slotWidth)
         for page in [NotchCardModel.Page.now, .shelf] {
@@ -332,6 +333,7 @@ struct NotchSurfaceRenderProofTests {
         defer { withExtendedLifetime(store) {} }
         let model = toy.cardModel
         Self.fill(model, monitor: monitor)
+        defer { Self.clearTray(model) }
         let now = Date()
         let reading = NotchWeather.Reading(celsius: 21.4, code: 2, place: "Austin", fahrenheit: true,
                                            highCelsius: 27, lowCelsius: 16, rainInMinutes: 40)
@@ -380,6 +382,45 @@ struct NotchSurfaceRenderProofTests {
         }
     }
 
+    /// The quiet states: a card with nothing on it but the idle header,
+    /// the wing hint up, and the glass peek — the header alone.
+    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
+    func quietCard() throws {
+        let (toy, store, _) = Self.makeToy(state: CoreState(sessions: []))
+        defer { withExtendedLifetime(store) {} }
+        let model = toy.cardModel
+        model.pinned = true
+        model.wingHint = true
+        let depth = max(toy.notchDepth, 32)
+        let width = NotchIslandLayout.expandedWidth(slotWidth: Self.slotWidth)
+        let card = NotchCardView(model: model, style: .island, width: width)
+        let probe = NSHostingView(rootView: card)
+        probe.layoutSubtreeIfNeeded()
+        let height = toy.cardTopPad + ceil(probe.fittingSize.height)
+        let island = ZStack(alignment: .top) {
+            NotchSilhouette(notchDepth: depth, restingRadius: 8).fill(.black)
+            card.padding(.top, toy.cardTopPad)
+        }
+        let canvas = CGSize(width: width + 140, height: height + 40)
+        try ProofRender.write(Self.scene(island, size: CGSize(width: width, height: height),
+                                         depth: depth, canvas: canvas),
+                              size: canvas, name: "notch-card-quiet")
+
+        model.pinned = false
+        model.focus = ScreenBarFocus(style: ProviderStyle.style(for: "codex"), label: "ship-it",
+                                     word: "Working", clickSession: "codex:1",
+                                     explanation: "Running the test suite")
+        for dark in [false, true] {
+            let peek = NotchCardView(model: model, style: .glass)
+            let view = ZStack {
+                ProofDesktop(dark: dark)
+                peek.background(ProofGlass(cornerRadius: NotchCardPanel.cornerRadius))
+            }
+            try ProofRender.write(view.frame(width: 360, height: 110), size: CGSize(width: 360, height: 110),
+                                  name: "notch-glass-peek-\(dark ? "dark" : "light")", dark: dark)
+        }
+    }
+
     /// The glass card — the fallback surface — in both appearances.
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
     func glassCard() throws {
@@ -387,6 +428,7 @@ struct NotchSurfaceRenderProofTests {
         defer { withExtendedLifetime(store) {} }
         let model = toy.cardModel
         Self.fill(model, monitor: monitor)
+        defer { Self.clearTray(model) }
         for dark in [false, true] {
             for page in [NotchCardModel.Page.now, .shelf] {
                 model.show(page)
@@ -508,6 +550,12 @@ struct NotchSurfaceRenderProofTests {
             try ProofRender.write(view.frame(width: 320, height: 280), size: CGSize(width: 320, height: 280),
                                   name: "buddy-pal-\(dark ? "dark" : "light")", dark: dark)
         }
+    }
+
+    /// The tray persists its paths in the test runner's defaults; a
+    /// proof leaves it as it found it.
+    static func clearTray(_ model: NotchCardModel) {
+        for entry in model.tray.entries { model.tray.remove(entry) }
     }
 
     /// A card with something on every row: the focus, three sessions
