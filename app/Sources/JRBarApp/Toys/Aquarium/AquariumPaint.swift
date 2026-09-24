@@ -229,10 +229,10 @@ enum TankPaint {
     /// Seats a piece in the water, so every piece in the shop reads as
     /// one illustrated set: `draw` paints the piece in its own layer,
     /// then — only where it painted — the surface light falls on its
-    /// crown with a lace of caustics, its foot darkens where the sand
+    /// crown with a net of caustics, its foot darkens where the sand
     /// hides the light, and the water between it and the glass veils
     /// the whole. `rect` bounds the piece in the context's units;
-    /// `unit` is points per unit, so the lace keeps a screen size.
+    /// `unit` is points per unit, so the net keeps a screen size.
     static func seat(_ c: inout GraphicsContext, in rect: CGRect, unit: Double = 1,
                      atmosphere a: Atmosphere, seed: UInt64, caustics: Bool = true,
                      draw: (inout GraphicsContext) -> Void) {

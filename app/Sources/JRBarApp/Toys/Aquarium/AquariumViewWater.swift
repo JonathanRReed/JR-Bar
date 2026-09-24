@@ -16,61 +16,64 @@ extension AquariumView {
         var shafts: Double
     }
 
-    /// Every theme's water, "classic" the one the game starts with.
-    /// The deep stops keep a blue-green cast all the way down, so the
-    /// far water reads as distance, not as a flat navy wall.
-    private static let waters: [String: TankWater] = {
-        func column(_ rgbs: [(Double, Double, Double)]) -> [(location: Double, rgb: TankPaint.RGB)] {
-            let locations = [0, 0.12, 0.30, 0.52, 0.72, 0.88, 1.0]
-            return zip(locations, rgbs).map { ($0, TankPaint.RGB($1.0, $1.1, $1.2)) }
-        }
-        return [
-            "classic": TankWater(stops: column([
-                (0.50, 0.84, 0.78), (0.29, 0.69, 0.70), (0.13, 0.51, 0.63), (0.06, 0.33, 0.54),
-                (0.04, 0.22, 0.45), (0.03, 0.15, 0.37), (0.02, 0.09, 0.27)]),
-                light: TankPaint.RGB(1.0, 0.97, 0.84), shafts: 1),
-            "reef": TankWater(stops: column([
-                (0.40, 0.78, 0.84), (0.22, 0.62, 0.76), (0.10, 0.45, 0.68), (0.05, 0.30, 0.57),
-                (0.03, 0.19, 0.47), (0.02, 0.12, 0.37), (0.015, 0.07, 0.27)]),
-                light: TankPaint.RGB(1.0, 0.98, 0.88), shafts: 1),
-            "lagoon": TankWater(stops: column([
-                (0.60, 0.93, 0.82), (0.40, 0.84, 0.76), (0.22, 0.66, 0.70), (0.11, 0.46, 0.60),
-                (0.06, 0.30, 0.49), (0.04, 0.19, 0.38), (0.03, 0.11, 0.28)]),
-                light: TankPaint.RGB(1.0, 0.99, 0.86), shafts: 1.15),
-            "twilight": TankWater(stops: column([
-                (0.44, 0.54, 0.80), (0.30, 0.42, 0.70), (0.17, 0.30, 0.58), (0.10, 0.19, 0.46),
-                (0.06, 0.12, 0.36), (0.04, 0.08, 0.28), (0.025, 0.05, 0.20)]),
-                light: TankPaint.RGB(0.88, 0.86, 1.0), shafts: 0.6),
-            "midnight": TankWater(stops: column([
-                (0.11, 0.18, 0.33), (0.08, 0.14, 0.29), (0.055, 0.10, 0.24), (0.035, 0.07, 0.20),
-                (0.025, 0.05, 0.16), (0.018, 0.035, 0.13), (0.012, 0.025, 0.10)]),
-                light: TankPaint.RGB(0.70, 0.80, 1.0), shafts: 0.35),
-            "dawn": TankWater(stops: column([
-                (0.88, 0.64, 0.66), (0.70, 0.57, 0.69), (0.44, 0.50, 0.68), (0.23, 0.38, 0.60),
-                (0.12, 0.26, 0.49), (0.06, 0.16, 0.38), (0.035, 0.09, 0.28)]),
-                light: TankPaint.RGB(1.0, 0.84, 0.72), shafts: 0.8),
-            "kelp": TankWater(stops: column([
-                (0.56, 0.77, 0.45), (0.37, 0.64, 0.42), (0.21, 0.50, 0.39), (0.11, 0.36, 0.35),
-                (0.06, 0.24, 0.29), (0.035, 0.15, 0.22), (0.02, 0.09, 0.16)]),
-                light: TankPaint.RGB(1.0, 0.97, 0.74), shafts: 1),
-            "abyss": TankWater(stops: column([
-                (0.05, 0.08, 0.17), (0.035, 0.06, 0.14), (0.025, 0.045, 0.11), (0.018, 0.03, 0.08),
-                (0.012, 0.02, 0.06), (0.008, 0.015, 0.045), (0.005, 0.01, 0.03)]),
-                light: TankPaint.RGB(0.55, 0.75, 1.0), shafts: 0),
-            "sunset": TankWater(stops: column([
-                (0.94, 0.58, 0.32), (0.82, 0.44, 0.39), (0.57, 0.31, 0.49), (0.33, 0.21, 0.51),
-                (0.19, 0.13, 0.45), (0.10, 0.08, 0.35), (0.055, 0.045, 0.26)]),
-                light: TankPaint.RGB(1.0, 0.76, 0.50), shafts: 0.9),
-            "blackwater": TankWater(stops: column([
-                (0.55, 0.44, 0.27), (0.44, 0.35, 0.21), (0.33, 0.25, 0.16), (0.23, 0.17, 0.11),
-                (0.15, 0.11, 0.075), (0.095, 0.07, 0.05), (0.055, 0.04, 0.03)]),
-                light: TankPaint.RGB(1.0, 0.84, 0.54), shafts: 0.45),
-        ]
-    }()
+    /// Seven stops down the column, at the depths every theme shares.
+    private static func column(_ rgbs: [(Double, Double, Double)]) -> [(location: Double, rgb: TankPaint.RGB)] {
+        let locations = [0, 0.12, 0.30, 0.52, 0.72, 0.88, 1.0]
+        return zip(locations, rgbs).map { ($0, TankPaint.RGB($1.0, $1.1, $1.2)) }
+    }
+
+    /// The water the game starts with: aquamarine under the surface,
+    /// teal, then a deep blue that keeps a green cast all the way down.
+    private static let classicWater = TankWater(stops: column([
+        (0.50, 0.84, 0.78), (0.29, 0.69, 0.70), (0.13, 0.51, 0.63), (0.06, 0.33, 0.54),
+        (0.04, 0.22, 0.45), (0.03, 0.15, 0.37), (0.02, 0.09, 0.27)]),
+        light: TankPaint.RGB(1.0, 0.97, 0.84), shafts: 1)
+
+    /// Every theme's water. The deep stops keep their cast all the way
+    /// down, so the far water reads as distance, not as a flat wall.
+    private static let waters: [String: TankWater] = [
+        "classic": classicWater,
+        "reef": TankWater(stops: column([
+            (0.40, 0.78, 0.84), (0.22, 0.62, 0.76), (0.10, 0.45, 0.68), (0.05, 0.30, 0.57),
+            (0.03, 0.19, 0.47), (0.02, 0.12, 0.37), (0.015, 0.07, 0.27)]),
+            light: TankPaint.RGB(1.0, 0.98, 0.88), shafts: 1),
+        "lagoon": TankWater(stops: column([
+            (0.60, 0.93, 0.82), (0.40, 0.84, 0.76), (0.22, 0.66, 0.70), (0.11, 0.46, 0.60),
+            (0.06, 0.30, 0.49), (0.04, 0.19, 0.38), (0.03, 0.11, 0.28)]),
+            light: TankPaint.RGB(1.0, 0.99, 0.86), shafts: 1.15),
+        "twilight": TankWater(stops: column([
+            (0.44, 0.54, 0.80), (0.30, 0.42, 0.70), (0.17, 0.30, 0.58), (0.10, 0.19, 0.46),
+            (0.06, 0.12, 0.36), (0.04, 0.08, 0.28), (0.025, 0.05, 0.20)]),
+            light: TankPaint.RGB(0.88, 0.86, 1.0), shafts: 0.6),
+        "midnight": TankWater(stops: column([
+            (0.11, 0.18, 0.33), (0.08, 0.14, 0.29), (0.055, 0.10, 0.24), (0.035, 0.07, 0.20),
+            (0.025, 0.05, 0.16), (0.018, 0.035, 0.13), (0.012, 0.025, 0.10)]),
+            light: TankPaint.RGB(0.70, 0.80, 1.0), shafts: 0.35),
+        "dawn": TankWater(stops: column([
+            (0.88, 0.64, 0.66), (0.70, 0.57, 0.69), (0.44, 0.50, 0.68), (0.23, 0.38, 0.60),
+            (0.12, 0.26, 0.49), (0.06, 0.16, 0.38), (0.035, 0.09, 0.28)]),
+            light: TankPaint.RGB(1.0, 0.84, 0.72), shafts: 0.8),
+        "kelp": TankWater(stops: column([
+            (0.56, 0.77, 0.45), (0.37, 0.64, 0.42), (0.21, 0.50, 0.39), (0.11, 0.36, 0.35),
+            (0.06, 0.24, 0.29), (0.035, 0.15, 0.22), (0.02, 0.09, 0.16)]),
+            light: TankPaint.RGB(1.0, 0.97, 0.74), shafts: 1),
+        "abyss": TankWater(stops: column([
+            (0.05, 0.08, 0.17), (0.035, 0.06, 0.14), (0.025, 0.045, 0.11), (0.018, 0.03, 0.08),
+            (0.012, 0.02, 0.06), (0.008, 0.015, 0.045), (0.005, 0.01, 0.03)]),
+            light: TankPaint.RGB(0.55, 0.75, 1.0), shafts: 0),
+        "sunset": TankWater(stops: column([
+            (0.94, 0.58, 0.32), (0.82, 0.44, 0.39), (0.57, 0.31, 0.49), (0.33, 0.21, 0.51),
+            (0.19, 0.13, 0.45), (0.10, 0.08, 0.35), (0.055, 0.045, 0.26)]),
+            light: TankPaint.RGB(1.0, 0.76, 0.50), shafts: 0.9),
+        "blackwater": TankWater(stops: column([
+            (0.55, 0.44, 0.27), (0.44, 0.35, 0.21), (0.33, 0.25, 0.16), (0.23, 0.17, 0.11),
+            (0.15, 0.11, 0.075), (0.095, 0.07, 0.05), (0.055, 0.04, 0.03)]),
+            light: TankPaint.RGB(1.0, 0.84, 0.54), shafts: 0.45),
+    ]
 
     /// The water for a theme key — "classic" when the key is unknown.
     static func water(forTheme themeKey: String) -> TankWater {
-        waters[themeKey] ?? waters["classic"]!
+        waters[themeKey] ?? classicWater
     }
 
     var water: TankWater { Self.water(forTheme: themeKey) }

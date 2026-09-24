@@ -477,7 +477,7 @@ struct AquariumView: View {
 
     /// The tank's own coordinate space — the canvas's points, which the
     /// chrome measures itself in so a pearl can fly home to its chip.
-    static let tankSpace = "aquarium-tank"
+    nonisolated static let tankSpace = "aquarium-tank"
 
     /// Where the pointer is and which fish it is over. A plain
     /// reference held in `ViewState`: the hover changes every frame
