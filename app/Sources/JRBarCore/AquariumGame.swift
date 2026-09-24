@@ -40,8 +40,14 @@ public enum AquariumRules {
     public static let dropPearlValue = 1
     /// The tank holds at most this many uncollected drops.
     public static let maxDrops = 24
-    /// An owned snail picks up a drop after it has sat this long.
+    /// With the tank closed, an owned snail picks up a drop after it
+    /// has sat this long.
     public static let snailCollectAfter: TimeInterval = 10
+    /// With the tank open the snail fetches drops itself — the view
+    /// sends `.snailCollected` when it gets there — and the tick only
+    /// sweeps up what has waited this long, so a drop it never reached
+    /// is still paid.
+    public static let snailBackstop: TimeInterval = 120
     /// Pet records kept at most — the oldest non-live go first.
     public static let maxPets = 64
     /// The most raised fish that keep swimming after their sessions
@@ -574,6 +580,9 @@ public enum AquariumEvent: Equatable, Sendable {
     case tick
     /// Drop pet records over the cap — the oldest not in `liveIDs`.
     case prune(liveIDs: Set<String>)
+    /// The snail reached a drop on the sand and picked it up — paid
+    /// exactly like a click. A drop already gone is a no-op.
+    case snailCollected(dropID: String)
     /// Remember what a listed session's fish is called and who it
     /// belongs to — only on a record that already exists; a session
     /// that merely swims through earns no record.
@@ -1070,9 +1079,13 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                     pets[id] = care
                 }
             }
-            // The snail collects whatever has sat long enough.
-            if inventory[ShopItem.snail.rawValue, default: 0] > 0 {
-                for drop in drops where nowS - drop.at >= AquariumRules.snailCollectAfter {
+            // The snail collects whatever has sat long enough. With the
+            // window closed that is its old ten seconds; with it open the
+            // snail fetches in the view, and this is only the backstop.
+            if owns(.snail) {
+                let wait = windowOpen ? AquariumRules.snailBackstop
+                    : AquariumRules.snailCollectAfter
+                for drop in drops where nowS - drop.at >= wait {
                     collect(drop, effects: &effects)
                 }
             }
@@ -1163,6 +1176,11 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 care.variant = AquariumVariant.starry.rawValue
                 pets[parent] = care
                 effects.append(.variantEarned(parent, .starry))
+            }
+
+        case .snailCollected(let dropID):
+            if owns(.snail), let drop = drops.first(where: { $0.id == dropID }) {
+                collect(drop, effects: &effects)
             }
 
         case .useClassic(let surface):

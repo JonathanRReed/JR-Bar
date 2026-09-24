@@ -571,3 +571,56 @@ extension AquariumGameTests {
         #expect(!effects.contains { if case .purchaseDenied = $0 { return true }; return false })
     }
 }
+
+// MARK: The snail fetches
+
+extension AquariumGameTests {
+    private static func snailTank(windowOpen: Bool) -> AquariumGame {
+        var game = AquariumGame()
+        game.inventory[ShopItem.snail.rawValue] = 1
+        game.windowOpen = windowOpen
+        game.drops = [PearlDrop(id: "d1", fishID: "a", at: Self.t0.timeIntervalSince1970,
+                                value: AquariumRules.dropPearlValue)]
+        return game
+    }
+
+    @Test("snailCollected pays once; a second send for the same drop is a no-op")
+    func snailCollectedPaysOnce() {
+        var game = Self.snailTank(windowOpen: true)
+        game.apply(.snailCollected(dropID: "d1"), now: Self.t0 + 3)
+        #expect(game.drops.isEmpty)
+        #expect(game.totals.dropsCollected == 1)
+        let paid = game.pearls
+        game.apply(.snailCollected(dropID: "d1"), now: Self.t0 + 4)
+        #expect(game.pearls == paid)
+        #expect(game.totals.dropsCollected == 1)
+    }
+
+    @Test("a tank without a snail can't be paid by one")
+    func snailCollectedNeedsASnail() {
+        var game = Self.snailTank(windowOpen: true)
+        game.inventory = [:]
+        game.apply(.snailCollected(dropID: "d1"), now: Self.t0 + 3)
+        #expect(game.drops.count == 1)
+    }
+
+    @Test("with the window open the tick leaves a 10 s drop, and the 120 s backstop collects it")
+    func snailBackstop() {
+        var game = Self.snailTank(windowOpen: true)
+        game.apply(.tick, now: Self.t0 + AquariumRules.snailCollectAfter + 1)
+        #expect(game.drops.count == 1, "the snail is on its way; the tick waits for it")
+        game.apply(.tick, now: Self.t0 + AquariumRules.snailBackstop - 1)
+        #expect(game.drops.count == 1)
+        game.apply(.tick, now: Self.t0 + AquariumRules.snailBackstop + 1)
+        #expect(game.drops.isEmpty, "a drop the snail never reached still pays")
+        #expect(game.totals.dropsCollected == 1)
+    }
+
+    @Test("with the window closed the tick still collects after 10 s")
+    func snailClosedTick() {
+        var game = Self.snailTank(windowOpen: false)
+        game.apply(.tick, now: Self.t0 + AquariumRules.snailCollectAfter + 1)
+        #expect(game.drops.isEmpty)
+        #expect(game.away.dropsCollected == 1)
+    }
+}
