@@ -10,11 +10,13 @@ import Testing
 /// monitor, no event tap, no repeating timer or clock, no capture stream,
 /// no panel on screen.
 ///
-/// The notch, the shelf, the Keep Awake card and the Data Hoarder are
-/// turned on (with their system hands replaced by counters) and then off.
-/// The Menu Bar, the Dock and the Screen Bar are checked from off: starting
-/// them for real in a test process would take the Mac's menu bar, the
-/// Dock's accessibility and an on-screen band, which no suite may do.
+/// The notch, the shelf, the Keep Awake card, the Data Hoarder and Agent
+/// Overview are turned on (with their system hands replaced by counters)
+/// and then off. The Menu Bar, the Dock and the Screen Bar are only built
+/// off and checked, and their tests say so: starting them for real in a
+/// test process would take the Mac's menu bar, the Dock's accessibility
+/// and an on-screen band, which no suite may do. Those three cases pin
+/// what off starts with, not that turning off lets go.
 @Suite("Utility off-cost", .serialized)
 @MainActor
 struct UtilityOffCostTests {
@@ -123,7 +125,7 @@ struct UtilityOffCostTests {
         #expect(await model.capture.activeSourceIDs.isEmpty, "no file watcher left")
     }
 
-    @Test("Agent Overview off keeps nothing running")
+    @Test("Agent Overview has nothing to run, on or off")
     func agentOverviewOff() {
         let core = CoreModel()
         let utility = AgentUtility(core: core)
@@ -132,6 +134,11 @@ struct UtilityOffCostTests {
         let store = Store()
         utility.settings = { store.settings }
         utility.onSettingsChange = { store.settings = $0 }
+        // On: its rules are read where each event lands, so nothing starts.
+        utility.isOn = true
+        utility.applySettings()
+        #expect(utility.isOn)
+        #expect(utility.status != .off)
         utility.isOn = false
         utility.applySettings()
         #expect(!utility.isOn)
@@ -143,7 +150,7 @@ struct UtilityOffCostTests {
     // its recovery paths may hand saved values back to the system's own
     // domains, which no suite may touch.
 
-    @Test("the Menu Bar off holds no engine, no reveal and no Item Bar")
+    @Test("a Menu Bar built off holds no engine, no reveal and no Item Bar")
     func menuBarOff() {
         let utility = MenuBarUtility()
         var settings = MenuBarSettings()
@@ -154,7 +161,7 @@ struct UtilityOffCostTests {
         #expect(!utility.reveal.revealed)
     }
 
-    @Test("the Dock off watches nothing and draws nothing")
+    @Test("a Dock built off watches nothing and draws nothing")
     func dockOff() {
         let utility = DockUtility()
         var settings = DockSettings()
