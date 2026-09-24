@@ -56,9 +56,13 @@ what comes after, in rough order.
 
 ## Deliberately not planned
 
-- A phone companion, a Waybar client, weather, a timebox timer, operator
-  export, the external Agent Deck bridge: deleted in 0.8 and not coming
-  back in that shape.
+- A phone companion, a Waybar client, severe-weather alerts, a timebox
+  timer, operator export, the external Agent Deck bridge: deleted in 0.8
+  and not coming back in that shape. Two things with similar names stay:
+  the notch card's Weather row (off by default, a keyless Open-Meteo read
+  of a city you type, IP location only if you opt in) and the shelf's
+  agent timers (a countdown to a quota reset, or a nudge if a session is
+  still running).
 - Executable effect plugins. Effects stay data-only JSON packs.
 - Windows or a native Linux runtime. Only remote-peer viewing crosses the
   Mac boundary.
