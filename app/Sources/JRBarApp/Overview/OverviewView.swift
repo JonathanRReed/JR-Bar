@@ -248,40 +248,27 @@ struct OverviewView: View {
             summaryStrip
             connectionsStrip
             if let error = store.error, !store.roster.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                    Text(error).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                    Spacer()
-                }
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .accessibilityElement(children: .combine)
+                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error)
+                    .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if let status = store.actionStatus {
-                HStack(spacing: 8) {
-                    Image(systemName: store.actionIsError ? "xmark.octagon" : "checkmark.circle")
-                        .foregroundStyle(store.actionIsError ? .red : .green)
-                    Text(status).font(.system(size: 11))
-                        .foregroundStyle(store.actionIsError ? .red : .secondary)
-                        .lineLimit(1).truncationMode(.tail).textSelection(.enabled)
-                    Spacer()
+                WindowNoticeRow(symbol: store.actionIsError ? "xmark.octagon.fill" : "checkmark.circle.fill",
+                                tint: store.actionIsError ? .red : .green, text: status) {
                     Button { store.actionStatus = nil } label: {
-                        Image(systemName: "xmark").font(.system(size: 9))
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Dismiss status")
                 }
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .accessibilityElement(children: .combine)
+                .textSelection(.enabled)
+                .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if let day = store.dayFilter {
-                HStack(spacing: 8) {
-                    Image(systemName: "calendar").foregroundStyle(.secondary)
-                    Text("Last active \(HistoryDayParse.title(day.day))" + (day.provider.map { " · \(ProviderStyle.style(for: $0).name)" } ?? ""))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                    Spacer()
+                WindowNoticeRow(symbol: "calendar", tint: .accentColor,
+                                text: "Last active \(HistoryDayParse.title(day.day))" + (day.provider.map { " · \(ProviderStyle.style(for: $0).name)" } ?? "")) {
                     if store.onOpenHistoryDay != nil {
                         Button("That day in History") { store.onOpenHistoryDay?(day.day) }
-                            .buttonStyle(.link).font(.system(size: 11))
+                            .buttonStyle(.link)
                             .help("Every started, finished, asked and failed row of that day")
                     }
                     Button { store.dayFilter = nil } label: {
@@ -290,56 +277,47 @@ struct OverviewView: View {
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Show every day")
                 }
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .accessibilityElement(children: .combine)
+                .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if let parent = store.workerFilter {
-                HStack(spacing: 8) {
-                    Image(systemName: "person.2").foregroundStyle(.secondary)
-                    // The raw agent id ("claude:session:9f3a…") is noise —
-                    // the parent row's label or short id is the name a
-                    // user actually recognises.
-                    let parentName = store.roster.first { $0.id == parent }
-                        .map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
-                    Text("Workers of \(parentName)").font(.system(size: 11)).foregroundStyle(.secondary)
-                    Spacer()
+                // The raw agent id ("claude:session:9f3a…") is noise — the
+                // parent row's label or short id is the name a user
+                // actually recognises.
+                let parentName = store.roster.first { $0.id == parent }
+                    .map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
+                WindowNoticeRow(symbol: "person.2.fill", tint: .accentColor, text: "Workers of \(parentName)") {
                     Button { store.workerFilter = nil } label: {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 11))
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Show all sessions")
                 }
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .accessibilityElement(children: .combine)
+                .padding(.horizontal, 10).padding(.bottom, 6)
             }
             Divider()
             if !store.isLive, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                   text: "The roster comes from the monitor. Rows appear as soon as the socket is live.")
+                                   text: "The roster comes from the monitor. Rows appear as soon as the socket is live.",
+                                   tint: .orange)
             } else if !store.isLive {
                 // The window is the record of what happened — a dead
                 // socket must not erase it. Show the last roster, dimmed
                 // and disclaimed, with live actions gated by `canOpen`/
                 // `askAction` which already refuse remote/dead work.
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.horizontal.circle")
-                        .foregroundStyle(.orange)
-                    Text("Monitor not connected — showing the last roster it reported.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(.orange.opacity(0.07))
+                WindowNoticeRow(symbol: "bolt.horizontal.circle.fill", tint: .orange,
+                                text: "Monitor not connected — showing the last roster it reported.")
+                    .padding(.horizontal, 10).padding(.vertical, 6)
                 rosterTable.opacity(0.55)
             } else if let error = store.error, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "exclamationmark.triangle", title: "Couldn't load the roster",
-                                   text: error)
+                                   text: error, tint: .orange)
             } else if store.nobodyWaiting {
                 // The default view with nothing to answer is good news,
                 // not a filter that failed.
                 let working = store.workingOverall
-                OverviewEmptyState(symbol: "checkmark.circle", title: "Nobody's waiting on you",
+                OverviewEmptyState(symbol: "checkmark", title: "Nobody's waiting on you",
                                    text: "When an agent asks for you, it lands here.",
+                                   tint: .green,
                                    actionTitle: working > 0 ? "Show \(working) working" : nil,
                                    action: { store.showWorking() })
             } else if store.rows.isEmpty {
@@ -565,37 +543,38 @@ struct OverviewView: View {
 
     /// "2 live · 1 needs you · 1 failed · 1 unreviewed · 3 hidden" —
     /// over the filtered rows, so the strip and the table can never
-    /// disagree. Failed gets its own red word: a dead run is not a
-    /// question and must not read as one anywhere in the window.
+    /// disagree. Each count is a small pill in its state's tint; failed
+    /// gets its own red: a dead run is not a question and must not read
+    /// as one anywhere in the window.
     @ViewBuilder
     private var summaryStrip: some View {
         let counts = store.stripCounts
-        HStack(spacing: 10) {
-            Text("\(counts.live) live")
+        HStack(spacing: 6) {
+            OverviewCountPill(text: "\(counts.live) live", tint: .green)
             if counts.attention > 0 {
-                Text("· \(counts.attention) need\(counts.attention == 1 ? "s" : "") you").foregroundStyle(.orange)
+                OverviewCountPill(text: "\(counts.attention) need\(counts.attention == 1 ? "s" : "") you", tint: .orange)
             }
             if counts.failed > 0 {
-                Text("· \(counts.failed) failed").foregroundStyle(.red)
+                OverviewCountPill(text: "\(counts.failed) failed", tint: .red)
             }
             if counts.unreviewed > 0 {
-                Text("· \(counts.unreviewed) unreviewed").foregroundStyle(.secondary)
+                OverviewCountPill(text: "\(counts.unreviewed) unreviewed", tint: .secondary)
             }
             if counts.hidden > 0 {
-                Text("· \(counts.hidden) hidden").foregroundStyle(.tertiary)
+                OverviewCountPill(text: "\(counts.hidden) hidden", tint: .secondary, quiet: true)
             }
             if let whole = store.wholeRosterPhrase {
                 // The counts above are this view's; this is everyone's.
-                Text("· \(whole)").foregroundStyle(.tertiary).lineLimit(1)
+                Text(whole).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer()
             if store.loading {
                 ProgressView().controlSize(.mini)
             } else if let loadedAt = store.loadedAt {
-                Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).font(.system(size: 10))
+                Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).font(.system(size: 10.5))
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 6)
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
         .font(.system(size: 11))
         .accessibilityElement(children: .combine)
     }
@@ -639,7 +618,7 @@ struct OverviewView: View {
                 Circle()
                     .fill(link.tone.color)
                     .frame(width: 5, height: 5)
-                connectionGlyph(link)
+                OverviewLinkGlyph(link: link, size: 12)
                 Text(link.title)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
@@ -669,96 +648,6 @@ struct OverviewView: View {
         if let subtitle = link.subtitle { parts.append(subtitle) }
         parts.append(link.tone.rawValue)
         return parts.joined(separator: ", ")
-    }
-
-    /// Providers draw their brand tile; everything else takes the link's
-    /// SF Symbol.
-    @ViewBuilder
-    private func connectionGlyph(_ link: OverviewLink) -> some View {
-        if link.group == .providers {
-            let raw = String(link.id.dropFirst("provider:".count))
-            let pid = raw.split(separator: "|").first.map(String.init) ?? raw
-            ProviderTile(style: ProviderStyle.style(for: pid), size: 12)
-        } else {
-            Image(systemName: link.symbol)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    /// A focused chip's facts — the same labelled grid the session
-    /// inspector uses, every line carrying the daemon's own words.
-    private func connectionInspector(_ link: OverviewLink) -> some View {
-        SnapshotScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 8) {
-                    connectionGlyph(link)
-                    Text(link.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(2)
-                    Circle().fill(link.tone.color).frame(width: 7, height: 7)
-                }
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
-                    ForEach(link.facts, id: \.label) { item in
-                        fact(item.label, item.value, evidence: .reported)
-                    }
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(minWidth: 220)
-    }
-
-    /// The inspector's idle state: the whole wiring, grouped — core,
-    /// nodes, devices, providers — so an empty roster still answers
-    /// "what is connected". A row focuses that link.
-    private var connectionsBrowser: some View {
-        SnapshotScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Connections")
-                    .font(.system(size: 15, weight: .semibold))
-                ForEach(OverviewLink.Group.allCases, id: \.self) { group in
-                    let links = store.links.filter { $0.group == group }
-                    if !links.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(group.title)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                            ForEach(links) { link in
-                                Button { store.selectLink(link.id) } label: {
-                                    HStack(spacing: 7) {
-                                        Circle().fill(link.tone.color).frame(width: 6, height: 6)
-                                        connectionGlyph(link)
-                                        Text(link.title)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .lineLimit(1)
-                                        if let subtitle = link.subtitle {
-                                            Text(subtitle)
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        Spacer(minLength: 4)
-                                    }
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .help(link.helpText)
-                            }
-                        }
-                    }
-                }
-                Text("Select a session row for its inspector.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(minWidth: 220)
     }
 
     @ViewBuilder
@@ -834,449 +723,12 @@ struct OverviewView: View {
         if store.pane == .usage {
             UsageGraphFacts(store: store)
         } else if let entry = store.selected {
-            SnapshotScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(entry.session.label ?? entry.session.shortId ?? "Session")
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(2)
-                    inspectorFacts(entry)
-                    if let ask = entry.session.ask {
-                        waitingSection(entry: entry, ask: ask)
-                    }
-                    if let message = entry.session.message, !message.isEmpty {
-                        inspectorSection("Last message", text: message)
-                    }
-                    if let coverage = store.coverageNote, entry.visibility == "hidden" {
-                        Text(coverage).font(.system(size: 10)).foregroundStyle(.tertiary)
-                    }
-                    timelineSection(for: entry)
-                    observedToolsSection(for: entry)
-                    if let previous = store.previousRun(for: entry) {
-                        Button {
-                            store.compareWithPreviousRun(entry)
-                        } label: {
-                            Label("Compare with the previous run here", systemImage: "arrow.left.arrow.right")
-                                .font(.system(size: 11))
-                        }
-                        .buttonStyle(.link)
-                        .disabled(store.comparing)
-                        .help("Side by side with \(previous.session.label ?? previous.session.shortId ?? "the last finished run") in the same folder")
-                    }
-                    if entry.session.remote {
-                        Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    } else {
-                        // The button names its target: the terminal app
-                        // the daemon says hosts the session — "Open in
-                        // iTerm", never a bare promise.
-                        let app = entry.session.terminal?.app
-                        HStack(spacing: 8) {
-                            Button(app.map { "Open in \($0)" } ?? "Open session") { store.openSelected() }
-                                .buttonStyle(.borderedProminent).controlSize(.small)
-                            if store.canStartHere(entry) {
-                                // A fresh run in the same folder, in your
-                                // own terminal — the first prompt is yours.
-                                Button("New Session Here") { Task { await store.startSessionHere(entry) } }
-                                    .buttonStyle(.bordered).controlSize(.small)
-                                    .help("Start \(ProviderStyle.style(for: entry.session.provider).name) in your terminal at \(entry.session.cwd ?? "this folder")")
-                            }
-                        }
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minWidth: 220)
+            OverviewSessionInspector(store: store, entry: entry) { replyEntry = $0 }
         } else if let link = store.selectedLink {
-            connectionInspector(link)
+            OverviewConnectionInspector(link: link)
         } else {
-            connectionsBrowser
+            OverviewConnectionsBrowser(store: store)
         }
-    }
-
-    private func inspectorFacts(_ entry: CoreRosterEntry) -> some View {
-        let session = entry.session
-        return Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
-            // S7.3: every fact names its evidence class — what the provider
-            // reported vs what the daemon derived vs what nobody can say.
-            fact("State", SessionActivity.reduce(session).word, evidence: .derived)
-            fact("Outcome", entry.axes?.outcome ?? "—", evidence: .derived)
-            fact("Review", entry.axes?.review ?? "—", evidence: .derived)
-            fact("Freshness", entry.axes?.freshness ?? (session.stale ? "stale" : "live"), evidence: .derived)
-            fact("Harness", session.provider, evidence: .reported)
-            if let origin = session.origin?.label { fact("Origin", origin, evidence: .reported) }
-            if let project = OverviewFilter.projectName(of: session.cwd) {
-                fact("Project", project, evidence: .derived)
-            }
-            if let tool = session.tool { fact("Tool", tool, evidence: .reported) }
-            if session.workers > 0 { fact("Workers", "\(session.workers)", evidence: .reported) }
-            if session.stale { fact("Stale", "yes", evidence: .reported) }
-            if let usage = store.usage(for: entry) {
-                // `session_usage`: the run's own transcript, read for
-                // model and tokens — reported by the provider; the cost is
-                // the daemon's list-price arithmetic, so derived.
-                if let model = usage.modelName {
-                    fact("Model (transcript)", model, evidence: .reported)
-                }
-                if usage.models.count > 1 {
-                    fact("Models", usage.models.sorted { $0.value > $1.value }
-                        .map { "\(ModelName.display($0.key) ?? $0.key) \(UsageFormat.tokens($0.value))" }
-                        .joined(separator: ", "), evidence: .reported)
-                }
-                if usage.tokens.total > 0 {
-                    fact("Tokens", Self.tokensFact(usage), evidence: .reported)
-                }
-                if let cost = usage.costText {
-                    fact("Cost", cost + (usage.costEstimated ? " (stand-in rate)" : ""), evidence: .derived)
-                }
-                if let context = usage.contextText {
-                    fact("Context", context, evidence: usage.contextWindowSource == "reported" ? .reported : .derived)
-                }
-            } else if let model = store.transcriptModel, store.timelineSessionID == entry.id {
-                // The transcript's own word for the model — the label
-                // names the source so it never reads as a roster fact.
-                fact("Model (transcript)", model, evidence: .reported)
-            } else {
-                fact("Model", store.sessionUsage.gap(for: entry.id).map(SessionUsageDocument.gapText) ?? "not read yet",
-                     evidence: .unavailable)
-            }
-        }
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
-    }
-
-    /// "1.2M in 48 turns · 84% cached".
-    static func tokensFact(_ usage: SessionUsage) -> String {
-        var text = "\(UsageFormat.tokens(usage.tokens.total)) in \(usage.turns) turn\(usage.turns == 1 ? "" : "s")"
-        if let share = usage.tokens.cacheShare, share >= 0.01 {
-            text += " · \(Int((share * 100).rounded()))% cached"
-        }
-        return text
-    }
-
-    /// S7.3's evidence vocabulary: reported (the source said it), derived
-    /// (the daemon computed it from reported inputs), unavailable.
-    private enum Evidence: String {
-        case reported = "Reported"
-        case derived = "Derived"
-        case unavailable = "Unavailable"
-
-        var tint: Color {
-            switch self {
-            case .reported: return .accentColor
-            case .derived: return .secondary
-            case .unavailable: return .orange
-            }
-        }
-    }
-
-    private func fact(_ name: String, _ value: String, evidence: Evidence) -> some View {
-        GridRow {
-            Text(name).foregroundStyle(.tertiary)
-            HStack(spacing: 5) {
-                Text(value).textSelection(.enabled)
-                Text(evidence.rawValue)
-                    .font(.system(size: 8, weight: .medium))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(evidence.tint.opacity(0.15), in: .capsule)
-                    .foregroundStyle(evidence.tint)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name): \(value) (\(evidence.rawValue))")
-    }
-
-    private func inspectorSection(_ title: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-            Text(text).font(.system(size: 12)).textSelection(.enabled)
-        }
-    }
-
-    /// The "Waiting on you" section: the ask's summary and age, then the
-    /// explicit actions — Approve / Deny / Reply…. Every button sends
-    /// with the ask's `request` pinned, so the daemon itself refuses a
-    /// stale card (`stale_request`) or an ask that moved on; Approve and
-    /// Deny go through the shared desk and are drawn only where it would
-    /// send them. Nothing here ever auto-answers; disabled buttons carry
-    /// the reason as a tooltip rather than silently greying.
-    @ViewBuilder
-    private func waitingSection(entry: CoreRosterEntry, ask: CoreAsk) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text("Waiting on you")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                if let waiting = OverviewStore.waitingText(entry, now: store.now) {
-                    Text(waiting).font(.system(size: 10)).foregroundStyle(.orange)
-                }
-            }
-            Text(ask.summary ?? "This session has an open question.")
-                .font(.system(size: 12)).textSelection(.enabled)
-            if let preview = ask.previewLine {
-                HStack(spacing: 5) {
-                    if ask.isDestructive { AskRiskMark(size: 10) }
-                    Text(preview)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
-                        .textSelection(.enabled)
-                        .lineLimit(3)
-                }
-            } else if ask.isDestructive {
-                Label("Destructive — it can lose work if it runs by mistake", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10)).foregroundStyle(.red)
-            }
-            if !entry.session.remote, AskVerbs.chooses(ask) {
-                // A held question: its options are the answer, through
-                // the agent's own hook, from whatever terminal hosts it.
-                choiceSection(entry: entry, ask: ask)
-            } else {
-                let reason = store.askDisabledReason(for: entry)
-                HStack(spacing: 8) {
-                    if reason != nil || AskVerbs.approves(ask) {
-                        Button("Approve") {
-                            Task { await store.answerAsk(entry: entry, approve: true) }
-                        }
-                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
-                    }
-                    if AskVerbs.alwaysAllows(ask) {
-                        // Its own button: the agent remembers the rule.
-                        Button("Always Allow") {
-                            Task { await store.alwaysAllow(entry: entry) }
-                        }
-                        .buttonStyle(.bordered).controlSize(.small)
-                        .help("Approve, and let the agent remember the rule it offered")
-                    }
-                    if reason != nil || AskVerbs.denies(ask) {
-                        Button("Deny") {
-                            Task { await store.answerAsk(entry: entry, approve: false) }
-                        }
-                        .buttonStyle(.bordered).controlSize(.small).tint(.red)
-                    }
-                    if store.canReply(entry) {
-                        Button("Reply…") { replyEntry = entry }
-                            .buttonStyle(.bordered).controlSize(.small)
-                    }
-                }
-                .disabled(reason != nil || store.askDesk.isPending(entry.id))
-                .help(reason ?? (ask.isHeldForDecision
-                    ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
-                    : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
-                if let reason {
-                    Label(reason, systemImage: "info.circle")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-            }
-        }
-    }
-
-    /// A held question in the inspector: every question with its options
-    /// as buttons — one click answers a single-pick question; several
-    /// parts pick first and then Send — and Deny, which declines it.
-    @ViewBuilder
-    private func choiceSection(entry: CoreRosterEntry, ask: CoreAsk) -> some View {
-        let choices = ask.decision?.choices ?? []
-        let picks = store.askDesk.picks(for: ask)
-        let oneClick = choices.count == 1 && choices.first?.multi == false
-        let busy = store.askDesk.isPending(entry.id)
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(choices, id: \.question) { choice in
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(choice.header.map { "\($0) — \(choice.question)" } ?? choice.question)
-                        .font(.system(size: 11, weight: .medium))
-                    WrapRow {
-                        ForEach(choice.options, id: \.self) { label in
-                            if picks.isPicked(label, in: choice) {
-                                optionButton(label, choice: choice, entry: entry)
-                                    .buttonStyle(.borderedProminent)
-                            } else {
-                                optionButton(label, choice: choice, entry: entry)
-                                    .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                }
-            }
-            HStack(spacing: 8) {
-                if !oneClick {
-                    Button("Send Answers") { Task { await store.sendPicks(entry: entry) } }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                        .disabled(!picks.isComplete(choices))
-                }
-                Button("Deny") { Task { await store.declineQuestion(entry: entry) } }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
-            }
-        }
-        .disabled(busy)
-    }
-
-    private func optionButton(_ label: String, choice: CoreAskChoice, entry: CoreRosterEntry) -> some View {
-        Button(label) { Task { await store.pick(label, in: choice, entry: entry) } }
-            .controlSize(.small)
-            .help(choice.multi ? "Pick or unpick “\(label)”" : "Answer “\(label)”")
-    }
-
-    // MARK: Timeline
-
-    /// S7.2 Timeline: the session's transcript rows — messages, tool
-    /// pairs, turn ends — occurrence time on the left. "Load earlier"
-    /// is the only way deeper history enters; nothing is virtualised
-    /// silently past the daemon's page bound. Kind chips and "Jump to
-    /// error" are display cuts over the loaded items, never new fetches.
-    @ViewBuilder
-    private func timelineSection(for entry: CoreRosterEntry) -> some View {
-        if entry.session.remote {
-            // The transcript lives on the peer Mac — a local fetch can
-            // only answer "not found", which reads as broken.
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Timeline")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                Text("The transcript is on \(entry.session.origin?.label ?? "the remote Mac") — open the session there to read it.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-        } else {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text("Timeline").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                Spacer()
-                if store.timelineLoading { ProgressView().controlSize(.mini) }
-                Button {
-                    Task { await store.refreshTimeline() }
-                } label: {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 9))
-                }
-                .buttonStyle(.plain).foregroundStyle(.tertiary)
-                .disabled(store.timelineLoading || store.timelinePage == nil)
-                .help("Reload the newest page")
-                .accessibilityLabel("Refresh timeline")
-                Button {
-                    store.prepareRunExport(entry)
-                } label: {
-                    Image(systemName: "square.and.arrow.up").font(.system(size: 9))
-                }
-                .buttonStyle(.plain).foregroundStyle(.tertiary)
-                .disabled(store.timelinePage == nil || store.timelineSessionID != entry.id)
-                .help("Export this run as Markdown: its facts, what happened and the timeline")
-                .accessibilityLabel("Export this run as Markdown")
-                if let page = store.timelinePage, store.timelineSessionID == entry.id, page.hasMore {
-                    Button("Load earlier") { Task { await store.loadEarlierTimeline() } }
-                        .controlSize(.mini)
-                }
-            }
-            if store.timelineSessionID == entry.id {
-                if let page = store.timelinePage {
-                    // The one timeline view History and the Data Hoarder
-                    // mount too: the story card, the honest gaps, the
-                    // kind chips, jump to error and the rows.
-                    if let archived = store.archivedTimeline, archived.id == entry.id {
-                        // The live transcript is gone but the Data Hoarder
-                        // kept it: the same view, labelled as the archive's.
-                        ReconstructedTimelineView(
-                            reconstruction: archived.reconstruction,
-                            viewState: store.timelineViewState, embedded: true,
-                            sourceNote: "Archived copy · \(archived.record.name) — the live transcript is gone")
-                    } else {
-                        ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
-                                                  viewState: store.timelineViewState, embedded: true,
-                                                  liveTail: OverviewStore.liveTail(for: entry))
-                    }
-                    if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
-                        Button {
-                            store.onOpenArchive?(OverviewStore.archiveSearchTerm(for: entry))
-                        } label: {
-                            Label("Search archive for this session", systemImage: "archivebox")
-                                .font(.system(size: 10))
-                        }
-                        .buttonStyle(.plain).foregroundStyle(.orange)
-                        .help("Open Data Hoarder seeded with this session's id")
-                    }
-                    if let file = page.file {
-                        archiveSourceLine(file: file, total: page.total)
-                    }
-                } else if store.timelineLoading {
-                    Text("Reading transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
-            }
-        }
-        }
-    }
-
-    /// The transcript's source line: path + item count, plus the Data
-    /// Hoarder's verdict when the archive probe answered — "Archived"
-    /// with a Reveal affordance, or nothing when the archive can't say.
-    @ViewBuilder
-    private func archiveSourceLine(file: String, total: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Source: \(file) · \(total) items")
-                .font(.system(size: 9)).foregroundStyle(.quaternary)
-                .textSelection(.enabled)
-            if let state = store.archiveStates[file], let row = state {
-                HStack(spacing: 6) {
-                    Text("Archived")
-                        .font(.system(size: 8, weight: .medium))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color.green.opacity(0.15), in: .capsule)
-                        .foregroundStyle(.green)
-                    Button("Reveal") {
-                        NSWorkspace.shared.activateFileViewerSelecting(
-                            [URL(fileURLWithPath: row.path)])
-                    }
-                    .buttonStyle(.plain).font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .help("Show the transcript in Finder")
-                }
-            }
-        }
-        .task { await store.probeArchive(file: file) }
-    }
-
-
-    // MARK: Observed tools
-
-    /// The tools and MCP servers this run actually called, from the
-    /// transcript already loaded for the Timeline — observed, not static,
-    /// and it works for Claude Code and Codex, which no static analyzer
-    /// scans. Failures ride beside the counts.
-    @ViewBuilder
-    private func observedToolsSection(for entry: CoreRosterEntry) -> some View {
-        let map = store.observedTools
-        if store.timelineSessionID == entry.id, !map.isEmpty {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text("Tools used")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                    Text("observed")
-                        .font(.system(size: 8, weight: .medium))
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.15), in: .capsule)
-                        .foregroundStyle(Color.accentColor)
-                    Spacer()
-                    Text("\(map.totalCalls) calls in the loaded transcript")
-                        .font(.system(size: 9)).foregroundStyle(.quaternary)
-                }
-                if !map.tools.isEmpty {
-                    Text(map.tools.prefix(10).map(Self.toolText).joined(separator: " · "))
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-                ForEach(map.servers) { server in
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Image(systemName: "server.rack")
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
-                        Text(server.name).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                        Text(server.tools.prefix(6).map(Self.toolText).joined(separator: " · "))
-                            .font(.system(size: 10)).foregroundStyle(.tertiary)
-                            .lineLimit(2)
-                    }
-                    .help("MCP server \(server.name): \(server.calls) calls")
-                }
-            }
-        }
-    }
-
-    /// "Bash ×12 (2 failed)".
-    private static func toolText(_ tool: ObservedToolMap.Tool) -> String {
-        tool.failures > 0 ? "\(tool.name) ×\(tool.calls) (\(tool.failures) failed)" : "\(tool.name) ×\(tool.calls)"
     }
 }
 
@@ -1465,30 +917,41 @@ struct CompareRunsSheet: View {
     }
 }
 
-/// The shared empty-state label set (Replay uses it too; the Usage
-/// Center's `UsageEmptyState` is fileprivate there).
+/// A count in the Overview's summary strip: the number and its word in a
+/// capsule of its tint, a dot leading.
+struct OverviewCountPill: View {
+    let text: String
+    let tint: Color
+    var quiet = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle().fill(tint).frame(width: 5, height: 5).opacity(quiet ? 0.6 : 1)
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(tint == .secondary ? Color.primary.opacity(quiet ? 0.55 : 0.75) : tint)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2.5)
+        .background(Capsule().fill(tint.opacity(tint == .secondary ? 0.08 : 0.12)))
+    }
+}
+
+/// The Overview's empty states — the roster's, the graph's and the usage
+/// pane's (and the Event Replay's) — in the windows' shared look.
 struct OverviewEmptyState: View {
     let symbol: String
     let title: String
     let text: String
+    var tint: Color = .secondary
     /// One way on from the empty state, when there is an obvious one.
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 30)).foregroundStyle(.quaternary)
-            Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-            Text(text).font(.system(size: 11)).foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center).frame(maxWidth: 320)
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(.link).font(.system(size: 12))
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A button of its own must stay a button to VoiceOver.
-        .accessibilityElement(children: actionTitle == nil ? .combine : .contain)
+        WindowEmptyState(symbol: symbol, title: title, text: text, tint: tint,
+                         actionTitle: actionTitle, action: action)
     }
 }
 
@@ -1606,20 +1069,6 @@ private extension OverviewPreset {
         case .thisMac: return "desktopcomputer"
         case .thisBranch: return "arrow.triangle.branch"
         case .all: return "globe"
-        }
-    }
-}
-
-private extension OverviewLink.Tone {
-    /// The status dot's colour — the same green-means-live vocabulary
-    /// the panel's device chips already speak.
-    var color: Color {
-        switch self {
-        case .good: return .green
-        case .busy: return .blue
-        case .warn: return .orange
-        case .down: return .red
-        case .idle: return .secondary.opacity(0.35)
         }
     }
 }
