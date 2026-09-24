@@ -197,7 +197,7 @@ extension AquariumView {
     /// worker's name shows when labels are off.
     func drawNameplate(canvas: inout GraphicsContext, size: CGSize,
                                fish: Fish, layout l: Layout) {
-        let length = 46 * l.scale * fish.species.sizeScale
+        let length = Self.fishBaseLength * l.scale * fish.species.sizeScale
             * (fish.isFry ? AquariumModel.fryScale : 1)
         let height = length * fish.species.aspect
         let tag = canvas
