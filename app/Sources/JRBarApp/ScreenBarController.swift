@@ -549,6 +549,10 @@ final class ScreenBarController {
         visibility.shown = false
         visibility.steppedAside = false
         peek.hide()
+        // Settings' "Stepped aside for Keynote" line goes with the band.
+        if ScreenBarLiveStatus.shared.steppedAsideForApp != nil {
+            ScreenBarLiveStatus.shared.steppedAsideForApp = nil
+        }
         publishStatus()
         ScreenBarGeometry.menuHandleScreenRect = nil
         updateNoticeMonitors()
@@ -731,7 +735,9 @@ final class ScreenBarController {
     private func wantsVideoGuard() -> Bool {
         let front = NSWorkspace.shared.frontmostApplication
         let aside = Self.stepsAside(forFrontmost: front?.bundleIdentifier, hiddenApps: hiddenApps)
-        let name = aside ? front?.localizedName : nil
+        // Named only while the band is shown: a band that is off steps
+        // aside for nobody, whatever is in front.
+        let name = (isShown && aside) ? front?.localizedName : nil
         if ScreenBarLiveStatus.shared.steppedAsideForApp != name { ScreenBarLiveStatus.shared.steppedAsideForApp = name }
         if isShown, aside { return true }
         guard isShown, showsInFullScreen, hideOverVideo,

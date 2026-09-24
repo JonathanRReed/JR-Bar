@@ -165,13 +165,17 @@ struct UtilityOffCostTests {
         #expect(!utility.switcher.running, "no switcher chord tap")
     }
 
-    @Test("the Screen Bar hidden runs no clock and has no window up")
+    @Test("a Screen Bar never shown runs no clock, has no window up, and steps aside for nobody")
     func screenBarOff() {
         let bar = ScreenBarController()
         #expect(!bar.isShown)
+        // A name left from before the band went away.
+        ScreenBarLiveStatus.shared.steppedAsideForApp = "Keynote"
         bar.hide()
         #expect(!bar.isShown)
         #expect(!bar.clockRunning, "no frame clock")
         #expect(!bar.panelOnScreen, "no band on screen")
+        #expect(ScreenBarLiveStatus.shared.steppedAsideForApp == nil,
+                "Settings never says the band stepped aside while it is off")
     }
 }
