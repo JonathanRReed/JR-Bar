@@ -44,6 +44,7 @@ FIXTURE_TESTS: Final = (
     "tests/test_provider_usage_parsers.py",
     "tests/test_integration_compatibility_manifest.py",
     "tests/test_settings_schema_coverage.py",
+    "tests/test_provider_usage_fixture_contract.py",
     "tests/test_provider_fixture_ownership.py",
 )
 FOCUSED_TESTS: Final = (
@@ -115,6 +116,10 @@ def build_steps(*, python: str, root: Path, fix: bool) -> tuple[GateStep, ...]:
         GateStep(
             "Tracked secret scan",
             (python, str(root / "scripts" / "scan_secrets.py"), "--root", str(root)),
+        ),
+        GateStep(
+            "Doc links",
+            (python, str(root / "scripts" / "check_doc_links.py"), "--root", str(root)),
         ),
         _pytest_step(python, "Fixture validation", FIXTURE_TESTS),
         _pytest_step(python, "Focused tests", FOCUSED_TESTS),

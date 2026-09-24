@@ -250,7 +250,7 @@ source-test fingerprint remained
 Final independent rereview returned no findings.
 
 Screen Bar energy and thermal work uses the separate fail-closed procedure in
-[`SCREEN-BAR-PROFILING.md`](SCREEN-BAR-PROFILING.md). Source tests do not stand
+[`SCREEN-BAR-PROFILING.md`](../SCREEN-BAR-PROFILING.md). Source tests do not stand
 in for its seven runtime and raw Instruments traces.
 
 Deterministic Screen Bar tests cover command-scoped batch reuse, finite-effect
