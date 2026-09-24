@@ -167,20 +167,23 @@ extension AquariumView {
         let baseY = sandTop(atX: x, in: size) + 1
         let unit = size.height / 700
         contactShadow(canvas: &canvas, x: x, y: baseY, halfW: 20 * unit, alpha: 0.30)
-        // An Amazon sword: broad, veined leaves fanning up from one
-        // crown, each swaying on its own clock, the near edge lit.
+        // An Amazon sword: broad, veined leaves rising from one crown,
+        // no two alike — the outer ones arching over, the inner ones
+        // standing — each swaying on its own clock.
         var leaves = Path()
         var veins = Path()
         var top = baseY
-        for k in 0..<7 {
+        let still = reduceMotion
+        for k in 0..<8 {
             let h = AquariumModel.stableHash("shop-plant-\(k)")
-            let spread = (Double(k) - 3) / 3
-            let reach = (40 + Double((h >> 8) & 0xFF) / 0xFF * 34) * unit * (1 - abs(spread) * 0.3)
-            let sway = reduceMotion ? 0 : sin(t * 0.9 + Double(k) * 1.4) * 0.06
-            let angle = -.pi / 2 + spread * 0.62 + sway
-            let base = CGPoint(x: x + spread * 3 * unit, y: baseY - 2 * unit)
-            leaves.addPath(leaf(from: base, angle: angle, length: reach, width: reach * 0.24,
-                                curl: spread * reach * 0.10))
+            let jitter = Double((h >> 20) & 0xFF) / 0xFF - 0.5
+            let spread = (Double(k) - 3.5) / 3.5 + jitter * 0.25
+            let reach = (36 + Double((h >> 8) & 0xFF) / 0xFF * 40) * unit * (1 - abs(spread) * 0.35)
+            let sway = still ? 0 : sin(t * 0.9 + Double(k) * 1.4) * 0.06
+            let angle = -.pi / 2 + spread * 0.72 + sway
+            let base = CGPoint(x: x + spread * 4 * unit, y: baseY - 2 * unit)
+            leaves.addPath(leaf(from: base, angle: angle, length: reach, width: reach * (0.20 + abs(jitter) * 0.12),
+                                curl: spread * reach * (0.16 + abs(spread) * 0.12)))
             veins.move(to: base)
             veins.addQuadCurve(to: CGPoint(x: base.x + cos(angle) * reach * 0.85 + spread * reach * 0.05,
                                            y: base.y + sin(angle) * reach * 0.85),

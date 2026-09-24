@@ -5,13 +5,14 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// Render proof for the expanded Aquarium: one synthetic tank that
-/// owns every shop item — all the new decor, all six pets, wearables,
-/// a buried treasure, a resident or two — rendered at 1200×700 under
-/// four looks so a human can eyeball the tranche-2B art the way the
-/// review screenshots do. Off by default; set `JRBAR_RENDER_PROOF=1`
-/// to write `aquarium-*.png` into `JRBAR_RENDER_PROOF_DIR` (default
-/// `/tmp/jrbar-audit`).
+/// Render proof for the Aquarium: one synthetic tank that owns every
+/// shop item — all the decor, all the pets, wearables, a buried
+/// treasure, a resident or two — rendered at 1200×700 and 2× under
+/// every theme, floor, back wall, visitor and a night, beside a starter
+/// tank, the empty tank, a small window, the shop and the card, so a
+/// human can eyeball the art the way the review screenshots do. Off by
+/// default; set `JRBAR_RENDER_PROOF=1` to write `aquarium-*.png` into
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
 @Suite("Aquarium render proof")
 @MainActor
 struct AquariumRenderProofTests {

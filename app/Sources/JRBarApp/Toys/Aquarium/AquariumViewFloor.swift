@@ -169,6 +169,31 @@ extension AquariumView {
         }
         far.stroke(lines, with: .color(TankPaint.color(TankPaint.mix(sand.rippleShade, haze, 0.5), 0.22)),
                    lineWidth: 0.7)
+        // Far off on the bank: low stones and tufts of grass, small and
+        // blue with the distance.
+        var stones = Path()
+        var tufts = Path()
+        var scatter = TankPaint.Seeded(0xFA7)
+        for _ in 0..<16 {
+            let x = scatter.next(0, size.width)
+            let y = backDuneTop(atX: x, in: size) + scatter.next(4, 16)
+            if scatter.next() < 0.4 {
+                let w = scatter.next(5, 12)
+                stones.addEllipse(in: CGRect(x: x - w / 2, y: y - w * 0.4, width: w, height: w * 0.55))
+            } else {
+                for k in 0..<5 {
+                    let h = scatter.next(5, 13)
+                    let lean = (Double(k) - 2) * 1.6 + scatter.next(-1, 1)
+                    tufts.move(to: CGPoint(x: x - 0.8 + Double(k) * 0.9, y: y))
+                    tufts.addQuadCurve(to: CGPoint(x: x + lean, y: y - h),
+                                       control: CGPoint(x: x + Double(k) * 0.9, y: y - h * 0.5))
+                    tufts.addLine(to: CGPoint(x: x + 0.8 + Double(k) * 0.9, y: y))
+                    tufts.closeSubpath()
+                }
+            }
+        }
+        far.fill(stones, with: .color(TankPaint.color(TankPaint.mix(TankPaint.RGB(0.40, 0.40, 0.40), haze, 0.55))))
+        far.fill(tufts, with: .color(TankPaint.color(TankPaint.mix(TankPaint.RGB(0.20, 0.42, 0.26), haze, 0.55))))
         // The crest's lit lip, hazed, and the haze rolling over it.
         var lip = Path()
         var x = -2.0

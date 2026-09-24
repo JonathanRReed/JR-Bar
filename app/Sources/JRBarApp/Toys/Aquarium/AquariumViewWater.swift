@@ -393,9 +393,9 @@ extension AquariumView {
             layer.clip(to: bed)
             layer.fill(bed, with: .linearGradient(
                 Gradient(stops: [
-                    .init(color: TankPaint.color(light, 0.04), location: 0),
-                    .init(color: TankPaint.color(light, 0.12), location: 0.3),
-                    .init(color: TankPaint.color(light, 0.05), location: 1),
+                    .init(color: TankPaint.color(light, 0.03), location: 0),
+                    .init(color: TankPaint.color(light, 0.10), location: 0.3),
+                    .init(color: TankPaint.color(light, 0.03), location: 1),
                 ]),
                 startPoint: CGPoint(x: 0, y: far), endPoint: CGPoint(x: 0, y: size.height)))
             layer.blendMode = .destinationOut
