@@ -64,19 +64,20 @@ final class OverviewStore {
     /// whole two-thousand-row record.
     static let usageRowBudget = 48
 
-    init(core: CoreModel) {
+    init(core: CoreModel, desk: AskAnswerDesk? = nil) {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
-        self.ownDesk = AskAnswerDesk(core: core)
+        self.ownDesk = desk ?? AskAnswerDesk(core: core)
         self.fetchGraph = { [weak core] days, metric, providers in
             guard let core else { throw CoreClientError.notConnected }
             return try await core.usageGraph(days: days, metric: metric, providers: providers)
         }
     }
 
-    /// Always allow and a held question's picks go through the panel's
-    /// shared desk (one pending set, one set of picks across surfaces);
-    /// this store's own only until the app delegate publishes that one.
+    /// Approve, Deny, Always allow and a held question's picks go through
+    /// the panel's shared desk (one pending set, one set of picks across
+    /// surfaces); this store's own only until the app delegate publishes
+    /// that one.
     private let ownDesk: AskAnswerDesk
     var askDesk: AskAnswerDesk { AskAnswerDesk.shared ?? ownDesk }
     /// The exact window a live session runs in, through the Dock's
@@ -803,47 +804,48 @@ final class OverviewStore {
     }
 
     /// Whether the Reply… button is offered: the ask must accept free
-    /// text AND be actionable. Approve/Deny only needs actionable.
+    /// text AND be actionable.
     func canReply(_ entry: CoreRosterEntry) -> Bool {
         askAction(for: entry) == .actionable && entry.session.ask?.wantsTextReply == true
     }
 
-    /// `answer_ask` awaited: the reply carries the daemon's verdict —
-    /// `answered: true` plus the surface's receipt on success; on
-    /// `ok: false` the refusal message (`stale_request`, `not_frontmost`,
-    /// `accessibility_required`, `unsupported`, …) is surfaced verbatim.
-    /// `request` pins the answer to the ask the user is looking at, so a
-    /// stale card can never approve its replacement. Never auto-answers:
-    /// every call comes from an explicit button.
-    func answerAsk(entry: CoreRosterEntry, approve: Bool, replyText: String? = nil) async {
-        // A silent early-return leaves actionIsError false, and the reply
-        // sheet reads that as "sent" — dismissing and dropping the draft.
-        // A stale ask must refuse loudly instead.
-        guard askAction(for: entry) == .actionable else {
+    /// Approve or Deny, from an explicit button, through the desk: the
+    /// ask's `request` pinned so a stale card can never approve its
+    /// replacement, one pending set with every other surface, and the
+    /// daemon's refusal (`stale_request`, `not_frontmost`, …) on the
+    /// status line — never a guessed success.
+    func answerAsk(entry: CoreRosterEntry, approve: Bool) async {
+        guard askAction(for: entry) == .actionable, let ask = deskAsk(for: entry) else {
             report(askDisabledReason(for: entry) ?? "This ask can no longer be answered", isError: true)
             return
         }
-        let ask = entry.session.ask
+        await answerThroughDesk(ask, approve ? .approve : .deny)
+    }
+
+    /// A typed reply to a `replyable` ask: `answer_ask` with `reply_text`,
+    /// awaited, the request pinned — the one answer the desk has no
+    /// verdict for yet. The daemon's refusal is surfaced verbatim.
+    func reply(entry: CoreRosterEntry, text: String) async {
+        // A silent early-return leaves actionIsError false, and the reply
+        // sheet reads that as "sent" — dismissing and dropping the draft.
+        // A stale ask must refuse loudly instead.
+        guard canReply(entry) else {
+            report(askDisabledReason(for: entry) ?? "This ask no longer takes a reply", isError: true)
+            return
+        }
         do {
             let reply = try await core.answerAskNow(
-                session: entry.id, approve: approve,
-                replyText: replyText, request: ask?.request)
+                session: entry.id, approve: true,
+                replyText: text, request: entry.session.ask?.request)
             if reply.ok {
-                report(Self.answeredText(reply, approve: approve, replied: replyText != nil))
+                report(AskAnswerLine.replied(reply))
                 await load()
             } else {
-                report(reply.error?.message ?? "Answer refused", isError: true)
+                report(reply.error?.message ?? "Reply refused", isError: true)
             }
         } catch {
             report(Self.describe(error), isError: true)
         }
-    }
-
-    /// The status line for an answer that went out, with the route the
-    /// reply names — "Approved · sent through the agent's permission
-    /// hook", "Reply sent · typed into the terminal" — the panel's words.
-    nonisolated static func answeredText(_ reply: CoreReply, approve: Bool, replied: Bool) -> String {
-        replied ? AskAnswerLine.replied(reply) : AskAnswerLine.sent(approve ? .approve : .deny, reply: reply)
     }
 
     /// `dismiss_session`: acknowledge a live-but-going-nowhere row until

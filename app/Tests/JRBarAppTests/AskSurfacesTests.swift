@@ -387,15 +387,39 @@ struct AskSurfacesTests {
         #expect(OverviewStore.startedText(nil, provider: "codex", cwd: "/tmp/x").hasPrefix("Started Codex at"))
     }
 
-    @Test("the Overview's status line names the route an answer took, as the panel's toast does")
-    func overviewAnswerLine() {
-        let hook = CoreReply(id: "1", ok: true, result: .object(["mechanism": .string("permission_hook"),
-                                                                 "decision": .string("approve")]))
-        #expect(OverviewStore.answeredText(hook, approve: true, replied: false)
-                == "Approved · sent through the agent's permission hook")
-        let typed = CoreReply(id: "2", ok: true, result: .object(["mechanism": .string("synthetic_text")]))
-        #expect(OverviewStore.answeredText(typed, approve: true, replied: true) == "Reply sent · typed into the terminal")
-        #expect(OverviewStore.answeredText(CoreReply(id: "3", ok: true), approve: false, replied: false) == "Denied")
+    @Test("the Overview's Approve and Deny go through the desk, pinned to the ask, in the panel's words")
+    func overviewAnswersThroughTheDesk() async {
+        let log = Log()
+        let desk = AskAnswerDesk(send: { session, verdict, request in
+            log.calls.append("\(verdict.decision):\(session):\(request ?? "")")
+            return CoreReply(id: "1", ok: true, result: .object(["mechanism": .string("permission_hook")]))
+        })
+        let store = OverviewStore(core: CoreModel(), desk: desk)
+        func entry(_ ask: CoreAsk) -> CoreRosterEntry {
+            CoreRosterEntry(session: CoreSession(id: "claude:s1", provider: "claude", mode: "waiting", ask: ask))
+        }
+
+        // The roster's ask carries no session of its own: the row's id fills it.
+        await store.answerAsk(entry: entry(CoreAsk(summary: "Bash", answerable: true, request: "r1")), approve: true)
+        #expect(log.calls == ["approve:claude:s1:r1"])
+        #expect(store.actionStatus == "Approved · sent through the agent's permission hook")
+        #expect(!store.actionIsError)
+
+        // A held question takes no bare yes — the desk refuses before sending — but Deny declines it.
+        let question = held(choices: [Self.single])
+        await store.answerAsk(entry: entry(question), approve: true)
+        #expect(log.calls == ["approve:claude:s1:r1"])
+        #expect(store.actionIsError)
+        await store.answerAsk(entry: entry(question), approve: false)
+        #expect(log.calls == ["approve:claude:s1:r1", "deny:claude:s1:r1"])
+        #expect(store.actionStatus == "Denied · sent through the agent's permission hook")
+
+        // A peer's ask never reaches the desk.
+        var peer = entry(CoreAsk(summary: "Bash", answerable: true, request: "r2"))
+        peer.session.remote = true
+        await store.answerAsk(entry: peer, approve: true)
+        #expect(log.calls.count == 2)
+        #expect(store.actionIsError)
     }
 
     // MARK: Hook doctor

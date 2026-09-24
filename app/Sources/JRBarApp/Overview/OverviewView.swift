@@ -507,13 +507,17 @@ struct OverviewView: View {
                                                send: { Task { await store.sendPicks(entry: entry) } })
                         }
                         Button("Deny ask") { Task { await store.declineQuestion(entry: entry) } }
-                    } else if let entry, store.askAction(for: entry) == .actionable {
+                    } else if let entry, store.askAction(for: entry) == .actionable, let ask = entry.session.ask {
                         Divider()
-                        Button("Approve ask") { Task { await store.answerAsk(entry: entry, approve: true) } }
-                        if let ask = entry.session.ask, AskVerbs.alwaysAllows(ask) {
+                        if AskVerbs.approves(ask) {
+                            Button("Approve ask") { Task { await store.answerAsk(entry: entry, approve: true) } }
+                        }
+                        if AskVerbs.alwaysAllows(ask) {
                             Button("Always allow") { Task { await store.alwaysAllow(entry: entry) } }
                         }
-                        Button("Deny ask") { Task { await store.answerAsk(entry: entry, approve: false) } }
+                        if AskVerbs.denies(ask) {
+                            Button("Deny ask") { Task { await store.answerAsk(entry: entry, approve: false) } }
+                        }
                         if store.canReply(entry) {
                             Button("Reply…") { replyEntry = entry }
                         }
@@ -969,10 +973,11 @@ struct OverviewView: View {
 
     /// The "Waiting on you" section: the ask's summary and age, then the
     /// explicit actions — Approve / Deny / Reply…. Every button sends
-    /// through `answerAskNow` with the ask's `request` pinned, so the
-    /// daemon itself refuses a stale card (`stale_request`) or an ask
-    /// that moved on. Nothing here ever auto-answers; disabled buttons
-    /// carry the reason as a tooltip rather than silently greying.
+    /// with the ask's `request` pinned, so the daemon itself refuses a
+    /// stale card (`stale_request`) or an ask that moved on; Approve and
+    /// Deny go through the shared desk and are drawn only where it would
+    /// send them. Nothing here ever auto-answers; disabled buttons carry
+    /// the reason as a tooltip rather than silently greying.
     @ViewBuilder
     private func waitingSection(entry: CoreRosterEntry, ask: CoreAsk) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1005,10 +1010,12 @@ struct OverviewView: View {
             } else {
                 let reason = store.askDisabledReason(for: entry)
                 HStack(spacing: 8) {
-                    Button("Approve") {
-                        Task { await store.answerAsk(entry: entry, approve: true) }
+                    if reason != nil || AskVerbs.approves(ask) {
+                        Button("Approve") {
+                            Task { await store.answerAsk(entry: entry, approve: true) }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                     if AskVerbs.alwaysAllows(ask) {
                         // Its own button: the agent remembers the rule.
                         Button("Always Allow") {
@@ -1017,16 +1024,18 @@ struct OverviewView: View {
                         .buttonStyle(.bordered).controlSize(.small)
                         .help("Approve, and let the agent remember the rule it offered")
                     }
-                    Button("Deny") {
-                        Task { await store.answerAsk(entry: entry, approve: false) }
+                    if reason != nil || AskVerbs.denies(ask) {
+                        Button("Deny") {
+                            Task { await store.answerAsk(entry: entry, approve: false) }
+                        }
+                        .buttonStyle(.bordered).controlSize(.small).tint(.red)
                     }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
                     if store.canReply(entry) {
                         Button("Reply…") { replyEntry = entry }
                             .buttonStyle(.bordered).controlSize(.small)
                     }
                 }
-                .disabled(reason != nil)
+                .disabled(reason != nil || store.askDesk.isPending(entry.id))
                 .help(reason ?? (ask.isHeldForDecision
                     ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
                     : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
@@ -1700,7 +1709,7 @@ private struct ReplyPromptSheet: View {
         let reply = text
         sending = true
         Task {
-            await store.answerAsk(entry: entry, approve: true, replyText: reply)
+            await store.reply(entry: entry, text: reply)
             sending = false
             // The daemon's verdict lands on the store's status line;
             // close only on a delivered answer — a refusal keeps the
