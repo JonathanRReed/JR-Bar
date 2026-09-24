@@ -59,12 +59,24 @@ struct MenuBarItemBarAnchorRow: View {
     }
 }
 
-/// The Advanced rows for where things stand: the icon's seat, the clock
-/// and Control Center, and the layout table.
+/// The Advanced rows for where things stand: the icon's seat, where new
+/// apps go, the clock and Control Center, and the layout table.
 struct MenuBarPlacementRows: View {
     let utility: MenuBarUtility
 
     var body: some View {
+        LabeledContent {
+            Picker(selection: utility.bind(\.curation.newItems)) {
+                Text("Where macOS puts them").tag(MenuBarNewItemsPlacement.asPlaced)
+                Text("Shown").tag(MenuBarNewItemsPlacement.shown)
+                Text("Hidden").tag(MenuBarNewItemsPlacement.hidden)
+            } label: { EmptyView() }
+                .labelsHidden()
+                .fixedSize()
+        } label: {
+            SettingLabel(title: "New menu bar items",
+                         subtitle: "An app's first item: ask on the ear, keep it shown, or tuck it away.")
+        }
         if utility.concealerAvailable {
             LabeledContent {
                 Picker(selection: utility.bind(\.curation.mirrorSeat)) {
@@ -139,5 +151,33 @@ struct MenuBarLayoutTableRows: View {
         mismatch.side == .right
             ? "\(name) is hidden but sits right of the icon — a reveal brings it back there."
             : "\(name) is shown but sits left of the icon."
+    }
+}
+
+/// "Relaunch menu bar apps": items take a new spacing only as their
+/// apps relaunch. A confirm lists every app it will quit and reopen;
+/// nothing runs on its own, and Apple's agents are never touched.
+struct MenuBarSpacingRelaunchRow: View {
+    let utility: MenuBarUtility
+    @ViewState private var confirming = false
+
+    var body: some View {
+        let apps = utility.spacingRelaunchApps
+        let names = apps.map(\.name).joined(separator: ", ")
+        LabeledContent {
+            Button(utility.relaunchingApps.isEmpty ? "Relaunch…" : "Relaunching…") { confirming = true }
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(apps.isEmpty || !utility.relaunchingApps.isEmpty)
+        } label: {
+            SettingLabel(title: "Relaunch menu bar apps",
+                         subtitle: "Items take a new spacing as their apps relaunch. This quits and reopens the apps with items on your bar, never Apple's own.")
+        }
+        .confirmationDialog("Relaunch \(apps.count) menu bar apps?", isPresented: $confirming) {
+            Button("Relaunch") { utility.relaunchForSpacing(apps.map(\.bundleID)) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("JR-Bar asks each to quit and opens it again in the background: \(names).")
+        }
     }
 }

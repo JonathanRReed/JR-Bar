@@ -1900,6 +1900,8 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored let layoutTableReader = MenuBarLayoutTableReader()
     /// Bumped on every read of the table, so the card's rows observe it.
     var layoutTableVersion = 0
+    /// Menu bar apps quitting and reopening for the spacing, in flight.
+    var relaunchingApps: [String] = []
 
     /// A rule's keep-awake hold — the app's own hold by default; a test
     /// records it.

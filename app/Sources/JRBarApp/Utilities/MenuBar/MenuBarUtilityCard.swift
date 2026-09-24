@@ -294,6 +294,7 @@ struct MenuBarUtilityControls: View {
                     SettingLabel(title: "Custom spacing",
                                  subtitle: "An exact gap in points — the presets above all live on this dial.")
                 }
+                MenuBarSpacingRelaunchRow(utility: utility)
                 engineControls
                 MenuBarPlacementRows(utility: utility)
                 MenuBarProfilesControls(utility: utility)
