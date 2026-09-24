@@ -782,7 +782,7 @@ enum CartoonFish {
                              control: CGPoint(x: e.x, y: (yb + yf) / 2 + sag))
             cap.addLine(to: CGPoint(x: e.x + r * 1.2 * sx, y: top - r))
             cap.closeSubpath()
-            lid.fill(cap, with: .linearGradient(Gradient(colors: [palette.light, palette.body]),
+            lid.fill(cap, with: .linearGradient(Gradient(colors: [palette.body, palette.body.mix(with: palette.dark, by: 0.25)]),
                                                 startPoint: CGPoint(x: 0, y: top),
                                                 endPoint: CGPoint(x: 0, y: max(yb, yf))))
             var edge = Path()

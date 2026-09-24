@@ -479,11 +479,13 @@ extension AquariumView {
             (!dead && (motion.smileUntil[fish.id].map { now < $0 } ?? false)) ? .smile
             : (!dead && (care?.hungry(at: now) ?? false) ? .hungry : .plain)
         // The blink: a lid slides down & back every few seconds,
-        // offset per fish by its seed.
+        // offset per fish by its seed — and a fish dozing through the
+        // tank's night lets its eyes fall shut.
         let blinkPhase = frac(t / (3.4 + Double((h >> 20) & 0xF) * 0.28) + phase)
-        let blink = dead || reduceMotion ? 0.0
-            : smooth(clamp01((blinkPhase - 0.94) / 0.025))
-              * smooth(clamp01((1.0 - blinkPhase) / 0.025))
+        let wink = smooth(clamp01((blinkPhase - 0.94) / 0.025))
+            * smooth(clamp01((1.0 - blinkPhase) / 0.025))
+        let drowsy = smooth(clamp01((l.sleep - 0.3) / 0.5))
+        let blink = dead || reduceMotion ? 0.0 : max(wink, drowsy)
         let lw = CartoonFish.outlineWidth(length)
         CartoonFish.draw(into: &f, species: fish.species, palette: palette, swim: swim,
                          mouth: mouth, blink: blink, dead: dead,
