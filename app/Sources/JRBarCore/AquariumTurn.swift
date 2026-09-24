@@ -109,6 +109,10 @@ public enum AquariumTurn {
     /// strip does it — the two silhouettes match in width here.
     public static let frontCut = 0.265
 
+    /// Where an asking fish holds its turn at the glass: about a third
+    /// of the way round, both eyes on you, level.
+    public static let askHold = 0.30
+
     /// One moment of a turn.
     public struct Pose: Equatable, Sendable {
         /// The signed side-on share: `dir0` going in, through 0 head-on,

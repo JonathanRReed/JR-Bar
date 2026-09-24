@@ -541,7 +541,10 @@ extension AquariumView {
     func drawStationCue(_ cue: FishCue, l: Layout, canvas: inout GraphicsContext,
                                 size: CGSize, length: Double, height: Double,
                                 t: Double, phase: Double) {
-        let mouthX = l.x + l.facing * length * 0.45
+        // The nose, wherever the turn and the pitch have put it.
+        let nose = l.along(0.45, length: length)
+        let mouthX = l.x + nose.x
+        let mouthY = l.y + nose.y
         var c = canvas
         c.opacity = l.opacity
         func dot(_ x: Double, _ y: Double, _ r: Double, _ color: Color, _ alpha: Double) {
@@ -560,7 +563,7 @@ extension AquariumView {
                 : Color(red: 1.0, green: 0.38, blue: 0.36)
             let p = reduceMotion ? 0.3 : frac(t / 2.4 + phase / (.pi * 2))
             let r = 3.8 + p * 2.4
-            let bx = l.x + l.facing * length * 0.1 + (reduceMotion ? 0 : sin(p * 9 + phase) * 2)
+            let bx = l.x + l.yawCos * length * 0.1 + (reduceMotion ? 0 : sin(p * 9 + phase) * 2)
             let by = l.y - height * 0.6 - 6 - p * 34
             let alpha = reduceMotion ? 0.9 : 0.35 + (1 - p) * 0.6
             dot(bx, by, r, tint, alpha * 0.45)
@@ -573,8 +576,8 @@ extension AquariumView {
             // Reading: two green crumbs drift off the mouth and fade.
             for k in 0..<2 {
                 let p = reduceMotion ? 0.35 : frac(t / 1.6 + Double(k) * 0.5 + phase)
-                let x = mouthX + l.facing * p * 9
-                let y = l.y - 1 + p * 7 + (reduceMotion ? 0 : sin(p * 7 + Double(k)) * 1.5)
+                let x = mouthX + l.yawCos * p * 9
+                let y = mouthY - 1 + p * 7 + (reduceMotion ? 0 : sin(p * 7 + Double(k)) * 1.5)
                 dot(x, y, 1.1 + 0.4 * (1 - p), Color(red: 0.45, green: 0.78, blue: 0.40),
                     (reduceMotion ? 0.7 : (1 - p)) * 0.8)
             }
@@ -584,7 +587,7 @@ extension AquariumView {
             guard sand - (l.y + height * 0.5) < 60 else { return }
             for k in 0..<3 {
                 let p = reduceMotion ? 0.3 : frac(t / 1.3 + Double(k) / 3 + phase)
-                let x = mouthX + (Double(k) - 1) * 5 + l.facing * p * 4
+                let x = mouthX + (Double(k) - 1) * 5 + l.yawCos * p * 4
                 let y = sand - 3 - p * 12
                 dot(x, y, 1.3 + p * 0.8, Color(red: 0.86, green: 0.78, blue: 0.60),
                     (reduceMotion ? 0.6 : (1 - p)) * 0.55)
@@ -620,15 +623,18 @@ extension AquariumView {
         case .survey:
             // Searching: a faint scan arc ahead of the nose.
             let p = reduceMotion ? 0.5 : frac(t / 1.5 + phase)
+            // It fades out as the fish comes head-on, so the arc never
+            // swaps sides where you can see it.
             var arc = Path()
-            arc.addArc(center: CGPoint(x: mouthX, y: l.y), radius: 6 + p * 8,
+            arc.addArc(center: CGPoint(x: mouthX, y: mouthY), radius: 6 + p * 8,
                        startAngle: .radians(l.facing > 0 ? -0.6 : .pi - 0.6),
                        endAngle: .radians(l.facing > 0 ? 0.6 : .pi + 0.6), clockwise: false)
-            c.stroke(arc, with: .color(.white.opacity((1 - p) * 0.4)), lineWidth: 0.8)
+            let side = smooth(clamp01((abs(l.yawCos) - 0.2) / 0.5))
+            c.stroke(arc, with: .color(.white.opacity((1 - p) * 0.4 * side)), lineWidth: 0.8)
         case .bench:
             // Any other tool: a small bright tick at the mouth, working.
             let p = reduceMotion ? 0.5 : frac(t / 0.9 + phase)
-            dot(mouthX + l.facing * 2, l.y, 1.2, .white, sin(p * .pi) * 0.6)
+            dot(mouthX + l.yawCos * 2, mouthY, 1.2, .white, sin(p * .pi) * 0.6)
         }
     }
 

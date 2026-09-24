@@ -351,9 +351,10 @@ struct AquariumSteeringTests {
                     #expect(abs(turn.duration - AquariumTurn.duration(for: kind, pace: .natural)) < 1e-9)
                 }
             }
-            let start = try? #require(began)
-            #expect((start ?? 99) - 10 >= AquariumSteering.urgentCooldown - 1e-9)
-            #expect((start ?? 99) - 10 <= AquariumSteering.urgentCooldown + 1.0 / 30 + 1e-9,
+            #expect(began != nil, "the food turned it")
+            let start = began ?? 99
+            #expect(start - 10 >= AquariumSteering.urgentCooldown - 1e-9)
+            #expect(start - 10 <= AquariumSteering.urgentCooldown + 1.0 / 30 + 1e-9,
                     "within a frame of the short cooldown")
         }
         #expect(AquariumTurn.duration(for: .food, pace: .natural) == 0.55)

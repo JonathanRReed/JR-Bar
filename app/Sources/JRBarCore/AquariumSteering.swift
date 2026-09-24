@@ -349,7 +349,11 @@ public enum AquariumSteering {
             let dy = food.y - body.y
             cap = seekClimb
             urgency = 1.9 * context.hunger
-            throttleTarget = 1.9 * context.hunger
+            // A dart, easing off into the last few points so the mouth
+            // meets the food instead of shooting past it; a scare is all
+            // dart.
+            let reach = context.startled ? 1 : min(1, max(0.15, (dx * dx + dy * dy).squareRoot() / 0.05))
+            throttleTarget = 1.9 * context.hunger * reach
             if dx * dir < 0 && abs(dx) > 0.004 {
                 backKind = context.startled ? .startle : .food
                 urgent = true

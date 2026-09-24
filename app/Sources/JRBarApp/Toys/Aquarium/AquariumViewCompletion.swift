@@ -86,7 +86,7 @@ extension AquariumView {
                 if let best {
                     claimed.insert(best.id)
                     pellet.eater = best.id
-                    pellet.dart = min(2.4, max(0.5, sqrt(bestD2) / 140))
+                    pellet.dart = dartTime(for: best, distance: sqrt(bestD2), in: size)
                     pellet.gone = 0.85 + pellet.dart
                 }
                 pellets.append(pellet)
@@ -96,22 +96,42 @@ extension AquariumView {
         return meals
     }
 
-    /// Bend the eaters' layouts toward their pellets: a pull that
-    /// swells as the fish darts over, holds while it mouths the food,
-    /// then releases it back onto its patrol.
+    /// How long `eater` takes to reach a pellet `distance` points off:
+    /// its own dart speed, plus the quick turn it may need first — the
+    /// fish swims there through its own steering now, so the meal waits
+    /// for it. A fixture fish (no body) keeps the old brisk dart.
+    private func dartTime(for eater: Fish, distance: Double, in size: CGSize) -> Double {
+        let tuning = swimTuning
+        let tempo = AquariumSettings.clamped(tuning.swimSpeed, to: AquariumSettings.swimSpeedRange)
+        let turn = AquariumTurn.duration(for: .food, pace: tuning.swimPace) / tempo
+        guard let body = motion.bodies[eater.id] else {
+            return min(2.4, max(0.5, distance / 140)) + turn
+        }
+        let widths = body.speed * body.energy * tuning.swimPace.cruiseScale * tempo * 1.9
+        let pointsPerSecond = max(20, widths * max(1, size.width))
+        // Up to speed, across, and easing into the pellet.
+        return min(5, max(0.6, distance / pointsPerSecond + turn + 0.5))
+    }
+
+    /// Ease the eaters' last few points onto their pellets: the fish
+    /// swims over on its own — turning round for it if it lies behind —
+    /// and this only settles the mouth on the food while it eats, then
+    /// lets go. It never flips a fish; the turn does that.
     func applyPursuits(_ meals: [Meal], to layouts: inout [String: Layout], now: Date) {
         for meal in meals {
             let age = now.timeIntervalSince(meal.leaver.stateSince)
             for pellet in meal.pellets {
                 guard let eater = pellet.eater, var l = layouts[eater] else { continue }
-                // The dart starts as the pellet drops and releases a
-                // beat after the fish arrives.
-                let pull = smooth(clamp01((age - 0.7) / pellet.dart))
+                // The pull comes in over the end of the dart, holds while
+                // the fish mouths the food and releases a beat after.
+                let arrive = 0.7 + pellet.dart * 0.6
+                let pull = smooth(clamp01((age - arrive) / (pellet.dart * 0.4)))
                     - smooth(clamp01((age - 0.7 - pellet.dart - 0.45) / 1.0))
                 guard pull > 0.001 else { continue }
-                let tx = pellet.rest.x
+                // Mouth on the food: the pellet sits just off the nose.
+                let nose = l.along(0.42, length: Self.fishBaseLength * l.scale)
+                let tx = pellet.rest.x - nose.x
                 let ty = pellet.rest.y - 6
-                if pull > 0.15 { l.facing = tx >= l.x ? 1 : -1 }
                 l.x += (tx - l.x) * pull
                 l.y += (ty - l.y) * pull * 0.85
                 l.pitch *= 1 - pull * 0.6
