@@ -200,9 +200,7 @@ struct SetupScreenBarPrimer: View {
                 Text("Hover the band to see who's asking — click it to jump to that session.")
             }
         }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .windowWell(padding: 14)
     }
 
     /// One row: the marks in a fixed-width column, the sentence beside them.

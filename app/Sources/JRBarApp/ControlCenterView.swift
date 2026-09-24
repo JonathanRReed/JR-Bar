@@ -127,25 +127,9 @@ struct ControlCenterView: View {
     @ViewBuilder
     private var statusPill: some View {
         if let error = store.lastError {
-            Label(error, systemImage: "exclamationmark.triangle.fill")
-                .font(.callout)
-                .lineLimit(2)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.regularMaterial, in: Capsule())
-                .padding(.bottom, 12)
-                .padding(.horizontal, 24)
-                .transition(.opacity)
+            WindowStatusCapsule(text: error, isError: true)
         } else if let status = store.status {
-            Text(status)
-                .font(.callout)
-                .lineLimit(2)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.regularMaterial, in: Capsule())
-                .padding(.bottom, 12)
-                .padding(.horizontal, 24)
-                .transition(.opacity)
+            WindowStatusCapsule(text: status)
         }
     }
 }
@@ -228,10 +212,8 @@ struct DeckNotice: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
-        .frame(maxWidth: 640)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tint.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(0.24), lineWidth: 1))
+        .frame(maxWidth: 608)
+        .windowWell(padding: 16, tint: tint)
         .accessibilityElement(children: .combine)
     }
 }
@@ -330,10 +312,7 @@ struct DeckDeviceChip: View {
                 .accessibilityLabel("Receipt: \(receipt.text)")
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
+        .windowCard(padding: 12)
     }
 }
 
@@ -830,21 +809,15 @@ struct SessionSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Sessions").font(.headline)
-                Spacer()
-                Text("\(store.sessionRows.count)").font(.caption).foregroundStyle(.secondary)
+            WindowSectionTitle(title: "Sessions", symbol: "person.2") {
+                Text("\(store.sessionRows.count)")
             }
             .padding(.horizontal, 16)
             .padding(.top, 18)
             .padding(.bottom, 8)
             if store.sessionRows.isEmpty {
-                Text("No agents right now.")
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                Spacer()
+                WindowEmptyState(symbol: "moon.stars", title: "No agents right now",
+                                 text: "Sessions appear here as they start; drag one onto a key to pin it.")
             } else {
                 SnapshotScrollView {
                     VStack(spacing: 2) {

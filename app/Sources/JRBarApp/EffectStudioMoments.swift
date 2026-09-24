@@ -214,13 +214,12 @@ struct LightMomentsView: View {
                         MomentRow(store: store, moment: moment, control: MomentSwitch.of(moment, cues: cues)) { enabled in
                             setCue(moment.id, enabled: enabled)
                         }
-                        if moment.id != LightMoment.all.last?.id { Divider().padding(.leading, 44) }
+                        if moment.id != LightMoment.all.last?.id { Divider().padding(.leading, 56) }
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
+                .windowCard(padding: 0)
             }
-            .padding(18)
+            .padding(WindowMetrics.margin)
             .frame(maxWidth: 820, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
@@ -272,10 +271,11 @@ private struct MomentRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: moment.symbol)
-                .font(.system(size: 15))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
-                .frame(width: 22)
-                .padding(.top, 2)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill((isOn ? Color.accentColor : Color.secondary).opacity(0.12)))
             VStack(alignment: .leading, spacing: 3) {
                 Text(moment.name).font(.body.weight(.medium))
                 Text(moment.meaning).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -318,8 +318,8 @@ private struct MomentRow: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
     /// The switch moved: through the monitor's cue switch when it has
