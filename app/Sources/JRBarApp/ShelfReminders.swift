@@ -270,18 +270,35 @@ final class ShelfRemindersModel {
         return ("Look at \(label)", notes + ". Left from JR-Bar's notch.")
     }
 
+    /// The link a session's reminder carries back to it:
+    /// `jrbar://session?id=<id>`, which raises the session's terminal or
+    /// app. The id holds colons (`claude:session:<uuid>`), so it rides
+    /// fully percent-encoded in the query, never as a path segment.
+    nonisolated static func sessionLink(_ id: String) -> URL? {
+        guard !id.isEmpty else { return nil }
+        let unreserved = CharacterSet(charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        guard let encoded = id.addingPercentEncoding(withAllowedCharacters: unreserved) else { return nil }
+        var components = URLComponents()
+        components.scheme = AppCommand.scheme
+        components.host = "session"
+        components.percentEncodedQuery = "id=" + encoded
+        return components.url
+    }
+
     /// "Remind Me About This" on a session: a reminder in the default
-    /// list, due and alerted at `later`. False without access or when
-    /// the save failed.
+    /// list, due and alerted at `later`, whose link opens the session
+    /// again. False without access or when the save failed.
     @discardableResult
-    func remind(about label: String, provider: String, cwd: String?, later: Later,
-                now: Date = Date()) -> Bool {
+    func remind(about label: String, session id: String, provider: String, cwd: String?,
+                later: Later, now: Date = Date()) -> Bool {
         guard let store, let list = store.defaultCalendarForNewReminders() else { return false }
         let made = Self.sessionReminder(label: label, provider: provider, cwd: cwd)
         let due = Self.due(later, now: now)
         let reminder = EKReminder(eventStore: store)
         reminder.title = made.title
         reminder.notes = made.notes
+        reminder.url = Self.sessionLink(id)
         reminder.calendar = list
         reminder.dueDateComponents = due
         if let when = Calendar.current.date(from: due) { reminder.addAlarm(EKAlarm(absoluteDate: when)) }

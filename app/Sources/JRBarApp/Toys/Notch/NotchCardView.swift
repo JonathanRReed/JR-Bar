@@ -779,7 +779,7 @@ struct NotchCardView: View {
                 Menu("Remind Me About This") {
                     ForEach(ShelfRemindersModel.Later.allCases, id: \.self) { later in
                         Button(later.title) {
-                            model.reminders.remind(about: row.label, provider: row.provider,
+                            model.reminders.remind(about: row.label, session: row.id, provider: row.provider,
                                                    cwd: model.sessionCwd(row.id), later: later)
                         }
                     }

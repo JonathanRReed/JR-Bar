@@ -79,6 +79,18 @@ struct ShelfReminderQuickAddTests {
         #expect(tomorrow.day == 24 && tomorrow.hour == 9 && tomorrow.minute == 0)
     }
 
+    @Test("a session's reminder links back to it through the router")
+    func sessionLinkRoundTrips() throws {
+        for id in ["claude:session:10095578-e911-4aa0-b668-c962688d3042",
+                   "codex:thread/a b&c=d+e?f#g", "claude:caf\u{e9}"] {
+            let url = try #require(ShelfRemindersModel.sessionLink(id))
+            #expect(url.absoluteString.hasPrefix("jrbar://session?id="))
+            #expect(!(url.query ?? "").contains(":"), "no raw colon rides in the link")
+            #expect(AppCommand.parse(url) == .openSession(id), "the router reads back \(id)")
+        }
+        #expect(ShelfRemindersModel.sessionLink("") == nil)
+    }
+
     @Test("a session's reminder names the run and where it ran")
     func sessionReminder() {
         let made = ShelfRemindersModel.sessionReminder(label: "rename-the-fish", provider: "claude",
