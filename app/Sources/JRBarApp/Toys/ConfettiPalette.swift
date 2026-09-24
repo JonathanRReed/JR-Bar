@@ -152,14 +152,14 @@ extension ConfettiView {
     /// Provider and Toys tint: the colour itself most, a lighter step, an
     /// accent leaning to gold (warm colours) or cyan (cool ones), white,
     /// gold and a pale step. The deeper shade is only ever a paper's back.
-    static func steps(around color: Color) -> (slots: [Color], weights: [Double]) {
+    nonisolated static func steps(around color: Color) -> (slots: [Color], weights: [Double]) {
         ([color, color.mix(with: .white, by: 0.4), accent(for: color), .white,
           Color(red: 0.99, green: 0.80, blue: 0.33), color.mix(with: .white, by: 0.65)],
          [35, 20, 10, 20, 10, 5])
     }
 
     /// Mono: the tint alone, from deep to pale.
-    static func shades(of color: Color) -> (slots: [Color], weights: [Double]) {
+    nonisolated static func shades(of color: Color) -> (slots: [Color], weights: [Double]) {
         guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else { return ([color], [1]) }
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         rgb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
@@ -174,7 +174,7 @@ extension ConfettiView {
 
     /// A tint's accent: its hue moved 0.08 toward gold for warm colours,
     /// toward cyan for cool ones; a grey gets gold.
-    static func accent(for color: Color) -> Color {
+    nonisolated static func accent(for color: Color) -> Color {
         guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else { return color }
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         rgb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
@@ -191,7 +191,7 @@ extension ConfettiView {
     }
 
     /// The provider's own mark, when the app knows one.
-    static func glyph(for provider: String?) -> ConfettiLook.Glyph? {
+    nonisolated static func glyph(for provider: String?) -> ConfettiLook.Glyph? {
         guard let id = provider?.lowercased(), let style = ProviderStyle.table[id] else { return nil }
         switch style.glyph {
         case .symbol(let name): return .symbol(name)
@@ -208,7 +208,7 @@ extension ConfettiView {
     /// yellow darkened in place turns olive, so the shade leans the way a
     /// painter's does: yellows and oranges toward amber, greens toward
     /// teal.
-    static func deeper(_ color: Color) -> Color {
+    nonisolated static func deeper(_ color: Color) -> Color {
         guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else {
             return color.mix(with: .black, by: 0.25)
         }
