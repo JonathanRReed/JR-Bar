@@ -94,16 +94,20 @@ struct DockUtilityControls: View {
                              subtitle: "How long the pointer rests before the preview opens.")
             }
             .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
+
+            CardSectionHeader("Appearance")
+            appearance
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
 
+            CardSectionHeader("More")
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
             } label: {
                 SettingLabel(title: "More preview options",
-                             subtitle: "Card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
+                             subtitle: "Fine spacing, card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
             }
 
             DisclosureGroup(isExpanded: $showExclusions) {
@@ -193,10 +197,70 @@ struct DockUtilityControls: View {
         }
     }
 
+    /// How much air the preview keeps and where it sits: a live sample
+    /// over drawn stills (no capture), the spacing stops, the distance
+    /// from the Dock and the name-label cover.
+    @ViewBuilder
+    private var appearance: some View {
+        let prefs = utility.enhance.preferences
+        DockPreviewSample(spacing: prefs.previewSpacing, dockGap: prefs.dockGap,
+                          coversLabel: prefs.coverDockLabel)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, SettingsMetrics.s)
+        LabeledContent {
+            HStack(spacing: 8) {
+                if spacingStop.wrappedValue == nil {
+                    Text("Custom")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        .help("Set with Fine spacing, under More preview options")
+                }
+                Picker(selection: spacingStop) {
+                    ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
+                        Text(stop.title).tag(Optional(stop))
+                    }
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+            }
+        } label: {
+            SettingLabel(title: "Spacing",
+                         subtitle: "The air around the cards inside the preview. Standard is the roomier look it had before.")
+        }
+        LabeledContent {
+            HStack(spacing: 10) {
+                Slider(value: dockGap, in: DockEnhancePreferences.dockGapRange)
+                    .frame(width: 140)
+                ValueText(text: "\(Int(prefs.dockGap.rounded())) pt")
+            }
+        } label: {
+            SettingLabel(title: "Distance from the Dock",
+                         subtitle: "The gap between the icon and the preview's glass.")
+        }
+        Toggle(isOn: coverDockLabel) {
+            SettingLabel(title: "Cover the Dock's name label",
+                         subtitle: "The preview sits over the name the Dock shows above the icon; its header names the app. Off, it floats above the name.")
+        }
+    }
+
     /// The rows past the everyday ones: what a card looks like and
     /// captures, which windows list, and the icon and keyboard gestures.
     private var previewOptions: some View {
         VStack(alignment: .leading, spacing: 0) {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: fineSpacing, in: DockEnhancePreferences.spacingRange, step: 0.05)
+                        .frame(width: 140)
+                    ValueText(text: Self.percent(utility.enhance.preferences.previewSpacing))
+                }
+            } label: {
+                SettingLabel(title: "Fine spacing",
+                             subtitle: "The spacing between the stops: 60 % is Tight, 100 % Standard, 140 % Roomy. The ⌥⇥ switcher follows it too.")
+            }
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
                              subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
@@ -340,6 +404,35 @@ struct DockUtilityControls: View {
     /// Whether JR-Bar's own hover watcher is the one running — the
     /// trigger, the icon gestures and ⌥` all ride it.
     private var ownPreviews: Bool { DockUtility.ownsPreviews(utility.settings()) }
+
+    /// "60%" — the fine spacing's readout.
+    static func percent(_ scale: Double) -> String {
+        "\(Int((scale * 100).rounded()))%"
+    }
+
+    /// The stop the spacing sits on; nil between stops (Custom). Picking
+    /// a stop stores its scale.
+    private var spacingStop: Binding<DockPreviewSpacing?> {
+        Binding(get: { DockPreviewSpacing.stop(for: utility.enhance.preferences.previewSpacing) },
+                set: { stop in
+                    guard let stop else { return }
+                    utility.enhance.preferences.previewSpacing = stop.scale
+                })
+    }
+    /// The fine slider lands on its 0.05 steps exactly, so 0.6 reads as
+    /// Tight rather than a hair off it.
+    private var fineSpacing: Binding<Double> {
+        Binding(get: { utility.enhance.preferences.previewSpacing },
+                set: { utility.enhance.preferences.previewSpacing = ($0 * 20).rounded() / 20 })
+    }
+    private var dockGap: Binding<Double> {
+        Binding(get: { utility.enhance.preferences.dockGap },
+                set: { utility.enhance.preferences.dockGap = $0.rounded() })
+    }
+    private var coverDockLabel: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.coverDockLabel },
+                set: { utility.enhance.preferences.coverDockLabel = $0 })
+    }
 
     // Nested settings structs get their own bindings — `bind` only
     // reaches top-level key paths cleanly through the write path.

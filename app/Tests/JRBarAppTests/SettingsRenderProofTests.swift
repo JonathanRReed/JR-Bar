@@ -348,4 +348,35 @@ struct SettingsRenderProofTests {
         }
         withExtendedLifetime(fixture) {}
     }
+
+    // MARK: lane dock
+
+    /// The Dock card's Appearance group with the spacing between stops
+    /// and the glass 12 pt off the Dock: the Custom tag beside the
+    /// segmented stops and the live sample at that spacing and gap, in
+    /// both appearances. The default card is `card-dock-*` above.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the Dock card PNGs"))
+    func dockCardAppearance() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-render-proof-dock.sock")
+        core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
+                                          document: try Self.document())))
+        let settings = SettingsStore(core: core)
+        let toys = ToysStore(core: core, settings: settings, state: ToysState(),
+                             cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        settings.toys = toys
+        // Seeded, not edited: a write would re-apply the Dock utility.
+        var state = UtilitiesState()
+        state.dock.enhance.previewSpacing = 0.85
+        state.dock.enhance.dockGap = 12
+        let utilities = UtilitiesStore(core: core, settings: settings, state: state)
+        settings.utilities = utilities
+        settings.expandedCards = [utilities.dock.id]
+        for dark in [false, true] where Self.wanted("card-dock") {
+            let view = SettingsPageContainer(store: settings, page: .utilities)
+            let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
+            try Self.write(rep, named: "card-dock-custom-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime((core, settings, toys, utilities)) {}
+    }
 }

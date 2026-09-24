@@ -61,6 +61,42 @@ struct UtilitySurfacesRenderProofTests {
         }
     }
 
+    /// The fixtures the spacing proofs walk, by the name their PNGs take.
+    private static let spacingFixtures: [(String, (Double) -> DockPreviewContent)] = [
+        ("browser", { Fixtures.browserContent(spacing: $0) }),
+        ("terminal", { Fixtures.terminalContent(spacing: $0) }),
+        ("music", { Fixtures.musicContent(spacing: $0) }),
+        ("compact", { Fixtures.compactContent(spacing: $0) }),
+        ("nostills", { Fixtures.noStillsContent(spacing: $0) }),
+    ]
+
+    /// Tight is smaller than Standard and Standard than Roomy, both ways,
+    /// for every face the panel wears.
+    @Test("each spacing stop grows the panel both ways")
+    func spacingOrdersThePanel() {
+        for (name, make) in Self.spacingFixtures {
+            let sizes = DockPreviewSpacing.allCases.map { DockPreviewPanel(content: make($0.scale)).fittingSize() }
+            #expect(sizes[0].width < sizes[1].width && sizes[1].width < sizes[2].width, "\(name) widths \(sizes)")
+            #expect(sizes[0].height < sizes[1].height && sizes[1].height < sizes[2].height, "\(name) heights \(sizes)")
+        }
+    }
+
+    /// Standard is the panel people had before the knob, to the point;
+    /// Tight is pinned where it measured, so a later padding drift trips
+    /// here rather than on the Dock.
+    @Test("Standard keeps the old size and Tight is pinned")
+    func spacingPinsTheSizes() {
+        let standard = DockPreviewPanel(content: Fixtures.browserContent(spacing: 1)).fittingSize()
+        #expect(standard == CGSize(width: 496, height: 194), "Standard browser \(standard)")
+        let tight = DockPreviewPanel(content: Fixtures.browserContent(spacing: 0.6)).fittingSize()
+        #expect(tight == CGSize(width: 472, height: 165), "Tight browser \(tight)")
+        let terminalStandard = DockPreviewPanel(content: Fixtures.terminalContent(spacing: 1)).fittingSize()
+        let terminalTight = DockPreviewPanel(content: Fixtures.terminalContent(spacing: 0.6)).fittingSize()
+        #expect(terminalStandard.width - terminalTight.width >= 16, "\(terminalStandard) vs \(terminalTight)")
+        #expect(terminalStandard.height - terminalTight.height >= 20, "\(terminalStandard) vs \(terminalTight)")
+        #expect(terminalTight == CGSize(width: 472, height: 247), "Tight terminal \(terminalTight)")
+    }
+
     /// The key row reads its caps off the line the controller writes, a
     /// tool's node follows its name, and a yellow disc takes dark ink.
     @Test("key caps, tool glyphs and verb ink read what they are given")
@@ -107,11 +143,48 @@ struct UtilitySurfacesRenderProofTests {
             ("dock-not-running", Fixtures.notRunningContent()),
             ("dock-large", Fixtures.terminalContent(large: true)),
         ]
+        // The plain shots wear the default spacing — what a new install
+        // shows; the stops below walk every face through all three.
+        let defaultMetrics = DockPreviewMetrics.scaled(DockEnhanceSettings.defaultSpacing)
         for (name, content) in shots {
+            content.metrics = defaultMetrics
             for dark in [true, false] {
                 let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
                 try Self.write(view, glassRadius: content.metrics.panelRadius, name: name, dark: dark,
                                canvas: CGSize(width: 900, height: 460))
+            }
+        }
+        for (name, make) in Self.spacingFixtures {
+            for stop in DockPreviewSpacing.allCases {
+                let content = make(stop.scale)
+                for dark in [true, false] {
+                    let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
+                    try Self.write(view, glassRadius: content.metrics.panelRadius,
+                                   name: "dock-\(name)-\(stop.rawValue)", dark: dark,
+                                   canvas: CGSize(width: 900, height: 480))
+                }
+            }
+        }
+        // Where the glass sits off a 55 pt tile, from the frame math:
+        // covering the name bubble at the default 4 pt, and the classic
+        // band that clears it.
+        for (name, covers) in [("dock-placement-cover", true), ("dock-placement-classic", false)] {
+            for dark in [true, false] {
+                let sample = DockPreviewSample(spacing: DockEnhanceSettings.defaultSpacing,
+                                               dockGap: DockEnhanceSettings.defaultDockGap,
+                                               coversLabel: covers, scale: 1, showsMeasure: true)
+                try Self.write(sample, glassRadius: nil, name: name, dark: dark,
+                               canvas: DockPreviewSample.desk)
+            }
+        }
+        // The card's sample at the stops and at the far gap, as Settings
+        // draws it.
+        for (name, spacing, gap) in [("dock-sample-tight", 0.6, 4.0), ("dock-sample-roomy", 1.4, 4.0),
+                                     ("dock-sample-far", 0.6, 40.0)] {
+            for dark in [true, false] {
+                let sample = DockPreviewSample(spacing: spacing, dockGap: gap, coversLabel: true)
+                try Self.write(sample, glassRadius: nil, name: name, dark: dark,
+                               canvas: CGSize(width: 420, height: 260))
             }
         }
         // The hover faces a render never reaches by pointer: each verb
@@ -381,107 +454,32 @@ private struct SurfaceProofGlass: View {
 
 @MainActor
 private enum Fixtures {
-    static func icon(_ path: String) -> NSImage {
-        NSWorkspace.shared.icon(forFile: path)
-    }
-
-    static var terminalIcon: NSImage {
-        FileManager.default.fileExists(atPath: "/Applications/Ghostty.app")
-            ? icon("/Applications/Ghostty.app") : icon("/System/Applications/Utilities/Terminal.app")
-    }
-
-    static func mark(_ id: String, provider: String, name: String, label: String,
-                     activity: SessionActivity, fact: String? = nil, ask: CoreAsk? = nil) -> DockAgentMark {
-        DockAgentMark(sessionID: id, provider: provider, providerName: name, label: label,
-                      cwd: "/Users/jonathanreed/Downloads/JR-Bar", cwdTail: "Downloads/JR-Bar",
-                      activity: activity, fact: fact, ask: ask,
-                      hosts: ["com.mitchellh.ghostty"], tty: nil)
-    }
-
-    static let waitingAsk = CoreAsk(session: "claude:proof", openedAt: Date().timeIntervalSince1970 - 90,
-                                    summary: "Bash: swift test --filter DockSwitcher",
-                                    answerable: true, request: "request:v1:proof",
-                                    preview: "swift test --filter DockSwitcher")
-
-    static var waiting: DockAgentMark {
-        mark("claude:proof", provider: "claude", name: "Claude", label: "polish the dock",
-             activity: .waiting, ask: waitingAsk)
-    }
-
-    static var working: DockAgentMark {
-        mark("codex:proof", provider: "codex", name: "Codex", label: "release notes",
-             activity: .working, fact: "running Edit")
-    }
+    // The Dock preview's fixtures live with the card's live sample
+    // (`DockPreviewSamples`), so the proofs and Settings draw the same.
+    static func icon(_ path: String) -> NSImage { DockPreviewSamples.icon(path) }
+    static var terminalIcon: NSImage { DockPreviewSamples.terminalIcon }
+    static var waiting: DockAgentMark { DockPreviewSamples.waiting }
+    static var working: DockAgentMark { DockPreviewSamples.working }
 
     static func window(_ id: Int, _ title: String, still: NSImage? = nil,
                        minimized: Bool = false, fullScreen: Bool? = false) -> DockPreviewWindow {
-        DockPreviewWindow(id: id, title: title, minimized: minimized, fullScreen: fullScreen,
-                          frame: nil, thumbnail: still, element: nil)
+        DockPreviewSamples.window(id, title, still: still, minimized: minimized, fullScreen: fullScreen)
     }
 
-    static func terminalContent(large: Bool = false) -> DockPreviewContent {
-        let content = DockPreviewContent()
-        content.largeCards = large
-        content.appName = "Ghostty"
-        content.icon = terminalIcon
-        content.bundleID = "com.mitchellh.ghostty"
-        content.isRunning = true
-        content.windows = [
-            window(1, "✳ polish the dock", still: Still.terminal(.waiting)),
-            window(2, "release notes — codex", still: Still.terminal(.working)),
-            window(3, "~/Downloads/JR-Bar — zsh", still: Still.terminal(.idle)),
-        ]
-        content.agents = [1: waiting, 2: working]
-        content.appAgents = [waiting, working]
-        content.selectedWindowID = 2
-        return content
+    static func terminalContent(large: Bool = false, spacing: Double = 1) -> DockPreviewContent {
+        DockPreviewSamples.terminal(large: large, spacing: spacing)
     }
 
-    static func browserContent() -> DockPreviewContent {
-        let content = DockPreviewContent()
-        content.appName = "Safari"
-        content.icon = icon("/Applications/Safari.app")
-        content.bundleID = "com.apple.Safari"
-        content.isRunning = true
-        content.badge = "3"
-        content.windows = [
-            window(1, "Liquid Glass — Apple Developer", still: Still.browser(hue: 0.58)),
-            window(2, "Raycast Store", still: Still.browser(hue: 0.02)),
-            window(3, "Pull request #412 · jr-bar", still: Still.browser(hue: 0.75), minimized: true),
-        ]
-        return content
+    static func browserContent(spacing: Double = 1) -> DockPreviewContent {
+        DockPreviewSamples.browser(spacing: spacing)
     }
 
-    static func noStillsContent() -> DockPreviewContent {
-        let content = DockPreviewContent()
-        content.appName = "T3 Code (Nightly)"
-        content.icon = icon("/Applications/T3 Code (Nightly).app")
-        content.bundleID = "com.t3.code"
-        content.isRunning = true
-        content.windows = [
-            window(1, "JR-Bar — DockEnhancePanel.swift"),
-            window(2, "notes.md", minimized: true),
-        ]
-        return content
+    static func noStillsContent(spacing: Double = 1) -> DockPreviewContent {
+        DockPreviewSamples.noStills(spacing: spacing)
     }
 
-    static func compactContent() -> DockPreviewContent {
-        let content = DockPreviewContent()
-        content.appName = "Ghostty"
-        content.icon = terminalIcon
-        content.bundleID = "com.mitchellh.ghostty"
-        content.isRunning = true
-        content.compact = true
-        let titles = ["✳ polish the dock", "release notes — codex", "~/Downloads/JR-Bar — zsh",
-                      "htop", "ssh studio.local", "python3 -m http.server", "vim README.md",
-                      "~/src/site — zsh", "tail -f daemon.log", "git log --oneline"]
-        content.windows = titles.enumerated().map { index, title in
-            window(index + 1, title, minimized: index == 6, fullScreen: index == 4 ? true : false)
-        }
-        content.agents = [1: waiting, 2: working]
-        content.appAgents = [waiting, working]
-        content.selectedWindowID = 3
-        return content
+    static func compactContent(spacing: Double = 1) -> DockPreviewContent {
+        DockPreviewSamples.compact(spacing: spacing)
     }
 
     static func folderContent() -> DockPreviewContent {
@@ -511,18 +509,8 @@ private enum Fixtures {
         return content
     }
 
-    static func musicContent() -> DockPreviewContent {
-        let content = DockPreviewContent()
-        content.appName = "Music"
-        content.icon = icon("/System/Applications/Music.app")
-        content.bundleID = "com.apple.Music"
-        content.isRunning = true
-        content.media = AlcoveMedia(title: "Nightcall", artist: "Kavinsky", album: "OutRun", playing: true,
-                                    artworkData: Still.artwork(), bundleIdentifier: "com.apple.Music",
-                                    duration: 258, elapsed: 97,
-                                    timestamp: Date().timeIntervalSinceReferenceDate)
-        content.windows = [window(1, "Music", still: Still.browser(hue: 0.95))]
-        return content
+    static func musicContent(spacing: Double = 1) -> DockPreviewContent {
+        DockPreviewSamples.music(spacing: spacing)
     }
 
     static func calendarContent() -> DockPreviewContent {
@@ -762,140 +750,6 @@ private enum Fixtures {
 
 // MARK: - Drawn window stills
 
-/// Window stills drawn for the proof — a terminal running an agent, a
-/// browser page — at a real window's proportions, so a card's
-/// letterboxing and corners read as they would over a capture.
-private enum Still {
-    enum TerminalState { case waiting, working, idle }
-
-    static func draw(_ size: CGSize, _ body: (CGRect) -> Void) -> NSImage {
-        let scale: CGFloat = 2
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
-                                   pixelsHigh: Int(size.height * scale), bitsPerSample: 8,
-                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        rep.size = size
-        NSGraphicsContext.saveGraphicsState()
-        let context = NSGraphicsContext(bitmapImageRep: rep)!
-        NSGraphicsContext.current = context
-        // Flip so drawing reads top-down like a window.
-        context.cgContext.translateBy(x: 0, y: size.height)
-        context.cgContext.scaleBy(x: 1, y: -1)
-        body(CGRect(origin: .zero, size: size))
-        NSGraphicsContext.restoreGraphicsState()
-        let image = NSImage(size: size)
-        image.addRepresentation(rep)
-        return image
-    }
-
-    static func text(_ string: String, at point: CGPoint, size: CGFloat, color: NSColor,
-                     weight: NSFont.Weight = .regular, mono: Bool = true) {
-        let font = mono ? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-                        : NSFont.systemFont(ofSize: size, weight: weight)
-        let attributed = NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color])
-        NSGraphicsContext.saveGraphicsState()
-        // Text draws unflipped: undo the flip locally around the line.
-        let cg = NSGraphicsContext.current!.cgContext
-        cg.translateBy(x: point.x, y: point.y + size)
-        cg.scaleBy(x: 1, y: -1)
-        attributed.draw(at: .zero)
-        NSGraphicsContext.restoreGraphicsState()
-    }
-
-    static func titleBar(_ rect: CGRect, dark: Bool, title: String) {
-        (dark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.93, alpha: 1)).setFill()
-        NSBezierPath(rect: CGRect(x: 0, y: 0, width: rect.width, height: 28)).fill()
-        for (index, color) in [NSColor.systemRed, .systemYellow, .systemGreen].enumerated() {
-            color.setFill()
-            NSBezierPath(ovalIn: CGRect(x: 12 + CGFloat(index) * 20, y: 8, width: 12, height: 12)).fill()
-        }
-        text(title, at: CGPoint(x: rect.width / 2 - CGFloat(title.count) * 3.2, y: 7), size: 11,
-             color: dark ? NSColor(white: 0.75, alpha: 1) : NSColor(white: 0.3, alpha: 1),
-             weight: .semibold, mono: false)
-    }
-
-    static func terminal(_ state: TerminalState) -> NSImage {
-        draw(CGSize(width: 480, height: 300)) { rect in
-            NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1).setFill()
-            NSBezierPath(rect: rect).fill()
-            titleBar(rect, dark: true, title: state == .idle ? "zsh" : "claude")
-            let dim = NSColor(white: 0.55, alpha: 1)
-            let body = NSColor(white: 0.88, alpha: 1)
-            let orange = NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1)
-            var y: CGFloat = 40
-            func line(_ string: String, _ color: NSColor, weight: NSFont.Weight = .regular) {
-                text(string, at: CGPoint(x: 14, y: y), size: 10.5, color: color, weight: weight)
-                y += 16
-            }
-            switch state {
-            case .waiting:
-                line("✳ polish the dock", orange, weight: .bold)
-                line("⏺ Read(DockEnhancePanel.swift)", body)
-                line("  ⎿  Read 1604 lines", dim)
-                line("⏺ Bash(swift test --filter DockSwitcher)", body)
-                y += 6
-                NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 0.9).setStroke()
-                let box = NSBezierPath(roundedRect: CGRect(x: 12, y: y, width: rect.width - 24, height: 92),
-                                       xRadius: 6, yRadius: 6)
-                box.lineWidth = 1
-                box.stroke()
-                y += 10
-                text("Do you want to proceed?", at: CGPoint(x: 24, y: y), size: 10.5, color: body, weight: .semibold)
-                y += 20
-                text("❯ 1. Yes", at: CGPoint(x: 24, y: y), size: 10.5, color: orange)
-                y += 16
-                text("  2. Yes, and don't ask again for swift test", at: CGPoint(x: 24, y: y), size: 10.5, color: body)
-                y += 16
-                text("  3. No, and tell Claude what to do differently", at: CGPoint(x: 24, y: y), size: 10.5, color: body)
-            case .working:
-                line("codex  ›  release notes", NSColor(red: 0.2, green: 0.56, blue: 1, alpha: 1), weight: .bold)
-                line("• Edited CHANGELOG.md (+42 -3)", body)
-                line("• Ran git log --oneline v0.7..HEAD", body)
-                line("  └ 431 commits", dim)
-                line("• Editing docs/release-0.8.md", body)
-                line("  ◦ Working (1m 12s · esc to interrupt)", dim)
-            case .idle:
-                line("~/Downloads/JR-Bar main ✓", NSColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 1))
-                line("❯ git status", body)
-                line("On branch main", dim)
-                line("nothing to commit, working tree clean", dim)
-                line("❯ make test", body)
-                line("  ✔ 1,842 tests passed in 41.2s", NSColor(red: 0.4, green: 0.8, blue: 0.5, alpha: 1))
-                line("❯ ▍", body)
-            }
-        }
-    }
-
-    static func browser(hue: CGFloat) -> NSImage {
-        draw(CGSize(width: 480, height: 312)) { rect in
-            NSColor.white.setFill()
-            NSBezierPath(rect: rect).fill()
-            titleBar(rect, dark: false, title: "")
-            NSColor(white: 0.88, alpha: 1).setFill()
-            NSBezierPath(roundedRect: CGRect(x: 140, y: 5, width: 200, height: 18), xRadius: 6, yRadius: 6).fill()
-            NSColor(hue: hue, saturation: 0.55, brightness: 0.92, alpha: 1).setFill()
-            NSBezierPath(rect: CGRect(x: 0, y: 28, width: rect.width, height: 120)).fill()
-            NSColor(hue: hue, saturation: 0.7, brightness: 0.55, alpha: 1).setFill()
-            NSBezierPath(roundedRect: CGRect(x: 32, y: 62, width: 200, height: 22), xRadius: 4, yRadius: 4).fill()
-            NSColor(white: 1, alpha: 0.8).setFill()
-            NSBezierPath(roundedRect: CGRect(x: 32, y: 96, width: 140, height: 10), xRadius: 3, yRadius: 3).fill()
-            for row in 0..<6 {
-                NSColor(white: 0.82, alpha: 1).setFill()
-                let width = rect.width - 64 - CGFloat((row * 37) % 90)
-                NSBezierPath(roundedRect: CGRect(x: 32, y: 170 + CGFloat(row) * 20, width: width, height: 8),
-                             xRadius: 3, yRadius: 3).fill()
-            }
-        }
-    }
-
-    static func artwork() -> Data? {
-        let image = draw(CGSize(width: 120, height: 120)) { rect in
-            let gradient = NSGradient(colors: [NSColor(red: 0.95, green: 0.25, blue: 0.55, alpha: 1),
-                                               NSColor(red: 0.25, green: 0.12, blue: 0.55, alpha: 1)])
-            gradient?.draw(in: rect, angle: -60)
-            NSColor(red: 1, green: 0.8, blue: 0.3, alpha: 1).setFill()
-            NSBezierPath(ovalIn: CGRect(x: 30, y: 44, width: 60, height: 60)).fill()
-        }
-        return image.tiffRepresentation
-    }
-}
+/// The drawn stills the Dock samples use — a terminal running an
+/// agent, a browser page — shared with the card's live sample.
+private typealias Still = DockSampleStill
