@@ -1546,6 +1546,45 @@ final class DockPreviewContent {
     }
 }
 
+// MARK: - Parking (pure, tested)
+
+/// When nobody can point at the Dock — the displays asleep, the screen
+/// locked, the session switched to another user — the preview tick has
+/// nothing to watch, and it parked nothing: it woke main eight times a
+/// second all night. Each notice flips its own fact; the tick parks when
+/// the first one holds and resumes when the last one lets go.
+struct DockTickPark: Equatable {
+    enum Event: Equatable, Sendable {
+        case displaysSlept, displaysWoke, locked, unlocked, sessionLeft, sessionReturned
+    }
+
+    enum Change: Equatable { case park, resume }
+
+    static let lockedNotification = Notification.Name("com.apple.screenIsLocked")
+    static let unlockedNotification = Notification.Name("com.apple.screenIsUnlocked")
+
+    private(set) var displaysAsleep = false
+    private(set) var locked = false
+    private(set) var sessionInactive = false
+
+    var parked: Bool { displaysAsleep || locked || sessionInactive }
+
+    /// Apply a notice; the change it makes to the tick, if any.
+    mutating func note(_ event: Event) -> Change? {
+        let before = parked
+        switch event {
+        case .displaysSlept: displaysAsleep = true
+        case .displaysWoke: displaysAsleep = false
+        case .locked: locked = true
+        case .unlocked: locked = false
+        case .sessionLeft: sessionInactive = true
+        case .sessionReturned: sessionInactive = false
+        }
+        guard parked != before else { return nil }
+        return parked ? .park : .resume
+    }
+}
+
 // MARK: - Controller
 
 /// Enhance mode: Apple's Dock stays; we watch the pointer over it
@@ -1561,7 +1600,9 @@ final class DockPreviewContent {
 /// The TCC probes are cached: `AXIsProcessTrusted` for
 /// `permissionTTL`, the Screen Recording preflight — a tccd round
 /// trip on every call — through `FoldCapturePermission`'s shared
-/// 30 s cache (see `refreshPermissions`).
+/// 30 s cache (see `refreshPermissions`). With the displays asleep, the
+/// screen locked or the session switched away the timer parks
+/// (`DockTickPark`).
 @MainActor
 @Observable
 final class DockEnhanceController {
@@ -1610,6 +1651,11 @@ final class DockEnhanceController {
     }
 
     @ObservationIgnored private var timer: Timer?
+    /// Displays asleep, locked, switched away: the tick stops until the
+    /// matching wake (`DockTickPark`).
+    @ObservationIgnored private(set) var presence = DockTickPark()
+    @ObservationIgnored private var presenceObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var lockObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var panelWarmupTimer: Timer?
     @ObservationIgnored private var tracker = DockHoverTracker()
     @ObservationIgnored private var panel: DockPreviewPanel?
@@ -1758,6 +1804,7 @@ final class DockEnhanceController {
     isolated deinit {
         timer?.invalidate()
         panelWarmupTimer?.invalidate()
+        unwatchPresence()
     }
 
     // MARK: Lifecycle
@@ -1792,9 +1839,71 @@ final class DockEnhanceController {
             Task { @MainActor [weak self] in self?.quickQuit(at: point, force: force) }
         }
         installGestureMonitors()
+        watchPresence()
         scheduleTick(after: Self.pollInterval)
         schedulePanelWarmup(layoutOnly: panel != nil)
     }
+
+    /// The sleep, lock and session notices the tick parks on — for as
+    /// long as the watcher runs.
+    private func watchPresence() {
+        guard presenceObservers.isEmpty, lockObservers.isEmpty else { return }
+        let workspace = NSWorkspace.shared.notificationCenter
+        let notices: [(Notification.Name, DockTickPark.Event)] = [
+            (NSWorkspace.screensDidSleepNotification, .displaysSlept),
+            (NSWorkspace.screensDidWakeNotification, .displaysWoke),
+            (NSWorkspace.sessionDidResignActiveNotification, .sessionLeft),
+            (NSWorkspace.sessionDidBecomeActiveNotification, .sessionReturned),
+        ]
+        for (name, event) in notices {
+            presenceObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.notePresence(event) }
+            })
+        }
+        let distributed = DistributedNotificationCenter.default()
+        let lockNotices: [(Notification.Name, DockTickPark.Event)] = [
+            (DockTickPark.lockedNotification, .locked),
+            (DockTickPark.unlockedNotification, .unlocked),
+        ]
+        for (name, event) in lockNotices {
+            lockObservers.append(distributed.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.notePresence(event) }
+            })
+        }
+    }
+
+    private func unwatchPresence() {
+        for observer in presenceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        for observer in lockObservers { DistributedNotificationCenter.default().removeObserver(observer) }
+        presenceObservers = []
+        lockObservers = []
+        presence = DockTickPark()
+    }
+
+    /// A sleep, lock or session notice: the tick parks when the first
+    /// reason holds — an open preview closes with it and lets the Dock
+    /// go — and comes back at its near rate when the last one lifts.
+    func notePresence(_ event: DockTickPark.Event) {
+        switch presence.note(event) {
+        case .park?:
+            timer?.invalidate()
+            timer = nil
+            if tracker.shown != nil {
+                tracker.reset()
+                hidePreview()
+            }
+            Self.log.notice("preview tick parked: \(String(describing: event), privacy: .public)")
+        case .resume?:
+            guard running else { return }
+            Self.log.notice("preview tick resumed: \(String(describing: event), privacy: .public)")
+            scheduleTick(after: Self.pollInterval)
+        case nil:
+            break
+        }
+    }
+
+    /// Whether the pointer poll is armed — the tests read it.
+    var isTicking: Bool { timer != nil }
 
     /// The Dock-icon gestures the card asks for: a middle-click monitor
     /// under the Middle Click trigger, a scroll monitor with scroll
@@ -1862,6 +1971,7 @@ final class DockEnhanceController {
         running = false
         timer?.invalidate()
         timer = nil
+        unwatchPresence()
         panelWarmupTimer?.invalidate()
         panelWarmupTimer = nil
         tracker.reset()
@@ -1943,12 +2053,12 @@ final class DockEnhanceController {
     /// a panel is up — the band a first hover can land in — 8 Hz
     /// elsewhere. In-reach polling pays the same per-tick cost the
     /// pointer already costs while resting on the Dock; the far band
-    /// stays cheap.
+    /// stays cheap. Parked (`presence`), nothing is re-armed.
     private func scheduleTick(after interval: TimeInterval) {
         self.timer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.running else { return }
+                guard let self, self.running, !self.presence.parked else { return }
                 self.tick()
                 let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation, mainScreenHeight: Self.mainScreenHeight())
                 let overDock = self.cachedList.map { Self.listReach(of: $0.frame).contains(axPoint) } ?? false

@@ -625,6 +625,29 @@ import Testing
         #expect(bySlot.hoverID == "dock-item@10")
     }
 
+    @Test("the preview tick parks while sleep, a lock or a switched session holds, and resumes when the last lifts")
+    func tickParks() {
+        var park = DockTickPark()
+        #expect(park.note(.displaysSlept) == .park)
+        #expect(park.note(.locked) == nil, "already parked")
+        #expect(park.note(.displaysWoke) == nil, "still locked")
+        #expect(park.parked)
+        #expect(park.note(.unlocked) == .resume)
+        #expect(!park.parked)
+        #expect(park.note(.displaysWoke) == nil, "a wake with nothing parked changes nothing")
+        #expect(park.note(.sessionLeft) == .park)
+        #expect(park.note(.sessionReturned) == .resume)
+    }
+
+    @Test("a watcher that isn't running never arms its tick on a wake")
+    func stoppedWatcherStaysParked() {
+        let controller = DockEnhanceController()
+        controller.notePresence(.displaysSlept)
+        #expect(controller.presence.parked)
+        controller.notePresence(.displaysWoke)
+        #expect(!controller.isTicking)
+    }
+
     @Test("the Dock's pid is kept between reads; its launch and exit move it, a failed read asks again")
     func dockPIDIsKept() {
         var asked = 0
