@@ -206,3 +206,50 @@ def test_the_app_can_list_lid_looks_finishes_and_a_providers_light() -> None:
     light = core_runtime._cmd_preview_provider_motion(host, {"provider": "opencode", "led_count": 2})
     assert light["motion"] == "pendulum" and light["led_count"] == 2
     assert "repeat" in light["program"]
+
+
+def test_iris_closes_on_what_was_lit_and_only_a_thumbnail_starts_cyan() -> None:
+    """On the desk the Iris close starts from whatever the strip shows --
+    never a flash of cyan first, even from idle-dark. A thumbnail starts
+    dark, so only the drawings Effect Studio shows get the lead-in."""
+    from jrbar.status_bar_legacy import program_for_lid_animation
+
+    seed = f"{lid_presets.DEFAULT_LID_ACCENT} 200ms cosine"
+    _name, seconds, program = lid_presets.preset(LID_ANIMATION_CLOSED, "Iris")
+    assert not program.startswith(seed), "the stored program is the strip's"
+    animation = LedAnimationSetting(program, seconds, shape=lid_presets.LID_SHAPE_IRIS_CLOSE)
+    for led_count in (8, 2):
+        played = program_for_lid_animation(animation, led_count=led_count)
+        assert seed not in played, (led_count, played)
+        assert played.splitlines()[0].startswith("0:#000000")
+    document = lid_presets.lid_presets_document(AgentMonitorSettings(), accent=ACCENT)
+    closed = next(entry for entry in document["kinds"] if entry["kind"] == LID_ANIMATION_CLOSED)
+    iris = next(look for look in closed["presets"] if look["name"] == "Iris")
+    assert iris["program"].startswith(seed) and iris["dot_program"].startswith(seed)
+    assert not iris["setting"]["program"].startswith(seed)
+
+
+def test_play_lid_preset_plays_the_look_drawn_for_each_device() -> None:
+    """``play_lid_preset`` hands the lid player the look as a lid change
+    would, shape and all; a look it does not know is refused."""
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime
+    from jrbar.core_server import CommandError
+
+    played: list = []
+    host = SimpleNamespace(
+        play_lid_animation=lambda kind, animation=None: played.append((kind, animation))
+    )
+    reply = core_runtime._cmd_play_lid_preset(host, {"kind": LID_ANIMATION_CLOSED, "name": "Iris"})
+    assert reply == {"kind": LID_ANIMATION_CLOSED, "name": "Iris", "seconds": 1.5}
+    kind, animation = played[-1]
+    assert kind == LID_ANIMATION_CLOSED
+    assert animation.shape == lid_presets.LID_SHAPE_IRIS_CLOSE
+    assert animation.program == lid_presets.preset(LID_ANIMATION_CLOSED, "Iris")[2]
+    core_runtime._cmd_play_lid_preset(host, {"kind": LID_ANIMATION_OPEN, "name": "Hello"})
+    assert played[-1][1].shape is None and played[-1][1].duration_seconds == 1.7
+    with pytest.raises(CommandError) as refused:
+        core_runtime._cmd_play_lid_preset(host, {"kind": LID_ANIMATION_OPEN, "name": "Wormhole"})
+    assert refused.value.code == "invalid_args"
+    assert len(played) == 2

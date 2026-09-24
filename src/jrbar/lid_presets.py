@@ -41,24 +41,35 @@ DEFAULT_LID_ACCENT = "#00E5FF"
 ACTIVE_CLOSE_EMBER = 0.12
 
 
-def render_lid_shape(shape: str, *, led_count: int = 8, accent: str | None = None) -> str | None:
+def render_lid_shape(
+    shape: str,
+    *,
+    led_count: int = 8,
+    accent: str | None = None,
+    preview: bool = False,
+) -> str | None:
     """One lid shape as a finite program for a device with ``led_count``
     LEDs, or None for a name this build does not know.
 
     ``accent`` is the colour of the agent that is still working; only the
-    Iris (active) looks use it.
+    Iris (active) looks use it. ``preview`` draws the Iris close for a
+    thumbnail: a thumbnail starts dark, so it first eases up to the working
+    cyan and has something to close on. The strip itself never gets that
+    line -- on the desk the close starts from whatever was lit.
     """
     count = max(2, int(led_count))
     color = accent or DEFAULT_LID_ACCENT
     if shape == LID_SHAPE_IRIS_OPEN:
         lines = shapes.iris_open(led_count=count)
     elif shape == LID_SHAPE_IRIS_CLOSE:
-        # Drawn shut from the working cyan, so the look is the same every
-        # time it is previewed; on the desk it closes on whatever was lit.
-        lines = [f"{shapes.IRIS_OPEN_START} 200ms cosine", *shapes.iris_close(led_count=count)]
+        lines = shapes.iris_close(led_count=count)
+        if preview:
+            lines = [f"{shapes.IRIS_OPEN_START} 200ms cosine", *lines]
     elif shape == LID_SHAPE_IRIS_OPEN_ACTIVE:
         lines = shapes.iris_open(color, shapes.mix(color, "#FFFFFF", 0.3), led_count=count)
     elif shape == LID_SHAPE_IRIS_CLOSE_ACTIVE:
+        # Gathers into the working agent's colour first -- the colour the
+        # strip was already moving in -- then closes on its ember.
         lines = [
             f"{color} 200ms cosine",
             *shapes.iris_close(
@@ -188,11 +199,19 @@ def upgraded_program(program: str, duration_seconds: float) -> tuple[str, float]
     return program, duration_seconds
 
 
-def lid_program(program: str, shape: str | None, *, led_count: int, accent: str | None = None) -> str:
+def lid_program(
+    program: str,
+    shape: str | None,
+    *,
+    led_count: int,
+    accent: str | None = None,
+    preview: bool = False,
+) -> str:
     """What a lid animation plays on one device: its shape drawn for that
-    device when it has one this build knows, else its stored program."""
+    device when it has one this build knows, else its stored program.
+    ``preview`` draws it for a thumbnail (``render_lid_shape``)."""
     if shape:
-        rendered = render_lid_shape(shape, led_count=led_count, accent=accent)
+        rendered = render_lid_shape(shape, led_count=led_count, accent=accent, preview=preview)
         if rendered is not None:
             return rendered
     return program
@@ -231,8 +250,10 @@ def lid_presets_document(settings, *, accent: str | None = None) -> dict:
                     "name": name,
                     "duration_seconds": seconds,
                     "shape": shape,
-                    "program": lid_program(program, shape, led_count=8, accent=accent),
-                    "dot_program": lid_program(program, shape, led_count=2, accent=accent),
+                    "program": lid_program(program, shape, led_count=8, accent=accent, preview=True),
+                    "dot_program": lid_program(
+                        program, shape, led_count=2, accent=accent, preview=True
+                    ),
                     "setting": {"program": program, "duration_seconds": seconds, "shape": shape},
                 }
             )

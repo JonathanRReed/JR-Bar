@@ -86,7 +86,10 @@ def fixtures() -> list[dict]:
                 )
     for shape in lid_presets.LID_SHAPES:
         for led_count in (8, 2):
-            program = lid_presets.render_lid_shape(shape, led_count=led_count, accent="#D97757")
+            # Drawn as the Moments thumbnails draw them: a close starts lit.
+            program = lid_presets.render_lid_shape(
+                shape, led_count=led_count, accent="#D97757", preview=True
+            )
             rows.append(
                 {
                     "name": f"lid_{shape}_{led_count}led",
