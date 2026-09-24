@@ -812,7 +812,6 @@ struct AquariumView: View {
                 let dx = goal.x - body.x, dy = goal.y - body.y
                 context.station = (x: min(bounds.maxX, max(bounds.minX, goal.x)),
                                    y: min(bounds.maxY, max(bounds.minY, goal.y)))
-                context.hunger = AquariumStations.seekHunger
                 context.wander = 0.35
                 context.effort = AquariumStations.effort(for: cue.station,
                                                          distance: (dx * dx + dy * dy).squareRoot())

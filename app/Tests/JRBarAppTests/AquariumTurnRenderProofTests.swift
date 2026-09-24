@@ -295,8 +295,11 @@ struct AquariumTurnRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the turn proof PNGs"))
     func stationHold() throws {
-        // Ten seconds holding in the current: an onion every 0.2 s, and
-        // the moving point it holds on.
+        // Ten seconds holding in the current, an onion every 0.2 s over
+        // the moving point it holds on; then a minute at each ranging
+        // station — the kelp, the survey, the wreck — as a path, the
+        // point's own path faint behind it and a dot where each turn began.
+        let bounds = SwimBounds(minX: 0.05, minY: 30 / 560, maxX: 0.95, maxY: 460 / 560, margin: 0.1)
         let fish = Self.makeFish("station", .clownfish, lane: 0.4)
         let view = Self.grown([fish])
         var t = Self.t0
@@ -316,9 +319,7 @@ struct AquariumTurnRenderProofTests {
             let before = b.dir
             let dist = hypot(goal.x - b.x, goal.y - b.y)
             AquariumSteering.step(&b, dt: Self.dt, t: t, seed: fish.seed,
-                                  context: SwimContext(bounds: SwimBounds(minX: 0.05, minY: 30 / 560, maxX: 0.95,
-                                                                          maxY: 460 / 560, margin: 0.1),
-                                                       wander: 0.35, hunger: AquariumStations.seekHunger,
+                                  context: SwimContext(bounds: bounds, wander: 0.35,
                                                        effort: AquariumStations.effort(for: .current, distance: dist),
                                                        station: goal))
             if b.dir != before { reversals += 1 }
@@ -330,10 +331,18 @@ struct AquariumTurnRenderProofTests {
                 goals.append(CGPoint(x: goal.x * Self.tank.width, y: goal.y * Self.tank.height))
             }
         }
-        let sheet = Self.sheet(width: 520, height: 300) { c, _ in
-            Self.label(&c, "station hold (current), 10 s, every 0.2 s: \(reversals) turns", at: CGPoint(x: 260, y: 14), size: 11)
+        let ranging: [(TankStation, AquariumStations.Anchor)] = [
+            (.kelp, AquariumStations.Anchor(x: 0.4, y: 0.65, spanX: 26 / Self.tank.width, spanY: 0.22)),
+            (.survey, AquariumStations.Anchor(x: 0.3, y: 0.5, spanX: 30 / Self.tank.width, spanY: 0.05,
+                                              altX: 0.65, altY: 0.5)),
+            (.wreck, AquariumStations.Anchor(x: 0.55, y: 0.6, spanX: 60 / Self.tank.width, spanY: 0.06)),
+        ]
+        let panelW = 450.0, panelH = 280.0
+        let sheet = Self.sheet(width: panelW * 2, height: (panelH + 24) * 2) { c, _ in
+            Self.label(&c, "holding in the current, 10 s, every 0.2 s: \(reversals) turns",
+                       at: CGPoint(x: panelW / 2, y: 12), size: 11)
             var g = c
-            g.translateBy(x: 260 - 0.5 * Self.tank.width, y: 150 - 0.45 * Self.tank.height)
+            g.translateBy(x: panelW / 2 - 0.5 * Self.tank.width, y: 24 + panelH / 2 - 0.45 * Self.tank.height)
             for (i, shot) in shots.enumerated() {
                 Self.draw(view, shot, on: &g, at: CGPoint(x: shot.layout.x, y: shot.layout.y),
                           opacity: 0.2 + 0.8 * Double(i) / Double(shots.count))
@@ -341,6 +350,41 @@ struct AquariumTurnRenderProofTests {
             for p in goals {
                 g.fill(Path(ellipseIn: CGRect(x: p.x - 1.5, y: p.y - 1.5, width: 3, height: 3)),
                        with: .color(.yellow.opacity(0.7)))
+            }
+            for (k, item) in ranging.enumerated() {
+                let (station, spot) = item
+                let ox = panelW * Double((k + 1) % 2), oy = (panelH + 24) * Double((k + 1) / 2)
+                let seed = AquariumModel.stableHash("station-\(station.rawValue)")
+                var b = AquariumSteering.spawn(seed: seed, fishSpeed: 0.1, direction: 1, homeY: spot.y,
+                                               length: 0.065)
+                b.x = spot.x - 0.1
+                var tt = 0.0
+                var path = Path(), point = Path()
+                path.move(to: CGPoint(x: ox + b.x * panelW, y: oy + 24 + b.y * panelH))
+                var turns: [CGPoint] = []
+                for i in 0..<(30 * 60) {
+                    tt += Self.dt
+                    let goal = AquariumStations.target(for: station, anchor: spot, t: tt, seed: seed)
+                    let gp = CGPoint(x: ox + goal.x * panelW, y: oy + 24 + goal.y * panelH)
+                    if i == 0 { point.move(to: gp) } else { point.addLine(to: gp) }
+                    let before = b.dir
+                    AquariumSteering.step(&b, dt: Self.dt, t: tt, seed: seed,
+                                          context: SwimContext(bounds: bounds, wander: 0.35,
+                                                               effort: AquariumStations.effort(
+                                                                   for: station, distance: hypot(goal.x - b.x, goal.y - b.y)),
+                                                               station: goal))
+                    let p = CGPoint(x: ox + b.x * panelW, y: oy + 24 + b.y * panelH)
+                    path.addLine(to: p)
+                    if b.dir != before { turns.append(p) }
+                }
+                c.stroke(point, with: .color(.yellow.opacity(0.35)), lineWidth: 0.8)
+                c.stroke(path, with: .color(.orange.opacity(0.9)), lineWidth: 1.4)
+                for p in turns {
+                    c.fill(Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)),
+                           with: .color(.white.opacity(0.95)))
+                }
+                Self.label(&c, "\(station.rawValue), a minute: \(turns.count) turns",
+                           at: CGPoint(x: ox + panelW / 2, y: oy + 12), size: 11)
             }
         }
         try Self.write(sheet, "fish-turn-station")

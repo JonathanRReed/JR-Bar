@@ -165,10 +165,13 @@ public enum AquariumStations {
     }
 
     /// How long a survey leg lasts before the fish heads for the other
-    /// landmark.
-    public static let surveyLeg: TimeInterval = 7
-    /// Seconds per lap of the wreck.
-    public static let wreckLap: TimeInterval = 11
+    /// landmark: long enough to swim across at a cruise and look about
+    /// when it gets there, so a surveyor turns back a couple of times a
+    /// minute, not every few seconds.
+    public static let surveyLeg: TimeInterval = 24
+    /// Seconds per lap of the wreck. Seen side-on a lap is two turns, so
+    /// a slow lap keeps an inspector to under three a minute.
+    public static let wreckLap: TimeInterval = 44
 
     /// The point a fish at `station` chases at clock `t`. Each station's
     /// path is its verb: a forager climbs and drops along the strand, a
@@ -182,7 +185,7 @@ public enum AquariumStations {
         let side: Double = (seed >> 17) & 1 == 0 ? 1 : -1
         switch station {
         case .kelp:
-            let climb = 0.5 + 0.5 * sin(t * 0.33 + phase)
+            let climb = 0.5 + 0.5 * sin(t * 0.2 + phase)
             return (a.x + side * a.spanX * 0.55 + sin(t * 0.6 + phase) * a.spanX * 0.25,
                     a.y - a.spanY * climb)
         case .survey:
@@ -210,9 +213,10 @@ public enum AquariumStations {
         }
     }
 
-    /// The seek's appetite: a purposeful swim at about cruise pace, not
-    /// the dart a pellet earns.
-    public static let seekHunger = 0.55
+    /// How long a working fish waits after one turn before it turns back
+    /// for its station again, seconds (the pace's own cooldown when that
+    /// is longer).
+    public static let turnCooldown: TimeInterval = 6
     /// The pace at a holding station once the fish has arrived.
     public static let holdEffort = 0.35
     /// Inside this distance (unit space) of its station's point a fish

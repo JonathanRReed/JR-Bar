@@ -315,7 +315,6 @@ struct AquariumSteeringTests {
                 let dirBefore = b.dir
                 AquariumSteering.step(&b, dt: 1.0 / 30, t: t, seed: 7,
                                       context: SwimContext(bounds: Self.tank, wander: 0.35,
-                                                           hunger: AquariumStations.seekHunger,
                                                            effort: AquariumStations.effort(for: .current, distance: dist),
                                                            station: goal))
                 if b.dir != dirBefore { reversals += 1; turnTimes.append(t) }
@@ -459,5 +458,71 @@ struct AquariumSteeringTests {
         for (a, next) in zip(poses, poses.dropFirst()) {
             #expect(abs(next.c - a.c) <= 0.4, "the side-on share jumped \(next.c - a.c) in a frame")
         }
+    }
+
+    @Test("a working fish potters: at most three turns a minute at the kelp, the survey and the wreck")
+    func rangingStationsTurnCalmly() {
+        // The view's own station shapes: a kelp strand, two landmarks
+        // across the tank, and the wreck.
+        let stations: [(TankStation, AquariumStations.Anchor)] = [
+            (.kelp, AquariumStations.Anchor(x: 0.4, y: 0.65, spanX: 26.0 / 900, spanY: 0.22)),
+            (.survey, AquariumStations.Anchor(x: 0.3, y: 0.5, spanX: 30.0 / 900, spanY: 0.05,
+                                              altX: 0.65, altY: 0.5)),
+            (.wreck, AquariumStations.Anchor(x: 0.55, y: 0.6, spanX: 60.0 / 900, spanY: 0.06)),
+        ]
+        for (station, anchor) in stations {
+            for fishSpeed in [0.05, 0.1, 0.14] {
+                for seed: UInt64 in [0x1234_5678_9ABC, 0xFEED_BEEF_1234] {
+                    var b = AquariumSteering.spawn(seed: seed, fishSpeed: fishSpeed, direction: 1,
+                                                   homeY: anchor.y, length: 0.065)
+                    b.x = anchor.x - 0.1
+                    var t = 0.0
+                    var turns: [Double] = []
+                    var distances: [Double] = []
+                    for _ in 0..<(30 * 60) {
+                        t += 1.0 / 30
+                        let goal = AquariumStations.target(for: station, anchor: anchor, t: t, seed: seed)
+                        let d = hypot(goal.x - b.x, goal.y - b.y)
+                        let before = b.dir
+                        AquariumSteering.step(&b, dt: 1.0 / 30, t: t, seed: seed,
+                                              context: SwimContext(bounds: Self.tank, wander: 0.35,
+                                                                   effort: AquariumStations.effort(for: station,
+                                                                                                   distance: d),
+                                                                   station: goal))
+                        if b.dir != before { turns.append(t) }
+                        distances.append(d)
+                    }
+                    let what = "\(station) at speed \(fishSpeed)"
+                    #expect(turns.count <= 3, "\(what): \(turns.count) turns in a minute")
+                    for (a, later) in zip(turns, turns.dropFirst()) {
+                        #expect(later - a >= AquariumStations.turnCooldown, "\(what): turns \(later - a) s apart")
+                    }
+                    if station == .kelp {
+                        // It works the strand, rising and sinking with it.
+                        let mean = distances.dropFirst(30 * 10).reduce(0, +) / Double(distances.count - 300)
+                        #expect(mean < AquariumStations.arriveRadius, "\(what): mean distance \(mean)")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("food and work outrank the school: a mate behind never turns a fish from its meal")
+    func schoolWaitsForFood() {
+        var fed = SwimBody(x: 0.5, y: 0.5, dir: 1, speed: 0.04, turnRate: 2.4, energy: 1, homeY: 0.5)
+        var working = fed
+        var t = 10.0
+        for _ in 0..<(30 * 2) {
+            t += 1.0 / 30
+            AquariumSteering.step(&fed, dt: 1.0 / 30, t: t, seed: 3,
+                                  context: SwimContext(bounds: Self.tank, food: (0.8, 0.5),
+                                                       school: (0.1, 0.5), wander: 0))
+            AquariumSteering.step(&working, dt: 1.0 / 30, t: t, seed: 3,
+                                  context: SwimContext(bounds: Self.tank, school: (0.1, 0.5), wander: 0,
+                                                       station: (0.7, 0.5)))
+            #expect(fed.turn == nil && fed.dir == 1, "the food ahead wins")
+            #expect(working.turn == nil && working.dir == 1, "the work ahead wins")
+        }
+        #expect(fed.x > 0.55)
     }
 }

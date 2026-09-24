@@ -46,6 +46,11 @@ public struct SwimBody: Equatable, Sendable {
     public var backFor: Double = 0
     /// Turns made so far; seeds each turn's bow.
     public var turns: Int = 0
+    /// A working fish's fin lift, unit tank heights per second (down
+    /// positive): at a station it rises and sinks with the point it
+    /// works at instead of swimming loops to follow it. Eased, 0 off
+    /// station.
+    public var lift: Double = 0
 
     /// Direction of travel in radians: 0 swims right, +π/2 dives,
     /// ±π swims left. Read from `dir` and `climb`; setting it splits it
@@ -187,8 +192,9 @@ public enum AquariumSteering {
     public static let hesitation = 0.25
     /// Food and a scare may turn a fish this soon after its last turn.
     public static let urgentCooldown = 0.6
-    /// A fish's hover at its station, as a share of its cruise.
-    public static let hoverThrottle = 0.12
+    /// The most a working fish's fins lift or sink it, as a share of
+    /// its cruise.
+    public static let stationLift = 0.8
 
     /// Smooth wander noise in −1…1: a few incommensurate sines off the
     /// seed, so it never repeats on any human timescale and every fish
@@ -296,6 +302,15 @@ public enum AquariumSteering {
         let bounds = context.bounds
         let cruise = body.speed * body.energy * pace.cruiseScale * tempo
 
+        // At a station the fins hold the fish level with the point,
+        // through a turn as much as out of one.
+        var liftTarget = 0.0
+        if context.food == nil, let goal = context.station {
+            let most = stationLift * cruise
+            liftTarget = min(most, max(-most, (goal.y - body.y) * 1.5 * tempo))
+        }
+        body.lift += (liftTarget - body.lift) * min(1, 3 * tempo * dt)
+
         if body.turn != nil {
             stepTurn(&body, dt: dt, t: t, cruise: cruise, context: context)
             return
@@ -317,11 +332,16 @@ public enum AquariumSteering {
         var backKind: SwimTurn.Kind?
         var urgent = false
         var immediate = false
+        // A turn back toward a station waits out the station's longer
+        // cooldown: working fish potter, they don't pace.
+        var stationBack = false
         // A goal ahead and close suppresses the glass's lookahead: it
         // swims up to food by the wall instead of turning away from it.
         var goalAheadX: Double?
 
-        if let school = context.school {
+        // The school only pulls a fish with nothing better to do: food
+        // and work both outrank it.
+        if context.food == nil, context.station == nil, let school = context.school {
             let dx = school.x - body.x
             let dy = school.y - body.y
             let dist = (dx * dx + dy * dy).squareRoot()
@@ -368,26 +388,23 @@ public enum AquariumSteering {
             let dy = goal.y - body.y
             let dist = (dx * dx + dy * dy).squareRoot()
             let ahead = dx * dir
-            cap = seekClimb
-            if dist < AquariumStations.arriveRadius {
-                // Arrived: hover, nosing toward the point within its own
-                // facing; only a point well behind turns it round.
-                let deadZone = AquariumStations.arriveRadius * 0.5
-                if ahead < -deadZone {
-                    backKind = .cruise
-                    throttleTarget = 0.04
-                } else {
-                    let near = min(1, max(0, (ahead + 0.01) / deadZone))
-                    throttleTarget = max(0.04, hoverThrottle * near)
-                    let want = atan2(dy, max(abs(dx), 0.02) * dir)
-                    climbRate = 1.5 * tempo * (clampClimb(want, cruiseClimb) - body.climb)
-                }
-                goalAheadX = max(0, ahead)
-            } else if cos(atan2(dy, dx)) * dir < -0.25 {
+            let arrived = dist < AquariumStations.arriveRadius
+            cap = arrived ? cruiseClimb : seekClimb
+            // Only a point well behind turns it round — behind by more
+            // than the station's reach, and by more than half how far
+            // it lies above or below, so a point overhead is risen to
+            // (the fins' lift) rather than paced under.
+            if ahead < -max(AquariumStations.arriveRadius, 0.5 * abs(dy)) {
                 backKind = .cruise
+                stationBack = true
+                throttleTarget = min(throttleTarget, 0.04)
             } else {
-                let want = atan2(dy, max(abs(dx), 0.01) * dir)
-                climbRate = 2 * tempo * (clampClimb(want, cap) - body.climb)
+                // The pace follows how far ahead the point lies: a swim
+                // across to it, easing to a hover as it draws level.
+                let near = min(1, max(0, (ahead + 0.01) / 0.10))
+                throttleTarget = max(0.04, throttleTarget * near)
+                let want = atan2(dy, max(abs(dx), 0.02) * dir)
+                climbRate = (arrived ? 1.5 : 2) * tempo * (clampClimb(want, cap) - body.climb)
                 goalAheadX = max(0, ahead)
             }
         }
@@ -416,13 +433,15 @@ public enum AquariumSteering {
         if room < reach, goalAheadX.map({ $0 >= room - 0.55 * body.length }) ?? true {
             if backKind == nil || !urgent { backKind = .wall }
             immediate = true
+            stationBack = false
         }
 
         // Turn back, or wait for it.
         if let kind = backKind {
             body.backFor += dt
             let since = t - body.lastTurnEnd
-            let cooled = since >= pace.cooldown / tempo
+            let rest = stationBack ? max(pace.cooldown, AquariumStations.turnCooldown) : pace.cooldown
+            let cooled = since >= rest / tempo
                 || (urgent && since >= urgentCooldown)
             if cooled && (immediate || body.backFor >= hesitation) {
                 beginTurn(&body, kind: kind, t: t, seed: seed, pace: pace, tempo: tempo,
@@ -452,9 +471,10 @@ public enum AquariumSteering {
         let vx = speed * dir * cos(body.climb)
         let vy = speed * sin(body.climb)
         body.x += vx * dt
-        body.y += vy * dt
+        body.y += (vy + body.lift) * dt
         clampInside(&body, bounds)
-        let travel = atan2(vy, abs(vx) + 0.25 * max(cruise, 1e-6))
+        // A fin lift tips the nose only a little: the fish rises level.
+        let travel = atan2(vy + 0.3 * body.lift, abs(vx) + 0.25 * max(cruise, 1e-6))
         easePitch(&body, toward: travel, dt: dt)
     }
 
@@ -478,7 +498,7 @@ public enum AquariumSteering {
         let vx = v0 * turn.from * cos(.pi * p)
         let vy = v0 * (0.20 * turn.arc * s + sin(body.climb) * (1 - s))
         body.x += vx * dt
-        body.y += vy * dt
+        body.y += (vy + body.lift) * dt
         clampInside(&body, context.bounds)
         let pose = AquariumTurn.pose(p: p, dir0: turn.from, arc: turn.arc, climb: body.climb)
         easePitch(&body, toward: pose.pitch, dt: dt)
