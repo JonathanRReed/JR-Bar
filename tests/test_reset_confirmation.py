@@ -236,3 +236,127 @@ def test_a_file_from_before_candidates_still_decodes() -> None:
     assert decode_reset_delivery_state(legacy) == ResetDeliveryState()
     broken = '{"events":[],"version":1,"candidates":[{"event_id":"x"}]}'
     assert decode_reset_delivery_state(broken).candidates == ()
+
+
+# --- The confirming read has to happen (review fix) ---------------------------
+
+
+def test_a_waiting_jump_brings_the_next_read_inside_the_confirmation_window() -> None:
+    from jrbar.adaptive_refresh import (
+        RESET_WATCH_INTERVAL_SECONDS,
+        AdaptiveRefreshReason,
+        plan_adaptive_refresh_cadence,
+    )
+
+    idle = plan_adaptive_refresh_cadence((), observed_at=T0)
+    assert idle.interval_seconds == 1800.0
+    waiting = plan_adaptive_refresh_cadence((), observed_at=T0, reset_confirm_until=T0 + 1800)
+    assert waiting.reason is AdaptiveRefreshReason.RESET_CONFIRM
+    assert waiting.interval_seconds == RESET_WATCH_INTERVAL_SECONDS
+    # Low Power Mode still takes the one confirming read.
+    constrained = plan_adaptive_refresh_cadence(
+        (), observed_at=T0, constrained=True, reset_confirm_until=T0 + 1800
+    )
+    assert constrained.interval_seconds == RESET_WATCH_INTERVAL_SECONDS
+    assert constrained.constrained is True
+    # Once the window has closed there is nothing left to confirm.
+    closed = plan_adaptive_refresh_cadence((), observed_at=T0 + 1801, reset_confirm_until=T0 + 1800)
+    assert closed.reason is AdaptiveRefreshReason.IDLE
+
+
+def test_a_jump_read_at_the_idle_cadence_is_still_confirmed(tmp_path) -> None:
+    """The idle cadence and the confirmation window are both half an hour,
+    so the read after a jump used to land just past the window and the
+    reset was never announced. A waiting jump now asks for its read."""
+    from jrbar.adaptive_refresh import AdaptiveRefreshReason
+    from jrbar.provider_usage_qol import RESET_CONFIRM_MAX_S, reset_confirm_deadline
+    from jrbar.provider_usage_runtime import ProviderUsageService
+    from jrbar.provider_usage_settings import default_provider_usage_settings
+
+    clock = [T0]
+    current = {"read": read(T0, lane(10.0, T0 + 3 * 86400))}
+    service = ProviderUsageService(
+        settings_loader=default_provider_usage_settings,
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: clock[0],
+        collectors={"claude": lambda _preference, _home, _now, _credentials: current["read"]},
+        incident_lookup=lambda _provider, _now: None,
+    )
+    service.refresh_now(providers=("claude",))
+    before = current["read"]
+    assert service.snapshot().next_refresh_at == T0 + 1800
+
+    # The next read comes at the idle cadence and shows a jump.
+    clock[0] = service.snapshot().next_refresh_at
+    boundary = clock[0] + WEEK
+    current["read"] = read(clock[0], lane(100.0, boundary))
+    service.refresh_now(providers=("claude",))
+    jumped = current["read"]
+    first = step(before, jumped)
+    assert first.events == () and len(first.candidates) == 1
+
+    service.note_reset_candidates(reset_confirm_deadline(first.candidates))
+    assert service.cadence_plan().reason is AdaptiveRefreshReason.RESET_CONFIRM
+    due = service.snapshot().next_refresh_at
+    assert 60.0 <= due - jumped.observed_at <= 120.0 < RESET_CONFIRM_MAX_S
+
+    clock[0] = due
+    confirm = read(clock[0], lane(99.0, boundary))
+    second = step(jumped, confirm, candidates=first.candidates)
+    assert [event.trigger for event in second.events] == [RESET_TRIGGER_JUMP]
+
+    # Nothing waiting: the cadence goes back to idle on the next read.
+    service.note_reset_candidates(reset_confirm_deadline(second.candidates))
+    current["read"] = confirm
+    service.refresh_now(providers=("claude",))
+    assert service.cadence_plan().reason is AdaptiveRefreshReason.IDLE
+
+
+def test_a_tick_before_the_first_reading_keeps_the_saved_candidates(tmp_path, monkeypatch) -> None:
+    """refresh_ delivers pending resets before the first usage reading
+    lands. It must read the saved state, not start an empty one and save
+    it over the candidates."""
+    import jrbar.provider_usage_event_store as store
+    from jrbar.provider_reset_settings_action import (
+        deliver_pending_reset_events,
+        reset_delivery_state,
+    )
+
+    path = tmp_path / "provider-reset-events.json"
+    monkeypatch.setattr(store, "default_reset_event_store_path", lambda: path)
+    before = read(T0, lane(10.0, T0 + 3 * 86400))
+    jumped = read(T0 + 120, lane(100.0, T0 + 120 + WEEK))
+    first = step(before, jumped)
+    store.save_reset_delivery_state(with_reset_candidates(ResetDeliveryState(), first.candidates), path)
+
+    persisted: list[bool] = []
+    controller = SimpleNamespace(
+        _persist_reset_delivery_state=lambda: persisted.append(True),
+        _schedule_reset_delivery_retry=lambda _now: None,
+    )
+    deliver_pending_reset_events(controller, legacy=SimpleNamespace(log_status_bar=lambda _line: None))
+
+    assert controller._jrbar_reset_delivery_state.candidates == first.candidates
+    assert reset_delivery_state(controller) is controller._jrbar_reset_delivery_state
+    assert persisted == [], "nothing changed, so nothing is saved over the file"
+    assert store.load_reset_delivery_state(path).candidates == first.candidates
+
+
+def test_the_usage_apply_reads_the_same_state_and_asks_for_the_confirming_read() -> None:
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "src" / "jrbar" / "provider_usage_status_bar.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    apply = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "applyProviderUsageState_"
+    )
+    called = {
+        node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
+        for node in ast.walk(apply)
+        if isinstance(node, ast.Call)
+    }
+    assert {"reset_delivery_state", "note_reset_candidates", "confirm_reset_events"} <= called
+    assert "load_reset_delivery_state" not in called

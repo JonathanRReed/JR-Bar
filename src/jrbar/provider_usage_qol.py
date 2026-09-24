@@ -395,6 +395,15 @@ def confirm_reset_events(
     return ResetConfirmation(tuple(events), tuple(kept))
 
 
+def reset_confirm_deadline(candidates: tuple[ResetCandidate, ...]) -> float | None:
+    """The last moment any waiting jump can still be confirmed, so the
+    refresh cadence can take its confirming read in time; None when
+    nothing is waiting."""
+    if not candidates:
+        return None
+    return max(candidate.observed_at for candidate in candidates) + RESET_CONFIRM_MAX_S
+
+
 def threshold_crossings(
     previous: tuple[ProviderUsageSnapshot, ...],
     current: tuple[ProviderUsageSnapshot, ...],
@@ -537,6 +546,7 @@ __all__ = [
     "detect_reset_events",
     "format_lane_meter",
     "format_reset_countdown",
+    "reset_confirm_deadline",
     "threshold_crossings",
     "usage_totals",
 ]

@@ -40,10 +40,11 @@ else:
         profile_session_action,
         toggle_provider_menu_visibility,
     )
-    from .provider_usage_event_store import (
-        load_reset_delivery_state,
-        save_reset_delivery_state,
+    from .provider_reset_settings_action import (
+        note_reset_candidates,
+        reset_delivery_state,
     )
+    from .provider_usage_event_store import save_reset_delivery_state
     from .provider_usage_feedback_actions import (
         alert_connection_loss,
         alert_new_critical_pace,
@@ -407,16 +408,11 @@ else:
                 is False
             ):
                 self._provider_usage_log("usage percent history write not queued")
-            delivery_state = getattr(self, "_jrbar_reset_delivery_state", None)
-            if type(delivery_state) is not ResetDeliveryState:
-                # First apply since launch: the saved deliveries and the
-                # jumps still waiting for confirmation come back, so a
-                # restart mid-candidate neither drops nor repeats a reset.
-                try:
-                    delivery_state = load_reset_delivery_state()
-                except Exception:
-                    delivery_state = ResetDeliveryState()
-                self._jrbar_reset_delivery_state = delivery_state
+            # The saved deliveries and the jumps still waiting for
+            # confirmation, loaded once for this and refresh_'s delivery
+            # alike, so a restart mid-candidate neither drops nor repeats
+            # a reset.
+            delivery_state = reset_delivery_state(self)
             seen = {
                 event.event_id
                 for event in delivery_state.events
@@ -440,6 +436,9 @@ else:
                 self._jrbar_reset_delivery_state = delivery_state
                 if not reset_events:
                     self._persist_reset_delivery_state()
+            # A waiting jump needs its confirming read within half an
+            # hour; the idle cadence alone would usually miss it.
+            note_reset_candidates(self, confirmation.candidates)
             reset_preferences = {preference.identity: preference for preference in settings.providers}
             if reset_events:
                 for event in reset_events:
@@ -661,7 +660,7 @@ else:
             celebrate_quota_resets(self, events, legacy=_legacy)
 
         def _persist_reset_delivery_state(self) -> None:
-            state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
+            state = reset_delivery_state(self)
             disposition = self._persistence_writer.submit(
                 "provider-reset-events",
                 lambda: save_reset_delivery_state(state),

@@ -50,17 +50,58 @@ def toggle_provider_reset_setting(controller, sender, *, log) -> None:
 __all__ = ["toggle_provider_reset_setting"]
 
 
+def reset_delivery_state(controller):
+    """The controller's reset delivery state, read from disk the first time
+    anything asks for it.
+
+    ``refresh_`` delivers pending resets on every tick, long before the
+    first usage reading lands. Loading here, in the one place both paths
+    read from, means that early tick sees the saved deliveries and the
+    jumps still waiting for confirmation, instead of starting from an
+    empty state and saving it over them.
+    """
+    from .provider_reset_events import ResetDeliveryState
+
+    state = getattr(controller, "_jrbar_reset_delivery_state", None)
+    if type(state) is ResetDeliveryState:
+        return state
+    try:
+        from .provider_usage_event_store import load_reset_delivery_state
+
+        state = load_reset_delivery_state()
+    except Exception:
+        state = ResetDeliveryState()
+    controller._jrbar_reset_delivery_state = state
+    return state
+
+
+def note_reset_candidates(controller, candidates) -> None:
+    """Ask the usage service for a confirming read while jumps wait."""
+    from .provider_usage_qol import reset_confirm_deadline
+
+    service = getattr(controller, "_jrbar_provider_usage_service", None)
+    note = getattr(service, "note_reset_candidates", None)
+    if not callable(note):
+        return
+    try:
+        note(reset_confirm_deadline(tuple(candidates)))
+    except Exception:
+        pass
+
+
+__all__ += ["note_reset_candidates", "reset_delivery_state"]
+
+
 def deliver_pending_reset_events(controller, *, legacy) -> None:
     import time
 
     from .provider_reset_events import (
-        ResetDeliveryState,
         apply_reset_channel_receipt,
         pending_reset_channels,
     )
     from .provider_usage_feedback import deliver_reset_channels
 
-    state = getattr(controller, "_jrbar_reset_delivery_state", ResetDeliveryState())
+    state = reset_delivery_state(controller)
     original = state
     epoch_now = time.time()
     monotonic_now = time.monotonic()

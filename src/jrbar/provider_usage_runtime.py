@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections import deque
@@ -381,6 +382,9 @@ class ProviderUsageService:
         self._menu_last_opened_at: float | None = None
         #: True while the LED bar renders Quota Runway.
         self._ambient_usage_visible = False
+        #: While a jump waits for its confirming read, the last moment it
+        #: can still be confirmed (note_reset_candidates); None otherwise.
+        self._reset_confirm_until: float | None = None
         self._last_cadence_plan = plan_adaptive_refresh_cadence(
             (),
             observed_at=0.0,
@@ -390,6 +394,22 @@ class ProviderUsageService:
         """Tell the cadence whether a usage number is on screen already."""
         with self._lock:
             self._ambient_usage_visible = bool(visible)
+            self._replan_cached_cadence_locked(float(self._clock()))
+
+    def note_reset_candidates(self, confirm_until: float | None) -> None:
+        """Tell the cadence a jump in remaining is waiting to be confirmed.
+
+        A jump is announced only after a second read 1 to 30 minutes
+        later agrees (provider_usage_qol.confirm_reset_events). The idle
+        cadence is 30 minutes, so without this the confirming read would
+        usually come too late. Until ``confirm_until`` the next read comes
+        within two minutes; None when nothing is waiting.
+        """
+        with self._lock:
+            until = None if confirm_until is None else float(confirm_until)
+            if until is not None and not math.isfinite(until):
+                until = None
+            self._reset_confirm_until = until
             self._replan_cached_cadence_locked(float(self._clock()))
 
     def note_menu_opened(self, *, now: float | None = None) -> None:
@@ -407,6 +427,7 @@ class ProviderUsageService:
             menu_last_opened_at=self._menu_last_opened_at,
             constrained=self._last_cadence_plan.constrained,
             ambient_usage_visible=self._ambient_usage_visible,
+            reset_confirm_until=self._reset_confirm_until,
         )
         next_refresh_at = self._state.next_refresh_at
         if next_refresh_at is not None:
@@ -727,6 +748,7 @@ class ProviderUsageService:
             ambient_usage_visible=bool(
                 getattr(self, "_ambient_usage_visible", False)
             ),
+            reset_confirm_until=getattr(self, "_reset_confirm_until", None),
         )
         state = ProviderUsageState(
             snapshots=ordered,
