@@ -88,6 +88,14 @@ struct NotchIslandView: View {
                    ? .easeInOut(duration: NotchMotion.reduceMotionFade)
                    : .spring(response: 0.32, dampingFraction: 0.82),
                    value: face)
+        // A face built while a notice is already up (a rebuilt root, a
+        // re-hosted window) shows it at once — the entrance only ever
+        // plays on the change.
+        .onAppear {
+            guard let notice = shownNotice else { return }
+            lastNotice = notice
+            noticeShown = true
+        }
         .onChange(of: shownNotice) { _, shown in
             if let shown {
                 lastNotice = shown
@@ -228,9 +236,7 @@ struct NotchIslandView: View {
     private func agentRow(summary: NotchIslandSummary) -> some View {
         HStack(spacing: 4) {
             ForEach(summary.workingProviders.prefix(NotchIsland.dotLimit), id: \.self) { provider in
-                Circle()
-                    .fill(ProviderStyle.style(for: provider).accent)
-                    .frame(width: 5, height: 5)
+                NotchDot(color: ProviderStyle.style(for: provider).accent)
             }
             Text("\(summary.working)")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -243,7 +249,7 @@ struct NotchIslandView: View {
     /// The attention mark: a coloured dot and the count beside it.
     private func markCount(_ count: Int, color: Color) -> some View {
         HStack(spacing: 3) {
-            Circle().fill(color).frame(width: 5, height: 5)
+            NotchDot(color: color)
             Text("\(count)")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .monospacedDigit()
@@ -270,12 +276,8 @@ struct NotchIslandView: View {
     /// LED it mirrors.
     private func sensorDots(_ sensors: NotchSensorState) -> some View {
         HStack(spacing: 4) {
-            if sensors.cameraInUse {
-                Circle().fill(.green).frame(width: 5, height: 5)
-            }
-            if sensors.microphoneInUse {
-                Circle().fill(.orange).frame(width: 5, height: 5)
-            }
+            if sensors.cameraInUse { NotchDot(color: .green) }
+            if sensors.microphoneInUse { NotchDot(color: .orange) }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(sensors.cameraInUse && sensors.microphoneInUse
@@ -297,16 +299,10 @@ struct NotchIslandView: View {
                 mediaStrip(media)
             }
             ForEach(summary.workingProviders.prefix(NotchIsland.dotLimit), id: \.self) { provider in
-                Circle()
-                    .fill(ProviderStyle.style(for: provider).accent)
-                    .frame(width: 5, height: 5)
+                NotchDot(color: ProviderStyle.style(for: provider).accent)
             }
-            if summary.waiting > 0 {
-                Circle().fill(.orange).frame(width: 5, height: 5)
-            }
-            if summary.failed > 0 {
-                Circle().fill(.red).frame(width: 5, height: 5)
-            }
+            if summary.waiting > 0 { NotchDot(color: .orange) }
+            if summary.failed > 0 { NotchDot(color: .red) }
             if summary.working + summary.waiting + summary.failed > 0 {
                 Text("\(summary.working + summary.waiting + summary.failed)")
                     .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -337,8 +333,10 @@ struct NotchIslandView: View {
                         .foregroundStyle(.white.opacity(0.7))
                 }
             }
-            .frame(width: 12, height: 12)
-            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .frame(width: 13, height: 13)
+            .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
             Text(media.displayLine)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.white.opacity(0.85))
@@ -360,15 +358,7 @@ struct NotchIslandView: View {
         let utility = toy.cardModel.utility
         return Group {
             if utility.audioTapLive {
-                HStack(alignment: .bottom, spacing: 1.5) {
-                    ForEach(utility.audioLevels.indices, id: \.self) { index in
-                        let level = CGFloat(min(1, max(0, utility.audioLevels[index])))
-                        RoundedRectangle(cornerRadius: 1, style: .continuous)
-                            .fill(.white.opacity(0.75))
-                            .frame(width: 2.5, height: 3 + 6 * level)
-                    }
-                }
-                .frame(height: 10, alignment: .bottom)
+                LiveEqualizer(utility: utility, color: .white.opacity(0.75), barWidth: 2.5, height: 10)
             } else {
                 DecorativeBars(live: playing && toy.islandVisible, color: .white.opacity(0.75), barWidth: 2.5)
             }
@@ -399,16 +389,19 @@ struct NotchIslandView: View {
         // A tap that could not open the session says why in the line.
         let refusal = notice.session.flatMap { toy.cardModel.openRefusals[$0] }
         return HStack(spacing: 7) {
-            Image(systemName: notice.symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(noticeTint(notice))
-            Text(refusal ?? (notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)"))
-                .font(.system(size: 11.5))
-                .foregroundStyle(refusal != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.white.opacity(0.85)))
-                .lineLimit(1)
-                .truncationMode(.middle)
+            NotchGlyph(symbol: notice.symbol, tint: noticeTint(notice))
+            Group {
+                if let refusal {
+                    Text(refusal).foregroundStyle(.orange)
+                } else {
+                    Self.noticeLine(notice)
+                }
+            }
+            .font(.system(size: 11.5))
+            .lineLimit(1)
+            .truncationMode(.middle)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         // The line lives in the lip below the notch, centred between the
         // bezel and a live Screen Bar's housing: the bar's panel sits
         // above the island and its black climbs up behind the island's
@@ -429,39 +422,47 @@ struct NotchIslandView: View {
         .accessibilityAction { toy.islandTapped() }
     }
 
+    /// The notice's copy as one line: who or what, bright and set a
+    /// weight up, then what happened, quieter.
+    static func noticeLine(_ notice: AlcoveNotice) -> Text {
+        let title = Text(notice.title)
+            .fontWeight(.semibold)
+            .foregroundStyle(Color.white.opacity(0.95))
+        guard !notice.subtitle.isEmpty else { return title }
+        let rest = Text(verbatim: "  \(notice.subtitle)")
+            .foregroundStyle(Color.white.opacity(0.6))
+        return Text("\(title)\(rest)")
+    }
+
     /// A level key's answer, grown out of the notch — the Alcove HUD in
     /// the island's own black rather than a pill hung under it. The
     /// reading is one continuous fill with its number: no segments, the
     /// same unbroken language the Screen Bar speaks. Muted is red.
     private func levelFace(_ notice: AlcoveNotice) -> some View {
         let fraction = min(1, max(0, notice.fraction ?? 0))
-        let tint: Color = notice.muted ? .red.opacity(0.85) : .white.opacity(0.92)
         return HStack(spacing: 10) {
-            Image(systemName: notice.symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(notice.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(Color.white.opacity(0.85)))
-                .frame(width: 16)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous).fill(.white.opacity(0.18))
-                    Capsule(style: .continuous).fill(tint)
-                        .frame(width: max(geo.size.height, geo.size.width * fraction))
-                        .opacity(fraction > 0 ? 1 : 0)
-                }
-            }
-            .frame(height: 5)
+            // The glyph's own waves light with the level where the
+            // symbol has them — the system HUD's speaker, in white.
+            Image(systemName: notice.symbol, variableValue: notice.muted ? nil : fraction)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(notice.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(Color.white.opacity(0.9)))
+                .frame(width: 20)
+            NotchLevelBar(fraction: fraction, tint: notice.muted ? .red : .white,
+                          dimmed: notice.muted)
             // A level reads its percent; a readout with words of its own
             // (the ⌘-drag timer's minutes) reads those.
             Text(notice.muted ? "Muted"
                  : notice.subtitle.isEmpty ? "\(Int((fraction * 100).rounded()))" : notice.subtitle)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(notice.muted ? AnyShapeStyle(Color.red.opacity(0.9))
+                                              : AnyShapeStyle(Color.white.opacity(0.75)))
+                .contentTransition(.numericText(value: fraction))
                 .lineLimit(1)
                 .fixedSize()
-                .frame(minWidth: 24, alignment: .trailing)
+                .frame(minWidth: 26, alignment: .trailing)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: fraction)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: fraction)
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.top, toy.notchDepth)
@@ -495,12 +496,10 @@ struct NotchIslandView: View {
         let lines = toy.askSummaryLines
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
-                Image(systemName: notice.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.orange)
+                askMark(notice)
                 Text(notice.title)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.95))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
@@ -509,10 +508,7 @@ struct NotchIslandView: View {
                 }
                 if let opened = live?.openedAt ?? notice.ask?.openedAt {
                     TimelineView(.periodic(from: .now, by: 15)) { context in
-                        Text(Self.waited(since: opened, now: context.date))
-                            .font(.system(size: 9.5, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.4))
+                        NotchWaitChip(text: Self.waited(since: opened, now: context.date))
                     }
                 }
             }
@@ -520,7 +516,7 @@ struct NotchIslandView: View {
             NotchAskCopy.line(toy.askSummary(notice), preview: live?.previewLine,
                               destructive: live?.isDestructive == true)
                 .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.62))
+                .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(lines)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity,
@@ -595,28 +591,25 @@ struct NotchIslandView: View {
         let meeting = toy.headsUpMeeting
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
-                Image(systemName: notice.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(noticeTint(notice))
+                NotchGlyph(symbol: notice.symbol, tint: noticeTint(notice), size: 11)
+                    .frame(width: NotchIslandLayout.askTitleLine)
                 Text(notice.title)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.95))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
                 if let start = meeting?.start {
                     TimelineView(.periodic(from: .now, by: 15)) { context in
-                        Text(ShelfMeetingWatch.countdown(to: start, now: context.date))
-                            .font(.system(size: 9.5, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.55))
+                        NotchWaitChip(text: ShelfMeetingWatch.countdown(to: start, now: context.date),
+                                      tint: .blue)
                     }
                 }
             }
             .frame(height: NotchIslandLayout.askTitleLine)
             Text(notice.subtitle)
                 .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.62))
+                .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, minHeight: NotchIslandLayout.askSummaryLine,
@@ -650,6 +643,18 @@ struct NotchIslandView: View {
         .accessibilityValue(notice.subtitle)
     }
 
+    /// Who is asking: the provider's own tile, or the ask glyph in amber
+    /// when the notice names no provider.
+    @ViewBuilder
+    private func askMark(_ notice: AlcoveNotice) -> some View {
+        if let provider = notice.provider {
+            ProviderTile(style: ProviderStyle.style(for: provider), size: NotchIslandLayout.askTitleLine)
+        } else {
+            NotchGlyph(symbol: notice.symbol, tint: .orange, size: 11)
+                .frame(width: NotchIslandLayout.askTitleLine)
+        }
+    }
+
     /// "4m", "1h 5m" — how long the ask has waited, off its own
     /// `opened_at`.
     static func waited(since openedAt: Double, now: Date) -> String {
@@ -676,5 +681,89 @@ struct NotchIslandView: View {
         case .focus: return .indigo
         case .level, .device, .capsLock, .display: return .white.opacity(0.85)
         }
+    }
+}
+
+/// A mark in the island's dot language: a small disc in its colour with
+/// a faint halo, so a working provider reads as lit on the black rather
+/// than printed on it.
+struct NotchDot: View {
+    let color: Color
+    var size: CGFloat = 5
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: size, height: size)
+            .shadow(color: color.opacity(0.55), radius: size * 0.5)
+    }
+}
+
+/// A notice's glyph: the kind's symbol in its colour, lit from behind by
+/// a soft halo of the same colour — the one flourish the black lip
+/// allows, and it stays inside the line's room.
+struct NotchGlyph: View {
+    let symbol: String
+    let tint: Color
+    var size: CGFloat = 11.5
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .semibold))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(tint)
+            .shadow(color: tint.opacity(0.5), radius: 3.5)
+            .accessibilityHidden(true)
+    }
+}
+
+/// How long something has waited, or how soon it starts, as a small
+/// tinted capsule beside a title — "3m", "in 2 min".
+struct NotchWaitChip: View {
+    let text: String
+    var tint: Color = .orange
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(tint.mix(with: .white, by: 0.25))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
+            .background(Capsule(style: .continuous).fill(tint.opacity(0.18)))
+            .fixedSize()
+    }
+}
+
+/// One continuous level — the island's volume, brightness and backlight
+/// answer and the HUD pill's: a track, and a fill that brightens toward
+/// its head and ends in a soft glow. Never segments: the same unbroken
+/// language the Screen Bar speaks.
+struct NotchLevelBar: View {
+    let fraction: Double
+    var tint: Color = .white
+    var track: Color = .white.opacity(0.16)
+    var height: CGFloat = 6
+    /// A muted level keeps its reading but stops glowing.
+    var dimmed = false
+    /// The head's halo — the island's black wants it, a pale HUD does not.
+    var glows = true
+
+    var body: some View {
+        GeometryReader { geo in
+            let clamped = min(1, max(0, fraction))
+            let width = clamped > 0 ? max(geo.size.height, geo.size.width * clamped) : 0
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous).fill(track)
+                Capsule(style: .continuous)
+                    .fill(LinearGradient(colors: [tint.opacity(dimmed ? 0.45 : 0.72),
+                                                  tint.opacity(dimmed ? 0.6 : 1)],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: width)
+                    .shadow(color: tint.opacity(dimmed || !glows ? 0 : 0.45), radius: height * 0.7)
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
     }
 }

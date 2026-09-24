@@ -98,7 +98,7 @@ final class NotchCardModel {
     /// Whether the daemon holds the Mac awake (`state.power.keep_awake`).
     var heldAwake: () -> Bool = { false }
     /// Media/device utility facts — monitored only while pinned.
-    let utility = ShelfUtilityModel()
+    let utility: ShelfUtilityModel
     /// The file tray — paths persist in defaults; revalidated on pin.
     /// The two card surfaces (glass panel, grown island) share the one
     /// instance the delegate hands out: twin trays would race the same
@@ -278,10 +278,13 @@ final class NotchCardModel {
         if changed { onDropHover?() }
     }
 
+    /// `utility` is the shared Now Playing and battery reader; the
+    /// render proofs hand in one on a test feed.
     init(timers: ShelfTimerModel, tray: ShelfTrayModel,
-         runtimeEnabled: Bool = true) {
+         utility: ShelfUtilityModel? = nil, runtimeEnabled: Bool = true) {
         self.timers = timers
         self.tray = tray
+        self.utility = utility ?? ShelfUtilityModel()
         self.runtimeEnabled = runtimeEnabled
         if runtimeEnabled { readPrivacy = { NotchSensorMonitor.privacyLineNow() } }
     }
@@ -308,6 +311,17 @@ extension NotchCardStyle {
     }
     /// A chip that should read as faded, not tappable.
     var chipFaint: Color { self == .island ? .white.opacity(0.07) : .primary.opacity(0.05) }
+    /// The edge a chip or well catches the light on.
+    var hairline: Color { self == .island ? .white.opacity(0.08) : .primary.opacity(0.08) }
+    /// The surface's own ink as a fill — the prominent verb, a lit
+    /// switch: white on the island, the label colour on glass.
+    var ink: AnyShapeStyle {
+        self == .island ? AnyShapeStyle(Color.white.opacity(0.94)) : AnyShapeStyle(Color.primary.opacity(0.88))
+    }
+    /// What reads on `ink`.
+    var inverseInk: AnyShapeStyle {
+        self == .island ? AnyShapeStyle(Color.black) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
+    }
 }
 
 /// The one card under the notch. A band hover shows it as a peek — the
@@ -368,8 +382,12 @@ struct NotchCardView: View {
                        value: model.contentRevealed)
     }
 
+    /// Air between the card's runs — the header, the sessions, the
+    /// meters, the media, the foot — wider than the gap inside one.
+    static let runSpacing: CGFloat = 12
+
     private var card: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Self.runSpacing) {
             revealRow(0, focusHeader(pinned: true))
             if model.wingHint { revealRow(1, wingHintRow) }
             switch model.page {
@@ -378,7 +396,7 @@ struct NotchCardView: View {
             }
             revealRow(22, pageBar)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, style == .island ? 16 : 14)
         .padding(.vertical, verticalPad)
         .padding(.bottom, style == .island
             ? Self.islandBottomContentInset - verticalPad : 0)
@@ -429,48 +447,42 @@ struct NotchCardView: View {
 
     /// The header row: who the bar is about — provider tile, label,
     /// word — with the light's reason underneath. Pinned adds the
-    /// card's controls on the trailing edge: the timer menu, Open for
-    /// the named session, and close.
+    /// card's controls on the trailing edge: the timer menu, the Mirror,
+    /// Open for the named session, and close — quiet round marks, Open
+    /// the one word among them.
     private func focusHeader(pinned: Bool) -> some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: 9) {
             if let style = model.focus.style {
-                ProviderTile(style: style, size: 16)
+                ProviderTile(style: style, size: pinned ? 26 : 20)
             } else {
                 Image(nsImage: StatusItemController.glyph())
                     .renderingMode(.template)
                     .foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(model.focus.label)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(style.titleColor)
-                        .lineLimit(1)
-                    Text("·").foregroundStyle(style.faintColor)
-                    Text(model.focus.word)
-                        .font(.system(size: 12))
-                        .foregroundStyle(style.subColor)
-                        .lineLimit(1)
-                }
-                // An Open that did not land says why where the light's
-                // reason sits, for a few seconds.
+                Text(model.focus.label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(style.titleColor)
+                    .lineLimit(1)
+                // An Open that did not land says why where the word and
+                // the light's reason sit, for a few seconds.
                 if let refusal = model.focus.clickSession.flatMap({ model.openRefusals[$0] }) {
                     Text(refusal)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 11))
                         .foregroundStyle(.orange)
                         .lineLimit(1)
-                } else if let explanation = model.focus.explanation {
-                    Text(explanation)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(style.faintColor)
+                } else {
+                    focusLine
+                        .font(.system(size: 11))
                         .lineLimit(1)
                 }
             }
+            .layoutPriority(-1)
             if pinned {
                 Spacer(minLength: 4)
                 // The deliberate-focus controls: the timer menu keeps the
-                // row hidden when empty reachable, Open raises the
-                // session's terminal, ✕ lets the card go.
+                // row hidden when empty reachable, the Mirror peeks, Open
+                // raises the session's terminal, ✕ lets the card go.
                 HStack(spacing: 4) {
                     Menu {
                         ForEach(Self.timerPresets, id: \.seconds) { preset in
@@ -481,12 +493,10 @@ struct NotchCardView: View {
                         Divider()
                         Button("Custom…") { timerEntryShown = true }
                     } label: {
-                        Image(systemName: "timer")
-                            .font(.system(size: 9))
-                            .foregroundStyle(style.faintColor)
-                            .frame(width: 16, height: 16)
+                        headerMark("timer")
                     }
-                    .menuStyle(.borderlessButton)
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
                     .menuIndicator(.hidden)
                     // An AppKit pop-up: its frame is its hit area, so the
                     // frame itself is the 24-point target.
@@ -494,46 +504,16 @@ struct NotchCardView: View {
                     .contentShape(Rectangle())
                     .help("Add a timer")
                     .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Custom timer")
-                                .font(.system(size: 11, weight: .semibold))
-                            TextField("Label (optional)", text: $timerEntryName)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11))
-                            Stepper(value: $timerEntryMinutes, in: 1...720, step: 1) {
-                                Text("\(timerEntryMinutes) min")
-                                    .font(.system(size: 11))
-                                    .monospacedDigit()
-                            }
-                            HStack {
-                                Spacer()
-                                Button("Start") {
-                                    let name = timerEntryName
-                                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                                    model.timers.add(
-                                        label: name.isEmpty
-                                            ? "\(timerEntryMinutes)-minute timer" : name,
-                                        duration: TimeInterval(timerEntryMinutes) * 60)
-                                    timerEntryShown = false
-                                    timerEntryName = ""
-                                }
-                                .keyboardShortcut(.defaultAction)
-                                .controlSize(.small)
-                            }
-                        }
-                        .padding(10)
-                        .frame(width: 200)
+                        timerEntry
                     }
                     // The Mirror is a peek on demand, never a standing
                     // row: the lens opens here (or on ⌥-click at the
                     // notch) and closes with the card.
                     if model.mirrorEnabled() {
                         Button { model.toggleMirror() } label: {
-                            Image(systemName: model.mirrorSummoned ? "camera.fill" : "camera")
-                                .font(.system(size: 9))
-                                .foregroundStyle(model.mirrorSummoned ? style.titleColor : style.faintColor)
-                                .frame(width: 20, height: 20)
-                                .notchHitArea(horizontal: 2, vertical: 4)
+                            headerMark(model.mirrorSummoned ? "camera.fill" : "camera",
+                                       lit: model.mirrorSummoned)
+                                .notchHitArea(horizontal: 2, vertical: 2)
                         }
                         .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
                         .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
@@ -543,57 +523,116 @@ struct NotchCardView: View {
                         // Mac an accent "Open" read as a warning.
                         Button { model.onOpenSession?() } label: {
                             Text("Open")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(style.titleColor)
-                                .padding(.horizontal, 7)
-                                .frame(minHeight: 18)
+                                .fixedSize()
+                                .padding(.horizontal, 10)
+                                .frame(height: 22)
                                 .background(Capsule(style: .continuous).fill(style.chipFill))
-                                .frame(minWidth: Self.hitSide - 4, minHeight: 20)
-                                .notchHitArea(horizontal: 2, vertical: 4)
+                                .overlay(Capsule(style: .continuous)
+                                    .strokeBorder(style.hairline, lineWidth: 0.5))
+                                .notchHitArea(horizontal: 2, vertical: 2)
                         }
                         .help("Bring this session's window forward")
                     }
                     Button { model.onClose?() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(style.faintColor)
-                            .frame(width: 20, height: 20)
-                            .notchHitArea(horizontal: 2, vertical: 4)
+                        headerMark("xmark")
+                            .notchHitArea(horizontal: 2, vertical: 2)
                     }
                     .accessibilityLabel("Close pinned card")
                 }
                 // Plain, so each label's own shape is its hit area: the
-                // marks stay 20 points, the targets reach 24 and stop
+                // marks stay 22 points, the targets reach 26 and stop
                 // halfway to their neighbours.
                 .buttonStyle(.plain)
             }
         }
     }
 
+    /// The header's second line: the activity word, then why the light
+    /// is what it is, quieter.
+    private var focusLine: Text {
+        let word = Text(model.focus.word).foregroundStyle(style.subColor)
+        guard let explanation = model.focus.explanation, !explanation.isEmpty else { return word }
+        let why = Text(verbatim: " · \(explanation)").foregroundStyle(style.faintColor)
+        return Text("\(word)\(why)")
+    }
+
+    /// One of the header's round marks: the glyph on a faint disc, lit
+    /// while what it opens is open.
+    private func headerMark(_ symbol: String, lit: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(lit ? style.titleColor : style.subColor)
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(lit ? style.chipFill : style.chipFaint))
+            .contentShape(Circle())
+    }
+
+    /// The custom timer: a label and the minutes, in a popover — the
+    /// card's panel never takes keys, so the field lives here.
+    private var timerEntry: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Custom timer")
+                .font(.system(size: 11, weight: .semibold))
+            TextField("Label (optional)", text: $timerEntryName)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+            Stepper(value: $timerEntryMinutes, in: 1...720, step: 1) {
+                Text("\(timerEntryMinutes) min")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+            }
+            HStack {
+                Spacer()
+                Button("Start") {
+                    let name = timerEntryName
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    model.timers.add(
+                        label: name.isEmpty
+                            ? "\(timerEntryMinutes)-minute timer" : name,
+                        duration: TimeInterval(timerEntryMinutes) * 60)
+                    timerEntryShown = false
+                    timerEntryName = ""
+                }
+                .keyboardShortcut(.defaultAction)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .frame(width: 200)
+    }
+
     /// Page one — what needs the person now, in the product design's
     /// order: the sessions (asks and failures sort first), their quota,
     /// who is listening, what is playing, the battery the runs ride on.
+    /// Each run is its own block, so the card reads in three glances,
+    /// not one list.
     @ViewBuilder
     private var nowPage: some View {
         if !model.rows.isEmpty {
-            ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
-                    id: \.element.id) { index, row in
-                revealRow(2 + index, sessionRow(row))
-            }
-            if model.rows.count > NotchIsland.rowLimit {
-                revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.faintColor)
-                    .padding(.leading, 24))
-            }
-        }
-        if !model.meters.isEmpty {
-            ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                revealRow(9 + index, meterRow(meter))
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
+                        id: \.element.id) { index, row in
+                    revealRow(2 + index, sessionRow(row))
+                }
+                if model.rows.count > NotchIsland.rowLimit {
+                    revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(style.faintColor)
+                        .padding(.leading, 15))
+                }
             }
         }
-        if let privacy = model.privacyLine {
-            revealRow(12, privacyRow(privacy))
+        if !model.meters.isEmpty || model.privacyLine != nil {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
+                    revealRow(9 + index, meterRow(meter))
+                }
+                if let privacy = model.privacyLine {
+                    revealRow(12, privacyRow(privacy))
+                }
+            }
         }
         revealRow(13, ShelfMediaRow(utility: model.utility, style: style))
         revealRow(14, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
@@ -617,35 +656,44 @@ struct NotchCardView: View {
         }
         // The weather leads the day; on a day with nothing scheduled it
         // is the day, and the calendar's empty line goes.
-        revealRow(4, ShelfWeatherRow(weather: model.utility.weather, style: style))
+        revealRow(4, ShelfWeatherRow(reading: model.utility.weather.reading, style: style))
         if !model.weatherInCalendarSlot {
-            revealRow(5, ShelfCalendarRow(calendar: model.calendar, style: style))
+            revealRow(5, ShelfCalendarRow(calendar: model.calendar, state: model.calendar.state,
+                                          style: style))
         }
-        revealRow(6, ShelfRemindersRow(reminders: model.reminders, style: style))
+        revealRow(6, ShelfRemindersRow(reminders: model.reminders, state: model.reminders.state,
+                                       style: style))
         revealRow(7, ShelfMirrorRow(mirror: model.mirror, style: style))
         revealRow(8, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
     }
 
-    /// The card's foot: the two pages as quiet tabs — the shelf's says
-    /// when something waits there — and, on Now, the roster.
+    /// The card's foot: the two pages as a small switcher — the shelf's
+    /// tab says when something waits there — and, on Now, the roster.
     private var pageBar: some View {
-        HStack(spacing: 4) {
-            pageTab(.now, title: "Now")
-            pageTab(.shelf, title: model.shelfWaiting > 0 ? "Shelf · \(model.shelfWaiting)" : "Shelf")
+        HStack(spacing: 8) {
+            HStack(spacing: 2) {
+                pageTab(.now, title: "Now")
+                pageTab(.shelf, title: model.shelfWaiting > 0 ? "Shelf · \(model.shelfWaiting)" : "Shelf")
+            }
+            .padding(2)
+            .background(Capsule(style: .continuous).fill(style.chipFaint))
             Spacer(minLength: 8)
             if model.page == .now {
                 Button { model.onOpenOverview?() } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "rectangle.grid.2x2")
-                            .font(.system(size: 9, weight: .semibold))
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 10, weight: .semibold))
                         Text("Agent Overview")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundStyle(style.subColor)
-                    .contentShape(Rectangle())
+                    .padding(.horizontal, 10)
+                    .frame(height: 22)
+                    .background(Capsule(style: .continuous).fill(style.chipFaint))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("Every session as a roster (⌘O)")
+                .help("Every session at a glance (⌘O)")
             }
         }
     }
@@ -654,14 +702,14 @@ struct NotchCardView: View {
         let selected = model.page == page
         return Button { model.show(page) } label: {
             Text(title)
-                .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                .font(.system(size: 11, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? style.titleColor : style.faintColor)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 10)
+                .frame(height: 18)
                 .background(Capsule(style: .continuous).fill(selected ? style.chipFill : .clear))
                 // The capsule draws 18 points tall; the target is 26,
                 // and stops halfway to the next tab.
-                .notchHitArea(horizontal: 2, vertical: 4)
+                .notchHitArea(horizontal: 1, vertical: 4)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -672,18 +720,14 @@ struct NotchCardView: View {
     /// and the apps behind them — the question the dots raise, answered
     /// in words where words belong.
     private func privacyRow(_ line: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             HStack(spacing: 3) {
-                if line.hasPrefix("Camera") {
-                    Circle().fill(Color.green).frame(width: 5, height: 5)
-                }
-                if line.contains("icrophone") {
-                    Circle().fill(Color.orange).frame(width: 5, height: 5)
-                }
+                if line.hasPrefix("Camera") { NotchDot(color: .green) }
+                if line.contains("icrophone") { NotchDot(color: .orange) }
             }
             .frame(width: 13, alignment: .leading)
             Text(line)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(style.subColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -715,14 +759,13 @@ struct NotchCardView: View {
         let answerable = row.activity == .waiting && !CoreSession.isRemoteID(row.id) && desk != nil
         let choosing = answerable && ask.map(AskVerbs.chooses) == true
         let answering = answerable && ask.map(AskVerbs.approves) == true
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(ProviderStyle.style(for: row.provider).accent)
-                    .frame(width: 5, height: 5)
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                NotchDot(color: ProviderStyle.style(for: row.provider).accent, size: 6)
+                    .frame(width: 7)
                 Text(row.label)
-                    .font(.system(size: 11))
-                    .foregroundStyle(style == .island ? .white.opacity(0.85) : .primary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(style == .island ? .white.opacity(0.9) : .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
@@ -756,26 +799,26 @@ struct NotchCardView: View {
                     }
                 } else {
                     Text(row.activity.word)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(row.activity.wordColor)
                 }
             }
             if let refusal {
                 Text(refusal)
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(openRefusal == nil && desk?.note(for: row.id)?.refused == false
                                      ? AnyShapeStyle(style.faintColor) : AnyShapeStyle(Color.orange))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .padding(.leading, 11)
+                    .padding(.leading, 15)
             } else if let summary {
                 NotchAskCopy.line(summary, preview: row.activity == .waiting ? ask?.previewLine : nil,
-                                  destructive: ask?.isDestructive == true, style: style, size: 9)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(style.faintColor)
+                                  destructive: ask?.isDestructive == true, style: style, size: 10)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(style.subColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .padding(.leading, 11)
+                    .padding(.leading, 15)
             }
         }
         .contentShape(Rectangle())
@@ -827,47 +870,45 @@ struct NotchCardView: View {
         .accessibilityLabel("\(row.label), \(row.activity.word)")
     }
 
-    /// One quota meter: provider, window, a short bar, the percent —
-    /// with the reset countdown the ear's drain arc only hints at, and
+    /// One quota meter: provider, window, a continuous bar, the percent
+    /// — with the reset countdown the ear's drain arc only hints at, and
     /// the status feed's incident mark when the vendor is having a day.
     private func meterRow(_ meter: NotchIslandMeter) -> some View {
-        HStack(spacing: 6) {
+        let accent = ProviderStyle.style(for: meter.provider).accent
+        return HStack(spacing: 7) {
             Text(ProviderStyle.style(for: meter.provider).name)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(style.subColor)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(style.titleColor.opacity(0.88))
                 .lineLimit(1)
             Text(meter.window)
-                .font(.system(size: 9))
-                .foregroundStyle(style.faintColor)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(style.subColor)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule(style: .continuous).fill(style.chipFaint))
             if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date()) {
                 Text(countdown)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .monospacedDigit()
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
             }
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.orange)
                     .help("The provider's status feed reports an incident")
             }
             Spacer(minLength: 4)
-            Capsule()
-                .fill(style.chipFill)
-                .frame(width: 48, height: 4)
-                .overlay(alignment: .leading) {
-                    if let percent = meter.percent {
-                        Capsule()
-                            .fill(ProviderStyle.style(for: meter.provider).accent)
-                            .frame(width: 48 * min(1, max(0, percent / 100)), height: 4)
-                    }
-                }
+            NotchLevelBar(fraction: (meter.percent ?? 0) / 100, tint: accent,
+                          track: style.chipFill, height: 5,
+                          dimmed: meter.percent == nil, glows: style == .island)
+                .frame(width: 64)
             Text(meter.percentText)
-                .font(.system(size: 10))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(style.subColor)
-                .frame(width: 30, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
         }
         .contentShape(Rectangle())
         .contextMenu {
@@ -886,85 +927,79 @@ struct NotchCardView: View {
 
 }
 
-/// The card's media row: artwork, source identity, track line,
-/// transport. Drawn only while a certified source reports media —
-/// `nil` media means no row, not a dead control.
+/// The card's media row, the card's one hero: the artwork large and
+/// lit by its own colour, the title over the artist, the transport, a
+/// continuous scrubber and the volume. Drawn only while a certified
+/// source reports media — `nil` media means no row, not a dead control.
 private struct ShelfMediaRow: View {
     let utility: ShelfUtilityModel
     let style: NotchCardStyle
 
+    static let artSide: CGFloat = 48
+
     var body: some View {
         if let media = utility.media {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Group {
-                        if let artwork = utility.artwork {
-                            Image(nsImage: artwork)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } else {
-                            Image(systemName: "music.note")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(style.subColor)
-                        }
-                    }
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .contentShape(Rectangle())
-                    .onTapGesture { utility.raisePlayer() }
-                    .help(utility.sourceName.map { "Open \($0)" } ?? "")
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(media.displayLine)
-                            .font(.system(size: 11))
+            let tint = utility.artworkTint.map { Color(nsColor: $0) }
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 12) {
+                    MediaArtwork(utility: utility, style: style, side: Self.artSide)
+                        .onTapGesture { utility.raisePlayer() }
+                        .help(utility.sourceName.map { "Open \($0)" } ?? "")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(media.title)
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(style.titleColor)
                             .lineLimit(1)
-                        Text(utility.sourceName ?? "Now playing")
-                            .font(.system(size: 9))
-                            .foregroundStyle(style.faintColor)
-                            .lineLimit(1)
-                    }
-                    if media.playing {
-                        // The bars wear the artwork's colour when it
-                        // has one.
-                        let bars = utility.artworkTint.map { Color(nsColor: $0).opacity(0.85) }
-                            ?? style.faintColor
-                        if utility.audioTapLive {
-                            LiveEqualizer(levels: utility.audioLevels, color: bars)
-                        } else {
-                            DecorativeBars(live: media.playing, color: bars)
+                        if let byline = Self.byline(media) {
+                            Text(byline)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(style.subColor)
+                                .lineLimit(1)
+                        }
+                        HStack(spacing: 6) {
+                            if media.playing {
+                                // The bars wear the artwork's colour
+                                // when it has one.
+                                let bars = tint?.opacity(0.9) ?? style.subColor
+                                if utility.audioTapLive {
+                                    LiveEqualizer(utility: utility, color: bars)
+                                } else {
+                                    DecorativeBars(live: media.playing, color: bars, height: 9)
+                                }
+                            }
+                            Text(utility.sourceName ?? "Now playing")
+                                .font(.system(size: 10))
+                                .foregroundStyle(style.faintColor)
+                                .lineLimit(1)
                         }
                     }
                     Spacer(minLength: 4)
-                    transportButton("backward.fill") { utility.send(.previousTrack) }
-                    transportButton(media.playing ? "pause.fill" : "play.fill") {
-                        utility.send(.togglePlayPause)
-                    }
-                    transportButton("forward.fill") { utility.send(.nextTrack) }
+                    transport(media)
                 }
                 if let duration = media.duration, duration > 1,
                    media.elapsed != nil {
                     TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
-                        HStack(spacing: 6) {
-                            Text(Self.clock(utility.elapsedShown(at: context.date)))
-                                .font(.system(size: 9))
+                        let shown = utility.elapsedShown(at: context.date)
+                        HStack(spacing: 8) {
+                            Text(Self.clock(shown))
+                                .font(.system(size: 9.5, weight: .medium, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(style.faintColor)
-                            Slider(value: Binding(
-                                    get: { utility.elapsedShown(at: context.date) },
-                                    set: { utility.mediaScrub = $0 }),
-                                   in: 0...duration) { editing in
-                                if editing {
-                                    utility.beginScrub()
-                                } else {
-                                    utility.commitScrub()
-                                }
-                            }
-                            .controlSize(.mini)
-                            .tint(utility.artworkTint.map { Color(nsColor: $0) })
-                            Text("−" + Self.clock(duration - utility.elapsedShown(at: context.date)))
-                                .font(.system(size: 9))
+                                .frame(width: 30, alignment: .leading)
+                            NotchScrubber(value: shown, range: 0...duration,
+                                          tint: tint ?? style.titleColor.opacity(0.85),
+                                          track: style.chipFill,
+                                          label: "Playback position",
+                                          valueText: Self.clock(shown),
+                                          onScrub: { utility.mediaScrub = $0 },
+                                          onEditing: { editing in
+                                              if editing { utility.beginScrub() } else { utility.commitScrub() }
+                                          })
+                            Text("−" + Self.clock(duration - shown))
+                                .font(.system(size: 9.5, weight: .medium, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(style.faintColor)
+                                .frame(width: 34, alignment: .trailing)
                         }
                     }
                 }
@@ -976,22 +1011,52 @@ private struct ShelfMediaRow: View {
                 if let volume = utility.outputVolume {
                     // Fine adjustment without the keys — the same
                     // CoreAudio path the level HUD reads.
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         Image(systemName: volume <= 0 ? "speaker.slash.fill" : "speaker.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: 9))
                             .foregroundStyle(style.faintColor)
-                            .frame(width: 12)
-                        Slider(value: Binding(get: { volume }, set: { utility.setVolume($0) }),
-                               in: 0...1)
-                            .controlSize(.mini)
+                            .frame(width: 30, alignment: .leading)
+                        NotchScrubber(value: volume, range: 0...1,
+                                      tint: style.titleColor.opacity(0.7), track: style.chipFill,
+                                      label: "Volume",
+                                      valueText: "\(Int((volume * 100).rounded())) percent",
+                                      onScrub: { utility.setVolume($0) }, onEditing: { _ in })
                         Image(systemName: "speaker.wave.3.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: 9))
                             .foregroundStyle(style.faintColor)
+                            .frame(width: 34, alignment: .trailing)
                     }
-                    .accessibilityLabel("Volume")
                 }
             }
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    /// The artist, else the album — the title's quieter second line.
+    static func byline(_ media: AlcoveMedia) -> String? {
+        for part in [media.artist, media.album] {
+            if let part, !part.trimmingCharacters(in: .whitespaces).isEmpty { return part }
+        }
+        return nil
+    }
+
+    /// Previous, play or pause on a lit disc, next.
+    private func transport(_ media: AlcoveMedia) -> some View {
+        HStack(spacing: 2) {
+            transportButton("backward.fill", size: 11, label: "Previous track") { utility.send(.previousTrack) }
+            Button { utility.send(.togglePlayPause) } label: {
+                Image(systemName: media.playing ? "pause.fill" : "play.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(style.titleColor)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(style.chipFill))
+                    .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(media.playing ? "Pause" : "Play")
+            transportButton("forward.fill", size: 11, label: "Next track") { utility.send(.nextTrack) }
         }
     }
 
@@ -1000,11 +1065,11 @@ private struct ShelfMediaRow: View {
     /// the yes; nothing about the track is sent before it.
     private var lyricsOffer: some View {
         Button { utility.agreeToLyrics() } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: "quote.bubble")
-                    .font(.system(size: 8))
-                Text("Show synced lyrics — looks the song up on LRCLIB")
                     .font(.system(size: 9))
+                Text("Show synced lyrics — looks the song up on LRCLIB")
+                    .font(.system(size: 10))
                     .lineLimit(1)
             }
             .foregroundStyle(style.faintColor)
@@ -1019,16 +1084,115 @@ private struct ShelfMediaRow: View {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    private func transportButton(_ symbol: String,
+    private func transportButton(_ symbol: String, size: CGFloat, label: String,
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(style.subColor)
-                .frame(width: 18, height: 18)
+                .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+/// The track's artwork, rounded and lit from beneath by its own colour
+/// — a soft pool on the black, a quieter one on glass. Its own view, so
+/// the image decodes when the track changes and not on every tick of
+/// the row around it.
+private struct MediaArtwork: View {
+    let utility: ShelfUtilityModel
+    let style: NotchCardStyle
+    let side: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: side * 0.23, style: .continuous)
+        let glow = utility.artworkTint.map { Color(nsColor: $0) } ?? .clear
+        Group {
+            if let artwork = utility.artwork {
+                Image(nsImage: artwork)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    shape.fill(style.chipFill)
+                    Image(systemName: "music.note")
+                        .font(.system(size: side * 0.36, weight: .semibold))
+                        .foregroundStyle(style.subColor)
+                }
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(style.hairline.opacity(1.5), lineWidth: 0.5))
+        .shadow(color: glow.opacity(style == .island ? 0.6 : 0.35), radius: side * 0.3, y: side * 0.1)
+        .contentShape(shape)
+    }
+}
+
+/// A continuous scrubber in the card's grammar — the playhead and the
+/// volume: a thin track that thickens under the pointer and a fill in
+/// the artwork's colour, dragged anywhere along its length. No knob,
+/// no ticks; VoiceOver adjusts it in tenths.
+struct NotchScrubber: View {
+    let value: Double
+    let range: ClosedRange<Double>
+    let tint: Color
+    let track: Color
+    let label: String
+    let valueText: String
+    let onScrub: (Double) -> Void
+    let onEditing: (Bool) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewState private var hovering = false
+    @ViewState private var dragging = false
+
+    private var span: Double { range.upperBound - range.lowerBound }
+    private var fraction: Double {
+        span > 0 ? min(1, max(0, (value - range.lowerBound) / span)) : 0
+    }
+
+    var body: some View {
+        let thick: CGFloat = hovering || dragging ? 6 : 4
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous).fill(track)
+                Capsule(style: .continuous)
+                    .fill(tint)
+                    .frame(width: max(thick, geo.size.width * fraction))
+            }
+            .frame(height: thick)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { drag in
+                    if !dragging {
+                        dragging = true
+                        onEditing(true)
+                    }
+                    let x = min(max(0, drag.location.x), geo.size.width)
+                    onScrub(range.lowerBound + span * Double(x / max(1, geo.size.width)))
+                }
+                .onEnded { _ in
+                    dragging = false
+                    onEditing(false)
+                })
+        }
+        .frame(height: 14)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.15), value: thick)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue(valueText)
+        .accessibilityAdjustableAction { direction in
+            let step = span / 10
+            let next = direction == .increment ? value + step : value - step
+            onEditing(true)
+            onScrub(min(range.upperBound, max(range.lowerBound, next)))
+            onEditing(false)
+        }
     }
 }
 
@@ -1068,17 +1232,17 @@ struct LyricLines: View {
         TimelineView(.animation(minimumInterval: clock.interval, paused: clock.paused)) { context in
             let at = utility.elapsedShown(at: context.date)
             let position = lyrics.position(at: at)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 if let line = lyrics.line(at: at) {
                     Text(line)
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(style.subColor)
                         .overlay {
                             if live, let progress = position.progress {
                                 // The sweep: the same text, brighter,
                                 // revealed left to right as the line plays.
                                 Text(line)
-                                    .font(.system(size: 9.5, weight: .medium))
+                                    .font(.system(size: 11.5, weight: .semibold))
                                     .foregroundStyle(style.titleColor)
                                     .mask(alignment: .leading) {
                                         GeometryReader { geo in
@@ -1092,7 +1256,7 @@ struct LyricLines: View {
                 }
                 if let next = position.next {
                     Text(next)
-                        .font(.system(size: 9))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(style.faintColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1124,13 +1288,13 @@ private struct ShelfTogglesRow: View {
     private static let perRow = 8
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             let chips = toggles.strip
             let rows = stride(from: 0, to: chips.count, by: Self.perRow).map {
                 Array(chips[$0..<min($0 + Self.perRow, chips.count)])
             }
             ForEach(rows.indices, id: \.self) { index in
-                HStack(spacing: 5) {
+                HStack(spacing: 2) {
                     ForEach(rows[index], id: \.rawValue) { toggle in
                         chip(toggle)
                     }
@@ -1144,7 +1308,7 @@ private struct ShelfTogglesRow: View {
             }
             if let caption = toggles.caption {
                 Text(caption)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundStyle(style.faintColor)
                     .lineLimit(2)
             }
@@ -1152,6 +1316,8 @@ private struct ShelfTogglesRow: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// Control Center's own grammar: a round button lit in the surface's
+    /// ink while the switch is on, the name under it.
     private func chip(_ toggle: SystemToggle) -> some View {
         let on = toggles.isOn[toggle] ?? false
         let busy = toggles.applying.contains(toggle)
@@ -1159,21 +1325,20 @@ private struct ShelfTogglesRow: View {
         return Button {
             toggles.apply(toggle)
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 5) {
                 Image(systemName: toggle.symbol)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(on ? style.inverseInk : AnyShapeStyle(style.subColor))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(on ? style.ink : AnyShapeStyle(style.chipFill)))
+                    .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))
                 Text(title)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(on ? style.titleColor : style.faintColor)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(on ? style.titleColor : style.faintColor)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(on ? AnyShapeStyle(style.chipFill)
-                             : AnyShapeStyle(style.chipFaint)))
             .opacity(busy ? 0.5 : 1)
             .contentShape(Rectangle())
         }
@@ -1184,12 +1349,16 @@ private struct ShelfTogglesRow: View {
     }
 }
 
-/// The real visualizer: six bars driven by the tap's band levels.
-/// The model publishes at ~30 Hz so plain reads animate themselves;
-/// under Reduce Motion the bars stand still and re-read at 2 Hz.
-private struct LiveEqualizer: View {
-    let levels: [Float]
+/// The real visualizer: six bars driven by the tap's band levels,
+/// breathing out from their middle like the decorative set. It reads the
+/// levels itself, so the tap's ~30 Hz publish redraws the bars and
+/// nothing around them; under Reduce Motion the bars stand still and
+/// re-read at 2 Hz.
+struct LiveEqualizer: View {
+    let utility: ShelfUtilityModel
     let color: Color
+    var barWidth: CGFloat = 2.2
+    var height: CGFloat = 9
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -1203,25 +1372,28 @@ private struct LiveEqualizer: View {
     }
 
     private var bars: some View {
-        HStack(alignment: .bottom, spacing: 1.5) {
+        let levels = utility.audioLevels
+        return HStack(alignment: .center, spacing: 1.5) {
             ForEach(levels.indices, id: \.self) { i in
                 let level = CGFloat(min(1, max(0, levels[i])))
-                RoundedRectangle(cornerRadius: 0.8, style: .continuous)
+                Capsule(style: .continuous)
                     .fill(color)
-                    .frame(width: 2.2, height: 2.5 + 7.5 * level)
+                    .frame(width: barWidth, height: height * (0.25 + 0.75 * level))
             }
         }
-        .frame(height: 10, alignment: .bottom)
+        .frame(height: height, alignment: .center)
         .accessibilityHidden(true)
     }
 }
 
 /// The card's battery row: the internal battery's observed state,
 /// hidden entirely on machines without one — never an invented charge.
-/// The glyph holds the charge it reads, and the line is agent-aware:
-/// the system's time estimate, how many runs ride on it, and whether
-/// the Mac is held awake (`AlcovePower.batteryLine`) — whether a long
-/// run survives unplugged is the question only this card can answer.
+/// The glyph is drawn, not picked: a continuous fill at the charge it
+/// reads, green while charging, amber when low. The line is
+/// agent-aware: the system's time estimate, how many runs ride on it,
+/// and whether the Mac is held awake (`AlcovePower.batteryLine`) —
+/// whether a long run survives unplugged is the question only this
+/// card can answer.
 private struct ShelfBatteryRow: View {
     let power: AlcovePowerState
     let working: Int
@@ -1231,54 +1403,97 @@ private struct ShelfBatteryRow: View {
     var body: some View {
         if power.hasBattery {
             let low = !power.onAC && (power.percent ?? 100) < AlcovePower.lowThreshold
-            HStack(spacing: 6) {
-                Image(systemName: power.symbol)
-                    .font(.system(size: 10))
-                    .foregroundStyle(low ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.subColor))
-                    .frame(width: 18)
+            HStack(spacing: 9) {
+                NotchBatteryGlyph(fraction: Double(power.percent ?? 0) / 100,
+                                  tone: power.charging ? .green : (low ? .orange : nil),
+                                  plugged: power.onAC, style: style)
                 Text(AlcovePower.batteryLine(power, working: working, heldAwake: heldAwake))
-                    .font(.system(size: 11))
+                    .font(.system(size: 11.5))
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
             }
+            .accessibilityElement(children: .combine)
         }
     }
 }
 
-/// The card's weather row: the Open-Meteo reading beside the battery —
-/// symbol, temperature, the place the reading is for — over a faint
-/// outlook line (today's high and low, rain in the next two hours in a
-/// cool tint). Absent while the setting is off or no fetch has landed;
-/// the row never invents a sky.
-private struct ShelfWeatherRow: View {
-    let weather: NotchWeather
+/// A battery drawn in the card's ink: the case, its cap, and one
+/// continuous fill at the charge — the charge as a level, never a row
+/// of bars. `tone` colours the fill (charging, low); a bolt rides on
+/// top while the Mac is plugged in.
+struct NotchBatteryGlyph: View {
+    let fraction: Double
+    var tone: Color?
+    var plugged = false
     let style: NotchCardStyle
 
     var body: some View {
-        if let reading = weather.reading {
+        let clamped = min(1, max(0, fraction))
+        HStack(spacing: 1) {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3.2, style: .continuous)
+                    .strokeBorder(style.subColor.opacity(0.8), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 1.6, style: .continuous)
+                    .fill(tone ?? style.titleColor.opacity(0.85))
+                    .frame(width: max(2, 17 * clamped))
+                    .padding(2)
+                if plugged {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 7, weight: .heavy))
+                        .foregroundStyle(tone == nil ? style.inverseInk : AnyShapeStyle(Color.white))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(width: 21, height: 11)
+            Capsule(style: .continuous)
+                .fill(style.subColor.opacity(0.8))
+                .frame(width: 1.5, height: 4)
+        }
+        .frame(width: 24)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The card's weather: the Open-Meteo reading as the day's headline —
+/// the sky in its own colours, the temperature large, what it is and
+/// where — over a faint outlook line (today's high and low, rain in the
+/// next two hours in a cool tint). Absent while the setting is off or
+/// no fetch has landed; the row never invents a sky.
+struct ShelfWeatherRow: View {
+    let reading: NotchWeather.Reading?
+    let style: NotchCardStyle
+
+    var body: some View {
+        if let reading {
             let (symbol, label) = NotchWeather.symbol(for: reading.code)
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .center, spacing: 11) {
                 Image(systemName: symbol)
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.subColor)
-                    .frame(width: 18)
+                    .symbolRenderingMode(.multicolor)
+                    .font(.system(size: 22))
+                    .frame(width: 30)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text([label, reading.temperatureText, reading.place]
-                            .filter { !$0.isEmpty }
-                            .joined(separator: " · "))
-                        .font(.system(size: 11))
-                        .foregroundStyle(style.subColor)
-                        .lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text(reading.temperatureText)
+                            .font(.system(size: 18, weight: .medium, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(style.titleColor)
+                        Text([label, reading.place].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(style.subColor)
+                            .lineLimit(1)
+                    }
                     if let outlook = reading.outlookText {
                         Text(outlook)
-                            .font(.system(size: 9.5))
+                            .font(.system(size: 10.5))
                             .foregroundStyle(reading.rainInMinutes != nil
-                                             ? AnyShapeStyle(Color.cyan.opacity(0.85))
+                                             ? AnyShapeStyle(style == .island ? Color.cyan.opacity(0.9)
+                                                                              : Color(nsColor: .systemTeal))
                                              : AnyShapeStyle(style.faintColor))
                             .lineLimit(1)
                     }
                 }
             }
+            .accessibilityElement(children: .combine)
         }
     }
 }
@@ -1302,9 +1517,10 @@ private struct ShelfTrayRow: View {
     /// the shelf has its own page now, so a file shows its face rather
     /// than an 11 pt glyph. One row until the shelf fills, then two,
     /// scrolling sideways.
-    static let tileWidth: CGFloat = 58
-    static let tileHeight: CGFloat = 48
-    static let tileSpacing: CGFloat = 4
+    static let tileWidth: CGFloat = 62
+    static let tileHeight: CGFloat = 54
+    static let tileSpacing: CGFloat = 6
+    static let tileRadius: CGFloat = 11
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -1321,16 +1537,16 @@ private struct ShelfTrayRow: View {
                         }
                     }
                 }
-                .frame(maxWidth: 280)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: CGFloat(rows) * Self.tileHeight + CGFloat(rows - 1) * Self.tileSpacing)
             }
             if let notice = tray.evictionNotice {
                 Text(notice)
-                    .font(.system(size: 8))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 280, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .task(id: notice) {
                         // Fades on its own; the next add/remove clears
                         // it outright.
@@ -1345,18 +1561,18 @@ private struct ShelfTrayRow: View {
     /// paste here can join the shelf in one click.
     private var pasteChip: some View {
         Button { tray.paste() } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 15))
-                    .frame(height: 26)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(height: 28)
                 Text("Paste")
-                    .font(.system(size: 8.5, weight: .medium))
+                    .font(.system(size: 9.5, weight: .medium))
             }
             .foregroundStyle(style.subColor)
             .frame(width: Self.tileWidth, height: Self.tileHeight)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(style.faintColor, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous)
+                .strokeBorder(style.faintColor.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [3, 2.5])))
+            .contentShape(RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .help("Put what you copied on the shelf")
@@ -1453,32 +1669,35 @@ private struct ShelfTrayRow: View {
     /// gestures so a stack can answer a plain click with its grid.
     private func itemFace(_ item: ShelfTrayModel.Entry,
                           entry: ShelfTrayModel.ShelfEntry) -> some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             if item.missing {
                 Image(systemName: "doc.questionmark")
-                    .font(.system(size: 15))
-                    .frame(width: 26, height: 26)
+                    .font(.system(size: 16))
+                    .frame(width: 28, height: 28)
             } else {
                 // The file's own face — its Quick Look thumbnail once one
                 // lands, the Finder icon until then.
                 Image(nsImage: tray.icon(for: item))
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 26, height: 26)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
             }
             Text(item.missing ? "\(item.name) (moved)" : item.name)
-                .font(.system(size: 8.5))
+                .font(.system(size: 9.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: Self.tileWidth - 8)
+                .frame(width: Self.tileWidth - 10)
         }
         .frame(width: Self.tileWidth, height: Self.tileHeight)
         .background(item.missing
                     ? AnyShapeStyle(style.chipFaint)
                     : AnyShapeStyle(style.chipFill),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous)
+            .strokeBorder(style.hairline, lineWidth: 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous))
         .foregroundStyle(item.missing ? style.faintColor : style.subColor)
         .onTapGesture(count: 2) {
             if !item.missing { tray.quickLook(entry) }
@@ -1509,7 +1728,7 @@ private struct ShelfStackChip: View {
     @ViewState private var open = false
 
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             // The fan: the first three faces, tilted like a stack of
             // prints — the tile's own tell that it holds more than one.
             ZStack {
@@ -1518,24 +1737,27 @@ private struct ShelfStackChip: View {
                     Image(nsImage: tray.icon(for: item))
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 22, height: 22)
+                        .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
                         .rotationEffect(.degrees(Double(index - 1) * 9))
-                        .offset(x: CGFloat(index - 1) * 6)
+                        .offset(x: CGFloat(index - 1) * 7)
                 }
             }
-            .frame(width: 40, height: 26)
+            .frame(width: 44, height: 28)
             Text("\(tray.stackName(stack)) · \(stack.items.count)")
-                .font(.system(size: 8.5))
+                .font(.system(size: 9.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: ShelfTrayRow.tileWidth - 8)
+                .frame(width: ShelfTrayRow.tileWidth - 10)
         }
         .frame(width: ShelfTrayRow.tileWidth, height: ShelfTrayRow.tileHeight)
         .background(stack.items.allSatisfy(\.missing)
                     ? AnyShapeStyle(style.chipFaint)
                     : AnyShapeStyle(style.chipFill),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: ShelfTrayRow.tileRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: ShelfTrayRow.tileRadius, style: .continuous)
+            .strokeBorder(style.hairline, lineWidth: 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: ShelfTrayRow.tileRadius, style: .continuous))
         .foregroundStyle(stack.items.allSatisfy(\.missing)
                          ? style.faintColor : style.subColor)
         .onTapGesture {
@@ -1615,7 +1837,7 @@ private struct ShelfTimersRow: View {
     let style: NotchCardStyle
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             ForEach(timers.entries) { entry in
                 timerChip(entry)
             }
@@ -1632,13 +1854,24 @@ private struct ShelfTimersRow: View {
     private func timerChip(_ entry: ShelfTimerModel.Entry) -> some View {
         TimelineView(.periodic(from: .now, by: entry.paused ? 60 : 1)) { _ in
             let overdue = entry.overdue
-            HStack(spacing: 3) {
-                HStack(spacing: 3) {
-                    Image(systemName: overdue ? "checkmark" : (entry.paused ? "pause.fill" : "timer"))
-                        .font(.system(size: 9))
-                    Text(overdue ? "Done" : remainingText(entry))
-                        .font(.system(size: 10, design: .monospaced))
-                        .lineLimit(1)
+            HStack(spacing: 5) {
+                HStack(spacing: 5) {
+                    Image(systemName: overdue ? "checkmark.circle.fill" : (entry.paused ? "pause.circle.fill" : "timer"))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(overdue ? AnyShapeStyle(Color.green)
+                                         : entry.paused ? AnyShapeStyle(style.subColor)
+                                         : AnyShapeStyle(Color.orange))
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(overdue ? "Done" : remainingText(entry))
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                        Text(entry.label)
+                            .font(.system(size: 9))
+                            .foregroundStyle(style.faintColor)
+                            .lineLimit(1)
+                            .frame(maxWidth: 76, alignment: .leading)
+                    }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -1649,19 +1882,23 @@ private struct ShelfTimersRow: View {
                     ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
                         Button("+\(Int(seconds / 60))") { timers.extend(entry, by: seconds) }
                             .buttonStyle(.plain)
-                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 6)
+                            .frame(height: 20)
+                            .background(Capsule(style: .continuous).fill(style.chipFill))
                             .help("Run it again for \(Int(seconds / 60)) min")
                     }
                 }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(style.chipFill, in: Capsule())
+            .padding(.leading, 8)
+            .padding(.trailing, 10)
+            .padding(.vertical, 5)
+            .background(style.chipFaint, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(style.hairline, lineWidth: 0.5))
             .foregroundStyle(overdue || entry.paused
                 ? AnyShapeStyle(style.subColor)
-                : AnyShapeStyle(style == .island
-                                ? Color.white.opacity(0.8)
-                                : Color.primary.opacity(0.75)))
+                : AnyShapeStyle(style.titleColor))
             .contextMenu {
                 if !overdue {
                     Button(entry.paused ? "Resume" : "Pause") {
@@ -1696,23 +1933,26 @@ private struct ShelfTimersRow: View {
 }
 
 /// The card's calendar glance: the next few timed events, soonest
-/// first — the first carries Join when it has an http(s) link, the rest
-/// whisper under it. No access or the switch off, no row: the ask lives
-/// in Setup and the Notch settings, never here.
-private struct ShelfCalendarRow: View {
+/// first, each on a thin accent rule like the day view's — the first
+/// carries Join when it has an http(s) link, the rest whisper under it.
+/// No access or the switch off, no row: the ask lives in Setup and the
+/// Notch settings, never here. `state` is the model's, handed in so the
+/// row draws exactly what it is given.
+struct ShelfCalendarRow: View {
     let calendar: ShelfCalendarModel
+    let state: ShelfCalendarModel.State
     let style: NotchCardStyle
 
     var body: some View {
-        switch calendar.state {
+        switch state {
         case .hidden, .needsPermission:
             EmptyView()
         case .idle:
             Label("Nothing in the next 24 hours", systemImage: "calendar")
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(style.faintColor)
         case .events(let events):
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 5) {
                 ForEach(Array(events.enumerated()), id: \.offset) { index, event in
                     eventLine(event, lead: index == 0)
                 }
@@ -1721,24 +1961,28 @@ private struct ShelfCalendarRow: View {
     }
 
     private func eventLine(_ event: ShelfCalendarModel.Event, lead: Bool) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "calendar")
-                .font(.system(size: 9))
-                .foregroundStyle(style.subColor)
-                .frame(width: 14)
-                .opacity(lead ? 1 : 0)
-            Text(event.start.formatted(date: .omitted, time: .shortened))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(lead ? style.subColor : style.faintColor)
-            Text(event.title)
-                .font(.system(size: 10))
-                .foregroundStyle(lead ? style.titleColor : style.faintColor)
-                .lineLimit(1)
+        HStack(spacing: 9) {
+            Capsule(style: .continuous)
+                .fill(lead ? Color.accentColor : style.faintColor)
+                .frame(width: 3, height: lead ? 26 : 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.title)
+                    .font(.system(size: lead ? 12 : 11, weight: lead ? .semibold : .regular))
+                    .foregroundStyle(lead ? style.titleColor : style.subColor)
+                    .lineLimit(1)
+                Text(Self.span(event))
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
             if lead, event.url != nil {
-                Button("Join") { calendar.join(event) }
-                    .controlSize(.mini)
+                NotchVerbButton(title: "Join", style: style, prominent: true,
+                                systemImage: "video.fill") { calendar.join(event) }
             }
         }
+        .contentShape(Rectangle())
         .contextMenu {
             if event.url != nil {
                 Button("Join") { calendar.join(event) }
@@ -1746,41 +1990,47 @@ private struct ShelfCalendarRow: View {
             Button("Open in Calendar") { calendar.openInCalendar(event) }
         }
     }
+
+    /// "10:30 – 11:00 AM", the event's own span in the person's clock.
+    static func span(_ event: ShelfCalendarModel.Event) -> String {
+        (event.start..<max(event.start, event.end)).formatted(date: .omitted, time: .shortened)
+    }
 }
 
 /// The card's reminders rows: a check-off circle, the title, the due
 /// time — overdue reads "Overdue", dueless rows carry no time. Drawn
 /// only while the state has something to say; asking for access is
 /// Setup's and the Notch settings' job, never a button here.
-private struct ShelfRemindersRow: View {
+struct ShelfRemindersRow: View {
     let reminders: ShelfRemindersModel
+    let state: ShelfRemindersModel.State
     let style: NotchCardStyle
     @ViewState private var adding = false
     @ViewState private var draft = ""
 
     var body: some View {
-        switch reminders.state {
+        switch state {
         case .hidden, .needsPermission:
             EmptyView()
         case .idle:
             HStack(spacing: 6) {
                 Label("No reminders due", systemImage: "checklist")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(style.faintColor)
                 Spacer(minLength: 4)
                 addButton
             }
         case .items(let items):
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 5) {
                 ForEach(items.prefix(ShelfRemindersModel.rowLimit)) { entry in
                     row(entry)
                 }
                 HStack(spacing: 6) {
                     if items.count > ShelfRemindersModel.rowLimit {
                         Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundStyle(style.faintColor)
-                            .padding(.leading, 20)
+                            .padding(.leading, 22)
                     }
                     Spacer(minLength: 4)
                     addButton
@@ -1795,10 +2045,11 @@ private struct ShelfRemindersRow: View {
     private var addButton: some View {
         Button { adding = true } label: {
             Image(systemName: "plus")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(style.faintColor)
-                .frame(width: 16, height: 14)
-                .contentShape(Rectangle())
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(style.subColor)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(style.chipFaint))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help("Add a reminder")
@@ -1844,25 +2095,29 @@ private struct ShelfRemindersRow: View {
     }
 
     private func row(_ entry: ShelfRemindersModel.Entry) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 9) {
             Button {
                 reminders.complete(entry)
             } label: {
-                Image(systemName: "circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(style.subColor)
+                Circle()
+                    .strokeBorder(style.subColor, lineWidth: 1.2)
+                    .frame(width: 13, height: 13)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Mark done")
+            .accessibilityLabel("Mark \(entry.title) done")
             Text(entry.title)
-                .font(.system(size: 10))
+                .font(.system(size: 11.5))
                 .foregroundStyle(style.titleColor)
                 .lineLimit(1)
             Spacer(minLength: 4)
             if let due = entry.due {
                 Text(due < Date() ? "Overdue"
                     : due.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .monospacedDigit()
                     .foregroundStyle(due < Date() ? Color.orange : style.faintColor)
             }
         }
@@ -1885,8 +2140,10 @@ private struct ShelfMirrorRow: View {
             EmptyView()
         case .live:
             MirrorPreview(view: mirror.preview)
-                .frame(height: 120)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .frame(height: 132)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(style.hairline, lineWidth: 0.5))
                 .accessibilityLabel("Camera mirror")
         case .denied:
             HStack(spacing: 6) {
@@ -1912,10 +2169,12 @@ private struct ShelfMirrorRow: View {
     }
 }
 
-/// One verb on an ask — Approve, Deny, Open — as a small capsule the
-/// card rows and the island's ask face share. The prominent one is the
-/// white fill (the island's own colour for "yes"), the rest sit on the
-/// chip fill; a verb whose answer is in flight dims and takes no second
+/// One verb on an ask — Approve, Deny, Open — as a capsule the card
+/// rows and the island's ask face share, the height of the ask's verb
+/// row. The prominent one is filled in the surface's ink (white on the
+/// island, the label colour on glass — never the accent, which on a red
+/// Mac reads as a warning), the rest sit on the chip fill with a
+/// hairline; a verb whose answer is in flight dims and takes no second
 /// click.
 struct NotchVerbButton: View {
     let title: String
@@ -1925,27 +2184,28 @@ struct NotchVerbButton: View {
     var systemImage: String?
     let action: () -> Void
 
+    /// The ask face's verb row, and every row that carries verbs.
+    static let height: CGFloat = 22
+
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold))
                 }
                 Text(title)
-                    .font(.system(size: 10, weight: prominent ? .semibold : .medium))
+                    .font(.system(size: 11, weight: prominent ? .semibold : .medium))
                     .lineLimit(1)
             }
-            .foregroundStyle(prominent
-                             ? AnyShapeStyle(style == .island ? Color.black : Color.white)
-                             : AnyShapeStyle(style.titleColor.opacity(0.9)))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .foregroundStyle(prominent ? style.inverseInk : AnyShapeStyle(style.titleColor.opacity(0.92)))
+            .padding(.horizontal, 10)
+            .frame(height: Self.height)
             .background(
                 Capsule(style: .continuous)
-                    .fill(prominent
-                          ? AnyShapeStyle(style == .island ? Color.white.opacity(0.92) : Color.accentColor)
-                          : AnyShapeStyle(style.chipFill)))
+                    .fill(prominent ? style.ink : AnyShapeStyle(style.chipFill)))
+            .overlay(Capsule(style: .continuous)
+                .strokeBorder(style.hairline.opacity(prominent ? 0 : 1), lineWidth: 0.5))
             .contentShape(Capsule())
             .opacity(busy ? 0.45 : 1)
         }

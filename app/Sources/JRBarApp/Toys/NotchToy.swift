@@ -1732,8 +1732,9 @@ final class NotchToy: Toy {
 
     /// A now-playing refresh landed: keep the media, and reframe — the
     /// strip changes the idle width. The capsule face does not measure
-    /// media, so a mid-capsule update just waits.
-    private func noteMedia(_ media: AlcoveMedia?) {
+    /// media, so a mid-capsule update just waits. Internal for the
+    /// render proofs.
+    func noteMedia(_ media: AlcoveMedia?) {
         guard media != islandMedia else { return }
         islandMedia = media
         if currentFace != .notice {
