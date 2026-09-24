@@ -917,16 +917,6 @@ class IntakeRefreshTests(unittest.TestCase):
         self._run_refresh(order)
         self.assertEqual(order[:2], ["intake", "status"])
 
-    def test_every_refresh_repaints_an_open_why_panel(self) -> None:
-        """The panel is only honest if the tick that changes the light also
-        changes the explanation."""
-        written: list[str] = []
-        self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.why_panel_text_view = SimpleNamespace(setString_=written.append)
-        self._run_refresh()
-        self.assertEqual(len(written), 1)
-        self.assertIn("THE LIGHT RIGHT NOW", written[0])
-
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

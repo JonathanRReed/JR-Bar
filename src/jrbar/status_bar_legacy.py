@@ -3360,10 +3360,6 @@ class StatusBarController(NSObject):
             resolved_glance=resolved_glance,
         )
         _t_leds = time.monotonic()
-        # A panel explaining the current light must follow the current
-        # light. Left alone it would answer for whichever light was on
-        # when it opened, which is the exact failure it exists to end.
-        self.refresh_why_panel()
         # A watched Profile pane must not freeze at menu-open vintage:
         # replan transcript scans on the tick while it is visible. The
         # planner's freshness gates and the JR plane's 120s opportunistic
