@@ -349,6 +349,44 @@ public enum AquariumModel {
         return result
     }
 
+    /// Card › Fish at once: the roster trimmed to at most `max` adult
+    /// fish (0 keeps everyone). Asking, sinking and leaving fish are
+    /// never cut — the tank always shows what needs you or just ended.
+    /// Otherwise residents go first (the least raised first, `stages`
+    /// by fish id), then idle sessions, then working ones, each oldest
+    /// update first. A cut fish takes its fry with it; the rest keep
+    /// their order.
+    public static func cap(_ fish: [Fish], max: Int, stages: [String: Int] = [:]) -> [Fish] {
+        guard max > 0 else { return fish }
+        let adults = fish.filter { !$0.isFry }
+        guard adults.count > max else { return fish }
+        func protected(_ f: Fish) -> Bool {
+            f.state == .surfacing || f.state == .sinking || f.state == .leaving
+        }
+        func tier(_ f: Fish) -> Int {
+            if f.isResident { return 0 }
+            return f.state == .idling ? 1 : 2
+        }
+        let cuttable = adults.filter { !protected($0) }.sorted { a, b in
+            let ta = tier(a), tb = tier(b)
+            if ta != tb { return ta < tb }
+            if ta == 0 {
+                let sa = stages[a.id] ?? 0, sb = stages[b.id] ?? 0
+                if sa != sb { return sa < sb }
+            }
+            let ua = a.lastUpdate ?? .distantPast, ub = b.lastUpdate ?? .distantPast
+            if ua != ub { return ua < ub }
+            return a.id < b.id
+        }
+        let over = adults.count - max
+        let cut = Set(cuttable.prefix(over).map(\.id))
+        return fish.filter { f in
+            if cut.contains(f.id) { return false }
+            if f.isFry, let anchor = f.anchorID, cut.contains(anchor) { return false }
+            return true
+        }
+    }
+
     /// A resident → fish: idling midwater on the swim its session's
     /// fish had (or a fresh deterministic one), under its remembered
     /// name, in its provider's species and colour. No plan — nothing

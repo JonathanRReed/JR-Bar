@@ -48,9 +48,12 @@ struct AquariumView: View {
     var tankSettings: AquariumSettings {
         if let toy { return toy.store?.state.aquarium ?? AquariumSettings() }
         if let pinned = fixture?.settings { return pinned }
-        return AquariumSettings(showLabels: fixture?.showLabels ?? true,
-                                density: fixture?.density ?? 1,
-                                dayNight: .cycle)
+        var built = AquariumSettings(showLabels: fixture?.showLabels ?? true,
+                                     density: fixture?.density ?? 1,
+                                     dayNight: .cycle)
+        built.bubbles = built.density
+        built.scenery = built.density < 1 ? .light : .full
+        return built
     }
 
     /// The water column's theme key — "classic" when there's no game.
@@ -71,20 +74,29 @@ struct AquariumView: View {
     /// keeps the original four-minute breathe; `realTime` follows the
     /// clock — night from 21:00 to 06:00, dawn & dusk blending the
     /// edges; `sun` blends at the real sunrise and sunset, or keeps the
-    /// clock's hours where the time zone has no city. Reduce Motion
-    /// holds a soft dusk; a fixture can pin it.
+    /// clock's hours where the time zone has no city; `appearance`
+    /// follows Light and Dark mode, easing over two seconds when it
+    /// flips; the two pinned modes hold day or night. Reduce Motion
+    /// holds a soft dusk for the moving modes; a fixture can pin it.
     func nightFactor(t: Double) -> Double {
         if let pinned = fixture?.night { return pinned }
+        let mode = tankSettings.dayNight
+        switch mode {
+        case .alwaysDay: return 0
+        case .alwaysNight: return 1
+        case .appearance: return AquariumNightEase.appearanceNight(at: t, still: reduceMotion)
+        case .cycle, .realTime, .sun: break
+        }
         if reduceMotion { return 0.4 }
         let date = Date(timeIntervalSince1970: t)
-        switch tankSettings.dayNight {
+        switch mode {
         case .cycle:
             return AquariumBehavior.night(at: t)
-        case .realTime:
-            return AquariumBehavior.realTimeNight(at: date, calendar: .current)
         case .sun:
             return AquariumSun.night(at: date)
                 ?? AquariumBehavior.realTimeNight(at: date, calendar: .current)
+        default:
+            return AquariumBehavior.realTimeNight(at: date, calendar: .current)
         }
     }
 
@@ -134,9 +146,16 @@ struct AquariumView: View {
         // Read the observable surface in `body` so the card's tracked
         // reads stay honest even while the timeline is paused.
         let fish = toy?.fish ?? fixture?.fish ?? []
+        // One read of the card: the chip under each fish, and the three
+        // amounts — plankton, bubbles, and how much seeded dressing (the
+        // stations use the same share, so a fish never works at a rock
+        // that isn't drawn).
         let settings = tankSettings
-        let showLabels = settings.showLabels
-        let density = max(0.1, settings.density)
+        let labelStyle = settings.labelStyle
+        let showLabels = labelStyle == .always
+        let plankton = max(0.1, settings.density)
+        let bubbles = settings.bubbles
+        let density = settings.scenery.fraction
         let paused = ambient ? !ambientVisible
             : (toy?.windowOccluded ?? fixture?.paused ?? false)
         ZStack {
@@ -242,8 +261,8 @@ struct AquariumView: View {
                     drawJellyfish(canvas: &canvas, size: size, t: t,
                                   resident: empty || owns(.jellyfish))
                     drawPlankton(canvas: &canvas, size: size, t: t,
-                                 density: density, front: false)
-                    drawBubbles(canvas: &canvas, size: size, t: t, density: density)
+                                 density: plankton, front: false)
+                    drawBubbles(canvas: &canvas, size: size, t: t, density: bubbles)
                     // The passers-by and the sand/mid-water pets
                     // live behind the fish lane.
                     drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
@@ -356,7 +375,7 @@ struct AquariumView: View {
                     drawPlants(canvas: &canvas, size: size, t: t, density: density,
                                front: true, keepClear: caption?.rect)
                     drawPlankton(canvas: &canvas, size: size, t: t,
-                                 density: density, front: true)
+                                 density: plankton, front: true)
                     // The surface draws over everything: a surfacing
                     // fish reads as under the waterline, not pasted
                     // on top.
@@ -368,8 +387,11 @@ struct AquariumView: View {
                     let probe = hoverProbe.point
                         ?? (hoverProbe.flashUntil > context.date
                             ? hoverProbe.flashPoint : nil)
+                    // Labels › Never keeps the tag for the fish you
+                    // selected, so the inspector's fish still names itself.
                     if let point = probe,
                        let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
+                       labelStyle != .never || hit.id == selectedID,
                        let l = layouts[hit.id],
                        let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
                         drawNameplate(canvas: &canvas, size: size,
