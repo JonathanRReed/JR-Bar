@@ -723,7 +723,7 @@ final class MenuBarUtility: Toy {
     /// clock, Control Center — never.
     private func overlayItemIDs() -> Set<String> {
         Set(Self.hideAllTargets(listedItems).filter { item in
-            concealer == nil || !(item.bundleID.map(MenuBarConcealPlan.canConcealApp) ?? false)
+            concealer == nil || !(item.bundleID.map { MenuBarConcealPlan.canConcealApp($0) } ?? false)
         }.map(\.id))
     }
 

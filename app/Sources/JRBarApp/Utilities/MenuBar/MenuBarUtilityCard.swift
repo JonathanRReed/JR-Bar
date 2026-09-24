@@ -356,7 +356,7 @@ struct MenuBarUtilityControls: View {
 
     /// The override picker for one item.
     private func overrideRow(_ item: MenuBarItem) -> some View {
-        let appChoice = utility.concealing && item.bundleID.map(MenuBarConcealPlan.canConcealApp) == true
+        let appChoice = utility.concealing && item.bundleID.map { MenuBarConcealPlan.canConcealApp($0) } == true
         return LabeledContent {
             Picker(selection: Binding(
                 get: { utility.effectiveSection(for: item) },

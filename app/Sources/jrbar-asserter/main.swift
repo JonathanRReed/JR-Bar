@@ -20,7 +20,10 @@ import Foundation
 /// decision to fall back to that backend.
 ///
 /// Wire protocol, one activation per process:
-///   stdin  line 1: a JSON array of allowed bundle identifiers
+///   stdin  line 1: a JSON array of allowed bundle identifiers — or an
+///     object `{"bundles": [...], "systemItems": [...]}` when the app's
+///     `concealSystemItems` lets some of macOS's own items go (every one
+///     of 0…8 stays otherwise)
 ///   stdout line 1: "ok" once the agent takes the assertion, else "err <why>"
 ///     — the only line ever: the host closes its read end once it has it,
 ///     so a second write would die of SIGPIPE and drop the assertion
@@ -30,9 +33,20 @@ import Foundation
 let out = FileHandle.standardOutput
 func say(_ text: String) { out.write((text + "\n").data(using: .utf8)!) }
 
-guard let line = readLine(strippingNewline: true),
-      let data = line.data(using: .utf8),
-      let allowlist = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+/// The first line: the plain allowlist array, or the object that adds
+/// the system items to keep.
+func request(_ line: String?) -> (bundles: [String], systemItems: [Int])? {
+    guard let data = line?.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+    if let bundles = object as? [String] { return (bundles, Array(0...8)) }
+    guard let fields = object as? [String: Any], let bundles = fields["bundles"] as? [String] else {
+        return nil
+    }
+    let items = (fields["systemItems"] as? [Int]) ?? Array(0...8)
+    return (bundles, items.filter { (0...8).contains($0) })
+}
+
+guard let (allowlist, systemItems) = request(readLine(strippingNewline: true)) else {
     say("err bad-allowlist")
     exit(2)
 }
@@ -55,7 +69,7 @@ let alloc = NSSelectorFromString("alloc")
 guard let config = (configuration as AnyObject).perform(alloc)?
         .takeUnretainedValue()
         .perform(NSSelectorFromString("initWithAllowedSystemItems:allowedBundleIdentifiers:"),
-                 with: Array(0...8) as NSArray,
+                 with: systemItems as NSArray,
                  with: allowlist as NSArray)?
         .takeUnretainedValue(),
       let live = (assertion as AnyObject).perform(alloc)?

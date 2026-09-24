@@ -30,10 +30,60 @@ import OSLog
 // MARK: - Pure planning
 
 enum MenuBarConcealPlan {
-    /// Apple extras use per-item covers, matching the visibility picker.
-    /// Do not also put them in the app-level assessment map.
-    nonisolated static func canConcealApp(_ bundleID: String) -> Bool {
-        !bundleID.hasPrefix("com.apple.")
+    /// Whether the agent may conceal `bundleID`'s items as a whole app.
+    /// Apple's own extras use per-item covers, matching the visibility
+    /// picker — unless `appleExtras` (`curation.concealAppleExtras`)
+    /// lets Weather, Passwords and Time Machine hide like any app. The
+    /// system's own owners never join either way.
+    nonisolated static func canConcealApp(_ bundleID: String, appleExtras: Bool = false) -> Bool {
+        guard bundleID.hasPrefix("com.apple.") else { return true }
+        return appleExtras && !appleSystemOwners.contains(bundleID)
+    }
+
+    /// Apple's processes whose items are the system's own — never an
+    /// extra the person may hide, whatever `concealAppleExtras` says:
+    /// the agent itself, Control Center, the input menu, Spotlight and
+    /// Siri.
+    nonisolated static let appleSystemOwners: Set<String> = systemItemOwners.union([
+        "com.apple.Spotlight",
+        "com.apple.Siri",
+        "com.apple.siri.launcher",
+        "com.apple.systemuiserver",
+        "com.apple.notificationcenterui",
+    ])
+
+    /// Whether a press with these flags is one the click bridge may
+    /// hold back and replay as a plain click. A ⌘-press is the start of
+    /// a drag the agent must see exactly as it came: replayed flagless,
+    /// a ⌘-drag of Wi-Fi turned into "open the Wi-Fi menu".
+    nonisolated static func bridges(flags: CGEventFlags) -> Bool {
+        !flags.contains(.maskCommand)
+    }
+
+    /// Every `MBSystemItemIdentifier` on 27.0 — battery, Bluetooth,
+    /// clock, displays, keyboard, volume, Wi-Fi, screen mirroring,
+    /// Control Center. All of them stay unless `concealSystemItems`
+    /// lets the person hide the clock or Control Center.
+    nonisolated static let allSystemItems: [Int] = Array(0...8)
+
+    /// The system items `concealSystemItems` may hide, by the AX
+    /// identifier their item carries, with the `MBSystemItemIdentifier`
+    /// read off the 0…8 order above. Unverified until the integrator's
+    /// live probe: the flag stays off unless the clock and Control
+    /// Center conceal and come back cleanly. Wi-Fi, battery and sound
+    /// never join.
+    nonisolated static let concealableSystemItems: [String: Int] = [
+        "com.apple.menuextra.clock": 2,
+        "com.apple.menuextra.controlcenter": 8,
+    ]
+
+    /// The system items an assertion keeps for a concealed set: all of
+    /// them, less the concealable ones the person hid — only while
+    /// `enabled`.
+    nonisolated static func allowedSystemItems(concealed: Set<String>, enabled: Bool) -> [Int] {
+        guard enabled else { return allSystemItems }
+        let hidden = Set(concealed.compactMap { concealableSystemItems[$0] })
+        return allSystemItems.filter { !hidden.contains($0) }
     }
 
     /// The applications an assertion must conceal for a reveal state:
@@ -113,6 +163,10 @@ final class MenuBarAssertionToken: @unchecked Sendable {
 @MainActor
 protocol MenuBarConcealBackend: AnyObject {
     func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken
+    /// The same with the system items the assertion keeps — every one
+    /// unless `concealSystemItems` let the clock or Control Center go.
+    /// A backend that predates it keeps them all.
+    func activate(allowedBundleIDs: [String], allowedSystemItems: [Int]) async throws -> MenuBarAssertionToken
     func invalidate(_ token: MenuBarAssertionToken)
     /// A dead token no longer conceals — the in-process assertion lives
     /// as long as the concealer, so the default says alive; the helper
@@ -122,6 +176,10 @@ protocol MenuBarConcealBackend: AnyObject {
 
 extension MenuBarConcealBackend {
     func isAlive(_ token: MenuBarAssertionToken) -> Bool { true }
+
+    func activate(allowedBundleIDs: [String], allowedSystemItems: [Int]) async throws -> MenuBarAssertionToken {
+        try await activate(allowedBundleIDs: allowedBundleIDs)
+    }
 }
 
 @MainActor
@@ -148,8 +206,9 @@ final class MenuBarAssessmentBackend: MenuBarConcealBackend {
     nonisolated private static let invalidateSelector = NSSelectorFromString("invalidate")
     /// `MBSystemItemIdentifier` 0…8 on 27.0 — battery, Bluetooth, clock,
     /// displays, keyboard, volume, Wi-Fi, screen mirroring, Control
-    /// Center. All of them stay: the system's items are never ours.
-    nonisolated private static let allSystemItems: [Int] = Array(0...8)
+    /// Center. All of them stay unless `concealSystemItems` says
+    /// otherwise: the system's items are never ours.
+    nonisolated private static let allSystemItems: [Int] = MenuBarConcealPlan.allSystemItems
 
     nonisolated private static let classes: (configuration: AnyClass, assertion: AnyClass)? = {
         guard dlopen(frameworkPath, RTLD_NOW) != nil,
@@ -194,12 +253,16 @@ final class MenuBarAssessmentBackend: MenuBarConcealBackend {
     }
 
     func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+        try await activate(allowedBundleIDs: allowedBundleIDs, allowedSystemItems: Self.allSystemItems)
+    }
+
+    func activate(allowedBundleIDs: [String], allowedSystemItems: [Int]) async throws -> MenuBarAssertionToken {
         guard let classes = Self.classes else { throw Failure.unavailable }
         let allocSelector = NSSelectorFromString("alloc")
         guard let configuration = (classes.configuration as AnyObject).perform(allocSelector)?
                 .takeUnretainedValue()
                 .perform(Self.configurationSelector,
-                         with: Self.allSystemItems.map { NSNumber(value: $0) } as NSArray,
+                         with: allowedSystemItems.map { NSNumber(value: $0) } as NSArray,
                          with: allowedBundleIDs as NSArray)?
                 .takeUnretainedValue(),
               let assertion = (classes.assertion as AnyObject).perform(allocSelector)?
@@ -414,9 +477,27 @@ final class MenuBarAsserterBackend: MenuBarConcealBackend {
     nonisolated init(helperURL: URL) { self.helperURL = helperURL }
 
     func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+        try await activate(allowedBundleIDs: allowedBundleIDs,
+                           allowedSystemItems: MenuBarConcealPlan.allSystemItems)
+    }
+
+    /// The helper's first line: the plain allowlist array while every
+    /// system item stays — the wire it has always read — or an object
+    /// carrying the system items too.
+    nonisolated static func requestLine(allowedBundleIDs: [String], allowedSystemItems: [Int]) -> String? {
+        let body: Any = allowedSystemItems == MenuBarConcealPlan.allSystemItems
+            ? allowedBundleIDs
+            : ["bundles": allowedBundleIDs, "systemItems": allowedSystemItems] as [String: Any]
+        guard let payload = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: payload, encoding: .utf8)
+    }
+
+    func activate(allowedBundleIDs: [String], allowedSystemItems: [Int]) async throws -> MenuBarAssertionToken {
         let (spawned, stdin, stdout) = try spawn()
-        guard let payload = try? JSONSerialization.data(withJSONObject: allowedBundleIDs),
-              let line = String(data: payload, encoding: .utf8) else {
+        guard let line = Self.requestLine(allowedBundleIDs: allowedBundleIDs,
+                                          allowedSystemItems: allowedSystemItems) else {
             spawned.terminate()
             throw MenuBarAssessmentBackend.Failure.unavailable
         }
@@ -505,6 +586,7 @@ final class MenuBarConcealer {
     private struct Live {
         let concealed: Set<String>
         let allowlist: [String]
+        var systemItems: [Int] = MenuBarConcealPlan.allSystemItems
         let token: MenuBarAssertionToken
     }
 
@@ -522,6 +604,9 @@ final class MenuBarConcealer {
     private var suspendGeneration = 0
     /// The last set asked for — what a suspend restores.
     private(set) var target: Set<String> = []
+    /// The system items the last apply keeps — every one unless
+    /// `concealSystemItems` let the clock or Control Center go.
+    private(set) var systemItems: [Int] = MenuBarConcealPlan.allSystemItems
     /// Every bundle ID observed running this session — the allowlist's
     /// universe. Monotonic: a snapshot that drops a shown app for one
     /// pass never shrinks it, so a bad listing can't conceal a shown
@@ -585,8 +670,10 @@ final class MenuBarConcealer {
     /// Conceal exactly `concealed` among `running`. An empty set
     /// releases everything — no assertion at all, so the system's
     /// items take clicks natively again.
-    func apply(concealed: Set<String>, running: Set<String>) {
+    func apply(concealed: Set<String>, running: Set<String>,
+               systemItems: [Int] = MenuBarConcealPlan.allSystemItems) {
         target = concealed
+        self.systemItems = systemItems
         // The allowlist's universe only grows: anything the workspace
         // has ever shown us stays allowlisted until the cap, so the
         // agent always has the ID it needs to keep a shown app on the
@@ -624,6 +711,7 @@ final class MenuBarConcealer {
     /// and stands down instead of re-concealing behind us.
     func releaseAll() async {
         target = []
+        systemItems = MenuBarConcealPlan.allSystemItems
         activationFailing = false
         dropLive()
         if let pending = queue {
@@ -647,7 +735,8 @@ final class MenuBarConcealer {
             await previous?.value
             guard let self, let live = self.live else { return }
             do {
-                let token = try await self.backend.activate(allowedBundleIDs: live.allowlist)
+                let token = try await self.backend.activate(allowedBundleIDs: live.allowlist,
+                                                            allowedSystemItems: live.systemItems)
                 // The token this sweep was meant to replace may have
                 // been released — or re-converged — while the agent
                 // answered; never resurrect what is already gone.
@@ -655,7 +744,8 @@ final class MenuBarConcealer {
                     self.backend.invalidate(token)
                     return
                 }
-                self.live = Live(concealed: live.concealed, allowlist: live.allowlist, token: token)
+                self.live = Live(concealed: live.concealed, allowlist: live.allowlist,
+                                 systemItems: live.systemItems, token: token)
                 self.backend.invalidate(live.token)
                 MenuBarAssessmentBackend.log.notice("reassert: reswept \(live.concealed.count, privacy: .public) apps")
             } catch {
@@ -694,7 +784,8 @@ final class MenuBarConcealer {
 
     private func converge() async {
         let concealed = target.intersection(seenRunning)
-        if concealed.isEmpty {
+        let systemItems = self.systemItems
+        if concealed.isEmpty, systemItems == MenuBarConcealPlan.allSystemItems {
             // Nothing asked for, so nothing is failing.
             activationFailing = false
             dropLive()
@@ -705,22 +796,23 @@ final class MenuBarConcealer {
         // allowlist, or a changed concealed set. A quit, a snapshot
         // blip, a re-read of the same universe — the live assertion
         // already covers all of those, so it stays.
-        if let live, live.concealed == concealed,
+        if let live, live.concealed == concealed, live.systemItems == systemItems,
            Set(allowlist).isSubset(of: Set(live.allowlist)),
            backend.isAlive(live.token) { return }
         do {
-            let token = try await backend.activate(allowedBundleIDs: allowlist)
+            let token = try await backend.activate(allowedBundleIDs: allowlist,
+                                                   allowedSystemItems: systemItems)
             activationFailing = false
             // A release or retarget that landed mid-activation wins:
             // the plan this token was built for no longer stands, so
             // it goes straight back rather than resurrecting a
             // concealment the caller already dropped.
-            guard target.intersection(seenRunning) == concealed else {
+            guard target.intersection(seenRunning) == concealed, self.systemItems == systemItems else {
                 backend.invalidate(token)
                 return
             }
             let old = live
-            live = Live(concealed: concealed, allowlist: allowlist, token: token)
+            live = Live(concealed: concealed, allowlist: allowlist, systemItems: systemItems, token: token)
             if let old { backend.invalidate(old.token) }
             MenuBarAssessmentBackend.log.notice("conceal: \(concealed.count, privacy: .public) apps hidden by the agent (\(concealed.sorted().joined(separator: ", "), privacy: .public)); allowlist \(allowlist.count, privacy: .public) apps, ours \(allowlist.contains(Bundle.main.bundleIdentifier ?? "-") ? "in" : "MISSING", privacy: .public)")
         } catch {
@@ -765,6 +857,11 @@ final class MenuBarConcealer {
 /// same point (the pointer never moves), and lets concealment return
 /// a moment later. Replays carry a marker so the tap passes them.
 ///
+/// A ⌘-press is never held back: it is the start of a drag, and the
+/// agent must see it exactly as it came. The bridge only reports the
+/// press and the release that ends it — read-only, nothing posted — so
+/// a ⌘-drag across the JR-Bar icon can pick the dragged app's section.
+///
 /// The tap is active and sees every left click on the Mac, so it runs
 /// on a thread of its own. Serviced by the main run loop, every click
 /// system-wide waited on whatever JR-Bar's main thread was doing, and
@@ -802,15 +899,27 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     private var items: [MenuBarItem] = []
     private var concealing = false
     private var swallowUp = false
+    /// A ⌘-press went by and its release has not: the next left-up ends
+    /// the drag, whatever the modifiers say by then.
+    private var commandDown = false
     /// Whether the event tap is live — `tapCreate` refuses without the
     /// Accessibility grant, and the card reads this to say so instead
     /// of silently no-opping. Written on the main thread by
     /// `start`/`stop`, read there too.
     private(set) var tapLive = false
     private let onBridge: @MainActor (CGPoint) -> Void
+    /// A ⌘-press at a Quartz point, passed straight through.
+    private let onCommandPress: @MainActor (CGPoint, CGEventFlags) -> Void
+    /// The release that ends a ⌘-press, with the flags held at the drop
+    /// (⌥ asks for Always Hidden).
+    private let onCommandRelease: @MainActor (CGPoint, CGEventFlags) -> Void
 
-    init(onBridge: @escaping @MainActor (CGPoint) -> Void) {
+    init(onBridge: @escaping @MainActor (CGPoint) -> Void,
+         onCommandPress: @escaping @MainActor (CGPoint, CGEventFlags) -> Void = { _, _ in },
+         onCommandRelease: @escaping @MainActor (CGPoint, CGEventFlags) -> Void = { _, _ in }) {
         self.onBridge = onBridge
+        self.onCommandPress = onCommandPress
+        self.onCommandRelease = onCommandRelease
     }
 
     /// A bridge dropped without `stop` must not leave a tap calling into
@@ -890,7 +999,10 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
         CFMachPortInvalidate(tap)
     }
 
-    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    /// One event off the tap: pass it, or hold a plain click on a
+    /// bridged system item back for the lift. Internal so a test can hand
+    /// it a built (never posted) event.
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = lock.withLock({ tap }) { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
@@ -899,12 +1011,29 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         if type == .leftMouseUp {
-            let eat = lock.withLock { () -> Bool in
-                defer { swallowUp = false }
-                return swallowUp
+            let (eat, endsDrag) = lock.withLock { () -> (Bool, Bool) in
+                defer { swallowUp = false; commandDown = false }
+                return (swallowUp, commandDown)
+            }
+            if endsDrag {
+                let report = onCommandRelease
+                let point = event.location
+                let flags = event.flags
+                Task { @MainActor in report(point, flags) }
             }
             return eat ? nil : Unmanaged.passUnretained(event)
         }
+        guard type == .leftMouseDown else { return Unmanaged.passUnretained(event) }
+        if !MenuBarConcealPlan.bridges(flags: event.flags) {
+            // The start of a drag: straight through, never replayed.
+            lock.withLock { commandDown = true; swallowUp = false }
+            let report = onCommandPress
+            let point = event.location
+            let flags = event.flags
+            Task { @MainActor in report(point, flags) }
+            return Unmanaged.passUnretained(event)
+        }
+        lock.withLock { commandDown = false }
         let point = event.location
         let hit: Bool = lock.withLock {
             guard concealing else { return false }
