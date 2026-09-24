@@ -51,8 +51,12 @@ final class EventCoordinator {
     var sessionInFront: @MainActor (String) async -> Bool?
     /// The last escalation_stage the daemon announced — remembered so a
     /// frontmost flip can re-decide the noise without waiting for the
-    /// next stage boundary.
-    private var lastEscalation: CoreEvent?
+    /// next stage boundary. Its session's `ask_resolved` forgets it.
+    private(set) var lastEscalation: CoreEvent?
+    /// One process's parent, for the ancestry walk that skips a
+    /// `session_in_front` the daemon could only answer no to; tests
+    /// stage it.
+    var parentPID: (Int32) -> Int32? = AskingPane.parentPID
     /// The daemon's last word on whether the owner is watching an asking
     /// session, and under which frontmost app it was read.
     private(set) var inFrontVerdict: AskingPane.Verdict?
@@ -184,6 +188,9 @@ final class EventCoordinator {
         let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
                                                           askingFrontmost: watching), event)
         if event.kind == "escalation_stage" { lastEscalation = event }
+        // The ask the stage was about is answered: an app switch has no
+        // noise left to re-decide for it.
+        if event.kind == "ask_resolved", lastEscalation?.session == event.session { lastEscalation = nil }
         apply(delivery, for: event)
         confirmWatching(event, decidedWatching: watching)
         var summary = "event \(event.kind)"
@@ -292,6 +299,9 @@ final class EventCoordinator {
               inFrontAsking != sessionID else { return }
         let front = frontmostApp().pid
         if let verdict = inFrontVerdict, verdict.speaks(for: sessionID, frontmostPID: front, now: Date()) { return }
+        // Another app is in front of a session whose process is known:
+        // the daemon could only say no, and the app's rule already does.
+        if AskingPane.frontmostElsewhere(sessionPID: session.pid, frontmostPID: front, parentPID: parentPID) { return }
         inFrontAsking = sessionID
         Task { [weak self] in
             guard let self else { return }

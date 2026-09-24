@@ -470,7 +470,11 @@ struct AskSurfacesTests {
         #expect(!verdict.speaks(for: "s", frontmostPID: 7, now: now.addingTimeInterval(AskingPane.verdictLife)))
     }
 
-    private func watchedCoordinator(inFront: Bool?, frontmostIsHost: Bool) -> EventCoordinator {
+    /// `frontmostIsHost: false` is a host the app's bundle rule does not
+    /// know — its pid still on the session's ancestry, so the daemon is
+    /// the one who can tell. `elsewhere` puts an unrelated app in front.
+    private func watchedCoordinator(inFront: Bool?, frontmostIsHost: Bool, elsewhere: Bool = false,
+                                    asked: Log = Log()) -> EventCoordinator {
         let core = CoreModel()
         let session = "claude:session:w"
         core.apply(.state(CoreState(
@@ -479,9 +483,42 @@ struct AskSurfacesTests {
             asks: [CoreAsk(session: session, summary: "Run")])))
         let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
         let parent = AskingPane.parentPID(getpid())
-        coordinator.frontmostApp = { frontmostIsHost ? ("dev.jr.tests", parent) : ("com.apple.Safari", 4242) }
-        coordinator.sessionInFront = { _ in inFront }
+        coordinator.frontmostApp = {
+            if elsewhere { return ("com.apple.Safari", 4242) }
+            return frontmostIsHost ? ("dev.jr.tests", parent) : ("com.apple.Safari", parent)
+        }
+        coordinator.sessionInFront = { session in
+            asked.calls.append(session)
+            return inFront
+        }
         return coordinator
+    }
+
+    @Test("an unrelated app in front of a known process skips session_in_front: the daemon could only say no")
+    func elsewhereSkipsTheRoundTrip() async throws {
+        let asked = Log()
+        let coordinator = watchedCoordinator(inFront: true, frontmostIsHost: false, elsewhere: true, asked: asked)
+        coordinator.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(asked.calls.isEmpty)
+        #expect(coordinator.isPulsing, "not watching: the stage keeps its noise")
+        #expect(AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: 4242))
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: getpid()))
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: Int(getpid()),
+                                               frontmostPID: AskingPane.parentPID(getpid())))
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: nil, frontmostPID: 4242), "no process: ask")
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: nil))
+    }
+
+    @Test("an answered ask forgets the stage it was escalating")
+    func resolvedForgetsTheStage() {
+        let coordinator = watchedCoordinator(inFront: nil, frontmostIsHost: true)
+        coordinator.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        #expect(coordinator.lastEscalation?.session == "claude:session:w")
+        coordinator.handle(CoreEvent(id: "e2", kind: "ask_resolved", session: "claude:session:other"))
+        #expect(coordinator.lastEscalation != nil, "another session's answer leaves it")
+        coordinator.handle(CoreEvent(id: "e3", kind: "ask_resolved", session: "claude:session:w"))
+        #expect(coordinator.lastEscalation == nil)
     }
 
     private func settle(_ coordinator: EventCoordinator, until: () -> Bool) async {

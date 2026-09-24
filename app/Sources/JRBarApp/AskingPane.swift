@@ -34,6 +34,19 @@ enum AskingPane {
         return ancestry(of: pid, parentPID: parentPID).contains(frontmostPID)
     }
 
+    /// Provably not the session's pane, with no daemon to ask: the
+    /// session names its process, and the frontmost app is neither that
+    /// process nor on its ancestry. That is exactly where the daemon's
+    /// `session_in_front` answers `false` (`other_app`) after the same
+    /// walk, so the round trip is skipped. A session with no process on
+    /// record, or no frontmost pid, still asks.
+    static func frontmostElsewhere(sessionPID: Int?, frontmostPID: Int32?,
+                                   parentPID: (Int32) -> Int32? = AskingPane.parentPID) -> Bool {
+        guard let sessionPID, sessionPID > 0, let frontmostPID else { return false }
+        let pid = Int32(sessionPID)
+        return pid != frontmostPID && !ancestry(of: pid, parentPID: parentPID).contains(frontmostPID)
+    }
+
     /// The session process's ancestors, child→parent order, the same
     /// walk the daemon's process table gives it — here straight from
     /// `proc_pidinfo`, one lookup per hop. A cycle or a dead link ends
