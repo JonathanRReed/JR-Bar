@@ -523,3 +523,31 @@ extension AquariumGameTests {
         #expect(back == named)
     }
 }
+
+// MARK: Keeping what a newer build bought
+
+extension AquariumGameTests {
+    @Test("an item this build doesn't know survives a decode/encode round trip")
+    func unknownInventoryPassthrough() throws {
+        let json = #"{"pearls": 7, "inventory": {"snail": 1, "themeFromTheFuture": 1, "zero": 0}}"#
+        let game = try JSONDecoder().decode(AquariumGame.self, from: Data(json.utf8))
+        #expect(game.owns(.snail))
+        #expect(game.inventory["themeFromTheFuture"] == nil, "only known items count as owned")
+        #expect(game.unknownInventory == ["themeFromTheFuture": 1])
+        let back = try JSONDecoder().decode([String: AnyCodableInventory].self,
+                                            from: JSONEncoder().encode(game))
+        #expect(back["inventory"]?.items == ["snail": 1, "themeFromTheFuture": 1])
+        // And the document itself round-trips unchanged.
+        let again = try JSONDecoder().decode(AquariumGame.self, from: JSONEncoder().encode(game))
+        #expect(again == game)
+    }
+}
+
+/// Reads just the `inventory` object out of an encoded game.
+private struct AnyCodableInventory: Decodable {
+    var items: [String: Int]?
+
+    init(from decoder: any Decoder) throws {
+        items = try? decoder.singleValueContainer().decode([String: Int].self)
+    }
+}

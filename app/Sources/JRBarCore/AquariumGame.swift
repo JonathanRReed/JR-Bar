@@ -672,6 +672,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     public var pets: [String: FishCare]
     /// ShopItem raw value → count owned (always 0 or 1 today).
     public var inventory: [String: Int]
+    /// Items a newer build sold that this one doesn't know, kept as they
+    /// were and written back beside `inventory` — so opening the tank in
+    /// an older build never throws away a purchase or the pearls it cost.
+    public var unknownInventory: [String: Int] = [:]
     /// The active water theme: "classic" plus the shop's theme ids.
     public var themeID: String
     /// Session id → hat item raw value.
@@ -1357,8 +1361,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         lifetimePearls = max(0, (try? c.decodeIfPresent(Int.self, forKey: .lifetimePearls)) ?? 0)
         pearlProgress = max(0, (try? c.decodeIfPresent(Double.self, forKey: .pearlProgress)) ?? 0)
         pets = (try? c.decodeIfPresent([String: FishCare].self, forKey: .pets)) ?? [:]
-        inventory = ((try? c.decodeIfPresent([String: Int].self, forKey: .inventory)) ?? [:])
-            .filter { ShopItem(rawValue: $0.key) != nil && $0.value > 0 }
+        let owned = ((try? c.decodeIfPresent([String: Int].self, forKey: .inventory)) ?? [:])
+            .filter { $0.value > 0 }
+        inventory = owned.filter { ShopItem(rawValue: $0.key) != nil }
+        unknownInventory = owned.filter { ShopItem(rawValue: $0.key) == nil }
         themeID = (try? c.decodeIfPresent(String.self, forKey: .themeID)) ?? "classic"
         hats = ((try? c.decodeIfPresent([String: String].self, forKey: .hats)) ?? [:])
             .filter { ShopItem(rawValue: $0.value)?.category == .hats }
@@ -1391,5 +1397,41 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             care.stage = min(AquariumRules.maxStage, max(0, care.stage))
             pets[id] = care
         }
+    }
+
+    /// Every field, as the decoder reads it — with the items this build
+    /// doesn't know folded back into `inventory`, so a newer build's
+    /// purchases survive a round trip through this one.
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(pearls, forKey: .pearls)
+        try c.encode(lifetimePearls, forKey: .lifetimePearls)
+        try c.encode(pearlProgress, forKey: .pearlProgress)
+        try c.encode(pets, forKey: .pets)
+        try c.encode(inventory.merging(unknownInventory) { known, _ in known }, forKey: .inventory)
+        try c.encode(themeID, forKey: .themeID)
+        try c.encode(hats, forKey: .hats)
+        try c.encode(drops, forKey: .drops)
+        try c.encode(streakDays, forKey: .streakDays)
+        try c.encode(lastStreakDay, forKey: .lastStreakDay)
+        try c.encode(windowOpen, forKey: .windowOpen)
+        try c.encode(away, forKey: .away)
+        try c.encode(totals, forKey: .totals)
+        try c.encode(dropSeq, forKey: .dropSeq)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(accessories, forKey: .accessories)
+        try c.encode(substrateID, forKey: .substrateID)
+        try c.encode(backdropID, forKey: .backdropID)
+        try c.encode(unlocked, forKey: .unlocked)
+        try c.encodeIfPresent(dailyGoal, forKey: .dailyGoal)
+        try c.encode(goalCarrySeconds, forKey: .goalCarrySeconds)
+        try c.encodeIfPresent(treasure, forKey: .treasure)
+        try c.encode(lastTreasureAt, forKey: .lastTreasureAt)
+        try c.encode(pendingVisitors, forKey: .pendingVisitors)
+        try c.encode(lastVisitorAt, forKey: .lastVisitorAt)
+        try c.encode(continuousWorkSeconds, forKey: .continuousWorkSeconds)
+        try c.encode(lastWorkAt, forKey: .lastWorkAt)
+        try c.encode(completionsToday, forKey: .completionsToday)
+        try c.encode(fleet, forKey: .fleet)
     }
 }
