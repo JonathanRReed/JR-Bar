@@ -1371,7 +1371,7 @@ private struct FoldControlsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
                 Text(toy.angleText)
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .font(angleFont)
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .foregroundStyle(toy.glyphAngle == nil ? .secondary : .primary)
@@ -1388,6 +1388,14 @@ private struct FoldControlsView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+    }
+
+    /// The angle in big digits while there is one; a missing reading
+    /// ("no sensor", "—") says so a size down, as a note, not a number.
+    private var angleFont: Font {
+        toy.glyphAngle == nil
+            ? .system(size: 17, weight: .medium, design: .rounded)
+            : .system(size: 26, weight: .semibold, design: .rounded)
     }
 
     /// One slider row: the label, the slider and its readout.
