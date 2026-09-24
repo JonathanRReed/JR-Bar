@@ -17,9 +17,11 @@ import SwiftUI
 /// the room clears — or let go, the card's pick — and a screen a
 /// fullscreen app owns is skipped, so a celebration never lands on a
 /// Keynote or a video call, fullscreen or not. Anything outside
-/// JR-Bar that wants a burst asks through `fire(reason: .request)`; the
-/// one route in today is a daemon `confetti` event, which the daemon
-/// does not emit yet.
+/// JR-Bar that wants a burst asks through `fire(reason: .request)`:
+/// `jrbar confetti` (or a hook) has the daemon journal a `confetti`
+/// event, which lands in `noteEvent`. `jrbar://confetti`, the palette's
+/// Fire Confetti and the card's Try it are explicit asks right here, so
+/// they go through `testBurst` and fire even while the toy is off.
 @MainActor
 @Observable
 final class ConfettiToy: Toy {
@@ -114,21 +116,20 @@ final class ConfettiToy: Toy {
         /// A rare moment JR-Bar noticed itself — an Aquarium achievement
         /// or tank level. Needs the Milestones trigger.
         case milestone
-        /// Something outside JR-Bar asked — a script or a hook, relayed
-        /// by the daemon as a `confetti` event (`requestEventKind`; no
-        /// daemon command emits one yet, and there is no URL scheme).
-        /// The toy must be on, the room is minded, and a repeat inside
-        /// `ConfettiRoom.requestCooldown` is dropped.
+        /// Something outside JR-Bar asked — `jrbar confetti`, a script or
+        /// a hook, relayed by the daemon as a `confetti` event
+        /// (`requestEventKind`). The toy must be on, the room is minded,
+        /// and a repeat inside `ConfettiRoom.requestCooldown` is dropped.
         case request
     }
 
     /// Fires a burst for `reason`, in `provider`'s colour when one is
-    /// named (else the Toys tint). Returns whether the ask was taken —
-    /// a held burst counts as taken; off, cooling down or an unticked
-    /// trigger does not.
+    /// named and known (else the Toys tint — never a grey). Returns
+    /// whether the ask was taken — a held burst counts as taken; off,
+    /// cooling down or an unticked trigger does not.
     @discardableResult
     func fire(reason: Reason, provider: String? = nil, at now: Date = Date()) -> Bool {
-        let color = provider.map { self.color(for: $0) } ?? ConfettiView.toysTint
+        let color = tint(for: provider)
         switch reason {
         case .test:
             present(color)
@@ -163,9 +164,8 @@ final class ConfettiToy: Toy {
         deliver(decision, event: event)
     }
 
-    /// The event kind a daemon-relayed ask arrives as — the app's half
-    /// of the route; the daemon's half (a command that journals one) is
-    /// still to come.
+    /// The event kind a daemon-relayed ask arrives as: `jrbar confetti`
+    /// (`cli_control.py`) has the daemon journal one, and it lands here.
     static let requestEventKind = "confetti"
 
     /// Each applied state document lands here too: the banked-credits
