@@ -124,7 +124,8 @@ listed is a helper of the row it sits next to alphabetically.
 | Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
 | Settings and persistence | `settings.py` → `_settings_legacy.py`, `settings_installation.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
-| Legacy AppKit UI (no longer reachable: `open_legacy_window` is gone, and the rest waits on the settings-window removal) | `status_bar_legacy.py`, `_status_bar_production.py`, `settings_window*.py`, `*_pane.py`, `agent_browser*.py`, `why_panel.py`, `usage_view.py`, `native_ui.py`, `window_presentation.py` |
+| Retained controller (live: `application_composition.py` composes it and `core_runtime.build_headless_controller_class` subclasses it, running its refresh, escalation and keep-awake methods through `objc.super`) | `application_composition.py`, `status_bar_legacy.py`, `_status_bar_production.py`, `status_bar.py`, `provider_usage_status_bar.py`, `usage_view.py`, `agent_browser.py`, `agent_browser_window.py` (payload types), `window_presentation.py` |
+| Legacy AppKit windows (still imported, but no socket command opens them since `open_legacy_window` went; removed with the settings-window removal, SP-10 in `docs/UPGRADE-PLAN-2026-09-24.md`) | `settings_window*.py`, `*_pane.py`, `why_panel.py` (the window half; `panel_body` feeds the controller's Why text), `native_ui.py` |
 
 The one-release `sidepulse` import shim and console alias are gone. Hook
 commands registered before the rename (`python -m sidepulse.hook_client`
