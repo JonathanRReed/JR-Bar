@@ -31,4 +31,19 @@ import JRBarCore
         utility.settings = { stored }
         #expect(utility.alertProviders == ["claude", "kiro"])
     }
+
+    @Test("quiet while you watch writes through, and the card's one way to the sessions is the Overview")
+    func quietAndOverview() {
+        let utility = AgentUtility(core: CoreModel())
+        var stored = AgentOrganizerSettings()
+        utility.settings = { stored }
+        utility.onSettingsChange = { stored = $0 }
+        utility.bind(\.quietWhenPaneFrontmost).wrappedValue = false
+        #expect(stored.quietWhenPaneFrontmost == false)
+
+        var opened = 0
+        utility.onOpenOverview = { opened += 1 }
+        utility.openFullOverview()
+        #expect(opened == 1)
+    }
 }
