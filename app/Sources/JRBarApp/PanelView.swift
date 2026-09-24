@@ -1651,26 +1651,69 @@ struct DeviceChip: View {
 
 // MARK: - Footer
 
+/// The panel's footer: the verbs that act on the list on the left —
+/// Clear finished (with its Undo) and Quiet — and the ways out on the
+/// right, as marks with tooltips: the awake hold, History, More and
+/// Settings. Quit lives at the bottom of More; ⌘Q still works while the
+/// panel is key. When the left side runs long the whole row tightens
+/// rather than clip, so the footer fits `PanelLayout.width` with every
+/// optional piece showing.
 struct PanelFooter: View {
     @Bindable var store: PanelStore
 
     var body: some View {
-        HStack(spacing: 2) {
+        ViewThatFits(in: .horizontal) {
+            PanelFooterRow(store: store, compact: false)
+            PanelFooterRow(store: store, compact: true)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: CGFloat(PanelLayout.footerHeight))
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.undoCountdown == nil)
+    }
+}
+
+/// One way to lay the footer out: `compact` trims every button's padding
+/// and the Undo link to its word — its countdown stays in the tooltip.
+struct PanelFooterRow: View {
+    @Bindable var store: PanelStore
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
+            PanelFooterLeading(store: store, compact: compact)
+            Spacer(minLength: 4)
+            PanelFooterTrailing(store: store, compact: compact)
+        }
+    }
+}
+
+/// Clear finished, its Undo while the offer stands, and the Quiet menu.
+struct PanelFooterLeading: View {
+    @Bindable var store: PanelStore
+    var compact = false
+
+    private var padding: CGFloat { compact ? 4 : 7 }
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
             // "Clear finished" never leaves: while an undo offer stands it
             // shrinks to a small inline link beside the button rather than
             // replacing it — a footer that swaps its verb out from under
             // the pointer is a trap.
-            FooterButton(title: "Clear finished", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
+            FooterButton(title: "Clear finished", dimmed: store.completedCount == 0, active: store.isOpen,
+                         horizontalPadding: padding) { store.clearCompleted() }
                 .help(store.completedCount == 0
                       ? "Nothing finished to acknowledge"
                       : "Acknowledge the \(store.completedCount) finished, ended and stale sessions; Undo stays here for 5 minutes")
             if let countdown = store.undoCountdown {
-                Button("Undo (\(countdown))") { store.undoClear() }
+                Button(compact ? "Undo" : "Undo \(countdown)") { store.undoClear() }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
                     .foregroundStyle(Color.accentColor)
                     .lineLimit(1)
-                    .padding(.leading, 4)
+                    .fixedSize()
+                    .padding(.horizontal, 3)
                     .help("Put the sessions you just cleared back (\(countdown) left)")
                     .transition(.opacity)
             }
@@ -1707,99 +1750,121 @@ struct PanelFooter: View {
                     .foregroundStyle(store.quiet != nil ? SessionActivity.waiting.tint : .primary)
             }
             .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help(store.quietLabel.map { "Quiet: \($0) · from \((store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu")" }
-                  ?? "Quiet the lights and sounds for a while")
+            .help(quietHelp)
             .accessibilityLabel(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
-            Spacer()
+        }
+    }
+
+    private var quietHelp: String {
+        guard let label = store.quietLabel else { return "Quiet the lights and sounds for a while" }
+        let source = (store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu"
+        return "Quiet: \(label) · from \(source)"
+    }
+}
+
+/// The footer's marks: the awake hold, History, More and Settings, each
+/// an icon whose words are its tooltip.
+struct PanelFooterTrailing: View {
+    @Bindable var store: PanelStore
+    var compact = false
+
+    private var padding: CGFloat { compact ? 4 : 7 }
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
             if let hold = store.awakeHold {
                 // The hold on sleep is a mark, not a sentence: the words
                 // live in the tooltip, and a click opens the Power rows.
                 Button { store.openSettings(page: .notifications) } label: {
                     Image(systemName: hold.symbol).font(.system(size: 11, weight: .medium))
                 }
-                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
+                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
                 .help(hold.text)
                 .accessibilityLabel(hold.text)
             }
-            // While a quiet is in effect its label needs the room the
-            // shortcut hints take; the shortcuts themselves still work
-            // and the .help texts keep naming them.
-            FooterButton(title: "History", dimmed: !store.isLive,
-                         shortcut: store.quiet == nil ? "⌘Y" : nil, active: store.isOpen) { store.openHistory() }
-                .help("Activity history (⌘Y)")
+            Button { store.openHistory() } label: {
+                Image(systemName: "clock.arrow.circlepath").font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
+            .help("History (⌘Y)")
+            .accessibilityLabel("History")
             Menu {
-                Button { store.openControlCenter() } label: { Text("Control Center…") }
-                    .keyboardShortcut("k", modifiers: .command)
-                Button { store.openEffects() } label: { Text("Effect Studio…") }
-                Button { store.openHistory() } label: { Text("History…") }
-                    .keyboardShortcut("y", modifiers: .command)
-                Button { store.openOverview() } label: { Text("Overview…") }
-                    .keyboardShortcut("o", modifiers: .command)
-                Button { store.openUsageCenter() } label: { Text("Usage Center…") }
-                    .keyboardShortcut("u", modifiers: .command)
-                Divider()
-                Button { store.checkForUpdates() } label: { Text("Check for Updates…") }
-                Button { store.openSettings() } label: { Text("Settings…") }
-                    .keyboardShortcut(",", modifiers: .command)
+                PanelMoreMenuItems(store: store)
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
             }
             .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Control Center (⌘K), Effects, History (⌘Y), Usage Center (⌘U), Check for Updates, Settings (⌘,)")
+            .help("More: Control Center (⌘K), Effects, History (⌘Y), Usage Center (⌘U), Check for Updates, Settings (⌘,), Quit (⌘Q)")
             .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
+            .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
             .help("Settings… (⌘,)")
             .accessibilityLabel("Settings")
-            FooterButton(title: "Quit", dimmed: false,
-                         shortcut: store.quiet == nil ? "⌘Q" : nil, active: store.isOpen) { store.quit() }
         }
-        .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.footerHeight))
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.undoCountdown == nil)
+        .fixedSize()
+    }
+}
+
+/// The footer's More menu.
+struct PanelMoreMenuItems: View {
+    @Bindable var store: PanelStore
+
+    var body: some View {
+        Button { store.openControlCenter() } label: { Text("Control Center…") }
+            .keyboardShortcut("k", modifiers: .command)
+        Button { store.openEffects() } label: { Text("Effect Studio…") }
+        Button { store.openHistory() } label: { Text("History…") }
+            .keyboardShortcut("y", modifiers: .command)
+        Button { store.openOverview() } label: { Text("Overview…") }
+            .keyboardShortcut("o", modifiers: .command)
+        Button { store.openUsageCenter() } label: { Text("Usage Center…") }
+            .keyboardShortcut("u", modifiers: .command)
+        Divider()
+        Button { store.checkForUpdates() } label: { Text("Check for Updates…") }
+        Button { store.openSettings() } label: { Text("Settings…") }
+            .keyboardShortcut(",", modifiers: .command)
+        Divider()
+        Button { store.quit() } label: { Text("Quit JR-Bar") }
+            .keyboardShortcut("q", modifiers: .command)
     }
 }
 
 struct FooterButton: View {
     let title: String
     let dimmed: Bool
-    var shortcut: String? = nil
     var active: Bool = true
+    var horizontalPadding: CGFloat = 7
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Text(title)
-                if let shortcut {
-                    Text(shortcut).font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-            }
-            .lineLimit(1)
-            .fixedSize()
+            Text(title)
+                .lineLimit(1)
+                .fixedSize()
         }
-        .buttonStyle(FooterButtonStyle(dimmed: dimmed, active: active))
+        .buttonStyle(FooterButtonStyle(dimmed: dimmed, active: active, horizontalPadding: horizontalPadding))
     }
 }
 
 struct FooterButtonStyle: ButtonStyle {
     let dimmed: Bool
     var active: Bool = true
+    var horizontalPadding: CGFloat = 7
     @ViewState private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12))
             .foregroundStyle(dimmed ? Color.secondary.opacity(0.7) : Color.primary.opacity(0.85))
-            .padding(.horizontal, 7)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
