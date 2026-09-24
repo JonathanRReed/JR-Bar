@@ -251,9 +251,12 @@ struct PanelRowStyle: ButtonStyle {
 }
 
 /// A list cut half a row from its end fades out over the last few points,
-/// so the cut reads as "more below" rather than a torn row.
+/// so the cut reads as "more below" rather than a torn row. A list whose
+/// cut row is tall fades over the whole half row, so no part of it is
+/// left drawn at full strength beside a part already gone.
 struct ScrollEdgeFade: ViewModifier {
     let active: Bool
+    var depth: CGFloat = Self.fade
     static let fade: CGFloat = 16
 
     func body(content: Content) -> some View {
@@ -262,7 +265,7 @@ struct ScrollEdgeFade: ViewModifier {
                 Rectangle().fill(Color.black)
                 if active {
                     LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
-                        .frame(height: Self.fade)
+                        .frame(height: depth)
                 }
             }
         )
@@ -1325,7 +1328,9 @@ struct UsageSection: View {
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.usageHeight))
                 .clipped()
-                .modifier(ScrollEdgeFade(active: layout.usageScroll))
+                // The fourth row shows its top half: it fades over that
+                // half, tile and words together.
+                .modifier(ScrollEdgeFade(active: layout.usageScroll, depth: CGFloat(PanelLayout.usageRowHeight / 2)))
             }
         }
         .padding(.bottom, CGFloat(PanelLayout.usageBottomPadding))
@@ -1410,6 +1415,10 @@ struct UsageRow: View {
 
     /// The percent column: `~100%` fits with room to spare.
     static let percentWidth: CGFloat = 46
+    /// How far the 20 pt tile rises above the name's line box, which
+    /// centres it on the name. It is layout, not an offset, so the first
+    /// row's tile is never clipped by the list's top edge.
+    nonisolated static let tileLift: CGFloat = 2
 
     private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
     private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
@@ -1421,8 +1430,11 @@ struct UsageRow: View {
 
     var body: some View {
         let (primary, secondary) = windows
-        HStack(alignment: .center, spacing: 9) {
+        HStack(alignment: .top, spacing: 9) {
+            // The tile sits on the name's line, so the list's half row,
+            // cut below that line, shows a tile and a name together.
             ProviderTile(style: style, size: 20)
+                .alignmentGuide(.top) { $0[.top] + Self.tileLift }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
