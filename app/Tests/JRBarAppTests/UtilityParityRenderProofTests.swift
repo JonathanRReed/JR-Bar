@@ -299,7 +299,7 @@ struct UtilityParityRenderProofTests {
         }
         rows.append(MenuStill.Row(title: "Deselect All"))
         rows.append(MenuStill.Row(title: "Merge with Next", divider: true))
-        rows.append(MenuStill.Row(title: "Remove from Tray"))
+        rows.append(MenuStill.Row(title: ShelfActionMenu.removeTitle(count: picked.count)))
         rows.append(MenuStill.Row(title: "Clear Shelf"))
         let menu = ZStack(alignment: .topLeading) {
             ProofDesktop(dark: true)
