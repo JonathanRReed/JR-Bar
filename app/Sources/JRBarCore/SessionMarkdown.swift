@@ -229,7 +229,11 @@ extension FailureStory {
             parts.append("Failed tools: \(failedToolNames.joined(separator: ", "))")
         }
         guard !parts.isEmpty else { return "These rows show a failure." }
-        return parts.joined(separator: ". ") + "."
+        // A quoted intent or error often ends its own sentence; add a
+        // full stop only where one is missing, never a second.
+        return parts.map { part in
+            part.last.map { ".!?…".contains($0) } == true ? part : part + "."
+        }.joined(separator: " ")
     }
 
     /// "42 s", "3 min 12 s", "1 h 4 min".

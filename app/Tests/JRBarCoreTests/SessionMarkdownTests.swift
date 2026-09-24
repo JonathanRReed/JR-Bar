@@ -115,6 +115,10 @@ struct SessionMarkdownTests {
         let story = FailureStory(failed: true, errorCount: 2, lastErrorSummary: nil, diedMidTurn: true,
                                  lastUserIntent: nil, failedToolNames: ["Edit"])
         #expect(story.sentence == "2 errors in these rows. The session ended mid-turn. Failed tools: Edit.")
+        // A quoted message that ends its own sentence gets no second stop.
+        let quoted = FailureStory(failed: true, errorCount: 1, lastErrorSummary: "the build broke!",
+                                  diedMidTurn: false, lastUserIntent: "use calmer type.", failedToolNames: [])
+        #expect(quoted.sentence == "Last asked: use calmer type. Then the build broke!")
         #expect(ReconstructionGap.text("transcript_not_found") == "no transcript found for this session")
         #expect(ReconstructionGap.text("gap:source rewritten") == "capture gap: source rewritten")
         #expect(ReconstructionGap.text("something_new") == "something_new")
