@@ -4977,19 +4977,17 @@ def build_headless_controller_class() -> type:
                 timing=DeviceTiming(anchor=epoch.anchor, rate=rate, trim_ms=phase_trim),
             )
             if getattr(write, "changed", False) and getattr(write, "error", None) is None:
-                sample = None
-                if correction:
-                    try:
-                        sample = link.reader(Path(device.target).parent)
-                    except Exception:
-                        sample = None
+                # No read of the Dot's clock here: this is the write worker,
+                # which carries the strip too, and a stalled Dot read held
+                # the strip's next command for half a second. The loop's
+                # next 20 s read carries the clock back to this write.
                 link.note_dot_write(
                     dot_id=device.device_id,
                     write=write,
                     epoch=epoch,
                     trim_ms=phase_trim,
                     reason=reason,
-                    sample=sample,
+                    sample=None,
                 )
                 if reason in ("reanchor", "blind"):
                     # One line per Dot-only re-anchor, for the log classifier:

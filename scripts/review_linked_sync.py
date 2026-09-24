@@ -205,14 +205,15 @@ def simulate(
             text, phase = timed.program, timed.phase_ms
             write = SimpleNamespace(timed=timed, applied_at=parse_real)
             now[0] = parse_real + 0.005
-            sample = reader(None)
+            # As the daemon does: no read of the Dot's clock at the write;
+            # the loop's next 20 s read carries it back.
             link.note_dot_write(
                 dot_id=DOT_ID,
                 write=write,
                 epoch=link.epoch,
                 trim_ms=-origin,
                 reason=reason,
-                sample=sample,
+                sample=None,
             )
         else:
             # Before: rotated by the measured write gap, on the Dot's own

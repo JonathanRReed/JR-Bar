@@ -739,6 +739,23 @@ def test_a_refused_reanchor_is_not_carried_to_the_next_dot_write(rig: Rig) -> No
     assert link.document(dot_id=rig.dot.device_id, tolerance_ms=40, correction=True)["sync_writes_hour"] == 0
 
 
+def test_a_dot_write_does_not_read_the_dot_on_the_write_worker(rig: Rig) -> None:
+    """Every changed Dot write used to read STATUS.TXT right after, on the
+    worker that carries the strip too: a stalled Dot held the strip's next
+    command for half a second, and the Dot was read far more often than
+    once in 20 s. The loop's own reads are the only ones now."""
+    controller = rig.controller
+    link = controller._core_linked
+    reads: list[object] = []
+    link.reader = lambda root: reads.append(root)
+    link.last_read_at = link.now()
+    rig.plan()
+    rig.set("linked_dot_scale", 0.7)
+    rig.plan()
+    assert link.dot_write is not None
+    assert reads == []
+
+
 # --- foreign writes ---------------------------------------------------------------
 
 
