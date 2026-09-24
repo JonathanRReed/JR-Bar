@@ -146,9 +146,10 @@ struct MenuBarUtilityControls: View {
             Picker(selection: utility.bind(\.rehideMode)) {
                 Text("After a delay").tag(MenuBarSettings.RehideMode.timed)
                 Text("When you click elsewhere").tag(MenuBarSettings.RehideMode.untilClick)
+                Text("When you switch apps").tag(MenuBarSettings.RehideMode.focusChange)
             } label: {
                 SettingLabel(title: "Tuck away",
-                             subtitle: "On a clock once the pointer leaves the bar, or only when a click lands outside it.")
+                             subtitle: "On a clock once the pointer leaves the bar, when a click lands outside it, or when another app comes to the front.")
             }
             .pickerStyle(.menu)
             .padding(.vertical, SettingsMetrics.rowPadding)
@@ -972,6 +973,7 @@ private struct MenuBarAutomationControls: View {
     @ViewState private var actionProfile = ""
     @ViewState private var actionSeconds = 4.0
     @ViewState private var actionScript = ""
+    @ViewState private var actionMinutes = 60
 
     /// The button names the key that opens the palette — whatever the
     /// Shortcuts page bound it to, or nothing once it is switched off.
@@ -1128,6 +1130,10 @@ private struct MenuBarAutomationControls: View {
                     Text("Show all").tag("showAll")
                     Text("Reveal for…").tag("reveal")
                     Text("Run script").tag("script")
+                    Divider()
+                    Text("Keep awake for…").tag("awake")
+                    Text("Keep awake until released").tag("awakeHold")
+                    Text("Let the Mac sleep").tag("awakeOff")
                 } label: { EmptyView() }
                 .labelsHidden()
                 .pickerStyle(.menu)
@@ -1153,6 +1159,11 @@ private struct MenuBarAutomationControls: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 160)
                 }
+                if actionKind == "awake" {
+                    TextField("min", value: $actionMinutes, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 44)
+                }
                 Button("Add rule") { addRule() }
                     .controlSize(.small)
                     .disabled(!ruleDraftValid)
@@ -1176,6 +1187,7 @@ private struct MenuBarAutomationControls: View {
             return false
         }
         if actionKind == "reveal" && actionSeconds < 1 { return false }
+        if actionKind == "awake" && actionMinutes < 1 { return false }
         if actionKind == "script" && actionScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return false
         }
@@ -1226,6 +1238,9 @@ private struct MenuBarAutomationControls: View {
         case "reveal": action = .reveal(seconds: actionSeconds)
         case "script": action = .runScript(
             command: actionScript.trimmingCharacters(in: .whitespacesAndNewlines))
+        case "awake": action = .holdAwake(seconds: MenuBarTriggerAction.clampedAwake(actionMinutes * 60))
+        case "awakeHold": action = .holdAwake(seconds: nil)
+        case "awakeOff": action = .releaseAwake
         default: action = .hideAll
         }
         utility.addTriggerRule(trigger: trigger, action: action)

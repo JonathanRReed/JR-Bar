@@ -100,6 +100,22 @@ public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
     /// (`/bin/sh -c …`) — "shortcuts run X", an AppleScript file, a
     /// one-liner. The rule's own text, fired as configured.
     case runScript(command: String)
+    /// Keep the Mac awake — Amphetamine's trigger: for `seconds`, or
+    /// until released when nil. The same hold the Keep Awake card and
+    /// `jrbar://awake` take, so a rule and a click never disagree.
+    case holdAwake(seconds: Int?)
+    /// Let the Mac sleep again — whatever hold is standing ends.
+    case releaseAwake
+
+    /// The longest hold a rule may ask for: a day. A rule that needs
+    /// longer holds until released.
+    public static let holdAwakeRange: ClosedRange<Int> = 60...86_400
+
+    /// A hold's seconds kept inside `holdAwakeRange`; nil stays nil,
+    /// the hold until released.
+    public static func clampedAwake(_ seconds: Int?) -> Int? {
+        seconds.map { min(max($0, holdAwakeRange.lowerBound), holdAwakeRange.upperBound) }
+    }
 }
 
 /// One rule. `id` is a stable string (UUIDs are fine) — the engine's
@@ -157,8 +173,19 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .showAll: a = "show all items"
         case .reveal(let s): a = "reveal for \(Int(s))s"
         case .runScript(let command): a = "run “\(command)”"
+        case .holdAwake(let seconds): a = Self.awakeSummary(seconds)
+        case .releaseAwake: a = "let the Mac sleep again"
         }
         return "\(t) → \(a)"
+    }
+
+    /// "keep the Mac awake for 2 h", "… for 45 min", or until released.
+    static func awakeSummary(_ seconds: Int?) -> String {
+        guard let seconds = MenuBarTriggerAction.clampedAwake(seconds) else {
+            return "keep the Mac awake until released"
+        }
+        if seconds % 3600 == 0 { return "keep the Mac awake for \(seconds / 3600) h" }
+        return "keep the Mac awake for \(max(1, seconds / 60)) min"
     }
 }
 

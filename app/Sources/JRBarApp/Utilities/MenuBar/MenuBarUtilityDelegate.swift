@@ -50,6 +50,14 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         bar.close()
     }
 
+    /// A rule's keep-awake hold lands on the app's own hold — the Keep
+    /// Awake card's and `jrbar://awake`'s — so a rule and a click never
+    /// hold two different things.
+    func menuBarActions(_: MenuBarActions, holdAwake seconds: Int?) {
+        MenuBarAssessmentBackend.log.notice("rule: keep awake \(seconds.map { $0 == 0 ? "released" : "for \($0) s" } ?? "until released", privacy: .public)")
+        holdAwake(seconds)
+    }
+
     /// The dedicated always-hidden gesture: drop that run's covers on
     /// the rehide clock. Under the concealer the reveal set narrows
     /// the assertion the same way — the deeper apps stand back on the

@@ -267,6 +267,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public enum RehideMode: String, Codable, CaseIterable, Sendable {
         case timed
         case untilClick
+        /// Ice's "smart" rehide: the reveal folds when another app comes
+        /// to the front, or a click lands off the bar.
+        case focusChange
     }
 
     /// A named preset: the section map — and under the concealer the

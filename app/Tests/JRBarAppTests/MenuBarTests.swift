@@ -760,4 +760,36 @@ struct MenuBarTests {
         #expect(result.sections.isEmpty)
         #expect(result.signatures["fresh"]?.hasPrefix("just appeared") == true)
     }
+
+    // MARK: lane menubar — the reveal stands down for a drag
+
+    /// The dwell's clock and the drag's suppression, steered by hand.
+    @MainActor
+    private final class DragSteer {
+        var now = Date(timeIntervalSince1970: 1_000)
+        var suppressed = true
+        var settings = MenuBarSettings(enabled: true)
+    }
+
+    @MainActor
+    @Test("under the focus-change rehide a reveal holds on no clock and folds when another app comes forward")
+    func focusChangeRehide() {
+        let h = RevealHarness()
+        let steer = DragSteer()
+        steer.settings.rehideMode = .focusChange
+        h.reveal.settings = { steer.settings }
+        h.reveal.triggerReveal()
+        #expect(h.pending == nil, "no clock armed")
+        h.reveal.frontAppChanged()
+        #expect(h.hides == 1)
+        #expect(!h.reveal.revealed)
+        // A second switch with nothing out folds nothing.
+        h.reveal.frontAppChanged()
+        #expect(h.hides == 1)
+        // Timed mode ignores the switch.
+        steer.settings.rehideMode = .timed
+        h.reveal.triggerReveal()
+        h.reveal.frontAppChanged()
+        #expect(h.hides == 1)
+    }
 }

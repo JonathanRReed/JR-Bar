@@ -1693,6 +1693,12 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored var startSettleUntil = Date.distantPast
     nonisolated static let startSettle: TimeInterval = 20
 
+    /// A rule's keep-awake hold — the app's own hold by default; a test
+    /// records it.
+    @ObservationIgnored var holdAwake: @MainActor (Int?) -> Void = { seconds in
+        _ = AppCommandRouter.shared.perform(.keepAwake(seconds: seconds))
+    }
+
     // MARK: Permissions
 
     /// The card's "Open Settings" for the click-through row.

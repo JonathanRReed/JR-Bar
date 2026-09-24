@@ -50,6 +50,19 @@ final class MenuBarReveal {
     var onReveal: @MainActor () -> Void = {}
     /// The rehide timer's landing: the covers go back.
     var onHide: @MainActor () -> Void = {}
+    /// Whether the gestures stand down right now: a ⌘-drag is in flight
+    /// (or just landed), or a mouse button is held. The drop of a drag
+    /// lands in the blank stretch more often than not, and a hover there
+    /// popped the Item Bar under the hand. While it holds, the pointer's
+    /// presence is tracked but never counts; a fresh entry after it
+    /// waits the full dwell. The rehide clock re-arms instead of folding.
+    var suppressed: @MainActor () -> Bool = { false }
+    /// A ⌘-press anywhere, in AppKit screen coordinates — the drag
+    /// learn's fallback while the click bridge's tap is down.
+    var onCommandDown: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
+    /// Every left-button release, in AppKit screen coordinates — the
+    /// fallback's end of a drag.
+    var onPointerUp: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
 
     /// Seams so a test can drive the gestures without a screen, a
     /// pointer, or a real clock.
@@ -71,6 +84,8 @@ final class MenuBarReveal {
     private(set) var revealed = false
 
     private var globalMonitor: Any?
+    /// The front-app watch behind `RehideMode.focusChange`.
+    private var focusObserver: NSObjectProtocol?
     private var hoverTimer: Timer?
     /// Whether the hover poll runs — between `startHoverPoll()` and
     /// `stop()`, parked or not.
@@ -140,6 +155,7 @@ final class MenuBarReveal {
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .scrollWheel],
             handler: { [weak self] event in self?.noteGlobalEvent(event) })
+        watchFocus()
         watchPresence()
         if MenuBarStateRunner.screenIsLocked() { park(.locked) }
         startHoverPoll()
@@ -199,6 +215,28 @@ final class MenuBarReveal {
         scheduleHoverPoll(after: Self.hoverPollInterval)
     }
 
+    /// Ice's "smart" rehide: under `.focusChange` a reveal folds when
+    /// another app comes to the front — the person has moved on.
+    private func watchFocus() {
+        guard focusObserver == nil else { return }
+        focusObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.frontAppChanged() }
+        }
+    }
+
+    /// Another app came to the front. Under `.focusChange` the reveal
+    /// folds — unless a listed item's menu is open (its app may well be
+    /// the one that activated) or a drag holds the bar.
+    func frontAppChanged() {
+        guard revealed, settings().rehideMode == .focusChange,
+              !itemMenuOpen(), !suppressed() else { return }
+        Self.log.notice("reveal: the front app changed")
+        cancelReveal()
+        onHide()
+    }
+
     /// The display, session and lock notices that park and resume the
     /// poll, for as long as the reveal runs.
     private func watchPresence() {
@@ -240,6 +278,8 @@ final class MenuBarReveal {
     func stop() {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         globalMonitor = nil
+        if let focusObserver { NSWorkspace.shared.notificationCenter.removeObserver(focusObserver) }
+        focusObserver = nil
         hoverTimer?.invalidate()
         hoverTimer = nil
         polling = false
@@ -259,6 +299,7 @@ final class MenuBarReveal {
 
     isolated deinit {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        if let focusObserver { NSWorkspace.shared.notificationCenter.removeObserver(focusObserver) }
         hoverTimer?.invalidate()
         for observer in presenceObservers { observer.center.removeObserver(observer.token) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
