@@ -487,7 +487,7 @@ extension AquariumView {
         let lw = CartoonFish.outlineWidth(length)
         CartoonFish.draw(into: &f, species: fish.species, palette: palette, swim: swim,
                          mouth: mouth, blink: blink, dead: dead,
-                         patternSeed: h, pointSize: length,
+                         pointSize: length,
                          variant: fish.isFry || dead ? nil : care?.earnedVariant)
         // A purchased hat rides the head — same unit space, so the
         // pitch, flip and squash all apply to it. Failing a bought

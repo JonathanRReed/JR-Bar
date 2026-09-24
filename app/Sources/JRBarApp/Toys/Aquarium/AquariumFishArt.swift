@@ -144,11 +144,9 @@ enum CartoonFish {
 
     /// A paint layer clipped to the body: bars, bands, stripes, spots.
     struct Mark: Sendable {
-        enum Tone: Sendable { case body, light, dark, outline, white, neonRed }
+        enum Tone: Sendable { case light, dark, outline, white, neonRed }
         enum Style: Sendable {
             case fill(Tone, Double)
-            /// An even-odd fill: the tang's palette with its pale window.
-            case evenOdd(Tone, Double)
             case stroke(Tone, width: Double, opacity: Double)
             /// A dotted line — the lateral line.
             case dots(Tone, width: Double, gap: Double, opacity: Double)
@@ -351,12 +349,10 @@ enum CartoonFish {
     /// …1 shut. `dead` (a sinking fish) crosses the eye out.
     /// `pointSize` is the fish's drawn length, so the outline keeps one
     /// weight and the fine detail drops out where it would only be
-    /// noise. `aspectComp` un-shears the eye for a caller that scales
-    /// y by more or less than x.
+    /// noise.
     static func draw(into f: inout GraphicsContext, species: FishSpecies,
                      palette: Palette, swim: Swim = .still,
                      mouth: MouthKind, blink: Double, dead: Bool,
-                     patternSeed: UInt64, aspectComp: Double = 1,
                      pointSize: Double = 60,
                      variant: AquariumVariant? = nil) {
         let art = art(for: species)
@@ -377,7 +373,7 @@ enum CartoonFish {
             near.append((fin, pose.fin(fin.path, fin)))
         }
         drawBody(body, art: art, pose: pose, palette: palette, into: &f,
-                 lw: lw, detailed: detailed, seed: patternSeed, variant: variant,
+                 lw: lw, detailed: detailed, variant: variant,
                  shadows: near.map(\.path))
         for (fin, path) in near {
             // The near pectoral: its own lit membrane, rays and edge.
@@ -403,7 +399,7 @@ enum CartoonFish {
         }
 
         drawFace(art: art, species: species, swim: swim, palette: palette, into: &f,
-                 mouth: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed, comp: aspectComp)
+                 mouth: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed)
     }
 
     /// The fins behind the body, soft and translucent so they read as
@@ -491,7 +487,7 @@ enum CartoonFish {
     /// gill cover. One clip to the silhouette carries all of it.
     private static func drawBody(_ body: Path, art: Art, pose: Pose, palette: Palette,
                                  into f: inout GraphicsContext, lw: Double, detailed: Bool,
-                                 seed: UInt64, variant: AquariumVariant?, shadows: [Path]) {
+                                 variant: AquariumVariant?, shadows: [Path]) {
         let r = art.bounds
         // Countershading: a deep back, the true colour across the
         // flank and a pale underside — for an upright seahorse, the
@@ -567,7 +563,6 @@ enum CartoonFish {
 
     private static func color(_ tone: Mark.Tone, _ palette: Palette) -> Color {
         switch tone {
-        case .body: return palette.body
         case .light: return palette.light
         case .dark: return palette.dark
         case .outline: return palette.outline
@@ -581,9 +576,6 @@ enum CartoonFish {
         switch mark.style {
         case .fill(let tone, let opacity):
             b.fill(path, with: .color(color(tone, palette).opacity(opacity)))
-        case .evenOdd(let tone, let opacity):
-            b.fill(path, with: .color(color(tone, palette).opacity(opacity)),
-                   style: FillStyle(eoFill: true))
         case .stroke(let tone, let width, let opacity):
             b.stroke(path, with: .color(color(tone, palette).opacity(opacity)),
                      style: StrokeStyle(lineWidth: width, lineCap: .round))
@@ -667,7 +659,7 @@ enum CartoonFish {
     /// squashing with the body.
     private static func drawFace(art: Art, species: FishSpecies, swim: Swim, palette: Palette,
                                  into f: inout GraphicsContext, mouth: MouthKind,
-                                 blink: Double, dead: Bool, lw: Double, detailed: Bool, comp: Double) {
+                                 blink: Double, dead: Bool, lw: Double, detailed: Bool) {
         let thin = max(0.12, min(1, swim.thin))
         let turn = min(1, max(0, (0.9 - thin) / 0.6))
         let spread = art.eyeSpread * (1 - thin * thin).squareRoot() / thin * turn
@@ -679,11 +671,11 @@ enum CartoonFish {
             far.opacity = turn
             drawEye(into: &far, at: CGPoint(x: art.eye.x - spread, y: art.eye.y), r: art.eyeR * 0.94,
                     palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: false,
-                    sx: sx, sy: comp)
+                    sx: sx)
         }
         drawEye(into: &f, at: CGPoint(x: art.eye.x + spread, y: art.eye.y), r: art.eyeR,
                 palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed,
-                sx: sx, sy: comp)
+                sx: sx)
         if !dead, species != .seahorse || mouth != .plain {
             var m = f
             if turn > 0.05 {
@@ -699,23 +691,23 @@ enum CartoonFish {
     /// its lower edge, a coloured iris lit from below, a deep pupil,
     /// two catchlights, and lids that carry the mood — relaxed, a
     /// happy squint after a meal, a worried slant when hungry — and
-    /// slide shut on `blink`. `sx`/`sy` stretch the circle back
-    /// against the caller's squash.
+    /// slide shut on `blink`. `sx` widens the circle back
+    /// against a turn's squash.
     private static func drawEye(into f: inout GraphicsContext, at e: CGPoint, r: Double,
                                 palette: Palette, mood: MouthKind, blink: Double, dead: Bool,
-                                lw: Double, detailed: Bool, sx: Double, sy: Double) {
+                                lw: Double, detailed: Bool, sx: Double) {
         func oval(_ cx: Double, _ cy: Double, _ rr: Double) -> Path {
-            Path(ellipseIn: CGRect(x: cx - rr * sx, y: cy - rr * sy,
-                                   width: rr * 2 * sx, height: rr * 2 * sy))
+            Path(ellipseIn: CGRect(x: cx - rr * sx, y: cy - rr,
+                                   width: rr * 2 * sx, height: rr * 2))
         }
         if dead {
             // A sinking fish: the classic cartoon X.
             var x = Path()
             let rr = r * 0.78
-            x.move(to: CGPoint(x: e.x - rr * sx, y: e.y - rr * sy))
-            x.addLine(to: CGPoint(x: e.x + rr * sx, y: e.y + rr * sy))
-            x.move(to: CGPoint(x: e.x + rr * sx, y: e.y - rr * sy))
-            x.addLine(to: CGPoint(x: e.x - rr * sx, y: e.y + rr * sy))
+            x.move(to: CGPoint(x: e.x - rr * sx, y: e.y - rr))
+            x.addLine(to: CGPoint(x: e.x + rr * sx, y: e.y + rr))
+            x.move(to: CGPoint(x: e.x + rr * sx, y: e.y - rr))
+            x.addLine(to: CGPoint(x: e.x - rr * sx, y: e.y + rr))
             f.stroke(x, with: .color(palette.outline.opacity(0.85)),
                      style: StrokeStyle(lineWidth: lw * 1.6, lineCap: .round))
             return
@@ -724,7 +716,7 @@ enum CartoonFish {
             // The socket: a soft shadow ring that seats the eye in the head.
             f.fill(oval(e.x - r * 0.03, e.y + r * 0.08, r * 1.3), with: .radialGradient(
                 Gradient(colors: [palette.dark.opacity(0.3), palette.dark.opacity(0)]),
-                center: CGPoint(x: e.x, y: e.y + r * 0.08 * sy), startRadius: r * 0.9, endRadius: r * 1.3))
+                center: CGPoint(x: e.x, y: e.y + r * 0.08), startRadius: r * 0.9, endRadius: r * 1.3))
         }
         // The white, shaded under the brow at the top and cool at the
         // bottom edge.
@@ -736,12 +728,12 @@ enum CartoonFish {
                 .init(color: .white, location: 0.7),
                 .init(color: Color(red: 0.84, green: 0.89, blue: 0.95), location: 1),
             ]),
-            startPoint: CGPoint(x: 0, y: e.y - r * sy), endPoint: CGPoint(x: 0, y: e.y + r * sy)))
+            startPoint: CGPoint(x: 0, y: e.y - r), endPoint: CGPoint(x: 0, y: e.y + r)))
         // Everything inside the white sits well inside it, so nothing
         // here needs a clip.
         // The iris looks forward, where the fish is going; a hungry
         // fish's pupils go wide.
-        let ix = e.x + r * 0.24 * sx, iy = e.y + r * 0.04 * sy
+        let ix = e.x + r * 0.24 * sx, iy = e.y + r * 0.04
         let irisR = r * (mood == .hungry ? 0.74 : 0.68)
         f.fill(oval(ix, iy, irisR), with: .radialGradient(
             Gradient(stops: [
@@ -749,13 +741,13 @@ enum CartoonFish {
                 .init(color: palette.body, location: 0.55),
                 .init(color: palette.outline, location: 1),
             ]),
-            center: CGPoint(x: ix, y: iy + irisR * 0.45 * sy),
+            center: CGPoint(x: ix, y: iy + irisR * 0.45),
             startRadius: 0, endRadius: irisR * 1.15))
         f.fill(oval(ix + r * 0.03 * sx, iy, irisR * (mood == .hungry ? 0.66 : 0.58)),
                    with: .color(Color(red: 0.02, green: 0.03, blue: 0.07)))
         // Catchlights: a big one high and forward, a sharp dot low.
-        var glints = oval(ix + r * 0.16 * sx, iy - r * 0.30 * sy, r * 0.27)
-        glints.addPath(oval(ix - r * 0.26 * sx, iy + r * 0.30 * sy, r * 0.10))
+        var glints = oval(ix + r * 0.16 * sx, iy - r * 0.30, r * 0.27)
+        glints.addPath(oval(ix - r * 0.26 * sx, iy + r * 0.30, r * 0.10))
         f.fill(glints, with: .color(.white.opacity(0.95)))
         f.stroke(white, with: .color(palette.outline.opacity(0.9)), lineWidth: lw * 0.95)
 
@@ -776,13 +768,13 @@ enum CartoonFish {
         lower = lower * (1 - blink)
         var lid = f
         lid.clip(to: oval(e.x, e.y, r + lw * 0.5))
-        let top = e.y - r * sy
-        let span = r * 2 * sy
+        let top = e.y - r
+        let span = r * 2
         if upper > 0.01 {
             // The lid's edge bows down: a curve from back to front.
             let yb = top + span * min(1, upper + slant * 0.5)
             let yf = top + span * max(0, upper - slant * 0.5)
-            let sag = r * 0.35 * sy * (1 - upper * 0.8)
+            let sag = r * 0.35 * (1 - upper * 0.8)
             var cap = Path()
             cap.move(to: CGPoint(x: e.x - r * 1.2 * sx, y: top - r))
             cap.addLine(to: CGPoint(x: e.x - r * 1.2 * sx, y: yb))
@@ -801,12 +793,12 @@ enum CartoonFish {
         }
         if lower > 0.01 {
             // The happy squint: the cheek pushes the lower lid up.
-            let bottom = e.y + r * sy
+            let bottom = e.y + r
             let yl = bottom - span * lower
             var arch = Path()
-            arch.move(to: CGPoint(x: e.x - r * 1.2 * sx, y: yl + r * 0.55 * sy))
-            arch.addQuadCurve(to: CGPoint(x: e.x + r * 1.2 * sx, y: yl + r * 0.55 * sy),
-                              control: CGPoint(x: e.x, y: yl - r * 0.55 * sy))
+            arch.move(to: CGPoint(x: e.x - r * 1.2 * sx, y: yl + r * 0.55))
+            arch.addQuadCurve(to: CGPoint(x: e.x + r * 1.2 * sx, y: yl + r * 0.55),
+                              control: CGPoint(x: e.x, y: yl - r * 0.55))
             var cheek = arch
             cheek.addLine(to: CGPoint(x: e.x + r * 1.2 * sx, y: bottom + r))
             cheek.addLine(to: CGPoint(x: e.x - r * 1.2 * sx, y: bottom + r))

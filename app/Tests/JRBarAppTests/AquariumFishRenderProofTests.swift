@@ -53,8 +53,7 @@ struct AquariumFishRenderProofTests {
         f.translateBy(x: p.x, y: p.y)
         f.scaleBy(x: facing * swim.thin * length, y: length)
         CartoonFish.draw(into: &f, species: species, palette: palette, swim: swim,
-                         mouth: mouth, blink: blink, dead: dead, patternSeed: 0x5EED,
-                         pointSize: length, variant: variant)
+                         mouth: mouth, blink: blink, dead: dead, pointSize: length, variant: variant)
         let art = CartoonFish.art(for: species)
         let lw = CartoonFish.outlineWidth(length)
         if let hat {
