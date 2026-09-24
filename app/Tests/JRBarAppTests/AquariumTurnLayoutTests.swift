@@ -45,6 +45,7 @@ struct AquariumTurnLayoutTests {
     /// side-on share never jump, and the facing changes only head-on.
     private func expectSmooth(_ frames: [AquariumView.Layout], speed: Double?, _ what: String) {
         let steps = zip(frames, frames.dropFirst()).map { (a: $0, b: $1) }
+        let moved: [Double] = steps.map { hypot($0.b.x - $0.a.x, $0.b.y - $0.a.y) }
         for (i, step) in steps.enumerated() {
             let (a, b) = step
             let dx = abs(b.x - a.x), dy = abs(b.y - a.y)
@@ -52,9 +53,8 @@ struct AquariumTurnLayoutTests {
             if let speed {
                 allowed = 1.5 * speed * dt + 2
             } else {
-                let before = i > 0 ? hypot(steps[i - 1].b.x - steps[i - 1].a.x, steps[i - 1].b.y - steps[i - 1].a.y) : 0
-                let after = i + 1 < steps.count
-                    ? hypot(steps[i + 1].b.x - steps[i + 1].a.x, steps[i + 1].b.y - steps[i + 1].a.y) : 0
+                let before = i > 0 ? moved[i - 1] : 0
+                let after = i + 1 < moved.count ? moved[i + 1] : 0
                 allowed = 1.5 * max(before, after) + 2
             }
             #expect(dx <= allowed && dy <= allowed, "\(what): frame \(i) moved \(dx), \(dy) (allowed \(allowed))")
