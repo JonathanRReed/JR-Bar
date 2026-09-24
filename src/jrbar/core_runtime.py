@@ -3097,49 +3097,6 @@ def _cmd_session_usage(self, args):
     return document
 
 
-@command("import_radar_report", main_thread=False)
-def _cmd_import_radar_report(self, args):
-    """Store a bounded, version-checked Radar report (S7.5/T38).
-
-    Import is data-only: the file is parsed, capped, normalized and
-    stored — never executed. Every imported edge is ``evidence:
-    "static"``; the inspector labels it and nothing consumes it as a
-    live call.
-    """
-    from .radar_import import RadarImportError, import_radar_report
-
-    raw_path = args.get("path")
-    if not isinstance(raw_path, str) or not raw_path.strip():
-        raise CommandError("invalid_value", "path is required")
-    try:
-        summary = import_radar_report(Path(raw_path))
-    except RadarImportError as error:
-        raise CommandError(error.code, str(error)) from error
-    return {"imported": summary}
-
-
-@command("list_radar_reports", main_thread=False)
-def _cmd_list_radar_reports(self, args):
-    """The stored report summaries (analyzer, scan, repo, counts)."""
-    from .radar_import import list_radar_reports
-
-    return {"reports": list_radar_reports()}
-
-
-@command("radar_report", main_thread=False)
-def _cmd_radar_report(self, args):
-    """One stored report's normalized graph for the inspector lens."""
-    from .radar_import import load_radar_report
-
-    report_id = args.get("id")
-    if not isinstance(report_id, str) or not report_id:
-        raise CommandError("invalid_value", "id is required")
-    report = load_radar_report(report_id)
-    if report is None:
-        raise CommandError("not_found", f"unknown report id: {report_id}")
-    return {"report": report}
-
-
 @command("replay_events")
 def _cmd_replay_events(self, args):
     """The resumable event stream's suffix after a cursor.

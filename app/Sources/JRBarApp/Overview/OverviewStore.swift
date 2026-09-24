@@ -1394,75 +1394,10 @@ final class OverviewStore {
         return id.split(separator: ":").last.map(String.init) ?? id
     }
 
-    // MARK: Topology (S7.5)
-
-    /// Imported Radar report summaries, and the graphs loaded so far —
-    /// the static-topology lens, which now lives under the inspector's
-    /// Advanced disclosure. Imported edges are `evidence: "static"` —
-    /// labels, never live-call proof (T38).
-    var radarReports: [CoreRadarSummary] = []
-    private(set) var radarGraphs: [String: CoreRadarReport] = [:]
-    var radarLoaded = false
-
-    /// The report summaries, loaded once; a graph is fetched only when a
-    /// selected row's repository has one.
-    func loadRadarIfNeeded() async {
-        guard !radarLoaded else { return }
-        radarLoaded = true
-        do {
-            radarReports = try await core.listRadarReports()
-        } catch {
-            // No reports is the common case — not an error surface.
-            radarReports = []
-        }
-    }
-
-    /// The repository name a row's static topology is filed under: its
-    /// git repository when the lookup landed, else the cwd's folder.
-    func repositoryName(for entry: CoreRosterEntry) -> String? {
-        if let workspace = workspace(for: entry) { return workspace.repositoryName }
-        return entry.session.cwd.map { ($0 as NSString).lastPathComponent }
-    }
-
-    /// The imported report for this row's repository — never the newest
-    /// report of some other project, which is what the old lens showed.
-    func radarSummary(for entry: CoreRosterEntry) -> CoreRadarSummary? {
-        RadarReportMatch.pick(radarReports, repository: repositoryName(for: entry))
-    }
-
-    func radarReport(for entry: CoreRosterEntry) -> CoreRadarReport? {
-        radarSummary(for: entry).flatMap { radarGraphs[$0.id] }
-    }
-
-    func loadRadarReport(for entry: CoreRosterEntry) async {
-        await loadRadarIfNeeded()
-        guard let summary = radarSummary(for: entry), radarGraphs[summary.id] == nil else { return }
-        if let report = try? await core.radarReport(id: summary.id) {
-            radarGraphs[summary.id] = report
-        }
-    }
-
-    /// The repository's static edges, first dozen. Evidence is always
-    /// "static" — the view labels it and nothing else consumes it (T38).
-    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
-        radarReport(for: entry)?.edges ?? []
-    }
-
-    func importRadarReport(path: String) async {
-        do {
-            _ = try await core.importRadarReport(path: path)
-            radarLoaded = false
-            radarGraphs = [:]
-            await loadRadarIfNeeded()
-        } catch {
-            self.error = Self.describe(error)
-        }
-    }
-
     // MARK: Observed tools
 
     /// The tools and MCP servers the selected run called, from its loaded
-    /// transcript — the observed half of the relationship lens.
+    /// transcript — the Overview's relationship lens.
     var observedTools: ObservedToolMap { ObservedToolMap.build(from: timeline) }
 
     // MARK: Usage pane

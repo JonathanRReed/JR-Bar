@@ -14,9 +14,6 @@ struct OverviewView: View {
     /// The row whose ask gets a free-text reply — the Reply… prompt's
     /// target. nil hides the sheet.
     @ViewState private var replyEntry: CoreRosterEntry?
-    /// The inspector's Advanced disclosure (static topology), closed
-    /// until opened and remembered once it is.
-    @AppStorage("overview.advancedExpanded") private var advancedExpanded = false
 
     var body: some View {
         NavigationSplitView {
@@ -110,9 +107,6 @@ struct OverviewView: View {
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
             Task { await store.loadTimeline(for: id) }
-            if let entry = store.selected {
-                Task { await store.loadRadarReport(for: entry) }
-            }
         }
     }
 
@@ -839,7 +833,6 @@ struct OverviewView: View {
                         .disabled(store.comparing)
                         .help("Side by side with \(previous.session.label ?? previous.session.shortId ?? "the last finished run") in the same folder")
                     }
-                    advancedSection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -1255,74 +1248,6 @@ struct OverviewView: View {
     /// "Bash ×12 (2 failed)".
     private static func toolText(_ tool: ObservedToolMap.Tool) -> String {
         tool.failures > 0 ? "\(tool.name) ×\(tool.calls) (\(tool.failures) failed)" : "\(tool.name) ×\(tool.calls)"
-    }
-
-    // MARK: Advanced (static topology)
-
-    /// The Agentic Radar lens, behind a disclosure that stays closed
-    /// until opened: Radar scans agent frameworks (LangGraph, CrewAI…),
-    /// not Claude Code or Codex sessions, so it is a specialist's tool,
-    /// not a fact every row should carry. When open it shows only a
-    /// report imported for this row's repository — never the newest
-    /// report of another project. Every edge is labeled "static", never
-    /// an observed call; it feeds nothing (T38).
-    @ViewBuilder
-    private func advancedSection(for entry: CoreRosterEntry) -> some View {
-        DisclosureGroup(isExpanded: $advancedExpanded) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text("Static topology")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                    Text("static")
-                        .font(.system(size: 8, weight: .medium))
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Color.purple.opacity(0.15), in: .capsule)
-                        .foregroundStyle(.purple)
-                    Spacer()
-                    Button("Import…") { importRadarReport() }
-                        .controlSize(.mini)
-                        .help("Import an Agentic Radar JSON report — its edges are listed for the repository it names")
-                }
-                if let report = store.radarReport(for: entry) {
-                    let edges = report.edges
-                    ForEach(Array(edges.prefix(12).enumerated()), id: \.offset) { _, edge in
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 8)).foregroundStyle(.quaternary)
-                            Text("\(edge.source) → \(edge.target)")
-                                .font(.system(size: 10)).foregroundStyle(.secondary)
-                                .lineLimit(1).truncationMode(.middle)
-                            if let kind = edge.kind {
-                                Text(kind).font(.system(size: 8)).foregroundStyle(.quaternary)
-                            }
-                        }
-                    }
-                    if edges.isEmpty {
-                        Text("The report for this repository has no edges.")
-                            .font(.system(size: 10)).foregroundStyle(.quaternary)
-                    }
-                    Text("\(report.repository ?? "report") · \(report.nodes.count) nodes · \(report.edges.count) edges")
-                        .font(.system(size: 9)).foregroundStyle(.quaternary)
-                } else {
-                    Text(store.radarReports.isEmpty
-                         ? "No Radar reports imported."
-                         : "No imported report names \(store.repositoryName(for: entry) ?? "this repository").")
-                        .font(.system(size: 10)).foregroundStyle(.quaternary)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("Advanced")
-                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-        }
-    }
-
-    private func importRadarReport() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await store.importRadarReport(path: url.path) }
     }
 }
 

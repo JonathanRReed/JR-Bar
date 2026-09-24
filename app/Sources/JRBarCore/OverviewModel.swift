@@ -2,9 +2,8 @@ import Foundation
 
 // Pure pieces of the Overview that do not need a window: where a session's
 // working directory sits in git (for the Branch column and the "By
-// branch" cut), which tools a run actually touched (the observed map a
-// Radar report can never draw for Claude Code or Codex), and which
-// imported Radar report belongs to the session's repository at all.
+// branch" cut), which tools a run actually touched, and what two runs'
+// file sets share.
 
 /// A working directory's place in git, read from the `.git` files
 /// themselves — no `git` process, so a roster of forty rows costs forty
@@ -113,9 +112,8 @@ public struct GitWorkspace: Hashable, Sendable {
 
 /// The tools one run actually called, from its transcript's `tool_use`
 /// rows: built-in tools by name, MCP tools (`mcp__<server>__<tool>`)
-/// grouped under their server. This is the observed half of the
-/// Overview's relationship lens — it works for Claude Code and Codex,
-/// which a static analyzer like Agentic Radar does not scan.
+/// grouped under their server. This is the Overview's relationship
+/// lens, read from what Claude Code and Codex actually did.
 public struct ObservedToolMap: Hashable, Sendable {
     public struct Tool: Hashable, Sendable, Identifiable {
         public var name: String
@@ -198,32 +196,6 @@ public enum AgentProject {
     /// folder), else the folder heuristic.
     public static func name(of cwd: String?, workspace: GitWorkspace?) -> String? {
         workspace?.repositoryName ?? name(of: cwd)
-    }
-}
-
-/// Which imported Radar report speaks for a session: the one whose
-/// `repository` names the session's repository. The newest-report-wins
-/// rule it replaces showed one project's edges on every other project's
-/// rows.
-public enum RadarReportMatch {
-    /// The repository's last path component, lowercased, from a URL
-    /// (`https://github.com/o/JR-Bar.git`), an `owner/name` pair, or a
-    /// plain path.
-    public static func repositoryKey(_ repository: String?) -> String? {
-        guard var text = repository?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
-        while text.hasSuffix("/") { text.removeLast() }
-        if text.hasSuffix(".git") { text.removeLast(4) }
-        let last = text.split(whereSeparator: { $0 == "/" || $0 == ":" }).last.map(String.init) ?? text
-        return last.isEmpty ? nil : last.lowercased()
-    }
-
-    /// The newest report for the session's repository, or nil — never a
-    /// report for some other repository.
-    public static func pick(_ reports: [CoreRadarSummary], repository: String?) -> CoreRadarSummary? {
-        guard let key = repositoryKey(repository) else { return nil }
-        return reports
-            .filter { repositoryKey($0.repository) == key }
-            .max { ($0.importedAt ?? 0) < ($1.importedAt ?? 0) }
     }
 }
 
