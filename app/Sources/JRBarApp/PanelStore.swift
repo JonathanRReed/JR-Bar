@@ -448,12 +448,11 @@ final class PanelStore {
 
     // MARK: Derived: layout
 
-    /// What the panel shows, counted for `PanelLayout`. The windowless
-    /// usage providers take a row each ("setup needed"), so they count
-    /// toward the section's height.
+    /// What the panel shows, counted for `PanelLayout`. The quiet
+    /// providers share one trailing row, so they count as one.
     var layoutContent: PanelLayout.Content {
         PanelLayout.Content(asks: visibleAskRows.count, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
-                            usageProviders: usage.count + windowlessUsage.count, hasHiddenFooter: hiddenCount > 0)
+                            usageProviders: usage.count + (quietUsage.isEmpty ? 0 : 1), hasHiddenFooter: hiddenCount > 0)
     }
 
     /// `state.hidden_count`: sessions the daemon keeps out of `sessions`
@@ -1087,12 +1086,14 @@ final class PanelStore {
 
     // MARK: Derived: usage and devices
 
-    /// Providers with at least one window; signed-out ones are the Usage Center's business.
-    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !$0.windows.isEmpty } : [] }
-    /// Providers that report in but carry no window at all (signed out,
-    /// the reader has no source configured): a compact "setup needed" row
-    /// each, so they vanish with a hint instead of silently.
-    var windowlessUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.windows.isEmpty } : [] }
+    /// Providers that earn a full row: a window with something on it,
+    /// from a source that is on and found.
+    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !Self.foldsIntoQuietRow($0) } : [] }
+    /// The providers with nothing to say — every window at 0 %, no window
+    /// at all, the source not found or switched off: one trailing row
+    /// names them and opens the Usage Center, so they neither vanish
+    /// silently nor take a 50 pt row each to say "nothing".
+    var quietUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { Self.foldsIntoQuietRow($0) } : [] }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
 
     /// `state.health.hooks` providers the daemon reports as `missing`: the
@@ -1252,6 +1253,76 @@ final class PanelStore {
         let secondary = usage.windows.first { $0.shortName == "7d" && $0.id != primary?.id }
             ?? usage.windows.first { $0.id != primary?.id }
         return (primary, secondary)
+    }
+
+    /// A provider whose row would say nothing: no window, every window at
+    /// 0 %, or a source that is switched off or was never found.
+    static func foldsIntoQuietRow(_ usage: CoreProviderUsage) -> Bool {
+        if usage.windows.isEmpty { return true }
+        if let state = usage.state?.lowercased(), state == "disabled" || state == "source_not_found" { return true }
+        return usage.windows.allSatisfy { ($0.usedPct ?? 1) < 0.5 }
+    }
+
+    /// Why a provider sits in the quiet row, in the fewest words.
+    static func quietWord(_ usage: CoreProviderUsage) -> String {
+        switch usage.state?.lowercased() {
+        case "disabled": return "off"
+        case "source_not_found": return "not found"
+        case "needs_sign_in": return "signed out"
+        case "needs_consent": return "needs consent"
+        case let state? where state != "ready" && state != "stale" && usage.windows.isEmpty:
+            return state.replacingOccurrences(of: "_", with: " ")
+        default: return usage.windows.isEmpty ? "no windows" : "at 0%"
+        }
+    }
+
+    /// The quiet row's second line: "at 0%" for one provider, else
+    /// "2 at 0% · 1 not found", in the order the providers came.
+    static func quietSummary(_ providers: [CoreProviderUsage]) -> String {
+        let words = providers.map(quietWord)
+        guard words.count > 1 else { return words.first ?? "" }
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for word in words {
+            if counts[word] == nil { order.append(word) }
+            counts[word, default: 0] += 1
+        }
+        return order.map { "\(counts[$0] ?? 0) \($0)" }.joined(separator: " · ")
+    }
+
+    /// The one thing a usage row's tag says, worst first. Nothing when
+    /// the provider is on track.
+    enum UsageTag: Equatable {
+        /// The reading is old — the last refresh did not land.
+        case stale
+        /// The leading window is at or past 100 %.
+        case usedUp
+        /// The forecast runs dry before the window resets.
+        case runsOut(String)
+        /// The vendor's status feed reports an outage.
+        case incident(String)
+
+        var text: String {
+            switch self {
+            case .stale: return "Stale"
+            case .usedUp: return "Used up"
+            case .runsOut(let when): return "Runs out \(when)"
+            case .incident: return "Incident"
+            }
+        }
+    }
+
+    static func usageTag(for usage: CoreProviderUsage, primary: CoreUsageWindow?, heldIdle: Bool, now: Date) -> UsageTag? {
+        if usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale" { return .stale }
+        if (primary?.usedPct ?? 0) >= 100 || usage.forecast?.pace?.lowercased() == "exhausted" { return .usedUp }
+        // A held-idle provider's last slope is history, and a window that
+        // resets before the forecast runs dry is on track.
+        if !heldIdle, let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > now.timeIntervalSince1970,
+           primary?.resetsAt.map({ exhaustsAt < $0 }) ?? true {
+            return .runsOut(UsageForecast.relative(to: exhaustsAt, now: now))
+        }
+        if let incident = usage.incident, !incident.isEmpty { return .incident(incident) }
+        return nil
     }
 
     /// The slider's value: a local drag wins, else the Pro's brightness, else the lights document's.
@@ -1749,7 +1820,9 @@ final class PanelStore {
     nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {
         guard let epoch else { return nil }
         let seconds = Int(epoch - now.timeIntervalSince1970)
-        if seconds <= 0 { return "resets now" }
+        // Past the reset the number on screen is the old window's until
+        // the next reading lands; "resets now" read like a promise.
+        if seconds <= 0 { return "reset — waiting for a new reading" }
         let minutes = (seconds + 30) / 60
         if minutes < 60 { return "resets in \(max(1, minutes))m" }
         let hours = minutes / 60
@@ -1759,20 +1832,12 @@ final class PanelStore {
 
     /// The daemon's `forecast.pace` as the outcome it names, not the
     /// race-course word it sends: "ahead of pace" used to read as headroom
-    /// when it means the window runs dry early. When the forecast also
-    /// names `exhausts_at` and the window a `resets_at`, the slack between
-    /// them is the line worth showing ("runs out ~2h before the reset").
-    nonisolated static func paceHint(_ pace: String?, exhaustsAt: Double? = nil, resetsAt: Double? = nil, now: Date = Date()) -> String? {
+    /// when it means the window runs dry early. A window that resets
+    /// before it runs out is on track and says nothing.
+    nonisolated static func paceHint(_ pace: String?) -> String? {
         switch pace?.lowercased() {
-        case "ahead":
-            if let exhaustsAt, let resetsAt, resetsAt > exhaustsAt + 60 {
-                return "runs out ~\(shortGap(resetsAt - exhaustsAt)) before the reset"
-            }
-            if let exhaustsAt, exhaustsAt > now.timeIntervalSince1970 {
-                return "runs out \(UsageForecast.relative(to: exhaustsAt, now: now))"
-            }
-            return "runs out early"
-        case "behind", "under": return "resets first"
+        case "ahead": return "runs out early"
+        case "behind", "under": return nil
         case "on", "on_pace", "on-pace", "onpace", "steady": return "on pace"
         case "exhausted": return "used up"
         // A guarded pace already explains itself through the forecast's
@@ -1781,15 +1846,5 @@ final class PanelStore {
         case nil, "": return nil
         case let other?: return other.replacingOccurrences(of: "_", with: " ")
         }
-    }
-
-    /// "2h", "45m", "1d": the gap between exhaustion and reset, rounded
-    /// so "~2h before the reset" never pretends to minutes it cannot see.
-    nonisolated static func shortGap(_ seconds: Double) -> String {
-        let minutes = Int((seconds + 30) / 60)
-        if minutes < 60 { return "\(max(1, minutes))m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
     }
 }

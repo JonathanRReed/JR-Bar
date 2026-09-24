@@ -1122,7 +1122,7 @@ struct UsageSection: View {
     var body: some View {
         VStack(spacing: 0) {
             SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Usage Center" : nil, onDetail: { store.openUsageCenter() })
-            if store.usage.isEmpty && store.windowlessUsage.isEmpty {
+            if store.usage.isEmpty && store.quietUsage.isEmpty {
                 Text(store.isLive ? "No usage reported yet." : "Usage comes from the monitor.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
@@ -1139,17 +1139,16 @@ struct UsageSection: View {
                             UsageRow(usage: usage, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
-                        // A provider that reports in with no window is a
-                        // setup state, not a quiet zero: it gets a row that
-                        // says so and opens the Usage Center on it.
-                        ForEach(store.windowlessUsage, id: \.identity) { usage in
-                            UsageSetupRow(usage: usage, store: store)
+                        // The providers with nothing to say share one
+                        // trailing row that names them.
+                        if !store.quietUsage.isEmpty {
+                            UsageQuietRow(providers: store.quietUsage, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
                     .padding(.horizontal, 6)
                     .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed),
-                               value: store.usage.map(\.identity) + store.windowlessUsage.map(\.identity))
+                               value: store.usage.map(\.identity) + store.quietUsage.map(\.identity))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.usageHeight))
@@ -1167,25 +1166,44 @@ struct UsageSection: View {
     }
 }
 
-/// A provider that reports in but carries no window — signed out, or no
-/// reader configured. One compact row (name + the daemon's state word +
-/// chevron) that opens the Usage Center on it; a silent absence used to
-/// pass for "not tracked".
-struct UsageSetupRow: View {
-    let usage: CoreProviderUsage
+/// The providers with nothing to say — every window at 0 %, no window
+/// at all, the source not found or off — as one row: their tiles, their
+/// names and why ("2 at 0% · 1 not found"). A click opens the Usage
+/// Center, on the provider when there is only one.
+struct UsageQuietRow: View {
+    let providers: [CoreProviderUsage]
     @Bindable var store: PanelStore
     @ViewState private var hovering = false
 
-    private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
+    /// Tiles past this many would crowd the names out.
+    static let maxTiles = 4
+
+    private var styles: [ProviderStyle] {
+        providers.map { ProviderStyle.style(for: $0.id, document: store.settingsDocument) }
+    }
 
     var body: some View {
+        let styles = styles
         HStack(spacing: 9) {
-            ProviderTile(style: style, size: 20)
-            Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-            Text(usage.state?.replacingOccurrences(of: "_", with: " ") ?? "setup needed")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+            HStack(spacing: -6) {
+                ForEach(Array(styles.prefix(Self.maxTiles).enumerated()), id: \.offset) { _, style in
+                    ProviderTile(style: style, size: 20)
+                        .saturation(0.35)
+                        .opacity(0.8)
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(styles.map(\.name).joined(separator: ", "))
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(PanelStore.quietSummary(providers))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 4)
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -1200,11 +1218,17 @@ struct UsageSetupRow: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { store.openUsageCenter(provider: usage.id) }
-        .help("\(style.name) reports no usage windows — the Usage Center can set it up")
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens \(style.name) in the Usage Center")
+        .onTapGesture { store.openUsageCenter(provider: providers.count == 1 ? providers.first?.id : nil) }
+        .help(tooltip(styles))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tooltip(styles))
+        .accessibilityHint("Opens the Usage Center")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// "Gemini: at 0%", one line per provider.
+    private func tooltip(_ styles: [ProviderStyle]) -> String {
+        zip(styles, providers).map { "\($0.name): \(PanelStore.quietWord($1))" }.joined(separator: "\n")
     }
 }
 
@@ -1231,43 +1255,9 @@ struct UsageRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                    if isStale {
-                        // The reading is old, not current: "Stale", the
-                        // Usage Center's own word, beside the name — never
-                        // a number quietly trusted anyway.
-                        Text("Stale")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.orange)
-                            .lineLimit(1)
-                            .help("This reading is old — the last refresh did not land")
-                    } else if usage.isDerived {
-                        // `derived`/`estimated` fidelity spelled out; the
-                        // bare "~" it used to hide behind was invisible.
-                        Text("est.")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .help("Derived estimate (\(usage.fidelity ?? "derived")), not the provider's own figure")
-                    }
-                    if let incident = usage.incident, !incident.isEmpty {
-                        // The vendor's status feed says so — amber, never
-                        // the quota bar's red: an outage is not a limit.
-                        Text("incident")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.orange)
-                            .lineLimit(1)
-                            .help(incident)
-                    }
-                    if paceForecast?.heldIdle == true {
-                        // Nothing of this provider is working here: the
-                        // last slope is history, not a run-out.
-                        Text("holding")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                            .help(paceForecast.map { $0.headline(now: store.now) } ?? "")
-                    } else if let hint = PanelStore.paceHint(usage.forecast?.pace,
-                                                           exhaustsAt: usage.forecast?.exhaustsAt,
-                                                           resetsAt: primary?.resetsAt, now: store.now) {
-                        Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
+                    if let tag {
+                        UsageTagText(tag: tag)
+                            .help(tagHelp(tag))
                     }
                     Spacer(minLength: 4)
                     Text(primary?.percentText ?? "")
@@ -1316,28 +1306,34 @@ struct UsageRow: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The daemon's `state`/`fidelity` say the reading is old — what the
-    /// row's "Stale" tag shows.
-    private var isStale: Bool {
-        usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale"
+    /// The one thing the row's tag says: Stale, Used up, Runs out in X
+    /// (or a vendor incident); nothing when the provider is on track.
+    private var tag: PanelStore.UsageTag? {
+        PanelStore.usageTag(for: usage, primary: windows.primary,
+                            heldIdle: paceForecast?.heldIdle == true, now: store.now)
     }
 
-    /// "5h resets in 1h 02m · 7d resets in 3d 5h · runs out in 2h", one
-    /// line. With no reset to name, the daemon's own fix-it (`action`,
-    /// "Retry later", "Run grok login") beats the bare state word.
+    private func tagHelp(_ tag: PanelStore.UsageTag) -> String {
+        switch tag {
+        case .stale: return "This reading is old — the last refresh did not land"
+        case .usedUp: return "The \(windows.primary?.longName ?? "leading") window is used up until it resets"
+        case .runsOut: return paceForecast.map { $0.headline(now: store.now) } ?? "The forecast runs dry before the reset"
+        case .incident(let text): return text
+        }
+    }
+
+    /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line: the resets
+    /// only, plus "no room for +1" when one more agent would not fit
+    /// before the reset. With no reset to name, the daemon's own fix-it
+    /// (`action`, "Retry later", "Run grok login") beats the bare state word.
     private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
         var parts: [String] = []
         if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
         if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
-        let forecast = paceForecast
-        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970,
-           forecast?.heldIdle != true {
-            parts.append("runs out \(UsageForecast.relative(to: exhaustsAt, now: store.now))")
-        }
-        // The decision the panel is opened for: is there room for one
-        // more agent before the reset, at what each one burns now?
-        if let forecast, let room = SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) {
-            parts.append(room ? "room for +1" : "no room for +1")
+        // The decision the panel is opened for, said only when the answer
+        // is no: one more agent at today's burn would not fit.
+        if let forecast = paceForecast, SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) == false {
+            parts.append("no room for +1")
         }
         if parts.isEmpty {
             if let action = usage.action, !action.isEmpty { return action }
@@ -1354,14 +1350,18 @@ struct UsageRow: View {
         if pct >= 80 { return .orange }
         return .primary
     }
+}
 
-    private func paceColor(_ pace: String?) -> Color {
-        switch pace?.lowercased() {
-        case "ahead": return .orange
-        case "exhausted": return .red
-        case "behind", "under": return .secondary
-        default: return Color.secondary.opacity(0.7)
-        }
+/// A usage row's tag: red when the window is used up, amber otherwise.
+struct UsageTagText: View {
+    let tag: PanelStore.UsageTag
+
+    var body: some View {
+        Text(tag.text)
+            .font(.system(size: 10, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(tag == .usedUp ? Color.red : Color.orange)
+            .lineLimit(1)
     }
 }
 
