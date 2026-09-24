@@ -355,6 +355,7 @@ extension AquariumView {
 
     /// W13's overlay markers — a small glyph floating just above the
     /// fish, one per plan (`FishOverlayArt` draws each distinct shape).
+    /// Reduce Motion holds the buoy's pulse and the pearl's gleam still.
     private func drawOverlayMarker(_ overlay: FishOverlay, l: Layout,
                                    canvas: inout GraphicsContext,
                                    length: Double, height: Double, t: Double) {
@@ -363,7 +364,8 @@ extension AquariumView {
         let y = l.y - height * 0.5 - r - 6
         var m = canvas
         m.opacity = l.opacity * 0.95
-        FishOverlayArt.draw(overlay, into: &m, at: CGPoint(x: x, y: y), r: r, t: t)
+        FishOverlayArt.draw(overlay, into: &m, at: CGPoint(x: x, y: y), r: r,
+                            t: reduceMotion ? 0 : t)
     }
 
     /// A grown, mid-lane fish's drawn length in points before its
