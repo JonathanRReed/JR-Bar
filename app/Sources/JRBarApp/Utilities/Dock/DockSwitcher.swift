@@ -1958,6 +1958,8 @@ enum DockSwitcherThumbs {
 /// key tap drives it and a card click commits.
 @MainActor
 final class DockSwitcherPanel: NSPanel {
+    /// The glass's corner — the strip's cards sit concentric inside it.
+    static let cornerRadius: CGFloat = 24
     private let model = DockSwitcherModel()
     private let hosting: NSHostingView<DockSwitcherView>
 
@@ -1971,14 +1973,14 @@ final class DockSwitcherPanel: NSPanel {
         hosting = NSHostingView(rootView: DockSwitcherView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
-        glass.cornerRadius = 18
+        glass.cornerRadius = Self.cornerRadius
         glass.style = .regular
         hosting.frame = glass.bounds
         hosting.autoresizingMask = [.width, .height]
         glass.contentView = hosting
         super.init(contentRect: NSRect(x: 0, y: 0, width: 420, height: 120),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = GlassBackdrop.rounded(glass, cornerRadius: 18)
+        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -2154,14 +2156,15 @@ struct DockSwitcherView: View {
                 // hover/selection.
                 if let item = zoomed {
                     zoom(item)
-                        .frame(maxWidth: 340, minHeight: 216)
-                        .padding(.top, 10)
+                        .frame(maxWidth: Self.zoomWidth, minHeight: Self.zoomHeight, alignment: .top)
+                        .padding(.top, 18)
+                        .padding(.horizontal, 18)
                         .id(item.id)
                         .transition(.opacity)
                         .animation(.easeOut(duration: 0.12), value: item.id)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .top, spacing: 4) {
                         ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
                             card(item, selected: index == model.selection)
                                 .id(item.id)
@@ -2171,54 +2174,24 @@ struct DockSwitcherView: View {
                                 }
                         }
                     }
-                    .padding(10)
+                    .padding(12)
                 }
                 if !model.query.isEmpty || model.latched {
-                    // The buffer's own label — a filtered strip should
-                    // never read as dropped rows. ⌘⇥'s latch shows it
-                    // before the first letter, as an invitation.
-                    HStack(spacing: 4) {
-                        // A leading "!" is the waiting-agents filter —
-                        // named, so the narrowed strip explains itself.
-                        let waiting = model.query.first == SwitcherModel.waitingFilter
-                        let rest = waiting ? String(model.query.dropFirst()) : model.query
-                        Image(systemName: waiting ? "exclamationmark.bubble" : "magnifyingglass")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(waiting && rest.isEmpty ? "Waiting on you"
-                             : (rest.isEmpty ? "Type an app's name — ↩ switches, esc cancels" : rest))
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                        if model.items.isEmpty {
-                            Text("— no match")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 8)
-                    .padding(.horizontal, 12)
+                    searchRow
+                        .padding(.bottom, 14)
+                        .padding(.horizontal, 14)
                 }
                 if let hints = model.hints, model.armedNote == nil {
-                    Text(hints)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .padding(.bottom, 8)
-                        .padding(.horizontal, 12)
+                    DockKeyHints(hints: hints)
+                        .padding(.bottom, 14)
+                        .padding(.horizontal, 14)
                         .transition(.opacity)
                 }
                 if let note = model.armedNote {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(model.armedAccent ?? .accentColor)
-                            .frame(width: 7, height: 7)
-                        Text(note)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                    }
-                    .padding(.bottom, 8)
-                    .padding(.horizontal, 12)
-                    .transition(.opacity)
+                    armedRow(note)
+                        .padding(.bottom, 14)
+                        .padding(.horizontal, 14)
+                        .transition(.opacity)
                 }
             }
             .onChange(of: model.selection) { _, _ in
@@ -2228,52 +2201,101 @@ struct DockSwitcherView: View {
         }
     }
 
-    /// The preview pane's contents — the hovered (or selected) card at
-    /// full size: the window still when the thumbnail pass granted
-    /// one, the app icon otherwise, plus the title the strip
-    /// truncates. Offscreen windows say so under the title.
+    // MARK: The pane
+
+    static let zoomWidth: CGFloat = 360
+    /// The still's slot in the pane — fixed, so the title under it sits
+    /// on one line whatever the window's shape.
+    static let zoomStillHeight: CGFloat = 184
+    static let zoomHeight: CGFloat = 240
+
+    /// The preview pane's contents — the selected card at full size: the
+    /// window still when the thumbnail pass granted one, the app icon
+    /// otherwise; the title the strip truncates over the app and its
+    /// state; the agent in it and what it wants.
     @ViewBuilder
     private func zoom(_ item: SwitcherItem) -> some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 10) {
             Group {
                 if let still = model.thumbnails[item.id] {
-                    Image(nsImage: still)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .shadow(radius: 6, y: 2)
+                    DockStill(image: still, radius: 12, ring: waitingRing(item))
+                        .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
                 } else {
                     Image(nsImage: item.icon ?? NSImage())
                         .resizable()
-                        .frame(width: 84, height: 84)
+                        .interpolation(.high)
+                        .frame(width: 104, height: 104)
+                        .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
+                        .overlay(alignment: .topTrailing) {
+                            if let badge = item.badge {
+                                DockBadgePill(text: badge, size: 13).offset(x: 8, y: -6)
+                            }
+                        }
+                        // A soft pool of light under the icon, so a pane
+                        // with no still still has a subject, not a void.
+                        .background {
+                            Circle()
+                                .fill(RadialGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0)],
+                                                     center: .center, startRadius: 20, endRadius: 96))
+                                .frame(width: 192, height: 192)
+                        }
                 }
             }
-            .frame(maxWidth: 320, maxHeight: 168)
-            Text("\(item.appName) — \(AppNameChannel.split(item.title).base)")
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 320)
-            if item.minimized || !item.onScreen {
-                Text(item.minimized ? "Minimized" : (item.windowID == nil ? "Preview unavailable" : "Off screen"))
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-            }
-            if let agent = item.agent {
-                // Which session this window holds and what it wants —
-                // the line the switcher exists to answer.
+            .frame(maxWidth: Self.zoomWidth - 20, maxHeight: Self.zoomStillHeight)
+            .frame(height: Self.zoomStillHeight)
+            VStack(spacing: 3) {
+                Text(zoomTitle(item))
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 HStack(spacing: 5) {
-                    DockAgentDot(mark: agent, size: 7)
-                    Text("\(agent.label) — \(agent.statusLine)")
+                    Image(nsImage: item.icon ?? NSImage())
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 14, height: 14)
+                    Text(zoomSubtitle(item))
                         .lineLimit(1)
-                        .truncationMode(.tail)
                 }
-                .font(.system(size: 10, weight: agent.isWaiting ? .semibold : .regular))
-                .foregroundStyle(agent.isWaiting ? .primary : .secondary)
-                .frame(maxWidth: 320)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                if let agent = item.agent {
+                    // Which session this window holds and what it wants —
+                    // the line the switcher exists to answer.
+                    HStack(spacing: 5) {
+                        DockAgentDot(mark: agent, size: 7)
+                        Text("\(agent.label) — \(agent.statusLine)")
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .font(.system(size: 11, weight: agent.isWaiting ? .semibold : .regular))
+                    .foregroundStyle(agent.isWaiting ? AnyShapeStyle(agent.accent) : AnyShapeStyle(.secondary))
+                    .padding(.top, 1)
+                }
             }
+            .frame(maxWidth: Self.zoomWidth)
         }
     }
+
+    /// The window's own name; the app's when the window is untitled or
+    /// only says the app again.
+    private func zoomTitle(_ item: SwitcherItem) -> String {
+        let title = AppNameChannel.split(item.title).base
+        return title.isEmpty ? item.appName : title
+    }
+
+    /// "Safari", "Notes · Minimized", "Finder · Off screen".
+    private func zoomSubtitle(_ item: SwitcherItem) -> String {
+        guard item.minimized || !item.onScreen else { return item.appName }
+        let state = item.minimized ? "Minimized" : (item.windowID == nil ? "Preview unavailable" : "Off screen")
+        return "\(item.appName) · \(state)"
+    }
+
+    private func waitingRing(_ item: SwitcherItem) -> Color? {
+        guard let agent = item.agent, agent.isWaiting else { return nil }
+        return agent.accent
+    }
+
+    // MARK: The strip
 
     /// Every card in a strip shares one slot, so a row of windows reads
     /// as a row, not a ragged line sized by each title: the still's
@@ -2281,7 +2303,7 @@ struct DockSwitcherView: View {
     /// none has.
     static func slotWidth(hasStills: Bool) -> CGFloat { hasStills ? 128 : 96 }
     static let slotHeight: CGFloat = 76
-    static let cardRadius: CGFloat = 12
+    static let cardRadius: CGFloat = 14
 
     /// A ring drawn `inset` inside a card keeps the card's curve — the
     /// same centre, a radius smaller by the inset.
@@ -2289,99 +2311,130 @@ struct DockSwitcherView: View {
 
     private func card(_ item: SwitcherItem, selected: Bool) -> some View {
         let slot = Self.slotWidth(hasStills: !model.thumbnails.isEmpty)
-        return VStack(spacing: 5) {
-            if let still = model.thumbnails[item.id] {
-                // AltTab's card: the window's own pixels, its app
-                // badged in the corner.
-                Image(nsImage: still)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: slot, maxHeight: Self.slotHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay(alignment: .bottomLeading) {
-                        Image(nsImage: item.icon ?? NSImage())
-                            .resizable()
-                            .frame(width: 18, height: 18)
-                            .overlay(alignment: .topTrailing) {
-                                // The corner icon keeps the Dock's badge —
-                                // a still must not hide Mail's unread.
-                                if let badge = item.badge {
-                                    badgePill(badge, size: 8)
-                                        .offset(x: 6, y: -5)
-                                }
-                            }
-                            .padding(3)
-                    }
-                    // The agent's mark rides the still's own corner, where
-                    // the preview card draws it.
-                    .overlay(alignment: .topTrailing) { agentDot(item).padding(5) }
-                    .frame(width: slot, height: Self.slotHeight)
-            } else {
-                Image(nsImage: item.icon ?? NSImage())
-                    .resizable()
-                    .frame(width: 44, height: 44)
-                    .overlay(alignment: .topTrailing) {
-                        // The Dock tile's badge — Witch draws the same
-                        // unread pill on its app cards.
-                        if let badge = item.badge {
-                            badgePill(badge, size: 10)
-                                .offset(x: 8, y: -6)
+        let shape = RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
+        return VStack(spacing: 7) {
+            Group {
+                if let still = model.thumbnails[item.id] {
+                    // AltTab's card: the window's own pixels, its app
+                    // badged on the still's corner.
+                    DockStill(image: still, radius: 7, ring: waitingRing(item))
+                        .opacity(item.minimized ? 0.6 : 1)
+                        .overlay(alignment: .bottomLeading) {
+                            appIcon(item, size: 22, badge: 8)
+                                .offset(x: -5, y: 6)
                         }
-                    }
-                    .frame(width: slot, height: Self.slotHeight)
-                    .overlay(alignment: .topTrailing) { agentDot(item).padding(4) }
+                        // The agent's mark rides the still's corner, where
+                        // the preview card draws it.
+                        .overlay(alignment: .topTrailing) { agentDot(item).padding(5) }
+                } else {
+                    appIcon(item, size: 48, badge: 10)
+                        .opacity(item.onScreen ? 1 : 0.7)
+                        // On an icon card it rides the icon, as the Dock
+                        // preview's header draws the app's most urgent one.
+                        .overlay(alignment: .bottomTrailing) { agentDot(item).offset(x: 4, y: 4) }
+                }
             }
+            .frame(maxWidth: slot, maxHeight: Self.slotHeight)
+            .frame(width: slot, height: Self.slotHeight)
             Text(AppNameChannel.split(item.title).base)
-                .font(.caption2)
+                .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                .foregroundStyle(item.onScreen ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: slot)
         }
-        .padding(8)
-        .opacity(item.onScreen ? 1 : 0.65)
-        .background(
-            RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
-                .fill(selected ? AnyShapeStyle(.tint.opacity(0.3))
-                               : AnyShapeStyle(.quaternary.opacity(0.4))))
-        .overlay(
-            RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
-                .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
-        // The "needs you" ring: a waiting agent's card is outlined in
-        // its provider's colour, inside the selection ring so both read.
-        .overlay {
-            if let agent = item.agent, agent.isWaiting {
-                let inset: CGFloat = selected ? 3 : 0
-                RoundedRectangle(cornerRadius: Self.ringRadius(inset: inset), style: .continuous)
-                    .strokeBorder(agent.accent.opacity(0.9), lineWidth: 1.5)
-                    .padding(inset)
+        .padding(.horizontal, 9)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background {
+            if selected {
+                shape.fill(Color.accentColor.opacity(0.18))
+                    .overlay(shape.strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1.5))
             }
         }
         // A guarded ⌘W/⌘Q's first press: the card rings in the agent's
         // colour until the second press or the guard's window lapses.
         .overlay {
             if model.armedID == item.id {
-                RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
-                    .strokeBorder(model.armedAccent ?? .accentColor, lineWidth: 3)
+                let inset: CGFloat = selected ? 3 : 0
+                RoundedRectangle(cornerRadius: Self.ringRadius(inset: inset), style: .continuous)
+                    .strokeBorder(model.armedAccent ?? .accentColor, lineWidth: 2.5)
+                    .padding(inset)
             }
         }
+        .contentShape(shape)
         .help(help(for: item))
     }
 
     @ViewBuilder
     private func agentDot(_ item: SwitcherItem) -> some View {
         if let agent = item.agent {
-            DockAgentDot(mark: agent)
+            DockAgentDot(mark: agent, size: 10)
+                .shadow(color: .black.opacity(0.35), radius: 1.5)
         }
     }
 
-    /// The Dock tile's unread pill, verbatim.
-    private func badgePill(_ badge: String, size: CGFloat) -> some View {
-        Text(badge)
-            .font(.system(size: size, weight: .bold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, size * 0.4)
-            .padding(.vertical, 1)
-            .background(.red, in: Capsule())
+    /// The app's icon, carrying the Dock tile's badge — a still must not
+    /// hide Mail's unread, and Witch draws the same pill on its cards.
+    private func appIcon(_ item: SwitcherItem, size: CGFloat, badge: CGFloat) -> some View {
+        Image(nsImage: item.icon ?? NSImage())
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .shadow(color: .black.opacity(0.3), radius: size > 30 ? 4 : 2, y: 1)
+            .overlay(alignment: .topTrailing) {
+                if let text = item.badge {
+                    DockBadgePill(text: text, size: badge)
+                        .offset(x: badge * 0.8, y: -badge * 0.6)
+                }
+            }
+    }
+
+    // MARK: The rows under the strip
+
+    /// The buffer's own field — a filtered strip should never read as
+    /// dropped rows. ⌘⇥'s latch shows it before the first letter, as an
+    /// invitation. A leading "!" is the waiting-agents filter — named,
+    /// so the narrowed strip explains itself.
+    private var searchRow: some View {
+        let waiting = model.query.first == SwitcherModel.waitingFilter
+        let rest = waiting ? String(model.query.dropFirst()) : model.query
+        let prompt = waiting && rest.isEmpty ? "Waiting on you"
+            : (rest.isEmpty ? "Type an app's name — ↩ switches, esc cancels" : rest)
+        return HStack(spacing: 7) {
+            Image(systemName: waiting ? "exclamationmark.bubble.fill" : "magnifyingglass")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(waiting ? AnyShapeStyle(DockChrome.caution) : AnyShapeStyle(.secondary))
+            Text(prompt)
+                .font(.system(size: 12.5, weight: rest.isEmpty ? .regular : .semibold))
+                .foregroundStyle(rest.isEmpty ? .secondary : .primary)
+                .lineLimit(1)
+            if model.items.isEmpty {
+                Text("No match")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .background(Capsule().fill(Color.primary.opacity(0.07)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+    }
+
+    private func armedRow(_ note: String) -> some View {
+        let accent = model.armedAccent ?? .accentColor
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(accent)
+                .frame(width: 7, height: 7)
+            Text(note)
+                .font(.system(size: 11.5, weight: .semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .background(Capsule().fill(accent.opacity(0.14)))
+        .overlay(Capsule().strokeBorder(accent.opacity(0.35), lineWidth: 0.5))
     }
 
     private func help(for item: SwitcherItem) -> String {
@@ -2393,4 +2446,51 @@ struct DockSwitcherView: View {
     }
 }
 
+/// The ⌘-held verb row as keys: the ⌘ cap, then each key the strip
+/// answers with its word — "W close", "M minimize" — read from the
+/// same line `DockSwitcherList.verbHints` writes.
+struct DockKeyHints: View {
+    let hints: String
 
+    var body: some View {
+        HStack(spacing: 12) {
+            DockKeyCap(key: "⌘")
+            ForEach(Array(Self.parse(hints).enumerated()), id: \.offset) { _, hint in
+                HStack(spacing: 5) {
+                    DockKeyCap(key: hint.key)
+                    Text(hint.word)
+                }
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
+    /// "W close · M minimize" → [("W", "close"), ("M", "minimize")]: the
+    /// key is each part's first word, the rest is what it does.
+    nonisolated static func parse(_ hints: String) -> [(key: String, word: String)] {
+        hints.components(separatedBy: " · ").compactMap { part in
+            let words = part.split(separator: " ", maxSplits: 1).map(String.init)
+            guard let key = words.first else { return nil }
+            return (key, words.count > 1 ? words[1] : "")
+        }
+    }
+}
+
+/// One key, drawn as a keyboard cap.
+struct DockKeyCap: View {
+    let key: String
+
+    var body: some View {
+        Text(key)
+            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 19, minHeight: 19)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.primary.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
+    }
+}

@@ -172,7 +172,7 @@ enum DockDisplays {
 @MainActor
 final class DockPreviewPanel: NSPanel {
     let actions: DockPreviewActions
-    static let cornerRadius: CGFloat = 16
+    static let cornerRadius: CGFloat = 20
 
     private let hosting: NSHostingView<DockPreviewView>
 
@@ -352,242 +352,65 @@ struct DockToastView: View {
 
     var body: some View {
         Text(model.text)
-            .font(.callout.weight(.medium))
+            .font(.system(size: 12.5, weight: .medium))
             .lineLimit(1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
     }
 }
 
-/// The panel's body: app header with its verbs, then the window cards
-/// — thumbnail when Screen Recording granted one, the app icon
-/// otherwise — each with hover-revealed close and minimize buttons.
-/// Clicks report through `actions`.
+/// The panel's body: the app's header and its verbs, any agent waiting
+/// in it, the player or calendar glance, then the window cards — each
+/// window's own still when Screen Recording granted one, the app's icon
+/// otherwise — with close, minimize and full screen on hover. Clicks
+/// report through `actions`.
 struct DockPreviewView: View {
     let content: DockPreviewContent
     let actions: DockPreviewActions
     /// A document card held over the panel — the highlight ring.
     @ViewState private var dropTargeted = false
 
+    /// The panel's inset from its glass edge — the cards' plates sit
+    /// concentric inside `DockPreviewPanel.cornerRadius` at this inset.
+    static let inset: CGFloat = 10
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                if !content.folderTrail.isEmpty {
-                    Button { actions.onFolderBack?() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Back to \(content.folderTrail.dropLast().last?.lastPathComponent ?? content.appName)")
-                    .accessibilityLabel("Back")
-                }
-                if let icon = content.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 26, height: 26)
-                        .overlay(alignment: .topTrailing) {
-                            // The Dock tile's own badge, on the icon the
-                            // way the tile draws it — unread counts,
-                            // alert dots, the works.
-                            if let badge = content.badge {
-                                Text(badge)
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(.red, in: Capsule())
-                                    .offset(x: 7, y: -5)
-                            }
-                        }
-                        // Beside the Dock's badge, the agent's: the most
-                        // urgent session this app hosts, as a mark.
-                        .overlay(alignment: .bottomTrailing) {
-                            if let agent = content.appAgents.first {
-                                DockAgentDot(mark: agent, size: 8)
-                                    .offset(x: 3, y: 3)
-                            }
-                        }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(appTitle.base)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        if let channel = appTitle.channel {
-                            Text(channel)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(.quaternary, in: Capsule())
-                        }
-                    }
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: 240, alignment: .leading)
-                // Exclude an app from where it bothers you — the card's
-                // list, one right-click nearer.
-                .contextMenu {
-                    if content.bundleID != nil, content.folderURL == nil {
-                        Button("Never Preview \(content.appName)") { actions.onExcludeApp?() }
-                    }
-                }
-                Spacer(minLength: 8)
-                // DockDoor's compact header: traffic-light circles, not
-                // spelled-out buttons — the row reclaims ~110pt of width.
-                if let shown = content.folderShown {
-                    headerVerb("folder", tint: .accentColor,
-                               label: "Open \(shown.lastPathComponent) in Finder") {
-                        actions.onOpen?(shown)
-                    }
-                } else if content.isRunning {
-                    HStack(spacing: 4) {
-                        headerVerb(content.stillRunning ? "bolt.horizontal.fill" : "power",
-                                   tint: Color(red: 0.93, green: 0.34, blue: 0.32),
-                                   label: content.stillRunning ? "Force quit \(content.appName)"
-                                                               : "Quit \(content.appName)") {
-                            actions.onQuitApp?()
-                        }
-                        if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {
-                            headerVerb("minus", tint: Color(red: 0.96, green: 0.73, blue: 0.20),
-                                       label: "Minimise every \(content.appName) window") {
-                                actions.onMinimizeAll?()
-                            }
-                        }
-                        if content.windows.count > 1 {
-                            headerVerb("xmark", tint: Color(red: 0.93, green: 0.34, blue: 0.32),
-                                       label: "Close every \(content.appName) window (app stays running)") {
-                                actions.onCloseAll?()
-                            }
-                        }
-                        headerVerb("eye.slash", tint: Color(red: 0.96, green: 0.73, blue: 0.20),
-                                   label: "Hide \(content.appName) (⌘H)") {
-                            actions.onHideApp?()
-                        }
-                        headerVerb("plus", tint: Color(red: 0.36, green: 0.78, blue: 0.36),
-                                   label: "New window in \(content.appName)") {
-                            actions.onNewWindow?()
-                        }
-                    }
-                }
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            header
             if let note = content.headerNote {
-                Text(note)
-                    .font(.caption)
+                Label(note, systemImage: "info.circle")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .padding(.horizontal, 2)
             }
             if !content.askRows.isEmpty {
-                Divider()
-                ForEach(content.askRows) { mark in
-                    DockAskRow(mark: mark, actions: actions)
+                VStack(spacing: 6) {
+                    ForEach(content.askRows) { mark in
+                        DockAskRow(mark: mark, actions: actions)
+                    }
                 }
             }
             if let media = content.media {
-                Divider()
+                DockPanelRule()
                 DockMediaRow(media: media, actions: actions)
             }
             if !content.calendarEvents.isEmpty || content.calendarNeedsAuth {
-                Divider()
+                DockPanelRule()
                 DockCalendarRow(events: content.calendarEvents,
                                 freeUntil: content.calendarFreeUntil,
                                 needsAuth: content.calendarNeedsAuth,
                                 actions: actions)
             }
             if content.folderURL != nil {
-                Divider()
-                switch content.folderState {
-                case .loading:
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Loading…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                case .denied:
-                    HStack(spacing: 6) {
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(.secondary)
-                        Text("No access to this folder")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Settings…") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
-                                actions.onOpen?(url)
-                            }
-                        }
-                        .controlSize(.small)
-                        .help("Grant folder access in Privacy & Security")
-                    }
-                    .padding(.vertical, 4)
-                case .failed:
-                    Text("Couldn't read this folder")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 4)
-                case .ready:
-                    if content.folderEntries.isEmpty {
-                        Text("Empty")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 4)
-                    } else {
-                        // Apple's Grid stack: five across, four rows
-                        // before it scrolls; a folder chip browses in.
-                        let grid = DockEnhanceMath.folderGrid(count: content.folderEntries.count)
-                        ScrollView(.vertical, showsIndicators: true) {
-                            LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width), spacing: 8),
-                                                     count: grid.columns),
-                                      spacing: 8) {
-                                ForEach(content.folderEntries) { entry in
-                                    DockFolderChip(entry: entry, actions: actions)
-                                }
-                            }
-                            .padding(2)
-                        }
-                        .frame(width: CGFloat(grid.columns) * (DockFolderChip.width + 8) + 4,
-                               height: CGFloat(grid.rows) * (DockFolderChip.height + 8) + 4)
-                    }
-                }
+                DockPanelRule()
+                folder
             } else if !content.windows.isEmpty {
-                Divider()
-                if content.compact {
-                    DockPreviewCompactList(windows: content.windows, agents: content.agents,
-                                           armedWindowID: content.armedWindowID,
-                                           armedNote: content.armedNote, actions: actions)
-                } else {
-                    // A strip that fits centres in the panel — one card
-                    // left-anchored with dead glass beside it reads as a
-                    // second, empty slot. ViewThatFits alone only centres
-                    // inside its own content-hugging bounds; the spacers
-                    // are what hand it the row's full width. An
-                    // overflowing set falls through to the scroll and
-                    // the spacers collapse to nothing.
-                    HStack(spacing: 0) {
-                        Spacer(minLength: 0)
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 8) { cards }
-                                .padding(2)
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) { cards }
-                                    .padding(2)
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
+                DockPanelRule()
+                windows
             }
         }
-        .padding(8)
+        .padding(Self.inset)
         // The card→Dock-tile handoff's other half: a document card
         // dropped on this preview opens the file in the previewed app —
         // DockDoor's drag between previews. Folder previews and bare
@@ -602,10 +425,155 @@ struct DockPreviewView: View {
         }
         .overlay {
             if dropTargeted, content.bundleID != nil {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.accentColor, lineWidth: 2)
+                RoundedRectangle(cornerRadius: DockPreviewPanel.cornerRadius - 4, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
                     .padding(4)
                     .allowsHitTesting(false)
+            }
+        }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            if !content.folderTrail.isEmpty {
+                DockRoundVerb(symbol: "chevron.left", label: backLabel, size: 22) {
+                    actions.onFolderBack?()
+                }
+            }
+            if let icon = content.icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 30, height: 30)
+                    .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                    .overlay(alignment: .topTrailing) {
+                        // The Dock tile's own badge, on the icon the way
+                        // the tile draws it — unread counts, alert dots.
+                        if let badge = content.badge {
+                            DockBadgePill(text: badge, size: 9.5)
+                                .offset(x: 7, y: -6)
+                        }
+                    }
+                    // Beside the Dock's badge, the agent's: the most
+                    // urgent session this app hosts, as a mark.
+                    .overlay(alignment: .bottomTrailing) {
+                        if let agent = content.appAgents.first {
+                            DockAgentDot(mark: agent, size: 9)
+                                .offset(x: 3, y: 3)
+                        }
+                    }
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(appTitle.base)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let channel = appTitle.channel {
+                        Text(channel)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    }
+                }
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: 260, alignment: .leading)
+            // Exclude an app from where it bothers you — the card's
+            // list, one right-click nearer.
+            .contextMenu {
+                if content.bundleID != nil, content.folderURL == nil {
+                    Button("Never Preview \(content.appName)") { actions.onExcludeApp?() }
+                }
+            }
+            Spacer(minLength: 12)
+            verbs
+        }
+    }
+
+    /// The header's verbs as quiet glass discs — least to most final,
+    /// Quit at the edge — each taking its traffic-light colour only
+    /// under the pointer, so five of them never read as a row of alarms.
+    @ViewBuilder
+    private var verbs: some View {
+        if let shown = content.folderShown {
+            DockRoundVerb(symbol: "folder", tint: .accentColor,
+                          label: "Open \(shown.lastPathComponent) in Finder") {
+                actions.onOpen?(shown)
+            }
+        } else if content.isRunning {
+            HStack(spacing: 6) {
+                DockRoundVerb(symbol: "plus", tint: DockChrome.go,
+                              label: "New window in \(content.appName)") {
+                    actions.onNewWindow?()
+                }
+                DockRoundVerb(symbol: "eye.slash", tint: DockChrome.caution,
+                              label: "Hide \(content.appName) (⌘H)") {
+                    actions.onHideApp?()
+                }
+                if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {
+                    DockRoundVerb(symbol: "minus", tint: DockChrome.caution,
+                                  label: "Minimise every \(content.appName) window") {
+                        actions.onMinimizeAll?()
+                    }
+                }
+                if content.windows.count > 1 {
+                    DockRoundVerb(symbol: "xmark", tint: DockChrome.stop,
+                                  label: "Close every \(content.appName) window (app stays running)") {
+                        actions.onCloseAll?()
+                    }
+                }
+                DockRoundVerb(symbol: content.stillRunning ? "bolt.horizontal.fill" : "power",
+                              tint: DockChrome.stop, label: quitLabel,
+                              lit: content.stillRunning) {
+                    actions.onQuitApp?()
+                }
+            }
+        }
+    }
+
+    private var quitLabel: String {
+        content.stillRunning ? "Force quit \(content.appName)" : "Quit \(content.appName)"
+    }
+
+    private var backLabel: String {
+        "Back to \(content.folderTrail.dropLast().last?.lastPathComponent ?? content.appName)"
+    }
+
+    // MARK: Windows
+
+    @ViewBuilder
+    private var windows: some View {
+        if content.compact {
+            DockPreviewCompactList(windows: content.windows, agents: content.agents,
+                                   selectedWindowID: content.selectedWindowID,
+                                   armedWindowID: content.armedWindowID,
+                                   armedNote: content.armedNote, actions: actions)
+        } else {
+            // A strip that fits centres in the panel — one card
+            // left-anchored with dead glass beside it reads as a
+            // second, empty slot. ViewThatFits alone only centres
+            // inside its own content-hugging bounds; the spacers
+            // are what hand it the row's full width. An
+            // overflowing set falls through to the scroll and
+            // the spacers collapse to nothing.
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 4) { cards }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 4) { cards }
+                    }
+                }
+                Spacer(minLength: 0)
             }
         }
     }
@@ -614,16 +582,13 @@ struct DockPreviewView: View {
     /// the scrolling one, so both draw the same row.
     @ViewBuilder
     private var cards: some View {
+        let captions = captionLines
         ForEach(content.windows) { window in
             DockPreviewCard(window: window, icon: content.icon,
                             size: DockEnhanceMath.cardSize(large: content.largeCards),
                             selected: window.id == content.selectedWindowID,
-                            // A card whose title is just the app name again
-                            // — "Claude" under a header that already says
-                            // Claude — reads as a second label, not a
-                            // caption. The Dock's own bubble makes three.
-                            showsTitle: window.title != content.appName
-                                && window.title != appTitle.base,
+                            showsTitle: showsTitle(window),
+                            captionLines: captions,
                             agent: content.agents[window.id],
                             armedNote: content.armedWindowID == window.id ? content.armedNote : nil,
                             pulsed: content.pulsedWindowIDs.contains(window.id),
@@ -631,35 +596,82 @@ struct DockPreviewView: View {
         }
     }
 
-    /// A header verb drawn as a macOS traffic light — a tinted circle
-    /// with a glyph, like DockDoor's compact header controls. The disc
-    /// itself is 13pt; the button keeps an 18pt hit area so the smaller
-    /// face never costs the click. The label carries both the tooltip
-    /// and the accessibility name since the button has no text.
-    private func headerVerb(_ symbol: String, tint: Color, label: String,
-                            action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Circle()
-                .fill(tint)
-                .frame(width: 13, height: 13)
-                .overlay {
-                    Image(systemName: symbol)
-                        // scaledToFit, not a font size: a 7pt symbol
-                        // rides its text baseline and floats off the
-                        // disc's centre; a resizable glyph centres in
-                        // the box it is given.
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 7, height: 7)
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 18, height: 18)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
+    /// A card whose title is just the app name again — "Claude" under a
+    /// header that already says Claude — reads as a second label, not a
+    /// caption. The Dock's own bubble makes three.
+    private func showsTitle(_ window: DockPreviewWindow) -> Bool {
+        window.title != content.appName && window.title != appTitle.base
     }
+
+    /// The caption rows the strip reserves under every still — the most
+    /// any card needs — so the stills line up along one top edge and
+    /// one bottom edge whatever each card has to say.
+    private var captionLines: Int {
+        content.windows.map { window in
+            let armed = content.armedWindowID == window.id && content.armedNote != nil
+            if armed { return 2 }
+            let title = showsTitle(window) || window.minimized ? 1 : 0
+            return title + (content.agents[window.id] == nil ? 0 : 1)
+        }.max() ?? 0
+    }
+
+    // MARK: Folder
+
+    @ViewBuilder
+    private var folder: some View {
+        switch content.folderState {
+        case .loading:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading…")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+        case .denied:
+            DockFolderNotice(symbol: "lock.fill", tint: DockChrome.caution,
+                             title: "No access to \(content.folderShown?.lastPathComponent ?? "this folder")",
+                             detail: "Allow Files & Folders for JR-Bar to list it here.") {
+                Button("Open Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
+                        actions.onOpen?(url)
+                    }
+                }
+                .buttonStyle(DockCapsuleButtonStyle(prominent: true))
+                .help("Grant folder access in Privacy & Security")
+            }
+        case .failed:
+            DockFolderNotice(symbol: "exclamationmark.triangle.fill", tint: DockChrome.caution,
+                             title: "Couldn't read this folder",
+                             detail: "It may be on a drive that went away.") { EmptyView() }
+        case .ready:
+            if content.folderEntries.isEmpty {
+                DockFolderNotice(symbol: "tray", tint: .secondary,
+                                 title: "Nothing in \(content.folderShown?.lastPathComponent ?? "here")",
+                                 detail: "Files you save here show up in this pop.") { EmptyView() }
+            } else {
+                // Apple's Grid stack: five across, four rows before it
+                // scrolls; a folder chip browses in.
+                let grid = DockEnhanceMath.folderGrid(count: content.folderEntries.count)
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width),
+                                                                 spacing: DockFolderChip.gap),
+                                             count: grid.columns),
+                              spacing: DockFolderChip.gap) {
+                        ForEach(content.folderEntries) { entry in
+                            DockFolderChip(entry: entry, actions: actions)
+                        }
+                    }
+                }
+                .frame(width: CGFloat(grid.columns) * (DockFolderChip.width + DockFolderChip.gap),
+                       height: CGFloat(grid.rows) * (DockFolderChip.height + DockFolderChip.gap))
+            }
+        }
+    }
+
+    // MARK: Words
 
     /// The header's name: the product name with any release-channel tag
     /// split into its own chip, so "T3 Code (Nightly)" lays out as slim
@@ -704,9 +716,10 @@ struct DockPreviewView: View {
     }
 }
 
-/// One window's card: the thumbnail (or the icon), the title, and the
-/// verbs that appear on hover — × closes, – minimizes or restores.
-/// The face is the raise target.
+/// One window's card: the still (or the app's icon), the title, what an
+/// agent in it is doing, and the verbs that appear on hover — × closes,
+/// – minimizes or restores, the arrows toggle full screen. The face is
+/// the raise target.
 struct DockPreviewCard: View {
     let window: DockPreviewWindow
     let icon: NSImage?
@@ -715,22 +728,30 @@ struct DockPreviewCard: View {
     /// nil-equivalent title rows are suppressed — the header already
     /// names the app, and the Dock's own bubble does too.
     var showsTitle = true
+    /// The caption rows the strip reserves under every still, so a card
+    /// with less to say keeps its still in line with the rest.
+    var captionLines = 2
     /// The agent session this window hosts — its mark, its ring when it
     /// waits on you, and what it is doing under the title.
     var agent: DockAgentMark? = nil
-    /// A guarded close's first press: the card rings in the agent's
-    /// colour and this line replaces the title until it lapses.
+    /// A guarded close's first press: the still rings in the agent's
+    /// colour and this line replaces the captions until it lapses.
     var armedNote: String? = nil
     /// A shake or flick just moved this window — the card dips a beat.
     var pulsed = false
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
-    /// The card's corner; a ring drawn inside it steps in from it.
-    static let radius: CGFloat = 10
+    /// The plate's corner — concentric with the panel's glass at its
+    /// inset, and with the still inside it at `pad`.
+    static let radius: CGFloat = 13
+    /// The plate's reach past the still on every side.
+    static let pad: CGFloat = 6
+    /// One caption row's height.
+    static let captionRow: CGFloat = 14
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             ZStack(alignment: .topLeading) {
                 Button { actions.pick(window) } label: {
                     face
@@ -751,124 +772,48 @@ struct DockPreviewCard: View {
                 })
                 // Right-click — DockDoor's action menu: the verbs the
                 // hover pills offer plus the tile grid.
-                .contextMenu {
-                    Button("Raise") { actions.performWindowAction(window, actions.onPick) }
-                    Button("Raise, Keep Preview") { actions.performWindowAction(window, actions.onPickKeepOpen) }
-                    Divider()
-                    Button(window.minimized ? "Bring Back" : "Minimize") {
-                        actions.performWindowAction(window, actions.onMinimize)
-                    }
-                    if window.fullScreen != nil {
-                        Button(window.fullScreen == true ? "Leave Full Screen" : "Full Screen") {
-                            actions.performWindowAction(window, actions.onFullScreen)
-                        }
-                    }
-                    Divider()
-                    Menu("Tile To") {
-                        ForEach(DockTile.allCases.filter { $0 != .center && $0 != .fill }, id: \.rawValue) { tile in
-                            Button(tile.title) { actions.performWindowAction(window, value: tile, actions.onTile) }
-                        }
-                        Divider()
-                        Button(DockTile.center.title) { actions.performWindowAction(window, value: DockTile.center, actions.onTile) }
-                        Button(DockTile.fill.title) { actions.performWindowAction(window, value: DockTile.fill, actions.onTile) }
-                    }
-                    // The other monitors, by name — the display half of
-                    // DockDoor's move-between-Spaces, no private Space API.
-                    let others = DockDisplays.others(than: window.frame)
-                    if !others.isEmpty {
-                        Menu("Move To") {
-                            ForEach(others, id: \.id) { display in
-                                Button(display.name) {
-                                    actions.performWindowAction(window, value: display.id, actions.onMoveToDisplay)
-                                }
-                            }
-                        }
-                    }
-                    if let document = window.documentURL, let send = actions.onSendToShelf {
-                        Divider()
-                        Button("Send Document to Shelf") { send(document) }
-                    }
-                    Divider()
-                    Button("Close Window") { actions.performWindowAction(window, actions.onClose) }
-                }
+                .contextMenu { menu }
                 if hovering {
-                    HStack(spacing: 4) {
-                        verb("xmark", help: "Close window") { actions.performWindowAction(window, actions.onClose) }
-                        verb(window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
-                             help: window.minimized ? "Bring back" : "Minimize") {
+                    HStack(spacing: 5) {
+                        DockRoundVerb(symbol: "xmark", tint: DockChrome.stop, label: "Close window",
+                                      size: 20, onStill: true) {
+                            actions.performWindowAction(window, actions.onClose)
+                        }
+                        DockRoundVerb(symbol: window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
+                                      tint: DockChrome.caution,
+                                      label: window.minimized ? "Bring back" : "Minimize",
+                                      size: 20, onStill: true) {
                             actions.performWindowAction(window, actions.onMinimize)
                         }
                         if let fullScreen = window.fullScreen {
-                            verb(fullScreen ? "arrow.down.left.and.arrow.up.right"
-                                            : "arrow.up.right.and.arrow.down.left",
-                                 help: fullScreen ? "Leave full screen" : "Full screen") {
+                            DockRoundVerb(symbol: fullScreen ? "arrow.down.left.and.arrow.up.right"
+                                                             : "arrow.up.right.and.arrow.down.left",
+                                          tint: DockChrome.go,
+                                          label: fullScreen ? "Leave full screen" : "Full screen",
+                                          size: 20, onStill: true) {
                                 actions.performWindowAction(window, actions.onFullScreen)
                             }
                         }
                     }
-                    .padding(5)
+                    .padding(6)
                     .transition(.opacity)
                 }
             }
             .overlay(alignment: .topTrailing) {
                 if let agent {
-                    DockAgentDot(mark: agent)
-                        .padding(6)
+                    DockAgentDot(mark: agent, size: 10)
+                        .shadow(color: .black.opacity(0.35), radius: 1.5)
+                        .padding(7)
                         .allowsHitTesting(false)
                 }
             }
-            if let armedNote {
-                Text(armedNote)
-                    .font(.caption2.weight(.medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: size.width)
-            } else if showsTitle || window.minimized {
-                HStack(spacing: 3) {
-                    if window.minimized {
-                        Image(systemName: "arrow.down.right.and.arrow.up.left")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.secondary)
-                    }
-                    if showsTitle {
-                        Text(window.title)
-                            .font(.caption2)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .frame(maxWidth: size.width)
-            }
-            if armedNote == nil, let agent {
-                // What the agent in this window is doing — the fact the
-                // panel's row would show, one quiet line.
-                Text(agent.statusLine)
-                    .font(.system(size: 9, weight: agent.isWaiting ? .semibold : .regular))
-                    .foregroundStyle(agent.isWaiting ? .primary : .secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: size.width)
+            if captionLines > 0 {
+                captions
+                    .frame(width: size.width, height: CGFloat(captionLines) * Self.captionRow, alignment: .top)
             }
         }
-        .padding(5)
-        .background(
-            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                .fill(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.quaternary.opacity(0.45))))
-        .overlay(
-            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                .strokeBorder(Color.accentColor, lineWidth: selected ? 2 : 0))
-        // A waiting agent's card is outlined in its provider's colour; a
-        // guarded close's first press thickens it. Inside the selection
-        // ring it steps in and keeps the card's curve.
-        .overlay {
-            if let agent, agent.isWaiting || armedNote != nil {
-                let inset: CGFloat = selected ? 3 : 0
-                RoundedRectangle(cornerRadius: Self.radius - inset, style: .continuous)
-                    .strokeBorder(agent.accent.opacity(0.9), lineWidth: armedNote != nil ? 3 : 1.5)
-                    .padding(inset)
-                    .allowsHitTesting(false)
-            }
-        }
+        .padding(Self.pad)
+        .background(plate)
         .contentShape(Rectangle())
         .onHover { inside in
             hovering = inside
@@ -892,61 +837,135 @@ struct DockPreviewCard: View {
         .help(window.title)
     }
 
+    /// The keyboard's pick wears the accent; the pointer's a quiet plate.
+    @ViewBuilder
+    private var plate: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+        if selected {
+            shape.fill(Color.accentColor.opacity(0.16))
+                .overlay(shape.strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1))
+        } else if hovering {
+            shape.fill(DockChrome.plateHover)
+        }
+    }
+
+    /// A waiting agent's still is ringed in its provider's colour; a
+    /// guarded close's first press thickens the ring.
+    private var ring: Color? {
+        guard let agent, agent.isWaiting || armedNote != nil else { return nil }
+        return agent.accent
+    }
+
     @ViewBuilder
     private var face: some View {
         Group {
             if let thumbnail = window.thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: size.width, height: size.height)
-                    // A transparent-window capture still needs a floor,
-                    // but a black wash fills the .fit letterbox too and
-                    // reads as a dead band atop the image. The card's
-                    // own quiet surface backs the margins instead.
-                    .background(.quaternary.opacity(0.5))
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(.quaternary)
-                    VStack(spacing: 5) {
-                        if let icon {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .frame(width: 34, height: 34)
-                        }
-                        Text(window.minimized ? "Minimized" : "No preview")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
+                DockStill(image: thumbnail, ring: ring, ringWidth: armedNote != nil ? 3 : 2)
+                    .opacity(window.minimized ? 0.55 : 1)
+                    .overlay(alignment: .bottomLeading) {
+                        if window.minimized { DockMinimizedMark().padding(6) }
                     }
-                }
-                .frame(width: size.width, height: size.height)
+            } else {
+                DockStillPlaceholder(icon: icon, minimized: window.minimized, ring: ring)
             }
         }
-        .opacity(window.minimized ? 0.6 : 1)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .frame(width: size.width, height: size.height)
         .contentShape(Rectangle())
     }
 
-    private func verb(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
-                .frame(width: 18, height: 18)
-                .background(.regularMaterial, in: Circle())
+    @ViewBuilder
+    private var captions: some View {
+        VStack(spacing: 1) {
+            if let armedNote {
+                Text(armedNote)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            } else {
+                if showsTitle || window.minimized {
+                    HStack(spacing: 4) {
+                        if window.minimized {
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        if showsTitle {
+                            Text(window.title)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .frame(height: Self.captionRow)
+                }
+                if let agent {
+                    // What the agent in this window is doing — the fact the
+                    // panel's row would show, one quiet line.
+                    Text(agent.statusLine)
+                        .font(.system(size: 10, weight: agent.isWaiting ? .semibold : .regular))
+                        .foregroundStyle(agent.isWaiting ? AnyShapeStyle(agent.accent) : AnyShapeStyle(.secondary))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(height: Self.captionRow)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .help(help)
+        .frame(maxWidth: size.width)
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        Button("Raise") { actions.performWindowAction(window, actions.onPick) }
+        Button("Raise, Keep Preview") { actions.performWindowAction(window, actions.onPickKeepOpen) }
+        Divider()
+        Button(window.minimized ? "Bring Back" : "Minimize") {
+            actions.performWindowAction(window, actions.onMinimize)
+        }
+        if window.fullScreen != nil {
+            Button(window.fullScreen == true ? "Leave Full Screen" : "Full Screen") {
+                actions.performWindowAction(window, actions.onFullScreen)
+            }
+        }
+        Divider()
+        Menu("Tile To") {
+            ForEach(DockTile.allCases.filter { $0 != .center && $0 != .fill }, id: \.rawValue) { tile in
+                Button(tile.title) { actions.performWindowAction(window, value: tile, actions.onTile) }
+            }
+            Divider()
+            Button(DockTile.center.title) { actions.performWindowAction(window, value: DockTile.center, actions.onTile) }
+            Button(DockTile.fill.title) { actions.performWindowAction(window, value: DockTile.fill, actions.onTile) }
+        }
+        // The other monitors, by name — the display half of
+        // DockDoor's move-between-Spaces, no private Space API.
+        let others = DockDisplays.others(than: window.frame)
+        if !others.isEmpty {
+            Menu("Move To") {
+                ForEach(others, id: \.id) { display in
+                    Button(display.name) {
+                        actions.performWindowAction(window, value: display.id, actions.onMoveToDisplay)
+                    }
+                }
+            }
+        }
+        if let document = window.documentURL, let send = actions.onSendToShelf {
+            Divider()
+            Button("Send Document to Shelf") { send(document) }
+        }
+        Divider()
+        Button("Close Window") { actions.performWindowAction(window, actions.onClose) }
     }
 }
 
 /// The past-`compactListLimit` face: one dense row per window — title,
-/// minimized mark, the same hover verbs as a card — instead of
-/// thumbnails a many-windowed app would only smear. Compact also
-/// means no captures: nothing here ever flashes the recording dot.
+/// minimized mark, what an agent in it is doing, the same hover verbs
+/// as a card — instead of thumbnails a many-windowed app would only
+/// smear. Compact also means no captures: nothing here ever flashes the
+/// recording dot.
 struct DockPreviewCompactList: View {
     let windows: [DockPreviewWindow]
     var agents: [Int: DockAgentMark] = [:]
+    /// The keyboard-walked row.
+    var selectedWindowID: Int? = nil
     var armedWindowID: Int? = nil
     var armedNote: String? = nil
     let actions: DockPreviewActions
@@ -957,29 +976,32 @@ struct DockPreviewCompactList: View {
         // starts on the same line.
         let columns = DockCompactColumns.of(windows, agents: agents)
         ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(spacing: 2) {
+            LazyVStack(spacing: 1) {
                 ForEach(windows) { window in
                     DockPreviewCompactRow(window: window, agent: agents[window.id],
+                                          selected: window.id == selectedWindowID,
                                           armedNote: armedWindowID == window.id ? armedNote : nil,
                                           columns: columns, actions: actions)
                 }
             }
-            .padding(2)
         }
-        .frame(maxHeight: 264)
-        .fixedSize(horizontal: true, vertical: false)
+        // The list takes the panel's width — an ask row above it can be
+        // wider than the rows need — and never less than a row's own.
+        .frame(minWidth: DockPreviewCompactRow.minWidth, maxHeight: 264)
     }
 }
 
-/// One chip in a folder pop: the type icon over the name — a click
-/// opens the file. Directories read with a subtle folder badge so a
-/// pop's nesting is visible at a glance.
+/// One chip in a folder pop: the file's Quick Look face (its type icon
+/// until one lands) over the name — a click opens the file, a folder
+/// browses in place. The plate only shows under the pointer, so a full
+/// grid reads as files, not as a wall of buttons.
 private struct DockFolderChip: View {
     let entry: DockFolderEntry
     let actions: DockPreviewActions
     /// The chip's box — the grid lays out on it.
-    static let width: CGFloat = 96
-    static let height: CGFloat = 64
+    static let width: CGFloat = 92
+    static let height: CGFloat = 72
+    static let gap: CGFloat = 4
     @ViewState private var hovering = false
     /// The file's Quick Look thumbnail once it lands — a screenshot or
     /// a PDF reads at a glance instead of as one more document icon.
@@ -994,22 +1016,19 @@ private struct DockFolderChip: View {
                 actions.onOpen?(entry.url)
             }
         } label: {
-            VStack(spacing: 4) {
-                Image(nsImage: thumbnail ?? entry.icon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 34, height: 34)
+            VStack(spacing: 5) {
+                face
+                    .frame(width: 40, height: 40)
                 Text(entry.name)
-                    .font(.caption2)
+                    .font(.system(size: 10.5, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .padding(.horizontal, 4)
             }
-            .frame(width: Self.width - 4, height: Self.height - 12)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 2)
+            .frame(width: Self.width, height: Self.height)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.quaternary.opacity(0.45))))
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(hovering ? DockChrome.plateHover : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1036,6 +1055,61 @@ private struct DockFolderChip: View {
             guard !entry.isDirectory else { return }
             thumbnail = await DockFolderThumbs.thumbnail(for: entry.url)
         }
+    }
+
+    /// A Quick Look face is a picture of the file — it gets a still's
+    /// corners and rim; a type icon is already its own shape.
+    @ViewBuilder
+    private var face: some View {
+        if let thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(DockChrome.hairline, lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+        } else {
+            Image(nsImage: entry.icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        }
+    }
+}
+
+/// A folder pop with nothing to grid — loading aside: why, in a line,
+/// and the one thing that fixes it.
+private struct DockFolderNotice<Trailing: View>: View {
+    let symbol: String
+    let tint: Color
+    let title: String
+    let detail: String
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(tint.opacity(0.14)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 12)
+            trailing()
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 2)
+        .frame(minWidth: 320)
     }
 }
 
@@ -1181,8 +1255,11 @@ struct DockCompactColumns: Equatable {
 
 /// One row of the compact list — click raises, hover shows the verbs.
 private struct DockPreviewCompactRow: View {
+    /// A row's narrowest — the list never squeezes a title below it.
+    static let minWidth: CGFloat = 340
     let window: DockPreviewWindow
     var agent: DockAgentMark? = nil
+    var selected = false
     var armedNote: String? = nil
     var columns = DockCompactColumns()
     let actions: DockPreviewActions
@@ -1190,19 +1267,19 @@ private struct DockPreviewCompactRow: View {
 
     var body: some View {
         Button { actions.pick(window) } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 // A clear slot, not a Group: a Group hands its frame to
                 // each child, so an empty one would take no room at all.
                 if columns.mark {
                     Color.clear
                         .frame(width: 8, height: 8)
                         .overlay {
-                            if let agent { DockAgentDot(mark: agent, size: 7) }
+                            if let agent { DockAgentDot(mark: agent, size: 8) }
                         }
                 }
                 if columns.state {
                     Color.clear
-                        .frame(width: 10, height: 10)
+                        .frame(width: 11, height: 11)
                         .overlay {
                             if window.minimized {
                                 Image(systemName: "arrow.down.right.and.arrow.up.left")
@@ -1210,38 +1287,48 @@ private struct DockPreviewCompactRow: View {
                                 Image(systemName: "arrow.up.right.and.arrow.down.left")
                             }
                         }
-                        .font(.system(size: 8))
+                        .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 Text(armedNote ?? window.title)
-                    .font(armedNote == nil ? .callout : .callout.weight(.medium))
+                    .font(.system(size: 12.5, weight: armedNote == nil ? .regular : .semibold))
+                    .foregroundStyle(window.minimized && armedNote == nil ? .secondary : .primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 8)
+                Spacer(minLength: 10)
                 if hovering {
                     HStack(spacing: 4) {
-                        verb("xmark", help: "Close window") { actions.performWindowAction(window, actions.onClose) }
-                        verb(window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
-                             help: window.minimized ? "Bring back" : "Minimize") {
+                        DockRoundVerb(symbol: "xmark", tint: DockChrome.stop, label: "Close window", size: 20) {
+                            actions.performWindowAction(window, actions.onClose)
+                        }
+                        DockRoundVerb(symbol: window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
+                                      tint: DockChrome.caution,
+                                      label: window.minimized ? "Bring back" : "Minimize", size: 20) {
                             actions.performWindowAction(window, actions.onMinimize)
                         }
                         if let fullScreen = window.fullScreen {
-                            verb(fullScreen ? "arrow.down.left.and.arrow.up.right"
-                                            : "arrow.up.right.and.arrow.down.left",
-                                 help: fullScreen ? "Leave full screen" : "Full screen") {
+                            DockRoundVerb(symbol: fullScreen ? "arrow.down.left.and.arrow.up.right"
+                                                             : "arrow.up.right.and.arrow.down.left",
+                                          tint: DockChrome.go,
+                                          label: fullScreen ? "Leave full screen" : "Full screen", size: 20) {
                                 actions.performWindowAction(window, actions.onFullScreen)
                             }
                         }
                     }
                     .transition(.opacity)
+                } else if armedNote == nil, let agent {
+                    // What the agent in this window is doing, where the
+                    // verbs stand on hover.
+                    Text(agent.statusLine)
+                        .font(.system(size: 11, weight: agent.isWaiting ? .semibold : .regular))
+                        .foregroundStyle(agent.isWaiting ? AnyShapeStyle(agent.accent) : AnyShapeStyle(.secondary))
+                        .lineLimit(1)
+                        .frame(maxWidth: 130, alignment: .trailing)
                 }
             }
-            .frame(width: 300)
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)))
+            .frame(minWidth: Self.minWidth, maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+            .background(plate)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1251,29 +1338,30 @@ private struct DockPreviewCompactRow: View {
         .help(window.title)
     }
 
-    private func verb(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
-                .frame(width: 18, height: 18)
-                .background(.regularMaterial, in: Circle())
+    @ViewBuilder
+    private var plate: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if selected {
+            shape.fill(Color.accentColor.opacity(0.18))
+        } else if hovering {
+            shape.fill(DockChrome.plateHover)
+        } else if armedNote != nil, let agent {
+            shape.fill(agent.accent.opacity(0.14))
         }
-        .buttonStyle(.plain)
-        .help(help)
     }
 }
 
-/// A waiting agent this app hosts, answerable from the Dock: the mark,
-/// the session and what it asks — what it would run, and the red mark
-/// when that is destructive — then Deny / Approve. Where the hook holds
-/// the ask, Always Allow sits between them, and a held question offers
-/// its options instead of Approve. Every verb goes through the shared
-/// answer desk the panel and the notch answer through, so one pending
-/// set dims every copy of the buttons and the line under the ask is the
-/// desk's. Where the daemon says the ask can't be answered from
-/// outside, the buttons disable and say where it can be; once answered,
-/// the row shows the daemon's verdict instead of guessing success. With
-/// no desk published the row draws no verbs.
+/// A waiting agent this app hosts, answerable from the Dock: the
+/// provider's tile, the session and what it asks — what it would run,
+/// and the red mark when that is destructive — then Deny / Approve.
+/// Where the hook holds the ask, Always Allow sits between them, and a
+/// held question offers its options instead of Approve. Every verb goes
+/// through the shared answer desk the panel and the notch answer
+/// through, so one pending set dims every copy of the buttons and the
+/// line under the ask is the desk's. Where the daemon says the ask can't
+/// be answered from outside, the buttons disable and say where it can
+/// be; once answered, the row shows the daemon's verdict instead of
+/// guessing success. With no desk published the row draws no verbs.
 private struct DockAskRow: View {
     let mark: DockAgentMark
     let actions: DockPreviewActions
@@ -1287,63 +1375,85 @@ private struct DockAskRow: View {
         }
     }
 
+    private var destructive: Bool { ask?.isDestructive == true }
+
     var body: some View {
         let desk = AskAnswerDesk.shared
         let busy = desk?.isPending(mark.sessionID) ?? false
-        HStack(spacing: 8) {
-            DockAgentDot(mark: mark)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
+        HStack(spacing: 10) {
+            ProviderTile(style: ProviderStyle.style(for: mark.provider), size: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
                     Text(mark.label)
-                        .font(.callout.weight(.medium))
+                        .font(.system(size: 12.5, weight: .semibold))
                         .lineLimit(1)
-                    if ask?.isDestructive == true {
+                    if destructive {
                         AskRiskMark(size: 10)
                     }
                 }
                 Text(mark.statusLine)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let preview = ask?.previewLine {
-                    AskPreviewLine(text: preview, size: 10.5,
-                                   tint: ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+                    AskPreviewLine(text: preview, size: 10,
+                                   tint: destructive ? Color.red.opacity(0.9) : .secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Color.primary.opacity(0.06)))
                 }
             }
-            .frame(maxWidth: 260, alignment: .leading)
-            Spacer(minLength: 8)
-            if let line = desk?.note(for: mark.sessionID)?.text {
-                Text(line)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            } else if let ask, let desk, AskVerbs.chooses(ask) {
-                Button("Deny") { answer(ask, .deny, on: desk) }
-                    .controlSize(.small)
-                    .disabled(busy)
-                DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
-            } else if let ask, let desk {
-                let answerable = ask.canAnswer && !ask.wantsTextReply
-                Button("Deny") { answer(ask, .deny, on: desk) }
-                    .controlSize(.small)
-                    .disabled(!answerable || busy)
-                if answerable, AskVerbs.alwaysAllows(ask) {
-                    Button("Always Allow") { answer(ask, .always, on: desk) }
-                        .controlSize(.small)
-                        .disabled(busy)
-                        .help("Approve, and let \(mark.providerName) remember the rule it offered")
-                }
-                Button("Approve") { answer(ask, .approve, on: desk) }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-                    .tint(mark.accent)
-                    .disabled(!answerable || busy)
-                    .help(answerable ? "Approve — \(mark.providerName) carries on"
-                                     : "Answer this one in the session's window")
+            .frame(maxWidth: 280, alignment: .leading)
+            Spacer(minLength: 10)
+            HStack(spacing: 6) {
+                verbs(desk: desk, busy: busy)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(mark.accent.opacity(0.09)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(mark.accent.opacity(destructive ? 0 : 0.28), lineWidth: 1))
+        .overlay {
+            if destructive {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.red.opacity(0.55), lineWidth: 1)
+            }
+        }
         .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
+    }
+
+    @ViewBuilder
+    private func verbs(desk: AskAnswerDesk?, busy: Bool) -> some View {
+        if let line = desk?.note(for: mark.sessionID)?.text {
+            Text(line)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else if let ask, let desk, AskVerbs.chooses(ask) {
+            Button("Deny") { answer(ask, .deny, on: desk) }
+                .buttonStyle(DockCapsuleButtonStyle())
+                .disabled(busy)
+            DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
+        } else if let ask, let desk {
+            let answerable = ask.canAnswer && !ask.wantsTextReply
+            Button("Deny") { answer(ask, .deny, on: desk) }
+                .buttonStyle(DockCapsuleButtonStyle())
+                .disabled(!answerable || busy)
+            if answerable, AskVerbs.alwaysAllows(ask) {
+                Button("Always Allow") { answer(ask, .always, on: desk) }
+                    .buttonStyle(DockCapsuleButtonStyle())
+                    .disabled(busy)
+                    .help("Approve, and let \(mark.providerName) remember the rule it offered")
+            }
+            Button("Approve") { answer(ask, .approve, on: desk) }
+                .buttonStyle(DockCapsuleButtonStyle(prominent: true, tint: mark.accent))
+                .disabled(!answerable || busy)
+                .help(answerable ? "Approve — \(mark.providerName) carries on"
+                                 : "Answer this one in the session's window")
+        }
     }
 
     /// One click's verdict, through the desk; once it has answered, the
@@ -1371,11 +1481,8 @@ private struct DockAskChoices: View {
         switch AskChoiceLayout.layout(choices) {
         case .buttons(let labels):
             ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
-                if index == 0 {
-                    option(label).buttonStyle(.borderedProminent).tint(accent)
-                } else {
-                    option(label)
-                }
+                option(label)
+                    .buttonStyle(DockCapsuleButtonStyle(prominent: index == 0, tint: accent))
             }
         case .menu:
             let picks = desk.picks(for: ask)
@@ -1389,9 +1496,7 @@ private struct DockAskChoices: View {
             .disabled(busy)
             if picks.isComplete(choices), choices.count > 1 || choices.first?.multi == true {
                 Button("Send") { Task { await desk.sendPicks(for: ask) } }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-                    .tint(accent)
+                    .buttonStyle(DockCapsuleButtonStyle(prominent: true, tint: accent))
                     .disabled(busy)
             }
         }
@@ -1401,21 +1506,20 @@ private struct DockAskChoices: View {
         Button(label) {
             if let choice = choices.first { desk.pick(label, in: choice, of: ask) }
         }
-        .controlSize(.small)
         .disabled(busy)
         .help("Answer “\(label)”")
     }
 }
 
 /// The player tile's Now Playing row — DockDoor's media widget: the
-/// artwork, "Title — Artist", and the transport the shared MediaRemote
-/// feed sends for real. Paused state dims the play glyph.
+/// artwork, the title over the artist, and the transport the shared
+/// MediaRemote feed sends for real.
 private struct DockMediaRow: View {
     let media: AlcoveMedia
     let actions: DockPreviewActions
 
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 6) {
             transport
             // Seek without opening the player: a continuous hairline of
             // the playhead, the times either side. Only when the source
@@ -1426,11 +1530,12 @@ private struct DockMediaRow: View {
             // The line the notch Shelf is singing — its own LRCLIB cache,
             // stepped to this row's playhead; no lookup of the Dock's own.
             // Silent between stamps and whenever the Shelf has no lyrics.
+            // A paused track's line cannot move, so it ticks slowly.
             if let synced = actions.lyrics() {
                 TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
                     if let line = synced.line(at: media.liveElapsed(at: context.date) ?? 0) {
                         Text(line)
-                            .font(.caption2)
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -1439,57 +1544,91 @@ private struct DockMediaRow: View {
                 }
             }
         }
+        .frame(minWidth: 300)
     }
 
     private var transport: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Group {
                 if let data = media.artworkData, let image = NSImage(data: data) {
                     Image(nsImage: image)
                         .resizable()
+                        .interpolation(.high)
                         .aspectRatio(contentMode: .fill)
                 } else {
                     ZStack {
-                        Rectangle().fill(.quaternary)
+                        Rectangle().fill(Color.primary.opacity(0.08))
                         Image(systemName: "music.note")
-                            .font(.system(size: 12))
+                            .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
                 }
             }
-            .frame(width: 28, height: 28)
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-            Text(media.displayLine)
-                .font(.callout)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 8)
-            HStack(spacing: 10) {
-                Button { actions.onMediaCommand?(.previousTrack) } label: {
-                    Image(systemName: "backward.fill")
+            .frame(width: 38, height: 38)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(DockChrome.hairline, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(media.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let artist = media.artist, !artist.isEmpty {
+                    Text(artist)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                .help("Previous track")
-                Button { actions.onMediaCommand?(.togglePlayPause) } label: {
-                    Image(systemName: media.playing ? "pause.fill" : "play.fill")
-                }
-                .help(media.playing ? "Pause" : "Play")
-                Button { actions.onMediaCommand?(.nextTrack) } label: {
-                    Image(systemName: "forward.fill")
-                }
-                .help("Next track")
             }
-            .font(.system(size: 12))
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            Spacer(minLength: 10)
+            HStack(spacing: 2) {
+                DockTransportButton(symbol: "backward.fill", label: "Previous track") {
+                    actions.onMediaCommand?(.previousTrack)
+                }
+                DockTransportButton(symbol: media.playing ? "pause.fill" : "play.fill",
+                                    label: media.playing ? "Pause" : "Play", size: 16) {
+                    actions.onMediaCommand?(.togglePlayPause)
+                }
+                DockTransportButton(symbol: "forward.fill", label: "Next track") {
+                    actions.onMediaCommand?(.nextTrack)
+                }
+            }
         }
-        .padding(.vertical, 2)
         .help(media.displayLine)
+    }
+}
+
+/// A transport glyph with a round plate under the pointer.
+private struct DockTransportButton: View {
+    let symbol: String
+    let label: String
+    var size: CGFloat = 12
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(hovering ? DockChrome.plateHover : Color.clear))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 
 /// The player row's playhead: elapsed, a thin continuous track, the
 /// length. A click or drag on the track seeks there. The playhead
-/// advances between feed pushes from the sampled elapsed + timestamp.
+/// advances between feed pushes from the sampled elapsed + timestamp —
+/// once a second while playing; a paused one only re-reads its feed.
 private struct DockMediaScrubber: View {
     let media: AlcoveMedia
     let duration: Double
@@ -1497,18 +1636,19 @@ private struct DockMediaScrubber: View {
     @ViewState private var dragFraction: Double?
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: .now, by: media.playing ? 1 : 60)) { context in
             let elapsed = media.liveElapsed(at: context.date) ?? 0
             let fraction = dragFraction ?? min(1, max(0, elapsed / duration))
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Text(DockEnhanceMath.clock(dragFraction.map { $0 * duration } ?? elapsed))
+                    .frame(width: 34, alignment: .leading)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(.quaternary)
-                        Capsule().fill(.secondary)
-                            .frame(width: max(2, geo.size.width * fraction))
+                        Capsule().fill(Color.primary.opacity(0.12))
+                        Capsule().fill(Color.primary.opacity(0.7))
+                            .frame(width: max(4, geo.size.width * fraction))
                     }
-                    .frame(height: 3)
+                    .frame(height: 4)
                     .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
@@ -1523,8 +1663,9 @@ private struct DockMediaScrubber: View {
                 }
                 .frame(height: 12)
                 Text(DockEnhanceMath.clock(duration))
+                    .frame(width: 34, alignment: .trailing)
             }
-            .font(.system(size: 9, weight: .medium).monospacedDigit())
+            .font(.system(size: 10, weight: .medium).monospacedDigit())
             .foregroundStyle(.secondary)
         }
         .help("Drag to seek")
@@ -1536,7 +1677,7 @@ private struct DockMediaScrubber: View {
 /// own Join) and a quiet "Free until 3:30" when nothing is on now; on a
 /// meeting app's tile, the one event whose link opens there. The row
 /// only exists when the grant already covers it or is still unasked
-/// ("Show events" is the explicit opt-in, never a prompt from a bare
+/// ("Show Events" is the explicit opt-in, never a prompt from a bare
 /// hover).
 private struct DockCalendarRow: View {
     let events: [ShelfCalendarModel.Event]
@@ -1546,46 +1687,63 @@ private struct DockCalendarRow: View {
 
     var body: some View {
         if needsAuth {
-            HStack(spacing: 6) {
+            HStack(spacing: 10) {
                 Image(systemName: "calendar")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.accentColor.opacity(0.14)))
+                Text("See what's next on your calendar")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                Button("Show events") { actions.onCalendarAuth?() }
-                    .controlSize(.small)
+                Spacer(minLength: 10)
+                Button("Show Events") { actions.onCalendarAuth?() }
+                    .buttonStyle(DockCapsuleButtonStyle(prominent: true))
                     .help("Allow calendar access to preview upcoming events")
             }
-            .padding(.vertical, 2)
         } else if !events.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let freeUntil {
-                    Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
                 }
                 ForEach(Array(events.enumerated()), id: \.offset) { _, event in
                     eventRow(event)
                 }
             }
-            .padding(.vertical, 2)
+            .frame(minWidth: 280)
         }
     }
 
     private func eventRow(_ event: ShelfCalendarModel.Event) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "calendar")
-                .foregroundStyle(.secondary)
+        let now = event.start <= Date()
+        return HStack(spacing: 9) {
+            Capsule()
+                .fill(now ? Color.green : Color.accentColor)
+                .frame(width: 3, height: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(event.title)
-                    .font(.callout)
+                    .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                 Text(timeLine(event))
-                    .font(.caption2)
+                    .font(.system(size: 11))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 10)
             if let url = event.url {
-                Button("Join") { actions.onCalendarJoin?(url) }
-                    .controlSize(.small)
-                    .help("Join the meeting link")
+                Button { actions.onCalendarJoin?(url) } label: {
+                    Label("Join", systemImage: "video.fill")
+                        .imageScale(.small)
+                }
+                .buttonStyle(DockCapsuleButtonStyle(prominent: now, tint: .green))
+                .help("Join the meeting link")
             }
         }
     }
