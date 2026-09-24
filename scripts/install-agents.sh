@@ -151,8 +151,13 @@ if [[ "$MODE" == "pkg" ]]; then
     codesign --verify --deep --strict "$APP" && echo "codesign verify: ok"
     echo "installed $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist") ($(/usr/libexec/PlistBuddy -c 'Print :JRBarCommit' "$APP/Contents/Info.plist" 2>/dev/null || echo 'no commit'))"
     # jrbar:// links open whichever copy Launch Services picks: make it
-    # this one. The package build unregisters its own intermediates.
+    # this one. The package build unregisters its own intermediates, but
+    # the installer's look for an existing com.jonathanreed.jrbar puts
+    # them straight back, so they come out again here.
     if [[ -x "$LSREGISTER" ]]; then
+        for bundle in "$ROOT/build/macos-pkg/app/JR-Bar.app" "$ROOT/build/macos-pkg/swift/JR-Bar.app"; do
+            [[ -e "$bundle" ]] && { "$LSREGISTER" -u "$bundle" >/dev/null 2>&1 || true; }
+        done
         if "$LSREGISTER" -f "$APP" >/dev/null 2>&1; then
             echo "==> registered $APP with Launch Services"
         else
