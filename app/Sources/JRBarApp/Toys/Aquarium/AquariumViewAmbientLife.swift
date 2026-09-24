@@ -68,16 +68,43 @@ extension AquariumView {
         lip.addQuadCurve(to: CGPoint(x: 0.5, y: 0.12), control: CGPoint(x: 0, y: 0.30))
         j.stroke(lip, with: .color(Color(red: 0.98, green: 0.88, blue: 0.95).opacity(0.5)),
                  lineWidth: 0.04)
-        for k in 0..<4 {
-            let tx = -0.30 + Double(k) * 0.20
-            var tent = Path()
-            tent.move(to: CGPoint(x: tx, y: 0.12))
-            tent.addCurve(to: CGPoint(x: tx + sin(t * 1.3 + Double(k) * 1.7) * 0.08, y: 0.85),
-                          control1: CGPoint(x: tx - 0.06, y: 0.35),
-                          control2: CGPoint(x: tx + 0.06, y: 0.60))
-            j.stroke(tent, with: .color(Color(red: 0.9, green: 0.75, blue: 0.85).opacity(0.6)),
-                     lineWidth: 0.05)
+        // Fine marginal tentacles off the whole lip, trailing long.
+        let drift = reduceMotion ? 0 : t
+        var fine = Path()
+        for k in 0..<11 {
+            let u = Double(k) / 10
+            let tx = -0.48 + u * 0.96
+            let ty = 0.12 + 0.17 * (1 - pow(u * 2 - 1, 2))
+            fine.move(to: CGPoint(x: tx, y: ty))
+            fine.addCurve(to: CGPoint(x: tx + sin(drift * 1.1 + Double(k)) * 0.10, y: ty + 0.95),
+                          control1: CGPoint(x: tx - 0.05, y: ty + 0.35),
+                          control2: CGPoint(x: tx + 0.06, y: ty + 0.65))
         }
+        j.stroke(fine, with: .color(Color(red: 0.96, green: 0.82, blue: 0.92).opacity(0.45)), lineWidth: 0.012)
+        // Four frilled oral arms under the bell.
+        for k in 0..<4 {
+            let tx = -0.21 + Double(k) * 0.14
+            var arm = Path()
+            arm.move(to: CGPoint(x: tx, y: 0.18))
+            arm.addCurve(to: CGPoint(x: tx + sin(drift * 1.3 + Double(k) * 1.7) * 0.08, y: 0.72),
+                         control1: CGPoint(x: tx - 0.08, y: 0.36),
+                         control2: CGPoint(x: tx + 0.08, y: 0.54))
+            j.stroke(arm, with: .linearGradient(
+                Gradient(colors: [Color(red: 0.98, green: 0.80, blue: 0.92).opacity(0.75),
+                                  Color(red: 0.90, green: 0.70, blue: 0.86).opacity(0.15)]),
+                startPoint: CGPoint(x: 0, y: 0.18), endPoint: CGPoint(x: 0, y: 0.72)),
+                     style: StrokeStyle(lineWidth: 0.07, lineCap: .round, dash: [0.05, 0.02]))
+        }
+        // The moon jelly's four pale rings, seen through the bell.
+        var rings = Path()
+        for k in 0..<4 {
+            let a = Double(k) / 4 * .pi * 2 + .pi / 4
+            rings.addEllipse(in: CGRect(x: cos(a) * 0.15 - 0.075, y: -0.14 + sin(a) * 0.08 - 0.05,
+                                        width: 0.15, height: 0.10))
+        }
+        j.stroke(rings, with: .color(Color(red: 1.0, green: 0.70, blue: 0.88).opacity(0.5)), lineWidth: 0.026)
+        TankPaint.glow(&j, at: CGPoint(x: 0, y: -0.1), radius: 0.8,
+                       color: Color(red: 0.95, green: 0.80, blue: 1.0).opacity(0.18))
         j.fill(Path(ellipseIn: CGRect(x: -0.16, y: -0.30, width: 0.32, height: 0.30)),
                with: .color(.white.opacity(0.5)))
     }
