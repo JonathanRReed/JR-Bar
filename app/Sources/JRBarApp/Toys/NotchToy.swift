@@ -254,6 +254,13 @@ final class NotchToy: Toy {
         audioTap.onLevels = { [weak self] bands in
             self?.cardModel.utility.audioLevels = bands
         }
+        // The row follows the tap's own edges: the start lands after
+        // `sync` returns, and a dead tap must drop its bars at once.
+        audioTap.onLiveChange = { [weak self] live in
+            guard let utility = self?.cardModel.utility else { return }
+            utility.audioTapLive = live
+            if !live { utility.audioLevels = [Float](repeating: 0, count: utility.audioLevels.count) }
+        }
         guard runtimeEnabled else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
@@ -1986,7 +1993,7 @@ final class NotchToy: Toy {
     /// Owned here so its lifecycle rides the island's — a parked
     /// island holds no tap. `runtimeEnabled` is folded into the gate,
     /// so state-machine tests never build a Core Audio object.
-    @ObservationIgnored private let audioTap = AudioLevelTap()
+    @ObservationIgnored let audioTap = AudioLevelTap()
 
     /// Push the gating facts. The media row is on screen only while
     /// the card is grown (no notice kind carries media today — the
@@ -1998,7 +2005,6 @@ final class NotchToy: Toy {
                       playing: islandMedia?.playing == true,
                       enabled: runtimeEnabled && settings.audioVisualizer,
                       clientBundleID: islandMedia?.bundleIdentifier)
-        cardModel.utility.audioTapLive = audioTap.live
     }
 
     // MARK: Power

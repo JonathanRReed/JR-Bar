@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import JRBarCore
 @testable import JRBarApp
 
 /// The tap's lifecycle against a fake engine: the gating table, the
@@ -134,5 +135,45 @@ import Testing
         #expect(tap.levels == [Float](repeating: 0, count: 6))
         #expect(seen.last == [Float](repeating: 0, count: 6),
                 "collapse leaves a decaying tail, not a frozen frame")
+    }
+
+    @Test func everyLiveEdgeReachesTheListener() async throws {
+        let (tap, engine) = makeTap()
+        var edges: [Bool] = []
+        tap.onLiveChange = { edges.append($0) }
+        tap.sync(visible: true, playing: true, enabled: true)
+        #expect(edges.isEmpty, "the start is async: nothing is live yet")
+        await settle()
+        engine().onDeath?()
+        try await Task.sleep(for: .milliseconds(50))
+        tap.sync(visible: true, playing: true, enabled: true)
+        await settle()
+        tap.stop()
+        #expect(edges == [true, false, true, false], "up, death, up, stop")
+    }
+
+    @Test func theCardFollowsTheTapAfterTheAsyncStartAndDropsOnDeath() async throws {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy: NotchToy = store.notch
+        let utility = toy.cardModel.utility
+        var latest: FakeEngine!
+        toy.audioTap.makeEngine = { let engine = FakeEngine(); latest = engine; return engine }
+
+        toy.audioTap.sync(visible: true, playing: true, enabled: true)
+        #expect(!utility.audioTapLive, "sync returns before the pipeline is up")
+        await settle()
+        #expect(utility.audioTapLive, "the async start lands on the card by itself")
+        latest.onLevels?([0.2, 0.4, 0.6, 0.8, 1, 0.5])
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(utility.audioLevels == [0.2, 0.4, 0.6, 0.8, 1, 0.5])
+
+        latest.onDeath?()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!utility.audioTapLive, "a dead tap gives the row back its decorative bars")
+        #expect(utility.audioLevels == [Float](repeating: 0, count: 6), "no frozen frame")
     }
 }

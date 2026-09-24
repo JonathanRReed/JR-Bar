@@ -34,11 +34,18 @@ final class AudioLevelTap {
                                                count: NotchAudioLevels.bandCenters.count)
     /// The whole pipeline is up and buffers are flowing — the row's
     /// signal to draw live bars instead of the decorative animation.
-    private(set) var live = false
+    private(set) var live = false {
+        didSet { if live != oldValue { onLiveChange?(live) } }
+    }
 
     /// Every level publication lands here — the toy forwards it to the
     /// model the card row reads.
     var onLevels: (@MainActor ([Float]) -> Void)?
+    /// Every edge of `live` lands here: up once the async start really
+    /// ran, down on a failed start, the engine's death or a stop. The
+    /// toy copies it into the card from here, never after `sync`, which
+    /// returns before the pipeline is built.
+    var onLiveChange: (@MainActor (Bool) -> Void)?
 
     /// The engine factory — tests substitute a fake so no Core Audio
     /// object is ever created off the runtime path.
@@ -97,10 +104,15 @@ final class AudioLevelTap {
         engine?.stop()
         engine = nil
         live = false
-        if levels.contains(where: { $0 > 0 }) {
-            levels = [Float](repeating: 0, count: levels.count)
-            onLevels?(levels)
-        }
+        zeroLevels()
+    }
+
+    /// The bars' last reading goes to zero with the tap, so a stopped or
+    /// dead pipeline never leaves a frozen frame behind.
+    private func zeroLevels() {
+        guard levels.contains(where: { $0 > 0 }) else { return }
+        levels = [Float](repeating: 0, count: levels.count)
+        onLevels?(levels)
     }
 
     /// Which processes the tap should mix: the now-playing client's
@@ -163,6 +175,7 @@ final class AudioLevelTap {
     private func noteEngineDied() {
         engine = nil
         live = false
+        zeroLevels()
     }
 }
 
@@ -286,14 +299,26 @@ private final class TapSampleBuffer: @unchecked Sendable {
 /// The real pipeline. One instance = one tap + one aggregate + one
 /// IOProc; `rebuild` (default-output change) is a stop/start pair, so
 /// at no moment are two taps alive.
+///
+/// Everything the pipeline owns lives on `workQueue` alone: the build,
+/// the running flag, the publish timer, the device listener and the
+/// Core Audio ids. `start` hops there and `stop` joins it with `sync`,
+/// so no field is ever touched from two threads. `processes` is the
+/// caller's copy of the target, written once before the hop.
 final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     private(set) var processes: [pid_t]?
-    private(set) var running = false
+    /// The caller's read of the queue's flag — never from `workQueue`.
+    var running: Bool { workQueue.sync { isRunning } }
     var onLevels: (([Float]) -> Void)?
     var onDeath: (() -> Void)?
 
     private let buffer = TapSampleBuffer()
     private let workQueue = DispatchQueue(label: "jrbar.audio.tap", qos: .utility)
+    // `workQueue` only, from here down.
+    private var isRunning = false
+    /// The target the queue builds around — a device-change rebuild
+    /// reads it again.
+    private var buildTarget: [pid_t]?
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
@@ -303,31 +328,21 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     /// The default-output listener context — kept so `stop` can
     /// remove exactly what `start` added.
     private var listeningForDeviceChange = false
-    /// Invalidate ticket for an in-flight build — a stop (or a newer
-    /// start) mid-construction makes the build unwind itself instead of
-    /// coming alive after its caller already left.
-    private var startTicket = 0
 
     func start(processes: [pid_t]?,
                completion: @escaping @Sendable (Result<Void, any Error>) -> Void) {
-        guard !running else { completion(.success(())); return }
         self.processes = processes
-        startTicket += 1
-        let ticket = startTicket
         workQueue.async { [weak self] in
             guard let self else { return }
+            guard !self.isRunning else { completion(.success(())); return }
+            self.buildTarget = processes
             do {
                 try self.buildPipeline()
             } catch {
                 completion(.failure(error))
                 return
             }
-            guard ticket == self.startTicket, !self.running else {
-                // Stopped (or restarted) while the HAL worked — unwind.
-                self.teardown()
-                return
-            }
-            self.running = true
+            self.isRunning = true
             self.armDeviceChangeListener()
             self.armPublishTimer()
             completion(.success(()))
@@ -335,18 +350,17 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     }
 
     func stop() {
-        running = false
-        startTicket += 1
-        timer?.cancel()
-        timer = nil
-        disarmDeviceChangeListener()
-        // The teardown runs on the engine's serial queue: a device-
-        // change rebuild or start already in flight finishes (or sees
-        // its ticket stale / `running == false` and unwinds) before we
-        // tear down, so a stop can never leave a tap behind. No
-        // work-queue item ever blocks on the main actor — the hops are
-        // `Task` posts — so `sync` cannot deadlock.
-        workQueue.sync { teardown() }
+        // A build already queued runs to the end first, and this item
+        // then tears it down, so a stop can never leave a tap behind.
+        // No work-queue item ever blocks on the main actor — the hops
+        // are `Task` posts — so `sync` cannot deadlock.
+        workQueue.sync {
+            isRunning = false
+            timer?.cancel()
+            timer = nil
+            disarmDeviceChangeListener()
+            teardown()
+        }
     }
 
     /// Unwind every Core Audio object — the IOProc first, then the
@@ -373,7 +387,7 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     private func buildPipeline() throws {
         // 1. The tap description. A known client mixes its processes;
         // otherwise the global stereo mixdown of everything.
-        let objectIDs = processes.map { Self.processObjectIDs(for: $0) } ?? []
+        let objectIDs = buildTarget.map { Self.processObjectIDs(for: $0) } ?? []
         let description: CATapDescription
         if !objectIDs.isEmpty {
             description = CATapDescription(stereoMixdownOfProcesses: objectIDs)
@@ -545,7 +559,7 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     /// itself dead and the row falls back.
     private func noteDeviceChange() {
         workQueue.async { [weak self] in
-            guard let self, self.running else { return }
+            guard let self, self.isRunning else { return }
             do {
                 self.teardown()
                 try self.buildPipeline()
@@ -555,6 +569,9 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
                 // this engine's address, and the next headphone plug would
                 // otherwise fire the proc on a dead object.
                 self.disarmDeviceChangeListener()
+                self.isRunning = false
+                self.timer?.cancel()
+                self.timer = nil
                 self.onDeath?()
             }
         }
