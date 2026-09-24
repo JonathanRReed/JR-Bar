@@ -294,9 +294,15 @@ study of Apple's own model (MIT).
   lets go on a 3 s watchdog (restarted once when the lid reopens), on
   screen sleep, lock, a session switch or a lost/mirrored built-in
   screen, or when the lid is back past 15° with a frame captured after
-  the close: the fold then unfolds from black. It sits at the overlay's
-  own level, so never above the lock screen, and uses no private
-  SkyLight spaces.
+  the close. The reopen films at once, wherever the lid is, and the fold
+  then unfolds from black: the glass starts at the last angle that still
+  draws all black (edge-on + 2°) and the chase unwinds it to the live lid
+  in under half a second, so a quick reopen never cuts straight to a
+  half-lit desktop. One reference holds for as long as the overlay is up,
+  so the unfold, and the dwell pause's unwind, draw from the lid they
+  started from. The card reads "Holding black across the close" for the
+  whole hold. It sits at the overlay's own level, so never above the
+  lock screen, and uses no private SkyLight spaces.
 - **Swap**: `FoldProvider.bendy` / `.lidPlane`: detect via
   `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` (Lid Plane's
   bundle id is in its repo `Info.plist`; Bendy's is read from
@@ -308,7 +314,9 @@ study of Apple's own model (MIT).
   Wherever the lid rests), Starts folding at 60–160° (Set angle only; in
   the Duo set it near where your lid rests), Release when parked, Jitter
   0–5°, Perspective / Shade / Blur, Goes dark over 20–100 % (Duo) or
-  Frost (Room), Hold picture in place 0–100 %, Click on return, Hinge
+  Frost (Room; a Settings search that lands on the other look's row draws
+  it switched off, saying which look has it), Hold picture in place
+  0–100 %, Click on return, Hinge
   voice, "Simulate a fold" slider (drives the angle while held), Try it
   (a close and reopen 50° below the fold's own reference), live angle
   readout ("104°" or "no sensor"), Render with (JR-Bar / Bendy / Lid
