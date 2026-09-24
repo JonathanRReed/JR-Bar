@@ -132,7 +132,9 @@ _PROVIDER_DESCRIPTORS: Final = (
     ProviderDescriptor(
         "opencode",
         "OpenCode",
-        ("opencode-db", "opencode-auth"),
+        # OpenCode Go's usage endpoint is the only quota source; the local
+        # database gives token totals only.
+        ("opencode-go-api", "opencode-db"),
         False,
         True,
         True,

@@ -1122,6 +1122,21 @@ def _provider_supports_quota(provider_id: object) -> bool:
     return False
 
 
+def _snapshot_has_quota_source(snapshot: object) -> bool:
+    """Whether THIS reading could carry a quota: the provider has a quota
+    collector, and the collector did not say this account has none.
+
+    OpenCode is the case that needs the second half: its collector exists,
+    but without an OpenCode Go key (or with a Zen key that has no Go
+    subscription) it reports ``unsupported``. The app must then draw no
+    meter at all rather than an empty one.
+    """
+    if not _provider_supports_quota(getattr(snapshot, "provider_id", None)):
+        return False
+    state = getattr(getattr(snapshot, "state", None), "value", getattr(snapshot, "state", None))
+    return state != "unsupported"
+
+
 def usage_document(
     usage_state: object,
     *,
@@ -1224,7 +1239,7 @@ def usage_document(
                 "instance": getattr(snapshot, "source_instance_id", "default"),
                 # False for a provider with no quota collector at all, so a
                 # "show meters" control can hide instead of drawing dead.
-                "quota_source": _provider_supports_quota(provider_id),
+                "quota_source": _snapshot_has_quota_source(snapshot),
                 # The app's UsageAccount block: {plan, label, fidelity}.
                 # `plan` is the provider's own word for the subscription
                 # ("pro", "Max 20x"), never inferred from which windows

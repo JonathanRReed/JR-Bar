@@ -603,7 +603,7 @@ def test_antigravity_cli_fallback_when_server_not_running__and_1_more(tmp_path: 
     assert len(result.lanes) == 1
     assert result.lanes[0].label == "Antigravity CLI"
 
-    # --- scenario: opencode_collector_detects_free_tier_and_tokens
+    # --- scenario: opencode_collector_reports_tokens_and_no_invented_quota
     root = tmp_path / ".local" / "share" / "opencode"
     root.mkdir(parents=True)
     auth_file = root / "auth.json"
@@ -624,10 +624,16 @@ def test_antigravity_cli_fallback_when_server_not_running__and_1_more(tmp_path: 
         preference("opencode"),
         observed_at=observed,
         home=tmp_path,
+        env={},
     )
-    assert result.state.value == "rate_limited"
-    assert result.account_label == "github-copilot"
+    # A Copilot sign-in is not an OpenCode quota, and a logged limit error
+    # is an incident: no lane is invented from either (see
+    # tests/test_opencode_go_usage.py for the OpenCode Go source).
+    assert result.state.value == "unsupported"
+    assert result.reason_code == "opencode_no_quota_source"
+    assert result.account_label is None
     assert result.input_tokens == 500
     assert result.output_tokens == 100
-    assert result.lanes[0].remaining_percent < 100.0
+    assert result.lanes == ()
+    assert result.incident is not None
 

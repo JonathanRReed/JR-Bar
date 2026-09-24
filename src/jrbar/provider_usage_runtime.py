@@ -515,6 +515,7 @@ class ProviderUsageService:
         }
         snapshots: list[ProviderUsageSnapshot] = []
         refreshed_provider_ids: set[str] = set()
+        collector_incidents: dict[tuple[str, str], str] = {}
         for preference in collection_settings.providers:
             if generation is not None:
                 with self._lock:
@@ -619,6 +620,8 @@ class ProviderUsageService:
                     action="Retry",
                     source_instance_id=preference.source_instance_id,
                 )
+            if candidate.incident:
+                collector_incidents[identity] = candidate.incident
             if candidate.state in _TERMINAL_FAILURE_STATES:
                 failure_gates[identity] = note_failure(
                     gate,
@@ -659,6 +662,12 @@ class ProviderUsageService:
             elif candidate.state is ProviderSourceState.READY:
                 last_known_good[identity] = candidate
                 snapshots.append(candidate)
+            elif candidate.state is ProviderSourceState.UNSUPPORTED:
+                # The source says this account HAS no quota (OpenCode
+                # without a Go subscription). Old lanes are not a stale
+                # reading of something that exists; they must go.
+                last_known_good.pop(identity, None)
+                snapshots.append(candidate)
             elif candidate.state is ProviderSourceState.STALE and candidate.lanes:
                 # A stale-but-real reading is NEWER information than the
                 # last known good one, and it is the same numbers wearing
@@ -686,7 +695,12 @@ class ProviderUsageService:
         incident_snapshots = [
             replace(
                 snapshot,
-                incident=incident_decisions[snapshot.provider_id],
+                # The status feed's outage wins; a collector's own note
+                # (OpenCode logging a limit error) stands when it is quiet.
+                incident=(
+                    incident_decisions[snapshot.provider_id]
+                    or collector_incidents.get(snapshot.identity)
+                ),
             )
             if snapshot.provider_id in incident_decisions
             else snapshot

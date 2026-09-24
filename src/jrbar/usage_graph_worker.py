@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import usage_percent_history, usage_stats
+from .provider_homes import opencode_data_root
 from .providers import default_state_dir
 from .t3_compat import T3ReadOnlyPolicy, _open_read_only, t3_database_path
 from .usage_heatmap import build_usage_heatmap
@@ -371,7 +372,7 @@ def _build_payload(
     )
     opencode_records = (
         _scan_opencode_records(
-            Path.home() / ".local" / "share" / "opencode" / "opencode.db",
+            opencode_data_root() / "opencode.db",
             period_start.timestamp(),
         )
         if "opencode" in provider_ids
@@ -571,9 +572,7 @@ def _corpus_fingerprint(
     if "codex" in providers:
         fingerprint["codex"] = _tree_fingerprint(Path.home() / ".codex" / "sessions")
     if "opencode" in providers:
-        fingerprint["opencode"] = _file_fingerprint(
-            Path.home() / ".local" / "share" / "opencode" / "opencode.db"
-        )
+        fingerprint["opencode"] = _file_fingerprint(opencode_data_root() / "opencode.db")
     if t3_policy is not None and t3_policy.may_scan_activity_statistics:
         fingerprint["t3"] = _file_fingerprint(t3_database_path(t3_policy.base_dir))
     if snapshot.usage_display_mode == "sessions":
