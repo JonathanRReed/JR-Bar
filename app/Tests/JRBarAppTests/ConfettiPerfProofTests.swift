@@ -14,7 +14,7 @@ import JRBarCore
 /// with `JRBAR_PERF_PROOF=1`, on its own: never in the everyday suite,
 /// and not alongside the render proofs, whose drawing would crowd its
 /// timings over budget.
-@Suite("Confetti perf proof")
+@Suite("Confetti perf proof", .serialized)
 @MainActor
 struct ConfettiPerfProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_PERF_PROOF"] == "1",
