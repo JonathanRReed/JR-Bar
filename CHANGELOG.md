@@ -52,7 +52,10 @@ All notable changes to JR-Bar are documented here.
   and continuous gauges; History has a 14-day activity chart you can
   hover and click to filter; the Overview inspector has a provider tile,
   state pill and the ask in an amber box.
-- What's New leads with the Graph and the Aquarium.
+- What's New leads with the Graph and the Aquarium, and each Try it
+  opens the thing itself: `jrbar://overview/graph` puts the Overview on
+  its Graph, open or not, and `jrbar://aquarium` opens the tank or brings
+  it forward (it never closes it).
 
 ### Overnight pass (2026-09-24)
 

@@ -22,6 +22,14 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         show()
     }
 
+    /// Opens on the Graph pane, the way its sidebar row does:
+    /// `jrbar://overview/graph` and What's New's Try it land on the map
+    /// whether the window was open or not.
+    func showGraph() {
+        store.showGraph()
+        show()
+    }
+
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window

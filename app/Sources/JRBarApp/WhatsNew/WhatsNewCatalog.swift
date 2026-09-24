@@ -51,12 +51,12 @@ enum WhatsNewCatalog {
             id: "graph", symbol: "point.3.connected.trianglepath.dotted",
             title: "The Overview draws a map",
             detail: "Every agent, its workers and whatever waits on you, as a living graph you can pan and zoom.",
-            tryIt: .window(.overview), opens: "Opens the Overview; the Graph is in its sidebar"),
+            tryIt: .overviewGraph, opens: "Opens the Overview's Graph"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
             title: "A brand-new Aquarium",
             detail: "Every fish, pet and piece of the tank is redrawn, lit from the surface with real depth.",
-            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Aquarium card is"),
+            tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
             id: "open", symbol: "arrow.up.forward.app",
             title: "Open lands on the session",
@@ -80,7 +80,7 @@ enum WhatsNewCatalog {
             id: "lyrics", symbol: "quote.bubble",
             title: "Lyrics are opt-in",
             detail: "Synced lyrics come from LRCLIB on the internet, so they wait for your click now.",
-            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Notch card's lyrics switch is"),
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where the Notch card's lyrics switch is"),
     ]
 }
 

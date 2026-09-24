@@ -22,6 +22,8 @@ final class AppCommandRouter {
     /// A `SettingsStore.Page` raw value, or nil for wherever it was.
     var openSettings: ((String?) -> Void)?
     var openWindow: ((AppCommand.AppWindow) -> Void)?
+    /// The Overview, open or not, brought forward on its Graph pane.
+    var openOverviewGraph: (() -> Void)?
     /// Each answers nil when done, or the sentence saying why not.
     var quiet: ((_ mode: String?, _ seconds: Int) -> String?)?
     var endQuiet: (() -> String?)?
@@ -32,6 +34,9 @@ final class AppCommandRouter {
     var openSession: ((String) -> String?)?
     var revealAsk: (() -> String?)?
     var toggleShelf: (() -> String?)?
+    /// The tank opens, or comes forward when it already is; it never
+    /// closes, so a second link does what the first did.
+    var openAquarium: (() -> String?)?
     /// Said where the person will see it — the delegate points it at
     /// the panel's toast.
     var onRefused: ((String) -> Void)?
@@ -92,6 +97,12 @@ final class AppCommandRouter {
         case .window(let window):
             guard let openWindow else { return Self.notReady }
             openWindow(window)
+        case .overviewGraph:
+            guard let openOverviewGraph else { return Self.notReady }
+            openOverviewGraph()
+        case .aquarium:
+            guard let openAquarium else { return Self.notReady }
+            return openAquarium()
         case .toggle(let toggle, let on):
             if let on {
                 toggles.set(toggle, on: on)
