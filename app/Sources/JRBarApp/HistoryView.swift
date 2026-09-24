@@ -79,7 +79,8 @@ struct HistoryView: View {
                         ForEach(store.days) { day in
                             Section {
                                 ForEach(Array(day.rows.enumerated()), id: \.element.id) { index, row in
-                                    HistoryRowView(row: row, store: store, isLast: index == day.rows.count - 1)
+                                    HistoryRowView(row: row, folded: day.folded[row.id] ?? [], store: store,
+                                                   isLast: index == day.rows.count - 1)
                                 }
                             } header: {
                                 DayHeader(title: day.title, count: day.rows.count)
@@ -304,6 +305,8 @@ enum HistoryKindStyle {
 
 struct HistoryRowView: View {
     let row: CoreHistoryRow
+    /// The session's older rows folded under this one, newest first.
+    var folded: [CoreHistoryRow] = []
     @Bindable var store: HistoryStore
     let isLast: Bool
     @ViewState private var hovering = false
@@ -394,6 +397,12 @@ struct HistoryRowView: View {
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         }
+                        if !folded.isEmpty {
+                            Text("+\(folded.count)")
+                                .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                                .foregroundStyle(.tertiary)
+                                .help(Self.foldedHelp(folded))
+                        }
                         if row.unseen {
                             Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Newer than your last visit here")
                         }
@@ -482,7 +491,13 @@ struct HistoryRowView: View {
                             : (resumable ? "Ended — Resume picks it back up where it ran"
                                          : "Ended; the session is gone from the daemon so there is nothing to open")))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))")
+        .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))"
+                            + (folded.isEmpty ? "" : ", and \(folded.count) earlier"))
+    }
+
+    /// "3 earlier: Finished ×2 · Started".
+    static func foldedHelp(_ folded: [CoreHistoryRow]) -> String {
+        "\(folded.count) earlier: \(HistoryGrouping.foldedSummary(folded))"
     }
 }
 

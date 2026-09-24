@@ -44,8 +44,9 @@ struct HistoryTests {
         let days = HistoryGrouping.days(Self.rows, now: Self.now, calendar: Self.calendar)
         #expect(days.map(\.title).prefix(2) == ["Today", "Yesterday"])
         #expect(days.count == 3)
-        #expect(days[0].rows.count == 4)
-        #expect(days[0].rows.map(\.kind) == ["completed", "asked", "completed", "started"], "newest first inside a day")
+        #expect(days[0].rows.map(\.kind) == ["completed", "asked", "completed"], "newest first inside a day")
+        #expect(days[0].folded[days[0].rows[2].id]?.map(\.kind) == ["started"],
+                "sidepulse-core's start folds under the completion that followed it")
         #expect(days[1].rows.count == 2)
         #expect(days[2].rows.count == 1)
         #expect(days[2].title.contains(" "), "older days carry a weekday and date")
@@ -63,6 +64,46 @@ struct HistoryTests {
         seen[0].unseen = false
         #expect(AwaySummary.make(from: seen) == nil)
         #expect(AwaySummary.make(from: []) == nil)
+    }
+
+    /// Two sessions ending turn after turn, one failing between, and a
+    /// sessionless quota crossing.
+    static let turns: [CoreHistoryRow] = [
+        row(10, "completed", "codex", label: "inkling", unseen: true),
+        row(20, "completed", "codex", label: "inkling", unseen: true),
+        row(30, "asked", "codex", label: "inkling", unseen: true),
+        row(40, "completed", "claude", label: "scaling", unseen: true),
+        row(50, "failed", "claude", label: "scaling", unseen: true),
+        row(60, "completed", "claude", label: "scaling", unseen: true),
+        row(70, "completed", "claude", label: "scaling", unseen: true),
+        CoreHistoryRow(at: now.timeIntervalSince1970 - 80, kind: "quota_crossed", provider: "codex", detail: "90 %",
+                       unseen: true),
+        row(90, "completed", "codex", label: "inkling", unseen: true),
+    ]
+
+    @Test("consecutive rows of one session fold under the newest; a failure stands alone")
+    func folding() {
+        let run = HistoryGrouping.fold(Self.turns)
+        #expect(run.rows.map { "\($0.label ?? $0.kind):\($0.kind)" } == [
+            "inkling:completed", "scaling:completed", "scaling:failed", "scaling:completed",
+            "quota_crossed:quota_crossed", "inkling:completed",
+        ])
+        #expect(run.folded[run.rows[0].id]?.map(\.kind) == ["completed", "asked"])
+        #expect(run.folded[run.rows[1].id] == nil, "the failure does not fold into the turn after it")
+        #expect(run.folded[run.rows[2].id] == nil)
+        #expect(run.folded[run.rows[3].id]?.count == 1)
+        #expect(run.folded[run.rows[5].id] == nil, "the quota crossing between them keeps inkling's rows apart")
+        #expect(HistoryGrouping.foldedSummary(run.folded[run.rows[0].id] ?? []) == "Finished · Needed you")
+        #expect(HistoryGrouping.foldedSummary(Array(Self.turns.prefix(2))) == "Finished ×2")
+    }
+
+    @Test("the away banner counts sessions, not the turns they ended")
+    func awayCountsSessions() throws {
+        let summary = try #require(AwaySummary.make(from: Self.turns))
+        #expect(summary.rows.count == 9)
+        #expect(summary.sessions == 3, "inkling, scaling and the quota crossing")
+        #expect(summary.counts == ["completed": 2, "asked": 1, "failed": 1, "quota_crossed": 1])
+        #expect(summary.text == "While you were away: 2 finished, 1 needed you, 1 failed, 1 quota crossing")
     }
 
     @Test("rows decode with defaults for missing fields")
