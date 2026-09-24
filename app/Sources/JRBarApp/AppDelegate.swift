@@ -1575,7 +1575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     nonisolated static func meterReading(of provider: CoreProviderUsage, window: CoreUsageWindow?, now: Double) -> MeterReading {
-        let stale = provider.state?.lowercased() == "stale" || provider.fidelity?.lowercased() == "stale"
+        let stale = provider.isStale
         let lapsed = window?.resetsAt.map { $0 <= now } ?? false
         let fraction = lapsed ? nil : window?.usedPct.map { $0 / 100 }
         return MeterReading(fraction: fraction, stale: stale, current: !stale && !lapsed)

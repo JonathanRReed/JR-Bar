@@ -773,8 +773,9 @@ enum ControlCenterPaletteRows {
 enum UsagePaletteRows {
     /// One row per metered provider: the headline window's percent as
     /// the tag (amber from 75 %, red from 90 %), the window and reset
-    /// as the subtitle, a live vendor incident said out loud. Return
-    /// opens the Usage Center on that provider's card.
+    /// as the subtitle (a broken source's fix once the reset is past), a
+    /// live vendor incident said out loud. Return opens the Usage Center
+    /// on that provider's card.
     @MainActor
     static func items(usage: [CoreProviderUsage], now: Date,
                       open: @escaping @MainActor (String) -> Void) -> [PaletteItem] {
@@ -782,7 +783,7 @@ enum UsagePaletteRows {
             guard let window = provider.headlineWindow else { return nil }
             let style = ProviderStyle.style(for: provider.id)
             var subtitle = window.shortName
-            if let countdown = PanelStore.countdown(to: window.resetsAt, now: now) {
+            if let countdown = PanelStore.countdown(to: window.resetsAt, now: now, fix: provider.staleFix) {
                 subtitle += " · \(countdown)"
             }
             if let account = provider.instance, !account.isEmpty { subtitle += " · \(account)" }
