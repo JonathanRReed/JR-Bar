@@ -34,10 +34,13 @@ enum MenuBarConcealPlan {
     /// Apple's own extras use per-item covers, matching the visibility
     /// picker — unless `appleExtras` (`curation.concealAppleExtras`)
     /// lets Weather, Passwords and Time Machine hide like any app. The
-    /// system's own owners never join either way.
+    /// system's own owners never join either way, and neither does a
+    /// system item's own key (`com.apple.menuextra.clock`) — that one is
+    /// `concealSystemItems`'s alone.
     nonisolated static func canConcealApp(_ bundleID: String, appleExtras: Bool = false) -> Bool {
         guard bundleID.hasPrefix("com.apple.") else { return true }
         return appleExtras && !appleSystemOwners.contains(bundleID)
+            && !bundleID.hasPrefix("com.apple.menuextra.")
     }
 
     /// Apple's processes whose items are the system's own — never an

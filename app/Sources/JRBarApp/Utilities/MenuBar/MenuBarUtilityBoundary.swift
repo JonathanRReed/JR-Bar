@@ -551,7 +551,8 @@ extension MenuBarUtility {
         let reveal = Self.updateReveal(
             changed: changed,
             watch: Set(settings().curation.updateWatch),
-            concealing: concealer != nil)
+            concealing: concealer != nil,
+            appleExtras: concealsAppleExtras)
         let seconds = settings().rehideSeconds
         // Under the concealer the changed app stands alone for the clock
         // — one item joins the row, not the whole run.
@@ -588,16 +589,18 @@ extension MenuBarUtility {
 
     /// What one show-for-updates pass acts on: the changed hidden items
     /// the watch list lets through (all of them while it is empty). An
-    /// app the concealer takes is lifted alone; anything else — a covered
-    /// extra, any item under the spacer engine — reveals its section.
-    /// Pure so a test pins it.
+    /// app the concealer takes is lifted alone — Apple's extras too with
+    /// `concealAppleExtras` on; anything else — a covered extra, any
+    /// item under the spacer engine — reveals its section. Pure so a
+    /// test pins it.
     nonisolated static func updateReveal(changed: [(MenuBarItem, MenuBarItemSection)],
-                                         watch: Set<String>,
-                                         concealing: Bool) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
+                                         watch: Set<String>, concealing: Bool,
+                                         appleExtras: Bool = false) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
         var lifts = Set<String>()
         var sections = Set<MenuBarItemSection>()
         for (item, section) in changed where watch.isEmpty || watch.contains(updateWatchKey(item)) {
-            if concealing, let app = item.bundleID, MenuBarConcealPlan.canConcealApp(app) {
+            if concealing, let app = item.bundleID,
+               MenuBarConcealPlan.canConcealApp(app, appleExtras: appleExtras) {
                 lifts.insert(app)
             } else {
                 sections.insert(section)

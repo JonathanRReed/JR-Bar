@@ -1274,7 +1274,7 @@ final class MenuBarUtility: Toy {
                                       sections: current.sections,
                                       concealedApps: current.concealedApps,
                                       items: listedItems)
-        let supported = Self.supportedConcealed(extras.concealedApps, curation: current.curation)
+        let supported = Self.keptConcealed(extras.concealedApps, curation: current.curation)
         let snapshots = current.curation.profileModel < MenuBarCuration.currentProfileModel
         let moved = supported != current.concealedApps || extras.sections != current.sections
         guard legacy || snapshots || moved else { return }
@@ -1306,6 +1306,25 @@ final class MenuBarUtility: Toy {
             MenuBarConcealPlan.canConcealApp($0.key, appleExtras: curation.concealAppleExtras)
                 || (curation.concealSystemItems && MenuBarConcealPlan.concealableSystemItems[$0.key] != nil)
         }
+    }
+
+    /// The `concealedApps` entries a migration keeps: what today's
+    /// settings act on — and, once the person has chosen on the card's
+    /// "Hide Apple's extras like apps", Apple's extras whatever the flag
+    /// says now: an extra hidden while it was on and not listed right now
+    /// keeps its pick until it is, when `migrateAppleExtras` turns it into
+    /// a cover. `concealTarget` leaves such an entry out meanwhile, so it
+    /// hides nothing. In a file that never chose, an extra's entry can
+    /// only be the old positional learning's, and it goes. Pure so a
+    /// test pins it.
+    nonisolated static func keptConcealed(_ apps: [String: MenuBarItemSection],
+                                          curation: MenuBarCuration) -> [String: MenuBarItemSection] {
+        guard curation.concealAppleExtrasChoice != nil else {
+            return supportedConcealed(apps, curation: curation)
+        }
+        var extrasKept = curation
+        extrasKept.concealAppleExtras = true
+        return supportedConcealed(apps, curation: extrasKept)
     }
 
     /// Apple's standalone extras' picks move with `concealAppleExtras`.

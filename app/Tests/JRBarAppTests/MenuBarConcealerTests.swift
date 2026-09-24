@@ -361,6 +361,8 @@ struct MenuBarConcealerTests {
         #expect(!MenuBarConcealPlan.canConcealApp("com.apple.weather.menu"))
         #expect(MenuBarConcealPlan.canConcealApp("com.apple.weather.menu", appleExtras: true))
         #expect(MenuBarConcealPlan.canConcealApp("com.apple.Passwords.MenuBarExtra", appleExtras: true))
+        #expect(!MenuBarConcealPlan.canConcealApp("com.apple.menuextra.clock", appleExtras: true),
+                "a system item's key is concealSystemItems's alone")
         for owner in ["com.apple.MenuBarAgent", "com.apple.controlcenter", "com.apple.TextInputMenuAgent",
                       "com.apple.Spotlight", "com.apple.Siri"] {
             #expect(!MenuBarConcealPlan.canConcealApp(owner, appleExtras: true), "\(owner)")
@@ -392,6 +394,25 @@ struct MenuBarConcealerTests {
         let apps: [String: MenuBarItemSection] = ["com.apple.weather.menu": .hidden, "x.app": .hidden,
                                                   "com.apple.menuextra.clock": .hidden]
         #expect(MenuBarUtility.supportedConcealed(apps, curation: curation) == ["x.app": .hidden])
+        // In a file that never chose, an extra's entry is old learning's
+        // and goes; once the person turned the flag off on the card, a
+        // migration keeps an unlisted extra's pick, so it becomes a cover
+        // once the extra is listed again.
+        #expect(MenuBarUtility.keptConcealed(apps, curation: curation) == ["x.app": .hidden])
+        var turnedOff = MenuBarCuration()
+        turnedOff.concealAppleExtras = false
+        #expect(MenuBarUtility.keptConcealed(apps, curation: turnedOff)
+                == ["com.apple.weather.menu": .hidden, "x.app": .hidden])
+        let offUnlisted = MenuBarUtility.migrateAppleExtras(on: false, sections: [:],
+                                                           concealedApps: ["com.apple.weather.menu": .hidden],
+                                                           items: [slack])
+        #expect(MenuBarUtility.keptConcealed(offUnlisted.concealedApps, curation: turnedOff)
+                == ["com.apple.weather.menu": .hidden], "the pick waits for its item")
+        let listedAgain = MenuBarUtility.migrateAppleExtras(on: false, sections: offUnlisted.sections,
+                                                           concealedApps: offUnlisted.concealedApps,
+                                                           items: [weather, slack])
+        #expect(listedAgain.sections == ["Weather": .hidden], "a cover where it sits")
+        #expect(listedAgain.concealedApps.isEmpty)
         curation.concealAppleExtras = true
         curation.concealSystemItems = true
         #expect(MenuBarUtility.supportedConcealed(apps, curation: curation) == apps)
